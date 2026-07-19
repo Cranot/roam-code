@@ -260,6 +260,8 @@ def test_extended_surfaces_are_walked() -> None:
         "CLAUDE.md",
         "AGENTS.md",
         "CONTRIBUTING.md",
+        "server.json",
+        "src/roam/cli.py",
         # Landing-page docs pages that quote the hard counts.
         "templates/distribution/landing-page/docs/agent-contract.html",
         "templates/distribution/landing-page/docs/integration-tutorials.html",
@@ -349,6 +351,7 @@ def test_new_patterns_fix_simulated_free_form_drift() -> None:
         counts["mcp_core_tools"],
     )
     aliases = counts["alias_names"]
+    preset_description = mod._mcp_preset_description(counts["mcp_preset_counts"])
 
     # (drifted phrase, expected corrected phrase)
     cases = [
@@ -375,6 +378,14 @@ def test_new_patterns_fix_simulated_free_form_drift() -> None:
         (
             "MCP server with 9 tools (9 in the default `core` preset)",
             f"MCP server with {mcp} tools ({core} in the default `core` preset)",
+        ),
+        (
+            "Tool preset: core (default, 1 — lean prompt surface), full (2)",
+            preset_description,
+        ),
+        (
+            "# Total: 2 invokable command names (1 canonical commands + 1 alias names).",
+            f"# Total: {cmds} invokable command names ({canon} canonical commands + {aliases} alias names).",
         ),
     ]
     all_pats: list[tuple] = []

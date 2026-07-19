@@ -63,9 +63,30 @@ def _git_init(path):
         "GIT_COMMITTER_NAME": "test",
         "GIT_COMMITTER_EMAIL": "t@t",
     }
-    subprocess.run(["git", "init"], cwd=path, capture_output=True, check=True, env=env)
-    subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True, env=env)
-    subprocess.run(["git", "commit", "-m", "init", "--allow-empty"], cwd=path, capture_output=True, check=True, env=env)
+    subprocess.run(
+        ["git", "init"],
+        cwd=path,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    subprocess.run(
+        ["git", "add", "."],
+        cwd=path,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "init", "--allow-empty"],
+        cwd=path,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        check=True,
+        env=env,
+    )
 
 
 @pytest.fixture
@@ -166,7 +187,13 @@ def test_replay_gate_green_and_propose_only(tmp_path):
     assert att.pre_patch_fired and att.post_patch_cleared
     # propose-only: the real tree is untouched, no worktrees leak
     assert "return d[k]" in (repo / "mod.py").read_text(encoding="utf-8")
-    wl = subprocess.run(["git", "worktree", "list"], cwd=repo, capture_output=True, text=True)
+    wl = subprocess.run(
+        ["git", "worktree", "list"],
+        cwd=repo,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+    )
     assert len(wl.stdout.strip().splitlines()) == 1
 
 

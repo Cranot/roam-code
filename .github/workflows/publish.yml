@@ -1,36 +1,21 @@
-# Publish roam-code to PyPI using Trusted Publishing (OIDC).
+# Publish roam-code to PyPI with a manifest-bound, fail-closed provenance path.
 #
-# Triggers:
-#   - push of any v* tag (the canonical path; wheel ships before release notes)
-#   - GitHub Release creation (legacy compatibility — kept so manual draft-then-
-#     publish still works; skip-existing makes the second invocation a no-op)
-#   - manual workflow_dispatch (for re-runs after a failure — REQUIRES a tag input)
+# Security invariants:
+#   1. Resolve one constrained v* tag to one commit and build exactly once.
+#   2. Move one wheel, one sdist, their SBOM, and a digest manifest through an
+#      immutable Actions artifact; move only a proven missing-file subset
+#      through a second immutable artifact. Download both strictly by ID.
+#   3. Recompute every digest before the OIDC-backed publish action runs.
+#   4. Recover a partial PyPI upload only when every existing file is an exact
+#      filename/digest/size subset of the manifest, then upload only missing
+#      files. Duplicate uploads and every non-subset state remain hard errors.
+#   5. Ask the pinned PyPA action to attest only newly missing verified files,
+#      then require valid PyPI digests and provenance subjects for the complete
+#      wheel/sdist pair before attaching signed evidence to the release.
 #
-# Setup: configure a "trusted publisher" on PyPI for this repo
-# (https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
-# before the first publish. No API tokens needed.
-#
-# W1055 — tag-bound build (split tag-publish from trunk-build):
-#   The artifact that gets published MUST be built from the exact commit the
-#   release tag points at, never from whatever trunk happens to be at run time.
-#   A ``release: published`` event days after the tag, or a ``workflow_dispatch``
-#   re-run, would otherwise check out default-branch HEAD (``github.sha``) and
-#   build drifted code under the tag's version number. The ``resolve-ref`` job
-#   below resolves a single canonical tag + SHA for every trigger and fails
-#   closed if the run is not tag-bound; every build/verify job then checks out
-#   that pinned SHA. No job both builds-from-trunk and publishes.
-#
-# W1054 — PEP 740 attestations + concurrency + environment reviewer gate:
-#   ``pypa/gh-action-pypi-publish`` is invoked with ``attestations: true`` so
-#   PyPI records PEP 740 provenance for the wheel. The ``concurrency`` block
-#   serializes overlapping tag pushes. The ``publish`` job runs in the ``pypi``
-#   GitHub environment — configure required reviewers on that environment in
-#   repo settings to gate the upload behind human approval.
-#
-# W1056 — SBOM↔wheel SHA binding + version-drift guard:
-#   The SBOM carries the SHA256 of the *published wheel* (computed after build,
-#   threaded into the CycloneDX document), not a build-time placeholder. A guard
-#   step fails the build if the built wheel's version != the git tag version.
+# The canonical trigger is a tag push. workflow_dispatch can safely recover a
+# partially accepted wheel/sdist pair, but only from byte-identical manifest
+# evidence. Post-publish jobs should still be retried in their original run.
 
 name: Publish to PyPI
 
@@ -38,521 +23,1380 @@ on:
   push:
     tags:
       - "v*"
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing v* tag to (re-)publish from (e.g. v13.3). The build is bound to this tag's commit."
+        description: "Existing release tag to publish (for example v13.9.0)"
         required: true
         type: string
 
-# W1054: serialize publish runs so overlapping tag pushes (or a tag-push +
-# release-create pair) cannot double-publish or race the SBOM-sign + PyPI
-# Trusted Publishing path. The group key is the resolved tag, NOT
-# ``github.ref`` — a ``release: published`` event and the matching tag push
-# carry different ``github.ref`` values for the SAME release, so keying on
-# ``github.ref`` would let them run concurrently. ``github.event.release.tag_name``
-# (release trigger), ``github.event.inputs.tag`` (manual) and ``github.ref_name``
-# (tag push) collapse to the same tag string.
-# ``cancel-in-progress: false`` is critical — killing an in-flight publish
-# would leave partial state (e.g. wheel on PyPI without signed SBOM).
+# One global release lock avoids races across tag-push and manual runs without
+# interpolating an untrusted workflow input into the concurrency key.
 concurrency:
-  group: publish-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref_name }}
+  group: publish-roam-code
   cancel-in-progress: false
 
+# Build and resolution jobs never receive an OIDC token. Privileged permissions
+# are granted only to the two jobs that need them.
 permissions:
-  id-token: write   # OIDC token for Trusted Publishing
   contents: read
 
 jobs:
-  # W1055: resolve the single canonical tag this run publishes, for ALL
-  # triggers, and fail closed if the run is not tag-bound. Every downstream
-  # job checks out ``needs.resolve-ref.outputs.sha`` so the published artifact
-  # is pinned to the tagged commit and can never drift to trunk HEAD.
   resolve-ref:
-    runs-on: ubuntu-latest
+    name: Resolve immutable release identity
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - name: Resolve and pin the tag-bound commit
+      - name: Resolve and pin the release tag
         id: resolve
         env:
           EVENT_NAME: ${{ github.event_name }}
           PUSH_REF_NAME: ${{ github.ref_name }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          RUN_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IMMUTABLE_RELEASES_ENABLED: ${{ vars.IMMUTABLE_RELEASES_ENABLED }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+
           case "$EVENT_NAME" in
-            push)              tag="$PUSH_REF_NAME" ;;
-            release)           tag="$RELEASE_TAG" ;;
+            push) tag="$PUSH_REF_NAME" ;;
             workflow_dispatch) tag="$DISPATCH_TAG" ;;
             *)
-              echo "::error::Unsupported trigger '$EVENT_NAME' — publish runs must be tag-bound."
+              echo "::error::Unsupported publish trigger: $EVENT_NAME"
               exit 1
               ;;
           esac
-          if [ -z "${tag:-}" ]; then
-            echo "::error::No tag resolved for event '$EVENT_NAME' — refusing to publish from an unbound ref."
+
+          # This allowlist rejects whitespace, slashes, shell metacharacters,
+          # query fragments, and multiline-output injection. It accepts the
+          # project's numeric release tags plus conventional PEP 440 pre/post
+          # suffixes.
+          tag_pattern='^v[0-9]+([.][0-9]+)+((a|b|rc)[0-9]+)?([.]post[0-9]+)?([.]dev[0-9]+)?$'
+          if [[ ! "$tag" =~ $tag_pattern ]]; then
+            echo "::error::Release tag is outside the allowed format: '$tag'"
             exit 1
           fi
-          case "$tag" in
-            v*) ;;
-            *)
-              echo "::error::Resolved tag '$tag' does not start with 'v' — not a release tag."
+          if [[ ! "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Repository identity has an unexpected format."
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == push && "$RUN_REF" != "refs/tags/$tag" ]]; then
+            echo "::error::Tag-push release identity does not match GITHUB_REF."
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == workflow_dispatch && "$RUN_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::Manual recovery must run from the repository default branch."
+            exit 1
+          fi
+
+          # GITHUB_TOKEN cannot read the administration-scoped repository
+          # setting directly. Require an explicit operator assertion before any
+          # build, then prove the resulting release's immutable=true state after
+          # draft publication. Keep this variable synchronized with the setting.
+          if [[ "$IMMUTABLE_RELEASES_ENABLED" != true ]]; then
+            echo "::error::Set repository variable IMMUTABLE_RELEASES_ENABLED=true only after enabling immutable releases."
+            exit 1
+          fi
+
+          ref_json=$(gh api "repos/${REPO}/git/ref/tags/${tag}")
+          object_type=$(jq -r '.object.type' <<<"$ref_json")
+          sha=$(jq -r '.object.sha' <<<"$ref_json")
+
+          # Dereference annotated (including nested annotated) tags with a
+          # finite bound, then require a lowercase full commit SHA.
+          for _depth in 1 2 3 4 5; do
+            if [[ "$object_type" == "commit" ]]; then
+              break
+            fi
+            if [[ "$object_type" != "tag" || ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Tag '$tag' resolves to unsupported object '$object_type' ($sha)."
               exit 1
-              ;;
-          esac
-          # Resolve the tag to the exact commit SHA it points at. This SHA —
-          # not github.sha (trunk HEAD) — is what every build/verify job
-          # checks out. Using the GitHub API (not a local clone) means this
-          # job needs no checkout of its own.
-          sha=$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq '.object.sha')
-          if [ -z "${sha:-}" ]; then
-            echo "::error::Could not resolve tag '$tag' to a commit SHA in '$REPO'."
+            fi
+            tag_json=$(gh api "repos/${REPO}/git/tags/${sha}")
+            object_type=$(jq -r '.object.type' <<<"$tag_json")
+            sha=$(jq -r '.object.sha' <<<"$tag_json")
+          done
+          if [[ "$object_type" != "commit" || ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Tag '$tag' did not resolve to one full commit SHA."
             exit 1
           fi
-          # A tag can be annotated (object.type == tag) — dereference to the
-          # underlying commit so ``actions/checkout`` gets a commit-ish.
-          obj_type=$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq '.object.type')
-          if [ "$obj_type" = "tag" ]; then
-            sha=$(gh api "repos/${REPO}/git/tags/${sha}" --jq '.object.sha')
-          fi
-          echo "Resolved publish target: tag=${tag} sha=${sha} (event=${EVENT_NAME})"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved release target: tag=$tag commit=$sha"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
 
   build:
-    # W1055: builds ONLY from the tag-pinned SHA resolved above. This job
-    # never sees trunk HEAD, so the artifact it produces is bound to the tag.
+    name: Build reproducible manifest-bound artifacts
     needs: resolve-ref
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      artifact_id: ${{ steps.upload_bundle.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload_bundle.outputs.artifact-digest }}
+      manifest_sha256: ${{ steps.release_manifest.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          # W1055: pin the checkout to the resolved tag commit, NOT the
-          # workflow's default ref. For a delayed ``release: published`` or a
-          # ``workflow_dispatch`` re-run, the default ref is trunk HEAD —
-          # checking that out would publish drifted code under the tag.
           ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
 
-      - name: Confirm checkout is the tag-bound commit
-        # W1055 belt-and-suspenders: prove the working tree is the resolved
-        # SHA before anything is built. Catches a checkout-ref regression
-        # before a drifted wheel can reach PyPI.
+      - name: Confirm checkout is the resolved commit
         env:
           EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
         run: |
           set -euo pipefail
-          actual=$(git rev-parse HEAD)
-          if [ "$actual" != "$EXPECTED_SHA" ]; then
-            echo "::error::Checked-out HEAD $actual != resolved tag SHA $EXPECTED_SHA"
+          actual_sha=$(git rev-parse HEAD)
+          if [[ "$actual_sha" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Checked-out HEAD $actual_sha != resolved commit $EXPECTED_SHA"
             exit 1
           fi
-          echo "Build is bound to tag commit $actual"
 
-      - uses: actions/setup-python@v5
+      - name: Bind reproducible build inputs to the commit
+        run: |
+          set -euo pipefail
+          source_date_epoch=$(git show -s --format=%ct HEAD)
+          if [[ ! "$source_date_epoch" =~ ^[0-9]+$ ]]; then
+            echo "::error::Tagged commit did not provide a valid source epoch."
+            exit 1
+          fi
+          printf 'SOURCE_DATE_EPOCH=%s\n' "$source_date_epoch" >> "$GITHUB_ENV"
+          printf 'PYTHONHASHSEED=0\nTZ=UTC\nLC_ALL=C.UTF-8\n' >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.13"
 
-      - name: Install build tools
-        run: pip install build
-
-      - name: Build sdist and wheel
-        run: python -m build
-
-      - name: Twine check
+      - name: Install the hash-locked release toolchain
         run: |
-          pip install twine
-          twine check --strict dist/*
-
-      - name: Verify wheel ships PEP 639 License-Expression metadata
-        # Pre-12.50 wheels shipped to PyPI with no license metadata
-        # because the build ran on setuptools < 77 (which silently
-        # drops the license expression). Block any future regression.
-        #
-        # W1104: extract the wheel path to a variable + assert a single
-        # match. The build currently produces one py3-none-any wheel; if
-        # that ever changes (multi-arch, multi-py), the unquoted glob
-        # would have been a silent footgun. Fail fast instead.
-        run: |
-          set -e
-          wheels=(dist/*.whl)
-          if [ ${#wheels[@]} -ne 1 ]; then
-            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
+          set -euo pipefail
+          lock=.github/release-tools.lock
+          wheelhouse=/tmp/release-wheelhouse
+          toolenv=/tmp/release-tools
+          if [[ -e "$wheelhouse" || -L "$wheelhouse" || -e "$toolenv" || -L "$toolenv" ]]; then
+            echo "::error::Release toolchain paths are not fresh."
             exit 1
           fi
-          wheel="${wheels[0]}"
-          unzip -p "$wheel" '*/METADATA' \
-            | grep -q '^License-Expression: Apache-2.0$' \
-            || (echo "::error::License-Expression missing — needs setuptools >= 77" && exit 1)
+          mkdir -m 0700 "$wheelhouse"
+          python -m venv "$toolenv"
+          "$toolenv/bin/python" -m pip download \
+            --disable-pip-version-check \
+            --require-hashes \
+            --only-binary=:all: \
+            --dest "$wheelhouse" \
+            --requirement "$lock"
+          "$toolenv/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --require-hashes \
+            --only-binary=:all: \
+            --force-reinstall \
+            --no-index \
+            --find-links "$wheelhouse" \
+            --requirement "$lock"
+          printf '%s\n' "$toolenv/bin" >> "$GITHUB_PATH"
+
+      - name: Build wheel and sdist once
+        run: python -m build --no-isolation --outdir dist
+
+      - name: Canonicalize the sdist for byte-identical recovery builds
+        run: |
+          set -euo pipefail
+          sdists=(dist/*.tar.gz)
+          [[ ${#sdists[@]} -eq 1 ]] || { echo "::error::Expected one sdist to canonicalize."; exit 1; }
+          python scripts/release_artifacts.py canonicalize-sdist \
+            --sdist "${sdists[0]}" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Validate distribution metadata
+        run: |
+          set -euo pipefail
+          dists=(dist/*)
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          if [[ ${#dists[@]} -ne 2 || ${#wheels[@]} -ne 1 || ${#sdists[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one wheel and one sdist in dist/."
+            printf 'Found: %s\n' "${dists[@]}"
+            exit 1
+          fi
+          python -m twine check --strict "${dists[@]}"
+
+      - name: Verify wheel ships PEP 639 license metadata
+        run: |
+          set -euo pipefail
+          wheels=(dist/*.whl)
+          [[ ${#wheels[@]} -eq 1 ]] || exit 1
+          metadata=$(unzip -p "${wheels[0]}" '*/METADATA')
+          grep -q '^License-Expression: Apache-2.0$' <<<"$metadata" \
+            || { echo "::error::License-Expression metadata is missing."; exit 1; }
 
       - name: Verify wheel contains v2 commands
-        # Belt-and-suspenders: if the wheel is missing a v2 command file
-        # (because pyproject package-data drifted), fail before PyPI sees it.
-        # W1104: same single-wheel assertion as the PEP 639 step above.
-        run: |
-          set -e
-          wheels=(dist/*.whl)
-          if [ ${#wheels[@]} -ne 1 ]; then
-            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
-            exit 1
-          fi
-          wheel="${wheels[0]}"
-          unzip -l "$wheel" | grep -E "(pr_analyze|metrics_push|audit_trail|rules_validate|dogfood)" | wc -l > .v2_count
-          count=$(cat .v2_count)
-          if [ "$count" -lt "8" ]; then
-            echo "::error::Expected at least 8 v2 command files in wheel, got $count"
-            exit 1
-          fi
-
-      - name: Guard — wheel version must equal the git tag version
-        # W1056 version-drift guard: the tag this run publishes under is
-        # ``v<X>`` (resolve-ref). The wheel filename embeds the version
-        # setuptools baked in from pyproject.toml of the tagged commit. If
-        # those disagree, the tag was pushed without bumping pyproject (or
-        # vice-versa) — fail BEFORE PyPI sees a mislabelled artifact.
-        env:
-          TAG: ${{ needs.resolve-ref.outputs.tag }}
         run: |
           set -euo pipefail
           wheels=(dist/*.whl)
-          if [ ${#wheels[@]} -ne 1 ]; then
-            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
-            exit 1
-          fi
-          wheel="${wheels[0]}"
-          # Wheel filename is {distribution}-{version}-{python}-{abi}-{platform}.whl
-          wheel_base=$(basename "$wheel")
-          wheel_version=$(echo "$wheel_base" | awk -F- '{print $2}')
-          # The git tag is ``v<version>``; strip the leading ``v``.
-          tag_version="${TAG#v}"
-          # Cross-check against pyproject.toml as a third witness.
-          pyproject_version=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
-          echo "tag_version=${tag_version} wheel_version=${wheel_version} pyproject_version=${pyproject_version}"
-          if [ "$wheel_version" != "$tag_version" ]; then
-            echo "::error::Wheel version '$wheel_version' != git tag version '$tag_version' — bump pyproject.toml or retag."
-            exit 1
-          fi
-          if [ "$pyproject_version" != "$tag_version" ]; then
-            echo "::error::pyproject.toml version '$pyproject_version' != git tag version '$tag_version' at the tagged commit."
+          [[ ${#wheels[@]} -eq 1 ]] || exit 1
+          listing=$(unzip -l "${wheels[0]}")
+          count=$(awk '/pr_analyze|metrics_push|audit_trail|rules_validate|dogfood/ { count++ } END { print count + 0 }' <<<"$listing")
+          if [[ "$count" -lt 8 ]]; then
+            echo "::error::Expected at least 8 v2 command files in the wheel; found $count."
             exit 1
           fi
 
-      - name: Compute published-wheel SHA256
-        # W1056: hash the EXACT wheel file that ``pypa/gh-action-pypi-publish``
-        # uploads, so the SBOM can bind to the real published artifact instead
-        # of a build-time placeholder. Emitted as a step output AND a file in
-        # ``dist/`` so both the SBOM step (this job) and any downstream
-        # consumer can read it.
-        id: wheelsha
+      - name: Generate runtime CycloneDX SBOM
         run: |
           set -euo pipefail
           wheels=(dist/*.whl)
-          if [ ${#wheels[@]} -ne 1 ]; then
-            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
-            exit 1
-          fi
-          wheel="${wheels[0]}"
-          sha256=$(sha256sum "$wheel" | awk '{print $1}')
-          echo "Published-wheel SHA256: ${sha256}  $(basename "$wheel")"
-          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
-          echo "wheel_name=$(basename "$wheel")" >> "$GITHUB_OUTPUT"
-
-      - name: Generate CycloneDX SBOM
-        # SBOM (Software Bill of Materials) for the published wheel.
-        # CycloneDX is the format auditors and enterprise procurement
-        # ask for under the audit-trail product.
-        #
-        # Method: build a fresh venv, install the just-built wheel
-        # (so the resolved dependency closure matches what end users
-        # get from ``pip install roam-code``), then run
-        # ``cyclonedx-py environment`` against that venv. Running
-        # cyclonedx against the CI build env would include build-only
-        # tooling like ``build`` and ``twine`` which users never see.
-        #
-        # The SBOM lives in ``sbom/`` (NOT ``dist/``) so it doesn't
-        # land in twine's upload set — twine validates filenames and
-        # would reject .cdx.json.
-        #
-        # W1056: after the SBOM is generated, the published-wheel SHA256
-        # (computed above) is threaded into the CycloneDX document as a
-        # component hash + a top-level metadata property, so the SBOM is
-        # cryptographically bound to the exact artifact that reaches PyPI.
-        env:
-          WHEEL_SHA256: ${{ steps.wheelsha.outputs.sha256 }}
-          WHEEL_NAME: ${{ steps.wheelsha.outputs.wheel_name }}
-        run: |
-          set -e
+          [[ ${#wheels[@]} -eq 1 ]] || exit 1
+          version=$(python -c "import pathlib,tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
           mkdir -p sbom
-          version=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
-          # W1104: assert single wheel before passing to pip; mirrors the
-          # PEP 639 + v2-commands verification steps above.
-          wheels=(dist/*.whl)
-          if [ ${#wheels[@]} -ne 1 ]; then
-            echo "::error::Expected exactly 1 wheel in dist/, got ${#wheels[@]}: ${wheels[*]}"
-            exit 1
-          fi
-          wheel="${wheels[0]}"
-          python -m venv /tmp/sbom-venv
-          /tmp/sbom-venv/bin/pip install --quiet --upgrade pip
-          /tmp/sbom-venv/bin/pip install --quiet cyclonedx-bom
-          /tmp/sbom-venv/bin/pip install --quiet "$wheel"
+
+          # The generator is part of the hash-locked toolchain. The target
+          # environment receives the wheel plus runtime dependencies solely
+          # from that lock's already hash-verified, no-index wheelhouse.
+          python -m venv --without-pip /tmp/sbom-target
+          python -m pip --python /tmp/sbom-target/bin/python install \
+            --disable-pip-version-check \
+            --only-binary=:all: \
+            --no-index \
+            --find-links /tmp/release-wheelhouse \
+            "${wheels[0]}"
           sbom_path="sbom/roam-code-${version}.cdx.json"
-          /tmp/sbom-venv/bin/cyclonedx-py environment \
-            /tmp/sbom-venv/bin/python \
+          cyclonedx-py environment \
+            /tmp/sbom-target/bin/python \
+            --output-reproducible \
             --of JSON \
             -o "$sbom_path"
-          echo "SBOM written to ${sbom_path}"
-          # Quick sanity: ensure roam-code itself appears in components.
           grep -q '"name": "roam-code"' "$sbom_path" \
-            || (echo "::error::SBOM missing roam-code component" && exit 1)
-          # W1056: bind the SBOM to the published wheel's SHA256.
-          # ``cyclonedx-py environment`` describes the installed dist (an
-          # unpacked package), not the wheel file, so it carries no hash for
-          # the wheel artifact itself. Inject the real SHA-256 of the wheel
-          # that will be uploaded to PyPI:
-          #   (a) onto the roam-code component as a CycloneDX ``hashes`` entry,
-          #   (b) as a top-level ``metadata.properties`` entry naming the
-          #       wheel file, so auditors can verify ``sha256sum <wheel>``
-          #       against the SBOM without parsing the component tree.
-          python - "$sbom_path" <<'PYEOF'
-          import json
-          import os
-          import sys
+            || { echo "::error::SBOM is missing the roam-code component."; exit 1; }
 
-          sbom_path = sys.argv[1]
-          wheel_sha = os.environ["WHEEL_SHA256"]
-          wheel_name = os.environ["WHEEL_NAME"]
-          if not wheel_sha:
-              sys.exit("::error::WHEEL_SHA256 is empty — wheel-SHA step did not run")
+      - name: Bind exact artifact and SBOM digests
+        id: release_manifest
+        env:
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          sboms=(sbom/*.cdx.json)
+          if [[ ${#sboms[@]} -ne 1 ]]; then
+            echo "::error::Expected exactly one CycloneDX SBOM; found ${#sboms[@]}."
+            exit 1
+          fi
+          mkdir -p release
+          python scripts/release_artifacts.py prepare \
+            --dist-dir dist \
+            --sbom "${sboms[0]}" \
+            --manifest release/release-manifest.json \
+            --tag "$TAG" \
+            --commit "$EXPECTED_SHA"
+          python scripts/release_artifacts.py verify \
+            --dist-dir dist \
+            --sbom "${sboms[0]}" \
+            --manifest release/release-manifest.json \
+            --tag "$TAG" \
+            --commit "$EXPECTED_SHA"
+          manifest_sha256=$(sha256sum release/release-manifest.json | awk '{print $1}')
+          printf 'sha256=%s\n' "$manifest_sha256" >> "$GITHUB_OUTPUT"
+          echo "Release manifest SHA256: $manifest_sha256"
 
-          with open(sbom_path, encoding="utf-8") as fh:
-              doc = json.load(fh)
-
-          # (a) attach the wheel hash to the roam-code component.
-          bound = False
-          for comp in doc.get("components", []):
-              if comp.get("name") == "roam-code":
-                  hashes = comp.setdefault("hashes", [])
-                  # Drop any pre-existing SHA-256 placeholder, then bind the
-                  # real published-wheel digest.
-                  hashes[:] = [h for h in hashes if h.get("alg") != "SHA-256"]
-                  hashes.append({"alg": "SHA-256", "content": wheel_sha})
-                  bound = True
-          # The roam-code dist may surface under the metadata.component slot
-          # rather than the components list depending on cyclonedx-bom version.
-          meta_comp = doc.setdefault("metadata", {}).get("component")
-          if meta_comp and meta_comp.get("name") == "roam-code":
-              hashes = meta_comp.setdefault("hashes", [])
-              hashes[:] = [h for h in hashes if h.get("alg") != "SHA-256"]
-              hashes.append({"alg": "SHA-256", "content": wheel_sha})
-              bound = True
-          if not bound:
-              sys.exit("::error::roam-code component not found in SBOM — cannot bind wheel SHA")
-
-          # (b) top-level metadata property naming the exact wheel file.
-          props = doc.setdefault("metadata", {}).setdefault("properties", [])
-          props[:] = [
-              p for p in props
-              if p.get("name") not in (
-                  "roam:published_wheel_sha256",
-                  "roam:published_wheel_filename",
-              )
-          ]
-          props.append({"name": "roam:published_wheel_sha256", "value": wheel_sha})
-          props.append({"name": "roam:published_wheel_filename", "value": wheel_name})
-
-          with open(sbom_path, "w", encoding="utf-8") as fh:
-              json.dump(doc, fh, indent=2)
-              fh.write("\n")
-          print(f"SBOM bound to published wheel {wheel_name} sha256={wheel_sha}")
-          PYEOF
-          # Verify the binding landed before the SBOM leaves the build job.
-          grep -q "$WHEEL_SHA256" "$sbom_path" \
-            || (echo "::error::SBOM does not carry the published-wheel SHA256" && exit 1)
-          echo "SBOM↔wheel SHA binding verified."
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload one immutable release bundle
+        id: upload_bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dist
-          path: dist/
+          name: release-bundle
+          path: |
+            dist/
+            sbom/
+            release/release-manifest.json
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 30
 
-      - name: Upload SBOM artifact
-        # Separate artifact so downstream consumers (release notes
-        # workflow, customers grabbing the SBOM directly) can fetch
-        # it without pulling the wheel.
-        uses: actions/upload-artifact@v4
+  recover:
+    name: Materialize the exact missing PyPI subset
+    needs: [resolve-ref, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      publish_required: ${{ steps.recovery.outputs.publish_required }}
+      artifact_id: ${{ steps.upload_subset.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload_subset.outputs.artifact-digest }}
+    steps:
+      - name: Check out the resolved recovery helper
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          name: sbom
-          path: sbom/
+          ref: ${{ needs.resolve-ref.outputs.sha }}
+          persist-credentials: false
+          path: release-source
+
+      - name: Confirm recovery helper is from the resolved commit
+        env:
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          actual_sha=$(git -C release-source rev-parse HEAD)
+          if [[ "$actual_sha" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Recovery helper checkout differs from the resolved release commit."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Download the immutable release bundle by artifact ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: release-bundle
+
+      - name: Materialize an exact-subset PyPI recovery set
+        id: recovery
+        env:
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          manifest="release-bundle/release/release-manifest.json"
+          if [[ ! "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ \
+            || "$(sha256sum "$manifest" | awk '{print $1}')" != "$EXPECTED_MANIFEST_SHA256" ]]; then
+            echo "::error::Recovery input manifest differs from the build output."
+            exit 1
+          fi
+          version=$(jq -r '.version' "$manifest")
+          response=$(mktemp /tmp/roam-pypi-preflight.XXXXXXXXXX)
+          if ! status=$(curl \
+            --silent --show-error \
+            --proto '=https' --tlsv1.2 \
+            --connect-timeout 10 --max-time 30 \
+            --max-filesize 16777216 \
+            --retry 3 --retry-all-errors \
+            --output "$response" --write-out '%{http_code}' \
+            "https://pypi.org/pypi/roam-code/${version}/json"); then
+            echo "::error::Could not retrieve definitive PyPI recovery state."
+            exit 1
+          fi
+          case "$status" in
+            200|404) ;;
+            *)
+              echo "::error::PyPI recovery requires HTTP 200 or 404; got $status."
+              exit 1
+              ;;
+          esac
+
+          plan=$(python release-source/scripts/release_artifacts.py recover \
+            --dist-dir release-bundle/dist \
+            --manifest "$manifest" \
+            --pypi-response "$response" \
+            --http-status "$status" \
+            --output-dir release-bundle/publish-dist \
+            --tag "$TAG" \
+            --commit "$EXPECTED_SHA")
+          jq -e '
+            .schema == "roam.pypi-recovery/v1" and
+            (.existing | type == "array") and
+            (.missing | type == "array") and
+            (.publish_required | type == "boolean") and
+            .publish_required == ((.missing | length) > 0)
+          ' <<<"$plan" >/dev/null
+          publish_required=$(jq -r '.publish_required' <<<"$plan")
+          printf 'publish_required=%s\n' "$publish_required" >> "$GITHUB_OUTPUT"
+          echo "Exact-subset recovery plan: $plan"
+
+      - name: Upload the immutable missing-file subset
+        id: upload_subset
+        if: steps.recovery.outputs.publish_required == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pypi-publish-subset
+          path: release-bundle/publish-dist/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 30
 
   publish:
-    needs: [resolve-ref, build]
-    runs-on: ubuntu-latest
+    name: Publish the exact PyPI subset
+    needs: [resolve-ref, build, recover]
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # W1054: the ``pypi`` GitHub environment gates this job. Configure
-    # required reviewers on the environment in repo Settings → Environments
-    # so a human must approve before the wheel is uploaded. The environment
-    # also scopes the OIDC subject for PyPI Trusted Publishing.
     environment:
       name: pypi
-      url: https://pypi.org/project/roam-code/${{ needs.resolve-ref.outputs.tag }}
+      url: https://pypi.org/project/roam-code/
     permissions:
-      id-token: write
-      contents: write   # upload SBOM as a release asset
+      contents: read   # allow the publisher action to resolve repository identity
+      id-token: write  # exchange GitHub OIDC for PyPI Trusted Publishing
     steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
+      - name: Download the immutable bundle by artifact ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: dist
-          path: dist/
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: release-bundle
 
-      - name: Download SBOM artifact
-        # Pull the SBOM produced in the ``build`` job back into this job
-        # so it's on disk for the release-asset upload + signing steps.
-        uses: actions/download-artifact@v4
+      - name: Verify exact bundle before requesting publish credentials
+        env:
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+          ACTIONS_ARTIFACT_SHA256: ${{ needs.build.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          manifest="release-bundle/release/release-manifest.json"
+          dist_dir="release-bundle/dist"
+
+          strict_json_file() {
+            local path="$1" max_bytes="$2" label="$3" size links
+            [[ -f "$path" && ! -L "$path" ]] \
+              || { echo "::error::$label is not a regular file."; return 1; }
+            size=$(stat -c '%s' "$path")
+            links=$(stat -c '%h' "$path")
+            [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 && "$size" -le "$max_bytes" && "$links" == 1 ]] \
+              || { echo "::error::$label violates its size or hardlink boundary."; return 1; }
+            python3 -I -S - "$path" <<'PY'
+          import json
+          import sys
+
+          def strict_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON key: {key!r}")
+                  result[key] = value
+              return result
+
+          def invalid_constant(value):
+              raise ValueError(f"non-standard JSON constant: {value}")
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              json.load(handle, object_pairs_hook=strict_object, parse_constant=invalid_constant)
+          PY
+          }
+
+          strict_json_file "$manifest" 1048576 "release manifest"
+
+          if [[ ! "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Build did not emit a valid manifest digest."
+            exit 1
+          fi
+          if [[ ! "$ACTIONS_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Actions did not emit a valid immutable-archive digest."
+            exit 1
+          fi
+          actual_manifest_sha256=$(sha256sum "$manifest" | awk '{print $1}')
+          if [[ "$actual_manifest_sha256" != "$EXPECTED_MANIFEST_SHA256" ]]; then
+            echo "::error::Downloaded manifest digest differs from the build output."
+            exit 1
+          fi
+
+          jq -e --arg tag "$TAG" --arg commit "$EXPECTED_SHA" '
+            . as $m |
+            $m.version as $version |
+            type == "object" and
+            (keys == ["artifacts", "commit", "project", "publish_predicate", "sbom", "schema", "tag", "version"]) and
+            $m.schema == "roam.release-artifacts/v1" and
+            $m.project == "roam-code" and
+            $m.publish_predicate == "https://docs.pypi.org/attestations/publish/v1" and
+            $m.tag == $tag and $m.commit == $commit and
+            $m.tag == ("v" + $version) and
+            ($version | test("^[0-9]+([.][0-9]+)+((a|b|rc)[0-9]+)?([.]post[0-9]+)?([.]dev[0-9]+)?$")) and
+            ($m.artifacts | type == "array" and length == 2) and
+            ([$m.artifacts[].kind] | sort == ["sdist", "wheel"]) and
+            all($m.artifacts[];
+              (keys == ["filename", "kind", "provenance_url", "sha256", "size"]) and
+              (.filename | test("^[A-Za-z0-9][A-Za-z0-9._+-]*$")) and
+              (.sha256 | test("^[0-9a-f]{64}$")) and
+              (.size | type == "number" and . > 0 and . <= 104857600 and floor == .) and
+              .provenance_url == ("https://pypi.org/integrity/roam-code/" + $version + "/" + .filename + "/provenance")
+            ) and
+            ($m.sbom | type == "object" and keys == ["filename", "sha256", "size"]) and
+            ($m.sbom.filename | test("^[A-Za-z0-9][A-Za-z0-9._+-]*[.]cdx[.]json$")) and
+            ($m.sbom.sha256 | test("^[0-9a-f]{64}$")) and
+            ($m.sbom.size | type == "number" and . > 0 and . <= 67108864 and floor == .)
+          ' "$manifest" >/dev/null
+
+          jq -r '.artifacts[].filename' "$manifest" | LC_ALL=C sort > /tmp/expected-dist-files
+          find "$dist_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort > /tmp/actual-dist-files
+          if ! diff -u /tmp/expected-dist-files /tmp/actual-dist-files; then
+            echo "::error::Downloaded dist/ contains a missing or unmanifested entry."
+            exit 1
+          fi
+
+          while IFS=$'\t' read -r filename expected_digest expected_size; do
+            path="$dist_dir/$filename"
+            if [[ ! -f "$path" || -L "$path" || "$(stat -c '%h' "$path")" != 1 ]]; then
+              echo "::error::Distribution is not a regular file: $filename"
+              exit 1
+            fi
+            actual_size=$(stat -c '%s' "$path")
+            if [[ ! "$actual_size" =~ ^[0-9]+$ || "$actual_size" -le 0 || "$actual_size" -gt 104857600 ]]; then
+              echo "::error::Distribution exceeds the publish size boundary: $filename"
+              exit 1
+            fi
+            actual_digest=$(sha256sum "$path" | awk '{print $1}')
+            if [[ "$actual_digest" != "$expected_digest" || "$actual_size" != "$expected_size" ]]; then
+              echo "::error::Distribution digest/size mismatch: $filename"
+              exit 1
+            fi
+          done < <(jq -r '.artifacts[] | [.filename, .sha256, (.size | tostring)] | @tsv' "$manifest")
+
+          sbom_name=$(jq -r '.sbom.filename' "$manifest")
+          sbom="release-bundle/sbom/$sbom_name"
+          printf '%s\n' "$sbom_name" > /tmp/expected-sbom-files
+          find release-bundle/sbom -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort > /tmp/actual-sbom-files
+          if ! diff -u /tmp/expected-sbom-files /tmp/actual-sbom-files; then
+            echo "::error::Downloaded sbom/ contains a missing or unmanifested entry."
+            exit 1
+          fi
+          if [[ ! -f "$sbom" || -L "$sbom" ]]; then
+            echo "::error::Manifested SBOM is missing or is a symlink."
+            exit 1
+          fi
+          strict_json_file "$sbom" 67108864 "release SBOM"
+          sbom_digest=$(sha256sum "$sbom" | awk '{print $1}')
+          sbom_size=$(stat -c '%s' "$sbom")
+          if [[ "$sbom_digest" != "$(jq -r '.sbom.sha256' "$manifest")" || "$sbom_size" != "$(jq -r '.sbom.size' "$manifest")" ]]; then
+            echo "::error::SBOM digest/size differs from the release manifest."
+            exit 1
+          fi
+
+          jq -e --slurpfile manifest "$manifest" '
+            $manifest[0] as $m |
+            ($m.artifacts[] | select(.kind == "wheel")) as $wheel |
+            ($m.artifacts[] | select(.kind == "sdist")) as $sdist |
+            def prop($name): [.metadata.properties[]? | select(.name == $name) | .value];
+            ([.components[]?, .metadata.component?] |
+              map(select(type == "object" and .name == "roam-code" and .version == $m.version))) as $components |
+            .bomFormat == "CycloneDX" and
+            ($components | length > 0) and
+            all($components[];
+              ([.hashes[]? | select(.alg == "SHA-256" and .content == $wheel.sha256)] | length) == 1
+            ) and
+            prop("roam:release_manifest_schema") == [$m.schema] and
+            prop("roam:release_tag") == [$m.tag] and
+            prop("roam:release_commit") == [$m.commit] and
+            prop("roam:release_wheel_filename") == [$wheel.filename] and
+            prop("roam:release_wheel_sha256") == [$wheel.sha256] and
+            prop("roam:release_wheel_provenance") == [$wheel.provenance_url] and
+            prop("roam:release_sdist_filename") == [$sdist.filename] and
+            prop("roam:release_sdist_sha256") == [$sdist.sha256] and
+            prop("roam:release_sdist_provenance") == [$sdist.provenance_url]
+          ' "$sbom" >/dev/null
+
+          echo "Actions immutable-archive digest: $ACTIONS_ARTIFACT_SHA256"
+          echo "Verified release manifest and exact wheel/sdist/SBOM digests."
+
+      - name: Download the immutable missing-file subset by artifact ID
+        if: needs.recover.outputs.publish_required == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: sbom
-          path: sbom/
+          artifact-ids: ${{ needs.recover.outputs.artifact_id }}
+          path: publish-subset
 
-      - name: Publish to PyPI
+      - name: Re-resolve tag immediately before PyPI publication
+        if: needs.recover.outputs.publish_required == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+          SUBSET_ARTIFACT_SHA256: ${{ needs.recover.outputs.artifact_digest }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ref_json=$(gh api "repos/${REPO}/git/ref/tags/${TAG}")
+          object_type=$(jq -r '.object.type' <<<"$ref_json")
+          actual_sha=$(jq -r '.object.sha' <<<"$ref_json")
+          for _depth in 1 2 3 4 5; do
+            [[ "$object_type" == commit ]] && break
+            if [[ "$object_type" != tag || ! "$actual_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Release tag changed to an unsupported object before PyPI publication."
+              exit 1
+            fi
+            tag_json=$(gh api "repos/${REPO}/git/tags/${actual_sha}")
+            object_type=$(jq -r '.object.type' <<<"$tag_json")
+            actual_sha=$(jq -r '.object.sha' <<<"$tag_json")
+          done
+          if [[ "$object_type" != commit || "$actual_sha" != "$EXPECTED_SHA" ]]; then
+            echo "::error::Release tag no longer identifies the manifest commit before PyPI publication."
+            exit 1
+          fi
+
+          manifest=release-bundle/release/release-manifest.json
+          publish_dir=publish-subset
+          if [[ ! "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ \
+            || "$(sha256sum "$manifest" | awk '{print $1}')" != "$EXPECTED_MANIFEST_SHA256" ]]; then
+            echo "::error::Manifest anchor changed before PyPI publication."
+            exit 1
+          fi
+          if [[ ! "$SUBSET_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Recovery job did not emit an immutable subset digest."
+            exit 1
+          fi
+          if [[ ! -d "$publish_dir" || -L "$publish_dir" ]]; then
+            echo "::error::Recovery publish set is not a real directory."
+            exit 1
+          fi
+          mapfile -d '' publish_files < <(find "$publish_dir" -mindepth 1 -maxdepth 1 -print0)
+          if [[ ${#publish_files[@]} -lt 1 || ${#publish_files[@]} -gt 2 ]]; then
+            echo "::error::Recovery publish set must contain one or two files."
+            exit 1
+          fi
+          for path in "${publish_files[@]}"; do
+            [[ -f "$path" && ! -L "$path" && "$(stat -c '%h' "$path")" == 1 ]] \
+              || { echo "::error::Recovery entry is not a singly-linked regular file."; exit 1; }
+            filename=$(basename "$path")
+            expected_digest=$(jq -er --arg filename "$filename" \
+              '.artifacts[] | select(.filename == $filename) | .sha256' "$manifest")
+            expected_size=$(jq -er --arg filename "$filename" \
+              '.artifacts[] | select(.filename == $filename) | .size' "$manifest")
+            actual_size=$(stat -c '%s' "$path")
+            [[ "$actual_size" =~ ^[0-9]+$ && "$actual_size" -gt 0 && "$actual_size" -le 104857600 ]] \
+              || { echo "::error::Recovery entry exceeds the publish size boundary."; exit 1; }
+            [[ "$(sha256sum "$path" | awk '{print $1}')" == "$expected_digest" ]] || exit 1
+            [[ "$actual_size" == "$expected_size" ]] || exit 1
+          done
+          echo "Missing-file immutable-archive digest: $SUBSET_ARTIFACT_SHA256"
+          echo "Revalidated every missing distribution immediately before PyPI publication."
+
+      - name: Publish only missing verified files with PEP 740 attestations
+        if: needs.recover.outputs.publish_required == 'true'
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
-          # Idempotency: when a manual twine upload already shipped the wheel,
-          # the workflow should no-op cleanly instead of erroring on file collision.
-          skip-existing: true
-          # W1054: emit PEP 740 attestations. The action signs each
-          # dist with a Sigstore-backed attestation via the job's OIDC
-          # token and PyPI records the provenance. ``true`` is the action
-          # default for Trusted Publishing, but pin it explicitly so a
-          # future action-default change cannot silently drop provenance.
+          packages-dir: publish-subset/
+          verify-metadata: true
+          skip-existing: false
+          print-hash: true
           attestations: true
 
-      - name: Install cosign
-        # Only needed for tag-driven runs; the install is cheap enough
-        # to do unconditionally and skip the actual sign step below.
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
-
-      - name: Sign SBOM with cosign (keyless OIDC)
-        # Same Sigstore chain as ``cga emit --sign --keyless``: GitHub OIDC
-        # token → Fulcio short-lived cert → Rekor transparency log. Produces
-        # a sibling ``.sig`` file that procurement can verify with
-        # ``cosign verify-blob --certificate <crt> <file>``.
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          COSIGN_EXPERIMENTAL: "1"
-        run: |
-          set -e
-          for f in sbom/*.cdx.json; do
-            cosign sign-blob --yes \
-              --output-signature "${f}.sig" \
-              --output-certificate "${f}.crt" \
-              "$f"
-          done
-          ls -la sbom/
-
-      - name: Upload SBOM to GitHub Release
-        # Attach the CycloneDX SBOM (and its cosign sig + cert when present)
-        # to the GitHub Release that triggered this run. This is the
-        # canonical fetch path for procurement under the audit-trail
-        # product narrative — workflow artifacts expire after 90 days,
-        # release assets do not.
-        #
-        # W1055: upload against the RESOLVED tag (``needs.resolve-ref``),
-        # not ``github.ref_name``. A ``workflow_dispatch`` re-run carries a
-        # branch ref in ``github.ref_name`` — the resolved tag is the only
-        # correct release target across all three triggers.
-        #
-        # v13.2 fix (W1047): the publish job has no actions/checkout, so
-        # ``gh release`` falls back to ``git`` for repo context and dies
-        # with "fatal: not a git repository". Pass ``--repo`` explicitly.
-        # Also: pushing a git tag does NOT auto-create a GitHub Release;
-        # only the ``release: published`` trigger does. So tag-pushed runs
-        # need to create the release before uploading assets. Idempotent
-        # via ``gh release view ... || gh release create ...``.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.resolve-ref.outputs.tag }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -e
-          # Ensure the GitHub Release exists before uploading assets.
-          # Idempotent: if the release was already created (e.g. by a
-          # ``release: published`` trigger or by a previous workflow run
-          # via workflow_dispatch), the view succeeds and the create is
-          # skipped.
-          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 \
-            || gh release create "$TAG" --repo "$REPO" --title "$TAG" --generate-notes
-          # --clobber makes the upload idempotent — re-running the workflow
-          # for the same tag overwrites the previous asset rather than 422-ing.
-          gh release upload "$TAG" sbom/*.cdx.json --repo "$REPO" --clobber
-          # Best-effort: upload cosign sig + cert if they exist. ls returns
-          # nothing if the cosign step was skipped, in which case the loop
-          # body never runs.
-          for sig in sbom/*.sig sbom/*.crt; do
-            [ -f "$sig" ] && gh release upload "$TAG" "$sig" --repo "$REPO" --clobber || true
-          done
-
-      - name: Verify SBOM is attached to the release
-        # Sanity check: the GitHub API must list the .cdx.json file in
-        # the release's assets array. Catches the class of failure where
-        # ``gh release upload`` exits 0 but the asset never lands (e.g.
-        # token scoping, rate-limit edge case, or someone deleting the
-        # release between upload and check).
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.resolve-ref.outputs.tag }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -e
-          assets=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.assets[].name')
-          echo "Release assets:"
-          echo "$assets"
-          echo "$assets" | grep -q '\.cdx\.json$' \
-            || (echo "::error::SBOM .cdx.json not found among release assets" && exit 1)
-
-  smoke:
-    # Post-publish: install the just-released package from PyPI in a
-    # clean environment and run --version. Catches the class of failure
-    # where the wheel passes local checks but PyPI's CDN serves the
-    # wrong file or a packaging error breaks ``pip install`` post-upload.
-    needs: [resolve-ref, publish]
-    runs-on: ubuntu-latest
+  sign-evidence:
+    name: Verify and sign release evidence
+    needs: [resolve-ref, build, publish]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.upload_signed_evidence.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload_signed_evidence.outputs.artifact-digest }}
+    permissions:
+      contents: read   # re-resolve the release tag before each signature
+      id-token: write  # obtain the keyless Fulcio certificate for cosign
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the resolved verifier lock
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
         with:
-          # W1055: smoke-test the SAME tagged commit's verification scripts,
-          # not trunk's — keeps the post-publish check bound to the release.
           ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.13"
 
-      - name: Install + verify (with CDN-propagation retry)
-        # W1089: PyPI's CDN can take 30-90s to surface a freshly-uploaded
-        # version; pip's index resolver hits the same edge. Retry with
-        # exponential backoff instead of a fixed ``sleep 45`` — fast path
-        # exits in ~10s when CDN is already warm; slow path covers the
-        # tail without over-waiting on the common case. Cumulative cap
-        # 160s before final attempt fails the step.
+      - name: Install the hash-locked PyPI provenance verifier
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+          PIP_NO_INPUT: "1"
+        run: |
+          set -euo pipefail
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+          lock=.github/release-tools.lock
+          toolroot=$(mktemp -d "${RUNNER_TEMP}/roam-pypi-verifier.XXXXXXXXXX")
+          chmod 0700 "$toolroot"
+          if [[ ! -d "$toolroot" || -L "$toolroot" || "$(stat -c '%a' "$toolroot")" != 700 ]]; then
+            echo "::error::PyPI provenance verifier root is not private."
+            exit 1
+          fi
+          wheelhouse="$toolroot/wheelhouse"
+          verifierenv="$toolroot/venv"
+          mkdir -m 0700 "$wheelhouse"
+          python -m venv "$verifierenv"
+          timeout --foreground --signal=TERM --kill-after=10s 240s \
+            "$verifierenv/bin/python" -m pip download \
+              --disable-pip-version-check \
+              --require-hashes \
+              --only-binary=:all: \
+              --timeout 15 \
+              --retries 2 \
+              --dest "$wheelhouse" \
+              --requirement "$lock"
+          timeout --foreground --signal=TERM --kill-after=10s 180s \
+            "$verifierenv/bin/python" -m pip install \
+              --disable-pip-version-check \
+              --require-hashes \
+              --only-binary=:all: \
+              --force-reinstall \
+              --no-index \
+              --find-links "$wheelhouse" \
+              --requirement "$lock"
+          "$verifierenv/bin/python" -m pip check
+          verifier_version=$("$verifierenv/bin/pypi-attestations" --version)
+          if [[ "$verifier_version" != "pypi-attestations 0.0.29" ]]; then
+            echo "::error::Unexpected PyPI provenance verifier: $verifier_version"
+            exit 1
+          fi
+          printf '%s\n' "$verifierenv/bin" >> "$GITHUB_PATH"
+
+      - name: Download the published bundle by artifact ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: release-bundle
+
+      - name: Recheck the manifest anchor
+        env:
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          manifest="release-bundle/release/release-manifest.json"
+          [[ -f "$manifest" && ! -L "$manifest" && "$(stat -c '%h' "$manifest")" == 1 ]] || exit 1
+          manifest_size=$(stat -c '%s' "$manifest")
+          [[ "$manifest_size" =~ ^[0-9]+$ && "$manifest_size" -gt 0 && "$manifest_size" -le 1048576 ]] || exit 1
+          python3 -I -S - "$manifest" <<'PY'
+          import json
+          import sys
+
+          def strict_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON key: {key!r}")
+                  result[key] = value
+              return result
+
+          def invalid_constant(value):
+              raise ValueError(f"non-standard JSON constant: {value}")
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              json.load(handle, object_pairs_hook=strict_object, parse_constant=invalid_constant)
+          PY
+          actual_manifest_sha256=$(sha256sum "$manifest" | awk '{print $1}')
+          if [[ ! "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ || "$actual_manifest_sha256" != "$EXPECTED_MANIFEST_SHA256" ]]; then
+            echo "::error::Release-evidence manifest differs from the build output."
+            exit 1
+          fi
+          jq -e --arg tag "$TAG" --arg commit "$EXPECTED_SHA" '
+            .schema == "roam.release-artifacts/v1" and
+            .project == "roam-code" and
+            .tag == $tag and .commit == $commit and
+            (.artifacts | length == 2) and
+            ([.artifacts[].kind] | sort == ["sdist", "wheel"]) and
+            all(.artifacts[];
+              (.filename | test("^[A-Za-z0-9][A-Za-z0-9._+-]*$")) and
+              (.sha256 | test("^[0-9a-f]{64}$")) and
+              (.size | type == "number" and . > 0 and . <= 104857600 and floor == .)
+            ) and
+            (.sbom.filename | test("^[A-Za-z0-9][A-Za-z0-9._+-]*[.]cdx[.]json$")) and
+            (.sbom.sha256 | test("^[0-9a-f]{64}$")) and
+            (.sbom.size | type == "number" and . > 0 and . <= 67108864 and floor == .)
+          ' "$manifest" >/dev/null
+
+          jq -r '.artifacts[].filename' "$manifest" | LC_ALL=C sort > /tmp/expected-dist-files
+          find release-bundle/dist -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort > /tmp/actual-dist-files
+          diff -u /tmp/expected-dist-files /tmp/actual-dist-files
+
+          while IFS=$'\t' read -r filename expected_digest expected_size; do
+            path="release-bundle/dist/$filename"
+            [[ -f "$path" && ! -L "$path" && "$(stat -c '%h' "$path")" == 1 ]] || exit 1
+            actual_size=$(stat -c '%s' "$path")
+            [[ "$actual_size" =~ ^[0-9]+$ && "$actual_size" -gt 0 && "$actual_size" -le 104857600 ]] || exit 1
+            [[ "$(sha256sum "$path" | awk '{print $1}')" == "$expected_digest" ]] || exit 1
+            [[ "$actual_size" == "$expected_size" ]] || exit 1
+          done < <(jq -r '.artifacts[] | [.filename, .sha256, (.size | tostring)] | @tsv' "$manifest")
+
+          sbom="release-bundle/sbom/$(jq -r '.sbom.filename' "$manifest")"
+          printf '%s\n' "$(basename "$sbom")" > /tmp/expected-sbom-files
+          find release-bundle/sbom -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort > /tmp/actual-sbom-files
+          diff -u /tmp/expected-sbom-files /tmp/actual-sbom-files
+          [[ -f "$sbom" && ! -L "$sbom" && "$(stat -c '%h' "$sbom")" == 1 ]] || exit 1
+          sbom_size=$(stat -c '%s' "$sbom")
+          [[ "$sbom_size" =~ ^[0-9]+$ && "$sbom_size" -gt 0 && "$sbom_size" -le 67108864 ]] || exit 1
+          [[ "$(sha256sum "$sbom" | awk '{print $1}')" == "$(jq -r '.sbom.sha256' "$manifest")" ]] || exit 1
+
+      - name: Verify PyPI artifact digests and PEP 740 subjects
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          manifest="release-bundle/release/release-manifest.json"
+          version=$(jq -r '.version' "$manifest")
+          publish_predicate=$(jq -r '.publish_predicate' "$manifest")
+          integrity_dir=$(mktemp -d "${RUNNER_TEMP}/roam-pypi-integrity.XXXXXXXXXX")
+          chmod 0700 "$integrity_dir"
+          if [[ ! -d "$integrity_dir" || -L "$integrity_dir" || "$(stat -c '%a' "$integrity_dir")" != 700 ]]; then
+            echo "::error::PyPI integrity workspace is not private."
+            exit 1
+          fi
+          printf 'PYPI_INTEGRITY_DIR=%s\n' "$integrity_dir" >> "$GITHUB_ENV"
+          verified=false
+
+          strict_json_file() {
+            local path="$1" size links
+            [[ -f "$path" && ! -L "$path" ]] || return 1
+            size=$(stat -c '%s' "$path")
+            links=$(stat -c '%h' "$path")
+            [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 && "$size" -le 16777216 && "$links" == 1 ]] || return 1
+            python3 -I -S - "$path" <<'PY'
+          import json
+          import sys
+
+          def strict_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON key: {key!r}")
+                  result[key] = value
+              return result
+
+          def invalid_constant(value):
+              raise ValueError(f"non-standard JSON constant: {value}")
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              json.load(handle, object_pairs_hook=strict_object, parse_constant=invalid_constant)
+          PY
+          }
+
+          for delay in 0 5 10 20 40 60; do
+            if [[ "$delay" -gt 0 ]]; then
+              echo "::notice::Waiting ${delay}s for PyPI integrity metadata."
+              sleep "$delay"
+            fi
+
+            release_json="$integrity_dir/release.json"
+            if ! release_status=$(curl \
+              --silent --show-error \
+              --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 30 \
+              --max-filesize 16777216 \
+              --output "$release_json" --write-out '%{http_code}' \
+              "https://pypi.org/pypi/roam-code/${version}/json"); then
+              continue
+            fi
+            [[ "$release_status" == 200 ]] || continue
+            strict_json_file "$release_json" || continue
+
+            if ! jq -e --slurpfile manifest "$manifest" '
+              $manifest[0] as $m |
+              .info.version == $m.version and
+              ([.urls[] | {filename, sha256: .digests.sha256, size}] | sort_by(.filename)) ==
+              ([$m.artifacts[] | {filename, sha256, size}] | sort_by(.filename))
+            ' "$release_json" >/dev/null; then
+              continue
+            fi
+
+            provenance_ok=true
+            while IFS=$'\t' read -r filename digest; do
+              provenance_json="$integrity_dir/${filename}.provenance.json"
+              if ! provenance_status=$(curl \
+                --silent --show-error \
+                --proto '=https' --tlsv1.2 \
+                --connect-timeout 10 --max-time 30 \
+                --max-filesize 16777216 \
+                --header 'Accept: application/vnd.pypi.integrity.v1+json' \
+                --output "$provenance_json" --write-out '%{http_code}' \
+                "https://pypi.org/integrity/roam-code/${version}/${filename}/provenance"); then
+                provenance_ok=false
+                break
+              fi
+              if [[ "$provenance_status" != 200 ]] || ! strict_json_file "$provenance_json" || ! jq -e \
+                --arg filename "$filename" \
+                --arg digest "$digest" \
+                --arg repo "$REPO" \
+                --arg predicate "$publish_predicate" '
+                  .version == 1 and
+                  any(.attestation_bundles[]?;
+                    .publisher.kind == "GitHub" and
+                    .publisher.repository == $repo and
+                    .publisher.workflow == "publish.yml" and
+                    .publisher.environment == "pypi" and
+                    any(.attestations[]?;
+                      .version == 1 and
+                      ((.envelope.statement | @base64d | fromjson) as $statement |
+                        $statement._type == "https://in-toto.io/Statement/v1" and
+                        $statement.predicateType == $predicate and
+                        $statement.predicate == null and
+                        $statement.subject == [{"name": $filename, "digest": {"sha256": $digest}}]
+                      )
+                    )
+                  )
+                ' "$provenance_json" >/dev/null; then
+                provenance_ok=false
+                break
+              fi
+            done < <(jq -r '.artifacts[] | [.filename, .sha256] | @tsv' "$manifest")
+
+            if [[ "$provenance_ok" == true ]]; then
+              verified=true
+              break
+            fi
+          done
+
+          if [[ "$verified" != true ]]; then
+            echo "::error::PyPI files or PEP 740 subjects did not converge to the manifest."
+            exit 1
+          fi
+          echo "Verified exact PyPI wheel/sdist digests and PEP 740 subjects."
+
+      - name: Cryptographically verify both PyPI distributions
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          umask 077
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL
+          unset GH_TOKEN GITHUB_TOKEN PYPI_API_TOKEN SIGSTORE_ID_TOKEN TWINE_PASSWORD TWINE_USERNAME
+          manifest="release-bundle/release/release-manifest.json"
+          repository_url="https://github.com/${REPO}"
+          if [[ -z "${PYPI_INTEGRITY_DIR:-}" || ! -d "$PYPI_INTEGRITY_DIR" || -L "$PYPI_INTEGRITY_DIR" \
+            || "$(stat -c '%a' "$PYPI_INTEGRITY_DIR")" != 700 ]]; then
+            echo "::error::Validated PyPI integrity workspace is unavailable."
+            exit 1
+          fi
+          release_json="$PYPI_INTEGRITY_DIR/release.json"
+          if [[ ! -f "$release_json" || -L "$release_json" || "$(stat -c '%h' "$release_json")" != 1 \
+            || "$(stat -c '%s' "$release_json")" -le 0 || "$(stat -c '%s' "$release_json")" -gt 16777216 ]]; then
+            echo "::error::Validated PyPI release metadata is unavailable."
+            exit 1
+          fi
+          published_dir="$PYPI_INTEGRITY_DIR/published"
+          if [[ -e "$published_dir" || -L "$published_dir" ]]; then
+            echo "::error::PyPI artifact verification directory is not fresh."
+            exit 1
+          fi
+          mkdir -m 0700 "$published_dir"
+          wheel_verified=0
+          sdist_verified=0
+
+          while IFS=$'\t' read -r kind filename expected_digest expected_size; do
+            if [[ ! "$filename" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ \
+              || ! "$expected_digest" =~ ^[0-9a-f]{64}$ \
+              || ! "$expected_size" =~ ^[0-9]+$ ]]; then
+              echo "::error::Manifest supplied an invalid PyPI verification subject."
+              exit 1
+            fi
+
+            distribution="release-bundle/dist/$filename"
+            provenance="$PYPI_INTEGRITY_DIR/${filename}.provenance.json"
+            if [[ ! -f "$distribution" || -L "$distribution" || "$(stat -c '%h' "$distribution")" != 1 \
+              || "$(stat -c '%s' "$distribution")" != "$expected_size" \
+              || "$(sha256sum "$distribution" | awk '{print $1}')" != "$expected_digest" ]]; then
+              echo "::error::Manifest-bound distribution changed before cryptographic verification: $filename"
+              exit 1
+            fi
+            if [[ ! -f "$provenance" || -L "$provenance" || "$(stat -c '%h' "$provenance")" != 1 ]]; then
+              echo "::error::Validated PyPI provenance is unavailable for: $filename"
+              exit 1
+            fi
+            provenance_size=$(stat -c '%s' "$provenance")
+            if [[ ! "$provenance_size" =~ ^[0-9]+$ || "$provenance_size" -le 0 || "$provenance_size" -gt 16777216 ]]; then
+              echo "::error::PyPI provenance exceeds the verification boundary for: $filename"
+              exit 1
+            fi
+
+            published_url=$(jq -er --arg filename "$filename" '
+              [.urls[] | select(.filename == $filename) | .url] as $urls |
+              select(($urls | length) == 1) |
+              $urls[0] |
+              select(type == "string")
+            ' "$release_json")
+            python -I -S - "$published_url" "$filename" <<'PY'
+          import sys
+          from urllib.parse import urlsplit
+
+          url = urlsplit(sys.argv[1])
+          filename = sys.argv[2]
+          if (
+              url.scheme != "https"
+              or url.netloc != "files.pythonhosted.org"
+              or url.query
+              or url.fragment
+              or not url.path.startswith("/packages/")
+              or not url.path.endswith(f"/{filename}")
+          ):
+              raise SystemExit("untrusted PyPI artifact URL")
+          PY
+            published="$published_dir/$filename"
+            if ! curl \
+              --fail --silent --show-error \
+              --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 90 \
+              --max-filesize 104857600 \
+              --output "$published" \
+              "$published_url"; then
+              echo "::error::Could not download the published PyPI artifact: $filename"
+              exit 1
+            fi
+            if [[ ! -f "$published" || -L "$published" || "$(stat -c '%h' "$published")" != 1 \
+              || "$(stat -c '%s' "$published")" != "$expected_size" \
+              || "$(sha256sum "$published" | awk '{print $1}')" != "$expected_digest" ]]; then
+              echo "::error::Published PyPI artifact differs from the release manifest: $filename"
+              exit 1
+            fi
+            cmp --silent "$distribution" "$published" \
+              || { echo "::error::Published PyPI artifact differs from the built distribution: $filename"; exit 1; }
+
+            if ! timeout --foreground --signal=TERM --kill-after=5s 90s \
+              pypi-attestations verify pypi \
+                --repository "$repository_url" \
+                --provenance-file "$provenance" \
+                "$published"; then
+              echo "::error::Cryptographic PyPI provenance verification failed for: $filename"
+              exit 1
+            fi
+
+            case "$kind" in
+              wheel) wheel_verified=$((wheel_verified + 1)) ;;
+              sdist) sdist_verified=$((sdist_verified + 1)) ;;
+              *)
+                echo "::error::Unexpected distribution kind during PyPI provenance verification: $kind"
+                exit 1
+                ;;
+            esac
+          done < <(jq -r '.artifacts[] | [.kind, .filename, .sha256, (.size | tostring)] | @tsv' "$manifest")
+
+          if [[ "$wheel_verified" -ne 1 || "$sdist_verified" -ne 1 ]]; then
+            echo "::error::Cryptographic verification requires exactly one wheel and one sdist."
+            exit 1
+          fi
+          echo "Cryptographically verified the exact PyPI wheel and sdist against their PEP 740 provenance."
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        with:
+          cosign-release: v2.5.2
+
+      - name: Re-resolve, sign, and verify each transparency-log subject
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          manifest="release-bundle/release/release-manifest.json"
+          sbom="release-bundle/sbom/$(jq -r '.sbom.filename' "$manifest")"
+          certificate_identity="https://github.com/${GITHUB_WORKFLOW_REF}"
+          evidence=("$manifest" "$sbom")
+
+          verify_evidence_anchor() {
+            [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || return 1
+            [[ -f "$manifest" && ! -L "$manifest" && -f "$sbom" && ! -L "$sbom" ]] || return 1
+            [[ "$(sha256sum "$manifest" | awk '{print $1}')" == "$EXPECTED_MANIFEST_SHA256" ]] || return 1
+            local expected_sbom_sha expected_sbom_size
+            expected_sbom_sha=$(jq -er '.sbom.sha256' "$manifest")
+            expected_sbom_size=$(jq -er '.sbom.size' "$manifest")
+            [[ "$(sha256sum "$sbom" | awk '{print $1}')" == "$expected_sbom_sha" ]] || return 1
+            [[ "$(stat -c '%s' "$sbom")" == "$expected_sbom_size" ]] || return 1
+          }
+
+          resolve_expected_tag() {
+            local ref_json object_type actual_sha tag_json
+            ref_json=$(gh api "repos/${REPO}/git/ref/tags/${TAG}")
+            object_type=$(jq -r '.object.type' <<<"$ref_json")
+            actual_sha=$(jq -r '.object.sha' <<<"$ref_json")
+            for _depth in 1 2 3 4 5; do
+              [[ "$object_type" == commit ]] && break
+              if [[ "$object_type" != tag || ! "$actual_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error::Release tag changed before transparency-log publication."
+                return 1
+              fi
+              tag_json=$(gh api "repos/${REPO}/git/tags/${actual_sha}")
+              object_type=$(jq -r '.object.type' <<<"$tag_json")
+              actual_sha=$(jq -r '.object.sha' <<<"$tag_json")
+            done
+            if [[ "$object_type" != commit || "$actual_sha" != "$EXPECTED_SHA" ]]; then
+              echo "::error::Release tag no longer identifies the manifest commit before transparency-log publication."
+              return 1
+            fi
+          }
+
+          for file in "${evidence[@]}"; do
+            verify_evidence_anchor
+            [[ -f "$file" && ! -L "$file" ]] || exit 1
+            resolve_expected_tag
+            cosign sign-blob --yes \
+              --output-signature "${file}.sig" \
+              --output-certificate "${file}.crt" \
+              "$file"
+            cosign verify-blob \
+              --certificate "${file}.crt" \
+              --signature "${file}.sig" \
+              --certificate-identity "$certificate_identity" \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$file"
+          done
+
+      - name: Stage the six verified evidence files
+        run: |
+          set -euo pipefail
+          manifest="release-bundle/release/release-manifest.json"
+          sbom="release-bundle/sbom/$(jq -er '.sbom.filename' "$manifest")"
+          evidence=(
+            "$manifest" "${manifest}.sig" "${manifest}.crt"
+            "$sbom" "${sbom}.sig" "${sbom}.crt"
+          )
+          mkdir -m 0700 signed-evidence
+          for source in "${evidence[@]}"; do
+            [[ -f "$source" && ! -L "$source" && "$(stat -c '%h' "$source")" == 1 ]] \
+              || { echo "::error::Missing or linked signed evidence: $source"; exit 1; }
+            name=$(basename "$source")
+            [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || exit 1
+            size=$(stat -c '%s' "$source")
+            [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 && "$size" -le 67108864 ]] || exit 1
+            install -m 0644 "$source" "signed-evidence/$name"
+            cmp --silent "$source" "signed-evidence/$name"
+          done
+          [[ "$(find signed-evidence -mindepth 1 -maxdepth 1 -type f | wc -l)" == 6 ]]
+
+      - name: Upload one immutable signed-evidence artifact
+        id: upload_signed_evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-release-evidence
+          path: signed-evidence/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 30
+
+  release-evidence:
+    name: Publish one immutable GitHub Release
+    needs: [resolve-ref, build, sign-evidence]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write  # create a draft, attach evidence, then publish it once
+    steps:
+      - name: Download the manifest-bound release bundle by artifact ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: release-bundle
+
+      - name: Download the signed evidence by artifact ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.sign-evidence.outputs.artifact_id }}
+          path: signed-evidence
+
+      - name: Verify, attach to a draft, and publish exactly once
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.resolve-ref.outputs.sha }}
+          EXPECTED_MANIFEST_SHA256: ${{ needs.build.outputs.manifest_sha256 }}
+          SIGNED_ARTIFACT_SHA256: ${{ needs.sign-evidence.outputs.artifact_digest }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          manifest="release-bundle/release/release-manifest.json"
+          release_state=$(mktemp /tmp/roam-release-state.XXXXXXXXXX)
+
+          strict_json_file() {
+            local path="$1" max_bytes="$2" label="$3" size links
+            [[ -f "$path" && ! -L "$path" ]] \
+              || { echo "::error::$label is not a regular file."; return 1; }
+            size=$(stat -c '%s' "$path")
+            links=$(stat -c '%h' "$path")
+            [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 && "$size" -le "$max_bytes" && "$links" == 1 ]] \
+              || { echo "::error::$label violates its size or hardlink boundary."; return 1; }
+            python3 -I -S - "$path" <<'PY'
+          import json
+          import sys
+
+          def strict_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON key: {key!r}")
+                  result[key] = value
+              return result
+
+          def invalid_constant(value):
+              raise ValueError(f"non-standard JSON constant: {value}")
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              json.load(handle, object_pairs_hook=strict_object, parse_constant=invalid_constant)
+          PY
+          }
+
+          resolve_expected_tag() {
+            local ref_json object_type actual_sha tag_json
+            ref_json=$(gh api "repos/${REPO}/git/ref/tags/${TAG}")
+            object_type=$(jq -r '.object.type' <<<"$ref_json")
+            actual_sha=$(jq -r '.object.sha' <<<"$ref_json")
+            for _depth in 1 2 3 4 5; do
+              [[ "$object_type" == commit ]] && break
+              if [[ "$object_type" != tag || ! "$actual_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error::Release tag changed before immutable publication."
+                return 1
+              fi
+              tag_json=$(gh api "repos/${REPO}/git/tags/${actual_sha}")
+              object_type=$(jq -r '.object.type' <<<"$tag_json")
+              actual_sha=$(jq -r '.object.sha' <<<"$tag_json")
+            done
+            if [[ "$object_type" != commit || "$actual_sha" != "$EXPECTED_SHA" ]]; then
+              echo "::error::Release tag no longer identifies the manifest commit."
+              return 1
+            fi
+          }
+
+          fetch_release_state() {
+            if ! release_status=$(curl \
+              --silent --show-error \
+              --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 30 \
+              --max-filesize 16777216 \
+              --retry 3 --retry-all-errors \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2026-03-10' \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --output "$release_state" --write-out '%{http_code}' \
+              "https://api.github.com/repos/${REPO}/releases/tags/${TAG}"); then
+              echo "::error::Could not retrieve definitive GitHub Release state."
+              return 1
+            fi
+            case "$release_status" in
+              200) strict_json_file "$release_state" 16777216 "GitHub Release response" ;;
+              404) ;;
+              *)
+                echo "::error::Unexpected GitHub Release lookup status: $release_status"
+                return 1
+                ;;
+            esac
+          }
+
+          require_exact_release_assets() {
+            jq -r '.assets[].name' "$release_state" | LC_ALL=C sort > /tmp/actual-release-assets
+            diff -u /tmp/expected-release-assets /tmp/actual-release-assets
+          }
+
+          download_release_assets() {
+            local destination="$1" name
+            mkdir -m 0700 "$destination"
+            while IFS= read -r name; do
+              gh release download "$TAG" --repo "$REPO" --pattern "$name" --dir "$destination"
+            done < /tmp/expected-release-assets
+          }
+
+          verify_evidence_set() {
+            local directory="$1" subject name size pubkey signature identity
+            find "$directory" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort > /tmp/actual-evidence-files
+            diff -u /tmp/expected-release-assets /tmp/actual-evidence-files
+            for name in "${evidence_names[@]}"; do
+              path="$directory/$name"
+              [[ -f "$path" && ! -L "$path" && "$(stat -c '%h' "$path")" == 1 ]] || return 1
+              size=$(stat -c '%s' "$path")
+              [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 && "$size" -le 67108864 ]] || return 1
+            done
+            cmp --silent "$manifest" "$directory/$manifest_name"
+            cmp --silent "$sbom" "$directory/$sbom_name"
+            for subject in "$directory/$manifest_name" "$directory/$sbom_name"; do
+              pubkey=$(mktemp /tmp/roam-release-pubkey.XXXXXXXXXX)
+              signature=$(mktemp /tmp/roam-release-signature.XXXXXXXXXX)
+              openssl x509 -in "${subject}.crt" -pubkey -noout > "$pubkey"
+              base64 --decode "${subject}.sig" > "$signature"
+              openssl dgst -sha256 -verify "$pubkey" -signature "$signature" "$subject"
+              identity=$(openssl x509 -in "${subject}.crt" -noout -ext subjectAltName)
+              if ! grep -Fq "URI:https://github.com/${REPO}/.github/workflows/publish.yml@refs/tags/${TAG}" <<<"$identity" \
+                && ! grep -Fq "URI:https://github.com/${REPO}/.github/workflows/publish.yml@refs/heads/${DEFAULT_BRANCH}" <<<"$identity"; then
+                echo "::error::Evidence certificate has an unexpected workflow identity."
+                return 1
+              fi
+            done
+          }
+
+          strict_json_file "$manifest" 1048576 "release manifest"
+          [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ \
+            && "$(sha256sum "$manifest" | awk '{print $1}')" == "$EXPECTED_MANIFEST_SHA256" ]] || exit 1
+          [[ "$SIGNED_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          sbom_name=$(jq -er '.sbom.filename' "$manifest")
+          sbom="release-bundle/sbom/$sbom_name"
+          strict_json_file "$sbom" 67108864 "release SBOM"
+          [[ "$(sha256sum "$sbom" | awk '{print $1}')" == "$(jq -er '.sbom.sha256' "$manifest")" \
+            && "$(stat -c '%s' "$sbom")" == "$(jq -er '.sbom.size' "$manifest")" ]] || exit 1
+
+          manifest_name=$(basename "$manifest")
+          evidence_names=(
+            "$manifest_name" "${manifest_name}.sig" "${manifest_name}.crt"
+            "$sbom_name" "${sbom_name}.sig" "${sbom_name}.crt"
+          )
+          printf '%s\n' "${evidence_names[@]}" | LC_ALL=C sort > /tmp/expected-release-assets
+          verify_evidence_set signed-evidence
+
+          resolve_expected_tag
+          fetch_release_state
+          if [[ "$release_status" == 404 ]]; then
+            gh release create "$TAG" --repo "$REPO" --verify-tag --draft --title "$TAG" --generate-notes
+            fetch_release_state
+          fi
+          jq -e --arg tag "$TAG" '.tag_name == $tag and (.draft | type == "boolean") and (.immutable | type == "boolean")' \
+            "$release_state" >/dev/null
+
+          if [[ "$(jq -r '.draft' "$release_state")" == true ]]; then
+            resolve_expected_tag
+            evidence_paths=()
+            for name in "${evidence_names[@]}"; do evidence_paths+=("signed-evidence/$name"); done
+            gh release upload "$TAG" "${evidence_paths[@]}" --repo "$REPO" --clobber
+            fetch_release_state
+            require_exact_release_assets
+            uploaded=$(mktemp -d /tmp/roam-release-uploaded.XXXXXXXXXX)
+            download_release_assets "$uploaded"
+            verify_evidence_set "$uploaded"
+            resolve_expected_tag
+            gh release edit "$TAG" --repo "$REPO" --draft=false
+
+            immutable=false
+            for delay in 0 2 5 10; do
+              [[ "$delay" -eq 0 ]] || sleep "$delay"
+              fetch_release_state
+              if jq -e '.draft == false and .immutable == true' "$release_state" >/dev/null; then
+                immutable=true
+                break
+              fi
+            done
+            [[ "$immutable" == true ]] \
+              || { echo "::error::Published release did not become immutable."; exit 1; }
+            require_exact_release_assets
+            published=$(mktemp -d /tmp/roam-release-published.XXXXXXXXXX)
+            download_release_assets "$published"
+            verify_evidence_set "$published"
+          else
+            jq -e '.immutable == true' "$release_state" >/dev/null \
+              || { echo "::error::Existing published release is mutable; refusing to modify it."; exit 1; }
+            require_exact_release_assets
+            existing=$(mktemp -d /tmp/roam-release-existing.XXXXXXXXXX)
+            download_release_assets "$existing"
+            verify_evidence_set "$existing"
+          fi
+          resolve_expected_tag
+          echo "Verified all six immutable release-evidence assets byte-for-byte."
+
+  smoke:
+    name: Verify the published release
+    needs: [resolve-ref, release-evidence]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ needs.resolve-ref.outputs.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Install and verify the published package
         run: |
           set +e
           for delay in 10 15 30 45 60; do
             python scripts/verify_release.py --pypi --install && exit 0
-            echo "::notice::CDN not warm yet — retrying in ${delay}s"
+            echo "::notice::PyPI CDN not ready; retrying in ${delay}s."
             sleep "$delay"
           done
           set -e

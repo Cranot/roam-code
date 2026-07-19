@@ -1,9 +1,9 @@
 name: Architecture Guardian
 
 # Run the continuous architecture guardian baseline daily and on manual
-# dispatch. Emits Markdown + JSON reports as workflow artifacts; the JSON
-# gate step is informational (continue-on-error) so the workflow does not
-# fail on advisory findings — review the uploaded artifact instead.
+# dispatch. Emits Markdown + JSON reports as workflow artifacts. Guardian
+# findings remain advisory because `roam report` runs without `--strict`;
+# installation, indexing, command, and envelope failures still fail closed.
 
 on:
   workflow_dispatch:
@@ -13,47 +13,91 @@ on:
 permissions:
   contents: read
 
+env:
+  UV_LOCKED: "1"
+  UV_NO_PROGRESS: "1"
+  UV_PYTHON_DOWNLOADS: "never"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   guardian:
-    runs-on: ubuntu-latest
+    name: Architecture guardian
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
-      - name: Install roam-code
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync the exact runtime graph
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --python python
+          uv pip check --python .venv/bin/python
 
       - name: Build index
-        run: roam init
+        run: |
+          # The parser bundle is fetched lazily on a fresh runner. Treat a
+          # transient transport reset as retryable, while preserving a hard
+          # failure after three bounded attempts.
+          for attempt in 1 2 3; do
+            if .venv/bin/roam init --yes; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then
+              echo "::error::roam init failed after three attempts"
+              exit 1
+            fi
+            delay=$((attempt * 15))
+            echo "::warning::roam init attempt ${attempt} failed; retrying in ${delay}s"
+            sleep "$delay"
+          done
 
       - name: Generate guardian markdown report
         run: |
           mkdir -p .roam/reports
-          roam report guardian --md > .roam/reports/architecture_guardian.md
+          .venv/bin/roam report guardian --md > .roam/reports/architecture_guardian.md
 
-      - name: Run guardian gate (JSON)
-        continue-on-error: true
+      - name: Run and validate guardian report (JSON)
         run: |
-          roam --json report guardian > .roam/reports/architecture_guardian.json
+          .venv/bin/roam --json report guardian > .roam/reports/architecture_guardian.json
+          .venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
 
+          report = json.loads(Path(".roam/reports/architecture_guardian.json").read_text(encoding="utf-8"))
+          assert report.get("command") == "report", report
+          summary = report.get("summary")
+          assert isinstance(summary, dict), report
+          failed = summary.get("sections_failed")
+          assert isinstance(failed, int), summary
+          if failed:
+              print(f"::warning::{failed} advisory guardian section(s) reported failure; inspect the artifact")
+          PY
+
+      # Preserve reports after failures for diagnosis; this step does not
+      # change the failure status of any preceding security or runtime gate.
       - name: Upload guardian artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: architecture-guardian
           path: .roam/reports/

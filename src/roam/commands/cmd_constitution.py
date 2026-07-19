@@ -1,9 +1,10 @@
 """Repo-local agent constitution CLI (R24 capstone).
 
-Five subcommands::
+Six subcommands::
 
     roam constitution init   [--with-laws/--no-laws] [--with-rules/--no-rules] [--force]
     roam constitution check
+    roam constitution upgrade [--apply] [--accept-mode-replacement] [--expect-modes-digest SHA256]
     roam constitution show   [--json]
     roam constitution apply  --gate before_edit|after_edit|before_pr [--strict] [--symbol X] [--file Y]
     roam constitution where
@@ -34,11 +35,16 @@ import click
 from roam.capability import roam_capability
 from roam.constitution.loader import (
     VALID_GATES,
+    ConstitutionConcurrentUpdate,
+    ConstitutionUpgradePreviewMismatch,
+    ConstitutionUpgradeRequiresAcceptance,
     apply_constitution,
+    assess_constitution_upgrade,
     check_constitution,
     constitution_path,
     init_constitution,
     load_constitution,
+    upgrade_constitution,
 )
 from roam.db.connection import find_project_root
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -58,6 +64,7 @@ from roam.runs.helpers import auto_log
     examples=[
         "roam constitution init",
         "roam constitution check",
+        "roam constitution upgrade",
         "roam constitution show --json",
         "roam constitution apply --gate before_edit --symbol useThemeClasses",
         "roam constitution where",
@@ -68,7 +75,7 @@ from roam.runs.helpers import auto_log
     maturity="stable",
     mcp_expose=False,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=False,
@@ -269,6 +276,7 @@ def constitution_check(ctx):
         return
 
     report = check_constitution(root, constitution)
+    mode_upgrade = report.mode_upgrade
 
     env = json_envelope(
         "constitution-check",
@@ -280,11 +288,14 @@ def constitution_check(ctx):
             "source_total": len(report.sources),
             "command_total": len(report.commands),
             "mode_issue_total": len(report.mode_issues),
+            "mode_upgrade_state": mode_upgrade.state if mode_upgrade else "not_evaluated",
+            "mode_upgrade_safe": mode_upgrade.safe_to_apply if mode_upgrade else False,
         },
         budget=token_budget,
         sources=[s.to_dict() for s in report.sources],
         commands=[c.to_dict() for c in report.commands],
         mode_issues=report.mode_issues,
+        mode_upgrade=mode_upgrade.to_dict() if mode_upgrade else None,
         path=str(constitution._path) if constitution._path else "",
     )
 
@@ -307,9 +318,219 @@ def constitution_check(ctx):
             click.echo("Mode allow-list issues:")
             rows = [[m["mode"], m["command"], m["state"]] for m in report.mode_issues]
             click.echo(format_table(["Mode", "Command", "State"], rows))
+        if mode_upgrade and mode_upgrade.state not in ("up_to_date", "not_applicable"):
+            click.echo("")
+            click.echo("Mode-policy upgrade:")
+            click.echo(f"  state:      {mode_upgrade.state}")
+            click.echo(f"  provenance: {mode_upgrade.provenance}")
+            click.echo(f"  changes:    +{mode_upgrade.addition_total} / -{mode_upgrade.removal_total}")
+            click.echo("  next:       roam constitution upgrade")
 
     # auto_log is documented + verified to never raise.
     auto_log(env, action="constitution-check", repo_root=root)
+
+
+# ---------------------------------------------------------------------------
+# upgrade
+# ---------------------------------------------------------------------------
+
+
+def _upgrade_next_command(report) -> str:
+    if report.state in ("up_to_date", "upgraded", "not_applicable"):
+        return ""
+    if report.requires_explicit_acceptance:
+        return (
+            "roam --override-mode constitution upgrade --apply --accept-mode-replacement "
+            f"--expect-modes-digest {report.current_modes_digest}"
+        )
+    return "roam constitution upgrade --apply"
+
+
+def _emit_upgrade_text(report, *, verdict: str) -> None:
+    click.echo(f"VERDICT: {verdict}")
+    click.echo(f"  state:      {report.state}")
+    click.echo(f"  provenance: {report.provenance}")
+    click.echo(f"  safe:       {'yes' if report.safe_to_apply else 'no'}")
+    click.echo(f"  entries:    +{report.addition_total} / -{report.removal_total}")
+    click.echo(f"  commands:   +{report.unique_addition_total} / -{report.unique_removal_total}")
+    for label, changes in (("Additions", report.additions), ("Removals", report.removals)):
+        if not changes:
+            continue
+        click.echo("")
+        click.echo(f"{label}:")
+        for mode, commands in changes.items():
+            click.echo(f"  {mode}: {', '.join(commands)}")
+    next_command = _upgrade_next_command(report)
+    if next_command:
+        click.echo("")
+        click.echo(f"Next: {next_command}")
+
+
+@constitution_group.command("upgrade")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    default=False,
+    help="Atomically apply the previewed generated mode-policy update.",
+)
+@click.option(
+    "--accept-mode-replacement",
+    is_flag=True,
+    default=False,
+    help="Acknowledge replacement of an unproven or customized modes block.",
+)
+@click.option(
+    "--expect-modes-digest",
+    default=None,
+    metavar="SHA256",
+    help="Bind an acknowledged replacement to the exact digest shown by preview.",
+)
+@click.pass_context
+def constitution_upgrade(ctx, apply_changes, accept_mode_replacement, expect_modes_digest):
+    """Preview or apply generated mode-policy updates.
+
+    Preview is the default. ``--apply`` proceeds automatically only for a
+    generator-owned, unchanged snapshot (or a metadata-only provenance
+    update). Legacy and customized policies remain authoritative unless the
+    caller passes ``--accept-mode-replacement`` plus the
+    ``--expect-modes-digest`` emitted by the reviewed preview.
+    """
+
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    root = find_project_root()
+    constitution = load_constitution(root)
+
+    if constitution is None:
+        verdict = "no constitution -- run `roam constitution init` first"
+        env = json_envelope(
+            "constitution-upgrade",
+            summary={
+                "verdict": verdict,
+                "partial_success": True,
+                "state": "not_initialized",
+                "applied": False,
+            },
+            budget=token_budget,
+            path=str(constitution_path(root)),
+        )
+        if json_mode:
+            click.echo(to_json(env))
+        else:
+            click.echo(f"VERDICT: {verdict}")
+        if apply_changes:
+            ctx.exit(2)
+        return
+
+    if constitution.metadata.get("unparseable"):
+        verdict = "constitution is unparseable; repair it before upgrading"
+        env = json_envelope(
+            "constitution-upgrade",
+            summary={
+                "verdict": verdict,
+                "partial_success": True,
+                "state": "unparseable",
+                "applied": False,
+            },
+            budget=token_budget,
+            path=str(constitution._path) if constitution._path else "",
+        )
+        if json_mode:
+            click.echo(to_json(env))
+        else:
+            click.echo(f"VERDICT: {verdict}")
+        if apply_changes:
+            ctx.exit(2)
+        return
+
+    report = assess_constitution_upgrade(constitution)
+    blocked = False
+    blocked_verdict = ""
+    error_state = ""
+    if apply_changes:
+        try:
+            report = upgrade_constitution(
+                root,
+                accept_mode_replacement=accept_mode_replacement,
+                expected_modes_digest=expect_modes_digest,
+            )
+        except ConstitutionUpgradeRequiresAcceptance as exc:
+            report = exc.report
+            blocked = True
+        except ConstitutionUpgradePreviewMismatch as exc:
+            report = exc.report
+            blocked = True
+            blocked_verdict = str(exc)
+        except ConstitutionConcurrentUpdate as exc:
+            error_state = "concurrent_update"
+            verdict = str(exc)
+        except (OSError, ValueError) as exc:
+            error_state = "error"
+            verdict = f"constitution upgrade failed: {exc}"
+
+    if error_state:
+        env = json_envelope(
+            "constitution-upgrade",
+            summary={
+                "verdict": verdict,
+                "partial_success": True,
+                "state": error_state,
+                "applied": False,
+            },
+            budget=token_budget,
+            path=str(constitution._path) if constitution._path else "",
+        )
+        if json_mode:
+            click.echo(to_json(env))
+        else:
+            click.echo(f"VERDICT: {verdict}")
+        ctx.exit(2)
+        return
+
+    if blocked:
+        verdict = blocked_verdict or (
+            report.summary_verdict + "; apply the digest-bound command from the preview to proceed"
+        )
+        state = "blocked"
+    else:
+        verdict = report.summary_verdict
+        state = report.state
+    next_command = _upgrade_next_command(report)
+    env = json_envelope(
+        "constitution-upgrade",
+        summary={
+            "verdict": verdict,
+            "partial_success": blocked,
+            "state": state,
+            "applied": report.applied,
+            "safe_to_apply": report.safe_to_apply,
+            "requires_explicit_acceptance": report.requires_explicit_acceptance,
+            "addition_total": report.addition_total,
+            "removal_total": report.removal_total,
+            "unique_addition_total": report.unique_addition_total,
+            "unique_removal_total": report.unique_removal_total,
+            "change_metric_definition": "per_mode_allow_list_entries",
+        },
+        budget=token_budget,
+        upgrade=report.to_dict(),
+        path=str(constitution._path) if constitution._path else "",
+        agent_contract={
+            "facts": [
+                f"{report.unique_addition_total} added commands",
+                f"{report.unique_removal_total} removed commands",
+            ],
+            "next_commands": [next_command] if next_command else [],
+        },
+    )
+
+    if json_mode:
+        click.echo(to_json(env))
+    else:
+        _emit_upgrade_text(report, verdict=verdict)
+    auto_log(env, action="constitution-upgrade", repo_root=root)
+    if blocked:
+        ctx.exit(5)
 
 
 # ---------------------------------------------------------------------------

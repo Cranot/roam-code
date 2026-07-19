@@ -16,6 +16,8 @@ import json
 import os
 import re
 import shlex
+import stat
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,10 +25,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
+from roam.atomic_io import atomic_write_bytes
+from roam.observability import log_swallowed
+
 BACKFILL_VERSION = 5
 MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024
+MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
 OUTPUT_NAME = "transcript-episodes.jsonl"
 SALT_NAME = "savings-backfill.key"
+_MAX_KEY_BYTES = 129
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_./\\:-]+")
 _CORRECTION_RE = re.compile(
@@ -273,27 +280,197 @@ def _bucket(value: int, width: int) -> int:
     return max(width, ((max(0, value) + width - 1) // width) * width)
 
 
-def _load_or_create_key(root: Path, *, create: bool = True) -> bytes:
-    path = root / ".roam" / SALT_NAME
+class TranscriptBackfillSafetyError(ValueError):
+    """A transcript or private-state path failed a containment check."""
+
+
+def _is_reparse_point(value: os.stat_result) -> bool:
+    attributes = getattr(value, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return bool(attributes & reparse_flag)
+
+
+def _same_private_file_state(left: os.stat_result, right: os.stat_result) -> bool:
+    return bool(
+        (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+        and left.st_mode == right.st_mode
+        and left.st_nlink == right.st_nlink
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+        and (os.name == "nt" or left.st_ctime_ns == right.st_ctime_ns)
+    )
+
+
+def _private_state_directory(root: Path, *, create: bool) -> Path:
+    """Return a concrete, owner-controlled ``.roam`` directory."""
+
     try:
-        raw = path.read_text(encoding="ascii").strip()
-        key = bytes.fromhex(raw)
-        if len(key) >= 16:
+        root_info = os.lstat(root)
+    except OSError as exc:
+        raise TranscriptBackfillSafetyError(f"project root is unavailable: {root}: {exc}") from exc
+    if not stat.S_ISDIR(root_info.st_mode) or _is_reparse_point(root_info):
+        raise TranscriptBackfillSafetyError(f"project root must be a concrete directory: {root}")
+
+    state = root / ".roam"
+    if create:
+        try:
+            state.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+    try:
+        state_info = os.lstat(state)
+    except FileNotFoundError:
+        if not create:
+            return state
+        raise TranscriptBackfillSafetyError(f"private state directory disappeared during creation: {state}") from None
+    except OSError as exc:
+        raise TranscriptBackfillSafetyError(f"private state directory is unavailable: {state}: {exc}") from exc
+    if (
+        not stat.S_ISDIR(state_info.st_mode)
+        or stat.S_ISLNK(state_info.st_mode)
+        or _is_reparse_point(state_info)
+        or os.path.normcase(str(state.resolve(strict=True))) != os.path.normcase(str(state))
+    ):
+        raise TranscriptBackfillSafetyError(f"private state directory must not be redirected: {state}")
+    if os.name != "nt":
+        if state_info.st_uid != os.geteuid():
+            raise TranscriptBackfillSafetyError(f"private state directory is not owned by this user: {state}")
+        if stat.S_IMODE(state_info.st_mode) & 0o022:
+            raise TranscriptBackfillSafetyError(f"private state directory is group/world writable: {state}")
+    return state
+
+
+def _private_file_state(path: Path, *, label: str, max_bytes: int, allow_missing: bool) -> os.stat_result | None:
+    try:
+        value = os.lstat(path)
+    except FileNotFoundError:
+        if allow_missing:
+            return None
+        raise TranscriptBackfillSafetyError(f"{label} is missing: {path}") from None
+    except OSError as exc:
+        raise TranscriptBackfillSafetyError(f"cannot inspect {label}: {path}: {exc}") from exc
+    if not stat.S_ISREG(value.st_mode) or stat.S_ISLNK(value.st_mode) or _is_reparse_point(value):
+        raise TranscriptBackfillSafetyError(f"{label} must be a regular, non-linked file: {path}")
+    if value.st_nlink != 1:
+        raise TranscriptBackfillSafetyError(f"{label} must not be hard-linked: {path}")
+    if value.st_size > max_bytes:
+        raise TranscriptBackfillSafetyError(f"{label} exceeds the {max_bytes}-byte limit: {path}")
+    if os.name != "nt":
+        if value.st_uid != os.geteuid():
+            raise TranscriptBackfillSafetyError(f"{label} is not owned by this user: {path}")
+        if stat.S_IMODE(value.st_mode) & 0o077:
+            raise TranscriptBackfillSafetyError(f"{label} is not owner-only: {path}")
+    return value
+
+
+def _read_private_key(path: Path, *, transient_retries: int = 0) -> bytes | None:
+    """Read a stable key, tolerating only a bounded concurrent-create window."""
+
+    for attempt in range(transient_retries + 1):
+        try:
+            before = _private_file_state(
+                path,
+                label="savings backfill key",
+                max_bytes=_MAX_KEY_BYTES,
+                allow_missing=True,
+            )
+            if before is None:
+                return None
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+            try:
+                descriptor = os.open(path, flags)
+            except OSError as exc:
+                raise TranscriptBackfillSafetyError(f"cannot open savings backfill key: {path}: {exc}") from exc
+            try:
+                opened = os.fstat(descriptor)
+                if not _same_private_file_state(before, opened):
+                    raise TranscriptBackfillSafetyError(f"savings backfill key changed before reading: {path}")
+                payload = os.read(descriptor, _MAX_KEY_BYTES + 1)
+                opened_after = os.fstat(descriptor)
+                after = _private_file_state(
+                    path,
+                    label="savings backfill key",
+                    max_bytes=_MAX_KEY_BYTES,
+                    allow_missing=False,
+                )
+                if not _same_private_file_state(opened, opened_after) or not _same_private_file_state(before, after):
+                    raise TranscriptBackfillSafetyError(f"savings backfill key changed while reading: {path}")
+            finally:
+                os.close(descriptor)
+            try:
+                key = bytes.fromhex(payload.decode("ascii").strip())
+            except (UnicodeDecodeError, ValueError) as exc:
+                raise TranscriptBackfillSafetyError(f"savings backfill key is malformed: {path}") from exc
+            if len(key) < 16:
+                raise TranscriptBackfillSafetyError(f"savings backfill key is too short: {path}")
             return key
-    except (OSError, ValueError):
-        pass
+        except TranscriptBackfillSafetyError:
+            if attempt >= transient_retries:
+                raise
+            time.sleep(0.01)
+    raise AssertionError("bounded key-read loop did not terminate")  # pragma: no cover
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    offset = 0
+    while offset < len(payload):
+        written = os.write(descriptor, payload[offset:])
+        if written <= 0:  # pragma: no cover - defensive OS contract guard
+            raise OSError("private key write made no forward progress")
+        offset += written
+
+
+def _create_private_key(path: Path) -> bytes:
+    key = os.urandom(32)
+    payload = key.hex().encode("ascii") + b"\n"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except FileExistsError:
+        concurrent = _read_private_key(path, transient_retries=20)
+        if concurrent is None:  # pragma: no cover - FileExistsError contract
+            raise TranscriptBackfillSafetyError(f"savings backfill key disappeared during creation: {path}")
+        return concurrent
+    except OSError as exc:
+        raise TranscriptBackfillSafetyError(f"cannot create savings backfill key: {path}: {exc}") from exc
+    created = os.fstat(descriptor)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        _write_all(descriptor, payload)
+        os.fsync(descriptor)
+        created = os.fstat(descriptor)
+    except BaseException:
+        try:
+            current = os.lstat(path)
+            if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+                os.unlink(path)
+        except OSError:
+            pass
+        raise
+    finally:
+        os.close(descriptor)
+    final = _private_file_state(path, label="savings backfill key", max_bytes=_MAX_KEY_BYTES, allow_missing=False)
+    if not _same_private_file_state(created, final):
+        raise TranscriptBackfillSafetyError(f"savings backfill key changed during creation: {path}")
+    if os.name != "nt":
+        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    return key
+
+
+def _load_or_create_key(root: Path, *, create: bool = True) -> bytes:
+    state = _private_state_directory(root, create=create)
+    path = state / SALT_NAME
+    key = _read_private_key(path, transient_retries=20)
+    if key is not None:
+        return key
     if not create:
         return os.urandom(32)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    key = os.urandom(32)
-    tmp = path.with_name(path.name + f".tmp-{os.getpid()}")
-    tmp.write_text(key.hex() + "\n", encoding="ascii")
-    try:
-        os.chmod(tmp, 0o600)
-    except OSError:
-        pass
-    os.replace(tmp, path)
-    return key
+    return _create_private_key(path)
 
 
 def _keyed_hex(key: bytes, purpose: str, value: str, length: int = 24) -> str:
@@ -1102,17 +1279,49 @@ class _Episode:
 
 
 def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
+    descriptor = -1
     try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
-            for line in fh:
+        before = os.lstat(path)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_ISLNK(before.st_mode)
+            or _is_reparse_point(before)
+            or before.st_nlink != 1
+            or before.st_size > MAX_TRANSCRIPT_BYTES
+        ):
+            return
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        if (
+            (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size > MAX_TRANSCRIPT_BYTES
+        ):
+            return
+        fh = os.fdopen(descriptor, "rb")
+        descriptor = -1
+        with fh:
+            size = 0
+            for raw_line in fh:
+                size += len(raw_line)
+                if size > MAX_TRANSCRIPT_BYTES:
+                    return
                 try:
-                    value = json.loads(line)
+                    value = json.loads(raw_line.decode("utf-8", errors="replace"))
                 except (TypeError, ValueError):
                     continue
                 if isinstance(value, dict):
                     yield value
     except OSError:
         return
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                log_swallowed("transcript_backfill._iter_jsonl.fd_close", exc)
 
 
 def _scan_claude(path: Path, root: Path, key: bytes, all_projects: bool) -> list[dict[str, Any]]:
@@ -1298,21 +1507,47 @@ def _candidate_files(
     since: datetime | None,
     max_files: int,
 ) -> list[Path]:
-    paths: list[Path] = []
-    for path in transcripts_dir.rglob("*.jsonl"):
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        if not path.is_file() or stat.st_size > MAX_TRANSCRIPT_BYTES:
-            continue
-        if since and datetime.fromtimestamp(stat.st_mtime, timezone.utc) < since:
-            continue
-        paths.append(path)
-    paths.sort(key=lambda path: (path.stat().st_mtime, str(path)))
+    try:
+        source_root = transcripts_dir.resolve(strict=True)
+    except OSError:
+        return []
+    paths: list[tuple[float, Path]] = []
+    for directory, dirnames, filenames in os.walk(source_root, topdown=True, onerror=lambda _error: None):
+        base = Path(directory)
+        safe_directories: list[str] = []
+        for name in dirnames:
+            candidate = base / name
+            try:
+                value = candidate.lstat()
+            except OSError:
+                continue
+            if stat.S_ISDIR(value.st_mode) and not stat.S_ISLNK(value.st_mode) and not _is_reparse_point(value):
+                safe_directories.append(name)
+        dirnames[:] = safe_directories
+        for name in filenames:
+            if not name.endswith(".jsonl"):
+                continue
+            path = base / name
+            try:
+                value = path.lstat()
+                path.resolve(strict=True).relative_to(source_root)
+            except (OSError, ValueError):
+                continue
+            if (
+                not stat.S_ISREG(value.st_mode)
+                or stat.S_ISLNK(value.st_mode)
+                or _is_reparse_point(value)
+                or value.st_nlink != 1
+                or value.st_size > MAX_TRANSCRIPT_BYTES
+            ):
+                continue
+            if since and datetime.fromtimestamp(value.st_mtime, timezone.utc) < since:
+                continue
+            paths.append((value.st_mtime, path))
+    paths.sort(key=lambda item: (item[0], str(item[1])))
     if max_files > 0:
         paths = paths[-max_files:]
-    return paths
+    return [path for _mtime, path in paths]
 
 
 def backfill_transcripts(
@@ -1347,7 +1582,7 @@ def backfill_transcripts(
             if identity not in seen_files:
                 seen_files.add(identity)
                 files.append(path)
-    files.sort(key=lambda path: (path.stat().st_mtime, str(path)))
+    files.sort(key=str)
     events: list[dict[str, Any]] = []
     source_counts: Counter[str] = Counter()
     skipped_unknown = 0
@@ -1364,20 +1599,47 @@ def backfill_transcripts(
             source_counts[detected] += 1
             events.extend(extracted)
     events.sort(key=lambda row: (str(row.get("ts") or ""), str(row.get("event_id") or "")))
-    output = root_path / ".roam" / OUTPUT_NAME
+    state_dir = _private_state_directory(root_path, create=not dry_run)
+    output = state_dir / OUTPUT_NAME
     if not dry_run:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        tmp = output.with_name(output.name + f".tmp-{os.getpid()}")
-        with tmp.open("w", encoding="utf-8", newline="\n") as fh:
-            for event in events:
-                fh.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, output)
+        payload = bytearray()
+        for event in events:
+            encoded = (json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+            if len(payload) + len(encoded) > MAX_SNAPSHOT_BYTES:
+                raise TranscriptBackfillSafetyError(
+                    f"derived transcript snapshot exceeds the {MAX_SNAPSHOT_BYTES}-byte limit"
+                )
+            payload.extend(encoded)
+
+        def prepare_private_temp(descriptor: int, temporary: str) -> None:
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, 0o600)
+            elif os.name != "nt":  # pragma: no cover - supported POSIX builds expose fchmod
+                os.chmod(temporary, 0o600)
+
+        def validate_destination() -> None:
+            _private_state_directory(root_path, create=False)
+            _private_file_state(
+                output,
+                label="derived transcript snapshot",
+                max_bytes=MAX_SNAPSHOT_BYTES,
+                allow_missing=True,
+            )
+
+        atomic_write_bytes(
+            output,
+            bytes(payload),
+            prepare_temp_fd=prepare_private_temp,
+            before_replace=validate_destination,
+            durable=True,
+            create_parents=False,
+        )
+        _private_file_state(
+            output,
+            label="derived transcript snapshot",
+            max_bytes=MAX_SNAPSHOT_BYTES,
+            allow_missing=False,
+        )
     return {
         "state": "dry_run" if dry_run else "written",
         "output": str(output),

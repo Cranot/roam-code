@@ -252,8 +252,11 @@ def test_hint_vocabulary_pinned(hint_key):
 # to the ``@_tool`` kwargs.
 #
 # ``read_only`` (MCP) vs ``side_effect`` (capability) is the SAME axis,
-# inverted: ``read_only=True`` ↔ ``side_effect=False``. The lint normalises
-# at boundary.
+# inverted: ``read_only=True`` ↔ ``side_effect=False``. The capability
+# registry records the maximum effect of the full CLI command, while an MCP
+# wrapper can intentionally expose a narrower read-only projection. Those
+# projections are admitted only with executable evidence below: the CLI's
+# effectful flags must exist and the MCP wrapper must omit them.
 # ---------------------------------------------------------------------------
 
 
@@ -270,52 +273,175 @@ _DESTRUCTIVE_PARITY_QUARANTINE: dict[str, str] = {
 }
 
 
-# Quarantine list for the READ_ONLY / SIDE_EFFECT axis-inversion —
-# intentional divergences between `_TOOL_METADATA[..]["read_only"]` and the
-# (inverted) `Capability.side_effect`. Keep this tight; every entry must
-# carry a one-line rationale. Adding a new entry requires explicit
-# justification.
-_READ_ONLY_PARITY_QUARANTINE: dict[str, str] = {
-    # The bulk of these are artefact-emitting tools where the capability
-    # registry tracks ANY disk write (side_effect=True) but the MCP
-    # read_only axis tracks GRAPH MUTATION ONLY (read_only=True). The
-    # asymmetry is acceptable: MCP clients route on read_only to gate
-    # graph-shape change confirmations; the capability registry serves the
-    # Roam Review GitHub App's "did this tool touch the filesystem at all"
-    # question.
-    "roam_dogfood": "writes audit logs only; not a graph mutation",
-    "roam_audit_trail_export": "writes export artefact; not a graph mutation",
-    "roam_agent_export": "writes export bundle; not a graph mutation",
-    "roam_attest": "writes attestation predicate; not a graph mutation",
-    "roam_sbom": "writes SBOM file; not a graph mutation",
-    "roam_pr_analyze": "writes analysis bundle; not a graph mutation",
-    "roam_rules_validate": "writes validation report; not a graph mutation",
-    "roam_stale_refs": "writes a stale-ref report; not a graph mutation",
-    "roam_fitness": "writes a fitness summary; not a graph mutation",
-    "roam_eval_retrieve": "writes eval rows; not a graph mutation",
-    "roam_test_scaffold": "scaffolds template files outside the index",
-    "roam_describe": "writes a description artefact; not a graph mutation",
-    "roam_minimap": "writes a minimap artefact; not a graph mutation",
-    # roam_mutate: capability registry says side_effect=False because the
-    # mutate command DOES NOT auto-write — it emits a unified diff the
-    # agent must apply explicitly. The MCP wrapper conservatively flags
-    # read_only=False (mutate IS a mutation surface even if applying the
-    # diff is the agent's responsibility). Conservative-on-MCP,
-    # accurate-on-capability.
-    "roam_mutate": "MCP conservative; capability tracks actual on-disk write",
-    # roam_vuln_map, roam_ingest_trace: both ingest external data into
-    # the index (vulns DB, traces). MCP read_only=False is correct for
-    # graph mutation; capability side_effect=False predates the ingest
-    # path (legacy decorator value). Track via W365 drive-by; not safe
-    # to flip silently without re-auditing every consumer of the
-    # capability manifest.
-    "roam_vuln_map": "legacy capability flag; ingestion mutates graph (W365 pinned)",
-    "roam_ingest_trace": "legacy capability flag; ingestion mutates graph (W365 pinned)",
-    # W365-followup: roam_reset / roam_clean previously carried a
-    # self-inconsistent destructive=True + side_effect=False decoration. Fixed
-    # at W365-followup by flipping side_effect=True on both decorators (both
-    # tools mutate the index DB on disk). No quarantine needed — the natural
-    # axis-inversion parity (read_only=False ↔ side_effect=True) holds.
+# Evidence-backed exceptions for the READ_ONLY / SIDE_EFFECT axis-inversion.
+#
+# Each value is ``(CLI-only effect flags, rationale)``. These are not generic
+# suppressions: ``test_read_only_projection_exceptions_are_evidence_backed``
+# proves that every flag still exists on the broad CLI command, is absent from
+# the executable MCP wrapper, and that the two surfaces still have the exact
+# maximum-effect/read-only divergence documented here. Stale entries therefore
+# fail instead of silently weakening the parity gate.
+_MCP_READ_ONLY_CLI_MAX_EFFECT_PROJECTIONS: dict[str, tuple[tuple[str, ...], str]] = {
+    "roam_agent_export": (
+        ("--output", "--write", "--bundle"),
+        "MCP renders one agent format to its result; CLI-only flags write one or more files.",
+    ),
+    "roam_agent_opt": (
+        ("--persist",),
+        "MCP returns optimization findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_article_12_check": (
+        ("--output", "--pdf"),
+        "MCP returns the checklist envelope; CLI-only flags write report artifacts.",
+    ),
+    "roam_attest": (
+        ("--output",),
+        "MCP returns the attestation; CLI --output writes it to disk.",
+    ),
+    "roam_audit_trail_conformance_check": (
+        ("--sarif-output", "--persist"),
+        "MCP returns conformance evidence; CLI-only flags write SARIF or registry findings.",
+    ),
+    "roam_audit_trail_export": (
+        ("--output", "--finalize"),
+        "MCP returns an export; CLI-only flags write an artifact or append a closing trail record.",
+    ),
+    "roam_audit_trail_verify": (
+        ("--persist",),
+        "MCP returns verification evidence; CLI --persist writes registry findings.",
+    ),
+    "roam_auth_gaps": (
+        ("--persist",),
+        "MCP returns auth-gap findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_bus_factor": (
+        ("--persist",),
+        "MCP returns ownership-risk findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_clones": (
+        ("--persist",),
+        "MCP returns clone findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_compatibility": (
+        ("--write-baseline",),
+        "MCP compares existing snapshots; CLI --write-baseline creates or replaces baseline state.",
+    ),
+    "roam_complexity_report": (
+        ("--persist",),
+        "MCP returns complexity findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_conventions": (
+        ("--persist",),
+        "MCP returns convention findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_coverage_gaps": (
+        ("--import-report", "--merge-imported"),
+        "MCP may read gate config only; CLI-only coverage import flags update indexed coverage rows.",
+    ),
+    "roam_critique": (
+        ("--persist",),
+        "MCP returns patch findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_dark_matter": (
+        ("--persist",),
+        "MCP returns hidden-coupling findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_dead_code": (
+        ("--persist",),
+        "MCP returns dead-code findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_describe": (
+        ("--write", "--output"),
+        "MCP returns generated prose; CLI-only flags create or replace a description file.",
+    ),
+    "roam_doctor": (
+        ("--persist",),
+        "MCP returns diagnostics; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_duplicates": (
+        ("--persist",),
+        "MCP returns duplicate findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_eval_retrieve": (
+        ("--report", "--emit-out"),
+        "MCP returns eval metrics; CLI-only flags write reports or benchmark rows.",
+    ),
+    "roam_fitness": (
+        ("--init", "--write-baseline"),
+        "MCP evaluates existing rules; CLI-only flags create config or baseline state.",
+    ),
+    "roam_health": (
+        ("--persist",),
+        "MCP returns health findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_hotspots": (
+        ("--persist",),
+        "MCP returns hotspot findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_llm_smells": (
+        ("--persist",),
+        "MCP returns LLM-smell findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_minimap": (
+        ("--update", "--output", "--init-notes"),
+        "MCP returns a minimap; CLI-only flags create or update agent-context files.",
+    ),
+    "roam_missing_index": (
+        ("--persist",),
+        "MCP returns missing-index findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_n1": (
+        ("--persist",),
+        "MCP returns N+1 findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_observability_opt": (
+        ("--persist",),
+        "MCP returns observability findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_orphan_imports": (
+        ("--persist",),
+        "MCP returns orphan-import findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_over_fetch": (
+        ("--persist",),
+        "MCP returns over-fetch findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_pr_risk": (
+        ("--persist",),
+        "MCP returns PR-risk findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_proof_bundle": (
+        ("--output",),
+        "MCP returns the proof bundle; CLI --output writes the selected representation to disk.",
+    ),
+    "roam_reachability_triage": (
+        ("--write-baseline",),
+        "MCP evaluates reachability; CLI --write-baseline creates or replaces baseline state.",
+    ),
+    "roam_rules_validate": (
+        ("--fix",),
+        "MCP validates rules; CLI --fix rewrites the rules file.",
+    ),
+    "roam_sbom": (
+        ("--output",),
+        "MCP returns the SBOM; CLI --output writes it to disk.",
+    ),
+    "roam_smells": (
+        ("--persist",),
+        "MCP returns smell findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_taint": (
+        ("--persist",),
+        "MCP returns taint findings; CLI --persist writes them to the findings registry.",
+    ),
+    "roam_tour": (
+        ("--write",),
+        "MCP returns the onboarding tour; CLI --write creates a tour artifact.",
+    ),
+    "roam_vibe_check": (
+        ("--persist",),
+        "MCP returns AI-rot findings; CLI --persist writes them to the findings registry.",
+    ),
 }
 
 
@@ -354,6 +480,109 @@ def _load_full_capability_registry():
             # only check parity for capabilities that DID register.
             pass
     return REGISTRY.items
+
+
+def _mcp_wrapper_executable_literals() -> dict[str, set[str]]:
+    """Return executable string literals for each ``@_tool`` wrapper.
+
+    Decorator descriptions and function docstrings are excluded: mentioning a
+    CLI-only flag in documentation is safe; forwarding that flag in executable
+    wrapper code is what would invalidate a read-only projection.
+    """
+    import ast
+    import inspect
+
+    import roam.mcp_server as mcp
+
+    source = inspect.getsource(mcp)
+    module = ast.parse(source)
+    result: dict[str, set[str]] = {}
+    for node in module.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        tool_name = ""
+        for decorator in node.decorator_list:
+            if not (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Name)
+                and decorator.func.id == "_tool"
+            ):
+                continue
+            for keyword in decorator.keywords:
+                if keyword.arg == "name" and isinstance(keyword.value, ast.Constant):
+                    if isinstance(keyword.value.value, str):
+                        tool_name = keyword.value.value
+        if not tool_name:
+            continue
+
+        body = list(node.body)
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+            if isinstance(body[0].value.value, str):
+                body = body[1:]
+        executable = ast.Module(body=body, type_ignores=[])
+        result[tool_name] = {
+            item.value
+            for item in ast.walk(executable)
+            if isinstance(item, ast.Constant) and isinstance(item.value, str)
+        }
+    return result
+
+
+def test_read_only_projection_exceptions_are_evidence_backed():
+    """Every CLI-max-effect/MCP-read-only divergence must remain narrowly true."""
+    import importlib
+
+    import roam.mcp_server as mcp
+
+    caps = _load_full_capability_registry()
+    wrapper_literals = _mcp_wrapper_executable_literals()
+    stale_surface: list[tuple[str, object, object]] = []
+    missing_cli_flags: list[tuple[str, list[str]]] = []
+    forwarded_effect_flags: list[tuple[str, list[str]]] = []
+    missing_wrappers: list[str] = []
+    bad_rationales: list[str] = []
+
+    for tool_name, (effect_flags, rationale) in _MCP_READ_ONLY_CLI_MAX_EFFECT_PROJECTIONS.items():
+        meta = mcp._TOOL_METADATA.get(tool_name)
+        cap_name = _mcp_name_to_capability_name(tool_name)
+        cap = caps.get(cap_name)
+        if meta is None or cap is None:
+            stale_surface.append((tool_name, meta, cap))
+            continue
+        if meta.get("read_only", True) is not True or cap.side_effect is not True:
+            stale_surface.append((tool_name, meta.get("read_only", True), cap.side_effect))
+        if not effect_flags or not rationale.strip():
+            bad_rationales.append(tool_name)
+
+        command = getattr(importlib.import_module(cap.module), cap.func_name)
+        cli_flags = {
+            option
+            for param in command.params
+            for option in (*getattr(param, "opts", ()), *getattr(param, "secondary_opts", ()))
+        }
+        absent = sorted(set(effect_flags) - cli_flags)
+        if absent:
+            missing_cli_flags.append((tool_name, absent))
+
+        literals = wrapper_literals.get(tool_name)
+        if literals is None:
+            missing_wrappers.append(tool_name)
+            continue
+        forwarded = sorted(set(effect_flags) & literals)
+        if forwarded:
+            forwarded_effect_flags.append((tool_name, forwarded))
+
+    assert not stale_surface, (
+        "Stale MCP read-only projection classifications; each entry must still be "
+        f"read_only=True against a side_effect=True CLI capability: {stale_surface}"
+    )
+    assert not bad_rationales, f"Projection entries require effect flags and a rationale: {bad_rationales}"
+    assert not missing_cli_flags, f"Documented CLI effect flags no longer exist: {missing_cli_flags}"
+    assert not missing_wrappers, f"Documented MCP wrappers no longer exist: {missing_wrappers}"
+    assert not forwarded_effect_flags, (
+        "Read-only MCP projections now forward CLI effect flags; update metadata or narrow the wrapper: "
+        f"{forwarded_effect_flags}"
+    )
 
 
 def test_capability_destructive_matches_tool_metadata():
@@ -395,9 +624,8 @@ def test_capability_read_only_matches_tool_metadata():
     """3rd-surface parity: ``Capability.side_effect`` ↔ NOT ``_TOOL_METADATA[..]["read_only"]``.
 
     ``side_effect=True`` ↔ ``read_only=False`` (same axis, inverted vocabulary).
-    Quarantine list above admits intentional divergences (artefact-writing
-    tools where the capability registry tracks any disk write but the MCP
-    read_only axis tracks only graph mutation).
+    The evidence-backed map above admits only narrower MCP projections whose
+    executable wrappers omit the broad CLI command's effectful flags.
     """
     import roam.mcp_server as mcp
 
@@ -408,7 +636,7 @@ def test_capability_read_only_matches_tool_metadata():
         cap = caps.get(cap_name)
         if cap is None:
             continue
-        if tool_name in _READ_ONLY_PARITY_QUARANTINE:
+        if tool_name in _MCP_READ_ONLY_CLI_MAX_EFFECT_PROJECTIONS:
             continue
         mcp_read_only = bool(meta.get("read_only", True))
         cap_side_effect = bool(cap.side_effect)
@@ -421,5 +649,5 @@ def test_capability_read_only_matches_tool_metadata():
         f"Each row: (tool_name, _TOOL_METADATA, Capability). They should be "
         f"INVERSES (read_only=True ↔ side_effect=False).\n"
         f"Fix: pick the truthful value, update the disagreeing surface, OR add "
-        f"an entry to _READ_ONLY_PARITY_QUARANTINE with a one-line rationale."
+        f"an evidence-backed entry to _MCP_READ_ONLY_CLI_MAX_EFFECT_PROJECTIONS."
     )

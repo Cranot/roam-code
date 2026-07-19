@@ -254,9 +254,9 @@ def test_cumulative_modes_from_constitution(fresh_repo):
     """If the constitution declares modes, list_modes honours them.
 
     Constitution lists are treated as REPLACEMENTS (the loader's default
-    is already cumulative). We test that the read_only list can be made
-    smaller via constitution, and that absent modes fall back to baked
-    defaults.
+    is already cumulative). A fresh digest-bound generated snapshot remains
+    complete; partial customized inheritance is pinned separately in
+    ``test_constitution.py``.
     """
     from roam.constitution.loader import init_constitution, load_constitution
     from roam.modes import list_modes

@@ -253,7 +253,7 @@ def stub_primitives(monkeypatch):
     """
     from roam.commands import cmd_service_report as mod
 
-    def _fake_run_roam_json(args):
+    def _fake_run_roam_json(args, **_kwargs):
         return _CANNED.get(args[0], {})
 
     def _fake_run_postmortem(commit_range, *, limit=100):
@@ -369,6 +369,10 @@ def test_json_envelope_is_well_formed(stub_primitives):
     assert "verdict" in summary
     assert "generated_at" in summary
     assert "sections_present" in summary
+    assert summary["sections_failed"] == []
+    assert summary["sections_degraded"] == []
+    assert summary["state"] == "complete"
+    assert summary["partial_success"] is False
     # Body
     assert isinstance(envelope.get("sections"), dict)
     assert isinstance(envelope.get("report_markdown"), str)
@@ -382,6 +386,182 @@ def test_json_envelope_sections_present_lists_run_commands(stub_primitives):
     present = envelope["summary"]["sections_present"]
     assert "health" in present
     assert "clones" in present
+
+
+def test_component_failure_is_visible_in_text_and_json(stub_primitives, monkeypatch):
+    """One absent primitive cannot collapse into a successful-looking report."""
+    mod = stub_primitives
+
+    def _partially_failed(args, **_kwargs):
+        if args[0] == "health":
+            return mod._component_failure("health", "component_timeout", "timed out after 180s")
+        return _CANNED.get(args[0], {})
+
+    monkeypatch.setattr(mod, "_run_roam_json", _partially_failed)
+    code, text_report = _invoke("--type", "due-diligence")
+    assert code == 0
+    assert "**Partial report:**" in text_report
+    assert "`health`" in text_report
+
+    code, output = _invoke("--type", "due-diligence", json_mode=True)
+    assert code == 0
+    envelope = _json.loads(output[output.find("{") :])
+    summary = envelope["summary"]
+    assert summary["partial_success"] is True
+    assert summary["state"] == "component_failure"
+    assert summary["sections_failed"] == ["health"]
+    assert "partial report" in summary["verdict"]
+    assert envelope["sections"]["health"]["isError"] is True
+
+
+# ---------------------------------------------------------------------------
+# Component process boundary
+# ---------------------------------------------------------------------------
+
+
+def test_component_runner_uses_literal_isolated_argv(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    seen = {}
+
+    class _Process:
+        returncode = 0
+
+        def communicate(self, timeout):
+            seen["timeout"] = timeout
+            return b'progress\n{"summary":{"verdict":"ok"}}', b""
+
+    def _popen(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return _Process()
+
+    monkeypatch.setattr(mod._subprocess, "Popen", _popen)
+    result = mod._run_roam_json(["version"])
+
+    assert seen["argv"][1:] == ["-m", "roam", "--json", "version"]
+    assert seen["kwargs"]["shell"] is False
+    assert seen["kwargs"]["stdin"] is mod._subprocess.DEVNULL
+    assert seen["timeout"] == mod._COMPONENT_TIMEOUT_SECONDS
+    assert result["summary"]["verdict"] == "ok"
+
+
+def test_component_runner_terminates_process_tree_on_timeout(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    class _TimedOutProcess:
+        returncode = None
+
+        def __init__(self):
+            self.calls = 0
+
+        def communicate(self, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                raise mod._subprocess.TimeoutExpired(cmd="roam", timeout=timeout)
+            return b"", b""
+
+    proc = _TimedOutProcess()
+    monkeypatch.setattr(mod._subprocess, "Popen", lambda *a, **k: proc)
+    terminated = []
+    monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda value: terminated.append(value) or True)
+
+    result = mod._run_roam_json(["clones"])
+
+    assert terminated == [proc]
+    assert result["isError"] is True
+    assert result["summary"]["state"] == "component_timeout"
+    assert result["summary"]["partial_success"] is True
+
+
+def test_component_runner_refuses_launch_after_report_deadline(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    monkeypatch.setattr(mod._time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(
+        mod._subprocess,
+        "Popen",
+        lambda *a, **k: pytest.fail("expired report component must not launch"),
+    )
+
+    result = mod._run_roam_json(["smells"], deadline=110.0)
+
+    assert result["isError"] is True
+    assert result["summary"]["state"] == "report_deadline_exhausted"
+    assert "before component launch" in result["summary"]["verdict"]
+
+
+def test_component_runner_uses_remaining_report_budget_and_cleans_tree(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    seen = {}
+
+    class _TimedOutProcess:
+        returncode = None
+
+        def __init__(self):
+            self.calls = 0
+
+        def communicate(self, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                seen["timeout"] = timeout
+                raise mod._subprocess.TimeoutExpired(cmd="roam", timeout=timeout)
+            return b"", b""
+
+    proc = _TimedOutProcess()
+    monkeypatch.setattr(mod._time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(mod._subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda value: value is proc)
+
+    result = mod._run_roam_json(["sbom"], deadline=150.0)
+
+    assert seen["timeout"] == 50.0 - mod._DEADLINE_CLEANUP_RESERVE_SECONDS
+    assert result["isError"] is True
+    assert result["summary"]["state"] == "report_deadline_exhausted"
+    assert "process tree terminated" in result["summary"]["verdict"]
+
+
+def test_due_diligence_uses_one_bounded_report_deadline(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    deadlines = []
+
+    def _fake_gather(components, *, max_workers=mod._COMPONENT_MAX_WORKERS, deadline=None):
+        del max_workers
+        deadlines.append(deadline)
+        return {key: {"command": args[0], "summary": {"verdict": f"{key} evidence"}} for key, args in components}
+
+    monkeypatch.setattr(mod._time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(mod, "_gather_components", _fake_gather)
+
+    result = mod._gather_due_diligence()
+
+    assert tuple(result) == tuple(key for key, _args in mod._DUE_DILIGENCE_COMPONENTS)
+    assert deadlines == [100.0 + mod._DUE_DILIGENCE_BUDGET_SECONDS] * 5
+
+
+@pytest.mark.parametrize(
+    ("payload", "state"),
+    [
+        (b'{"summary":{"verdict":"first"},"summary":{"verdict":"last"}}', "component_malformed_output"),
+        (b"[]", "component_empty_output"),
+        (b"no json here", "component_empty_output"),
+    ],
+)
+def test_component_runner_rejects_ambiguous_or_invalid_envelopes(monkeypatch, payload, state):
+    from roam.commands import cmd_service_report as mod
+
+    class _Process:
+        returncode = 0
+
+        def communicate(self, timeout):
+            return payload, b""
+
+    monkeypatch.setattr(mod._subprocess, "Popen", lambda *a, **k: _Process())
+    result = mod._run_roam_json(["health"])
+    assert result["isError"] is True
+    assert result["summary"]["state"] == state
 
 
 # ---------------------------------------------------------------------------

@@ -12,13 +12,21 @@ enumeration layer and the leaf reader seals that.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+from conftest import SYMLINK_SKIP_REASON, symlink_supported  # noqa: E402
 
 from roam.plan.import_audit import (
     _audit_file_contained,
     _audit_source_files_in_dir,
     _file_import_effects,
 )
+
+pytestmark = pytest.mark.skipif(not symlink_supported(), reason=SYMLINK_SKIP_REASON)
 
 
 def _repo_with_symlink(tmp_path: Path) -> tuple[Path, Path, Path, Path]:

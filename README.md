@@ -136,8 +136,10 @@ roam hooks claude --write     # compile-before + verify-after, wired into Claude
 ```
 
 Then use `claude` exactly as you always do. Undo anytime with
-`roam hooks claude --uninstall --write`. A broken install can never block
-your agent — every hook is fail-open.
+`roam hooks claude --uninstall --write`. Compile-time context injection is
+fail-open. After an edited turn, the Stop gate is deliberately fail-closed:
+findings, malformed output, an unavailable check, or incomplete evidence must
+be resolved before Claude reports completion. No-edit Q&A turns fast-exit.
 
 **What that buys you, measured head-to-head on Claude** (same prompts, same
 repo, with and without the compiler — June 2026, 41 cells):
@@ -269,7 +271,8 @@ Private per-task tables and raw cells are retained for audit; the public summary
 Headless for scripts and CI: `roam compile "<task>" --artifact auto`.
 Prefer a dedicated product CLI? The same loop ships as
 [**compile-code**](https://github.com/Cranot/compile-code) —
-`pip install git+https://github.com/Cranot/compile-code && compile claude`.
+starting with v0.2.0, install it from PyPI with `pip install compile-code`,
+then run `compile claude`.
 
 ### The verify half of the loop — what runs after every edit
 
@@ -296,13 +299,14 @@ checks, source edits unlock naming/duplicates), and runs:
   each with the better approach and a fix sketch
 
 **The fix loop.** Wired via `roam hooks claude --write`, findings come back
-to the agent as an actionable list — *fix or suppress, then re-verify* — and
-the loop re-runs automatically until quiet (bounded rounds). Findings the
-agent disagrees with go to `.roam-suppressions.yml`, keyed by **symbol** so
-a suppression survives refactors that shift line numbers; the file is
-append-only (a suppression is never silently dropped). Everything is
-fail-open and quiet-on-pass: the loop surfaces only real findings, and a
-broken install can never block a turn.
+to the agent as an actionable list — *fix, then re-verify* — and the gate runs
+again on each correction (Claude bounds consecutive continuations). A
+human-reviewed exception can be recorded in `.roam-suppressions.yml`, keyed by
+**symbol** so it survives refactors that shift line numbers; automatic hook
+corrections cannot alter suppressions, policy, baselines, or verification
+scope. The compile hook remains fail-open. The edited-turn Stop gate is quiet
+only on a complete PASS and blocks when verification is unavailable,
+malformed, incomplete, or reports non-advisory findings.
 
 **Scoping and debt control** — the flags that make verify usable on a
 codebase with history:
@@ -337,10 +341,10 @@ refactors, never lose entries).
 
 ## What's New
 
-**v13.6 (2026-06-11) — the verify loop grows teeth + compiler injection economics.** A default secrets-leak gate and scoped algorithm sweep run after every edit; suppressions are symbol-keyed so they survive refactors; and the compiler now skips generation-shaped prompts (measured overhead) while ranking retrieval by graph importance. Full notes below · [CHANGELOG.md](CHANGELOG.md).
+**v13.10 (2026-07-18) — repeated work becomes measurable procedures, and post-edit verification becomes proof-complete.** Privacy-preserving transcript/shell-template mining can nominate repeated-work interventions without exposing raw prompts or claiming causal savings; `roam savings` promotes only prospectively joined, integrity-checked outcomes. The Claude adapter now binds every edited turn to a strict Verify receipt and blocks unavailable, malformed, incomplete, or failing evidence. Roam owns the canonical hooks end to end—Compile Code no longer rewrites installed source. Full notes: [CHANGELOG.md](CHANGELOG.md).
 
 <details>
-<summary><strong>Release notes — v13.6 → v13.0</strong></summary>
+<summary><strong>Earlier release notes — v13.6 → v13.0</strong></summary>
 
 **v13.6 (2026-06-11) — The verify loop grows teeth + compiler injection economics.** The post-edit loop now runs a **secrets leak gate** by default (credential shapes + an optional repo-local `.roam-leak-patterns.py` catalogue) and an advisory **algorithm/idiom sweep** scoped to the diff; suppressions are **symbol-keyed** (refactor-proof) and the suppression file is append-only after a confirmed data-loss fix; the naming rule samples production code only (~2000 false positives removed on a test-heavy codebase) and `verify --auto` is **16× faster** on sweeping diffs. The compiler learns injection economics — generation-shaped prompts get **no envelope** (measured pure overhead) — plus graph-ranked retrieval (PageRank + file-role + path-token blend), new answer probes (taint scan, world-model idempotency/side-effects, design patterns, scoped algo findings, and verify findings riding into envelopes as `known_findings`), and routing waves for trace/entry-point phrasings. New offline lock suites (procedure-registry lint, suppression fuzz corpus, self-dogfood FP lock, envelope byte budgets, L1-rate floor) and a `prepush_check.py --release` gate that proves the full CI surface green before any release push. Full diff in [CHANGELOG.md](CHANGELOG.md).
 
@@ -548,7 +552,7 @@ roam mcp
 
 **Cold-start envelope.** Any wrapper that can't complete normally — missing index, stale index, partial failure — returns one canonical structured envelope (`status`, `error_code`, `summary.verdict`, `hint`, `next_command`) instead of hanging or emitting empty output. Agents always get an actionable signal, never a silent failure.
 
-**MCP runtime security.** Three controls run at the wrapper boundary inside the server, protecting every client even with no gateway present: egress secret-redaction, mode-gated `policy_decision` enforcement (opt-in shadow-mode via `ROAM_MODE_DRY_RUN`), and HMAC-linked decision receipts bound into the signed run ledger. Gateway integrators: see [`dev/MCP-SECURITY-POSTURE.md`](dev/MCP-SECURITY-POSTURE.md).
+**MCP runtime security.** Three controls run at the wrapper boundary inside the server, protecting every client even with no gateway present: egress secret-redaction, mode-gated `policy_decision` enforcement (opt-in shadow-mode via `ROAM_MODE_DRY_RUN`), and HMAC-linked decision receipts bound into the signed run ledger. Mixed query/write tools are classified per invocation, so a read-only form stays available while an explicit persist/write flag raises the required mode and receipt effects. Gateway integrators: see [`dev/MCP-SECURITY-POSTURE.md`](dev/MCP-SECURITY-POSTURE.md).
 
 See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run flow and canonical agent sequence.
 
@@ -790,7 +794,7 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 | `roam_validate_plan` | Pre-apply validator for a multi-step change plan. Returns blockers, warnings, advice per operation. |
 | `roam_verdict` | Compute a closed-enum verdict (pass / pass_with_warnings / needs_review / blocked) from the active pr-bundle. Pure judgment layer — no rendering, no log, no GH POST. |
 | `roam_verification_contract` | Compute the minimal `{required, skipped}` verification set for the current changed_files × risk × mode × policy. Surfaces what an agent MUST run before its PR can pass. |
-| `roam_verify` | Check changed files for naming, import, error-handling, and duplicate issues. |
+| `roam_verify` | Run the post-edit proof gate over every changed file. |
 | `roam_verify_imports` | Hallucination firewall: validate import statements resolve to indexed symbols. |
 | `roam_vibe_check` | AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns. |
 | `roam_visualize` | Generate Mermaid/DOT architecture diagram with smart filtering. |
@@ -850,17 +854,19 @@ on: [pull_request]
 
 jobs:
   roam:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-      - uses: Cranot/roam-code@main
+          persist-credentials: false
+      # Resolve v13.10.0 after release and pin its reviewed 40-character SHA.
+      - uses: Cranot/roam-code@v13.10.0
         with:
           commands: health
           gate: "score>=70"
-          sarif: true
-          comment: true
+          sarif: 'true'
+          comment: 'true'
 ```
 
 `roam init` auto-generates this workflow. The Action accepts `commands`, `gate` (quality-gate expression, exit 5 on failure), `sarif` (upload to GitHub Code Scanning), `comment` (sticky PR comment), `cache`, and `changed-only` (incremental mode).
@@ -869,7 +875,7 @@ jobs:
 
 ```yaml
 - run: roam --sarif health > roam-health.sarif
-- uses: github/codeql-action/upload-sarif@v3
+- uses: github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57 # v3.36.0
   with:
     sarif_file: roam-health.sarif
 ```

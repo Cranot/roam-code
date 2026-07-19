@@ -10,6 +10,16 @@ updates:
       - dependencies
     commit-message:
       prefix: "deps"
+    # Let newly published versions mature before routine lock refreshes.
+    # GitHub applies cooldown only to version updates; vulnerability-driven
+    # security updates continue immediately and bypass these delays.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
+      include:
+        - "*"
     # Suppress major-version bumps on deps with a track record of
     # closed-without-merge PRs (test-budget drift on graph algorithms,
     # API churn on numerical libraries). Minor + patch bumps stay
@@ -33,3 +43,10 @@ updates:
       - ci
     commit-message:
       prefix: "ci"
+    # GitHub Actions supports the ecosystem-wide default cooldown. Keep the
+    # window short so reviewed SHA bumps remain prompt while avoiding day-zero
+    # adoption of a compromised or immediately regressed action release.
+    cooldown:
+      default-days: 7
+      include:
+        - "*"

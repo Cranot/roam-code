@@ -24,10 +24,10 @@ collapse has regressed.
 
 from __future__ import annotations
 
-# The pre-collapse hardcoded set. Before W113, ``_NON_IDEMPOTENT_TOOLS``
-# was a ``.copy()`` of ``_NON_READ_ONLY_TOOLS`` (W108) — same 6 tools.
-# Treat this as the regression floor.
-PRE_COLLAPSE_NON_IDEMPOTENT = {
+# Audited source-of-truth membership. The first entries are the W113
+# regression floor; the remaining entries are the 13.10 maximum-callable-
+# effects audit. Every expansion is therefore an explicit authority review.
+AUDITED_NON_IDEMPOTENT = {
     "roam_annotate_symbol",
     "roam_ingest_trace",
     "roam_vuln_map",
@@ -37,6 +37,16 @@ PRE_COLLAPSE_NON_IDEMPOTENT = {
     # Wave 10 (Roam Guard MCP wrappers): guard-pr appends to verdict-log.jsonl
     # AND optionally POSTs a GitHub Check Run — both non-idempotent side effects.
     "roam_guard_pr",
+    # 13.10 maximum callable effects audit.
+    "roam_cga_emit",
+    "roam_compile",
+    "roam_dogfood",
+    "roam_metrics_push",
+    "roam_pr_analyze",
+    "roam_stale_refs",
+    "roam_test_scaffold",
+    "roam_trends",
+    "roam_verify",
 }
 
 
@@ -86,7 +96,7 @@ def test_non_idempotent_tools_membership_pinned() -> None:
     """
     from roam.mcp_server import _NON_IDEMPOTENT_TOOLS
 
-    missing = PRE_COLLAPSE_NON_IDEMPOTENT - _NON_IDEMPOTENT_TOOLS
+    missing = AUDITED_NON_IDEMPOTENT - _NON_IDEMPOTENT_TOOLS
     assert not missing, (
         f"Non-idempotent markers lost during collapse: {sorted(missing)}. "
         f"These tools were marked non-idempotent before ROADMAP A1 W113 but "
@@ -98,11 +108,11 @@ def test_non_idempotent_tools_membership_pinned() -> None:
     # And the reverse — if the derived view has GROWN, that's also worth
     # surfacing (so a new non-idempotent tool gets a deliberate test
     # update rather than silently widening the set).
-    extra = _NON_IDEMPOTENT_TOOLS - PRE_COLLAPSE_NON_IDEMPOTENT
+    extra = _NON_IDEMPOTENT_TOOLS - AUDITED_NON_IDEMPOTENT
     assert not extra, (
         f"_NON_IDEMPOTENT_TOOLS gained unexpected members: {sorted(extra)}. "
         f"If a new tool was intentionally marked idempotent=False on its "
-        f"@_tool decorator, update PRE_COLLAPSE_NON_IDEMPOTENT in this test "
+        f"@_tool decorator, update AUDITED_NON_IDEMPOTENT in this test "
         f"file to reflect the new floor."
     )
 
@@ -129,7 +139,7 @@ def test_default_idempotent_is_true() -> None:
     )
 
     # Sample a well-known idempotent tool and assert its metadata reflects
-    # the default. ``roam_health`` is not in PRE_COLLAPSE_NON_IDEMPOTENT,
+    # the default. ``roam_health`` is not in AUDITED_NON_IDEMPOTENT,
     # so it must have metadata idempotent=True via the decorator default.
     meta = mcp._TOOL_METADATA.get("roam_health")
     assert meta is not None, (
@@ -150,7 +160,7 @@ def test_idempotent_decorator_kwarg_propagates_to_metadata() -> None:
     """
     import roam.mcp_server as mcp
 
-    for name in PRE_COLLAPSE_NON_IDEMPOTENT:
+    for name in AUDITED_NON_IDEMPOTENT:
         meta = mcp._TOOL_METADATA.get(name)
         assert meta is not None, f"_TOOL_METADATA missing {name!r} — decorator did not register it."
         assert meta.get("idempotent") is False, (
@@ -189,9 +199,9 @@ def test_idempotent_hint_in_annotations_matches_derived_view() -> None:
 def test_idempotent_axis_independent_of_read_only() -> None:
     """W113 decoupled ``idempotent`` from ``read_only``: each is a
     separate first-class kwarg on ``@_tool`` and populates its own slot
-    in ``_TOOL_METADATA``. In the CURRENT data the two axes coincide
-    (every non-read-only tool happens to be non-idempotent), but the
-    decorator surface MUST expose them independently so a future tool
+    in ``_TOOL_METADATA``. The current data deliberately includes both
+    non-read-only/idempotent and non-read-only/non-idempotent tools; the
+    decorator surface MUST keep those axes independent so a future tool
     can be ``read_only=True, idempotent=False`` (e.g. a read-only tool
     that returns a fresh UUID per call) without re-introducing a
     split-brain set.
@@ -233,7 +243,21 @@ def test_idempotent_axis_independent_of_read_only() -> None:
     # Wave 20: `roam_guard_clean` rewrites the verdict log atomically — it
     # mutates state (read_only=False) but re-running on an already-trimmed
     # log is a no-op (idempotent=True). Same axis split as roam_clean / roam_reset.
-    expected_divergence = {"roam_reset", "roam_clean", "roam_guard_clean"}
+    # The 13.10 maximum-callable-effects audit added option-dependent writers
+    # whose repeated writes converge on the same state. They remain writes,
+    # but are idempotent in the MCP protocol sense.
+    expected_divergence = {
+        "roam_reset",
+        "roam_clean",
+        "roam_guard_clean",
+        "roam_boundary",
+        "roam_evidence_oscal",
+        "roam_fan",
+        "roam_fingerprint",
+        "roam_graph_diff",
+        "roam_test_hermeticity",
+        "roam_vuln_reach",
+    }
     actual_divergence = mcp._NON_READ_ONLY_TOOLS - mcp._NON_IDEMPOTENT_TOOLS
     assert actual_divergence == expected_divergence, (
         f"Unexpected divergence between _NON_READ_ONLY_TOOLS and "

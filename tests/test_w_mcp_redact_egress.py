@@ -5,7 +5,7 @@ MCP-P0.1 motivation: ``redact_secrets_in_string`` ships in
 PAT, sk-prefix, AWS AKIA, Bearer, PEM, JWT) but historically was never
 wired into the MCP egress path. This test pins the fix:
 
-1. A sensitive tool that returns a string containing a secret-shaped
+1. Every tool, including an ordinary read-only tool, that returns a secret-shaped
    token must NOT leak the verbatim secret to the MCP client.
 2. The receipt's ``redactions`` tuple must contain ``"secret"``.
 3. The receipt's ``output_hash`` must hash the REDACTED output
@@ -19,6 +19,7 @@ Mirrors the harness pattern in ``tests/test_mcp_receipt_emitter.py``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -50,6 +51,10 @@ def isolated_repo(tmp_path, monkeypatch):
     monkeypatch.delenv("ROAM_RUN_ID", raising=False)
     monkeypatch.delenv("ROAM_AGENT_ID", raising=False)
     monkeypatch.delenv("ROAM_MCP_CLIENT_ID", raising=False)
+    # Synthetic tools are intentionally absent from policy allow-lists; keep
+    # these redaction-only tests on the explicit audited permissive path.
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
+    monkeypatch.delenv("ROAM_MODE_DRY_RUN", raising=False)
     return tmp_path
 
 
@@ -72,6 +77,39 @@ def _register_sensitive_returning(monkeypatch, name: str, return_value):
             "version": "0.0.0",
         },
     )
+
+    def _inner(**kwargs):
+        return return_value
+
+    return m._wrap_with_receipt(name, _inner)
+
+
+def _register_readonly_returning(monkeypatch, name: str, return_value, *, async_tool: bool = False):
+    """Register an ordinary read-only tool; it is secure but receipt-free."""
+    import roam.mcp_server as m
+
+    monkeypatch.setitem(
+        m._TOOL_METADATA,
+        name,
+        {
+            "name": name,
+            "title": name,
+            "description": "synthetic read-only test fixture",
+            "core": False,
+            "read_only": True,
+            "destructive": False,
+            "idempotent": True,
+            "task_mode": None,
+            "version": "0.0.0",
+        },
+    )
+
+    if async_tool:
+
+        async def _async_inner(**kwargs):
+            return return_value
+
+        return m._wrap_with_receipt(name, _async_inner)
 
     def _inner(**kwargs):
         return return_value
@@ -110,6 +148,97 @@ def test_egress_redaction_strips_secret_from_client_visible_output(isolated_repo
     # Wrapper-bridge passthrough invariant: _meta.cli_exit_code is an int
     # and must survive the recursive walk unchanged.
     assert result["_meta"]["cli_exit_code"] == 0
+
+
+def test_ordinary_readonly_tool_redacts_canary_without_emitting_receipt(isolated_repo, monkeypatch) -> None:
+    """Receipt suppression must never suppress the egress security boundary."""
+    raw_output = {
+        "command": "stub_readonly_leaky",
+        "summary": {"verdict": f"read-only result contained {_SECRET_TOKEN}"},
+    }
+    wrapped = _register_readonly_returning(monkeypatch, "stub_readonly_leaky", raw_output)
+
+    result = wrapped()
+
+    flat = json.dumps(result)
+    assert _SECRET_TOKEN not in flat
+    assert _REDACTED_PLACEHOLDER in flat
+    assert _read_receipts(isolated_repo / ".roam" / "mcp_receipts") == []
+
+
+def test_async_readonly_tool_uses_the_same_egress_redaction_boundary(isolated_repo, monkeypatch) -> None:
+    raw_output = {
+        "command": "stub_async_readonly_leaky",
+        "summary": {"verdict": f"async read-only result contained {_SECRET_TOKEN}"},
+    }
+    wrapped = _register_readonly_returning(
+        monkeypatch,
+        "stub_async_readonly_leaky",
+        raw_output,
+        async_tool=True,
+    )
+
+    result = asyncio.run(wrapped())
+
+    flat = json.dumps(result)
+    assert _SECRET_TOKEN not in flat
+    assert _REDACTED_PLACEHOLDER in flat
+    assert _read_receipts(isolated_repo / ".roam" / "mcp_receipts") == []
+
+
+def test_redactor_exception_fails_closed_without_raw_output(isolated_repo, monkeypatch) -> None:
+    """A broken scrubber returns a constant failure, never the original bytes."""
+    import roam.security.redact as redaction
+
+    raw_output = {
+        "command": "stub_readonly_redactor_failure",
+        "summary": {"verdict": f"must stay private {_SECRET_TOKEN}"},
+    }
+    wrapped = _register_readonly_returning(
+        monkeypatch,
+        "stub_readonly_redactor_failure",
+        raw_output,
+    )
+
+    def _broken_redactor(_value):
+        raise RuntimeError(f"synthetic redactor exception echoed {_SECRET_TOKEN}")
+
+    monkeypatch.setattr(redaction, "redact_secrets_in_value", _broken_redactor)
+    result = wrapped()
+
+    flat = json.dumps(result)
+    assert _SECRET_TOKEN not in flat
+    assert result["isError"] is True
+    assert result["error_code"] == "COMMAND_FAILED"
+    assert result["status"] == "hard_failure"
+    assert _read_receipts(isolated_repo / ".roam" / "mcp_receipts") == []
+
+
+def test_sensitive_redactor_exception_receipt_uses_existing_policy_enum(isolated_repo, monkeypatch) -> None:
+    """Conditional receipts describe fail-closed withholding without enum drift."""
+    import roam.security.redact as redaction
+
+    raw_output = {
+        "command": "stub_sensitive_redactor_failure",
+        "summary": {"verdict": f"must stay private {_SECRET_TOKEN}"},
+    }
+    wrapped = _register_sensitive_returning(
+        monkeypatch,
+        "stub_sensitive_redactor_failure",
+        raw_output,
+    )
+
+    def _broken_redactor(_value):
+        raise RuntimeError(f"synthetic redactor exception echoed {_SECRET_TOKEN}")
+
+    monkeypatch.setattr(redaction, "redact_secrets_in_value", _broken_redactor)
+    result = wrapped()
+
+    assert result["isError"] is True
+    receipts = _read_receipts(isolated_repo / ".roam" / "mcp_receipts")
+    assert len(receipts) == 1
+    assert receipts[0]["redactions"] == ["policy"]
+    assert _SECRET_TOKEN not in json.dumps(receipts[0])
 
 
 def test_receipt_redactions_field_records_secret_reason(isolated_repo, monkeypatch) -> None:

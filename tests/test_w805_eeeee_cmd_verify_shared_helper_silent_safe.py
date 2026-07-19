@@ -170,26 +170,15 @@ def clean_indexed_project(tmp_path):
 
 
 class TestCmdVerifyConsumesSharedHelper:
-    """W978 first-hypothesis verification: cmd_verify imports + calls
-    ``get_changed_files``. Source-level invariant elevating W805-EEEEE
-    from a coincidental shape match to a structural shared-helper
-    audit."""
+    """Pin verify's status-based target discovery implementation."""
 
     def test_cmd_verify_consumes_get_changed_files(self):
-        """Source-level check: cmd_verify imports + calls get_changed_files."""
+        """Verify owns explicit, failure-aware porcelain-status discovery."""
         src = (Path(__file__).resolve().parent.parent / "src" / "roam" / "commands" / "cmd_verify.py").read_text(
             encoding="utf-8"
         )
-        assert "from roam.commands.changed_files import" in src, (
-            "W805-EEEEE W978-precondition: cmd_verify must import from "
-            "roam.commands.changed_files; if this changed, re-audit the "
-            "shared-helper family membership."
-        )
-        assert "get_changed_files(" in src, (
-            "W805-EEEEE W978-precondition: cmd_verify must call "
-            "get_changed_files; if this changed, re-audit the shared-"
-            "helper family membership."
-        )
+        assert "def _discover_verify_targets(root: Path) -> dict:" in src
+        assert '"status", "--porcelain=v1", "-z", "--untracked-files=all"' in src
 
 
 # ---------------------------------------------------------------------------
@@ -231,24 +220,12 @@ class TestChangedModeNoSignatureTypeError:
         )
 
     def test_verify_call_site_uses_correct_signature(self):
-        """Source-level: line 706 call site must pass ``root`` positionally,
-        not use the broken ``base=`` keyword pattern from W805-CCCCC."""
+        """The target resolver passes the repository root positionally."""
         src = (Path(__file__).resolve().parent.parent / "src" / "roam" / "commands" / "cmd_verify.py").read_text(
             encoding="utf-8"
         )
-        # Find the single get_changed_files( call.
-        matches = list(re.finditer(r"get_changed_files\(([^)]*)\)", src))
-        assert len(matches) == 1, (
-            f"W805-EEEEE: cmd_verify must have exactly one get_changed_files call site; got {len(matches)}"
-        )
-        call_args = matches[0].group(1).strip()
-        # W805-CCCCC bug pattern: ``base=`` keyword (helper has no such
-        # kwarg). Helper accepts ``base_ref=`` instead.
-        assert "base=" not in call_args, (
-            f"W805-EEEEE W805-CCCCC echo: cmd_verify must NOT use the "
-            f"``base=`` keyword (helper signature uses ``base_ref=``); "
-            f"got call args: {call_args!r}"
-        )
+        assert "_discover_verify_targets(root)" in src
+        assert "_discover_verify_targets(base=" not in src
 
 
 # ---------------------------------------------------------------------------

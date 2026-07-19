@@ -47,10 +47,16 @@ _ACCEPTABLE_DISCLOSURE_FRAGMENTS = (
 )
 
 
-def _assert_no_silent_safe(verdict: str) -> None:
+def _assert_no_silent_safe(verdict: str, *dynamic_values: object) -> None:
     lo = verdict.lower()
+    # Verdicts may disclose caller-provided paths.  Exclude those exact data
+    # values before testing policy vocabulary so directory names such as
+    # ``D:\\Safe`` or ``secure-fixtures`` do not become false positives.
+    semantic_verdict = lo
+    for value in dynamic_values:
+        semantic_verdict = semantic_verdict.replace(os.fspath(value).lower(), "<path>")
     for frag in _FORBIDDEN_VERDICT_FRAGMENTS:
-        assert frag not in lo, (
+        assert frag not in semantic_verdict, (
             f"Silent-SAFE Pattern-2 violation: empty-corpus verdict contains forbidden fragment {frag!r}: {verdict!r}"
         )
 
@@ -128,7 +134,7 @@ class TestTaintEmptyCorpus:
 
         _assert_envelope_shape(data)
         verdict = data["summary"]["verdict"]
-        _assert_no_silent_safe(verdict)
+        _assert_no_silent_safe(verdict, empty_rules, proj)
         # Positive disclosure — the verdict must name the absent state.
         lo = verdict.lower()
         assert any(frag in lo for frag in _ACCEPTABLE_DISCLOSURE_FRAGMENTS), (

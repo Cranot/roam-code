@@ -21,10 +21,11 @@ import re
 import stat as _stat_mod
 import subprocess
 import sys
+import threading as _threading
 import time as _time
 import warnings
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal
 
@@ -3662,7 +3663,7 @@ def _wrap_with_handle_off(name: str, fn):
 
 
 # ---------------------------------------------------------------------------
-# W196 - McpDecisionReceipt emission for sensitive tool calls
+# W196 - MCP security boundary + decision receipts for sensitive tool calls
 # ---------------------------------------------------------------------------
 #
 # Per ``(internal memo)`` §"MCP trust boundary"
@@ -3674,8 +3675,9 @@ def _wrap_with_handle_off(name: str, fn):
 #
 # Sensitive = at least one of: ``destructive=True``, ``read_only=False``,
 # ``idempotent=False``, ``task_mode="required"``. Read-only / idempotent
-# tools (search/symbol/describe/...) skip emission - they are high-volume
-# and benign; receipts are for the WRITE audit trail.
+# tools (search/symbol/describe/...) skip RECEIPT emission because they are
+# high-volume. They do NOT skip mode enforcement or egress redaction: those
+# controls apply to every tool result crossing the MCP boundary.
 #
 # Best-effort discipline: a receipt write that fails must NEVER break the
 # underlying tool call. The audit trail is opportunistic.
@@ -3691,6 +3693,305 @@ def _is_sensitive(meta: dict) -> bool:
         or not meta.get("read_only", True)
         or not meta.get("idempotent", True)
         or meta.get("task_mode") == "required"
+    )
+
+
+def _validated_mcp_run_id(value: object) -> str | None:
+    """Return a canonical run id or ``None`` for any unsafe value.
+
+    Receipt and ledger paths are influenced by ``ROAM_RUN_ID``. Reuse the
+    run substrate's closed grammar (``run_YYYYMMDD_<hex>``) rather than
+    treating an environment variable as a path component. Whitespace around
+    an otherwise canonical id remains compatible with the historical
+    ``.strip()`` behavior.
+    """
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    try:
+        from roam.runs.ledger import RUN_ID_RE
+    except Exception as exc:  # noqa: BLE001 - unavailable grammar disables run-linked writes
+        log_swallowed("mcp_server:validate_run_id:import", exc)
+        return None
+    return candidate if RUN_ID_RE.fullmatch(candidate) is not None else None
+
+
+def _validated_mcp_root_arg(args: Mapping[str, object] | None) -> tuple[str | None, bool]:
+    """Return ``(root, explicit)`` for one MCP invocation.
+
+    ``root`` is a security-boundary input because it selects the receipt tree,
+    active-run namespace, and HMAC key.  Accept ordinary strings and
+    ``os.PathLike`` objects whose ``__fspath__`` returns a string; bytes,
+    empty/whitespace-only values, and embedded NULs are rejected before any
+    filesystem lookup.  A missing/``None`` root preserves the historical
+    server-CWD behavior.
+    """
+    if args is None or "root" not in args or args.get("root") is None:
+        return None, False
+    root_arg = args.get("root")
+    if isinstance(root_arg, os.PathLike):
+        root_arg = os.fspath(root_arg)
+    if not isinstance(root_arg, str):
+        raise TypeError(f"root must be a path string, got {type(root_arg).__name__}")
+    if not root_arg.strip() or "\x00" in root_arg:
+        raise ValueError("root must be a non-empty path without NUL bytes")
+    return root_arg, True
+
+
+_MCP_RUN_META_MAX_BYTES = 1024 * 1024
+_MCP_LEDGER_MAX_BYTES = 64 * 1024 * 1024
+_MCP_LEDGER_APPEND_LOCK = _threading.Lock()
+
+
+def _mcp_stat_is_redirect(st: os.stat_result) -> bool:
+    """Return whether an ``lstat`` result names a link/reparse redirect.
+
+    ``Path.is_symlink()`` is insufficient on Windows: NTFS junctions are
+    directory reparse points but are not reported as symbolic links.  The
+    file-attribute check also covers mount-point and other reparse aliases on
+    Python versions that predate :meth:`Path.is_junction`.
+    """
+
+    if _stat_mod.S_ISLNK(st.st_mode):
+        return True
+    attributes = int(getattr(st, "st_file_attributes", 0) or 0)
+    reparse_flag = int(getattr(_stat_mod, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+    return bool(attributes & reparse_flag)
+
+
+def _mcp_path_identity(st: os.stat_result) -> tuple[int, int]:
+    """Return the stable filesystem identity used for race comparisons."""
+
+    return int(st.st_dev), int(st.st_ino)
+
+
+def _mcp_file_version(st: os.stat_result) -> tuple[int, int, int]:
+    """Return mutation-sensitive metadata for one already-pinned file."""
+
+    return (
+        int(st.st_size),
+        int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))),
+        int(getattr(st, "st_ctime_ns", int(st.st_ctime * 1_000_000_000))),
+    )
+
+
+def _mcp_lstat(path: Path, *, label: str) -> os.stat_result:
+    """``lstat`` *path* and reject every link/reparse-point redirect."""
+
+    st = os.lstat(path)
+    if _mcp_stat_is_redirect(st):
+        raise ValueError(f"{label} contains a filesystem redirect")
+    return st
+
+
+def _mcp_directory_identity(
+    path: Path,
+    *,
+    label: str,
+    expected: tuple[int, int] | None = None,
+) -> tuple[int, int]:
+    """Validate a real directory and optionally compare its pinned inode."""
+
+    st = _mcp_lstat(path, label=label)
+    if not _stat_mod.S_ISDIR(st.st_mode):
+        raise ValueError(f"{label} must be a directory")
+    identity = _mcp_path_identity(st)
+    if expected is not None and identity != expected:
+        raise ValueError(f"{label} changed after invocation binding")
+    return identity
+
+
+def _mcp_open_regular_file(
+    path: Path,
+    *,
+    label: str,
+    flags: int = os.O_RDONLY,
+    expected: tuple[int, int] | None = None,
+) -> tuple[int, tuple[int, int]]:
+    """Open one unaliased regular file and pin path identity to its handle.
+
+    The pre-open ``lstat`` rejects symlinks, junctions, and hardlinks.  The
+    post-open ``fstat`` then proves the opened handle is the same inode that was
+    inspected, closing deterministic path-swap races before any bytes are read
+    or written.  ``O_NOFOLLOW`` adds a kernel-level guard where available.
+    """
+
+    before = _mcp_lstat(path, label=label)
+    if not _stat_mod.S_ISREG(before.st_mode):
+        raise ValueError(f"{label} must be a regular file")
+    if int(before.st_nlink) != 1:
+        raise ValueError(f"{label} must not be hardlinked")
+    before_identity = _mcp_path_identity(before)
+    if expected is not None and before_identity != expected:
+        raise ValueError(f"{label} changed after invocation binding")
+
+    open_flags = flags | int(getattr(os, "O_BINARY", 0)) | int(getattr(os, "O_CLOEXEC", 0))
+    open_flags |= int(getattr(os, "O_NOINHERIT", 0)) | int(getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, open_flags)
+    try:
+        opened = os.fstat(fd)
+        if not _stat_mod.S_ISREG(opened.st_mode):
+            raise ValueError(f"{label} opened a non-regular file")
+        if int(opened.st_nlink) != 1:
+            raise ValueError(f"{label} opened a hardlinked file")
+        if _mcp_path_identity(opened) != before_identity:
+            raise ValueError(f"{label} changed while it was opened")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, before_identity
+
+
+def _mcp_read_regular_file(
+    path: Path,
+    *,
+    label: str,
+    max_bytes: int,
+    expected: tuple[int, int] | None = None,
+) -> tuple[bytes, tuple[int, int]]:
+    """Read a bounded regular file through a path-identity-pinned handle."""
+
+    fd, identity = _mcp_open_regular_file(path, label=label, expected=expected)
+    try:
+        before = os.fstat(fd)
+        size = int(before.st_size)
+        if size > max_bytes:
+            raise ValueError(f"{label} exceeds the {max_bytes}-byte safety limit")
+        chunks: list[bytes] = []
+        remaining = max_bytes + 1
+        while remaining:
+            chunk = os.read(fd, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        if len(payload) > max_bytes:
+            raise ValueError(f"{label} exceeds the {max_bytes}-byte safety limit")
+        after = os.fstat(fd)
+        if _mcp_path_identity(after) != identity or int(after.st_nlink) != 1:
+            raise ValueError(f"{label} changed while it was read")
+        if _mcp_file_version(after) != _mcp_file_version(before) or len(payload) != size:
+            raise ValueError(f"{label} content changed while it was read")
+    finally:
+        os.close(fd)
+
+    # Recheck the namespace after closing the handle.  A replacement now is a
+    # failure rather than permission to consume bytes from a detached inode.
+    _mcp_open_and_close_identity(path, label=label, expected=identity)
+    return payload, identity
+
+
+def _mcp_open_and_close_identity(
+    path: Path,
+    *,
+    label: str,
+    expected: tuple[int, int] | None = None,
+) -> tuple[int, int]:
+    """Validate a regular file identity without consuming its contents."""
+
+    fd, identity = _mcp_open_regular_file(path, label=label, expected=expected)
+    os.close(fd)
+    return identity
+
+
+def _resolve_contained_path(candidate: Path, root: Path, *, label: str) -> Path:
+    """Resolve *candidate* and require it to remain beneath *root*.
+
+    Resolving both paths catches absolute/path-traversal components and
+    pre-existing symlinks that redirect either a receipt bucket or a run
+    directory outside its repo-local security root.
+    """
+    resolved_root = root.resolve()
+    resolved_candidate = candidate.resolve()
+    try:
+        resolved_candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"{label} escaped its allowed root") from exc
+    return resolved_candidate
+
+
+def _resolve_mcp_evidence_path(candidate: Path, root: Path, *, label: str) -> Path:
+    """Resolve an evidence path without allowing symlink redirection.
+
+    Containment after ``Path.resolve`` catches escaping links, while the
+    component walk rejects links that redirect to a different path *inside*
+    the same project (for example, one run bucket aliased to another).  Missing
+    components are allowed because receipt directories are created lazily.
+    """
+    resolved_root = root.resolve()
+    lexical_candidate = Path(os.path.abspath(os.fspath(candidate)))
+    try:
+        relative = lexical_candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(f"{label} escaped its allowed root") from exc
+
+    current = resolved_root
+    for component in relative.parts:
+        current /= component
+        try:
+            _mcp_lstat(current, label=label)
+        except FileNotFoundError:
+            # Receipt directories are created lazily. Once one component is
+            # absent, descendants cannot exist without a concurrent namespace
+            # mutation; creation performs the same validation again.
+            continue
+    return _resolve_contained_path(lexical_candidate, resolved_root, label=label)
+
+
+def _resolve_mcp_invocation_root(
+    args: Mapping[str, object] | None,
+    *,
+    resolver=None,
+    fallback_to_cwd: bool = False,
+) -> tuple[Path, bool]:
+    """Resolve the project selected by an invocation's validated ``root``.
+
+    An explicit root never falls back: evidence must be omitted instead of
+    being misattributed to the MCP server's CWD.  The fallback exists only for
+    omitted roots and preserves the legacy receipt location when project-root
+    discovery itself is unavailable.
+    """
+    root_arg, explicit = _validated_mcp_root_arg(args)
+    if resolver is None:
+        from roam.db.connection import find_project_root
+
+        resolver = find_project_root
+    try:
+        resolved = resolver(root_arg) if explicit else resolver()
+        if resolved is None:
+            raise RuntimeError("project root was not resolved")
+        repo_root = Path(resolved).resolve()
+        if not repo_root.is_dir():
+            raise ValueError("resolved project root must be an existing directory")
+        if explicit:
+            requested = Path(root_arg).resolve()  # type: ignore[arg-type]
+            if not requested.is_dir():
+                raise ValueError("root must select an existing directory")
+            _resolve_contained_path(requested, repo_root, label="MCP invocation root")
+        return repo_root, explicit
+    except Exception:
+        if explicit or not fallback_to_cwd:
+            raise
+        return Path(".").resolve(), False
+
+
+def _mcp_receipt_target(run_id: str | None, tool_call_id: str, repo_root: Path | None = None) -> Path:
+    """Build a contained receipt target for one validated run bucket."""
+    receipts_root = _mcp_receipts_root(repo_root)
+    safe_receipts_root = receipts_root
+    bucket = run_id if run_id else "_no_run"
+    safe_bucket = _resolve_mcp_evidence_path(
+        safe_receipts_root / bucket,
+        safe_receipts_root,
+        label="MCP receipt bucket",
+    )
+    return _resolve_mcp_evidence_path(
+        safe_bucket / f"{tool_call_id}.json",
+        safe_bucket,
+        label="MCP receipt target",
     )
 
 
@@ -3711,7 +4012,114 @@ def _declared_side_effects_for(meta: dict) -> tuple[str, ...]:
     return tuple(effects)
 
 
-def _resolve_active_run_id() -> str | None:
+def _capture_mcp_run_snapshot(repo_root: Path, run_id: str) -> dict[str, object]:
+    """Capture an active run's redirect-free filesystem identity.
+
+    The snapshot is intentionally stronger than the general run reader: MCP
+    attribution is a security boundary, so metadata, event-ledger, and HMAC-key
+    aliases are rejected before bytes are consumed.  Metadata/key hashes catch
+    in-place mutation while inode identities catch atomic replacement.
+    """
+
+    import hashlib as _hashlib
+
+    from roam.runs.signing import LEDGER_KEY_BYTES, ledger_key_path
+
+    safe_run_id = _validated_mcp_run_id(run_id)
+    if safe_run_id is None:
+        raise ValueError("run snapshot rejected a non-canonical run id")
+    bound_root = Path(repo_root)
+    root_identity = _mcp_directory_identity(bound_root, label="MCP invocation root")
+    runs_root = _resolve_mcp_evidence_path(
+        bound_root / ".roam" / "runs",
+        bound_root,
+        label="run ledger root",
+    )
+    runs_identity = _mcp_directory_identity(runs_root, label="run ledger root")
+    run_root = _resolve_mcp_evidence_path(
+        runs_root / safe_run_id,
+        runs_root,
+        label="run ledger bucket",
+    )
+    run_identity = _mcp_directory_identity(run_root, label="run ledger bucket")
+
+    meta_path = _resolve_mcp_evidence_path(run_root / "meta.json", run_root, label="run metadata")
+    meta_bytes, meta_identity = _mcp_read_regular_file(
+        meta_path,
+        label="run metadata",
+        max_bytes=_MCP_RUN_META_MAX_BYTES,
+    )
+    try:
+        meta = json.loads(meta_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("run metadata is not valid UTF-8 JSON") from exc
+    if not isinstance(meta, dict):
+        raise ValueError("run metadata must be a JSON object")
+    if meta.get("run_id") != safe_run_id or meta.get("status") != "in_progress":
+        raise ValueError("run metadata does not identify an in-progress run")
+
+    events_path = _resolve_mcp_evidence_path(run_root / "events.jsonl", run_root, label="run event ledger")
+    events_identity = _mcp_open_and_close_identity(events_path, label="run event ledger")
+
+    key_path = _resolve_mcp_evidence_path(ledger_key_path(bound_root), runs_root, label="run ledger key")
+    key_identity: tuple[int, int] | None = None
+    key_hash: str | None = None
+    try:
+        key_bytes, key_identity = _mcp_read_regular_file(
+            key_path,
+            label="run ledger key",
+            max_bytes=LEDGER_KEY_BYTES,
+        )
+    except FileNotFoundError:
+        key_bytes = b""
+    if key_identity is not None:
+        if len(key_bytes) != LEDGER_KEY_BYTES:
+            raise ValueError("run ledger key has the wrong length")
+        key_hash = _hashlib.sha256(key_bytes).hexdigest()
+
+    return {
+        "root_identity": root_identity,
+        "runs_identity": runs_identity,
+        "run_identity": run_identity,
+        "meta_identity": meta_identity,
+        "meta_hash": _hashlib.sha256(meta_bytes).hexdigest(),
+        "events_identity": events_identity,
+        "key_identity": key_identity,
+        "key_hash": key_hash,
+    }
+
+
+def _mcp_run_snapshots_match(expected: Mapping[str, object], current: Mapping[str, object]) -> bool:
+    """Compare run identity while allowing a formerly absent key to appear."""
+
+    stable_fields = (
+        "root_identity",
+        "runs_identity",
+        "run_identity",
+        "meta_identity",
+        "meta_hash",
+        "events_identity",
+    )
+    if any(expected.get(field) != current.get(field) for field in stable_fields):
+        return False
+    expected_key = expected.get("key_identity")
+    if expected_key is not None:
+        return expected_key == current.get("key_identity") and expected.get("key_hash") == current.get("key_hash")
+    return True
+
+
+def _mcp_run_is_active(repo_root: Path, run_id: str) -> bool:
+    """Return whether *run_id* is an unaliased in-progress local run."""
+
+    try:
+        _capture_mcp_run_snapshot(repo_root, run_id)
+        return True
+    except Exception as exc:  # noqa: BLE001 - invalid/unreadable run handles are not active
+        log_swallowed("mcp_server:validate_active_run", exc)
+        return False
+
+
+def _resolve_active_run_id(repo_root: Path | None = None, *, require_repo_membership: bool = False) -> str | None:
     """Best-effort lookup of the currently-active run id.
 
     Reads ``ROAM_RUN_ID`` first (explicit handle-set signal from the agent /
@@ -3720,16 +4128,52 @@ def _resolve_active_run_id() -> str | None:
     when no run is open or anything blows up - the caller will route the
     receipt to ``_no_run/`` instead.
     """
+    try:
+        bound_root = (
+            Path(repo_root).resolve()
+            if repo_root is not None
+            else _resolve_mcp_invocation_root(None, fallback_to_cwd=False)[0]
+        )
+    except Exception as exc:  # noqa: BLE001 - unavailable root means no safely attributable run
+        log_swallowed("mcp_server:resolve_active_run_id:find_root", exc)
+        return None
+
     env_id = os.environ.get("ROAM_RUN_ID", "").strip()
     if env_id:
-        return env_id
+        validated = _validated_mcp_run_id(env_id)
+        if validated is not None:
+            if require_repo_membership and not _mcp_run_is_active(bound_root, validated):
+                log_swallowed(
+                    "mcp_server:resolve_active_run_id:foreign_or_inactive_env",
+                    ValueError("ROAM_RUN_ID is not an active run in the invocation project"),
+                )
+                return None
+            return validated
+        # Treat an explicitly malformed id as untrusted input, not as an
+        # invitation to scan/fall back through a helper that reads the same
+        # environment variable. The receipt safely routes to ``_no_run``.
+        log_swallowed(
+            "mcp_server:resolve_active_run_id:invalid_env",
+            ValueError("ROAM_RUN_ID did not match run_YYYYMMDD_<hex>"),
+        )
+        return None
     try:
-        from pathlib import Path as _Path
-
-        from roam.db.connection import find_project_root
         from roam.runs.helpers import get_active_run_id
 
-        return get_active_run_id(_Path(find_project_root()))
+        active_run_id = get_active_run_id(bound_root)
+        validated = _validated_mcp_run_id(active_run_id)
+        if active_run_id and validated is None:
+            log_swallowed(
+                "mcp_server:resolve_active_run_id:invalid_active_run",
+                ValueError("active run id did not match run_YYYYMMDD_<hex>"),
+            )
+        if validated is not None and require_repo_membership and not _mcp_run_is_active(bound_root, validated):
+            log_swallowed(
+                "mcp_server:resolve_active_run_id:foreign_or_inactive_scan",
+                ValueError("resolved run is not active in the invocation project"),
+            )
+            return None
+        return validated
     except Exception as exc:  # noqa: BLE001 — receipt routing must never break a tool call
         # No run open OR the ledger scan blew up — route the receipt to
         # `_no_run/`. Surface the failure under ROAM_VERBOSE so a real
@@ -3738,7 +4182,7 @@ def _resolve_active_run_id() -> str | None:
         return None
 
 
-def _mcp_receipts_root() -> "Path":
+def _mcp_receipts_root(repo_root: Path | None = None) -> "Path":
     """Repo-local home for MCP decision receipts.
 
     Lives under ``<repo_root>/.roam/mcp_receipts/`` so a receipt sits
@@ -3747,16 +4191,104 @@ def _mcp_receipts_root() -> "Path":
     ``.git`` root (rare; e.g. running ``roam mcp`` outside any repo).
     """
     try:
-        from roam.db.connection import find_project_root
-
-        root = Path(find_project_root())
-    except Exception as exc:  # noqa: BLE001 — receipt-root resolution must never break a tool call
+        root = (
+            Path(repo_root).resolve()
+            if repo_root is not None
+            else _resolve_mcp_invocation_root(None, fallback_to_cwd=False)[0]
+        )
+        if not root.is_dir():
+            raise ValueError("MCP receipt project root must be an existing directory")
+    except Exception as exc:  # noqa: BLE001 — omitted-root compatibility falls back to CWD
+        if repo_root is not None:
+            raise
         # No `.git` root found (running `roam mcp` outside a repo) OR the
         # resolver raised — fall back to CWD. Surface under ROAM_VERBOSE so a
         # real find_project_root regression doesn't hide as "outside a repo".
         log_swallowed("mcp_server:mcp_receipts_root", exc)
         root = Path(".").resolve()
-    return root / ".roam" / "mcp_receipts"
+    return _resolve_mcp_evidence_path(
+        root / ".roam" / "mcp_receipts",
+        root,
+        label="MCP receipts root",
+    )
+
+
+def _bind_mcp_evidence_context(args: Mapping[str, object] | None, state: dict) -> None:
+    """Pin root/run attribution before policy evaluation or tool execution.
+
+    CWD and environment variables are process-global. Resolving either in the
+    context-manager ``finally`` block lets a tool or concurrent invocation
+    redirect its evidence after the mode gate has already made a decision.
+    This one-time binding makes the gate, receipt, and HMAC link consume the
+    same root/run snapshot.
+    """
+
+    try:
+        _root_arg, explicit = _validated_mcp_root_arg(args)
+        try:
+            repo_root, explicit = _resolve_mcp_invocation_root(args, fallback_to_cwd=False)
+        except Exception as exc:
+            if explicit:
+                raise
+            # Preserve the historical location for a denial receipt, but mark
+            # the binding as degraded so mode enforcement cannot mistake CWD
+            # fallback for a successfully resolved project.
+            repo_root = Path(".").resolve()
+            state["_evidence_binding_error"] = type(exc).__name__
+            log_swallowed("mcp_server:bind_evidence:cwd_fallback", exc)
+        root_identity = _mcp_directory_identity(repo_root, label="MCP invocation root")
+        run_id = (
+            None
+            if state.get("_evidence_binding_error")
+            else _resolve_active_run_id(repo_root, require_repo_membership=True)
+        )
+        run_snapshot: dict[str, object] | None = None
+        if run_id is not None:
+            try:
+                run_snapshot = _capture_mcp_run_snapshot(repo_root, run_id)
+            except Exception as exc:  # noqa: BLE001 - a raced run becomes unattributed
+                log_swallowed("mcp_server:bind_evidence:run_snapshot", exc)
+                run_id = None
+        state["_bound_repo_root"] = repo_root
+        state["_bound_root_identity"] = root_identity
+        state["_bound_root_explicit"] = explicit
+        state["_bound_run_id"] = run_id
+        state["_bound_run_snapshot"] = run_snapshot
+    except Exception as exc:  # noqa: BLE001 - invalid roots must never fall back later
+        state["_evidence_binding_error"] = type(exc).__name__
+        log_swallowed("mcp_server:bind_evidence", exc)
+
+
+def _ensure_mcp_evidence_directory(directory: Path, repo_root: Path, *, label: str) -> tuple[int, int]:
+    """Create a directory chain one component at a time with redirect checks."""
+
+    root = Path(repo_root)
+    _mcp_directory_identity(root, label="MCP invocation root")
+    lexical = Path(os.path.abspath(os.fspath(directory)))
+    try:
+        relative = lexical.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{label} escaped its allowed root") from exc
+
+    current = root
+    for component in relative.parts:
+        current /= component
+        try:
+            os.mkdir(current, mode=0o700)
+        except FileExistsError:
+            pass
+        _resolve_mcp_evidence_path(current, root, label=label)
+        _mcp_directory_identity(current, label=label)
+    return _mcp_directory_identity(lexical, label=label)
+
+
+def _validate_optional_mcp_receipt_target(target: Path) -> None:
+    """Reject an existing receipt alias; absence is the expected case."""
+
+    try:
+        _mcp_open_and_close_identity(target, label="MCP receipt target")
+    except FileNotFoundError:
+        return
 
 
 def _receipt_serialize_args(
@@ -3849,38 +4381,209 @@ def _receipt_resolve_required_mode(state: dict, meta: dict) -> str:
     return _required_mode_from_side_effects(meta)
 
 
+def _read_mcp_ledger_fd(fd: int) -> tuple[bytes, tuple[int, int, int]]:
+    """Read a stable, bounded ledger snapshot from an already-pinned handle."""
+
+    before = os.fstat(fd)
+    if int(before.st_size) > _MCP_LEDGER_MAX_BYTES:
+        raise ValueError("run event ledger exceeds the MCP safety limit")
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    remaining = _MCP_LEDGER_MAX_BYTES + 1
+    while remaining:
+        chunk = os.read(fd, min(64 * 1024, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    payload = b"".join(chunks)
+    after = os.fstat(fd)
+    if len(payload) > _MCP_LEDGER_MAX_BYTES:
+        raise ValueError("run event ledger exceeds the MCP safety limit")
+    if _mcp_file_version(after) != _mcp_file_version(before) or len(payload) != int(before.st_size):
+        raise RuntimeError("run event ledger changed while preparing the receipt link")
+    return payload, _mcp_file_version(after)
+
+
+def _append_mcp_receipt_event_secure(
+    repo_root: Path,
+    run_id: str,
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    receipt_hash: str,
+    expected_snapshot: Mapping[str, object] | None,
+) -> None:
+    """Append one signed receipt event through an inode-pinned ledger handle.
+
+    The general run API is path-oriented. At the MCP trust boundary that leaves
+    a check/open race where ``events.jsonl`` can be swapped for a symlink or
+    hardlink after validation. This narrow append preserves the ledger's exact
+    JSON/HMAC format while opening and writing the already-validated inode.
+    """
+
+    from roam.runs.ledger import _utc_now_iso
+    from roam.runs.signing import (
+        LEDGER_KEY_BYTES,
+        SEED_SIGNATURE,
+        compute_event_signature,
+        ensure_ledger_key,
+        ledger_key_path,
+    )
+
+    safe_run_id = _validated_mcp_run_id(run_id)
+    if safe_run_id is None:
+        raise ValueError("receipt ledger append rejected a non-canonical run id")
+
+    with _MCP_LEDGER_APPEND_LOCK:
+        current_snapshot = _capture_mcp_run_snapshot(repo_root, safe_run_id)
+        if expected_snapshot is not None and not _mcp_run_snapshots_match(expected_snapshot, current_snapshot):
+            raise RuntimeError("run evidence changed after invocation binding")
+
+        runs_root = _resolve_mcp_evidence_path(
+            repo_root / ".roam" / "runs",
+            repo_root,
+            label="run ledger root",
+        )
+        run_root = _resolve_mcp_evidence_path(
+            runs_root / safe_run_id,
+            runs_root,
+            label="run ledger bucket",
+        )
+        key_path = _resolve_mcp_evidence_path(ledger_key_path(repo_root), runs_root, label="run ledger key")
+        if current_snapshot.get("key_identity") is None:
+            # ``start_run`` normally materialises this. Preserve the historical
+            # best-effort generation path, then consume only a securely opened
+            # key below; a raced alias is rejected before signing.
+            ensure_ledger_key(repo_root)
+            current_snapshot = _capture_mcp_run_snapshot(repo_root, safe_run_id)
+            if expected_snapshot is not None and not _mcp_run_snapshots_match(expected_snapshot, current_snapshot):
+                raise RuntimeError("run evidence changed while materialising the ledger key")
+        key_bytes, key_identity = _mcp_read_regular_file(
+            key_path,
+            label="run ledger key",
+            max_bytes=LEDGER_KEY_BYTES,
+            expected=current_snapshot.get("key_identity"),  # type: ignore[arg-type]
+        )
+        if len(key_bytes) != LEDGER_KEY_BYTES:
+            raise ValueError("run ledger key has the wrong length")
+
+        events_path = _resolve_mcp_evidence_path(run_root / "events.jsonl", run_root, label="run event ledger")
+        events_identity = current_snapshot.get("events_identity")
+        fd, opened_identity = _mcp_open_regular_file(
+            events_path,
+            label="run event ledger",
+            flags=os.O_RDWR | os.O_APPEND,
+            expected=events_identity,  # type: ignore[arg-type]
+        )
+        try:
+            ledger_bytes, ledger_version = _read_mcp_ledger_fd(fd)
+            try:
+                ledger_text = ledger_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError("run event ledger is not valid UTF-8") from exc
+            nonblank = [line.strip() for line in ledger_text.splitlines() if line.strip()]
+            previous_signature: str | None = None
+            if nonblank:
+                try:
+                    previous = json.loads(nonblank[-1])
+                except json.JSONDecodeError as exc:
+                    log_swallowed("mcp_server:receipt_ledger_last_event", exc)
+                else:
+                    candidate = previous.get("signature") if isinstance(previous, dict) else None
+                    previous_signature = candidate if isinstance(candidate, str) else None
+
+            event = {
+                "action": "mcp_receipt",
+                "receipt_hash": receipt_hash,
+                "tool_call": tool_call_id,
+                "tool_name": tool_name,
+                "ts": _utc_now_iso(),
+                "seq": len(nonblank) + 1,
+            }
+            event["signature"] = compute_event_signature(previous_signature or SEED_SIGNATURE, event, key_bytes)
+            line = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+
+            # Final compare immediately before mutation. The write targets the
+            # open inode, not a path resolved after this check.
+            final_snapshot = _capture_mcp_run_snapshot(repo_root, safe_run_id)
+            if not _mcp_run_snapshots_match(current_snapshot, final_snapshot):
+                raise RuntimeError("run evidence changed before ledger append")
+            _mcp_open_and_close_identity(events_path, label="run event ledger", expected=opened_identity)
+            _mcp_open_and_close_identity(key_path, label="run ledger key", expected=key_identity)
+            opened_now = os.fstat(fd)
+            if _mcp_path_identity(opened_now) != opened_identity or int(opened_now.st_nlink) != 1:
+                raise RuntimeError("run event ledger handle changed before append")
+            if _mcp_file_version(opened_now) != ledger_version:
+                raise RuntimeError("run event ledger changed before receipt append")
+
+            written = os.write(fd, line)
+            if written != len(line):
+                raise OSError(f"short MCP ledger append ({written}/{len(line)} bytes)")
+            os.fsync(fd)
+            after_write = os.fstat(fd)
+            if _mcp_path_identity(after_write) != opened_identity or int(after_write.st_nlink) != 1:
+                raise RuntimeError("run event ledger changed during append")
+            _mcp_open_and_close_identity(events_path, label="run event ledger", expected=opened_identity)
+        finally:
+            os.close(fd)
+
+
 def _receipt_link_to_ledger(
     run_id: str,
     tool_name: str,
     tool_call_id: str,
     canonical: str,
+    repo_root: Path | None = None,
+    *,
+    expected_root_identity: tuple[int, int] | None = None,
+    expected_run_snapshot: Mapping[str, object] | None = None,
 ) -> None:
     """MCP-P0.3 — HMAC-link the on-disk receipt to the signed event stream.
 
-    Appends ONE ledger event carrying the sha256 of the canonical receipt
-    bytes; the rolling-HMAC chain then locks that hash into the chain.
-    ``verify_chain`` walks these events, re-hashes the on-disk receipts,
-    and reports mismatch / missing / not_linked sub-states.
+    Best-effort failures leave the receipt on disk as ``not_linked`` and never
+    break the underlying tool call. Root/run identities are nevertheless
+    fail-closed: a stale or aliased path is omitted, never reassigned.
+    """
 
-    Best-effort: any failure here is swallowed so an audit-trail outage
-    cannot break the tool call. The receipt is still on disk;
-    ``verify_chain`` will report ``receipt_integrity="not_linked"`` for
-    it. ROAM_VERBOSE surfaces the failure so a regression doesn't silently
-    lose tamper-evidence."""
     try:
         import hashlib as _hashlib
 
-        from roam.db.connection import find_project_root
-        from roam.runs.ledger import log_event
+        safe_run_id = _validated_mcp_run_id(run_id)
+        if safe_run_id is None:
+            raise ValueError("receipt ledger link rejected a non-canonical run id")
+        bound_root = (
+            Path(repo_root) if repo_root is not None else _resolve_mcp_invocation_root(None, fallback_to_cwd=False)[0]
+        )
+        _mcp_directory_identity(
+            bound_root,
+            label="MCP invocation root",
+            expected=expected_root_identity,
+        )
+        current_snapshot = _capture_mcp_run_snapshot(bound_root, safe_run_id)
+        if expected_run_snapshot is not None and not _mcp_run_snapshots_match(
+            expected_run_snapshot,
+            current_snapshot,
+        ):
+            raise RuntimeError("run evidence changed after invocation binding")
 
+        receipt_path = _mcp_receipt_target(safe_run_id, tool_call_id, bound_root)
+        expected_receipt = (canonical + "\n").encode("utf-8")
+        receipt_bytes, _receipt_identity = _mcp_read_regular_file(
+            receipt_path,
+            label="MCP receipt target",
+            max_bytes=max(len(expected_receipt), 1),
+        )
+        if receipt_bytes != expected_receipt:
+            raise RuntimeError("on-disk MCP receipt differs from the canonical bytes")
         receipt_hash = _hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        log_event(
-            Path(find_project_root()),
-            run_id,
-            action="mcp_receipt",
+        _append_mcp_receipt_event_secure(
+            bound_root,
+            safe_run_id,
             tool_name=tool_name,
-            tool_call=tool_call_id,
+            tool_call_id=tool_call_id,
             receipt_hash=receipt_hash,
+            expected_snapshot=expected_run_snapshot or current_snapshot,
         )
     except Exception as exc:  # noqa: BLE001 — ledger-link failure must never break the tool call
         log_swallowed("mcp_server:receipt_ledger_link", exc)
@@ -3903,14 +4606,38 @@ def _write_mcp_receipt(
     """
     import uuid as _uuid
 
-    from roam.atomic_io import atomic_write_text
+    from roam.atomic_io import atomic_write_bytes
     from roam.evidence.mcp_receipt import McpDecisionReceipt, hash_input_args
 
-    meta = _TOOL_METADATA.get(tool_name, {})
+    effective_meta = state.get("effective_metadata")
+    meta = dict(effective_meta) if isinstance(effective_meta, Mapping) else _TOOL_METADATA.get(tool_name, {})
+    repo_root = state.get("_bound_repo_root")
+    root_identity = state.get("_bound_root_identity")
+    if not isinstance(repo_root, Path) or not isinstance(root_identity, tuple):
+        raise RuntimeError("MCP receipt has no pre-execution root binding")
+    _mcp_directory_identity(repo_root, label="MCP invocation root", expected=root_identity)
     safe_args = _receipt_serialize_args(args)
     tool_call_id = f"{tool_name}_{_uuid.uuid4().hex[:12]}"
     input_hash = hash_input_args(safe_args)
-    run_id = _resolve_active_run_id()
+    # Consume only the pre-execution run snapshot. CWD/ROAM_RUN_ID may have
+    # changed while the tool ran and are never consulted again here.
+    run_id = state.get("_bound_run_id")
+    expected_run_snapshot = state.get("_bound_run_snapshot")
+    if run_id is not None:
+        run_id = _validated_mcp_run_id(run_id)
+        if run_id is None:
+            raise ValueError("receipt write rejected a non-canonical run id")
+        try:
+            current_snapshot = _capture_mcp_run_snapshot(repo_root, run_id)
+            if not isinstance(expected_run_snapshot, Mapping) or not _mcp_run_snapshots_match(
+                expected_run_snapshot,
+                current_snapshot,
+            ):
+                raise RuntimeError("run evidence changed after invocation binding")
+        except Exception as exc:  # noqa: BLE001 - preserve receipt, remove stale attribution
+            log_swallowed("mcp_server:write_receipt:stale_run", exc)
+            run_id = None
+            expected_run_snapshot = None
     output_ref, output_hash = _receipt_resolve_output(state)
     extra = _receipt_build_extra(state)
     required_mode = _receipt_resolve_required_mode(state, meta)
@@ -3933,12 +4660,73 @@ def _write_mcp_receipt(
         extra=extra,
     )
 
-    bucket = run_id if run_id else "_no_run"
-    target = _mcp_receipts_root() / bucket / f"{tool_call_id}.json"
+    target = _mcp_receipt_target(run_id, tool_call_id, repo_root)
     canonical = receipt.to_canonical_json()
-    atomic_write_text(target, canonical + "\n")
+    # Materialise one component at a time and pin the parent inode. This closes
+    # pre-existing symlink/junction aliases and deterministic mkdir/replace
+    # swaps before any canonical receipt bytes are written.
+    parent_identity = _ensure_mcp_evidence_directory(
+        target.parent,
+        repo_root,
+        label="MCP receipt directory",
+    )
+    target = _mcp_receipt_target(run_id, tool_call_id, repo_root)
+    _validate_optional_mcp_receipt_target(target)
+
+    def _revalidate_target() -> None:
+        _mcp_directory_identity(repo_root, label="MCP invocation root", expected=root_identity)
+        _mcp_directory_identity(
+            target.parent,
+            label="MCP receipt directory",
+            expected=parent_identity,
+        )
+        if _mcp_receipt_target(run_id, tool_call_id, repo_root) != target:
+            raise ValueError("MCP receipt target changed before atomic replace")
+        _validate_optional_mcp_receipt_target(target)
+        if run_id is not None:
+            current = _capture_mcp_run_snapshot(repo_root, run_id)
+            if not isinstance(expected_run_snapshot, Mapping) or not _mcp_run_snapshots_match(
+                expected_run_snapshot,
+                current,
+            ):
+                raise RuntimeError("run evidence changed before receipt replace")
+
+    def _prepare_receipt_temp(fd: int, temp_path: str) -> None:
+        _revalidate_target()
+        opened = os.fstat(fd)
+        if not _stat_mod.S_ISREG(opened.st_mode) or int(opened.st_nlink) != 1:
+            raise ValueError("MCP receipt tempfile must be an unaliased regular file")
+        temp_stat = _mcp_lstat(Path(temp_path), label="MCP receipt tempfile")
+        if _mcp_path_identity(temp_stat) != _mcp_path_identity(opened):
+            raise RuntimeError("MCP receipt tempfile path changed after creation")
+
+    payload = (canonical + "\n").encode("utf-8")
+    atomic_write_bytes(
+        target,
+        payload,
+        prepare_temp_fd=_prepare_receipt_temp,
+        before_replace=_revalidate_target,
+        durable=True,
+        create_parents=False,
+        secure_parent=True,
+    )
+    on_disk, _receipt_identity = _mcp_read_regular_file(
+        target,
+        label="MCP receipt target",
+        max_bytes=max(len(payload), 1),
+    )
+    if on_disk != payload:
+        raise RuntimeError("MCP receipt bytes changed after atomic replace")
     if run_id:
-        _receipt_link_to_ledger(run_id, tool_name, tool_call_id, canonical)
+        _receipt_link_to_ledger(
+            run_id,
+            tool_name,
+            tool_call_id,
+            canonical,
+            repo_root,
+            expected_root_identity=root_identity,
+            expected_run_snapshot=expected_run_snapshot if isinstance(expected_run_snapshot, Mapping) else None,
+        )
 
 
 import contextlib as _contextlib
@@ -3948,6 +4736,7 @@ import contextlib as _contextlib
 def _mcp_receipt_for(
     tool_name: str,
     args: "Mapping[str, object]",  # noqa: F821 — string annotation; `from __future__ import annotations` keeps it lazy
+    effective_meta: Mapping[str, object] | None = None,
 ):
     """Emit an ``McpDecisionReceipt`` for a sensitive tool call.
 
@@ -3959,7 +4748,7 @@ def _mcp_receipt_for(
     For read-only tools the helper yields an empty dict and writes nothing -
     receipts are reserved for the WRITE audit trail.
     """
-    meta = _TOOL_METADATA.get(tool_name, {})
+    meta = dict(effective_meta) if effective_meta is not None else _TOOL_METADATA.get(tool_name, {})
     if not _is_sensitive(meta):
         yield {}
         return
@@ -3984,7 +4773,13 @@ def _mcp_receipt_for(
         # MCP-P1.2 — per-marker prompt-injection hit counts; populated by
         # the egress scan in ``_wrap_with_receipt`` when a marker fires.
         "injection_markers": {},
+        # The catalog records maximum callable effects; mixed wrappers can
+        # narrow those effects for a concrete read-only invocation. Persist
+        # the exact classification used by the gate so the receipt never
+        # over- or under-states what this call could do.
+        "effective_metadata": dict(meta),
     }
+    _bind_mcp_evidence_context(args, receipt_state)
     try:
         yield receipt_state
     finally:
@@ -3992,9 +4787,24 @@ def _mcp_receipt_for(
             _write_mcp_receipt(tool_name, args, receipt_state)
         except Exception as exc:  # noqa: BLE001 — receipts must never break the tool call
             # Best-effort: receipts must NEVER break the tool call. Surface
-            # under ROAM_VERBOSE — a silent receipt-write failure means the
-            # WRITE audit trail has a hole no one is told about.
+            # under ROAM_VERBOSE and stamp a secret-free client-visible state
+            # so the WRITE audit-trail hole is explicit.
             log_swallowed("mcp_server:write_mcp_receipt", exc)
+            result = receipt_state.get("result")
+            if isinstance(result, dict):
+                result_meta = result.get("_meta")
+                if result_meta is None:
+                    result_meta = {}
+                    result["_meta"] = result_meta
+                if isinstance(result_meta, dict):
+                    # The client-visible disclosure carries only the exception
+                    # class—never a path or exception message that could echo
+                    # sensitive input. No receipt exists, so this mutation
+                    # cannot desynchronise a persisted output hash.
+                    result_meta["mcp_receipt"] = {
+                        "state": "write_failed",
+                        "error_type": type(exc).__name__,
+                    }
 
 
 def _should_skip_cold_start_guard(name: str) -> bool:
@@ -4143,11 +4953,10 @@ def _wrap_with_exception_envelope(name: str, fn):
 #
 # The 4-mode substrate (read_only / safe_edit / migration / autonomous_pr) is
 # CLI-only via ``cli._enforce_mode_gate``. In-process MCP dispatch bypasses
-# that gate because ``_run_roam_inprocess`` invokes the CLI through Click's
-# CliRunner which DOES re-enter the gate — BUT the gate only fires when a
-# fresh ``ROAM_MODE_ENFORCEMENT=1`` env-var is set. The MCP server needs its
-# own gate so a single ``ROAM_MODE_ENFORCEMENT=1`` toggle covers both
-# surfaces, and so the gate's decision can be folded into the
+# that gate for native tools, so the MCP server owns the equivalent default-on
+# boundary. An explicit ``ROAM_MODE_ENFORCEMENT=0`` is treated as an emergency
+# shadow override: it is warned, receipt-audited, and never represented as an
+# enforced deny. The gate's effective decision is folded into the
 # ``McpDecisionReceipt`` (``policy_decision`` field) without going through a
 # CLI subprocess.
 #
@@ -4165,6 +4974,15 @@ def _wrap_with_exception_envelope(name: str, fn):
 
 
 _MODE_BLOCKED_ERROR_CODE = "MODE_BLOCKED"
+_MODE_ENFORCEMENT_FALSEY: frozenset[str] = frozenset({"0", "false", "no", "off"})
+
+
+def _is_mode_enforcement_enabled() -> bool:
+    """Return True by default; only explicit false values disable blocking."""
+    raw = os.environ.get("ROAM_MODE_ENFORCEMENT")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in _MODE_ENFORCEMENT_FALSEY
 
 
 # MCP-P1.1 — shadow-mode flag (``ROAM_MODE_DRY_RUN``).
@@ -4182,10 +5000,10 @@ _MODE_BLOCKED_ERROR_CODE = "MODE_BLOCKED"
 #
 # Allow paths are unchanged under dry-run (no marker, no log) — observe-
 # only rollout cares about what WOULD have been blocked, not what was
-# already allowed. Enforcement-off (the steady-state advisory path) is
-# also unchanged when dry-run is off: pre-P1.1 receipts stay byte-
-# identical, satisfying the hash-stability discipline (W210 omit-when-
-# default pattern, ledger-event layer).
+# already allowed. The explicit global emergency bypass
+# (``ROAM_MODE_ENFORCEMENT=0``) uses the same effective shadow decision even
+# when dry-run is off, with a distinct warning/reason so receipts never claim
+# that an unenforced deny actually blocked dispatch.
 _DRY_RUN_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
 
 
@@ -4226,23 +5044,179 @@ def _log_mode_dry_run_would_deny(tool_name: str, reason: str) -> None:
         log_swallowed("mcp_server:log_mode_dry_run_would_deny", exc)
 
 
-# Mirrors tests/test_w954_core_tools_capability_drift.py. Kept local to
-# avoid coupling production code to a test module; the lint in that test
-# pins both tables in sync.
+def _log_mode_enforcement_override_would_deny(tool_name: str, reason: str) -> None:
+    """Make the global emergency bypass visible in the MCP server log."""
+    try:
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "mcp.mode_policy.override: tool=%s ROAM_MODE_ENFORCEMENT=0 would_deny reason=%s",
+            tool_name,
+            reason,
+        )
+    except Exception as exc:  # noqa: BLE001 — logging must never break the policy path
+        log_swallowed("mcp_server:log_mode_enforcement_override_would_deny", exc)
+
+
+# Historical naming drifts plus mode-boundary aliases whose MCP names differ
+# from the CLI verb they actually execute.
 _MCP_TO_CLI_RENAME_ALIAS: dict[str, str] = {
     "roam_dead_code": "dead",
     "roam_complexity_report": "complexity",
     "roam_search_symbol": "search",
     "roam_file_info": "file",
+    "roam_annotate_symbol": "annotate",
+    "roam_cga_emit": "cga",
+    "roam_reindex": "index",
 }
+
+# These wrappers intentionally expose only the read-side projection of a CLI
+# capability whose *maximum* effect includes an optional write flag.  Keeping
+# the exception set closed prevents a newly mutating wrapper from inheriting
+# ``read_only=True`` merely because its backing command also has a query form.
+# Every entry is regression-audited against the wrapper signature/body in
+# ``tests/test_mcp_tool_side_effect_metadata.py``.
+_MCP_READ_ONLY_CAPABILITY_PROJECTIONS: frozenset[str] = frozenset(
+    {
+        "roam_agent_export",
+        "roam_agent_opt",
+        "roam_article_12_check",
+        "roam_attest",
+        "roam_audit_trail_conformance_check",
+        "roam_audit_trail_export",
+        "roam_audit_trail_verify",
+        "roam_auth_gaps",
+        "roam_bus_factor",
+        "roam_clones",
+        "roam_compatibility",
+        "roam_complexity_report",
+        "roam_conventions",
+        "roam_coverage_gaps",
+        "roam_critique",
+        "roam_dark_matter",
+        "roam_dead_code",
+        "roam_describe",
+        "roam_doctor",
+        "roam_duplicates",
+        "roam_eval_retrieve",
+        "roam_fitness",
+        "roam_health",
+        "roam_hotspots",
+        "roam_llm_smells",
+        "roam_minimap",
+        "roam_missing_index",
+        "roam_n1",
+        "roam_observability_opt",
+        "roam_orphan_imports",
+        "roam_over_fetch",
+        "roam_pr_risk",
+        "roam_proof_bundle",
+        "roam_reachability_triage",
+        "roam_rules_validate",
+        "roam_sbom",
+        "roam_smells",
+        "roam_taint",
+        "roam_tour",
+        "roam_vibe_check",
+    }
+)
+
+# MCP-native read-only operations have no CLI verb for a constitution to
+# classify. Keep this surface closed and explicit: these tools are admitted by
+# their declared effects and mode rank, while any newly added native wrapper
+# remains fail-closed until the audit test classifies it here.
+_MCP_NATIVE_READ_ONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "roam_adversarial_review",
+        "roam_batch_get",
+        "roam_bisect_blame",
+        "roam_breaking_changes",
+        "roam_budget_check",
+        "roam_capsule_export",
+        "roam_catalog",
+        "roam_cga_verify",
+        "roam_cut_analysis",
+        "roam_diagnose_issue",
+        "roam_doc_intent",
+        "roam_expand_toolset",
+        "roam_explore",
+        "roam_fetch_handle",
+        "roam_findings_count",
+        "roam_findings_list",
+        "roam_findings_show",
+        "roam_fleet_plan",
+        "roam_for_bug_fix",
+        "roam_for_new_feature",
+        "roam_for_refactor",
+        "roam_for_security_review",
+        "roam_full_coupling",
+        "roam_generate_plan",
+        "roam_get_annotations",
+        "roam_get_invariants",
+        "roam_oracle_batch",
+        "roam_oracle_is_clone_of",
+        "roam_oracle_is_reachable_from_entry",
+        "roam_oracle_is_test_only",
+        "roam_oracle_route_exists",
+        "roam_oracle_symbol_exists",
+        "roam_oracle_test_only",
+        "roam_prepare_change",
+        "roam_repo_map",
+        "roam_review_change",
+        "roam_rules_check",
+        "roam_runtime_hotspots",
+        "roam_session_metrics",
+        "roam_taint_classify",
+        "roam_validate_plan",
+        "roam_ws_context",
+        "roam_ws_understand",
+    }
+)
+
+# Some MCP wrappers expose both a high-volume query form and an explicit
+# opt-in write control.  ``_TOOL_METADATA`` intentionally describes the
+# wrapper's *maximum* callable effect for catalog/discovery consumers, while
+# the dispatch gate must classify the concrete invocation so the query form
+# remains available in ``read_only`` mode.  Keep this mapping closed and
+# auditable: a wrapper belongs here only when every write path is controlled
+# by one of the named truthy boolean parameters.
+_MCP_OPTION_DEPENDENT_WRITE_FLAGS: dict[str, frozenset[str]] = {
+    "roam_fan": frozenset({"persist"}),
+}
+
+
+def _effective_mcp_tool_metadata(tool_name: str, args: Mapping[str, object] | None = None) -> dict:
+    """Return side-effect metadata for one concrete MCP invocation.
+
+    Catalog metadata remains conservative (maximum effects).  For a closed
+    set of option-dependent wrappers, an invocation with every audited write
+    flag false is narrowed to a pure read.  Unexpected truthy values stay on
+    the maximum-effect path, matching Python's actual branch semantics and
+    therefore failing safe when transport validation is bypassed.
+    """
+    maximum = dict(_TOOL_METADATA.get(tool_name, {}))
+    write_flags = _MCP_OPTION_DEPENDENT_WRITE_FLAGS.get(tool_name)
+    if not write_flags:
+        return maximum
+    invocation = args or {}
+    if any(bool(invocation.get(flag, False)) for flag in write_flags):
+        return maximum
+    maximum.update(read_only=True, destructive=False, idempotent=True)
+    return maximum
+
+
+# Match the CLI's intentional bootstrap recovery surface. These writes are
+# allowed only after policy/root/mode resolution succeeds; an unavailable
+# policy still takes the metadata-based fail-closed path.
+_MCP_MODE_BOOTSTRAP_CLI: frozenset[str] = frozenset({"init", "index"})
 
 
 def _mcp_tool_to_cli_command(tool_name: str) -> str:
     """Map an MCP tool name (``roam_<x>``) to its policy / CLI command name.
 
-    The 4 historical renames live in :data:`_MCP_TO_CLI_RENAME_ALIAS`; every
-    other tool follows the uniform "strip ``roam_`` prefix + swap ``_`` for
-    ``-``" convention (W961).
+    Explicit renames live in :data:`_MCP_TO_CLI_RENAME_ALIAS`; every other
+    tool follows the uniform "strip ``roam_`` prefix + swap ``_`` for ``-``"
+    convention (W961).
     """
     if tool_name in _MCP_TO_CLI_RENAME_ALIAS:
         return _MCP_TO_CLI_RENAME_ALIAS[tool_name]
@@ -4270,15 +5244,21 @@ def _required_mode_from_side_effects(meta: dict) -> str:
     return "read_only"
 
 
-def _resolve_required_mode_for_tool(tool_name: str, repo_root) -> str:
-    """Return the lowest mode that allows *tool_name* under the active policy.
+def _resolve_required_mode_for_tool(
+    tool_name: str,
+    repo_root,
+    effective_meta: Mapping[str, object] | None = None,
+) -> str:
+    """Return the strictest required mode from policy and tool effects.
 
-    Walks :data:`roam.modes.policy.VALID_MODES` in cumulative order. Falls
-    back to :func:`_required_mode_from_side_effects` when no mode allows the
-    underlying CLI command (typo, renamed command, etc.) so the receipt's
-    ``required_mode`` field is never empty.
+    The CLI allow-list describes the backing command's minimum tier while MCP
+    metadata describes the maximum effects exposed by this particular wrapper.
+    Neither source may weaken the other: return the higher tier.  When no mode
+    allows the CLI command, return the metadata tier so ``required_mode`` is
+    never empty; the separate command-policy decision still denies an
+    authoritative constitution omission.
     """
-    meta = _TOOL_METADATA.get(tool_name, {})
+    meta = dict(effective_meta) if effective_meta is not None else _TOOL_METADATA.get(tool_name, {})
     fallback = _required_mode_from_side_effects(meta)
     try:
         from roam.modes.policy import VALID_MODES, list_modes
@@ -4289,6 +5269,8 @@ def _resolve_required_mode_for_tool(tool_name: str, repo_root) -> str:
         log_swallowed("mcp_server:resolve_required_mode:import", exc)
         return fallback
     cli_name = _mcp_tool_to_cli_command(tool_name)
+    if cli_name in _MCP_MODE_BOOTSTRAP_CLI:
+        return "read_only"
     try:
         policies = list_modes(repo_root)
     except Exception as exc:  # noqa: BLE001 — mode resolution must never break a tool call
@@ -4297,16 +5279,74 @@ def _resolve_required_mode_for_tool(tool_name: str, repo_root) -> str:
         # distinguishable from the no-policy-configured default path.
         log_swallowed("mcp_server:resolve_required_mode:list_modes", exc)
         return fallback
+    policy_mode: str | None = None
     for mode_name in VALID_MODES:
         policy = policies.get(mode_name)
         if policy is None:
             continue
         if cli_name in policy.allowed_commands:
-            return mode_name
-    return fallback
+            policy_mode = mode_name
+            break
+    if policy_mode is None:
+        return fallback
+    return VALID_MODES[max(VALID_MODES.index(policy_mode), VALID_MODES.index(fallback))]
 
 
-def _evaluate_mcp_mode_policy(tool_name: str) -> dict:
+def _mcp_mode_policy_dependencies():
+    """Load the policy boundary lazily so failures can be classified."""
+    from roam.db.connection import find_project_root
+    from roam.modes.policy import VALID_MODES, check_command_allowed, resolve_mode
+
+    return find_project_root, check_command_allowed, resolve_mode, VALID_MODES
+
+
+def _mcp_tool_is_read_only_diagnostic(
+    tool_name: str,
+    effective_meta: Mapping[str, object] | None = None,
+) -> bool:
+    """Return True only for explicitly read-only, idempotent tool metadata."""
+    meta = dict(effective_meta) if effective_meta is not None else _TOOL_METADATA.get(tool_name, {})
+    return bool(meta.get("read_only") is True and meta.get("destructive") is False and meta.get("idempotent") is True)
+
+
+def _mcp_mode_policy_failure(
+    tool_name: str,
+    enforcement: bool,
+    phase: str,
+    effective_meta: Mapping[str, object] | None = None,
+) -> dict:
+    """Build the conservative result for an unavailable policy decision.
+
+    Read-only diagnostics remain usable. Write, destructive, non-idempotent,
+    and unclassified tools receive a deny that the wrapper enforces unless an
+    explicit audited emergency override is active.
+    """
+    meta = dict(effective_meta) if effective_meta is not None else _TOOL_METADATA.get(tool_name, {})
+    read_only_diagnostic = _mcp_tool_is_read_only_diagnostic(tool_name, meta)
+    cli_name = _mcp_tool_to_cli_command(tool_name)
+    reason = ""
+    if not read_only_diagnostic:
+        reason = (
+            f"mode policy unavailable during {phase}; blocked '{cli_name}' because "
+            "the tool is not declared read-only and idempotent"
+        )
+    return {
+        "decision": "allow" if read_only_diagnostic else "deny",
+        "enforcement": enforcement,
+        "active_mode": "",
+        "required_mode": _required_mode_from_side_effects(meta),
+        "reason": reason,
+    }
+
+
+def _evaluate_mcp_mode_policy(
+    tool_name: str,
+    args: Mapping[str, object] | None = None,
+    effective_meta: Mapping[str, object] | None = None,
+    *,
+    bound_repo_root: Path | None = None,
+    bound_root_identity: tuple[int, int] | None = None,
+) -> dict:
     """Run the MCP-boundary mode gate for *tool_name*.
 
     Returns a dict with:
@@ -4319,59 +5359,88 @@ def _evaluate_mcp_mode_policy(tool_name: str) -> dict:
     * ``reason``: human-readable explanation when ``decision`` is ``"deny"``;
       empty string otherwise.
 
-    All exceptions are swallowed — a policy-check failure must NEVER break
-    the tool call. On any unexpected error the gate fails OPEN
-    (``decision="allow"``).
+    Policy exceptions are converted into a metadata-based decision. Declared
+    read-only diagnostics fail open; every write/destructive/unknown tool
+    fails closed. The wrapper separately applies an explicit emergency
+    override, if configured, and records that effective outcome in its receipt.
     """
-    enforcement_raw = os.environ.get("ROAM_MODE_ENFORCEMENT", "").strip()
-    enforcement = enforcement_raw in {"1", "true", "yes", "on"}
+    enforcement = _is_mode_enforcement_enabled()
+    invocation_meta = (
+        dict(effective_meta) if effective_meta is not None else _effective_mcp_tool_metadata(tool_name, args)
+    )
     try:
-        from roam.db.connection import find_project_root
-        from roam.modes.policy import check_command_allowed, resolve_mode
+        find_project_root, check_command_allowed, resolve_mode, valid_modes = _mcp_mode_policy_dependencies()
     except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
-        # Policy substrate unavailable — gate fails OPEN. Surface under
-        # ROAM_VERBOSE: a missing policy module silently disables the entire
-        # MCP-boundary mode gate, which is a security-relevant degradation.
         log_swallowed("mcp_server:evaluate_mode_policy:import", exc)
-        return {
-            "decision": "allow",
-            "enforcement": enforcement,
-            "active_mode": "",
-            "required_mode": _required_mode_from_side_effects(_TOOL_METADATA.get(tool_name, {})),
-            "reason": "",
-        }
+        return _mcp_mode_policy_failure(tool_name, enforcement, "dependency import", invocation_meta)
     try:
-        repo_root = find_project_root()
+        if bound_repo_root is None:
+            repo_root, _explicit_root = _resolve_mcp_invocation_root(
+                args,
+                resolver=find_project_root,
+                fallback_to_cwd=False,
+            )
+        else:
+            repo_root = Path(bound_repo_root)
+            _mcp_directory_identity(
+                repo_root,
+                label="MCP invocation root",
+                expected=bound_root_identity,
+            )
     except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
-        # No repo root — gate fails OPEN. Surface under ROAM_VERBOSE so a
-        # find_project_root regression doesn't masquerade as "outside a repo".
         log_swallowed("mcp_server:evaluate_mode_policy:find_root", exc)
-        return {
-            "decision": "allow",
-            "enforcement": enforcement,
-            "active_mode": "",
-            "required_mode": _required_mode_from_side_effects(_TOOL_METADATA.get(tool_name, {})),
-            "reason": "",
-        }
+        return _mcp_mode_policy_failure(tool_name, enforcement, "project-root resolution", invocation_meta)
     try:
         active = resolve_mode(repo_root)
         active_name = active.name
+        if active_name not in valid_modes:
+            raise ValueError(f"unknown active mode: {active_name!r}")
     except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
-        # Active-mode resolution failed — proceed with an empty active mode.
-        # Surface under ROAM_VERBOSE: a corrupt mode file silently weakens
-        # the gate's view of what mode the agent is actually in.
         log_swallowed("mcp_server:evaluate_mode_policy:resolve_mode", exc)
-        active_name = ""
+        return _mcp_mode_policy_failure(tool_name, enforcement, "active-mode resolution", invocation_meta)
     cli_name = _mcp_tool_to_cli_command(tool_name)
+    if cli_name in _MCP_MODE_BOOTSTRAP_CLI:
+        return {
+            "decision": "allow",
+            "enforcement": enforcement,
+            "active_mode": active_name,
+            "required_mode": "read_only",
+            "reason": "",
+        }
+    required_mode = _resolve_required_mode_for_tool(tool_name, repo_root, invocation_meta)
     try:
-        allowed, reason = check_command_allowed(repo_root, cli_name)
-    except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
-        # check_command_allowed raised — gate fails OPEN (allowed=True).
-        # Surface under ROAM_VERBOSE so a policy-evaluation crash doesn't
-        # silently turn the gate into a no-op for this tool.
-        log_swallowed("mcp_server:evaluate_mode_policy:check_allowed", exc)
-        allowed, reason = True, ""
-    required_mode = _resolve_required_mode_for_tool(tool_name, repo_root)
+        active_rank = valid_modes.index(active_name)
+        required_rank = valid_modes.index(required_mode)
+    except (AttributeError, ValueError) as exc:
+        log_swallowed("mcp_server:evaluate_mode_policy:rank", exc)
+        return _mcp_mode_policy_failure(tool_name, enforcement, "mode-rank evaluation", invocation_meta)
+
+    if tool_name in _MCP_NATIVE_READ_ONLY_TOOLS:
+        allowed = active_rank >= required_rank
+        reason = (
+            ""
+            if allowed
+            else (
+                f"MCP-native '{tool_name}' effects require {required_mode}; "
+                f"run `roam mode {required_mode}` to enable it"
+            )
+        )
+    else:
+        try:
+            allowed, reason = check_command_allowed(repo_root, cli_name)
+            if not isinstance(allowed, bool):
+                raise TypeError(f"policy allowed flag must be bool, got {type(allowed).__name__}")
+            if not isinstance(reason, str):
+                raise TypeError(f"policy reason must be str, got {type(reason).__name__}")
+        except Exception as exc:  # noqa: BLE001 — policy check must never break a tool call
+            log_swallowed("mcp_server:evaluate_mode_policy:check_allowed", exc)
+            return _mcp_mode_policy_failure(tool_name, enforcement, "command-policy evaluation", invocation_meta)
+        if active_rank < required_rank:
+            allowed = False
+            reason = (
+                f"'{cli_name}' command policy allows {active_name}, but MCP tool effects require "
+                f"{required_mode}; run `roam mode {required_mode}` to enable it"
+            )
     return {
         "decision": "allow" if allowed else "deny",
         "enforcement": enforcement,
@@ -4428,6 +5497,10 @@ def _build_mode_blocked_envelope(tool_name: str, policy_result: dict) -> dict:
     return _structured_error(envelope)
 
 
+class _McpEgressRedactionFailure(RuntimeError):
+    """Internal signal that raw tool output must be withheld."""
+
+
 def _redact_result_for_egress(result):
     """MCP-P0.1 — scrub secret-shaped strings from a tool result before egress.
 
@@ -4439,22 +5512,26 @@ def _redact_result_for_egress(result):
     floats — including ``_meta.cli_exit_code``) ride through untouched, so
     the wrapper-bridge passthrough behavior stays intact.
 
-    Defensive: any exception is swallowed and the original result is
-    returned unredacted (with empty counts). Egress redaction must never
-    break the tool call itself — the audit-trail and security boundary
-    are best-effort, like the rest of ``_wrap_with_receipt``.
+    A redactor exception raises the private
+    :class:`_McpEgressRedactionFailure` signal. The boundary wrapper converts
+    that signal into a constant structured failure envelope and withholds the
+    original result. Receipt persistence remains best-effort; secret egress
+    does not.
     """
     try:
         from roam.security.redact import redact_secrets_in_value
 
         return redact_secrets_in_value(result)
-    except Exception as exc:  # noqa: BLE001 — egress redaction must never break the tool call
-        # Redaction failed — ship the result UNREDACTED rather than break the
-        # call. Surface under ROAM_VERBOSE: a silent failure here means a
-        # secret-shaped string could cross the MCP boundary unredacted with
-        # nobody told the scrubber didn't run.
-        log_swallowed("mcp_server:redact_result_for_egress", exc)
-        return result, {}
+    except Exception as exc:  # noqa: BLE001 — fail closed at the MCP egress boundary
+        # Do not log the exception message: a defensive redactor can fail on
+        # hostile data and its exception text may echo the raw secret-bearing
+        # value. The class name is enough diagnostic lineage under verbose
+        # logging without creating a second egress channel.
+        log_swallowed(
+            "mcp_server:redact_result_for_egress",
+            RuntimeError(f"{type(exc).__name__}: egress redactor failed"),
+        )
+        raise _McpEgressRedactionFailure("MCP egress redaction failed") from None
 
 
 def _scan_result_for_injection_markers(result):
@@ -4523,28 +5600,160 @@ def _stamp_egress_redactions(state, secret_hits, injection_hits):
         state["redactions"] = tuple(reasons)
 
 
+def _build_egress_redaction_failure_envelope(tool_name: str) -> dict:
+    """Return a constant, secret-free failure when egress scrubbing fails.
+
+    ``COMMAND_FAILED`` is an existing error code and maps to the existing
+    ``hard_failure`` status; no receipt/error vocabulary is extended here.
+    The raw tool result and redactor exception text are deliberately absent.
+    """
+    return _structured_error(
+        {
+            "command": tool_name,
+            "status": "hard_failure",
+            "isError": True,
+            "summary": {
+                "verdict": "BLOCKED: MCP egress redaction did not complete",
+                "level": "blocker",
+                "partial_success": False,
+                "state": "egress_redaction_failed",
+            },
+            "error_code": "COMMAND_FAILED",
+            "error": "Raw tool output was withheld because MCP egress redaction failed.",
+            "hint": "Retry the tool after restoring the MCP redaction boundary.",
+        }
+    )
+
+
+def _secure_mcp_tool_result(name: str, state: dict, result):
+    """Redact and scan one result, or replace it with a fail-closed envelope."""
+    try:
+        redacted, hits = _redact_result_for_egress(result)
+    except _McpEgressRedactionFailure:
+        envelope = _build_egress_redaction_failure_envelope(name)
+        state["result"] = envelope
+        # Existing closed-enum reason: the producer withheld output under
+        # security policy. This is persisted only when the tool is sensitive
+        # enough for ``_mcp_receipt_for`` to emit a receipt.
+        state["redactions"] = ("policy",)
+        return envelope
+
+    # MCP-P1.2 — scan the (secret-redacted) bytes for prompt-injection
+    # markers. Non-mutating: the marker scan annotates conditional receipts;
+    # the client-visible output stays byte-identical to ``redacted``.
+    injection_hits = _scan_result_for_injection_markers(redacted)
+    state["result"] = redacted
+    _stamp_egress_redactions(state, hits, injection_hits)
+    return redacted
+
+
+def _apply_mcp_mode_policy(
+    name: str,
+    state: dict,
+    args: Mapping[str, object] | None = None,
+    effective_meta: Mapping[str, object] | None = None,
+) -> dict | None:
+    """Apply one policy result and stamp the receipt with what happened.
+
+    Returns a MODE_BLOCKED envelope when dispatch must stop, otherwise None.
+    A denied call that proceeds through either explicit shadow mode or
+    ``ROAM_MODE_ENFORCEMENT=0`` is recorded as ``would_deny_dry_run`` rather
+    than the unenforced ``deny`` value.
+    """
+    bound_root = state.get("_bound_repo_root")
+    bound_identity = state.get("_bound_root_identity")
+    if state.get("_evidence_binding_error"):
+        invocation_meta = (
+            dict(effective_meta) if effective_meta is not None else _effective_mcp_tool_metadata(name, args)
+        )
+        policy = _mcp_mode_policy_failure(
+            name,
+            _is_mode_enforcement_enabled(),
+            "project-root resolution",
+            invocation_meta,
+        )
+    else:
+        policy = _evaluate_mcp_mode_policy(
+            name,
+            args,
+            effective_meta,
+            bound_repo_root=bound_root if isinstance(bound_root, Path) else None,
+            bound_root_identity=bound_identity if isinstance(bound_identity, tuple) else None,
+        )
+    state["required_mode"] = policy["required_mode"]
+    if policy["decision"] != "deny":
+        state["policy_decision"] = policy["decision"]
+        return None
+
+    reason = policy.get("reason") or "mode policy denied the tool call"
+    if policy["enforcement"] and not _is_mode_dry_run():
+        state["policy_decision"] = "deny"
+        return _build_mode_blocked_envelope(name, policy)
+
+    state["policy_decision"] = "would_deny_dry_run"
+    state["shadow_mode"] = True
+    if policy["enforcement"]:
+        state["would_deny_reason"] = reason
+        _log_mode_dry_run_would_deny(name, reason)
+    else:
+        override_reason = f"ROAM_MODE_ENFORCEMENT=0 emergency override: {reason}"
+        state["would_deny_reason"] = override_reason
+        _log_mode_enforcement_override_would_deny(name, reason)
+    return None
+
+
+def _canonical_mcp_call_args(fn, args: tuple[object, ...], kwargs: Mapping[str, object]) -> dict[str, object]:
+    """Bind positional and keyword inputs into one stable receipt/policy map.
+
+    FastMCP normally calls tools with keywords, but direct in-process callers
+    and tests may use positional arguments.  Binding here prevents those
+    values from disappearing from the policy decision or receipt input hash.
+    ``**kwargs``-only synthetic wrappers are flattened to preserve the public
+    input shape rather than hashing a nested implementation detail.
+    """
+    import inspect as _inspect
+
+    try:
+        signature = _inspect.signature(fn)
+        bound = signature.bind_partial(*args, **dict(kwargs))
+    except (TypeError, ValueError):
+        fallback = dict(kwargs)
+        if args:
+            fallback["_positional_args"] = tuple(args)
+        return fallback
+
+    canonical: dict[str, object] = {}
+    for parameter_name, value in bound.arguments.items():
+        parameter = signature.parameters[parameter_name]
+        if parameter.kind is _inspect.Parameter.VAR_KEYWORD and isinstance(value, Mapping):
+            canonical.update(value)
+        elif parameter.kind is _inspect.Parameter.VAR_POSITIONAL:
+            canonical["_positional_args"] = tuple(value)
+        else:
+            canonical[parameter_name] = value
+    return canonical
+
+
 def _wrap_with_receipt(name: str, fn):
-    """Wrap an MCP tool so a decision receipt is emitted per sensitive call.
+    """Apply MCP security to every tool and receipt sensitive calls.
 
-    Non-sensitive (read-only + idempotent + no required task mode) tools are
-    returned unchanged so we don't pay the overhead. Sensitive tools emit a
-    receipt to ``.roam/mcp_receipts/<run_id>/<tool_call>.json`` on every
-    invocation - capturing input args hash, declared side effects, the
-    resolved active run id, and the output hash (or handle ref for large
-    outputs).
+    Mode policy and egress redaction run for every tool, including ordinary
+    read-only/idempotent tools. Sensitive tools additionally emit a receipt
+    to ``.roam/mcp_receipts/<run_id>/<tool_call>.json`` on every invocation,
+    capturing input args hash, declared side effects, the validated active
+    run id, and the output hash (or handle ref for large outputs).
 
-    MCP-P0.1 egress redaction (W195): for sensitive tools, the result is
-    scrubbed of producer-boundary secret patterns BEFORE returning to the
-    MCP client AND before the receipt's ``output_hash`` is computed — so
-    the client never sees a verbatim secret and the hash reflects what
-    the client actually received.
+    MCP-P0.1 egress redaction (W195): every result is scrubbed of
+    producer-boundary secret patterns BEFORE returning to the MCP client.
+    For receipt-bearing tools this is also before ``output_hash`` is computed,
+    so the hash reflects exactly what the client received.
 
     MCP-P0.2 mode enforcement (W196.2): before invoking ``fn``, run the
-    4-mode policy gate. When ``ROAM_MODE_ENFORCEMENT=1`` AND the active mode
-    does not allow the tool, return a Pattern-1 ``MODE_BLOCKED`` envelope
-    without invoking the tool. When enforcement is off (default), proceed
-    but record ``policy_decision="deny"`` on the receipt (advisory-shadow
-    mode) so an audit trail shows what WOULD have been blocked.
+    default-on 4-mode policy gate. A deny returns a Pattern-1
+    ``MODE_BLOCKED`` envelope without invoking the tool. Explicit dry-run or
+    emergency-disable overrides proceed with a visible warning and record
+    ``policy_decision="would_deny_dry_run"`` so receipts describe the
+    decision actually enforced.
 
     The redaction wiring (P0.1) is preserved on the allow path; on the deny
     path the tool never runs, so the egress walk only sees the
@@ -4553,73 +5762,31 @@ def _wrap_with_receipt(name: str, fn):
     import functools as _functools
     import inspect as _inspect
 
-    meta = _TOOL_METADATA.get(name, {})
-    if not _is_sensitive(meta):
-        return fn
-
     if _inspect.iscoroutinefunction(fn):
 
         @_functools.wraps(fn)
         async def _async_receipt_wrapped(*args, **kwargs):
-            with _mcp_receipt_for(name, kwargs) as state:
-                policy = _evaluate_mcp_mode_policy(name)
-                state["policy_decision"] = policy["decision"]
-                state["required_mode"] = policy["required_mode"]
-                # MCP-P1.1 — shadow-mode short-circuit. When dry-run is ON
-                # and the gate would normally deny, stamp the receipt with
-                # the ``would_deny_dry_run`` verdict + shadow markers and
-                # let the tool call proceed for observe-only rollout. The
-                # allow path is untouched.
-                if policy["decision"] == "deny" and policy["enforcement"] and _is_mode_dry_run():
-                    reason = policy.get("reason") or ""
-                    state["policy_decision"] = "would_deny_dry_run"
-                    state["shadow_mode"] = True
-                    state["would_deny_reason"] = reason
-                    _log_mode_dry_run_would_deny(name, reason)
-                elif policy["decision"] == "deny" and policy["enforcement"]:
-                    envelope = _build_mode_blocked_envelope(name, policy)
-                    state["result"] = envelope
-                    return envelope
+            call_args = _canonical_mcp_call_args(fn, args, kwargs)
+            effective_meta = _effective_mcp_tool_metadata(name, call_args)
+            with _mcp_receipt_for(name, call_args, effective_meta) as state:
+                envelope = _apply_mcp_mode_policy(name, state, call_args, effective_meta)
+                if envelope is not None:
+                    return _secure_mcp_tool_result(name, state, envelope)
                 result = await fn(*args, **kwargs)
-                redacted, hits = _redact_result_for_egress(result)
-                # MCP-P1.2 — scan the (secret-redacted) bytes for prompt-
-                # injection markers. Non-mutating: the marker scan only
-                # annotates the receipt, the output bytes are unchanged.
-                injection_hits = _scan_result_for_injection_markers(redacted)
-                state["result"] = redacted
-                _stamp_egress_redactions(state, hits, injection_hits)
-                return redacted
+                return _secure_mcp_tool_result(name, state, result)
 
         return _async_receipt_wrapped
 
     @_functools.wraps(fn)
     def _sync_receipt_wrapped(*args, **kwargs):
-        with _mcp_receipt_for(name, kwargs) as state:
-            policy = _evaluate_mcp_mode_policy(name)
-            state["policy_decision"] = policy["decision"]
-            state["required_mode"] = policy["required_mode"]
-            # MCP-P1.1 — see async branch above for rationale. Both paths
-            # share the same shadow-mode semantics; the only difference is
-            # the ``await`` keyword on the underlying tool call.
-            if policy["decision"] == "deny" and policy["enforcement"] and _is_mode_dry_run():
-                reason = policy.get("reason") or ""
-                state["policy_decision"] = "would_deny_dry_run"
-                state["shadow_mode"] = True
-                state["would_deny_reason"] = reason
-                _log_mode_dry_run_would_deny(name, reason)
-            elif policy["decision"] == "deny" and policy["enforcement"]:
-                envelope = _build_mode_blocked_envelope(name, policy)
-                state["result"] = envelope
-                return envelope
+        call_args = _canonical_mcp_call_args(fn, args, kwargs)
+        effective_meta = _effective_mcp_tool_metadata(name, call_args)
+        with _mcp_receipt_for(name, call_args, effective_meta) as state:
+            envelope = _apply_mcp_mode_policy(name, state, call_args, effective_meta)
+            if envelope is not None:
+                return _secure_mcp_tool_result(name, state, envelope)
             result = fn(*args, **kwargs)
-            redacted, hits = _redact_result_for_egress(result)
-            # MCP-P1.2 — scan the (secret-redacted) bytes for prompt-
-            # injection markers. Non-mutating: the marker scan only
-            # annotates the receipt, the output bytes are unchanged.
-            injection_hits = _scan_result_for_injection_markers(redacted)
-            state["result"] = redacted
-            _stamp_egress_redactions(state, hits, injection_hits)
-            return redacted
+            return _secure_mcp_tool_result(name, state, result)
 
     return _sync_receipt_wrapped
 
@@ -8866,6 +10033,10 @@ def sbom(
         "Merkle root over symbol fingerprints + "
         "edge-bundle digest. Optional cosign keyless or offline signing."
     ),
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=False,
 )
 def _mcp_cga_emit(
     include_taint: bool = False,
@@ -9152,7 +10323,14 @@ def pr_risk(staged: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_pr_analyze", description="Agent-aware PR risk verdict — INTENTIONAL / SAFE / REVIEW / BLOCK.")  # W459
+@_tool(
+    name="roam_pr_analyze",
+    description="Agent-aware PR risk verdict — INTENTIONAL / SAFE / REVIEW / BLOCK.",
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=False,
+)  # W459
 def pr_analyze(
     diff_path: str = "",
     commit_range: str = "",
@@ -9333,7 +10511,12 @@ def audit_trail_export(
 
 
 @_tool(
-    name="roam_metrics_push", description="Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.**"
+    name="roam_metrics_push",
+    description="Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.**",
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=False,
 )  # W459
 def metrics_push_tool(
     token: str = "",
@@ -9419,7 +10602,12 @@ def audit_trail_conformance_check(
 
 
 @_tool(
-    name="roam_dogfood", description="One-shot full-stack run: audit + pr-analyze + audit-trail + conformance."
+    name="roam_dogfood",
+    description="One-shot full-stack run: audit + pr-analyze + audit-trail + conformance.",
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=False,
 )  # W459
 def dogfood(
     audit: bool = True,
@@ -9536,7 +10724,12 @@ def mcp_suggest_reviewers(top: int = 3, exclude: str = "", changed: bool = True,
 
 
 @_tool(
-    name="roam_verify", description="Check changed files for naming, import, error-handling, and duplicate issues."
+    name="roam_verify",
+    description="Run the post-edit proof gate over every changed file.",
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=False,
 )  # W459
 def verify(threshold: int = 70, root: str = ".") -> dict:
     """Check changed files for naming, import, error-handling, and duplicate issues.
@@ -10167,7 +11360,8 @@ def roam_llm_smells(
         "__all__) and wrong_direction_import (high, lower-layer module imports "
         "from higher-layer caller)."
     ),
-    read_only=True,
+    version="1.1.0",
+    read_only=False,
     destructive=False,
     idempotent=True,
 )
@@ -10221,7 +11415,8 @@ def boundary_tool(
         "subprocess. AST-driven (not regex) with module-level suppression "
         "for monkeypatch / freezegun / responses / random.seed."
     ),
-    read_only=True,
+    version="1.1.0",
+    read_only=False,
     destructive=False,
     idempotent=True,
 )
@@ -11622,6 +12817,10 @@ def doc_intent(
 @_tool(
     name="roam_fingerprint",
     description="Topology fingerprint for cross-repo comparison or structural drift tracking.",
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=True,
 )
 def mcp_fingerprint(compact: bool = False, export_path: str = "", compare_path: str = "", root: str = ".") -> dict:
     """Extract a topology fingerprint for cross-repo comparison.
@@ -11884,6 +13083,10 @@ def vuln_map(
 @_tool(
     name="roam_vuln_reach",
     description="Vulnerability reachability through call graph: paths, hops, blast radius.",
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=True,
 )
 def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
     """Query reachability of ingested vulnerabilities through the call graph.
@@ -12660,6 +13863,10 @@ async def _enrich_stale_refs_with_llm_hints(envelope: dict, ctx: _Context | None
     name="roam_stale_refs",
     description="Find dangling file references — markdown links / HTML href-src / backtick paths whose target is missing. v12.48 adds anchor validation, confidence-tagged hints, --diff branch filter, --fix preview/apply, and --sort-by ranking. Set enrich_with_llm=True for LLM-sampled hints on findings the deterministic providers couldn't resolve.",
     output_schema=_SCHEMA_STALE_REFS,
+    version="1.1.0",
+    read_only=False,
+    destructive=True,
+    idempotent=False,
 )
 async def roam_stale_refs(
     limit: int = 20,
@@ -13425,6 +14632,10 @@ def roam_semantic_diff(base: str = "HEAD~1", root: str = ".") -> dict:
 @_tool(
     name="roam_trends",
     description="Historical metric tracking: record and query health metric trends over time.",
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=False,
 )
 def roam_trends(record: bool = False, days: int = 30, metric: str = "", root: str = ".") -> dict:
     """Track and query health metric trends over time.
@@ -13851,6 +15062,10 @@ def roam_evidence_doctor(packet_path: str, root: str = ".") -> dict:
         "(authority_refs, redactions) surface as OSCAL ``prop`` "
         "extensions under the ``urn:roam:oscal:v1`` namespace."
     ),
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=True,
 )
 def roam_evidence_oscal(
     kind: str = "control-mapping",
@@ -14268,6 +15483,10 @@ def roam_refs_text(
         "cross-file import / call edges. Different from coupling "
         "(co-change frequency) -- this measures structural connectivity."
     ),
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=True,
 )
 def roam_fan(
     mode: str = "symbol",
@@ -14793,6 +16012,10 @@ def roam_fn_coupling(
         "layer migrations, and likely renames. Reads persisted snapshots "
         "from ``.roam/snapshots/`` -- capture one with ``--save-snapshot``."
     ),
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=True,
 )
 def roam_graph_diff(
     base: str = "",
@@ -15980,6 +17203,10 @@ def roam_test_pyramid(root: str = ".") -> dict:
         "with ``roam_test_map`` first to confirm no existing coverage. "
         "Skips symbols that already have tests in the target file."
     ),
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=False,
 )
 def roam_test_scaffold(
     symbol: str,
@@ -18194,6 +19421,10 @@ def roam_workflow(
         "Different from roam_plan (symbol-centric execution plan) -- "
         "this is the freeform-task compiler."
     ),
+    version="1.1.0",
+    read_only=False,
+    destructive=False,
+    idempotent=False,
 )
 def roam_compile(
     task: str,

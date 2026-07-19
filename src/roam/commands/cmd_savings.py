@@ -11,7 +11,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
-from roam.savings import EVENT_FIELD_DEFINITIONS, analyze_ledger
+from roam.savings import EVENT_FIELD_DEFINITIONS, aggregate_savings_result, analyze_ledger
 
 
 @click.command(name="savings")
@@ -22,14 +22,23 @@ from roam.savings import EVENT_FIELD_DEFINITIONS, analyze_ledger
     help="Project root containing .roam/episodes.jsonl and .roam/compile-runs.jsonl.",
 )
 @click.option("--schema", is_flag=True, help="Print the episode-event field contract and exit.")
+@click.option(
+    "--aggregate",
+    is_flag=True,
+    help="Emit the aggregate-only SavingsAggregate contract for platform consumers.",
+)
 @click.pass_context
 @roam_capability(
     name="savings",
     category="planning",
     summary="Gate compiler-savings claims on joined prompt, compile, and terminal episode evidence.",
-    inputs=("--root",),
-    outputs=("summary_envelope", "coverage", "repeat_candidates"),
-    examples=("roam savings", "roam --json savings --root /path/to/project"),
+    inputs=("--root", "--aggregate"),
+    outputs=("summary_envelope", "coverage", "repeat_candidates", "savings_aggregate"),
+    examples=(
+        "roam savings",
+        "roam --json savings --root /path/to/project",
+        "roam --json savings --aggregate",
+    ),
     tags=("planning", "telemetry", "compiler", "episodes", "savings"),
     ai_safe=True,
     requires_index=False,
@@ -38,10 +47,12 @@ from roam.savings import EVENT_FIELD_DEFINITIONS, analyze_ledger
     side_effect=True,
     stale_sensitive=False,
 )
-def savings(ctx: click.Context, root: str, schema: bool) -> None:
+def savings(ctx: click.Context, root: str, schema: bool, aggregate: bool) -> None:
     """Materialize the local episode ledger and report admissible savings evidence."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    if schema and aggregate:
+        raise click.UsageError("--schema and --aggregate are mutually exclusive")
     if schema:
         if json_mode:
             click.echo(
@@ -60,6 +71,35 @@ def savings(ctx: click.Context, root: str, schema: bool) -> None:
         return
 
     result = analyze_ledger(root)
+    if aggregate:
+        aggregate_result = aggregate_savings_result(result)
+        aggregate_summary = aggregate_result["summary"]
+        if json_mode:
+            envelope = json_envelope(
+                "savings",
+                budget=token_budget,
+                summary=aggregate_summary,
+                **{key: value for key, value in aggregate_result.items() if key != "summary"},
+            )
+            # SavingsAggregate is a machine-to-machine privacy boundary. The
+            # formatter's generic agent helper is useful for rich reports but
+            # is outside this closed producer contract.
+            envelope.pop("agent_contract", None)
+            click.echo(to_json(envelope))
+            return
+
+        counts = aggregate_result["opportunity_counts"]
+        intervention_state = aggregate_result["intervention_state"]
+        click.echo(f"VERDICT: {aggregate_summary['verdict']}")
+        click.echo(f"state:                         {aggregate_summary['state']}")
+        click.echo(f"repeated live candidates:      {counts['repeated_live_candidates']}")
+        click.echo(f"historical pattern candidates: {counts['historical_pattern_candidates']}")
+        click.echo(f"ranked work opportunities:     {counts['ranked_work_opportunities']}")
+        click.echo(f"intervention mappings:         {counts['intervention_mappings']}")
+        click.echo(f"intervention assignments:      {intervention_state['assignments']}")
+        click.echo("privacy:                       aggregate_only")
+        return
+
     summary = result.pop("summary")
     coverage = result.get("coverage") or {}
     next_commands = ["roam hooks claude --write", "roam savings"]

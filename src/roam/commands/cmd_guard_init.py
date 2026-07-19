@@ -71,6 +71,7 @@ extends: default
         "roam guard-init --with-rules-stub",
     ),
     tags=("planning", "roam-guard", "init"),
+    side_effect=True,
 )
 def guard_init(ctx: click.Context, with_rules_stub: bool, force: bool) -> None:
     """Bootstrap `.roam/` + optional rule-pack stub for Roam Guard."""

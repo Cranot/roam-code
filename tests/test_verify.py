@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -326,7 +327,7 @@ class TestComplexityDisplay:
             ["verify", "--checks", "complexity", "--threshold", "0", "complex.py"],
             cwd=project,
         )
-        assert text_result.exit_code == 0, text_result.output
+        assert text_result.exit_code == 5, text_result.output
         assert "complex.py has 3 complex functions" in text_result.output
         assert text_result.output.count("fn `") == 0
 
@@ -335,7 +336,7 @@ class TestComplexityDisplay:
             ["verify", "--verbose", "--checks", "complexity", "--threshold", "0", "complex.py"],
             cwd=project,
         )
-        assert verbose_result.exit_code == 0, verbose_result.output
+        assert verbose_result.exit_code == 5, verbose_result.output
         assert verbose_result.output.count("fn `") == 3
 
         json_result = invoke_cli(
@@ -344,7 +345,8 @@ class TestComplexityDisplay:
             cwd=project,
             json_mode=True,
         )
-        data = parse_json_output(json_result, "verify")
+        assert json_result.exit_code == 5, json_result.output
+        data = json.loads(json_result.stdout)
         complexity_findings = [item for item in data["violations"] if item.get("category") == "complexity"]
         assert len(complexity_findings) == 3
 
@@ -538,7 +540,7 @@ class TestJsonOutput:
         out, rc = index_in_process(verify_project, "--force")
         assert rc == 0
 
-        # Use --threshold 0 so the gate doesn't fail (exit code 5)
+        # Thresholds cannot launder a surviving FAIL finding into exit zero.
         result = invoke_cli(
             cli_runner,
             ["verify", "--threshold", "0", "violation.py"],
@@ -546,7 +548,8 @@ class TestJsonOutput:
             json_mode=True,
         )
 
-        data = parse_json_output(result, "verify")
+        assert result.exit_code == 5, result.output
+        data = json.loads(result.stdout)
         violations = data.get("violations", [])
         assert len(violations) > 0, "Expected violations for this file"
         for v in violations:
@@ -568,20 +571,22 @@ class TestNoChangedFiles:
     def test_no_files_text_output(self, verify_project, cli_runner, monkeypatch):
         """No changed files should produce PASS verdict in text mode."""
         monkeypatch.chdir(verify_project)
-        # Pass a nonexistent file to trigger no-match
+        # An explicit nonexistent target is incomplete evidence, not no work.
         result = invoke_cli(cli_runner, ["verify", "nonexistent.py"], cwd=verify_project)
-        # Should still show VERDICT line even with no matching files
-        assert "VERDICT" in result.output
+        assert result.exit_code == 5
+        assert "VERDICT: FAIL" in result.output
 
     def test_no_files_json_output(self, verify_project, cli_runner, monkeypatch):
         """No changed files should produce valid JSON with PASS."""
         monkeypatch.chdir(verify_project)
         result = invoke_cli(cli_runner, ["verify", "nonexistent.py"], cwd=verify_project, json_mode=True)
 
-        data = parse_json_output(result, "verify")
+        assert result.exit_code == 5, result.output
+        data = json.loads(result.stdout)
         summary = data["summary"]
-        # Should be PASS with score 100 when no matched files
-        assert summary["verdict"] in ("PASS", "WARN", "FAIL")
+        assert summary["verdict"] == "FAIL"
+        assert summary["verification_complete"] is False
+        assert "explicit_target_missing" in summary["incomplete_reasons"]
 
 
 # ---------------------------------------------------------------------------
@@ -850,7 +855,8 @@ def test_file_remaining_adds_residual_findings_without_re_gating(verify_project,
         cwd=verify_project,
         json_mode=True,
     )
-    data = parse_json_output(result, "verify")
+    assert result.exit_code == 5, result.output
+    data = json.loads(result.stdout)
 
     assert len(data["violations"]) == 5
     assert len(data["residual_findings"]) == 3
@@ -858,7 +864,7 @@ def test_file_remaining_adds_residual_findings_without_re_gating(verify_project,
     assert all(v["finding_scope"] == "pre-existing/residual" for v in data["residual_findings"])
     assert [v["severity"] for v in data["violations"][:2]] == ["FAIL", "FAIL"]
     assert data["summary"]["residual_findings_non_gating"] is True
-    assert data["summary"]["score"] == 90
+    assert data["summary"]["score"] == 40
 
 
 def test_file_remaining_is_opt_in(verify_project, cli_runner, monkeypatch):
@@ -869,7 +875,8 @@ def test_file_remaining_is_opt_in(verify_project, cli_runner, monkeypatch):
         cwd=verify_project,
         json_mode=True,
     )
-    data = parse_json_output(result, "verify")
+    assert result.exit_code == 5, result.output
+    data = json.loads(result.stdout)
 
     assert len(data["violations"]) == 2
     assert "residual_findings" not in data

@@ -168,7 +168,7 @@ def _default_control_map_path() -> Path:
     # Not a daily-workflow core tool — OSCAL emission is a niche
     # governance/compliance surface, opt-in via the full preset.
     mcp_preset=("full",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=False,

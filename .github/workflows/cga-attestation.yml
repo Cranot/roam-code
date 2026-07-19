@@ -38,7 +38,11 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write   # required for keyless OIDC signing
+
+env:
+  UV_LOCKED: "1"
+  UV_NO_PROGRESS: "1"
+  UV_PYTHON_DOWNLOADS: "never"
 
 jobs:
   # -- Mode 1: offline keypair signing --------------------------------------
@@ -46,27 +50,39 @@ jobs:
   # Deterministic, no network. This is the path most enterprise users will
   # take for air-gapped or compliance-sensitive deployments.
   offline-key:
-    runs-on: ubuntu-latest
+    name: Offline key attestation
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0   # full history needed for git_stats during indexing
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
-      - name: Install roam-code
-        run: pip install -e .
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync the exact runtime graph
+        run: |
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --python python
+          uv pip check --python .venv/bin/python
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
       - name: Index the repo
         run: |
-          roam index
-          roam clones --persist
+          .venv/bin/roam index
+          .venv/bin/roam clones --persist
 
       - name: Generate ephemeral cosign keypair
         env:
@@ -91,7 +107,7 @@ jobs:
           # .roam/cga-offline.vsa.json. --sign covers both statements,
           # so the VSA is cosign-signed alongside the CGA and gets its
           # own .roam/cga-offline.vsa.bundle.
-          roam cga emit \
+          .venv/bin/roam cga emit \
             --include-taint \
             --sign \
             --key cosign.key \
@@ -101,7 +117,7 @@ jobs:
 
       - name: Verify CGA statement (offline round-trip)
         run: |
-          roam cga verify \
+          .venv/bin/roam cga verify \
             .roam/cga-offline.intoto.json \
             --cosign-key cosign.pub
 
@@ -112,18 +128,21 @@ jobs:
           # intent explicit: this test exercises predicate tamper, not
           # cosign-signature tamper.
           cp .roam/cga-offline.intoto.json .roam/cga-tampered.intoto.json
-          python -c "import json,pathlib; p=pathlib.Path('.roam/cga-tampered.intoto.json'); d=json.loads(p.read_text()); d['predicate']['edge_bundle_digest']='deadbeef'+d['predicate']['edge_bundle_digest'][8:]; p.write_text(json.dumps(d))"
-          set +e
-          roam cga verify .roam/cga-tampered.intoto.json --no-cosign
-          rc=$?
-          set -e
+          .venv/bin/python -c "import json,pathlib; p=pathlib.Path('.roam/cga-tampered.intoto.json'); d=json.loads(p.read_text()); d['predicate']['edge_bundle_digest']='deadbeef'+d['predicate']['edge_bundle_digest'][8:]; p.write_text(json.dumps(d))"
+          # This single expected failure is captured explicitly. Every other
+          # command in the workflow remains under the shell's fail-fast mode.
+          if .venv/bin/roam cga verify .roam/cga-tampered.intoto.json --no-cosign; then
+            rc=0
+          else
+            rc=$?
+          fi
           if [ "$rc" != "5" ]; then
             echo "Expected verify to exit 5 on tamper; got $rc" >&2
             exit 1
           fi
 
       - name: Upload offline statement
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cga-offline-attestation
           path: |
@@ -143,27 +162,42 @@ jobs:
   # that always runs without network — this one is the production-path
   # smoke. If Sigstore has an outage, re-run the job after they recover.
   keyless-oidc:
-    runs-on: ubuntu-latest
+    name: Keyless OIDC attestation
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write   # required only for keyless OIDC signing
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
-      - name: Install roam-code
-        run: pip install -e .
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync the exact runtime graph
+        run: |
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --python python
+          uv pip check --python .venv/bin/python
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
       - name: Index the repo
         run: |
-          roam index
-          roam clones --persist
+          .venv/bin/roam index
+          .venv/bin/roam clones --persist
 
       - name: Emit + sign keyless
         env:
@@ -177,7 +211,7 @@ jobs:
           # covers both statements, so the VSA is keyless-signed via
           # Fulcio + Rekor alongside the CGA and gets its own
           # .roam/cga-keyless.vsa.bundle (+ .vsa.cert for keyless).
-          roam cga emit \
+          .venv/bin/roam cga emit \
             --include-taint \
             --sign \
             --keyless \
@@ -199,11 +233,13 @@ jobs:
           ROAM_CGA_CERT_IDENTITY: ${{ github.server_url }}/${{ github.workflow_ref }}
           ROAM_CGA_CERT_OIDC_ISSUER: https://token.actions.githubusercontent.com
         run: |
-          roam cga verify .roam/cga-keyless.intoto.json
+          .venv/bin/roam cga verify .roam/cga-keyless.intoto.json
 
+      # Preserve any partially emitted statement for incident diagnosis. The
+      # signing or verification failure remains the job's terminal status.
       - name: Upload keyless statement
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cga-keyless-attestation
           path: |

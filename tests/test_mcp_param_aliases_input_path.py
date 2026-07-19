@@ -28,6 +28,16 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_dispatch_policy(monkeypatch):
+    """Alias forwarding is independent of repo-local mode policy state."""
+    monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
+
+
 # ---------------------------------------------------------------------------
 # Direct unit tests on the helper for each W332 alias
 # ---------------------------------------------------------------------------

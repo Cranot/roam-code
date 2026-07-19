@@ -174,6 +174,8 @@ def test_cli_proof_bundle_writes_output_file(tmp_path):
     )
     assert result.exit_code in (0, 4, 5)
     assert out_path.is_file()
+    assert "Proof bundle written:" in result.output
+    assert "Roam Guard verdict:" not in result.output
     composed = json.loads(out_path.read_text())
     assert composed["schema"] == PROOF_BUNDLE_SCHEMA
 
@@ -268,8 +270,10 @@ def test_cli_proof_bundle_format_markdown_to_file(tmp_path):
         ],
     )
     assert result.exit_code in (0, 4, 5)
-    content = out_path.read_text()
+    content = out_path.read_text(encoding="utf-8")
     assert "Roam Guard verdict:" in content
+    assert "Proof bundle written:" in result.output
+    assert "Roam Guard verdict:" not in result.output
 
 
 # ---- Phase 7: JSON Schema validation ----

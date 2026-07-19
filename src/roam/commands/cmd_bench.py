@@ -551,6 +551,7 @@ def _structure_judge_score(result_text: str, task: str) -> dict:
         "roam bench compile --tasks-file my-bench-tasks.txt --runs 3",
     ),
     tags=("planning", "benchmark", "compiler", "ab"),
+    side_effect=True,
 )
 def bench_compile(
     ctx: click.Context,

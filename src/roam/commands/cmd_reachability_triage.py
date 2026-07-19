@@ -256,6 +256,8 @@ def _text_output(
     ],
     tags=["security", "reachability", "zero-egress", "review"],
     ai_safe=True,
+    side_effect=True,
+    destructive=False,
     mcp_expose=True,
     requires_index=True,
     since="13.8",

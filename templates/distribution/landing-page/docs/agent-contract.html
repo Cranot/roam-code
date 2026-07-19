@@ -92,7 +92,7 @@
       <h2 id="surface-at-a-glance">Surface at a glance</h2>
       <p>
         Authoritative counts from <code>roam surface --json</code>
-        (v13.9.0). The MCP server exposes a tunable preset surface so the
+        (v13.10.0). The MCP server exposes a tunable preset surface so the
         agent sees what it needs, not the entire registry.
       </p>
       <table>
@@ -361,11 +361,39 @@
         <code>not_evaluated</code> / <code>would_deny_dry_run</code> —
         reflecting an actual enforcement
         decision at the MCP boundary, not a hard-coded allow. Resolution
-        priority (highest wins): explicit <code>--mode</code> flag,
+        is invocation-sensitive for mixed query/write wrappers: the query
+        form remains read-only, while an explicit persist or write control
+        raises both <code>required_mode</code> and the receipt's declared
+        effects. Mode-source priority (highest wins): explicit
+        <code>--mode</code> flag,
         <code>ROAM_AGENT_MODE</code> env var,
         <code>.roam/active_mode</code> file, default
         <code>safe_edit</code>. A gateway can map external roles to
         Roam modes and pass the resolved mode in per call.
+      </p>
+      <p>
+        A generated <code>.roam/constitution.yml</code> remains fail-safe as
+        the command surface grows. New constitutions record a semantic SHA-256
+        of the exact generated <code>modes</code> snapshot in additive
+        generator metadata (the constitution document schema remains
+        <code>version: 1</code>). Roam follows newer generated defaults only
+        while the on-disk modes still match that recorded digest. Editing one
+        permission breaks generator ownership and keeps the customized lists
+        authoritative. In a partial customized policy, an omitted higher mode
+        inherits only the permissions already declared below it; absence never
+        imports a baked-in allow-list. Legacy files without a digest are also
+        authoritative:
+        <code>roam constitution check</code> reports their migration state,
+        <code>roam constitution upgrade</code> previews every per-mode addition
+        and removal, and <code>--apply</code> refuses a policy-changing legacy
+        or customized upgrade unless the caller also passes
+        <code>--accept-mode-replacement</code> and the preview's
+        <code>--expect-modes-digest</code>. That digest binds replacement to
+        the exact policy reviewed. The emitted recovery command includes the
+        audited <code>--override-mode</code> bootstrap escape so a stale policy
+        cannot block its own repair. The accepted write preserves unknown YAML
+        keys, uses an atomic compare-and-swap, and aborts if the file changes
+        during application.
       </p>
 
       <h3 id="hmac-linked-receipts">HMAC-linked decision receipts</h3>

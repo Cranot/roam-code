@@ -24,13 +24,15 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _disable_cold_start_guard(monkeypatch):
-    """Tests mock ``_run_roam`` directly, so we want the cold-start guard
-    to short-circuit to pass-through rather than fire on whatever cwd the
-    test runner picks up. ``ROAM_MCP_DISABLE_COLD_START_GUARD`` flips the
-    guard to a no-op for the duration of each test (see
-    ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
+    """Isolate wrapper-shape tests from project-level dispatch policy.
+
+    These tests mock ``_run_roam`` directly, so both pre-dispatch boundaries
+    must pass through regardless of the runner's cwd or a developer-local
+    ``.roam/constitution.yml``. Dedicated MCP policy suites exercise the
+    default-on gate itself.
     """
     monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
     yield
 
 
@@ -67,14 +69,17 @@ class TestRegistryPresence:
             f"changed without updating this test."
         )
 
-    @pytest.mark.parametrize("tool_name", W299_TOOL_NAMES)
-    def test_wrapper_is_read_only(self, tool_name: str) -> None:
-        """All 9 wrappers are read-only (read_only=True implied default)."""
+    @pytest.mark.parametrize(
+        ("tool_name", "read_only"),
+        [(name, name != "roam_fan") for name in W299_TOOL_NAMES],
+    )
+    def test_wrapper_declares_maximum_effect(self, tool_name: str, read_only: bool) -> None:
+        """Catalog metadata declares each wrapper's maximum callable effect."""
         from roam.mcp_server import _TOOL_METADATA
 
         meta = _TOOL_METADATA[tool_name]
-        assert meta.get("read_only", True) is True, (
-            f"{tool_name} must be read-only -- the exploration cluster only contains pure-query commands."
+        assert meta.get("read_only", True) is read_only, (
+            f"{tool_name} maximum-effect classification drifted; roam_fan exposes an opt-in --persist write."
         )
 
     @pytest.mark.parametrize("tool_name", W299_TOOL_NAMES)

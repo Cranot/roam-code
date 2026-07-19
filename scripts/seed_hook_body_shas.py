@@ -3,10 +3,11 @@
 Enumerates every hook body roam ever shipped (per the git history of
 src/roam/commands/cmd_hooks.py), computes the SHA-256 of each body in its
 DEPLOYED form — the raw literal for pre-stamp commits, the version-stamped
-form after — plus the deterministic variant compile-code's mode-override
-surgery produces (_override_hook_maintenance_commands, copied verbatim
-below). Run after ANY hook-body change and paste the output into the
-frozenset; the paired registry test fails when this drifts.
+form after — plus deterministic legacy variants produced by Compile Code
+versions that rewrote maintenance invocations before Roam v11 owned the mode
+override natively. Compile Code 0.2+ does not perform this transform. Run after
+ANY hook-body change and paste the output into the frozenset; the paired
+registry test fails when this drifts.
 
 Usage: python scripts/seed_hook_body_shas.py
 """
@@ -26,12 +27,12 @@ NAMES = {"_CLAUDE_UPS_HOOK_SCRIPT": "ups", "_CLAUDE_STOP_HOOK_SCRIPT": "stop"}
 
 
 def surgered(script: str) -> str:
-    """compile-code's hook surgery, copied verbatim (cli.py, compile-code repo).
+    """Reproduce the historical Compile Code hook transform for old digests.
 
-    Duplicated as DATA-GENERATION logic only — roam must not import
-    compile-code. If compile-code changes its transform, rerun this script;
-    until then surgered bodies of the new shape classify "modified"
-    (report-only), never overwritten.
+    This is DATA-GENERATION logic only: it preserves recognition of bodies
+    deployed by Compile Code before 0.2. Roam v11 owns the override in its
+    canonical body, and current Compile Code does not rewrite hooks or Roam
+    source. Roam must never import Compile Code here.
     """
     dynamic_command = '["roam", "--json", *args]'
     overridden_dynamic_command = (

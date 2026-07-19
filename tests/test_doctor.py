@@ -177,7 +177,8 @@ class TestDoctorCheckCoverage:
         # wallclock advisory ("Phase timings") — total 22. W482 added
         # the emitted-workflow drift advisory ("CI workflow drift") — total 23.
         # W836 added the corpus-content advisory (Pattern 2 sweep) — total 24.
-        assert data["summary"]["total"] == 24
+        # T2c added the deployed Claude hook-body drift advisory — total 25.
+        assert data["summary"]["total"] == 25
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()

@@ -696,6 +696,7 @@ def _build_facts(diff: dict) -> list[str]:
         'roam envelope-diff "trace login" --update-baseline internal/benchmarks/envelope-baselines/',
     ),
     tags=("planning", "compiler", "diff"),
+    side_effect=True,
 )
 def envelope_diff(
     ctx: click.Context,

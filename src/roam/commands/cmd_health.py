@@ -1248,7 +1248,7 @@ def _emit_baseline_diff(
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

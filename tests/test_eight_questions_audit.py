@@ -272,9 +272,10 @@ def test_score_values_are_closed_enumeration(
 #
 # W223 wired the five new W199 collector kwargs (rules, audit-trail,
 # vuln-reach, test-impact, cga) plus the mcp_receipts_dir into the
-# PR Replay producer, lifting the count to 5/8: Q1 (actor_refs from
-# mcp receipts), Q2 (mode), Q4 (changed subjects), Q5 (risk), Q6
-# (policy decisions from audit-trail).
+# PR Replay producer, lifting Q6 when a policy producer was present.
+# The detector-scope policy floor now makes that lift deterministic on a
+# fresh checkout: every successful replay records which detector policy it
+# selected as ``not_evaluated`` (never a fabricated pass/fail decision).
 #
 # W246 wired the changed-file surface into the collector's
 # ``context_files`` channel: ``_gather_context_files`` derives the file

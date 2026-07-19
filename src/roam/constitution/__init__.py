@@ -16,6 +16,8 @@ Top-level API (see :mod:`roam.constitution.loader`)::
     load_constitution(repo_root)   -> Optional[Constitution]
     init_constitution(repo_root)   -> Path
     check_constitution(repo_root, constitution) -> CheckReport
+    assess_constitution_upgrade(constitution) -> ModePolicyUpgradeReport
+    upgrade_constitution(repo_root) -> ModePolicyUpgradeReport
     apply_constitution(repo_root, constitution, gate=...) -> ApplyReport
 """
 
@@ -25,20 +27,34 @@ from roam.constitution.loader import (
     ApplyReport,
     CheckReport,
     Constitution,
+    ConstitutionConcurrentUpdate,
+    ConstitutionUpgradePreviewMismatch,
+    ConstitutionUpgradeRequiresAcceptance,
+    ModePolicyUpgradeReport,
     apply_constitution,
+    assess_constitution_upgrade,
     check_constitution,
     constitution_path,
     init_constitution,
     load_constitution,
+    mode_policy_digest,
+    upgrade_constitution,
 )
 
 __all__ = [
     "ApplyReport",
     "CheckReport",
     "Constitution",
+    "ConstitutionConcurrentUpdate",
+    "ConstitutionUpgradePreviewMismatch",
+    "ConstitutionUpgradeRequiresAcceptance",
+    "ModePolicyUpgradeReport",
     "apply_constitution",
+    "assess_constitution_upgrade",
     "check_constitution",
     "constitution_path",
     "init_constitution",
     "load_constitution",
+    "mode_policy_digest",
+    "upgrade_constitution",
 ]

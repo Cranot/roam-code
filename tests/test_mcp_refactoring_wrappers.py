@@ -14,6 +14,8 @@ This module pins:
   (auto-appended by ``maybe_decorate_description``)
 * each wrapper's CLI argument shape is what the underlying command
   expects (verified by mocking ``_run_roam`` and asserting the args).
+* option-dependent writers declare their maximum callable effects even when
+  their default invocation is a dry run.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ def _disable_cold_start_guard(monkeypatch):
     ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
     """
     monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
     yield
 
 
@@ -68,18 +71,13 @@ class TestRegistryPresence:
             f"changed without updating this test."
         )
 
-    @pytest.mark.parametrize("tool_name", W302_TOOL_NAMES)
+    @pytest.mark.parametrize("tool_name", W302_TOOL_NAMES[:-1])
     def test_wrapper_is_read_only(self, tool_name: str) -> None:
-        """All 9 wrappers are read-only.
+        """The eight analysis-only wrappers are read-only.
 
         Even ``roam_safe_delete`` and ``roam_delete_check`` -- which
         carry "delete" in their name -- only REPORT verdicts; the
-        underlying CLI never touches the filesystem. ``roam_test_scaffold``
-        has a ``write`` flag but defaults to dry-run; the wrapper-level
-        side-effect is gated by the caller-supplied bool, not the
-        wrapper itself, so the tool stays read-only by default per the
-        same precedent as ``roam_fitness`` (which can rewrite baselines
-        but the wrapper does not).
+        underlying CLI never touches the filesystem.
         """
         from roam.mcp_server import _TOOL_METADATA
 
@@ -89,6 +87,15 @@ class TestRegistryPresence:
             f"only contains analyses and gates; any disk-writing side "
             f"effect is opt-in via a caller-supplied flag."
         )
+
+    def test_test_scaffold_declares_maximum_callable_effects(self) -> None:
+        """``write=True`` makes the tool a conservative static writer."""
+        from roam.mcp_server import _TOOL_METADATA
+
+        meta = _TOOL_METADATA["roam_test_scaffold"]
+        assert meta["read_only"] is False
+        assert meta["destructive"] is False
+        assert meta["idempotent"] is False
 
     @pytest.mark.parametrize("tool_name", W302_TOOL_NAMES)
     def test_wrapper_has_description(self, tool_name: str) -> None:

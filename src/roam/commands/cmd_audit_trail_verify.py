@@ -271,7 +271,7 @@ def _build_rollup(_records, _issues, _records_count: int, _issues_count: int) ->
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core", "compliance"),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

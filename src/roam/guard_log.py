@@ -22,20 +22,176 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+import threading
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from roam.observability import log_swallowed
+
 LOG_FILENAME = "verdict-log.jsonl"
 
-# POSIX guarantees atomic O_APPEND writes <= PIPE_BUF (typically 4096B).
-# Beyond this, concurrent appends from parallel guard-pr runs can interleave.
+# Keep each audit record bounded even though append/rotate now share a lock.
+# This prevents an untrusted verdict payload from becoming an unbounded write.
 _ATOMIC_APPEND_LIMIT = 4096
+_LOG_LOCK_TIMEOUT_SECONDS = 10.0
+_LOG_LOCK_RETRY_SECONDS = 0.01
+_LOG_THREAD_LOCK = threading.RLock()
 
 
 def log_path_for(root: Path) -> Path:
     """Return the canonical verdict-log path under .roam/."""
     return root / ".roam" / LOG_FILENAME
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """Return True for a symlink or Windows junction/reparse directory."""
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
+
+
+def _validate_existing_regular_file(path: Path, *, label: str) -> None:
+    """Reject links, device nodes, and hard-linked control-plane files."""
+    if _is_reparse_point(path):
+        raise OSError(f"unsafe {label}: links are not accepted")
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(info.st_mode):
+        raise OSError(f"unsafe {label}: expected a regular file")
+    if info.st_nlink != 1:
+        raise OSError(f"unsafe {label}: hard-linked files are not accepted")
+
+
+def _validated_log_path(root: Path, *, create_parent: bool) -> Path:
+    """Return a contained, concrete ``.roam/verdict-log.jsonl`` path."""
+    root_path = Path(root)
+    resolved_root = root_path.resolve(strict=False)
+    control_dir = root_path / ".roam"
+    if _is_reparse_point(control_dir):
+        raise OSError("unsafe verdict log root: .roam is a link or junction")
+    if control_dir.exists() and not control_dir.is_dir():
+        raise OSError("unsafe verdict log root: .roam is not a directory")
+    if create_parent:
+        control_dir.mkdir(parents=True, exist_ok=True)
+    resolved_control = control_dir.resolve(strict=False)
+    expected_control = resolved_root / ".roam"
+    if resolved_control != expected_control:
+        raise OSError("unsafe verdict log root: .roam escaped the repository")
+    path = control_dir / LOG_FILENAME
+    _validate_existing_regular_file(path, label="verdict log")
+    return path
+
+
+def _open_regular_fd(path: Path, flags: int, mode: int = 0o600) -> int:
+    """Open one regular, single-link file without following POSIX symlinks."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    binary = getattr(os, "O_BINARY", 0)
+    fd = os.open(str(path), flags | nofollow | binary, mode)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise OSError("unsafe control-plane file descriptor")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _open_lock_file(path: Path):
+    """Securely create or open the persistent cross-process lock file."""
+    try:
+        fd = _open_regular_fd(path, os.O_RDWR | os.O_CREAT | os.O_EXCL)
+    except FileExistsError:
+        _validate_existing_regular_file(path, label="verdict log lock")
+        fd = _open_regular_fd(path, os.O_RDWR)
+    return os.fdopen(fd, "r+b", buffering=0)
+
+
+def _lock_file_nonblocking(lock_file) -> bool:
+    """Try one OS-level exclusive lock acquisition."""
+    lock_file.seek(0, os.SEEK_END)
+    if lock_file.tell() == 0:
+        lock_file.write(b"\0")
+    lock_file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    import fcntl
+
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
+def _unlock_file(lock_file) -> None:
+    """Release an OS-level lock; descriptor close remains the final backstop."""
+    lock_file.seek(0)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _exclusive_log_lock(root: Path):
+    """Serialize append and rotate across threads and independent processes."""
+    with _LOG_THREAD_LOCK:
+        path = _validated_log_path(root, create_parent=True)
+        lock_path = path.with_name(path.name + ".lock")
+        _validate_existing_regular_file(lock_path, label="verdict log lock")
+        with _open_lock_file(lock_path) as lock_file:
+            deadline = time.monotonic() + _LOG_LOCK_TIMEOUT_SECONDS
+            while not _lock_file_nonblocking(lock_file):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("timed out acquiring verdict log lock")
+                time.sleep(_LOG_LOCK_RETRY_SECONDS)
+            try:
+                yield path
+            finally:
+                try:
+                    _unlock_file(lock_file)
+                except OSError as exc:
+                    # Closing the descriptor releases the OS lock. Preserve the
+                    # caller's original result while leaving an opt-in trace.
+                    log_swallowed("guard_log._exclusive_log_lock.unlock", exc)
+
+
+def _append_all(path: Path, line: bytes) -> None:
+    """Append all bytes while the caller holds ``_exclusive_log_lock``."""
+    try:
+        fd = _open_regular_fd(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        _validate_existing_regular_file(path, label="verdict log")
+        fd = _open_regular_fd(path, os.O_WRONLY | os.O_APPEND, 0o644)
+    try:
+        remaining = memoryview(line)
+        while remaining:
+            written = os.write(fd, remaining)
+            if written <= 0:
+                raise OSError("verdict log append made no progress")
+            remaining = remaining[written:]
+    finally:
+        os.close(fd)
 
 
 def build_log_entry(
@@ -76,27 +232,24 @@ def _intent_from_bundle(v1: dict[str, Any]) -> str | None:
 def append_log_entry(root: Path, entry: dict[str, Any]) -> bool:
     """Append one line to `.roam/verdict-log.jsonl`. Returns True on success.
 
-    Concurrency-safe: uses POSIX `O_APPEND` + a single `os.write()` so
-    parallel guard-pr runs from different processes cannot interleave
-    each other's lines (atomic up to PIPE_BUF, ~4096 bytes).
+    Concurrency-safe on POSIX and Windows: append and rotate share a bounded
+    advisory lock, while a process-local lock covers same-process threads.
+    The data descriptor is opened no-follow where the OS supports it and the
+    writer rejects redirected or hard-linked control-plane files.
 
     Never raises — log failures are non-fatal for the verdict command itself.
     """
     try:
-        path = log_path_for(root)
-        path.parent.mkdir(parents=True, exist_ok=True)
         line = (json.dumps(entry, separators=(",", ":")) + "\n").encode("utf-8")
         if len(line) > _ATOMIC_APPEND_LIMIT:
-            # Oversize line — concurrent writes may interleave. Bail
-            # rather than write a record that could corrupt the log.
+            # Preserve the historical bounded-record contract. Huge audit
+            # records are rejected rather than turning the log into an
+            # unbounded disk-write surface.
             return False
-        fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-        try:
-            os.write(fd, line)
-        finally:
-            os.close(fd)
+        with _exclusive_log_lock(root) as path:
+            _append_all(path, line)
         return True
-    except (OSError, ValueError):
+    except (OSError, TimeoutError, ValueError):
         return False
 
 
@@ -123,37 +276,42 @@ def rotate_log(root: Path, keep: int) -> dict[str, Any]:
     if keep < 0:
         out["error"] = "invalid_keep"
         return out
-    path = log_path_for(root)
-    if not path.is_file():
-        return out
     try:
-        raw = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    except OSError as e:
-        out["error"] = f"read_failed: {e}"
-        return out
-    out["total_before"] = len(raw)
-    to_keep = raw[-keep:] if keep > 0 else []
-    out["kept"] = len(to_keep)
-    out["removed"] = len(raw) - len(to_keep)
-    if out["removed"] == 0:
-        return out
-    try:
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=path.name + ".",
-            suffix=".tmp",
-            dir=str(path.parent),
-        )
-        with _os.fdopen(fd, "w", encoding="utf-8") as f:
-            for line in to_keep:
-                f.write(line + "\n")
-        _os.replace(tmp_path, str(path))
-    except OSError as e:
-        try:
-            _os.unlink(tmp_path)
-        except OSError:
-            pass
-        out["removed"] = 0  # rollback signal
-        out["error"] = f"write_failed: {e}"
+        with _exclusive_log_lock(root) as path:
+            if not path.is_file():
+                return out
+            try:
+                raw = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            except OSError as e:
+                out["error"] = f"read_failed: {e}"
+                return out
+            out["total_before"] = len(raw)
+            to_keep = raw[-keep:] if keep > 0 else []
+            out["kept"] = len(to_keep)
+            out["removed"] = len(raw) - len(to_keep)
+            if out["removed"] == 0:
+                return out
+            tmp_path: str | None = None
+            try:
+                fd, tmp_path = tempfile.mkstemp(
+                    prefix=path.name + ".",
+                    suffix=".tmp",
+                    dir=str(path.parent),
+                )
+                with _os.fdopen(fd, "w", encoding="utf-8") as f:
+                    for line in to_keep:
+                        f.write(line + "\n")
+                _os.replace(tmp_path, str(path))
+            except OSError as e:
+                if tmp_path is not None:
+                    try:
+                        _os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                out["removed"] = 0  # rollback signal
+                out["error"] = f"write_failed: {e}"
+    except (OSError, TimeoutError) as e:
+        out["error"] = f"lock_failed: {e}"
     return out
 
 
@@ -179,13 +337,18 @@ def read_log_entries_detail(root: Path, limit: int | None = None) -> dict[str, A
     "log present but contains N malformed lines" — previously all three
     looked identical (an empty list).
     """
-    path = log_path_for(root)
     result: dict[str, Any] = {
         "entries": [],
         "error": None,
-        "file_present": path.is_file(),
+        "file_present": False,
         "malformed_lines": 0,
     }
+    try:
+        path = _validated_log_path(root, create_parent=False)
+    except OSError as e:
+        result["error"] = f"unsafe_path: {e}"
+        return result
+    result["file_present"] = path.is_file()
     if not result["file_present"]:
         return result
     out: list[dict[str, Any]] = []

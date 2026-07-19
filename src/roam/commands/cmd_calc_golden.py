@@ -86,6 +86,7 @@ def _parse_where(entries: tuple[str, ...]) -> dict[str, str] | None:
     summary="Golden-master value oracle: extract (inputs->outputs) cases from historical data; audit rules; check cent-exact",
     inputs=("extract|audit|check", "source/corpus", "--inputs", "--expect", "--rule", "--runner"),
     outputs=("findings_envelope",),
+    side_effect=True,
 )
 @click.group(name="calc-golden")
 def calc_golden() -> None:

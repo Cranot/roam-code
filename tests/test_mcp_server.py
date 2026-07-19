@@ -708,17 +708,16 @@ class TestToolWrappers:
 
     @pytest.fixture(autouse=True)
     def _bypass_cold_start_guard(self, monkeypatch):
-        """W843: bypass the W296 cold-start guard so the inner wrapper
-        body actually reaches ``_run_roam``.
+        """Bypass runtime policy layers so this class tests argv only.
 
-        Without this, every tool that needs an index (i.e. almost all of
-        them) short-circuits at ``_wrap_with_cold_start_guard`` and the
-        ``_run_roam`` mock never fires -- producing the
+        Without this, an index guard or the checkout's real constitution can
+        short-circuit before the mocked ``_run_roam`` call, producing the
         ``Expected '_run_roam' to have been called once. Called 0 times``
-        failure shape. The guard ships with a documented env-var bypass
-        (``src/roam/mcp_extras/preflight.py`` line 166).
+        failure shape. Dedicated mode-enforcement suites exercise the default-on
+        policy path; these tests isolate literal argument construction.
         """
         monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+        monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
 
     def _check_args(self, fn, kwargs, expected_args):
         """Call a tool function with mocked _run_roam and verify args."""

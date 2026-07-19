@@ -6,7 +6,13 @@
 // Prerequisites:
 //   - Python 3.10+ available on the agent
 //   - Jenkins warnings-ng plugin (optional, for SARIF ingestion)
-//   - Pipeline Utility Steps plugin (optional, for JSON parsing)
+//
+// Supply-chain boundary:
+//   - roam-code is exactly 13.10.0.
+//   - `agent any` deliberately preserves portability across Jenkins fleets.
+//     Jenkins cannot bind that executor to an immutable image from this file;
+//     administrators should attach the job only to a reviewed immutable node
+//     image and treat executor-image mutability as a residual platform risk.
 //
 // Parameters:
 //   ROAM_PYTHON:         Python executable name (default: python3)
@@ -37,16 +43,43 @@ pipeline {
         stage('Setup') {
             steps {
                 sh '''
+                    set -eu
                     mkdir -p "${ROAM_RESULTS}"
+                    mkdir -p "${ROAM_RESULTS}/advisory"
+
+                    case "${ROAM_PYTHON}" in
+                        python3|python3.[0-9]|python3.[0-9][0-9]) ;;
+                        *)
+                            echo "ROAM_PYTHON must be a bounded python3 executable name" >&2
+                            exit 1
+                            ;;
+                    esac
+                    case "${ROAM_HEALTH_GATE}" in
+                        ''|*[!0-9]*)
+                            echo "ROAM_HEALTH_GATE must be an integer from 0 through 100" >&2
+                            exit 1
+                            ;;
+                    esac
+                    if [ "${ROAM_HEALTH_GATE}" -gt 100 ]; then
+                        echo "ROAM_HEALTH_GATE must be an integer from 0 through 100" >&2
+                        exit 1
+                    fi
+
+                    if [ -L .roam-venv ] || { [ -e .roam-venv ] && [ ! -d .roam-venv ]; }; then
+                        echo ".roam-venv must be an absent path or a real directory" >&2
+                        exit 1
+                    fi
+                    if [ -d .roam-venv ]; then
+                        rm -rf -- .roam-venv
+                    fi
 
                     # Create virtual environment for isolation
-                    ${ROAM_PYTHON} -m venv .roam-venv
+                    "${ROAM_PYTHON}" -m venv .roam-venv
                     . .roam-venv/bin/activate
 
-                    pip install --quiet --upgrade pip
-                    pip install --quiet roam-code
+                    python -m pip install --quiet "roam-code==13.10.0"
 
-                    echo "roam-code version: $(roam --version 2>/dev/null || echo unknown)"
+                    roam --version
                 '''
             }
         }
@@ -71,29 +104,77 @@ pipeline {
             }
         }
 
-        // Advisory stage (|| true): rules findings ship in archived
-        // artifacts + warnings-ng report; the merge gate is health-score-only
-        // at the Quality Gate stage below.
+        // Rules findings are advisory for this health-score-only template.
+        // Non-zero commands can continue only through the captured status
+        // protocol below; their output never masquerades as successful.
         stage('Rules Check') {
             steps {
                 sh '''
+                    set -eu
                     . .roam-venv/bin/activate
 
-                    roam --json check-rules > "${ROAM_RESULTS}/rules.json" || true
-                    roam check-rules || true
+                    capture_advisory() {
+                        label=$1
+                        stdout_path=$2
+                        stderr_path=$3
+                        shift 3
+                        set +e
+                        "$@" > "$stdout_path" 2> "$stderr_path"
+                        exit_code=$?
+                        set -e
+                        state=completed
+                        if [ "$exit_code" -ne 0 ]; then
+                            state=failed
+                        fi
+                        {
+                            printf 'command=%s\n' "$*"
+                            printf 'exit_code=%s\n' "$exit_code"
+                            printf 'state=%s\n' "$state"
+                        } > "${ROAM_RESULTS}/advisory/${label}.status"
+                        if [ "$exit_code" -ne 0 ]; then
+                            echo "ADVISORY ${label}: command exited ${exit_code}; inspect captured artifacts." >&2
+                        fi
+                    }
+
+                    capture_advisory rules-json \
+                        "${ROAM_RESULTS}/rules.json" \
+                        "${ROAM_RESULTS}/advisory/rules-json.stderr" \
+                        roam --json check-rules
+                    capture_advisory rules-text \
+                        "${ROAM_RESULTS}/advisory/rules.txt" \
+                        "${ROAM_RESULTS}/advisory/rules-text.stderr" \
+                        roam check-rules
+                    cat "${ROAM_RESULTS}/advisory/rules.txt"
                 '''
             }
         }
 
-        // Advisory stage (|| true): SARIF artifacts ship for warnings-ng /
-        // CI ingestion; generation failure does not block the pipeline.
+        // Health SARIF is required. Rules SARIF remains advisory and records
+        // its command status for reviewers and downstream automation.
         stage('SARIF Reports') {
             steps {
                 sh '''
+                    set -eu
                     . .roam-venv/bin/activate
 
-                    roam --sarif health > "${ROAM_RESULTS}/health.sarif" || true
-                    roam --sarif check-rules > "${ROAM_RESULTS}/rules.sarif" 2>/dev/null || true
+                    roam --sarif health > "${ROAM_RESULTS}/health.sarif"
+
+                    set +e
+                    roam --sarif check-rules \
+                        > "${ROAM_RESULTS}/rules.sarif" \
+                        2> "${ROAM_RESULTS}/advisory/rules-sarif.stderr"
+                    rules_sarif_exit=$?
+                    set -e
+                    rules_sarif_state=completed
+                    if [ "$rules_sarif_exit" -ne 0 ]; then
+                        rules_sarif_state=failed
+                        echo "ADVISORY rules-sarif: command exited ${rules_sarif_exit}; inspect captured artifacts." >&2
+                    fi
+                    {
+                        printf 'command=roam --sarif check-rules\n'
+                        printf 'exit_code=%s\n' "$rules_sarif_exit"
+                        printf 'state=%s\n' "$rules_sarif_state"
+                    } > "${ROAM_RESULTS}/advisory/rules-sarif.status"
                 '''
             }
         }
@@ -101,16 +182,18 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 sh '''
+                    set -eu
                     . .roam-venv/bin/activate
 
-                    HEALTH_SCORE=$(${ROAM_PYTHON} -c "
-import json
-try:
-    data = json.load(open('${ROAM_RESULTS}/health.json'))
-    print(data.get('summary', {}).get('health_score', 0))
-except Exception:
-    print(0)
-")
+                    HEALTH_SCORE=$("${ROAM_PYTHON}" -c '
+import json, os
+from pathlib import Path
+data = json.loads((Path(os.environ["ROAM_RESULTS"]) / "health.json").read_text(encoding="utf-8"))
+score = data.get("summary", {}).get("health_score")
+if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
+    raise SystemExit(f"invalid or missing health_score: {score!r}")
+print(score)
+')
                     echo "Health score: ${HEALTH_SCORE}/100"
                     echo "Gate threshold: ${ROAM_HEALTH_GATE}"
 
@@ -127,13 +210,6 @@ except Exception:
 
     post {
         always {
-            // Archive JSON and SARIF results
-            archiveArtifacts(
-                artifacts: 'roam-results/**',
-                allowEmptyArchive: true,
-                fingerprint: true
-            )
-
             // Ingest SARIF via warnings-ng plugin (if installed)
             // Install "Warnings Next Generation" plugin for this to work.
             // See: https://plugins.jenkins.io/warnings-ng/
@@ -151,9 +227,17 @@ except Exception:
                             unstable: true
                         ]]
                     )
+                    sh '''
+                        printf 'command=warnings-ng health SARIF ingestion\nexit_code=0\nstate=completed\n' \
+                            > "${ROAM_RESULTS}/advisory/warnings-ng-health.status"
+                    '''
                 } catch (e) {
                     echo "warnings-ng plugin not available: ${e.message}"
                     echo "Install 'Warnings Next Generation' plugin for SARIF integration"
+                    sh '''
+                        printf 'command=warnings-ng health SARIF ingestion\nexit_code=1\nstate=failed\n' \
+                            > "${ROAM_RESULTS}/advisory/warnings-ng-health.status"
+                    '''
                 }
             }
 
@@ -171,13 +255,37 @@ except Exception:
                             unstable: true
                         ]]
                     )
+                    sh '''
+                        printf 'command=warnings-ng rules SARIF ingestion\nexit_code=0\nstate=completed\n' \
+                            > "${ROAM_RESULTS}/advisory/warnings-ng-rules.status"
+                    '''
                 } catch (e) {
-                    // Silently skip if plugin not installed
+                    echo "warnings-ng rules ingestion unavailable: ${e.message}"
+                    sh '''
+                        printf 'command=warnings-ng rules SARIF ingestion\nexit_code=1\nstate=failed\n' \
+                            > "${ROAM_RESULTS}/advisory/warnings-ng-rules.status"
+                    '''
                 }
             }
 
+            // Required outputs must exist; empty evidence never looks green.
+            archiveArtifacts(
+                artifacts: 'roam-results/**',
+                allowEmptyArchive: false,
+                fingerprint: true
+            )
+
             // Clean up virtual environment
-            sh 'rm -rf .roam-venv || true'
+            sh '''
+                set -eu
+                if [ -L .roam-venv ] || { [ -e .roam-venv ] && [ ! -d .roam-venv ]; }; then
+                    echo "Refusing to clean a non-directory or symlinked .roam-venv" >&2
+                    exit 1
+                fi
+                if [ -d .roam-venv ]; then
+                    rm -rf -- .roam-venv
+                fi
+            '''
         }
 
         failure {

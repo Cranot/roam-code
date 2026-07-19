@@ -240,8 +240,7 @@ class TestVersionConsistency:
         )
 
     def test_card_tool_count_matches_live_count(self):
-        """The card's ``capabilities.tools.total`` must match the live
-        MCP tool count from ``surface_counts``."""
+        """The card's total and complete preset map must match the runtime."""
         try:
             from roam.surface_counts import collect_surface_counts
         except ImportError:
@@ -249,19 +248,33 @@ class TestVersionConsistency:
         live = collect_surface_counts()
         card = json.loads(_PUBLIC_MCP_CARD.read_text(encoding="utf-8"))
         live_total = live["mcp"]["registered_tools"]
-        live_core = live["mcp"]["core_tools"]
+        live_presets = live["mcp"]["preset_counts"]
         card_total = card["capabilities"]["tools"]["total"]
-        card_core = card["capabilities"]["tools"]["presets"]["core"]
-        card_full = card["capabilities"]["tools"]["presets"]["full"]
+        card_presets = card["capabilities"]["tools"]["presets"]
         assert card_total == live_total, (
             f"card capabilities.tools.total = {card_total} but live MCP tool count = {live_total}"
         )
-        assert card_core == live_core, (
-            f"card capabilities.tools.presets.core = {card_core} but live core preset count = {live_core}"
+        assert card_presets == live_presets, (
+            f"card capabilities.tools.presets = {card_presets} but live preset counts = {live_presets}"
         )
-        assert card_full == live_total, (
-            f"card capabilities.tools.presets.full = {card_full} but live total = {live_total}"
-        )
+
+    def test_server_json_mcp_preset_description_matches_live_count(self):
+        """The registry help string must enumerate every runtime preset."""
+        from roam.surface_counts import collect_surface_counts
+
+        live_presets = collect_surface_counts()["mcp"]["preset_counts"]
+        parts = []
+        for name, count in live_presets.items():
+            if name == "core":
+                parts.append(f"core (default, {count} — lean prompt surface)")
+            else:
+                parts.append(f"{name} ({count})")
+        expected = "Tool preset: " + ", ".join(parts)
+
+        server = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+        variables = server["packages"][0]["environmentVariables"]
+        actual = next(item["description"] for item in variables if item["name"] == "ROAM_MCP_PRESET")
+        assert actual == expected, f"server.json preset description = {actual!r}, expected {expected!r}"
 
     # -- Landing-page surfaces (newly guarded) -----------------------------
     #

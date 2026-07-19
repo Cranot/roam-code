@@ -3,12 +3,15 @@
 # Runs roam-code health checks and rules validation on pull requests.
 # Publishes SARIF results and posts a PR comment with quality summary.
 #
-# Prerequisites:
-#   - Python 3.10+ (uses UsePythonVersion task)
-#   - pip install roam-code
+# Supply-chain pins:
+#   - roam-code is exactly 13.10.0.
+#   - The hosted VM label and default Python runtime are exact versions.
+#   - Azure built-in tasks only support service-managed major selectors in
+#     pipeline YAML; @0/@1 below therefore retain Azure-controlled patch-level
+#     mutability. No third-party Azure task is used.
 #
 # Variables (set in pipeline definition or variable group):
-#   roamPythonVersion: Python version (default: 3.12)
+#   roamPythonVersion: Exact Python version (default: 3.12.10)
 #   roamHealthGate:    Minimum health score to pass (default: 60)
 #
 # To customize: copy this file to azure-pipelines.yml in your project root.
@@ -27,12 +30,11 @@ pr:
       - master
 
 variables:
-  roamPythonVersion: '3.12'
-  roamHealthGate: 60
-  pip_cache_dir: $(Pipeline.Workspace)/.pip
+  roamPythonVersion: '3.12.10'
+  roamHealthGate: '60'
 
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: 'ubuntu-24.04'
 
 stages:
   - stage: Analyze
@@ -43,120 +45,265 @@ stages:
         steps:
           - checkout: self
             fetchDepth: 0  # Full history for git analysis
+            persistCredentials: false
 
           - task: UsePythonVersion@0
             inputs:
               versionSpec: '$(roamPythonVersion)'
             displayName: 'Set up Python $(roamPythonVersion)'
 
-          - task: Cache@2
-            inputs:
-              key: 'pip | "$(Agent.OS)" | requirements.txt'
-              restoreKeys: |
-                pip | "$(Agent.OS)"
-              path: $(pip_cache_dir)
-            displayName: 'Cache pip packages'
+          - script: python -m pip install --quiet "roam-code==13.10.0"
+            displayName: 'Install roam-code 13.10.0'
 
           - script: |
-              pip install --quiet roam-code
-            displayName: 'Install roam-code'
-
-          - script: |
+              set -eu
+              mkdir -p "$ROAM_ARTIFACT_DIR"
               roam init
-            displayName: 'Build index'
-
-          - script: |
-              roam --json health > $(Build.ArtifactStagingDirectory)/roam-health.json
+              roam --json health > "$ROAM_ARTIFACT_DIR/roam-health.json"
               roam health
-            displayName: 'Run health check'
+            displayName: 'Build index and run required health checks'
+            env:
+              ROAM_ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)
 
-          # Advisory step (|| true): rules findings surface in artifacts + PR
-          # comment for review; the merge gate is health-score-only at the
-          # Enforce quality gate stage below.
+          # Rules are advisory for this health-score-only gate. Every command
+          # records stdout, stderr, exit code, and state instead of discarding
+          # failures. Required health evidence never uses this protocol.
           - script: |
-              roam --json check-rules > $(Build.ArtifactStagingDirectory)/roam-rules.json || true
-              roam check-rules || true
-            displayName: 'Run rules check'
+              set -eu
+              mkdir -p "$ROAM_ARTIFACT_DIR/advisory"
+              capture_advisory() {
+                label=$1
+                stdout_path=$2
+                stderr_path=$3
+                shift 3
 
-          # Advisory step (|| true): SARIF artifacts ship for CI ingestion;
-          # generation failure does not block the pipeline.
+                set +e
+                "$@" > "$stdout_path" 2> "$stderr_path"
+                exit_code=$?
+                set -e
+
+                state=completed
+                if [ "$exit_code" -ne 0 ]; then
+                  state=failed
+                fi
+                {
+                  printf 'command=%s\n' "$*"
+                  printf 'exit_code=%s\n' "$exit_code"
+                  printf 'state=%s\n' "$state"
+                } > "$ROAM_ARTIFACT_DIR/advisory/${label}.status"
+                if [ "$exit_code" -ne 0 ]; then
+                  echo "##vso[task.logissue type=warning]Advisory ${label} exited ${exit_code}; inspect captured artifacts."
+                fi
+              }
+
+              capture_advisory rules-json \
+                "$ROAM_ARTIFACT_DIR/roam-rules.json" \
+                "$ROAM_ARTIFACT_DIR/advisory/rules-json.stderr" \
+                roam --json check-rules
+              capture_advisory rules-text \
+                "$ROAM_ARTIFACT_DIR/advisory/rules.txt" \
+                "$ROAM_ARTIFACT_DIR/advisory/rules-text.stderr" \
+                roam check-rules
+              cat "$ROAM_ARTIFACT_DIR/advisory/rules.txt"
+            displayName: 'Run advisory rules checks'
+            env:
+              ROAM_ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)
+
           - script: |
-              roam --sarif health > $(Build.ArtifactStagingDirectory)/roam-health.sarif || true
-              roam --sarif check-rules > $(Build.ArtifactStagingDirectory)/roam-rules.sarif 2>/dev/null || true
+              set -eu
+              mkdir -p "$ROAM_ARTIFACT_DIR/advisory"
+
+              # Health SARIF is a required artifact.
+              roam --sarif health > "$ROAM_ARTIFACT_DIR/roam-health.sarif"
+
+              # Rules SARIF is advisory and gets a bounded status record.
+              set +e
+              roam --sarif check-rules \
+                > "$ROAM_ARTIFACT_DIR/roam-rules.sarif" \
+                2> "$ROAM_ARTIFACT_DIR/advisory/rules-sarif.stderr"
+              rules_sarif_exit=$?
+              set -e
+              rules_sarif_state=completed
+              if [ "$rules_sarif_exit" -ne 0 ]; then
+                rules_sarif_state=failed
+                echo "##vso[task.logissue type=warning]Advisory rules-sarif exited ${rules_sarif_exit}; inspect captured artifacts."
+              fi
+              {
+                printf 'command=roam --sarif check-rules\n'
+                printf 'exit_code=%s\n' "$rules_sarif_exit"
+                printf 'state=%s\n' "$rules_sarif_state"
+              } > "$ROAM_ARTIFACT_DIR/advisory/rules-sarif.status"
             displayName: 'Generate SARIF reports'
+            env:
+              ROAM_ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)
 
           - script: |
-              HEALTH_SCORE=$(python3 -c "
+              set -eu
+              HEALTH_SCORE=$(
+                python3 - <<'PY'
               import json
-              try:
-                  data = json.load(open('$(Build.ArtifactStagingDirectory)/roam-health.json'))
-                  print(data.get('summary', {}).get('health_score', 0))
-              except Exception:
-                  print(0)
-              ")
+              import os
+              import re
+              from pathlib import Path
+
+              gate = os.environ.get("ROAM_HEALTH_GATE", "")
+              if not re.fullmatch(r"(?:0|[1-9][0-9]?|100)", gate):
+                  raise SystemExit("roamHealthGate must be an integer from 0 through 100")
+              path = Path(os.environ["ROAM_ARTIFACT_DIR"]) / "roam-health.json"
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              score = payload.get("summary", {}).get("health_score")
+              if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
+                  raise SystemExit(f"invalid or missing health_score: {score!r}")
+              print(score)
+              PY
+              )
               echo "Health score: ${HEALTH_SCORE}/100"
               echo "##vso[task.setvariable variable=healthScore]${HEALTH_SCORE}"
-
-              if [ "${HEALTH_SCORE}" -lt "$(roamHealthGate)" ]; then
-                echo "##vso[task.logissue type=error]Health score ${HEALTH_SCORE} is below gate threshold $(roamHealthGate)"
+              if [ "$HEALTH_SCORE" -lt "$ROAM_HEALTH_GATE" ]; then
+                echo "##vso[task.logissue type=error]Health score ${HEALTH_SCORE} is below gate threshold ${ROAM_HEALTH_GATE}"
                 exit 1
               fi
             displayName: 'Enforce quality gate'
-
-          # Post PR comment via Azure DevOps REST API
-          - script: |
-              if [ "$(Build.Reason)" = "PullRequest" ]; then
-                RULES_VERDICT=$(python3 -c "
-              import json
-              try:
-                  data = json.load(open('$(Build.ArtifactStagingDirectory)/roam-rules.json'))
-                  v = data.get('summary', {}).get('verdict', 'unknown')
-                  violations = data.get('summary', {}).get('violations', 0)
-                  print(f'{v} ({violations} violations)')
-              except Exception:
-                  print('not available')
-              " 2>/dev/null || echo "not available")
-
-                PR_ID=$(echo "$(System.PullRequest.PullRequestId)" | grep -o '[0-9]*' || echo "")
-
-                if [ -n "${PR_ID}" ]; then
-                  COMMENT_BODY="## roam-code Analysis\n\n| Metric | Value |\n|--------|-------|\n| Health Score | **$(healthScore)/100** |\n| Gate Threshold | $(roamHealthGate) |\n| Rules | ${RULES_VERDICT} |\n| Commit | \`$(Build.SourceVersion)\` |\n\n---\n*Generated by [roam-code](https://github.com/Cranot/roam-code)*"
-
-                  python3 -c "
-              import json, urllib.request, os
-
-              org_url = os.environ.get('SYSTEM_TEAMFOUNDATIONCOLLECTIONURI', '')
-              project = os.environ.get('SYSTEM_TEAMPROJECT', '')
-              repo_id = os.environ.get('BUILD_REPOSITORY_ID', '')
-              pr_id = '${PR_ID}'
-              token = os.environ.get('SYSTEM_ACCESSTOKEN', '')
-
-              if not all([org_url, project, repo_id, pr_id, token]):
-                  print('Warning: Missing Azure DevOps variables for PR comment')
-                  raise SystemExit(0)
-
-              url = f'{org_url}{project}/_apis/git/repositories/{repo_id}/pullRequests/{pr_id}/threads?api-version=7.1'
-              body = json.dumps({
-                  'comments': [{'parentCommentId': 0, 'content': '${COMMENT_BODY}', 'commentType': 1}],
-                  'status': 1
-              }).encode()
-
-              import base64
-              auth = base64.b64encode(f':{token}'.encode()).decode()
-              req = urllib.request.Request(url, data=body, method='POST')
-              req.add_header('Content-Type', 'application/json')
-              req.add_header('Authorization', f'Basic {auth}')
-
-              try:
-                  urllib.request.urlopen(req)
-                  print('PR comment posted successfully')
-              except Exception as e:
-                  print(f'Warning: Could not post PR comment: {e}')
-              " || echo "Warning: PR comment posting failed"
-                fi
-              fi
-            displayName: 'Post PR comment'
             env:
+              ROAM_ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)
+              ROAM_HEALTH_GATE: $(roamHealthGate)
+
+          # PR commenting is explicitly advisory. It uses a no-redirect HTTP
+          # client so the Azure access token cannot cross an origin boundary.
+          - script: |
+              set -eu
+              mkdir -p "$ROAM_ARTIFACT_DIR/advisory"
+              if [ "$BUILD_REASON" != "PullRequest" ]; then
+                {
+                  printf 'command=post Azure pull-request comment\n'
+                  printf 'exit_code=0\n'
+                  printf 'state=not_applicable\n'
+                } > "$ROAM_ARTIFACT_DIR/advisory/pr-comment.status"
+                exit 0
+              fi
+
+              set +e
+              python3 - <<'PY' \
+                > "$ROAM_ARTIFACT_DIR/advisory/pr-comment.stdout" \
+                2> "$ROAM_ARTIFACT_DIR/advisory/pr-comment.stderr"
+              import base64
+              import json
+              import os
+              import re
+              import urllib.error
+              import urllib.parse
+              import urllib.request
+              from pathlib import Path
+
+              def require(name: str) -> str:
+                  value = os.environ.get(name, "")
+                  if not value:
+                      raise SystemExit(f"{name} is unavailable")
+                  return value
+
+              pr_id = require("AZURE_PR_ID")
+              if not re.fullmatch(r"[1-9][0-9]*", pr_id):
+                  raise SystemExit("Azure pull-request ID must be a positive integer")
+              health_score = require("ROAM_HEALTH_SCORE")
+              gate = require("ROAM_HEALTH_GATE")
+              for label, value in (("health score", health_score), ("gate", gate)):
+                  if not re.fullmatch(r"(?:0|[1-9][0-9]?|100)", value):
+                      raise SystemExit(f"invalid {label}: {value!r}")
+
+              artifact_dir = Path(require("ROAM_ARTIFACT_DIR"))
+              status_fields = dict(
+                  line.split("=", 1)
+                  for line in (artifact_dir / "advisory/rules-json.status").read_text(encoding="utf-8").splitlines()
+                  if "=" in line
+              )
+              rules_exit = status_fields.get("exit_code", "missing")
+              try:
+                  rules = json.loads((artifact_dir / "roam-rules.json").read_text(encoding="utf-8"))
+                  verdict = rules.get("summary", {}).get("verdict")
+                  violations = rules.get("summary", {}).get("violations", rules.get("summary", {}).get("failed"))
+                  if not isinstance(verdict, str) or not verdict.strip():
+                      raise ValueError("missing verdict")
+                  rules_summary = f"{verdict} ({violations!r} violations; advisory exit {rules_exit})"
+              except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                  rules_summary = f"unavailable (advisory exit {rules_exit})"
+
+              org_url = require("AZURE_ORG_URL")
+              parsed = urllib.parse.urlsplit(org_url)
+              if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                  raise SystemExit("Azure collection URL must be canonical HTTPS")
+              project = urllib.parse.quote(require("AZURE_PROJECT"), safe="")
+              repo_id = urllib.parse.quote(require("AZURE_REPOSITORY_ID"), safe="")
+              url = (
+                  f"{org_url.rstrip('/')}/{project}/_apis/git/repositories/{repo_id}"
+                  f"/pullRequests/{pr_id}/threads?api-version=7.1"
+              )
+              comment = "\n".join(
+                  [
+                      "## roam-code Analysis",
+                      "",
+                      "| Metric | Value |",
+                      "|--------|-------|",
+                      f"| Health Score | **{health_score}/100** |",
+                      f"| Gate Threshold | {gate} |",
+                      f"| Rules | {rules_summary} |",
+                      f"| Commit | `{require('AZURE_COMMIT')}` |",
+                      "",
+                      "SARIF and advisory status artifacts are attached to the build.",
+                  ]
+              )
+              body = json.dumps(
+                  {
+                      "comments": [{"parentCommentId": 0, "content": comment, "commentType": 1}],
+                      "status": 1,
+                  }
+              ).encode("utf-8")
+              token = require("SYSTEM_ACCESSTOKEN")
+              basic = base64.b64encode(f":{token}".encode("utf-8")).decode("ascii")
+              request = urllib.request.Request(
+                  url,
+                  data=body,
+                  method="POST",
+                  headers={"Content-Type": "application/json", "Authorization": f"Basic {basic}"},
+              )
+
+              class NoRedirect(urllib.request.HTTPRedirectHandler):
+                  def redirect_request(self, req, fp, code, msg, headers, newurl):
+                      return None
+
+              opener = urllib.request.build_opener(NoRedirect)
+              try:
+                  with opener.open(request, timeout=20) as response:
+                      if not 200 <= response.status < 300:
+                          raise SystemExit(f"Azure comment API returned HTTP {response.status}")
+              except urllib.error.HTTPError as exc:
+                  raise SystemExit(f"Azure comment API returned HTTP {exc.code}") from exc
+              except urllib.error.URLError as exc:
+                  raise SystemExit(f"Azure comment API request failed: {exc.reason}") from exc
+              print("Azure pull-request comment posted")
+              PY
+              comment_exit=$?
+              set -e
+              comment_state=completed
+              if [ "$comment_exit" -ne 0 ]; then
+                comment_state=failed
+                echo "##vso[task.logissue type=warning]Advisory PR comment exited ${comment_exit}; inspect captured artifacts."
+              fi
+              {
+                printf 'command=post Azure pull-request comment\n'
+                printf 'exit_code=%s\n' "$comment_exit"
+                printf 'state=%s\n' "$comment_state"
+              } > "$ROAM_ARTIFACT_DIR/advisory/pr-comment.status"
+            displayName: 'Post advisory PR comment'
+            env:
+              AZURE_COMMIT: $(Build.SourceVersion)
+              AZURE_ORG_URL: $(System.TeamFoundationCollectionUri)
+              AZURE_PR_ID: $(System.PullRequest.PullRequestId)
+              AZURE_PROJECT: $(System.TeamProject)
+              AZURE_REPOSITORY_ID: $(Build.Repository.ID)
+              BUILD_REASON: $(Build.Reason)
+              ROAM_ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)
+              ROAM_HEALTH_GATE: $(roamHealthGate)
+              ROAM_HEALTH_SCORE: $(healthScore)
               SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
           - task: PublishBuildArtifacts@1

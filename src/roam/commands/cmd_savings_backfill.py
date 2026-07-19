@@ -13,7 +13,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
-from roam.transcript_backfill import backfill_transcripts
+from roam.transcript_backfill import TranscriptBackfillSafetyError, backfill_transcripts
 
 
 def _since_value(_ctx: click.Context, _param: click.Parameter, value: str | None) -> datetime | None:
@@ -84,15 +84,49 @@ def savings_backfill(
     dry_run: bool,
 ) -> None:
     """Write a value-redacted historical episode snapshot for repeated-pattern discovery."""
-    result = backfill_transcripts(
-        root,
-        transcripts_dir,
-        source=source.lower(),
-        since=since,
-        max_files=max_files,
-        all_projects=all_projects,
-        dry_run=dry_run,
-    )
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    try:
+        result = backfill_transcripts(
+            root,
+            transcripts_dir,
+            source=source.lower(),
+            since=since,
+            max_files=max_files,
+            all_projects=all_projects,
+            dry_run=dry_run,
+        )
+    except TranscriptBackfillSafetyError as exc:
+        verdict = "Transcript backfill stopped safely because private-state containment could not be proven"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "savings-backfill",
+                        budget=token_budget,
+                        summary={
+                            "verdict": verdict,
+                            "state": "unsafe_path",
+                            "partial_success": True,
+                            "policy_admissible": False,
+                        },
+                        status="error",
+                        isError=True,
+                        error_code="RUN_FAILED",
+                        error=str(exc),
+                        privacy_contract={
+                            "raw_transcripts_persisted": False,
+                            "raw_prompts_or_responses_persisted": False,
+                            "raw_paths_or_shell_values_persisted": False,
+                        },
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(f"reason: {exc}")
+        ctx.exit(1)
+        return
     verdict = (
         f"Derived {result['episodes']} historical discovery episodes from "
         f"{result['files_with_episodes']} transcript files"
@@ -105,8 +139,6 @@ def savings_backfill(
         "files_with_episodes": result["files_with_episodes"],
         "policy_admissible": False,
     }
-    json_mode = ctx.obj.get("json") if ctx.obj else False
-    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     if json_mode:
         click.echo(
             to_json(

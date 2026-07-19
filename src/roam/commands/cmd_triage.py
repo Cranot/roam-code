@@ -43,7 +43,7 @@ from roam.output.formatter import format_table, json_envelope, to_json
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core", "debug"),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

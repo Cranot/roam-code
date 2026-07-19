@@ -3,7 +3,7 @@
 
 Single source of truth: ``roam.surface_counts.collect_surface_counts()``.
 This script reads the live counts and rewrites every doc-surface that
-quotes them: server.json, mcp-server-card (both copies; see note below),
+quotes them: server.json, the mcp-server-card family (see note below),
 the Cloudflare-served landing-page HTML / llms.txt / docs pages, the
 Claude Code skill, the in-repo CI integration doc, AND the **free-form
 (non-marker) count phrases** in README.md / CLAUDE.md / AGENTS.md /
@@ -67,6 +67,7 @@ def _live_counts() -> dict:
         # changes (W933-class stale-literal hazard). See preset_counts in
         # roam.surface_counts.mcp_surface_counts.
         "mcp_core_tools": int(surface["mcp"]["preset_counts"]["core"]),
+        "mcp_preset_counts": {str(name): int(count) for name, count in surface["mcp"]["preset_counts"].items()},
     }
 
 
@@ -98,6 +99,17 @@ def _live_languages() -> int:
 REPLACEMENTS: list[tuple] = []
 
 
+def _mcp_preset_description(preset_counts: dict[str, int]) -> str:
+    """Render the server.json preset help from the complete runtime map."""
+    parts = []
+    for name, count in preset_counts.items():
+        if name == "core":
+            parts.append(f"core (default, {count} — lean prompt surface)")
+        else:
+            parts.append(f"{name} ({count})")
+    return "Tool preset: " + ", ".join(parts)
+
+
 def build_replacements(counts: dict, languages: int) -> None:
     """Build the (file, [(pattern, replacement)...], marker_aware) list."""
     REPLACEMENTS.clear()
@@ -107,6 +119,7 @@ def build_replacements(counts: dict, languages: int) -> None:
     aliases = counts["alias_names"]
     mcp = counts["mcp_tools"]
     core = counts["mcp_core_tools"]
+    preset_description = _mcp_preset_description(counts["mcp_preset_counts"])
     langs = languages
 
     # README.md — the auto-count MARKER blocks (headline / canonical-mention
@@ -229,12 +242,31 @@ def build_replacements(counts: dict, languages: int) -> None:
         )
     )
 
-    # server.json (string description with "N languages")
+    # server.json (language count + complete ROAM_MCP_PRESET description)
     REPLACEMENTS.append(
         (
             REPO_ROOT / "server.json",
             [
                 (re.compile(r"\b\d+ languages\b"), f"{langs} languages"),
+                (re.compile(r"Tool preset: [^\"]+"), preset_description),
+            ],
+        )
+    )
+
+    # cli.py top-of-file current-surface comment. The registry itself remains
+    # the source of truth; this replacement keeps the human-facing summary
+    # from silently lagging after command additions/removals.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "src" / "roam" / "cli.py",
+            [
+                (
+                    re.compile(
+                        r"# Total: \d+ invokable command names "
+                        r"\(\d+ canonical commands \+ \d+ alias names\)\."
+                    ),
+                    f"# Total: {cmds} invokable command names ({canon} canonical commands + {aliases} alias names).",
+                ),
             ],
         )
     )

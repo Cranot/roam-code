@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+
+import pytest
 
 from roam.guard_log import (
     LOG_FILENAME,
@@ -11,6 +16,7 @@ from roam.guard_log import (
     log_path_for,
     read_log_entries,
 )
+from tests._helpers.repo_root import repo_root
 
 
 def _sample_v1() -> dict:
@@ -142,18 +148,85 @@ def test_append_log_entry_parallel_no_interleave(tmp_path):
     n_threads = 16
     per_thread = 8
 
+    outcomes = []
+
     def writer():
         for _ in range(per_thread):
-            append_log_entry(tmp_path, entry)
+            outcomes.append(append_log_entry(tmp_path, entry))
 
     threads = [threading.Thread(target=writer) for _ in range(n_threads)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
+    assert outcomes == [True] * (n_threads * per_thread)
     lines = log_path_for(tmp_path).read_text(encoding="utf-8").splitlines()
     assert len(lines) == n_threads * per_thread
     # Every line must be a complete, parseable JSON record (no torn writes).
     for line in lines:
         parsed = json.loads(line)
         assert parsed["verdict"] == "pass"
+
+
+def test_append_log_entry_rejects_symlinked_control_directory(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (tmp_path / ".roam").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symlinks are unavailable on this platform")
+
+    assert append_log_entry(tmp_path, {"verdict": "pass"}) is False
+    assert not (outside / LOG_FILENAME).exists()
+
+
+def test_append_log_entry_parallel_processes_no_loss(tmp_path):
+    """The OS lock serializes independent guard-pr processes, not only threads."""
+    workers = 4
+    per_worker = 16
+    source_root = repo_root() / "src"
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join(part for part in (str(source_root), existing_pythonpath) if part)
+    script = (
+        "from pathlib import Path\n"
+        "import sys\n"
+        "from roam.guard_log import append_log_entry\n"
+        "root = Path(sys.argv[1])\n"
+        "count = int(sys.argv[2])\n"
+        "assert all(append_log_entry(root, {'verdict': 'pass'}) for _ in range(count))\n"
+    )
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", script, str(tmp_path), str(per_worker)],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(workers)
+    ]
+    failures = []
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=30)
+        if process.returncode != 0:
+            failures.append((process.returncode, stdout, stderr))
+    assert not failures
+
+    lines = log_path_for(tmp_path).read_text(encoding="utf-8").splitlines()
+    assert len(lines) == workers * per_worker
+    assert all(json.loads(line)["verdict"] == "pass" for line in lines)
+
+
+def test_append_log_entry_rejects_hard_linked_log(tmp_path):
+    control_dir = tmp_path / ".roam"
+    control_dir.mkdir()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("sentinel\n", encoding="utf-8")
+    try:
+        os.link(outside, control_dir / LOG_FILENAME)
+    except (OSError, NotImplementedError):
+        pytest.skip("hard links are unavailable on this platform")
+
+    assert append_log_entry(tmp_path, {"verdict": "pass"}) is False
+    assert outside.read_text(encoding="utf-8") == "sentinel\n"

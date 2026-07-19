@@ -26,13 +26,15 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _disable_cold_start_guard(monkeypatch):
-    """Tests mock ``_run_roam`` directly, so we want the cold-start guard
-    to short-circuit to pass-through rather than fire on whatever cwd the
-    test runner picks up. ``ROAM_MCP_DISABLE_COLD_START_GUARD`` flips the
-    guard to a no-op for the duration of each test (see
-    ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
+    """Isolate wrapper-shape tests from project-level dispatch policy.
+
+    These tests mock ``_run_roam`` directly, so both pre-dispatch boundaries
+    must pass through regardless of the runner's cwd or a developer-local
+    ``.roam/constitution.yml``. Dedicated MCP policy suites exercise the
+    default-on gate itself.
     """
     monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
     yield
 
 

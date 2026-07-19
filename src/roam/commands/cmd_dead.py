@@ -1804,7 +1804,7 @@ def _analyze_dataflow_dead(conn):
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core", "refactor"),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

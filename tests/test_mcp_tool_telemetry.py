@@ -17,6 +17,7 @@ process and reset on restart.
 from __future__ import annotations
 
 import asyncio
+import inspect
 
 import pytest
 
@@ -80,6 +81,54 @@ def test_wrap_with_guard_records_success_on_normal_return():
     summary = tool_invocation_summary()
     assert summary["test_echo"]["success"] == 1
     assert summary["test_echo"].get("error", 0) == 0
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+def test_wrap_with_guard_preserves_synthesised_runtime_annotations(is_async):
+    """FastMCP must see one type hint for every synthesised parameter.
+
+    Python 3.14's ``functools.wraps`` no longer copies a runtime-assigned
+    ``__annotations__`` mapping.  This shape mirrors the alias-normalisation
+    wrapper that sits immediately inside the concurrency guard.
+    """
+    from roam.mcp_extras.concurrency import wrap_with_guard
+
+    if is_async:
+
+        async def tool(*args, **kwargs):
+            return {"args": args, "kwargs": kwargs}
+
+    else:
+
+        def tool(*args, **kwargs):
+            return {"args": args, "kwargs": kwargs}
+
+    tool.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter(
+                "symbol",
+                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default="",
+                annotation=str,
+            ),
+            inspect.Parameter(
+                "name",
+                kind=inspect.Parameter.KEYWORD_ONLY,
+                default=None,
+                annotation=str,
+            ),
+        ],
+        return_annotation=dict,
+    )
+    tool.__annotations__ = {"symbol": str, "name": str, "return": dict}
+
+    wrapped = wrap_with_guard("test_synthesised_annotations", tool)
+
+    assert inspect.signature(wrapped) == tool.__signature__
+    assert wrapped.__annotations__ == tool.__annotations__
+    pydantic = pytest.importorskip("pydantic", reason="FastMCP schema generation requires pydantic")
+    schema = pydantic.TypeAdapter(wrapped).json_schema()
+    assert set(schema["properties"]) == {"symbol", "name"}
 
 
 def test_wrap_with_guard_records_error_on_exception():

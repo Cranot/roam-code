@@ -53,9 +53,10 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import tempfile
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Callable, Union
 
 from roam.observability import log_swallowed
 
@@ -107,6 +108,104 @@ def _close_fd_safely(fd: int, *, origin: str) -> None:
         os.close(fd)
     except OSError as exc:
         log_swallowed(origin, exc)
+
+
+def _fsync_parent_directory(target: Path) -> None:
+    """Persist a completed rename on filesystems that support directory fsync.
+
+    A file ``fsync`` makes the tempfile contents durable, but a power loss can
+    still forget the directory entry installed by ``os.replace``. POSIX lets us
+    close that gap by syncing the containing directory after the rename.
+    Windows does not expose a portable directory-fsync primitive through
+    Python, so its file flush remains the strongest cross-version guarantee.
+    """
+
+    if os.name == "nt":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(target.parent, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_write_bytes_dirfd(
+    target: Path,
+    content: bytes,
+    *,
+    prepare_temp: Callable[[str], None] | None,
+    prepare_temp_fd: Callable[[int, str], None] | None,
+    before_replace: Callable[[], None] | None,
+    durable: bool,
+) -> None:
+    """POSIX atomic write pinned to an already-open parent directory.
+
+    This variant is deliberately private and selected only by the explicit
+    ``secure_parent`` option. Relative ``open``/``replace``/``unlink`` calls
+    keep cleanup and replacement attached to the directory inode even if its
+    lexical pathname is concurrently renamed.
+    """
+
+    parent_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    parent_flags |= getattr(os, "O_NOFOLLOW", 0)
+    parent_fd = os.open(target.parent, parent_flags)
+    fd = -1
+    fdopen_succeeded = False
+    temp_name: str | None = None
+    try:
+        lexical_parent = os.stat(target.parent, follow_symlinks=False)
+        opened_parent = os.fstat(parent_fd)
+        if (lexical_parent.st_dev, lexical_parent.st_ino) != (opened_parent.st_dev, opened_parent.st_ino):
+            raise RuntimeError("atomic-write parent changed while opening its directory handle")
+
+        open_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
+        open_flags |= getattr(os, "O_NOFOLLOW", 0)
+        for _attempt in range(128):
+            candidate = f".{target.name}.{secrets.token_hex(8)}.tmp"
+            try:
+                fd = os.open(candidate, open_flags, 0o600, dir_fd=parent_fd)
+            except FileExistsError:
+                continue
+            temp_name = candidate
+            break
+        if temp_name is None:
+            raise FileExistsError("could not allocate a unique atomic-write tempfile")
+
+        temp_path = str(target.parent / temp_name)
+        if prepare_temp_fd is not None:
+            prepare_temp_fd(fd, temp_path)
+        if prepare_temp is not None:
+            prepare_temp(temp_path)
+        fh = os.fdopen(fd, "wb")
+        fdopen_succeeded = True
+        with fh:
+            fh.write(content)
+            if durable:
+                fh.flush()
+                os.fsync(fh.fileno())
+        if before_replace is not None:
+            before_replace()
+        os.replace(
+            temp_name,
+            target.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        temp_name = None
+        if durable:
+            os.fsync(parent_fd)
+    except BaseException:
+        if fd >= 0 and not fdopen_succeeded:
+            _close_fd_safely(fd, origin="atomic_io._atomic_write_bytes_dirfd.fd_close")
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name, dir_fd=parent_fd)
+            except OSError as exc:
+                log_swallowed("atomic_io._atomic_write_bytes_dirfd.cleanup", exc)
+        raise
+    finally:
+        os.close(parent_fd)
 
 
 def atomic_write_text(path: PathLike, content: str, *, encoding: str = "utf-8") -> None:
@@ -164,15 +263,56 @@ def atomic_write_text(path: PathLike, content: str, *, encoding: str = "utf-8") 
         raise
 
 
-def atomic_write_bytes(path: PathLike, content: bytes) -> None:
+def atomic_write_bytes(
+    path: PathLike,
+    content: bytes,
+    *,
+    prepare_temp: Callable[[str], None] | None = None,
+    prepare_temp_fd: Callable[[int, str], None] | None = None,
+    before_replace: Callable[[], None] | None = None,
+    durable: bool = False,
+    create_parents: bool = True,
+    secure_parent: bool = False,
+) -> None:
     """Atomically write *content* (raw bytes) to *path*.
 
     Same contract as :func:`atomic_write_text` but for binary payloads
     (e.g. cosign signatures, gzip-compressed bundles). Same three-stage
     cleanup discipline — see :func:`atomic_write_text` docstring.
+
+    ``prepare_temp`` and ``prepare_temp_fd`` run after the same-directory
+    tempfile is created but before it receives any bytes. The latter receives
+    the still-open descriptor and is preferred for race-resistant permission
+    changes. Security-sensitive callers can use either callback to install and
+    verify owner-only ACLs without reimplementing the atomic-write protocol.
+
+    ``before_replace`` runs after the complete payload has been written (and
+    synced when ``durable`` is true) but immediately before ``os.replace``.
+    Callers can use it for a final compare-and-swap or path-integrity check. A
+    callback failure removes the tempfile and leaves the target untouched.
+
+    ``create_parents=False`` is intended for security-sensitive callers that
+    validated an existing directory themselves and do not want this helper to
+    create or traverse missing ancestors. All callbacks must raise on failure.
+
+    ``secure_parent=True`` additionally pins the existing parent directory by
+    file descriptor and performs tempfile creation, replacement, and cleanup
+    relative to that descriptor on POSIX. Python has no portable equivalent on
+    Windows, where the callback-based validation path remains in force.
     """
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    if create_parents:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    if secure_parent and os.name != "nt":
+        _atomic_write_bytes_dirfd(
+            target,
+            content,
+            prepare_temp=prepare_temp,
+            prepare_temp_fd=prepare_temp_fd,
+            before_replace=before_replace,
+            durable=durable,
+        )
+        return
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{target.name}.",
         suffix=".tmp",
@@ -180,11 +320,22 @@ def atomic_write_bytes(path: PathLike, content: bytes) -> None:
     )
     fdopen_succeeded = False
     try:
+        if prepare_temp_fd is not None:
+            prepare_temp_fd(fd, tmp_name)
+        if prepare_temp is not None:
+            prepare_temp(tmp_name)
         fh = os.fdopen(fd, "wb")
         fdopen_succeeded = True
         with fh:
             fh.write(content)
+            if durable:
+                fh.flush()
+                os.fsync(fh.fileno())
+        if before_replace is not None:
+            before_replace()
         os.replace(tmp_name, str(target))
+        if durable:
+            _fsync_parent_directory(target)
     except BaseException:
         if not fdopen_succeeded:
             _close_fd_safely(fd, origin="atomic_io.atomic_write_bytes.fd_close")

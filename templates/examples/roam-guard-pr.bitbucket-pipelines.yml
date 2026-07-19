@@ -1,35 +1,75 @@
 # Roam Guard for PRs — Bitbucket Pipelines template.
 #
-# Copy this into `bitbucket-pipelines.yml` (top level OR under `pipelines:`).
-# Runs on every PR; gates the build on Roam Guard's verdict.
+# Copy this file as the repository's top-level `bitbucket-pipelines.yml`.
+# The step runs on every PR and gates the build on the Guard verdict.
+#
+# The image tag is retained for readability. The OCI index digest selects the
+# immutable bytes. It was obtained from Docker Hub's registry and recomputed
+# over the returned manifest bytes on 2026-07-18.
 
-image: python:3.12-slim
+image: python:3.12.13-bookworm@sha256:9bed8554e926c07c6f908841d5ee88c33e8df9236b191526bbce81a9062ab43a
 
 pipelines:
   pull-requests:
     '**':
       - step:
           name: Roam Guard
-          caches:
-            - pip
           script:
-            # Install + index
-            - apt-get update && apt-get install -y --no-install-recommends git
-            - pip install --quiet roam-code
-            - roam init --quiet || true
-            # --ci is shorthand for --strict + --init-if-missing + --format markdown.
-            # Build fails on `blocked` (exit 5) or `needs_review` (exit 4).
-            - roam guard-pr --ci --output guard.md
-          artifacts:
-            - guard.md
-            - guard.sarif
+            - |
+              set -eu
+              if [ -e .roam-guard-venv ] || [ -L .roam-guard-venv ]; then
+                printf '%s\n' 'ERROR: reserved path .roam-guard-venv already exists' >&2
+                exit 1
+              fi
+              if [ -e roam-guard-artifacts ] || [ -L roam-guard-artifacts ]; then
+                printf '%s\n' 'ERROR: reserved path roam-guard-artifacts already exists' >&2
+                exit 1
+              fi
 
-      # Optional second step for SARIF upload (if you have a downstream
-      # security dashboard that consumes SARIF artifacts).
-      - step:
-          name: Roam Guard SARIF
-          script:
-            - pip install --quiet roam-code
-            - roam proof-bundle --format sarif --output guard.sarif || true
+              python -I -m venv .roam-guard-venv
+              PATH='/usr/local/bin:/usr/bin:/bin'
+              export PATH
+              .roam-guard-venv/bin/python -I -m pip --isolated --disable-pip-version-check install \
+                --no-input --no-cache-dir --only-binary=:all: 'roam-code==13.10.0'
+              .roam-guard-venv/bin/python -I -m pip check
+              .roam-guard-venv/bin/python -I -c "from importlib.metadata import version; actual = version('roam-code'); print(f'roam-code {actual}'); raise SystemExit(0 if actual == '13.10.0' else 1)"
+              git --version
+              mkdir -- roam-guard-artifacts
+
+              # Indexing and guard.md are required. Any failure remains fatal.
+              .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam init --quiet
+              set +e
+              .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam guard-pr --ci \
+                --output roam-guard-artifacts/guard.md
+              guard_status=$?
+              set -e
+              if [ ! -s roam-guard-artifacts/guard.md ]; then
+                printf '%s\n' 'ERROR: Roam Guard did not produce required non-empty guard.md evidence' >&2
+                exit 1
+              fi
+              if ! .roam-guard-venv/bin/python -I -c "from pathlib import Path; text = Path('roam-guard-artifacts/guard.md').read_text(encoding='utf-8'); raise SystemExit(0 if text.startswith('## ') and 'Roam Guard verdict:' in text else 1)"; then
+                printf '%s\n' 'ERROR: guard.md is not a structurally valid Roam Guard verdict' >&2
+                exit 1
+              fi
+
+              # SARIF is supplemental. Its status is logged and never replaces
+              # the required Roam Guard exit status (pass=0, review=4, blocked=5).
+              printf '%s\n' 'ADVISORY: SARIF is supplemental and does not affect the Guard gate' >&2
+              set +e
+              .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam proof-bundle \
+                --validate --format sarif \
+                --output roam-guard-artifacts/guard.sarif
+              sarif_status=$?
+              if [ "$sarif_status" -eq 0 ]; then
+                .roam-guard-venv/bin/python -I -c "import json; from pathlib import Path; payload = json.loads(Path('roam-guard-artifacts/guard.sarif').read_text(encoding='utf-8')); runs = payload.get('runs'); first = runs[0] if isinstance(runs, list) and runs else {}; driver = first.get('tool', {}).get('driver', {}); raise SystemExit(0 if payload.get('version') == '2.1.0' and driver.get('name') == 'roam-guard' and isinstance(first.get('results'), list) else 1)"
+                sarif_status=$?
+              fi
+              set -e
+              if [ "$sarif_status" -ne 0 ]; then
+                printf '%s\n' "ADVISORY: SARIF generation or validation failed with status $sarif_status; guard.md remains the required evidence" >&2
+                rm -f -- roam-guard-artifacts/guard.sarif
+              fi
+
+              exit "$guard_status"
           artifacts:
-            - guard.sarif
+            - roam-guard-artifacts/**

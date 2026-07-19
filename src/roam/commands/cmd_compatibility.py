@@ -317,7 +317,7 @@ def _default_baseline_path() -> Path:
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=False,

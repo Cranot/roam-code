@@ -369,6 +369,11 @@ class TestBatchGetOne:
 class TestBatchSearch:
     """Integration-style tests for the roam_batch_search MCP tool."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_argument_and_result_contract_from_repo_policy(self, monkeypatch):
+        """Exercise batch semantics independently of the checkout constitution."""
+        monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
+
     def test_empty_queries_returns_empty_results(self, tmp_db):
         from roam.mcp_server import batch_search
 

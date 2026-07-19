@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import stat
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import click
 
+from roam.atomic_io import atomic_write_bytes
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
 
@@ -523,8 +525,9 @@ def status(ctx):
 # materially, and append the SHA of the prior stamped body to
 # _KNOWN_HOOK_BODY_SHAS so `hooks claude --write` heals the now-stale deployed
 # copies. The stamp is a bare comment line inserted after the shebang:
-# compile-code's mode-override surgery rewrites only the roam INVOCATION lines,
-# never this, so a healed body keeps its version marker.
+# Legacy Compile Code releases rewrote only roam invocation lines, never this
+# stamp. Roam v11 owns the audited maintenance override in its canonical body;
+# Compile Code 0.2+ no longer rewrites hooks or installed Roam source.
 # v3 (2026-07-16): Stop hook gained the opt-in Loop-B whole-repo report refresh
 # (ROAM_HOOK_REPORT_REFRESH). Deployed v2 bodies heal to v3 on `hooks claude
 # --write`, which is how this new body reaches already-wired installs.
@@ -536,7 +539,26 @@ def status(ctx):
 # warm-daemon and cold compile paths. Deployed v4 bodies heal.
 # v6 (2026-07-16): events stamp provenance + hook version and Stop emits a
 # closed verification-health state. Deployed v5 bodies heal.
-_HOOK_BODY_VERSION = 6
+# v7 (2026-07-17): edited stops fail closed when Verify is unavailable,
+# malformed, or incomplete; FAIL-without-findings also blocks. Deployed v6
+# bodies heal so every wired client receives the proof-completeness contract.
+# v8 (2026-07-17): correction continuations re-run Verify instead of silently
+# allowing the second stop. Verify envelopes are bound to their process exit
+# code and strict count/completeness invariants. Claude Code itself caps
+# consecutive Stop-hook continuations, preserving loop safety without granting
+# an unverified completion.
+# v9 (2026-07-17): UserPromptSubmit records the episode base HEAD and a
+# policy/hook/settings digest outside the repository. Stop binds Verify to an
+# exact receipt-v2 filename/content snapshot, covers commits made during the
+# turn, and rejects any pre/post verification mutation before allowing.
+# v10 (2026-07-17): require Verify receipt v3's before/after byte digests and
+# stable file-identity proof. Deployed v9 bodies heal so same-byte replacement
+# during Verify can never satisfy the Stop gate.
+# v12 (2026-07-19): treat a hook evidence directory on another Windows volume
+# as safely outside the repository. ``os.path.commonpath`` raises ValueError
+# across drive letters; v11 accidentally collapsed that safe case into an
+# unavailable evidence root and dropped episode identity.
+_HOOK_BODY_VERSION = 12
 _HOOK_VERSION_MARKER = "# roam-hook-version:"
 
 _CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
@@ -549,6 +571,7 @@ nothing and exits 0 (a broken roam install must never block a turn).
 import json
 import hashlib
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -563,6 +586,20 @@ _LOCK_STALE_S = 30.0
 # envelope compute on a cache hit), so try the loopback daemon first. The
 # connect budget is tiny on purpose: an absent daemon must cost ~nothing.
 _DAEMON_CONNECT_TIMEOUT_S = 0.01
+_POLICY_MAX_FILE_BYTES = 4 * 1024 * 1024
+_POLICY_RELATIVE_PATHS = (
+    ".roam/verify.yaml",
+    ".roam/verify-baseline.json",
+    ".roam/constitution.yml",
+    ".roam/active_mode",
+    ".roam-suppressions.yml",
+    ".roam-gates.yml",
+    ".roam-leak-patterns.py",
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".claude/hooks/roam-compile-ups.py",
+    ".claude/hooks/roam-verify-stop.py",
+)
 
 
 def _repo_root():
@@ -574,6 +611,163 @@ def _repo_root():
         if parent == d:
             return os.getcwd()
         d = parent
+
+
+def _evidence_base(root, create):
+    """Return a restrictive state directory that is never inside the repo."""
+    override = (os.environ.get("ROAM_HOOK_EVIDENCE_DIR") or "").strip()
+    if override:
+        base = os.path.abspath(os.path.expanduser(override))
+    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        base = os.path.join(os.environ["LOCALAPPDATA"], "roam", "hook-evidence")
+    else:
+        state_home = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+        base = os.path.join(state_home, "roam", "hook-evidence")
+    try:
+        repo_real = os.path.normcase(os.path.realpath(root))
+        base_real = os.path.normcase(os.path.realpath(base))
+        try:
+            base_is_inside_repo = os.path.commonpath([repo_real, base_real]) == repo_real
+        except ValueError:
+            # Different Windows drive letters have no common path and are, by
+            # construction, outside one another.
+            base_is_inside_repo = False
+        if base_is_inside_repo:
+            return ""
+        if create:
+            os.makedirs(base_real, mode=0o700, exist_ok=True)
+            if os.name != "nt":
+                os.chmod(base_real, 0o700)
+        if not os.path.isdir(base_real):
+            return ""
+        return base_real
+    except OSError:
+        return ""
+
+
+def _episode_state_path(root, session_key, create):
+    base = _evidence_base(root, create)
+    if not base:
+        return ""
+    repo_key = hashlib.sha256(os.path.normcase(os.path.realpath(root)).encode("utf-8", "replace")).hexdigest()[:24]
+    state_root = os.path.join(base, repo_key)
+    try:
+        if create:
+            os.makedirs(state_root, mode=0o700, exist_ok=True)
+            if os.name != "nt":
+                os.chmod(state_root, 0o700)
+        if not os.path.isdir(state_root):
+            return ""
+        return os.path.join(state_root, session_key + ".json")
+    except OSError:
+        return ""
+
+
+def _git_base_head(root):
+    try:
+        inside = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"], cwd=root,
+            capture_output=True, text=True, timeout=10,
+        )
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return "", "unavailable"
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"], cwd=root,
+            capture_output=True, text=True, timeout=10,
+        )
+        if head.returncode != 0:
+            return "", "unborn"
+        value = head.stdout.strip().lower()
+        if len(value) not in (40, 64) or any(ch not in "0123456789abcdef" for ch in value):
+            return "", "unavailable"
+        return value, "present"
+    except Exception:
+        return "", "unavailable"
+
+
+def _same_file_state(left, right, cross_handle=False):
+    fields = ["st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns"]
+    if cross_handle and os.name == "nt":
+        fields.remove("st_ctime_ns")
+    return all(getattr(left, field) == getattr(right, field) for field in fields)
+
+
+def _policy_file_state(path):
+    """Hash one policy file without following repo-controlled symlinks."""
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        return "missing", True
+    except OSError:
+        return "unreadable", False
+    if stat.S_ISLNK(before.st_mode):
+        return "unsafe_symlink", False
+    if not stat.S_ISREG(before.st_mode):
+        return "not_regular", False
+    if before.st_size > _POLICY_MAX_FILE_BYTES:
+        return "too_large", False
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return "unreadable", False
+    digest = hashlib.sha256()
+    read_n = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or not _same_file_state(before, opened, cross_handle=True):
+            return "changed_during_hash", False
+        while True:
+            chunk = os.read(fd, 128 * 1024)
+            if not chunk:
+                break
+            read_n += len(chunk)
+            if read_n > _POLICY_MAX_FILE_BYTES:
+                return "too_large", False
+            digest.update(chunk)
+        opened_after = os.fstat(fd)
+        try:
+            after = os.lstat(path)
+        except OSError:
+            return "changed_during_hash", False
+        if (
+            read_n != opened.st_size
+            or not _same_file_state(opened, opened_after)
+            or not _same_file_state(before, after)
+        ):
+            return "changed_during_hash", False
+    finally:
+        os.close(fd)
+    return "sha256:" + digest.hexdigest(), True
+
+
+def _policy_paths(root):
+    paths = {"repo:" + rel: os.path.join(root, *rel.split("/")) for rel in _POLICY_RELATIVE_PATHS}
+    runtime_file = os.path.abspath(globals().get("__file__") or sys.argv[0])
+    runtime_dir = os.path.dirname(runtime_file)
+    paths["runtime:user_prompt_hook"] = os.path.join(runtime_dir, "roam-compile-ups.py")
+    paths["runtime:stop_hook"] = os.path.join(runtime_dir, "roam-verify-stop.py")
+    paths["runtime:settings"] = os.path.join(os.path.dirname(runtime_dir), "settings.json")
+    paths["user:settings"] = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+    paths["user:settings_local"] = os.path.join(os.path.expanduser("~"), ".claude", "settings.local.json")
+    return paths
+
+
+def _policy_snapshot(root):
+    manifest = []
+    complete = True
+    for label, path in sorted(_policy_paths(root).items()):
+        state, ok = _policy_file_state(path)
+        manifest.append([label, state])
+        complete = complete and ok
+    env_values = sorted(
+        [name, value]
+        for name, value in os.environ.items()
+        if name == "ROAM_COMPILE_VERIFY" or name == "ROAM_REPO_LEAK_PATTERNS" or name.startswith("ROAM_VERIFY_")
+    )
+    manifest.append(["environment", env_values])
+    payload = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest(), complete
 
 
 def _utc_now():
@@ -592,7 +786,7 @@ def _session_key(payload):
 def _acquire_lock(path):
     for _ in range(_LOCK_ATTEMPTS):
         try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             os.write(fd, str(os.getpid()).encode("ascii", "replace"))
             return fd
         except FileExistsError:
@@ -624,12 +818,15 @@ def _release_lock(path, fd):
 def _atomic_json(path, value):
     tmp = path + ".tmp-%d-%d" % (os.getpid(), time.time_ns())
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(value, fh, sort_keys=True, separators=(",", ":"))
             fh.write(chr(10))
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+        if os.name != "nt":
+            os.chmod(path, 0o600)
     finally:
         try:
             if os.path.exists(tmp):
@@ -661,13 +858,13 @@ def _append_episode_event(root, event):
 
 def _start_episode(payload, prompt):
     root = _repo_root()
-    state_root = os.path.join(root, ".roam", "episode-state")
     session_key, session_id, transcript_path = _session_key(payload)
-    if not session_key or not os.path.isdir(os.path.join(root, ".roam")):
+    if not session_key:
         return session_id, "", ""
     try:
-        os.makedirs(state_root, exist_ok=True)
-        state_path = os.path.join(state_root, session_key + ".json")
+        state_path = _episode_state_path(root, session_key, True)
+        if not state_path:
+            return session_id, "", ""
         lock_path = state_path + ".lock"
         fd = _acquire_lock(lock_path)
         if fd is None:
@@ -692,13 +889,23 @@ def _start_episode(payload, prompt):
                 os.getpid(),
             )
             episode_id = "ep_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:24]
+            base_head, base_head_state = _git_base_head(root)
+            policy_sha256, policy_complete = _policy_snapshot(root)
             state = {
+                "state_schema": "roam.hook.episode.v2",
+                "repo_sha256": hashlib.sha256(
+                    os.path.normcase(os.path.realpath(root)).encode("utf-8", "replace")
+                ).hexdigest(),
                 "session_id": session_id,
                 "last_turn_seq": turn_seq,
                 "active": {
                     "episode_id": episode_id,
                     "started_at_ms": started_at_ms,
                     "turn_seq": turn_seq,
+                    "base_head": base_head,
+                    "base_head_state": base_head_state,
+                    "policy_sha256": policy_sha256,
+                    "policy_complete": bool(policy_complete),
                 },
             }
             _atomic_json(state_path, state)
@@ -706,7 +913,7 @@ def _start_episode(payload, prompt):
             _release_lock(lock_path, fd)
         event = {
             "schema_version": _EPISODE_SCHEMA,
-            "hook_version": 6,
+            "hook_version": 12,
             "evidence_source": "live_hook",
             "event_id": "evt_" + hashlib.sha256((episode_id + ":start").encode("utf-8")).hexdigest()[:24],
             "episode_id": episode_id,
@@ -726,6 +933,9 @@ def _start_episode(payload, prompt):
             "permission_mode": str(payload.get("permission_mode") or ""),
             "compile_expected": len(prompt) >= _MIN_PROMPT_CHARS,
             "health_state": "unknown",
+            "base_head": base_head,
+            "base_head_state": base_head_state,
+            "policy_snapshot_complete": bool(policy_complete),
         }
         _append_episode_event(root, event)
         return session_id, episode_id, str(turn_seq)
@@ -843,18 +1053,20 @@ def _claude_hook_dir(user_level: bool) -> Path:
 
 # W-CC-VERIFY (2026-06-10) — the post-edit verify half of the decision-doc
 # MVP loop (compile before the model acts, verify after it edits). Stop-hook
-# script: scoped `roam verify --auto --diff-only`, fail-open, quiet on PASS.
+# script: scoped `roam verify --auto --diff-only`, fail-closed when edited
+# evidence is unavailable, quiet on a complete PASS.
 _CLAUDE_STOP_HOOK_FILENAME = "roam-verify-stop.py"
 _CLAUDE_STOP_HOOK_SCRIPT = '''#!/usr/bin/env python3
 """roam verify -> Claude Code Stop-hook post-edit check.
 
-Installed by `roam hooks claude --write`. FAIL-OPEN and QUIET-ON-PASS:
-any error or a clean verdict prints nothing; only real findings surface.
+Installed by `roam hooks claude --write`. QUIET-ON-COMPLETE-PASS: optional
+reviewers fail open, but an edited stop blocks when the required Verify call
+times out, returns malformed output, or reports incomplete evidence.
 
-Fast-exit + block-rate telemetry (2026-07-11): a stop with a clean working
-tree (no tracked edits, no new untracked files -- a pure Q&A session) skips
-the verify subprocess entirely (~10ms git check instead of a 90s-budget
-verify run). Every decision appends a counts-only JSON line to
+Fast-exit + block-rate telemetry (2026-07-11): a stop whose prompt-base
+episode has no net source delta (committed, staged, unstaged, or untracked)
+skips the verify subprocess. A commit made during the episode remains in scope
+even when the current working tree is clean. Every decision appends a counts-only JSON line to
 `.roam/hook-stops.jsonl` so the block rate is measurable -- see
 _log_stop_event.
 
@@ -901,7 +1113,10 @@ behaviour.
 """
 import json
 import hashlib
+import errno
 import os
+import secrets
+import stat
 import subprocess
 import sys
 import time
@@ -946,10 +1161,155 @@ _ADVISORY_CATEGORIES = frozenset({
     "llm_smells", "test_hermeticity", "smells",
 })
 _EPISODE_SCHEMA = 1
-_EPISODE_HOOK_VERSION = 6
+_EPISODE_HOOK_VERSION = 12
 _EPISODE_LOCK_ATTEMPTS = 20
 _EPISODE_LOCK_SLEEP_S = 0.005
 _EPISODE_LOCK_STALE_S = 30.0
+_POLICY_MAX_FILE_BYTES = 4 * 1024 * 1024
+_VERIFY_MAX_FILE_BYTES = 64 * 1024 * 1024
+_VERIFY_MAX_TOTAL_BYTES = 256 * 1024 * 1024
+_VERIFY_MAX_TARGETS = 4096
+_VERIFY_MAX_ARG_CHARS = 128 * 1024
+_POLICY_RELATIVE_PATHS = (
+    ".roam/verify.yaml",
+    ".roam/verify-baseline.json",
+    ".roam/constitution.yml",
+    ".roam/active_mode",
+    ".roam-suppressions.yml",
+    ".roam-gates.yml",
+    ".roam-leak-patterns.py",
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".claude/hooks/roam-compile-ups.py",
+    ".claude/hooks/roam-verify-stop.py",
+)
+
+
+def _evidence_base(root, create=False):
+    """Return the same out-of-repository evidence root as UserPromptSubmit."""
+    override = (os.environ.get("ROAM_HOOK_EVIDENCE_DIR") or "").strip()
+    if override:
+        base = os.path.abspath(os.path.expanduser(override))
+    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        base = os.path.join(os.environ["LOCALAPPDATA"], "roam", "hook-evidence")
+    else:
+        state_home = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+        base = os.path.join(state_home, "roam", "hook-evidence")
+    try:
+        repo_real = os.path.normcase(os.path.realpath(root))
+        base_real = os.path.normcase(os.path.realpath(base))
+        try:
+            base_is_inside_repo = os.path.commonpath([repo_real, base_real]) == repo_real
+        except ValueError:
+            # Different Windows drive letters have no common path and are, by
+            # construction, outside one another.
+            base_is_inside_repo = False
+        if base_is_inside_repo:
+            return ""
+        if create:
+            os.makedirs(base_real, mode=0o700, exist_ok=True)
+            if os.name != "nt":
+                os.chmod(base_real, 0o700)
+        if not os.path.isdir(base_real):
+            return ""
+        return base_real
+    except OSError:
+        return ""
+
+
+def _episode_state_path(root, session_key):
+    base = _evidence_base(root)
+    if not base:
+        return ""
+    repo_key = hashlib.sha256(os.path.normcase(os.path.realpath(root)).encode("utf-8", "replace")).hexdigest()[:24]
+    state_root = os.path.join(base, repo_key)
+    if not os.path.isdir(state_root):
+        return ""
+    return os.path.join(state_root, session_key + ".json")
+
+
+def _same_file_state(left, right, cross_handle=False):
+    fields = ["st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns"]
+    if cross_handle and os.name == "nt":
+        fields.remove("st_ctime_ns")
+    return all(getattr(left, field) == getattr(right, field) for field in fields)
+
+
+def _policy_file_state(path):
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        return "missing", True
+    except OSError:
+        return "unreadable", False
+    if stat.S_ISLNK(before.st_mode):
+        return "unsafe_symlink", False
+    if not stat.S_ISREG(before.st_mode):
+        return "not_regular", False
+    if before.st_size > _POLICY_MAX_FILE_BYTES:
+        return "too_large", False
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return "unreadable", False
+    digest = hashlib.sha256()
+    read_n = 0
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or not _same_file_state(before, opened, cross_handle=True):
+            return "changed_during_hash", False
+        while True:
+            chunk = os.read(fd, 128 * 1024)
+            if not chunk:
+                break
+            read_n += len(chunk)
+            if read_n > _POLICY_MAX_FILE_BYTES:
+                return "too_large", False
+            digest.update(chunk)
+        opened_after = os.fstat(fd)
+        try:
+            after = os.lstat(path)
+        except OSError:
+            return "changed_during_hash", False
+        if (
+            read_n != opened.st_size
+            or not _same_file_state(opened, opened_after)
+            or not _same_file_state(before, after)
+        ):
+            return "changed_during_hash", False
+    finally:
+        os.close(fd)
+    return "sha256:" + digest.hexdigest(), True
+
+
+def _policy_paths(root):
+    paths = {"repo:" + rel: os.path.join(root, *rel.split("/")) for rel in _POLICY_RELATIVE_PATHS}
+    runtime_file = os.path.abspath(globals().get("__file__") or sys.argv[0])
+    runtime_dir = os.path.dirname(runtime_file)
+    paths["runtime:user_prompt_hook"] = os.path.join(runtime_dir, "roam-compile-ups.py")
+    paths["runtime:stop_hook"] = os.path.join(runtime_dir, "roam-verify-stop.py")
+    paths["runtime:settings"] = os.path.join(os.path.dirname(runtime_dir), "settings.json")
+    paths["user:settings"] = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+    paths["user:settings_local"] = os.path.join(os.path.expanduser("~"), ".claude", "settings.local.json")
+    return paths
+
+
+def _policy_snapshot(root):
+    manifest = []
+    complete = True
+    for label, path in sorted(_policy_paths(root).items()):
+        state, ok = _policy_file_state(path)
+        manifest.append([label, state])
+        complete = complete and ok
+    env_values = sorted(
+        [name, value]
+        for name, value in os.environ.items()
+        if name == "ROAM_COMPILE_VERIFY" or name == "ROAM_REPO_LEAK_PATTERNS" or name.startswith("ROAM_VERIFY_")
+    )
+    manifest.append(["environment", env_values])
+    payload = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest(), complete
 
 
 def _episode_session_key(payload):
@@ -964,7 +1324,7 @@ def _episode_session_key(payload):
 def _episode_lock(path):
     for _ in range(_EPISODE_LOCK_ATTEMPTS):
         try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             os.write(fd, str(os.getpid()).encode("ascii", "replace"))
             return fd
         except FileExistsError:
@@ -996,27 +1356,73 @@ def _episode_unlock(path, fd):
 def _active_episode(payload):
     session_key, session_id = _episode_session_key(payload)
     if not session_key:
-        return {"session_id": session_id}
+        return {"session_id": session_id, "evidence_required": False}
     root = _hook_repo_root()
-    state_path = os.path.join(root, ".roam", "episode-state", session_key + ".json")
+    state_path = _episode_state_path(root, session_key)
+    if not state_path:
+        return {
+            "session_id": session_id,
+            "evidence_required": True,
+            "evidence_error": "protected_episode_state_unavailable",
+        }
+    try:
+        state_meta = os.lstat(state_path)
+        if not stat.S_ISREG(state_meta.st_mode) or state_meta.st_size > 1024 * 1024:
+            raise OSError("unsafe protected episode state")
+        if os.name != "nt" and (
+            state_meta.st_uid != os.getuid() or stat.S_IMODE(state_meta.st_mode) & 0o077
+        ):
+            raise OSError("unprotected episode state permissions")
+    except OSError:
+        return {
+            "session_id": session_id,
+            "evidence_required": True,
+            "evidence_error": "protected_episode_state_unsafe",
+        }
     lock_path = state_path + ".lock"
     fd = _episode_lock(lock_path)
     if fd is None:
-        return {"session_id": session_id}
+        return {
+            "session_id": session_id,
+            "evidence_required": True,
+            "evidence_error": "protected_episode_state_locked",
+        }
     try:
         try:
             with open(state_path, encoding="utf-8") as fh:
                 state = json.load(fh)
         except (OSError, ValueError):
             state = {}
+        expected_repo = hashlib.sha256(
+            os.path.normcase(os.path.realpath(root)).encode("utf-8", "replace")
+        ).hexdigest()
+        if (
+            not isinstance(state, dict)
+            or state.get("state_schema") != "roam.hook.episode.v2"
+            or state.get("repo_sha256") != expected_repo
+        ):
+            return {
+                "session_id": session_id,
+                "evidence_required": True,
+                "evidence_error": "protected_episode_state_invalid",
+            }
         active = state.get("active") if isinstance(state, dict) else {}
         if not isinstance(active, dict):
-            active = {}
+            return {
+                "session_id": session_id,
+                "evidence_required": True,
+                "evidence_error": "protected_episode_state_missing",
+            }
         return {
             "session_id": str((state or {}).get("session_id") or session_id),
             "episode_id": str(active.get("episode_id") or ""),
             "turn_seq": active.get("turn_seq"),
             "started_at_ms": active.get("started_at_ms"),
+            "base_head": active.get("base_head"),
+            "base_head_state": active.get("base_head_state"),
+            "policy_sha256": active.get("policy_sha256"),
+            "policy_complete": active.get("policy_complete"),
+            "evidence_required": True,
             "_state_path": state_path,
             "_state": state,
         }
@@ -1045,12 +1451,15 @@ def _clear_active_episode(active):
         state["active"] = None
         tmp = state_path + ".tmp-%d-%d" % (os.getpid(), time.time_ns())
         try:
-            with open(tmp, "w", encoding="utf-8") as fh:
+            tmp_fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
                 json.dump(state, fh, sort_keys=True, separators=(",", ":"))
                 fh.write(chr(10))
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, state_path)
+            if os.name != "nt":
+                os.chmod(state_path, 0o600)
         finally:
             try:
                 if os.path.exists(tmp):
@@ -1083,38 +1492,6 @@ def _append_episode_event(event):
         _episode_unlock(lock_path, fd)
 
 
-def _diff_identity():
-    """Return counts + a privacy-preserving identity for the current diff."""
-    try:
-        tracked = subprocess.run(
-            ["git", "diff", "--binary", "HEAD"],
-            capture_output=True, timeout=_GITDIFF_TIMEOUT_S,
-        )
-        tracked_names = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            capture_output=True, text=True, timeout=_GITDIFF_TIMEOUT_S,
-        )
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True, text=True, timeout=_GITDIFF_TIMEOUT_S,
-        )
-        if tracked.returncode != 0 or tracked_names.returncode != 0 or untracked.returncode != 0:
-            return {"changed_files": None, "diff_sha256": ""}
-        names = [ln.strip() for ln in tracked_names.stdout.splitlines() if ln.strip()]
-        new_names = [
-            ln.strip()
-            for ln in untracked.stdout.splitlines()
-            if ln.strip() and not ln.startswith((".roam/", ".claude/"))
-        ]
-        all_names = sorted(set(names + new_names))
-        digest = hashlib.sha256()
-        digest.update(tracked.stdout)
-        digest.update(chr(0).join(new_names).encode("utf-8", "replace"))
-        return {"changed_files": len(all_names), "diff_sha256": digest.hexdigest()}
-    except Exception:
-        return {"changed_files": None, "diff_sha256": ""}
-
-
 def _record_episode_stop(payload, active, outcome, terminal, blocked, verify_ms, skipped_no_edit, diff_identity):
     episode_id = str(active.get("episode_id") or "")
     if not episode_id:
@@ -1130,7 +1507,12 @@ def _record_episode_stop(payload, active, outcome, terminal, blocked, verify_ms,
         health_state = "verification_passed"
     elif outcome in ("verification_blocked", "verification_failed_without_findings"):
         health_state = "verification_failed"
-    elif outcome == "verify_unavailable":
+    elif outcome in (
+        "verify_unavailable",
+        "policy_evidence_unavailable",
+        "policy_tampering",
+        "verification_race",
+    ):
         health_state = "verification_unavailable"
     elif outcome == "continued_after_block":
         health_state = "continuation_unverified"
@@ -1156,6 +1538,8 @@ def _record_episode_stop(payload, active, outcome, terminal, blocked, verify_ms,
         "skipped_no_edit": bool(skipped_no_edit),
         "changed_files": diff_identity.get("changed_files"),
         "diff_sha256": str(diff_identity.get("diff_sha256") or ""),
+        "base_head": str(active.get("base_head") or ""),
+        "base_head_state": str(active.get("base_head_state") or ""),
         "health_state": health_state,
     }
     _append_episode_event(event)
@@ -1187,6 +1571,250 @@ def _hook_repo_root():
         if parent == d:
             return os.getcwd()
         d = parent
+
+
+def _git_current_head(root):
+    try:
+        inside = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"], cwd=root,
+            capture_output=True, text=True, timeout=_GIT_CHECK_TIMEOUT_S,
+        )
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return "", "unavailable"
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"], cwd=root,
+            capture_output=True, text=True, timeout=_GIT_CHECK_TIMEOUT_S,
+        )
+        if head.returncode != 0:
+            return "", "unborn"
+        value = head.stdout.strip().lower()
+        if len(value) not in (40, 64) or any(ch not in "0123456789abcdef" for ch in value):
+            return "", "unavailable"
+        return value, "present"
+    except Exception:
+        return "", "unavailable"
+
+
+def _decode_git_paths(raw):
+    paths = []
+    for value in raw.split(bytes((0,))):
+        if not value:
+            continue
+        path = os.fsdecode(value).replace("\\\\", "/")
+        if any(0xD800 <= ord(ch) <= 0xDFFF for ch in path):
+            return None
+        if path.startswith("/") or os.path.isabs(path) or ".." in path.split("/"):
+            return None
+        if path == ".roam" or path.startswith(".roam/") or path == ".claude" or path.startswith(".claude/"):
+            continue
+        paths.append(path)
+    return paths
+
+
+def _git_name_bytes(root, args):
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=root, capture_output=True,
+            timeout=_GITDIFF_TIMEOUT_S,
+        )
+    except Exception:
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def _verification_scope_paths(root, active):
+    """Resolve the full episode delta, including commits made after prompt."""
+    if active.get("evidence_required"):
+        if active.get("evidence_error"):
+            return None, str(active.get("evidence_error"))
+        base_head = active.get("base_head")
+        base_state = active.get("base_head_state")
+        if base_state == "present":
+            if (
+                not isinstance(base_head, str)
+                or len(base_head) not in (40, 64)
+                or any(ch not in "0123456789abcdef" for ch in base_head)
+            ):
+                return None, "episode_base_head_invalid"
+        elif base_state == "unborn":
+            base_head = ""
+        else:
+            return None, "episode_base_head_unavailable"
+    else:
+        base_head, base_state = _git_current_head(root)
+        if base_state == "unavailable":
+            return None, "git_head_unavailable"
+
+    raw_paths = []
+    if base_state == "present":
+        changed = _git_name_bytes(
+            root,
+            ["diff", "--no-ext-diff", "--name-only", "-z", "--no-renames", base_head, "--"],
+        )
+        if changed is None:
+            return None, "episode_diff_unavailable"
+        decoded = _decode_git_paths(changed)
+        if decoded is None:
+            return None, "episode_path_decode_failed"
+        raw_paths.extend(decoded)
+    else:
+        # An unborn base means every currently tracked path was created during
+        # the episode. `ls-files --cached` continues to cover it after a commit.
+        tracked = _git_name_bytes(root, ["ls-files", "--cached", "-z"])
+        if tracked is None:
+            return None, "episode_index_scope_unavailable"
+        decoded = _decode_git_paths(tracked)
+        if decoded is None:
+            return None, "episode_path_decode_failed"
+        raw_paths.extend(decoded)
+
+    untracked = _git_name_bytes(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+    if untracked is None:
+        return None, "episode_untracked_scope_unavailable"
+    decoded = _decode_git_paths(untracked)
+    if decoded is None:
+        return None, "episode_path_decode_failed"
+    raw_paths.extend(decoded)
+    paths = sorted(set(path.strip() for path in raw_paths if path.strip()))
+    if len(paths) > _VERIFY_MAX_TARGETS or sum(len(path) + 1 for path in paths) > _VERIFY_MAX_ARG_CHARS:
+        return None, "episode_scope_too_large"
+    return paths, None
+
+
+def _scope_sha256(paths):
+    payload = json.dumps(sorted(set(paths)), ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _verification_content_sha256(root, paths):
+    """Mirror Verify receipt-v3 hashing: exact bytes, missing markers, no symlinks."""
+    try:
+        canonical_root = os.path.realpath(root)
+        if not os.path.isdir(canonical_root):
+            return None, "verification_root_unavailable"
+    except OSError:
+        return None, "verification_root_unavailable"
+    manifest = []
+    total_bytes = 0
+    for relative_path in sorted(set(paths)):
+        candidate = os.path.join(canonical_root, *relative_path.split("/"))
+        try:
+            if os.path.commonpath([canonical_root, os.path.abspath(candidate)]) != canonical_root:
+                return None, "scope_path_outside_root"
+        except ValueError:
+            return None, "scope_path_outside_root"
+        parent = os.path.dirname(candidate)
+        if not os.path.exists(parent):
+            manifest.append([relative_path, "missing"])
+            continue
+        try:
+            canonical_parent = os.path.realpath(parent)
+            if os.path.commonpath([canonical_root, canonical_parent]) != canonical_root:
+                return None, "scope_path_outside_root"
+        except (OSError, ValueError):
+            return None, "scope_file_unreadable"
+        try:
+            path_before = os.lstat(candidate)
+        except FileNotFoundError:
+            manifest.append([relative_path, "missing"])
+            continue
+        except OSError:
+            return None, "scope_file_unreadable"
+        if stat.S_ISLNK(path_before.st_mode):
+            return None, "scope_file_symlink"
+        if not stat.S_ISREG(path_before.st_mode):
+            return None, "scope_file_not_regular"
+        if path_before.st_size > _VERIFY_MAX_FILE_BYTES:
+            return None, "scope_file_too_large"
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        try:
+            fd = os.open(candidate, flags)
+        except OSError as exc:
+            return None, "scope_file_symlink" if exc.errno == errno.ELOOP else "scope_file_unreadable"
+        digest = hashlib.sha256()
+        bytes_read = 0
+        try:
+            opened_before = os.fstat(fd)
+            if not stat.S_ISREG(opened_before.st_mode) or not _same_file_state(
+                path_before, opened_before, cross_handle=True
+            ):
+                return None, "scope_file_changed_during_hash"
+            while True:
+                chunk = os.read(fd, 256 * 1024)
+                if not chunk:
+                    break
+                bytes_read += len(chunk)
+                if bytes_read > _VERIFY_MAX_FILE_BYTES:
+                    return None, "scope_file_too_large"
+                digest.update(chunk)
+            opened_after = os.fstat(fd)
+            try:
+                path_after = os.lstat(candidate)
+            except OSError:
+                return None, "scope_file_changed_during_hash"
+            if (
+                bytes_read != opened_before.st_size
+                or not _same_file_state(opened_before, opened_after)
+                or not _same_file_state(path_before, path_after)
+            ):
+                return None, "scope_file_changed_during_hash"
+        finally:
+            os.close(fd)
+        total_bytes += bytes_read
+        if total_bytes > _VERIFY_MAX_TOTAL_BYTES:
+            return None, "verification_scope_too_large"
+        manifest.append([relative_path, "sha256:" + digest.hexdigest()])
+    payload = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest(), None
+
+
+def _scope_status_sha256(root, paths):
+    head, head_state = _git_current_head(root)
+    if head_state == "unavailable":
+        return None, "git_head_unavailable"
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *paths],
+            cwd=root, capture_output=True, timeout=_GITDIFF_TIMEOUT_S,
+        )
+    except Exception:
+        return None, "git_status_unavailable"
+    if proc.returncode != 0:
+        return None, "git_status_unavailable"
+    digest = hashlib.sha256()
+    digest.update(head_state.encode("ascii"))
+    digest.update(bytes((0,)))
+    digest.update(head.encode("ascii"))
+    digest.update(bytes((0,)))
+    digest.update(proc.stdout)
+    return digest.hexdigest(), None
+
+
+def _verification_snapshot(root, active):
+    paths, error = _verification_scope_paths(root, active)
+    if error:
+        return None, error
+    scope_sha = _scope_sha256(paths)
+    content_sha, error = _verification_content_sha256(root, paths)
+    if error:
+        return None, error
+    status_sha, error = _scope_status_sha256(root, paths)
+    if error:
+        return None, error
+    return {
+        "paths": paths,
+        "scope_sha256": scope_sha,
+        "content_sha256": content_sha,
+        "status_sha256": status_sha,
+        "target_file_count": len(paths),
+    }, None
+
+
+def _same_verification_snapshot(left, right):
+    return bool(left) and bool(right) and all(
+        left.get(key) == right.get(key)
+        for key in ("paths", "scope_sha256", "content_sha256", "status_sha256", "target_file_count")
+    )
 
 
 def _maybe_refresh_whole_repo_report():
@@ -1236,24 +1864,122 @@ def _maybe_refresh_whole_repo_report():
         # whole-repo (NO --diff-only) --report --persist -> <root>/.roam/verify-report.json
         # cwd=root pins the spawned verify's project-root resolution to the SAME
         # directory the throttle checked.
-        subprocess.Popen(["roam", "verify", "--auto", "--report", "--persist"], cwd=root, **kwargs)
+        subprocess.Popen(
+            ["roam", "--override-mode", "verify", "--auto", "--report", "--persist"],
+            cwd=root,
+            **kwargs,
+        )
     except Exception:
         return  # a refresh we could not spawn is never the user's problem
 
 
 def _run_roam(args, timeout, env=None):
-    """Run `roam --json <args>`; return the parsed envelope or None. Fail-open."""
+    """Run `roam --json <args>`; return the parsed envelope or None."""
     try:
+        # Verify/index are hook-owned maintenance operations. Put the global
+        # override before the subcommand so they remain callable under a
+        # user's restrictive mode without weakening any other hook query.
+        maintenance_override = ["--override-mode"] if args and args[0] in {"verify", "index"} else []
         proc = subprocess.run(
-            ["roam", "--json", *args],
+            ["roam", *maintenance_override, "--json", *args],
             capture_output=True, text=True, timeout=timeout,
             env=env,
         )
         if not proc.stdout.strip():
             return None
-        return json.loads(proc.stdout)
+        envelope = json.loads(proc.stdout)
+        if not isinstance(envelope, dict):
+            return None
+        # Bind structured evidence to the process outcome. Without this, a
+        # stale or malformed wrapper could print PASS while exiting with the
+        # gate-failure code (or print FAIL while exiting zero), and the Stop
+        # hook would trust only whichever half looked convenient.
+        envelope["_hook_process_returncode"] = proc.returncode
+        return envelope
     except Exception:
         return None
+
+
+def _verify_protocol_state(envelope, expected_receipt):
+    """Classify required Verify evidence as one closed protocol transaction."""
+    if not isinstance(envelope, dict) or envelope.get("command") != "verify":
+        return "unavailable"
+    summary = envelope.get("summary")
+    if not isinstance(summary, dict):
+        return "unavailable"
+    verdict = str(summary.get("verdict") or "").strip().upper().split(":", 1)[0].split(None, 1)[0]
+    issue_count = summary.get("violation_count")
+    files_checked = summary.get("files_checked")
+    violations = envelope.get("violations")
+    returncode = envelope.get("_hook_process_returncode")
+    receipt = summary.get("verification_receipt")
+    if verdict not in {"PASS", "WARN", "FAIL"}:
+        return "unavailable"
+    if type(issue_count) is not int or issue_count < 0:
+        return "unavailable"
+    if type(files_checked) is not int or files_checked < 0:
+        return "unavailable"
+    if not isinstance(violations, list) or len(violations) != issue_count:
+        return "unavailable"
+    if any(not isinstance(item, dict) for item in violations):
+        return "unavailable"
+    category_findings = []
+    categories = envelope.get("categories")
+    if categories is not None:
+        if not isinstance(categories, dict):
+            return "unavailable"
+        for result in categories.values():
+            if not isinstance(result, dict):
+                return "unavailable"
+            nested = result.get("violations", [])
+            if not isinstance(nested, list) or any(not isinstance(item, dict) for item in nested):
+                return "unavailable"
+            category_findings.extend(nested)
+    evidence_findings = violations + category_findings
+    if not isinstance(returncode, int):
+        return "unavailable"
+    if summary.get("verification_complete") is not True or summary.get("partial_success") is not False:
+        return "incomplete"
+    if not isinstance(receipt, dict) or not isinstance(expected_receipt, dict):
+        return "unavailable"
+    if (
+        receipt.get("schema") != "roam.verify.receipt.v3"
+        or receipt.get("request_nonce") != expected_receipt.get("request_nonce")
+        or receipt.get("scope_sha256") != expected_receipt.get("scope_sha256")
+        or receipt.get("content_sha256") != expected_receipt.get("content_sha256")
+        or receipt.get("content_sha256_before") != expected_receipt.get("content_sha256")
+        or receipt.get("content_sha256_after") != expected_receipt.get("content_sha256")
+        or receipt.get("target_file_count") != expected_receipt.get("target_file_count")
+        or receipt.get("scope_stable") is not True
+        or receipt.get("request_match") is not True
+        or files_checked != expected_receipt.get("target_file_count")
+    ):
+        return "unavailable"
+    has_fail_finding = any(
+        str(item.get("severity") or "").upper() == "FAIL"
+        for item in evidence_findings
+    )
+    if verdict == "PASS":
+        if returncode != 0 or has_fail_finding:
+            return "unavailable"
+        # Verify intentionally keeps advisory detector findings outside its
+        # gate verdict. A complete rc0 PASS may therefore carry WARN rows, but
+        # only from the closed advisory category set; any other contradiction
+        # is malformed evidence and can never be treated as a pass.
+        if any(
+            str(item.get("severity") or "").upper() != "WARN"
+            or str(item.get("category") or "") not in _ADVISORY_CATEGORIES
+            for item in evidence_findings
+        ):
+            return "unavailable"
+        return "passed"
+    if verdict == "WARN":
+        if returncode != 0 or has_fail_finding:
+            return "unavailable"
+        return "failed"
+    if returncode != 5:
+        return "unavailable"
+    return "failed"
 
 
 def _run_roam_stdin(args, stdin_text, timeout):
@@ -1272,8 +1998,7 @@ def _run_roam_stdin(args, stdin_text, timeout):
 
 
 def _git_diff_head():
-    """Working-tree diff vs HEAD -- the same scope verify uses with
-    --diff-only. Returns '' on any error (so callers stay silent)."""
+    """Working-tree diff vs HEAD for the optional critique reviewer only."""
     try:
         proc = subprocess.run(
             ["git", "diff", "HEAD"], capture_output=True, text=True,
@@ -1282,38 +2007,6 @@ def _git_diff_head():
         return proc.stdout if proc.returncode == 0 else ""
     except Exception:
         return ""
-
-
-def _tree_has_no_edits():
-    """Fast-exit pre-check (~10ms): True only when the working tree has no
-    tracked changes vs HEAD AND no new untracked files -- a pure Q&A stop
-    with nothing for `verify --diff-only` to inspect. Any git error (not a
-    repo, no HEAD yet, timeout) returns False so the hook falls back to the
-    full verify path (fail-open)."""
-    try:
-        diff = subprocess.run(
-            ["git", "diff", "--quiet", "HEAD"],
-            capture_output=True, timeout=_GIT_CHECK_TIMEOUT_S,
-        )
-        if diff.returncode != 0:  # 1 = tracked changes; 128+ = git error
-            return False
-        untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True, text=True, timeout=_GIT_CHECK_TIMEOUT_S,
-        )
-        if untracked.returncode != 0:
-            return False
-        # Roam's own state files (.roam/hook-stops.jsonl, .claude/settings)
-        # are often untracked in target repos -- without this filter the
-        # first telemetry write would defeat the fast-exit forever. verify
-        # --diff-only has nothing to say about them anyway.
-        new_files = [
-            ln for ln in untracked.stdout.splitlines()
-            if ln.strip() and not ln.startswith((".roam/", ".claude/"))
-        ]
-        return not new_files
-    except Exception:
-        return False
 
 
 def _log_stop_event(
@@ -1527,74 +2220,156 @@ def main():
     try:
         payload = json.load(sys.stdin)
         active = _active_episode(payload)
-        if payload.get("stop_hook_active"):
-            # This Stop is the completion of the one bounded continuation that
-            # an earlier block requested. Do not verify again (loop guard), but
-            # do close the episode so blocked turns do not stay permanently open.
-            diff_identity = _diff_identity()
-            episode_event = _record_episode_stop(
-                payload,
-                active,
-                "continued_after_block",
-                True,
-                False,
-                0,
-                diff_identity.get("changed_files") == 0,
-                diff_identity,
-            )
-            _log_stop_event(
-                False,
-                0,
-                0,
-                0,
-                diff_identity.get("changed_files") == 0,
-                episode_event=episode_event,
-            )
-            return  # already inside a stop-hook continuation; never loop
-        # Fast-exit (2026-07-11): pure Q&A stops (no tracked edits, no new
-        # untracked files) have nothing for `verify --diff-only` to check --
-        # skip the verify subprocess entirely. Any git error falls back to
-        # the full verify path below (fail-open). Downstream code is
-        # unchanged: d=None yields the same quiet "allow" outcome (and the
-        # same opt-in second-opinion behaviour) as a clean verify.
-        skipped_no_edit = _tree_has_no_edits()
-        diff_identity = _diff_identity()
+        root = _hook_repo_root()
+        security_issue = None
+        policy_before, policy_before_complete = _policy_snapshot(root)
+        if active.get("evidence_required"):
+            if active.get("evidence_error"):
+                security_issue = "policy_evidence_unavailable"
+            elif (
+                active.get("policy_complete") is not True
+                or not isinstance(active.get("policy_sha256"), str)
+                or len(active.get("policy_sha256")) != 64
+                or not policy_before_complete
+            ):
+                security_issue = "policy_evidence_unavailable"
+            elif active.get("policy_sha256") != policy_before:
+                security_issue = "policy_tampering"
+        elif not policy_before_complete:
+            # Standalone/manual Stop invocations have no prompt episode to
+            # compare against, but still require a complete pre-Verify policy
+            # snapshot and protect it across the verification transaction.
+            security_issue = "policy_evidence_unavailable"
+
+        snapshot = None
+        snapshot_error = None
+        if security_issue is None:
+            snapshot, snapshot_error = _verification_snapshot(root, active)
+            if snapshot_error:
+                security_issue = "verification_snapshot_unavailable"
+        skipped_no_edit = bool(snapshot is not None and not snapshot["paths"] and security_issue is None)
+        diff_identity = {
+            "changed_files": snapshot.get("target_file_count") if snapshot else None,
+            "diff_sha256": snapshot.get("content_sha256") if snapshot else "",
+        }
         verify_ms = 0
         d = None
-        if not skipped_no_edit:
+        expected_receipt = None
+        if not skipped_no_edit and security_issue is None:
+            nonce = secrets.token_hex(16)
+            expected_receipt = {
+                "schema": "roam.verify.receipt.v3",
+                "request_nonce": nonce,
+                "scope_sha256": snapshot["scope_sha256"],
+                "content_sha256": snapshot["content_sha256"],
+                "content_sha256_before": snapshot["content_sha256"],
+                "content_sha256_after": snapshot["content_sha256"],
+                "target_file_count": snapshot["target_file_count"],
+                "scope_stable": True,
+                "request_match": True,
+            }
+            verify_env = {**os.environ, **_ADVISORY_ENV}
+            verify_env.update({
+                "ROAM_VERIFY_REQUEST_NONCE": nonce,
+                "ROAM_VERIFY_SCOPE_SHA256": snapshot["scope_sha256"],
+                "ROAM_VERIFY_CONTENT_SHA256": snapshot["content_sha256"],
+                "ROAM_VERIFY_SCOPE_COUNT": str(snapshot["target_file_count"]),
+            })
             verify_t0 = time.perf_counter()
-            d = _run_roam(["verify", "--auto", "--diff-only"], _VERIFY_TIMEOUT_S,
-                          env={**os.environ, **_ADVISORY_ENV})
+            d = _run_roam(
+                ["verify", "--auto", "--diff-only", "--", *snapshot["paths"]],
+                _VERIFY_TIMEOUT_S,
+                env=verify_env,
+            )
             verify_ms = int((time.perf_counter() - verify_t0) * 1000)
-            # Loop B (opt-in, detached, throttled): the edits just landed, so the
-            # persisted whole-repo report is now conceptually stale — kick off a
-            # background refresh so the NEXT compile's known_findings is current.
-            # Fire AFTER the blocking diff-only verify: a whole-repo verify
-            # competing for CPU/DB locks can push the gate past its 90s budget,
-            # and a timed-out gate silently allows — the worst possible trade.
-            _maybe_refresh_whole_repo_report()
+            post_snapshot, post_error = _verification_snapshot(root, active)
+            policy_after, policy_after_complete = _policy_snapshot(root)
+            if not policy_after_complete or policy_after != policy_before:
+                security_issue = "policy_tampering"
+            elif post_error or not _same_verification_snapshot(snapshot, post_snapshot):
+                security_issue = "verification_race"
         summary = (d or {}).get("summary") or {}
         verdict = str(summary.get("verdict") or "")
-        verify_failed = bool(d) and bool(verdict) and not verdict.upper().startswith("PASS")
+        verify_state = (
+            "skipped"
+            if skipped_no_edit
+            else _verify_protocol_state(d, expected_receipt)
+            if security_issue is None
+            else "unavailable"
+        )
+        verify_failed = verify_state == "failed"
+        verify_unavailable = security_issue is not None or verify_state in {"unavailable", "incomplete"}
         findings = _collect_findings(d) if d else []
         # BUG#62: advisory detectors (default-ON here) emit WARN-only
         # findings that never enter the verdict. Route them out of the
         # blocking set and surface them as a NON-BLOCKING transcript notice
         # (stderr) even on PASS -- never a decision:block.
-        advisory = [v for v in findings if v.get("category") in _ADVISORY_CATEGORIES]
-        findings = [v for v in findings if v.get("category") not in _ADVISORY_CATEGORIES]
+        advisory = [
+            v for v in findings
+            if v.get("category") in _ADVISORY_CATEGORIES
+            and str(v.get("severity") or "").upper() == "WARN"
+        ]
+        advisory_ids = {id(v) for v in advisory}
+        findings = [v for v in findings if id(v) not in advisory_ids]
         if advisory:
-            notice = [f"roam verify advisory (non-blocking, changed lines vs HEAD): {len(advisory)} finding(s)"]
+            notice = [f"roam verify advisory (non-blocking, episode scope): {len(advisory)} finding(s)"]
             for v in advisory[:_MAX_OTHER_SHOWN]:
                 notice.extend(_fmt(v))
             if len(advisory) > _MAX_OTHER_SHOWN:
                 notice.append(f"  ... and {len(advisory) - _MAX_OTHER_SHOWN} more")
-            notice.append("  (advisory only -- review, or add to .roam-suppressions.yml; does not block)")
+            notice.append("  (advisory only -- review now; change suppressions only in a separate approved episode)")
             print(chr(10).join(notice), file=sys.stderr)
 
+        # Optional reviewers run inside the same transaction. A final exact
+        # snapshot below catches any reviewer or concurrent agent mutation.
+        extra = _second_opinion_lines() if security_issue is None else []
+        if security_issue is None:
+            final_snapshot, final_error = _verification_snapshot(root, active)
+            policy_final, policy_final_complete = _policy_snapshot(root)
+            if not policy_final_complete or policy_final != policy_before:
+                security_issue = "policy_tampering"
+            elif final_error or not _same_verification_snapshot(snapshot, final_snapshot):
+                security_issue = "verification_race"
+            if security_issue is not None:
+                verify_unavailable = True
+
+        if not skipped_no_edit and security_issue is None:
+            # Run only after the exact verification transaction has closed.
+            # The refresh writes internal `.roam/` state, excluded from source
+            # scope, and can no longer race the evidence used for this stop.
+            _maybe_refresh_whole_repo_report()
+
         lines = []
-        if verify_failed and findings:
-            lines.append(f"roam verify (post-edit, changed lines vs HEAD): {verdict}")
+        if security_issue == "policy_tampering":
+            lines.extend([
+                "BLOCKING [policy_tampering]: Verify policy, suppression, baseline, hook, or Claude settings changed during this episode.",
+                "Restore the prompt-start policy state. Make policy changes only in a separate user-approved episode; they cannot satisfy this stop.",
+            ])
+        elif security_issue == "policy_evidence_unavailable":
+            lines.extend([
+                "BLOCKING [policy_evidence_unavailable]: the protected prompt-start policy snapshot is missing or incomplete.",
+                "Start a fresh Claude turn with the current roam hooks installed, then rerun Verify before stopping.",
+            ])
+        elif security_issue == "verification_race":
+            lines.extend([
+                "BLOCKING [verification_race]: filenames, bytes, Git status, or HEAD changed while post-edit evidence was being produced.",
+                "Stop concurrent edits and rerun the automatically bound Verify transaction on the final bytes.",
+            ])
+        elif security_issue == "verification_snapshot_unavailable":
+            lines.extend([
+                "BLOCKING [verification_snapshot_unavailable]: the exact episode filename/content snapshot could not be proven "
+                f"({snapshot_error or 'unknown_snapshot_error'}).",
+                "Restore readable regular files and Git status, then rerun Verify before stopping.",
+            ])
+        elif verify_unavailable:
+            lines.extend([
+                "roam verify could not produce complete post-edit evidence (receipt v3 required).",
+                "BLOCKING: keep this edit open; run `roam verify --auto --diff-only` "
+                "successfully before stopping. Do not bypass the gate with policy, "
+                "baseline, or suppression edits.",
+            ])
+        elif verify_failed and findings:
+            lines.append(f"roam verify (post-edit, prompt-base episode scope): {verdict}")
 
             if _env_on("ROAM_HOOK_PROMINENT", "1"):
                 # Partition so BLOCK-level (FAIL) findings -- failed tests,
@@ -1633,19 +2408,25 @@ def main():
 
             # AUTO-FIX directive -- on by default. The block makes the agent
             # resolve findings on lines it just touched instead of stopping;
-            # the stop_hook_active guard above bounds it to one fix round.
+            # every continuation re-runs Verify, while Claude Code's own
+            # consecutive-block cap provides the loop bound.
             lines.append(
                 "AUTO-FIX: resolve these now. EDIT the file(s) to fix each "
-                "finding on a line your change touched; a genuine false "
-                "positive goes in .roam-suppressions.yml (rule/file/symbol or "
-                "line + reason); only clearly pre-existing, unrelated findings "
-                "may be left. Verify re-runs automatically after your fix."
+                "finding on a line your change touched. Do not edit Verify "
+                "configuration, baselines, or suppressions during automatic "
+                "correction; report a genuine false positive to the user. Only "
+                "clearly pre-existing, unrelated findings may be left. Verify "
+                "re-runs automatically after your fix."
             )
+        elif verify_failed:
+            lines.extend([
+                f"roam verify failed without actionable findings: {verdict}",
+                "BLOCKING: run `roam verify --auto --diff-only --verbose`, repair "
+                "the gate failure, and rerun Verify before stopping.",
+            ])
 
-        # Opt-in second-opinion reviewers (all default-OFF; byte-identical
-        # default output when none are enabled). Independent of the verify
-        # verdict and advisory -- they never carry the hard AUTO-FIX directive.
-        extra = _second_opinion_lines()
+        # Opt-in second-opinion reviewers are advisory, but their execution was
+        # included inside the final byte/status comparison above.
         if extra:
             if lines:
                 lines.append("")
@@ -1656,14 +2437,18 @@ def main():
             lines.extend(extra)
 
         blocked = bool(lines)
-        if skipped_no_edit:
+        if security_issue is not None:
+            outcome = security_issue
+        elif skipped_no_edit:
             outcome = "no_edit"
+        elif blocked and verify_unavailable:
+            outcome = "verify_unavailable"
         elif blocked and verify_failed and findings:
             outcome = "verification_blocked"
+        elif blocked and verify_failed:
+            outcome = "verification_failed_without_findings"
         elif blocked:
             outcome = "second_opinion_blocked"
-        elif d is None or not verdict:
-            outcome = "verify_unavailable"
         elif verify_failed:
             outcome = "verification_failed_without_findings"
         else:
@@ -1690,7 +2475,13 @@ def main():
             return  # quiet: clean verify and nothing from any enabled reviewer
         print(json.dumps({"decision": "block", "reason": chr(10).join(lines)}))
     except Exception:
-        return  # fail open
+        print(json.dumps({
+            "decision": "block",
+            "reason": (
+                "roam verify Stop hook could not validate this stop. "
+                "Run `roam verify --auto --diff-only` successfully before stopping."
+            ),
+        }))
 
 
 main()
@@ -1716,8 +2507,8 @@ _CLAUDE_STOP_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_STOP_HOOK_SCRIPT)
 
 
 # SHA-256 of every hook body roam ever shipped, in DEPLOYED form (stamped where
-# the shipping commit stamped, raw literal before that), plus the deterministic
-# variant compile-code's mode-override surgery produces (cli.py:266-283 there).
+# the shipping commit stamped, raw literal before that), including historical
+# integration variants from before Roam owned maintenance-mode overrides.
 # A deployed body whose hash is here is KNOWN to be roam's own output — safe to
 # heal without a marker. A stamped body whose hash is NOT here has been edited
 # by hand (or by an unknown external transform): report, never auto-overwrite.
@@ -1726,6 +2517,20 @@ _CLAUDE_STOP_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_STOP_HOOK_SCRIPT)
 # defect that shipped in #77).
 _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
     {
+        "6ab4f91dc4c407c2fa82cb4e51bb5fd5268563150598650e4928618834a59a04",  # ups v11 pristine (canonical override ownership)
+        "391fd8b9044037b20000fc301415137647b51f7bf60bfcf35a84a05ec94a3bb8",  # stop v11 pristine (canonical override ownership)
+        "62e71df1b62b44860b5eccb181022bb5d1dfa1a751d5c0593c787c99d13e59ed",  # ups v10 pristine (2026-07-17 receipt-v3 identity binding)
+        "731d9593da3bf3fefb513e5dd89d44337bc474305da705f74462c00c630968d8",  # stop v10 pristine (2026-07-17 receipt-v3 identity binding)
+        "170b382530bb56b1301f069981a6404d8bf4441ae2a29e7c8b5716037e04ceeb",  # stop v10 surgered (2026-07-17 receipt-v3 identity binding)
+        "73cecf9fb98139944257c5193a10f53e10bc14dc819ac93dd6d9e0793d0e0510",  # ups v9 pristine (2026-07-17 receipt-v2 episode binding)
+        "335f74c850f8ce0651268571d17152308ecdd4c651ac561c9b8981230bc47848",  # stop v9 pristine (2026-07-17 receipt-v2 episode binding)
+        "3a74a4e09cef342e6c9490292c0b0adab626180592ccf3bc06f68fba03c4604b",  # stop v9 surgered (2026-07-17 receipt-v2 episode binding)
+        "187c9b317434ce85f2593b4d1c6043a083432d1430f355f5daa9001e6ab1de03",  # ups v8 pristine (2026-07-17 strict continuation verify)
+        "515d432ae0171628ff6d9a46589f733f4395d86e0aacb6dd291d6c2d78ca3f49",  # stop v8 pristine (2026-07-17 strict continuation verify)
+        "6e7bd67b651c0ae2dac0bf3739d7b1a0525e3c069467bcc57ab14befbbfb825e",  # stop v8 surgered (2026-07-17 strict continuation verify)
+        "bafb2a1af1735f754645a80caa967c5b3c1c0692c78a79b0d09d44fbd3dd71aa",  # ups v7 pristine (2026-07-17 fail-closed verify)
+        "c9bd8df743d83ae21a21b5f2825e6df3dceefe4b723cc088877437f3dcb4e29c",  # stop v7 pristine (2026-07-17 fail-closed verify)
+        "07915b8913ee53f387ef0d74a57306191f7a66358cfd11bf702ee71a8ffa00c8",  # stop v7 surgered (2026-07-17 fail-closed verify)
         "d3ed7a41d1836445eed526d4ae7929af3e90b288b89db1d8f9796fa4b2fad3fb",  # ups v6 pristine (2026-07-16 evidence states)
         "a8a68ecec99484aafa0049b6b16c5ff35cb813fbace746395f01e47907a5884a",  # stop v6 pristine (2026-07-16 evidence states)
         "35a7e01d539c4febd3ee903ba2efc034fdca3e7173db823cd9960efdcd4c5a63",  # stop v6 surgered (2026-07-16 evidence states)
@@ -1770,8 +2575,8 @@ def _hook_body_version(text: str) -> int | None:
 def _hook_heal_state(deployed: str, canonical: str) -> str:
     """Classify a deployed hook body vs the current canonical body.
 
-    - "current"    : byte-identical, or a KNOWN roam-shipped variant of the
-                     current version (compile-code's surgered form).
+    - "current"    : byte-identical, or a KNOWN same-version roam-shipped
+                     legacy integration variant.
     - "heal"       : a KNOWN roam-shipped body (stamped or pre-stamp, pristine
                      or surgered) that is out of date — safe to refresh.
     - "modified"   : carries our version marker but the content is NOT any
@@ -1792,12 +2597,300 @@ def _hook_heal_state(deployed: str, canonical: str) -> str:
     cver = _hook_body_version(canonical)
     known = hashlib.sha256(deployed.encode("utf-8")).hexdigest() in _KNOWN_HOOK_BODY_SHAS
     if known:
-        # Same-version known variant = compile-code's surgery on the current
-        # body: leave it alone. Anything else roam shipped is stale.
+        # Same-version known variant = a legacy integration body Roam shipped:
+        # leave it alone. Anything older that Roam shipped is stale.
         if dver is not None and cver is not None and dver >= cver:
             return "current"
         return "heal"
     return "modified" if dver is not None else "foreign"
+
+
+_MAX_CLAUDE_SETTINGS_BYTES = 1024 * 1024
+_MAX_CLAUDE_HOOK_BYTES = 2 * 1024 * 1024
+_CAPTURE_CURRENT_CONTENT = object()
+
+
+class _UnsafeClaudePathError(OSError):
+    """A Claude control-plane path is redirected or not privately owned."""
+
+
+class _HookBodyStates(dict[str, str]):
+    """Mapping-compatible scan result carrying exact compare-and-swap bytes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.contents: dict[str, bytes | None] = {}
+
+
+def _is_claude_reparse_point(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
+
+
+def _validate_concrete_directory(path: Path, *, allow_missing: bool) -> os.stat_result | None:
+    """Require a concrete directory leaf without following links/junctions."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        if allow_missing:
+            return None
+        raise _UnsafeClaudePathError(f"required directory is missing: {path}") from None
+    if _is_claude_reparse_point(path):
+        raise _UnsafeClaudePathError(f"links and junctions are not accepted: {path}")
+    if not stat.S_ISDIR(info.st_mode):
+        raise _UnsafeClaudePathError(f"expected a directory: {path}")
+    expected = path.parent.resolve(strict=True) / path.name
+    if path.resolve(strict=True) != expected:
+        raise _UnsafeClaudePathError(f"directory escaped its lexical parent: {path}")
+    return info
+
+
+def _validate_existing_claude_file(
+    path: Path,
+    *,
+    label: str,
+    max_bytes: int,
+) -> os.stat_result | None:
+    """Reject links, non-files, hard links, and oversized control files."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if _is_claude_reparse_point(path):
+        raise _UnsafeClaudePathError(f"unsafe {label}: links are not accepted ({path})")
+    if not stat.S_ISREG(info.st_mode):
+        raise _UnsafeClaudePathError(f"unsafe {label}: expected a regular file ({path})")
+    if info.st_nlink != 1:
+        raise _UnsafeClaudePathError(f"unsafe {label}: hard-linked files are not accepted ({path})")
+    if info.st_size > max_bytes:
+        raise ValueError(f"{label} exceeds the {max_bytes}-byte limit: {path}")
+    return info
+
+
+def _same_file_snapshot(before: os.stat_result, after: os.stat_result) -> bool:
+    """Compare identity and mutation fields across a bounded read."""
+    before_inode = (before.st_dev, before.st_ino)
+    after_inode = (after.st_dev, after.st_ino)
+    identity_matches = before_inode == after_inode or not all(before_inode + after_inode)
+    return bool(
+        identity_matches
+        and before.st_size == after.st_size
+        and before.st_mtime_ns == after.st_mtime_ns
+        and stat.S_ISREG(after.st_mode)
+        and after.st_nlink == 1
+    )
+
+
+def _read_claude_file(path: Path, *, label: str, max_bytes: int) -> bytes | None:
+    """Read one stable, bounded regular file through a no-follow descriptor."""
+    before = _validate_existing_claude_file(path, label=label, max_bytes=max_bytes)
+    if before is None:
+        return None
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags)
+    try:
+        opened = os.fstat(fd)
+        if not _same_file_snapshot(before, opened):
+            raise _UnsafeClaudePathError(f"{label} changed before it could be read safely: {path}")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(64 * 1024, max_bytes + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(f"{label} exceeds the {max_bytes}-byte limit: {path}")
+        after = os.fstat(fd)
+        if not _same_file_snapshot(opened, after):
+            raise _UnsafeClaudePathError(f"{label} changed while it was being read: {path}")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _validate_claude_layout(settings_path: Path, hook_dir: Path, *, create: bool) -> None:
+    """Validate and optionally create the concrete settings/hooks directory tree."""
+    settings_parent = Path(os.path.abspath(settings_path.parent))
+    hooks_path = Path(os.path.abspath(hook_dir))
+    try:
+        hook_relative = hooks_path.relative_to(settings_parent)
+    except ValueError as exc:
+        raise _UnsafeClaudePathError("Claude hook directory escaped the settings directory") from exc
+
+    parent_info = _validate_concrete_directory(settings_parent, allow_missing=True)
+    if parent_info is None and create:
+        settings_parent.mkdir(mode=0o700)
+        _validate_concrete_directory(settings_parent, allow_missing=False)
+
+    current = settings_parent
+    for component in hook_relative.parts:
+        current = current / component
+        info = _validate_concrete_directory(current, allow_missing=True)
+        if info is None and create:
+            current.mkdir(mode=0o700)
+            _validate_concrete_directory(current, allow_missing=False)
+
+    _validate_existing_claude_file(
+        settings_path,
+        label="Claude settings",
+        max_bytes=_MAX_CLAUDE_SETTINGS_BYTES,
+    )
+
+
+def _capture_claude_write_state(
+    path: Path,
+    *,
+    label: str,
+    max_bytes: int,
+    expected_content: bytes | None | object,
+) -> bytes | None:
+    """Validate the parent and resolve the expected compare-and-swap bytes."""
+    _validate_concrete_directory(path.parent, allow_missing=False)
+    initial_content = _read_claude_file(path, label=label, max_bytes=max_bytes)
+    if expected_content is _CAPTURE_CURRENT_CONTENT:
+        return initial_content
+    if initial_content != expected_content:
+        raise _UnsafeClaudePathError(f"{label} changed since it was loaded: {path}")
+    return expected_content
+
+
+def _atomic_write_claude_file(
+    path: Path,
+    payload: bytes,
+    *,
+    label: str,
+    max_bytes: int,
+    mode: int,
+    expected_content: bytes | None | object = _CAPTURE_CURRENT_CONTENT,
+) -> None:
+    """Atomically compare-and-swap one validated Claude control file."""
+    if len(payload) > max_bytes:
+        raise ValueError(f"{label} exceeds the {max_bytes}-byte limit: {path}")
+    expected_content = _capture_claude_write_state(
+        path,
+        label=label,
+        max_bytes=max_bytes,
+        expected_content=expected_content,
+    )
+
+    def prepare_temp(fd: int, tmp_name: str) -> None:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
+        else:  # pragma: no cover - Windows lacks fchmod on some Python builds
+            os.chmod(tmp_name, mode)
+
+    def check_unchanged() -> None:
+        _validate_concrete_directory(path.parent, allow_missing=False)
+        current_content = _read_claude_file(path, label=label, max_bytes=max_bytes)
+        if current_content != expected_content:
+            raise _UnsafeClaudePathError(f"{label} changed during the update: {path}")
+
+    atomic_write_bytes(
+        path,
+        payload,
+        prepare_temp_fd=prepare_temp,
+        before_replace=check_unchanged,
+        durable=True,
+        create_parents=False,
+    )
+    _validate_existing_claude_file(path, label=label, max_bytes=max_bytes)
+
+
+def _backup_existing_claude_file(
+    source: Path,
+    backup: Path,
+    *,
+    label: str,
+    max_bytes: int,
+) -> None:
+    payload = _read_claude_file(source, label=label, max_bytes=max_bytes)
+    if payload is None:
+        return
+    _atomic_write_claude_file(
+        backup,
+        payload,
+        label=f"{label} backup",
+        max_bytes=max_bytes,
+        mode=0o600,
+    )
+
+
+def _unlink_claude_file(path: Path, *, label: str, max_bytes: int) -> None:
+    if _validate_existing_claude_file(path, label=label, max_bytes=max_bytes) is not None:
+        path.unlink()
+
+
+def _strict_json_object_pairs(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"duplicate JSON key: {key}")
+        out[key] = value
+    return out
+
+
+def _validate_claude_settings_shape(settings: object) -> dict:
+    if not isinstance(settings, dict):
+        raise ValueError("Claude settings root must be a JSON object")
+    hooks_block = settings.get("hooks")
+    if hooks_block is None:
+        return settings
+    if not isinstance(hooks_block, dict):
+        raise ValueError("Claude settings hooks must be an object")
+    for event, rules in hooks_block.items():
+        if not isinstance(rules, list):
+            raise ValueError(f"Claude settings hooks.{event} must be an array")
+        for rule in rules:
+            if not isinstance(rule, dict):
+                raise ValueError(f"Claude settings hooks.{event} contains a non-object rule")
+            entries = rule.get("hooks", [])
+            if not isinstance(entries, list):
+                raise ValueError(f"Claude settings hooks.{event}.hooks must be an array")
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ValueError(f"Claude settings hooks.{event}.hooks contains a non-object entry")
+                command = entry.get("command")
+                if command is not None and not isinstance(command, str):
+                    raise ValueError(f"Claude settings hooks.{event} command must be a string")
+    return settings
+
+
+def _write_claude_settings(
+    settings_path: Path,
+    settings: dict,
+    *,
+    expected_content: bytes | None,
+) -> None:
+    payload = (json.dumps(settings, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    _atomic_write_claude_file(
+        settings_path,
+        payload,
+        label="Claude settings",
+        max_bytes=_MAX_CLAUDE_SETTINGS_BYTES,
+        mode=0o600,
+        expected_content=expected_content,
+    )
+
+
+def _assert_claude_settings_unchanged(settings_path: Path, expected_content: bytes | None) -> None:
+    current = _read_claude_file(
+        settings_path,
+        label="Claude settings",
+        max_bytes=_MAX_CLAUDE_SETTINGS_BYTES,
+    )
+    if current != expected_content:
+        raise _UnsafeClaudePathError(f"Claude settings changed since they were loaded: {settings_path}")
+
+
+def _claude_hook_command(hook_path: Path) -> str:
+    argv = [sys.executable, str(hook_path)]
+    if os.name == "nt":
+        return subprocess.list2cmdline(argv)
+    return " ".join(shlex.quote(part) for part in argv)
 
 
 def _scan_hook_bodies(hook_dir: Path, managed: list) -> dict[str, str]:
@@ -1808,42 +2901,90 @@ def _scan_hook_bodies(hook_dir: Path, managed: list) -> dict[str, str]:
     - "unreadable" : not valid UTF-8 (e.g. saved as UTF-16 by PowerShell) —
                      report; replaceable only with --force. Never a traceback:
                      this scan runs inside `compile claude`'s wire path too.
+    - "unsafe"     : link, junction, hard link, or redirected control tree;
+                     never replaceable with --force.
     """
-    out: dict[str, str] = {}
+    out = _HookBodyStates()
+    try:
+        _validate_concrete_directory(hook_dir.parent, allow_missing=True)
+        _validate_concrete_directory(hook_dir, allow_missing=True)
+    except _UnsafeClaudePathError:
+        for _event, filename, _canonical in managed:
+            out[filename] = "unsafe"
+        return out
     for _event, filename, canonical in managed:
         p = hook_dir / filename
-        if not p.exists():
-            out[filename] = "missing"
-            continue
         try:
-            deployed = p.read_text(encoding="utf-8")
-        except OSError:
-            continue  # transient FS error: report nothing, touch nothing
-        except ValueError:
+            raw = _read_claude_file(p, label="Claude hook body", max_bytes=_MAX_CLAUDE_HOOK_BYTES)
+            out.contents[filename] = raw
+            out[filename] = _classify_hook_content(raw, canonical)
+        except _UnsafeClaudePathError:
+            out[filename] = "unsafe"
+            continue
+        except (OSError, ValueError):
             out[filename] = "unreadable"
             continue
-        out[filename] = _hook_heal_state(deployed, canonical)
     return out
 
 
-def _write_hook_body(hook_path: Path, script: str) -> None:
+def _classify_hook_content(raw: bytes | None, canonical: str) -> str:
+    if raw is None:
+        return "missing"
+    try:
+        # Match Path.read_text(newline=None)'s historical universal-newline
+        # semantics so registered LF bodies remain recognizable when an
+        # editor wrote the same script with CRLF on Windows.
+        deployed = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except UnicodeError:
+        return "unreadable"
+    return _hook_heal_state(deployed, canonical)
+
+
+def _write_hook_body(
+    hook_path: Path,
+    script: str,
+    *,
+    expected_state: str | None = None,
+    expected_content: bytes | None | object = _CAPTURE_CURRENT_CONTENT,
+) -> None:
     """Overwrite a hook body atomically, preserving the prior content as .bak.
 
     Atomic (temp + os.replace) so a crash mid-write can never leave a
     truncated body behind a valid version stamp; .bak so heal/--force is
     recoverable (settings.json already gets the same courtesy).
     """
-    if hook_path.exists():
-        try:
-            old = hook_path.read_bytes()
-        except OSError:
-            old = None
-        if old is not None and old != script.encode("utf-8"):
-            backup = hook_path.parent / (hook_path.name + ".bak")
-            backup.write_bytes(old)
-    tmp = hook_path.parent / (hook_path.name + ".tmp")
-    tmp.write_text(script, encoding="utf-8")
-    os.replace(tmp, hook_path)
+    payload = script.encode("utf-8")
+    old = _read_claude_file(hook_path, label="Claude hook body", max_bytes=_MAX_CLAUDE_HOOK_BYTES)
+    if expected_content is not _CAPTURE_CURRENT_CONTENT and old != expected_content:
+        raise _UnsafeClaudePathError(f"Claude hook body changed after inspection: {hook_path}")
+    current_state = _classify_hook_content(old, script)
+    if expected_state is not None and current_state != expected_state:
+        raise _UnsafeClaudePathError(
+            f"Claude hook body changed after inspection ({expected_state} -> {current_state}): {hook_path}"
+        )
+    if old is not None and old != payload:
+        _atomic_write_claude_file(
+            hook_path.parent / (hook_path.name + ".bak"),
+            old,
+            label="Claude hook body backup",
+            max_bytes=_MAX_CLAUDE_HOOK_BYTES,
+            mode=0o600,
+        )
+    _atomic_write_claude_file(
+        hook_path,
+        payload,
+        label="Claude hook body",
+        max_bytes=_MAX_CLAUDE_HOOK_BYTES,
+        mode=0o700,
+        expected_content=old,
+    )
+
+
+def _expected_hook_content(body_states: dict[str, str] | None, filename: str) -> bytes | None | object:
+    contents = getattr(body_states, "contents", None)
+    if isinstance(contents, dict) and filename in contents:
+        return contents[filename]
+    return _CAPTURE_CURRENT_CONTENT
 
 
 def _hook_entry_present(settings: dict, event: str, filename: str) -> bool:
@@ -1894,14 +3035,21 @@ def _remove_ups_entry(settings: dict) -> bool:
     return _remove_hook_entry(settings, "UserPromptSubmit", _CLAUDE_UPS_HOOK_FILENAME)
 
 
-def _load_claude_settings(settings_path: Path) -> tuple[dict, str | None]:
-    """Parse settings.json. Returns (settings, error_message-or-None)."""
-    if not settings_path.exists():
-        return {}, None
+def _load_claude_settings(settings_path: Path) -> tuple[dict, str | None, bytes | None]:
+    """Parse settings.json and retain the exact bytes for compare-and-swap."""
     try:
-        return json.loads(settings_path.read_text(encoding="utf-8")), None
-    except (OSError, ValueError) as exc:
-        return {}, f"Cannot parse {settings_path}: {exc}"
+        _validate_concrete_directory(settings_path.parent, allow_missing=True)
+        raw = _read_claude_file(
+            settings_path,
+            label="Claude settings",
+            max_bytes=_MAX_CLAUDE_SETTINGS_BYTES,
+        )
+        if raw is None:
+            return {}, None, None
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_strict_json_object_pairs)
+        return _validate_claude_settings_shape(parsed), None, raw
+    except (OSError, ValueError, UnicodeError, RecursionError) as exc:
+        return {}, f"Cannot parse {settings_path}: {exc}", None
 
 
 def _emit_hooks_verdict(json_mode: bool, verdict: str, summary: dict, extra: dict, text_lines: list) -> None:
@@ -1914,19 +3062,52 @@ def _emit_hooks_verdict(json_mode: bool, verdict: str, summary: dict, extra: dic
         click.echo(line)
 
 
-def _claude_uninstall_hooks(settings: dict, settings_path: Path, hook_dir: Path, write: bool) -> tuple[str, bool]:
+def _claude_uninstall_hooks(
+    settings: dict,
+    settings_path: Path,
+    hook_dir: Path,
+    write: bool,
+    *,
+    expected_settings_content: bytes | None,
+) -> tuple[str, bool]:
     """Sweep BOTH managed hooks (regardless of --no-verify). (verdict, removed_any)."""
     removed_any = False
+    bodies_to_remove: list[Path] = []
     for event, filename in (
         ("UserPromptSubmit", _CLAUDE_UPS_HOOK_FILENAME),
         ("Stop", _CLAUDE_STOP_HOOK_FILENAME),
     ):
         if _remove_hook_entry(settings, event, filename):
             removed_any = True
-            if write and (hook_dir / filename).exists():
-                (hook_dir / filename).unlink()
+            bodies_to_remove.append(hook_dir / filename)
     if write and removed_any:
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        _validate_claude_layout(settings_path, hook_dir, create=False)
+        _assert_claude_settings_unchanged(settings_path, expected_settings_content)
+        for body_path in bodies_to_remove:
+            _validate_existing_claude_file(
+                body_path,
+                label="Claude hook body",
+                max_bytes=_MAX_CLAUDE_HOOK_BYTES,
+            )
+        _backup_existing_claude_file(
+            settings_path,
+            settings_path.with_suffix(".json.bak"),
+            label="Claude settings",
+            max_bytes=_MAX_CLAUDE_SETTINGS_BYTES,
+        )
+        # Unwire first. A later unlink failure leaves only an inert body, never
+        # a settings entry that points at a missing script.
+        _write_claude_settings(
+            settings_path,
+            settings,
+            expected_content=expected_settings_content,
+        )
+        for body_path in bodies_to_remove:
+            _unlink_claude_file(
+                body_path,
+                label="Claude hook body",
+                max_bytes=_MAX_CLAUDE_HOOK_BYTES,
+            )
     verdict = "Removed roam Claude Code hooks" if removed_any else "No roam Claude Code hooks found"
     if not write and removed_any:
         verdict += " (dry-run; re-run with --write to apply)"
@@ -1940,6 +3121,7 @@ def _claude_install_hooks(
     to_install: list,
     body_states: dict[str, str] | None = None,
     force: bool = False,
+    expected_settings_content: bytes | None = None,
 ) -> tuple[str, list[str]]:
     """Write the hook scripts + merge settings entries (settings.json backed up).
 
@@ -1949,22 +3131,35 @@ def _claude_install_hooks(
     must not become a license to overwrite a customized body. Returns
     (verdict_part, preserved_filenames).
     """
-    if settings_path.exists():
-        backup = settings_path.with_suffix(".json.bak")
-        backup.write_text(settings_path.read_text(encoding="utf-8"), encoding="utf-8")
-    hook_dir.mkdir(parents=True, exist_ok=True)
+    _validate_claude_layout(settings_path, hook_dir, create=True)
+    _assert_claude_settings_unchanged(settings_path, expected_settings_content)
+    _backup_existing_claude_file(
+        settings_path,
+        settings_path.with_suffix(".json.bak"),
+        label="Claude settings",
+        max_bytes=_MAX_CLAUDE_SETTINGS_BYTES,
+    )
     preserved: list[str] = []
     for event, filename, script in to_install:
         hook_path = hook_dir / filename
         state = (body_states or {}).get(filename)
+        if state == "unsafe":
+            raise _UnsafeClaudePathError(f"unsafe Claude hook body: {hook_path}")
         if state in ("modified", "foreign", "unreadable") and not force:
             preserved.append(filename)
         else:
-            _write_hook_body(hook_path, script)
-            _make_executable(hook_path)
-        _merge_hook_entry(settings, event, f"python3 {hook_path}")
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+            _write_hook_body(
+                hook_path,
+                script,
+                expected_state=state,
+                expected_content=_expected_hook_content(body_states, filename),
+            )
+        _merge_hook_entry(settings, event, _claude_hook_command(hook_path))
+    _write_claude_settings(
+        settings_path,
+        settings,
+        expected_content=expected_settings_content,
+    )
     wired = " + ".join(e for e, _f, _s in to_install)
     return f"Wired roam compile+verify into Claude Code ({wired}): {settings_path}", preserved
 
@@ -1995,10 +3190,12 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify, force):
     measured at -83%% turns on Claude. Stop runs scoped
     `roam verify --auto --diff-only` after the agent finishes editing —
     including the default-on leak gate (credential shapes + the repo's
-    `.roam-leak-patterns.py` catalogue) — and on findings blocks once with
-    an AUTO-FIX directive so the agent resolves them before stopping;
-    quiet on PASS. Both fail-open; `--no-verify` installs the compile
-    hook alone.
+    `.roam-leak-patterns.py` catalogue) — and on findings emits an AUTO-FIX
+    directive so the agent resolves them before stopping. Verify re-runs after
+    each correction and stays quiet only on complete PASS. Compile context
+    injection remains fail-open; edited Stop verification fails closed. Claude
+    Code bounds consecutive continuations. `--no-verify` installs only the
+    compile hook.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     settings_path = _claude_settings_path(user_level)
@@ -2008,14 +3205,45 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify, force):
     if not no_verify:
         managed.append(("Stop", _CLAUDE_STOP_HOOK_FILENAME, _CLAUDE_STOP_HOOK_SCRIPT))
 
-    settings, load_error = _load_claude_settings(settings_path)
+    try:
+        _validate_claude_layout(settings_path, hook_dir, create=False)
+    except (OSError, ValueError) as exc:
+        verdict = f"Unsafe Claude hook layout: {exc}"
+        _emit_hooks_verdict(
+            json_mode,
+            verdict,
+            {"partial_success": False, "state": "unsafe_path"},
+            {"settings_path": str(settings_path), "hook_dir": str(hook_dir)},
+            [],
+        )
+        ctx.exit(1)
+        return
+
+    settings, load_error, settings_content = _load_claude_settings(settings_path)
     if load_error:
-        _emit_hooks_verdict(json_mode, load_error, {"partial_success": True}, {}, [])
+        _emit_hooks_verdict(json_mode, load_error, {"partial_success": False}, {}, [])
         ctx.exit(1)
         return
 
     if do_uninstall:
-        verdict, removed_any = _claude_uninstall_hooks(settings, settings_path, hook_dir, write)
+        try:
+            verdict, removed_any = _claude_uninstall_hooks(
+                settings,
+                settings_path,
+                hook_dir,
+                write,
+                expected_settings_content=settings_content,
+            )
+        except (OSError, ValueError) as exc:
+            _emit_hooks_verdict(
+                json_mode,
+                f"Claude hook uninstall stopped safely: {exc}",
+                {"removed": False, "partial_success": False, "state": "write_failed"},
+                {"settings_path": str(settings_path), "hook_dir": str(hook_dir)},
+                [],
+            )
+            ctx.exit(1)
+            return
         _emit_hooks_verdict(json_mode, verdict, {"removed": removed_any, "settings_path": str(settings_path)}, {}, [])
         return
 
@@ -2029,6 +3257,18 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify, force):
     # entry stayed wired; leave modified/foreign/unreadable bodies untouched
     # (reported below; --force overwrites, with a .bak).
     body_states = _scan_hook_bodies(hook_dir, managed)
+    unsafe_bodies = sorted(filename for filename, state in body_states.items() if state == "unsafe")
+    if unsafe_bodies:
+        verdict = f"Unsafe Claude hook body path(s): {', '.join(unsafe_bodies)}"
+        _emit_hooks_verdict(
+            json_mode,
+            verdict,
+            {"partial_success": False, "state": "unsafe_path", "unsafe_bodies": unsafe_bodies},
+            {"settings_path": str(settings_path), "hook_dir": str(hook_dir)},
+            [],
+        )
+        ctx.exit(1)
+        return
     heal = [
         (e, f, s) for e, f, s in managed if body_states.get(f) in ("heal", "missing") and (e, f, s) not in to_install
     ]
@@ -2041,7 +3281,11 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify, force):
             and (e, f, s) not in to_install
             and (e, f, s) not in heal
         ]
-    attention = {f: st for f, st in body_states.items() if st in ("modified", "foreign", "unreadable") and not force}
+    attention = {
+        f: st
+        for f, st in body_states.items()
+        if st in ("modified", "foreign", "unreadable", "unsafe") and (not force or st == "unsafe")
+    }
 
     if not to_install and not heal and not forced:
         verdict = f"roam Claude Code hooks wired + current in {settings_path}"
@@ -2051,32 +3295,45 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify, force):
             )
     elif write:
         parts = []
-        preserved: list[str] = []
-        if to_install:
-            installed_verdict, preserved = _claude_install_hooks(
-                settings, settings_path, hook_dir, to_install, body_states=body_states, force=force
+        try:
+            _validate_claude_layout(settings_path, hook_dir, create=True)
+            if to_install:
+                installed_verdict, _preserved = _claude_install_hooks(
+                    settings,
+                    settings_path,
+                    hook_dir,
+                    to_install,
+                    body_states=body_states,
+                    force=force,
+                    expected_settings_content=settings_content,
+                )
+                parts.append(installed_verdict)
+            for _e, filename, script in heal + forced:
+                _write_hook_body(
+                    hook_dir / filename,
+                    script,
+                    expected_state=body_states.get(filename),
+                    expected_content=_expected_hook_content(body_states, filename),
+                )
+        except (OSError, ValueError) as exc:
+            _emit_hooks_verdict(
+                json_mode,
+                f"Claude hook update stopped safely: {exc}",
+                {
+                    "partial_success": bool(parts),
+                    "state": "write_failed",
+                    "body_states": body_states,
+                },
+                {"settings_path": str(settings_path), "hook_dir": str(hook_dir)},
+                [],
             )
-            parts.append(installed_verdict)
-        surgery_reset = False
-        for _e, filename, script in heal + forced:
-            hook_path = hook_dir / filename
-            try:
-                prior = hook_path.read_text(encoding="utf-8") if hook_path.exists() else ""
-            except (OSError, ValueError):
-                prior = ""
-            if "--override-mode" in prior and "--override-mode" not in script:
-                surgery_reset = True
-            _write_hook_body(hook_path, script)
-            _make_executable(hook_path)
+            ctx.exit(1)
+            return
         if heal:
             parts.append(f"healed {len(heal)} stale hook body(ies): {', '.join(f for _e, f, _s in heal)}")
         if forced:
             parts.append(f"force-refreshed {len(forced)} body(ies): {', '.join(f for _e, f, _s in forced)}")
         verdict = "; ".join(parts)
-        # preserved ⊆ attention already (same states, force=False) — the NOTE
-        # below reports them; nothing to overwrite here.
-        if surgery_reset:
-            verdict += "; mode-override surgery reset — re-run `compile claude` to re-apply"
     else:
         actions = []
         if to_install:
@@ -2096,7 +3353,8 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify, force):
         detail = ", ".join(f"{f} ({st})" for f, st in sorted(attention.items()))
         text_lines.append(
             f"  NOTE: {len(attention)} hook body(ies) are user-modified, externally managed, or "
-            f"unreadable ({detail}); not healed. Use --force to overwrite (a .bak is kept)."
+            f"unreadable/unsafe ({detail}); not healed. Use --force only for recognized regular files "
+            f"(a .bak is kept); unsafe paths must be replaced manually."
         )
     _emit_hooks_verdict(
         json_mode,

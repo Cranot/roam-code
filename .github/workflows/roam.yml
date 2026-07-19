@@ -23,23 +23,32 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
-  # Required for SARIF upload to GitHub Code Scanning:
-  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   analyze:
-    runs-on: ubuntu-latest
+    name: Analyze with roam-code
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write   # post the configured PR comment
+      security-events: write # upload configured SARIF to Code Scanning
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0  # Full history needed for pr-risk and git analysis
+          persist-credentials: false
 
-      # Uses the published action from PyPI/GitHub, not the local source.
-      # Change to `uses: ./` to test the local action instead.
-      - uses: Cranot/roam-code@main
+      # This copied downstream template cannot consume this repository's
+      # uv.lock. Pin both the action source and its PyPI package version;
+      # active source-checkout workflows use uv.lock directly.
+      - uses: Cranot/roam-code@0506aede419c5446dff8d3ac31dbd7b3c32ff23d # roam-code 13.9.0 source
         with:
+          version: '13.9.0'
           commands: 'health pr-risk'
           sarif: 'true'
           sarif-commands: 'health'

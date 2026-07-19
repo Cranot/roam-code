@@ -19,9 +19,9 @@ debugging without auto-rotation).
 See also: ``scripts/sync_surface_counts.py``
     The two scripts are intentional cousins, not duplicates. This one
     (``build_readme_counts.py``) owns **marker-protected Markdown
-    blocks** in README.md / CLAUDE.md / llms-install.md and the **two
-    mcp-server-card.json files** (which must stay byte-identical per
-    ``test_bundled_card_matches_public_card``).
+    blocks** in README.md / CLAUDE.md / llms-install.md and the MCP
+    server-card family (the bundled card plus three byte-identical public
+    variants).
     ``sync_surface_counts.py`` owns **free-form prose surfaces** that
     do not have markers: landing-page HTML, llms.txt, server.json,
     ``skills/roam/SKILL.md``, ``competitor_site_data.py``,
@@ -107,6 +107,7 @@ class Counts:
     category_count: int  # number of categories in _CATEGORIES
     mcp_core: int  # tools in the default ``core`` preset
     mcp_full: int  # tools in the full preset (every @_tool decorator)
+    mcp_presets: dict[str, int]  # every named preset, in runtime declaration order
     mcp_default_preset: int  # core + 1 meta-tool (``roam_expand_toolset``)
     pyproject_version: str  # ``version`` string from pyproject.toml (truth)
 
@@ -133,6 +134,7 @@ def collect_counts(root: Path | None = None) -> Counts:
         category_count=cats,
         mcp_core=int(mcp["core_tools"]),
         mcp_full=int(mcp["registered_tools"]),
+        mcp_presets={str(name): int(count) for name, count in mcp["preset_counts"].items()},
         mcp_default_preset=int(mcp["core_tools"]) + 1,
         pyproject_version=_pyproject_version(root),
     )
@@ -540,19 +542,24 @@ def _update_mcp_card_text(text: str, c: Counts) -> str:
         new_text,
         count=1,
     )
-    # capabilities.tools.presets.core / .full — the two specific keys we own.
-    new_text = re.sub(
-        r'("core"\s*:\s*)\d+',
-        lambda m: f"{m.group(1)}{c.mcp_core}",
-        new_text,
-        count=1,
+    # capabilities.tools.presets — replace the complete map from the runtime
+    # declaration. Updating only core/full let review/refactor/debug/
+    # architecture silently stale and could never add a newly introduced
+    # preset such as compile-curated.
+    preset_block = re.compile(
+        r'^(?P<indent>[ \t]*)"presets"\s*:\s*\{\s*\n.*?^(?P=indent)\}',
+        flags=re.MULTILINE | re.DOTALL,
     )
-    new_text = re.sub(
-        r'("full"\s*:\s*)\d+',
-        lambda m: f"{m.group(1)}{c.mcp_full}",
-        new_text,
-        count=1,
-    )
+
+    def _render_presets(match: re.Match[str]) -> str:
+        indent = match.group("indent")
+        item_indent = f"{indent}  "
+        rows = [f"{item_indent}{json.dumps(name)}: {count}" for name, count in c.mcp_presets.items()]
+        return f'{indent}"presets": {{\n' + ",\n".join(rows) + f"\n{indent}}}"
+
+    new_text, preset_replacements = preset_block.subn(_render_presets, new_text, count=1)
+    if preset_replacements != 1:
+        raise RuntimeError("mcp-server-card.json is missing exactly one capabilities.tools.presets block")
     # Validate the result still parses; refuse to write garbage.
     json.loads(new_text)
     return new_text
@@ -708,6 +715,7 @@ def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True, root: Pa
         f"  truth: command_names={c.command_names} canonical={c.canonical_commands} "
         f"aliases={c.alias_names} categories={c.category_count} "
         f"mcp_core={c.mcp_core} mcp_full={c.mcp_full} "
+        f"mcp_presets={c.mcp_presets} "
         f"default_preset={c.mcp_default_preset}"
     )
     for r in results:

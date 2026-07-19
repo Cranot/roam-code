@@ -1905,7 +1905,7 @@ def _build_suggestion(framework, model_name, rel_name, attr_name, io_type):
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

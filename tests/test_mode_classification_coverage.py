@@ -26,24 +26,18 @@ them. We assert both have full coverage.
 
 from __future__ import annotations
 
+import ast
 
-def test_unclassified_command_count_does_not_grow_in_policy():
-    """Snapshot the current unclassified-command count; fail if it GROWS.
+from tests._helpers.repo_root import repo_root
 
-    W26.4 surfaced 8 commands missing from every mode's allow-list in
-    ``policy._MODE_EXTRAS``. PR-B.5 fixes those 8, but ~150 other
-    commands remain unclassified — those still work today (enforcement
-    is opt-in) and will be classified by later waves before W23.3's
-    PR-C flips ``ROAM_MODE_ENFORCEMENT`` to default-on.
 
-    This snapshot test is the GUARD-RAIL: it pins the current
-    unclassified count so the next added command cannot silently ship
-    without being either (a) classified in ``_MODE_EXTRAS`` or (b)
-    deliberately added to ``_MODE_ALWAYS_ALLOWED``. Either path is
-    fine — but going neither path must fail loudly here.
+def test_every_command_has_an_explicit_mode_classification():
+    """Every registered command has an explicit authority classification.
 
-    When PR-C lands and the remaining ~150 are classified, replace this
-    snapshot with a strict ``not unclassified`` assertion.
+    The enforcement-completeness audit closed the historical residual surface:
+    all pure diagnostics live in ``read_only``, mutating commands have an
+    intentional higher tier, and control-plane bootstrap verbs are always
+    available. A new command must now be classified in the same change.
     """
     from roam.cli import _COMMANDS, _MODE_ALWAYS_ALLOWED
     from roam.modes.policy import _MODE_EXTRAS
@@ -60,26 +54,10 @@ def test_unclassified_command_count_does_not_grow_in_policy():
             continue
         unclassified.append(cmd)
 
-    # Baseline established 2026-05-13 (W26.4 / PR-B.5). Decrement this
-    # ceiling whenever a new wave classifies more commands. Increment
-    # ONLY by adding to _MODE_ALWAYS_ALLOWED or _MODE_EXTRAS — never
-    # by raising this ceiling silently.
-    # W104 classified `findings` and `x-lang` into ``safe_edit``; W107
-    # demoted both to ``read_only`` (still classified — just in a
-    # different mode), so the ceiling is unchanged.
-    # W248 classified `ws` into ``safe_edit`` (Click group; ws init /
-    # ws resolve write to .roam-workspace.json + workspace DB), so the
-    # ceiling decrements from 153 → 152.
-    UNCLASSIFIED_CEILING = 152
-
-    assert len(unclassified) <= UNCLASSIFIED_CEILING, (
-        f"{len(unclassified)} commands lack mode classification "
-        f"(ceiling: {UNCLASSIFIED_CEILING}). A new command silently "
-        "shipped without mode classification — add it to "
+    assert not unclassified, (
+        "registered commands lack mode classification — add each command to "
         "_MODE_EXTRAS in src/roam/modes/policy.py or to "
-        "_MODE_ALWAYS_ALLOWED in src/roam/cli.py. "
-        f"Newly added unclassified: "
-        f"{sorted(set(unclassified))[-(len(unclassified) - UNCLASSIFIED_CEILING) :] if len(unclassified) > UNCLASSIFIED_CEILING else []}"
+        f"_MODE_ALWAYS_ALLOWED in src/roam/cli.py: {sorted(unclassified)}"
     )
 
 
@@ -210,10 +188,10 @@ def test_mode_extras_entries_are_real_commands():
     anti-pattern #5 names this exact failure mode (compound-recipe
     internal command-name drift).
     """
-    from roam.cli import _COMMANDS, _DEPRECATED_COMMANDS
+    from roam.cli import _COMMANDS, _DEPRECATED_COMMANDS, _EXPERIMENTAL_COMMANDS
     from roam.modes.policy import _MODE_EXTRAS
 
-    known = set(_COMMANDS.keys()) | set(_DEPRECATED_COMMANDS.keys())
+    known = set(_COMMANDS.keys()) | set(_DEPRECATED_COMMANDS.keys()) | set(_EXPERIMENTAL_COMMANDS.keys())
     phantoms: dict[str, list[str]] = {}
     for mode, verbs in _MODE_EXTRAS.items():
         unknown = sorted(v for v in verbs if v not in known)
@@ -228,6 +206,261 @@ def test_mode_extras_entries_are_real_commands():
         "in cli._COMMANDS, add it to _DEPRECATED_COMMANDS, or remove "
         f"it from _MODE_EXTRAS. Phantom verbs: {phantoms}"
     )
+
+
+def test_registered_side_effect_commands_have_explicit_mode_tiers():
+    """Default-on enforcement must never discover a registered write by accident."""
+    import importlib
+
+    from roam.capability import REGISTRY
+    from roam.cli import _COMMANDS, _MODE_ALWAYS_ALLOWED
+    from roam.modes.policy import _MODE_EXTRAS
+
+    classified = set(_MODE_ALWAYS_ALLOWED)
+    for commands in _MODE_EXTRAS.values():
+        classified.update(commands)
+
+    unclassified: list[str] = []
+    for command_name, (module_name, attr_name) in sorted(_COMMANDS.items()):
+        command = getattr(importlib.import_module(module_name), attr_name)
+        capability = getattr(command, "__roam_capability__", None) or getattr(
+            getattr(command, "callback", None), "__roam_capability__", None
+        )
+        capability = capability or REGISTRY.get(command_name)
+        if capability is None:
+            continue
+        if not (capability.side_effect or capability.destructive):
+            continue
+        if command_name not in classified:
+            unclassified.append(command_name)
+
+    assert not unclassified, (
+        "registered side-effect/destructive commands lack an explicit mode "
+        f"tier and would fail closed as unknown: {unclassified}"
+    )
+
+
+def test_read_only_max_effect_commands_have_invocation_escalations():
+    """A mixed command may stay in read_only only with an audited argv gate."""
+    import importlib
+
+    from roam.capability import REGISTRY
+    from roam.cli import _MODE_INVOCATION_ESCALATIONS, _command_target
+    from roam.modes.policy import _MODE_EXTRAS, VALID_MODES
+
+    missing: list[str] = []
+    for command_name in sorted(_MODE_EXTRAS["read_only"]):
+        target = _command_target(command_name)
+        if target is None:
+            continue
+        importlib.import_module(target[0])
+        capability = REGISTRY.get(command_name)
+        if capability is None or not (capability.side_effect or capability.destructive):
+            continue
+        if command_name not in _MODE_INVOCATION_ESCALATIONS:
+            missing.append(command_name)
+
+    assert not missing, (
+        f"read_only contains max-effect capabilities without an invocation-level escalation contract: {missing}"
+    )
+    invalid = {
+        command: {trigger: mode for trigger, mode in requirements.items() if mode not in VALID_MODES}
+        for command, requirements in _MODE_INVOCATION_ESCALATIONS.items()
+        if any(mode not in VALID_MODES for mode in requirements.values())
+    }
+    assert not invalid
+
+
+def test_high_confidence_write_options_declare_max_side_effect():
+    """Static lint: obvious write flags cannot retain a false max-effect claim."""
+    write_options = {
+        "--apply",
+        "--clear",
+        "--emit-guard-findings",
+        "--emit-out",
+        "--evidence-bundle",
+        "--finalize",
+        "--import-report",
+        "--init-notes",
+        "--install",
+        "--out",
+        "--out-dir",
+        "--output",
+        "--pdf",
+        "--persist",
+        "--record",
+        "--reset",
+        "--sarif-output",
+        "--save",
+        "--uninstall",
+        "--update-baseline",
+        "--write",
+        "--write-baseline",
+    }
+    commands_dir = repo_root() / "src" / "roam" / "commands"
+    false_claims: dict[str, list[str]] = {}
+
+    for source_path in sorted(commands_dir.glob("cmd_*.py")):
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        options: set[str] = set()
+        side_effect_claims: list[bool] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call):
+                    continue
+                name = (
+                    decorator.func.attr
+                    if isinstance(decorator.func, ast.Attribute)
+                    else decorator.func.id
+                    if isinstance(decorator.func, ast.Name)
+                    else ""
+                )
+                if name == "option":
+                    options.update(
+                        argument.value
+                        for argument in decorator.args
+                        if isinstance(argument, ast.Constant) and argument.value in write_options
+                    )
+                elif name == "roam_capability":
+                    side_effect_claims.append(
+                        any(
+                            keyword.arg == "side_effect"
+                            and isinstance(keyword.value, ast.Constant)
+                            and keyword.value.value is True
+                            for keyword in decorator.keywords
+                        )
+                    )
+        if options and side_effect_claims and not any(side_effect_claims):
+            false_claims[source_path.name] = sorted(options)
+
+    assert not false_claims, f"write-capable command modules declare side_effect=False: {false_claims}"
+
+
+def test_newly_audited_write_capabilities_are_pinned():
+    """Pin non-obvious DB/process writes that option-name lint cannot infer."""
+    import importlib
+
+    from roam.capability import REGISTRY
+    from roam.cli import _command_target
+
+    expected = {
+        "agent-opt",
+        "audit-trail-conformance-check",
+        "bench-compile",
+        "calc-golden",
+        "compile",
+        "compile-cache",
+        "compile-daemon",
+        "compiler-health",
+        "coverage-gaps",
+        "critique",
+        "doctor",
+        "envelope-diff",
+        "fan",
+        "guard-init",
+        "health",
+        "ingest-trace",
+        "laws",
+        "mutate",
+        "observability-opt",
+        "permit",
+        "pr-replay",
+        "pr-risk",
+        "proof-bundle",
+        "service-report",
+        "tour",
+        "vuln-map",
+        "vuln-reach",
+        "vulns",
+        "version",
+    }
+    false_claims: list[str] = []
+    for command_name in sorted(expected):
+        target = _command_target(command_name)
+        assert target is not None, command_name
+        importlib.import_module(target[0])
+        capability = REGISTRY.get(command_name)
+        if capability is None or capability.side_effect is not True:
+            false_claims.append(command_name)
+    assert not false_claims, f"audited write capabilities lost max-effect metadata: {false_claims}"
+
+
+def test_default_policy_side_effect_tiers_are_intentional():
+    """Pin the conservative tier chosen for each newly audited effect family."""
+    from roam.modes.policy import _CONDITIONAL_MODE_MINIMUMS, _MODE_EXTRAS
+
+    safe_edit = {
+        "agents-md",
+        "article-12-check",
+        "audit-trail-verify",
+        "auth-gaps",
+        "bench-compile",
+        "budget",
+        "boundary",
+        "bus-factor",
+        "capsule",
+        "clones",
+        "compatibility",
+        "compile",
+        "complexity",
+        "conventions",
+        "dark-matter",
+        "dead",
+        "digest",
+        "duplicates",
+        "ci-setup",
+        "eval-retrieve",
+        "evidence-oscal",
+        "fitness",
+        "fingerprint",
+        "fleet",
+        "graph-diff",
+        "graph-export",
+        "hotspots",
+        "index-export",
+        "ingest-trace",
+        "lease",
+        "llm-smells",
+        "memory",
+        "missing-index",
+        "n1",
+        "orphan-imports",
+        "over-fetch",
+        "reachability-triage",
+        "rules",
+        "rules-suggest",
+        "savings",
+        "savings-backfill",
+        "sbom",
+        "skill-generate",
+        "smells",
+        "snapshot",
+        "suppress",
+        "taint",
+        "test-hermeticity",
+        "test-scaffold",
+        "trend",
+        "trends",
+        "triage",
+        "verify",
+        "vibe-check",
+        "vuln-map",
+        "vuln-reach",
+    }
+    migration = {"clean", "index-import", "reset", "stale-refs"}
+    autonomous_pr = {"dogfood", "hooks", "mcp-setup", "metrics-push", "pre-commit"}
+
+    assert safe_edit <= _MODE_EXTRAS["safe_edit"]
+    assert migration <= _MODE_EXTRAS["migration"]
+    assert autonomous_pr <= _MODE_EXTRAS["autonomous_pr"]
+    assert _CONDITIONAL_MODE_MINIMUMS["sibling-patch"] == "safe_edit"
+    assert all("sibling-patch" not in commands for commands in _MODE_EXTRAS.values())
+    assert "verify" not in _MODE_EXTRAS["read_only"]
+    assert "verify-imports" in _MODE_EXTRAS["read_only"]
+    assert "verify-imports" not in _MODE_EXTRAS["autonomous_pr"]
+    assert {"compile", "savings", "savings-backfill", "vuln-map", "vuln-reach"}.isdisjoint(_MODE_EXTRAS["read_only"])
 
 
 def test_default_modes_returns_every_valid_mode():

@@ -2716,9 +2716,11 @@ def _compact_sources(sources: list[dict]) -> list[dict]:
     mcp_preset=("core",),
     side_effect=True,
     task_required=False,
-    destructive=False,
+    # ``--fix apply`` rewrites source files in place. Capability metadata
+    # describes the command's maximum effect, not its read-only default.
+    destructive=True,
     stale_sensitive=True,
-    ai_safe=True,
+    ai_safe=False,
     requires_index=True,
 )
 @click.command("stale-refs")

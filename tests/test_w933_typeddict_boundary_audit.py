@@ -84,6 +84,11 @@ APPROVED_TIGHT_DICT_RETURNS: dict[str, str] = {
         "internal str->Path map of rehearsal artifact locations under internal/; not an "
         "external/parsed boundary — paths are constructed locally, never deserialized"
     ),
+    "sibling_patch/replay_gate.py:_runtime_layout": (
+        "internal str->Path map built exclusively from a closed tuple of runtime-directory "
+        "names beneath the caller-provided, already-bounded replay root; no parsed or "
+        "deserialized values populate the returned shape"
+    ),
 }
 
 

@@ -33,6 +33,13 @@ def _invoke(*args):
     return CliRunner().invoke(hooks, list(args), obj={"json": False})
 
 
+def _symlink_or_skip(target, link, *, directory=False):
+    try:
+        link.symlink_to(target, target_is_directory=directory)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are unavailable on this platform")
+
+
 class TestClaudeSetupLifecycle:
     def test_dry_run_writes_nothing(self, in_tmp):
         res = _invoke("claude")
@@ -107,6 +114,202 @@ class TestSettingsMergeHelpers:
         remaining = s["hooks"]["UserPromptSubmit"]
         assert len(remaining) == 1
         assert remaining[0]["hooks"][0]["command"] == "other-tool"
+
+
+class TestClaudeSetupPathSecurity:
+    def test_rejects_symlinked_claude_directory(self, in_tmp):
+        outside = in_tmp / "outside"
+        outside.mkdir()
+        _symlink_or_skip(outside, in_tmp / ".claude", directory=True)
+
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert "unsafe" in res.output.lower()
+        assert list(outside.iterdir()) == []
+
+    def test_rejects_symlinked_hooks_directory(self, in_tmp):
+        cdir = in_tmp / ".claude"
+        cdir.mkdir()
+        outside = in_tmp / "outside"
+        outside.mkdir()
+        _symlink_or_skip(outside, cdir / "hooks", directory=True)
+
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert "unsafe" in res.output.lower()
+        assert list(outside.iterdir()) == []
+
+    def test_rejects_symlinked_settings_file(self, in_tmp):
+        cdir = in_tmp / ".claude"
+        cdir.mkdir()
+        outside = in_tmp / "outside-settings.json"
+        outside.write_text('{"sentinel": true}\n', encoding="utf-8")
+        _symlink_or_skip(outside, cdir / "settings.json")
+
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert outside.read_text(encoding="utf-8") == '{"sentinel": true}\n'
+
+    def test_force_never_follows_symlinked_hook_body(self, in_tmp):
+        assert _invoke("claude", "--write").exit_code == 0
+        hook = in_tmp / ".claude" / "hooks" / _CLAUDE_UPS_HOOK_FILENAME
+        hook.unlink()
+        outside = in_tmp / "outside-hook.py"
+        outside.write_text("sentinel\n", encoding="utf-8")
+        _symlink_or_skip(outside, hook)
+
+        res = _invoke("claude", "--write", "--force")
+        assert res.exit_code == 1
+        assert outside.read_text(encoding="utf-8") == "sentinel\n"
+
+    def test_force_never_rewrites_hard_linked_hook_body(self, in_tmp):
+        assert _invoke("claude", "--write").exit_code == 0
+        hook = in_tmp / ".claude" / "hooks" / _CLAUDE_UPS_HOOK_FILENAME
+        hook.unlink()
+        outside = in_tmp / "outside-hook.py"
+        outside.write_text("sentinel\n", encoding="utf-8")
+        try:
+            os.link(outside, hook)
+        except (OSError, NotImplementedError):
+            pytest.skip("hard links are unavailable on this platform")
+
+        res = _invoke("claude", "--write", "--force")
+        assert res.exit_code == 1
+        assert outside.read_text(encoding="utf-8") == "sentinel\n"
+
+    def test_rejects_hard_linked_settings(self, in_tmp):
+        cdir = in_tmp / ".claude"
+        cdir.mkdir()
+        outside = in_tmp / "outside-settings.json"
+        outside.write_text("{}\n", encoding="utf-8")
+        try:
+            os.link(outside, cdir / "settings.json")
+        except (OSError, NotImplementedError):
+            pytest.skip("hard links are unavailable on this platform")
+
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert outside.read_text(encoding="utf-8") == "{}\n"
+
+    def test_rejects_duplicate_settings_keys(self, in_tmp):
+        cdir = in_tmp / ".claude"
+        cdir.mkdir()
+        settings = cdir / "settings.json"
+        original = '{"hooks": {}, "hooks": {}}\n'
+        settings.write_text(original, encoding="utf-8")
+
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert "duplicate JSON key" in res.output
+        assert settings.read_text(encoding="utf-8") == original
+
+    def test_rejects_oversized_settings(self, in_tmp):
+        from roam.commands.cmd_hooks import _MAX_CLAUDE_SETTINGS_BYTES
+
+        cdir = in_tmp / ".claude"
+        cdir.mkdir()
+        settings = cdir / "settings.json"
+        settings.write_bytes(b"x" * (_MAX_CLAUDE_SETTINGS_BYTES + 1))
+
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert "byte limit" in res.output
+        assert settings.stat().st_size == _MAX_CLAUDE_SETTINGS_BYTES + 1
+
+    def test_rejects_symlinked_settings_backup(self, in_tmp):
+        cdir = in_tmp / ".claude"
+        cdir.mkdir()
+        (cdir / "settings.json").write_text("{}\n", encoding="utf-8")
+        outside = in_tmp / "outside-backup.json"
+        outside.write_text("sentinel\n", encoding="utf-8")
+        _symlink_or_skip(outside, cdir / "settings.json.bak")
+
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert outside.read_text(encoding="utf-8") == "sentinel\n"
+        hooks_dir = cdir / "hooks"
+        assert not hooks_dir.exists() or list(hooks_dir.iterdir()) == []
+
+    def test_rejects_hard_linked_settings_backup(self, in_tmp):
+        cdir = in_tmp / ".claude"
+        cdir.mkdir()
+        (cdir / "settings.json").write_text("{}\n", encoding="utf-8")
+        outside = in_tmp / "outside-backup.json"
+        outside.write_text("sentinel\n", encoding="utf-8")
+        try:
+            os.link(outside, cdir / "settings.json.bak")
+        except (OSError, NotImplementedError):
+            pytest.skip("hard links are unavailable on this platform")
+
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert outside.read_text(encoding="utf-8") == "sentinel\n"
+        hooks_dir = cdir / "hooks"
+        assert not hooks_dir.exists() or list(hooks_dir.iterdir()) == []
+
+    def test_force_rejects_hard_linked_hook_backup(self, in_tmp):
+        assert _invoke("claude", "--write").exit_code == 0
+        hook = in_tmp / ".claude" / "hooks" / _CLAUDE_UPS_HOOK_FILENAME
+        custom = "#!/usr/bin/env python3\nprint('custom')\n"
+        hook.write_text(custom, encoding="utf-8")
+        outside = in_tmp / "outside-hook-backup.py"
+        outside.write_text("sentinel\n", encoding="utf-8")
+        try:
+            os.link(outside, hook.parent / (hook.name + ".bak"))
+        except (OSError, NotImplementedError):
+            pytest.skip("hard links are unavailable on this platform")
+
+        res = _invoke("claude", "--write", "--force")
+        assert res.exit_code == 1
+        assert outside.read_text(encoding="utf-8") == "sentinel\n"
+        assert hook.read_text(encoding="utf-8").replace("\r\n", "\n") == custom
+
+    def test_concurrent_settings_change_is_not_clobbered(self, in_tmp, monkeypatch):
+        from roam.commands import cmd_hooks
+
+        cdir = in_tmp / ".claude"
+        cdir.mkdir()
+        settings = cdir / "settings.json"
+        settings.write_text('{"permissions": {"allow": []}}\n', encoding="utf-8")
+        concurrent = '{"permissions": {"allow": ["concurrent"]}}\n'
+        real_scan = cmd_hooks._scan_hook_bodies
+
+        def mutate_after_load(*args, **kwargs):
+            settings.write_text(concurrent, encoding="utf-8")
+            return real_scan(*args, **kwargs)
+
+        monkeypatch.setattr(cmd_hooks, "_scan_hook_bodies", mutate_after_load)
+        res = _invoke("claude", "--write")
+        assert res.exit_code == 1
+        assert "changed since" in res.output
+        assert settings.read_text(encoding="utf-8").replace("\r\n", "\n") == concurrent
+        hooks_dir = cdir / "hooks"
+        assert not hooks_dir.exists() or list(hooks_dir.iterdir()) == []
+
+    def test_concurrent_hook_change_is_not_clobbered(self, in_tmp, monkeypatch):
+        from roam.commands import cmd_hooks
+
+        assert _invoke("claude", "--write").exit_code == 0
+        hook = in_tmp / ".claude" / "hooks" / _CLAUDE_UPS_HOOK_FILENAME
+        first = "#!/usr/bin/env python3\nprint('first custom')\n"
+        concurrent = "#!/usr/bin/env python3\nprint('concurrent custom')\n"
+        hook.write_text(first, encoding="utf-8")
+        real_validate = cmd_hooks._validate_claude_layout
+        calls = 0
+
+        def mutate_after_scan(*args, **kwargs):
+            nonlocal calls
+            result = real_validate(*args, **kwargs)
+            calls += 1
+            if calls == 2:
+                hook.write_text(concurrent, encoding="utf-8")
+            return result
+
+        monkeypatch.setattr(cmd_hooks, "_validate_claude_layout", mutate_after_scan)
+        res = _invoke("claude", "--write", "--force")
+        assert res.exit_code == 1
+        assert "changed after inspection" in res.output
+        assert hook.read_text(encoding="utf-8").replace("\r\n", "\n") == concurrent
 
 
 class TestHookScriptFailOpen:
@@ -261,7 +464,7 @@ class TestVerifyStopHook:
         settings = json.loads((in_tmp / ".claude" / "settings.json").read_text())
         assert settings.get("hooks", {}) == {}
 
-    def test_stop_hook_fails_open_and_respects_loop_guard(self, in_tmp):
+    def test_stop_hook_fails_closed_on_invalid_input(self, in_tmp):
         import subprocess
         import sys
 
@@ -269,17 +472,23 @@ class TestVerifyStopHook:
 
         _invoke("claude", "--write")
         hook = in_tmp / ".claude" / "hooks" / _CLAUDE_STOP_HOOK_FILENAME
-        # loop guard: stop_hook_active → instant silent exit
-        proc = subprocess.run(
-            [sys.executable, str(hook)], input='{"stop_hook_active": true}', capture_output=True, text=True, timeout=30
-        )
-        assert proc.returncode == 0 and proc.stdout == ""
-        # garbage stdin → fail open
+        # garbage stdin cannot silently allow an unvalidated stop
         proc = subprocess.run([sys.executable, str(hook)], input="NOT JSON", capture_output=True, text=True, timeout=30)
-        assert proc.returncode == 0 and proc.stdout == ""
+        assert proc.returncode == 0
+        assert json.loads(proc.stdout)["decision"] == "block"
 
 
-_PASS_ENVELOPE = {"summary": {"verdict": "PASS"}, "violations": []}
+_PASS_ENVELOPE = {
+    "command": "verify",
+    "summary": {
+        "verdict": "PASS",
+        "violation_count": 0,
+        "files_checked": 1,
+        "verification_complete": True,
+        "partial_success": False,
+    },
+    "violations": [],
+}
 
 # Python stub standing in for the `roam` binary: appends an invocation marker
 # and prints the canned envelope. Pure Python so it is hermetic on every OS
@@ -287,12 +496,59 @@ _PASS_ENVELOPE = {"summary": {"verdict": "PASS"}, "violations": []}
 # `roam` to a real roam.exe on PATH and never to a stub roam.bat, so on dev
 # machines with roam installed a PATH stub silently tests the real binary).
 _ROAM_STUB_PY = """\
-import os, sys
+import json, os, sys
 here = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(here, "roam-called.txt"), "a", encoding="utf-8") as fh:
     fh.write("called" + chr(10))
+with open(os.path.join(here, "request.json"), "w", encoding="utf-8") as fh:
+    json.dump({
+        "argv": sys.argv[1:],
+        "nonce": os.environ.get("ROAM_VERIFY_REQUEST_NONCE"),
+        "scope_sha256": os.environ.get("ROAM_VERIFY_SCOPE_SHA256"),
+        "content_sha256": os.environ.get("ROAM_VERIFY_CONTENT_SHA256"),
+        "scope_count": os.environ.get("ROAM_VERIFY_SCOPE_COUNT"),
+    }, fh, sort_keys=True)
 with open(os.path.join(here, "envelope.json"), encoding="utf-8") as fh:
-    sys.stdout.write(fh.read())
+    raw = fh.read()
+try:
+    envelope = json.loads(raw)
+except ValueError:
+    envelope = None
+if isinstance(envelope, dict) and envelope.get("command") == "verify":
+    summary = envelope.get("summary")
+    if isinstance(summary, dict) and "verification_receipt" not in summary:
+        summary["verification_receipt"] = {
+            "schema": "roam.verify.receipt.v3",
+            "request_nonce": os.environ.get("ROAM_VERIFY_REQUEST_NONCE"),
+            "scope_sha256": os.environ.get("ROAM_VERIFY_SCOPE_SHA256"),
+            "content_sha256": os.environ.get("ROAM_VERIFY_CONTENT_SHA256"),
+            "content_sha256_before": os.environ.get("ROAM_VERIFY_CONTENT_SHA256"),
+            "content_sha256_after": os.environ.get("ROAM_VERIFY_CONTENT_SHA256"),
+            "target_file_count": int(os.environ.get("ROAM_VERIFY_SCOPE_COUNT", "-1")),
+            "scope_stable": True,
+            "request_match": True,
+        }
+    raw = json.dumps(envelope)
+mutation = os.environ.get("ROAM_STUB_MUTATE_PATH")
+if mutation:
+    target = mutation if os.path.isabs(mutation) else os.path.join(os.getcwd(), mutation)
+    action = os.environ.get("ROAM_STUB_MUTATE_ACTION", "write")
+    if action == "delete":
+        os.unlink(target)
+    else:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        mode = "a" if action == "append" else "w"
+        with open(target, mode, encoding="utf-8") as fh:
+            fh.write(os.environ.get("ROAM_STUB_MUTATE_CONTENT", "mutated by verifier" + chr(10)))
+sys.stdout.write(raw)
+override = os.environ.get("ROAM_STUB_EXIT_CODE")
+if override is not None:
+    raise SystemExit(int(override))
+try:
+    verdict = str((json.loads(raw).get("summary") or {}).get("verdict") or "").upper()
+except (AttributeError, ValueError):
+    verdict = ""
+raise SystemExit(5 if verdict.startswith("FAIL") else 0)
 """
 
 # Driver that runs the UNMODIFIED Stop-hook script text with a `subprocess`
@@ -337,7 +593,7 @@ sys.modules["subprocess"] = shim
 with open(_SCRIPT, encoding="utf-8") as fh:
     code = fh.read()
 sys.argv = [_SCRIPT]
-exec(compile(code, _SCRIPT, "exec"), {"__name__": "__main__"})
+exec(compile(code, _SCRIPT, "exec"), {"__name__": "__main__", "__file__": _SCRIPT})
 """
 
 
@@ -350,16 +606,56 @@ def _install_roam_verify_stub(stub_root, envelope):
     return stub_dir, stub_dir / "roam-called.txt"
 
 
-def _run_stop_hook(repo, stub_dir, payload="{}"):
+def _hook_runtime(repo):
+    from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT, _CLAUDE_UPS_HOOK_SCRIPT
+
+    runtime = repo.parent / "managed-hooks"
+    runtime.mkdir(exist_ok=True)
+    ups = runtime / "roam-compile-ups.py"
+    stop = runtime / "roam-verify-stop.py"
+    ups.write_text(_CLAUDE_UPS_HOOK_SCRIPT, encoding="utf-8")
+    stop.write_text(_CLAUDE_STOP_HOOK_SCRIPT, encoding="utf-8")
+    return ups, stop
+
+
+def _hook_test_env(repo, env=None):
+    fake_home = repo.parent / "hook-home"
+    fake_home.mkdir(exist_ok=True)
+    return {
+        **os.environ,
+        "ROAM_HOOK_EVIDENCE_DIR": str(repo.parent / "hook-evidence"),
+        "HOME": str(fake_home),
+        "USERPROFILE": str(fake_home),
+        **(env or {}),
+    }
+
+
+def _run_prompt_hook(repo, payload, env=None):
+    import shutil
+    import subprocess
+    import sys
+
+    ups, _ = _hook_runtime(repo)
+    git_bin = shutil.which("git")
+    hook_path = os.path.dirname(git_bin) if git_bin else os.environ.get("PATH", "")
+    return subprocess.run(
+        [sys.executable, str(ups)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=str(repo),
+        env={**_hook_test_env(repo, env), "PATH": hook_path},
+    )
+
+
+def _run_stop_hook(repo, stub_dir, payload="{}", env=None):
     """Run the Stop-hook script (via the subprocess-shim driver) with
     cwd=repo. Script files live OUTSIDE the repo so the tree stays clean."""
     import subprocess
     import sys
 
-    from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT
-
-    hook = repo.parent / "stop-hook.py"
-    hook.write_text(_CLAUDE_STOP_HOOK_SCRIPT, encoding="utf-8")
+    _, hook = _hook_runtime(repo)
     driver = repo.parent / "stop-hook-driver.py"
     driver.write_text(_STOP_HOOK_DRIVER_PY, encoding="utf-8")
     return subprocess.run(
@@ -369,6 +665,7 @@ def _run_stop_hook(repo, stub_dir, payload="{}"):
         text=True,
         timeout=60,
         cwd=str(repo),
+        env=_hook_test_env(repo, env),
     )
 
 
@@ -434,7 +731,14 @@ class TestStopHookFastExitAndTelemetry:
         repo = self._git_repo(tmp_path)
         (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
         envelope = {
-            "summary": {"verdict": "FAIL"},
+            "command": "verify",
+            "summary": {
+                "verdict": "FAIL",
+                "violation_count": 1,
+                "files_checked": 1,
+                "verification_complete": True,
+                "partial_success": False,
+            },
             "violations": [
                 {
                     "severity": "FAIL",
@@ -459,16 +763,274 @@ class TestStopHookFastExitAndTelemetry:
         log_text = (repo / ".roam" / "hook-stops.jsonl").read_text(encoding="utf-8")
         assert "super_secret_module" not in log_text  # counts only, never finding text
 
+    def test_correction_continuation_reverifies_until_evidence_passes(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        failing = {
+            "command": "verify",
+            "summary": {
+                "verdict": "FAIL",
+                "violation_count": 1,
+                "files_checked": 1,
+                "verification_complete": True,
+                "partial_success": False,
+            },
+            "violations": [
+                {
+                    "severity": "FAIL",
+                    "category": "syntax",
+                    "file": "tracked.txt",
+                    "line": 1,
+                    "message": "syntax failure",
+                }
+            ],
+        }
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, failing)
+
+        first = _run_stop_hook(repo, stub_dir, '{"stop_hook_active": false}')
+        second = _run_stop_hook(repo, stub_dir, '{"stop_hook_active": true}')
+
+        assert json.loads(first.stdout)["decision"] == "block"
+        assert json.loads(second.stdout)["decision"] == "block"
+        assert marker.read_text(encoding="utf-8").splitlines() == ["called", "called"]
+
+        (stub_dir / "envelope.json").write_text(json.dumps(_PASS_ENVELOPE), encoding="utf-8")
+        third = _run_stop_hook(repo, stub_dir, '{"stop_hook_active": true}')
+
+        assert third.returncode == 0 and third.stdout == ""
+        assert marker.read_text(encoding="utf-8").splitlines() == ["called", "called", "called"]
+
+    def test_exit_verdict_mismatch_is_unavailable_not_pass(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+
+        proc = _run_stop_hook(repo, stub_dir, env={"ROAM_STUB_EXIT_CODE": "5"})
+
+        assert marker.exists()
+        decision = json.loads(proc.stdout)
+        assert decision["decision"] == "block"
+        assert "complete post-edit evidence" in decision["reason"]
+
+    def test_malformed_verify_envelope_blocks_an_edited_stop(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, {})
+
+        proc = _run_stop_hook(repo, stub_dir)
+
+        assert proc.returncode == 0
+        assert marker.exists()
+        decision = json.loads(proc.stdout)
+        assert decision["decision"] == "block"
+        assert "complete post-edit evidence" in decision["reason"]
+        assert self._stop_rows(repo)[-1]["blocked"] is True
+
+    def test_partial_pass_envelope_blocks_an_edited_stop(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        envelope = {
+            "command": "verify",
+            "summary": {
+                "verdict": "PASS",
+                "violation_count": 0,
+                "files_checked": 1,
+                "verification_complete": False,
+                "partial_success": True,
+            },
+            "violations": [],
+        }
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, envelope)
+
+        proc = _run_stop_hook(repo, stub_dir)
+
+        decision = json.loads(proc.stdout)
+        assert decision["decision"] == "block"
+        assert "complete post-edit evidence" in decision["reason"]
+
+    def test_commit_before_stop_is_verified_from_prompt_base_head(self, tmp_path):
+        import subprocess
+
+        repo = self._git_repo(tmp_path)
+        initial_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        payload = json.dumps({"prompt": "repair the committed syntax path", "session_id": "commit-episode"})
+        assert _run_prompt_hook(repo, payload).returncode == 0
+        state_paths = list((repo.parent / "hook-evidence").rglob("*.json"))
+        assert len(state_paths) == 1 and not state_paths[0].is_relative_to(repo)
+        protected_state = json.loads(state_paths[0].read_text(encoding="utf-8"))
+        assert protected_state["active"]["base_head"] == initial_head
+        assert protected_state["active"]["policy_complete"] is True
+        (repo / "tracked.txt").write_text("committed during episode\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "-m", "agent edit"], cwd=repo, check=True, capture_output=True)
+        assert subprocess.run(["git", "diff", "--quiet", "HEAD"], cwd=repo, capture_output=True).returncode == 0
+
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        proc = _run_stop_hook(repo, stub_dir, payload)
+
+        assert proc.returncode == 0 and proc.stdout == ""
+        assert marker.read_text(encoding="utf-8").splitlines() == ["called"]
+        request = json.loads((stub_dir / "request.json").read_text(encoding="utf-8"))
+        assert "tracked.txt" in request["argv"]
+        assert request["scope_count"] == "1"
+        assert len(request["nonce"]) == 32
+
+    @pytest.mark.parametrize("path", ["tracked.txt", "draft.py"])
+    def test_verifier_mutating_tracked_or_untracked_bytes_blocks(self, tmp_path, path):
+        repo = self._git_repo(tmp_path)
+        (repo / path).write_text("pre-verify bytes\n", encoding="utf-8")
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+
+        proc = _run_stop_hook(
+            repo,
+            stub_dir,
+            env={
+                "ROAM_STUB_MUTATE_PATH": path,
+                "ROAM_STUB_MUTATE_CONTENT": "post-verify bytes\n",
+            },
+        )
+
+        assert marker.exists()
+        decision = json.loads(proc.stdout)
+        assert decision["decision"] == "block"
+        assert "[verification_race]" in decision["reason"]
+
+    def test_verifier_mutating_suppressions_is_policy_tampering(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        suppressions = repo / ".roam-suppressions.yml"
+        suppressions.write_text("suppressions: []\n", encoding="utf-8")
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+
+        proc = _run_stop_hook(
+            repo,
+            stub_dir,
+            env={
+                "ROAM_STUB_MUTATE_PATH": ".roam-suppressions.yml",
+                "ROAM_STUB_MUTATE_CONTENT": "suppressions:\n  - rule: syntax\n",
+            },
+        )
+
+        assert marker.exists()
+        decision = json.loads(proc.stdout)
+        assert "[policy_tampering]" in decision["reason"]
+
+    def test_session_stop_without_protected_prompt_evidence_blocks_before_verify(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+        payload = json.dumps({"session_id": "missing-prompt-evidence"})
+
+        proc = _run_stop_hook(repo, stub_dir, payload)
+
+        decision = json.loads(proc.stdout)
+        assert "[policy_evidence_unavailable]" in decision["reason"]
+        assert not marker.exists()
+
+    @pytest.mark.parametrize(
+        "relative_path,initial,mutated",
+        [
+            (".roam/verify.yaml", "enabled: true\n", "enabled: false\n"),
+            (".roam-suppressions.yml", "suppressions: []\n", "suppressions:\n  - rule: syntax\n"),
+            (".claude/hooks/roam-verify-stop.py", "# managed stop hook\n", "# bypassed stop hook\n"),
+            (".claude/settings.json", '{"hooks": {}}\n', '{"hooks": {"Stop": []}}\n'),
+        ],
+    )
+    def test_prompt_start_policy_hook_and_settings_mutation_blocks(self, tmp_path, relative_path, initial, mutated):
+        repo = self._git_repo(tmp_path)
+        target = repo.joinpath(*relative_path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(initial, encoding="utf-8")
+        payload = json.dumps({"prompt": "apply a source-only correction", "session_id": "policy-episode"})
+        assert _run_prompt_hook(repo, payload).returncode == 0
+        target.write_text(mutated, encoding="utf-8")
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
+
+        proc = _run_stop_hook(repo, stub_dir, payload)
+
+        decision = json.loads(proc.stdout)
+        assert decision["decision"] == "block"
+        assert "[policy_tampering]" in decision["reason"]
+        assert not marker.exists(), "policy tampering must block before invoking Verify"
+
+    @pytest.mark.parametrize(
+        "schema",
+        ["roam.verify.receipt.v1", "roam.verify.receipt.v2", "roam.verify.receipt.v3"],
+    )
+    def test_stale_or_wrong_receipt_never_satisfies_stop(self, tmp_path, schema):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        envelope = json.loads(json.dumps(_PASS_ENVELOPE))
+        envelope["summary"]["verification_receipt"] = {
+            "schema": schema,
+            "request_nonce": "0" * 32,
+            "scope_sha256": "1" * 64,
+            "content_sha256": "2" * 64,
+            "content_sha256_before": "2" * 64,
+            "content_sha256_after": "2" * 64,
+            "target_file_count": 1,
+            "scope_stable": True,
+            "request_match": True,
+        }
+        stub_dir, marker = _install_roam_verify_stub(tmp_path, envelope)
+
+        proc = _run_stop_hook(repo, stub_dir)
+
+        assert marker.exists()
+        decision = json.loads(proc.stdout)
+        assert decision["decision"] == "block"
+        assert "receipt v3 required" in decision["reason"]
+
+    def test_complete_rc0_pass_with_advisory_warn_is_allowed(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        envelope = json.loads(json.dumps(_PASS_ENVELOPE))
+        envelope["summary"]["violation_count"] = 1
+        envelope["violations"] = [
+            {
+                "severity": "WARN",
+                "category": "dead",
+                "file": "tracked.txt",
+                "line": 1,
+                "message": "advisory orphan",
+            }
+        ]
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, envelope)
+
+        proc = _run_stop_hook(repo, stub_dir)
+
+        assert proc.returncode == 0 and proc.stdout == ""
+        assert "roam verify advisory" in proc.stderr
+
+    @pytest.mark.parametrize("nested_only", [False, True])
+    def test_pass_envelope_with_fail_finding_never_allows(self, tmp_path, nested_only):
+        repo = self._git_repo(tmp_path)
+        (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        envelope = json.loads(json.dumps(_PASS_ENVELOPE))
+        finding = {
+            "severity": "FAIL",
+            "category": "dead",
+            "file": "tracked.txt",
+            "line": 1,
+            "message": "hard failure disguised as advisory",
+        }
+        if nested_only:
+            envelope["categories"] = {"dead": {"violations": [finding]}}
+        else:
+            envelope["summary"]["violation_count"] = 1
+            envelope["violations"] = [finding]
+        stub_dir, _ = _install_roam_verify_stub(tmp_path, envelope)
+
+        proc = _run_stop_hook(repo, stub_dir)
+
+        decision = json.loads(proc.stdout)
+        assert decision["decision"] == "block"
+        assert "receipt v3 required" in decision["reason"]
+
     def test_prompt_and_stop_share_episode_identity(self, tmp_path):
         repo = self._git_repo(tmp_path)
-        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
-
-        ups = tmp_path / "ups-hook.py"
-        ups.write_text(_CLAUDE_UPS_HOOK_SCRIPT, encoding="utf-8")
-        import subprocess
-        import sys
-
-        env = {**os.environ, "PATH": ""}
         prompt_payload = json.dumps(
             {
                 "prompt": "investigate the repeated login latency",
@@ -476,15 +1038,7 @@ class TestStopHookFastExitAndTelemetry:
                 "transcript_path": str(tmp_path / "transcript.jsonl"),
             }
         )
-        proc = subprocess.run(
-            [sys.executable, str(ups)],
-            input=prompt_payload,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=repo,
-            env=env,
-        )
+        proc = _run_prompt_hook(repo, prompt_payload)
         assert proc.returncode == 0
         starts = [
             json.loads(line) for line in (repo / ".roam" / "episodes.jsonl").read_text(encoding="utf-8").splitlines()
@@ -508,31 +1062,18 @@ class TestStopHookFastExitAndTelemetry:
         assert events[1]["terminal"] is True
         assert events[1]["outcome"] == "no_edit"
         assert events[1]["turn_seq"] == 1
-        assert events[0]["hook_version"] == events[1]["hook_version"] == 6
+        from roam.commands.cmd_hooks import _HOOK_BODY_VERSION
+
+        assert events[0]["hook_version"] == events[1]["hook_version"] == _HOOK_BODY_VERSION
         assert events[0]["evidence_source"] == events[1]["evidence_source"] == "live_hook"
         assert events[1]["health_state"] == "not_applicable"
 
     def test_prompt_turn_sequence_is_monotonic_and_prompt_private(self, tmp_path):
         repo = self._git_repo(tmp_path)
-        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
-
-        ups = tmp_path / "ups-hook.py"
-        ups.write_text(_CLAUDE_UPS_HOOK_SCRIPT, encoding="utf-8")
-        import subprocess
-        import sys
-
         secret = "private-marker-should-never-land"
         payload = json.dumps({"prompt": f"investigate {secret}", "session_id": "sequence-session"})
         for _ in range(2):
-            proc = subprocess.run(
-                [sys.executable, str(ups)],
-                input=payload,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                cwd=repo,
-                env={**os.environ, "PATH": ""},
-            )
+            proc = _run_prompt_hook(repo, payload)
             assert proc.returncode == 0
         raw = (repo / ".roam" / "episodes.jsonl").read_text(encoding="utf-8")
         events = [json.loads(line) for line in raw.splitlines()]
@@ -577,6 +1118,100 @@ class TestHookBodyHeal:
 
         compile(_CLAUDE_UPS_HOOK_SCRIPT, "roam-compile-ups.py", "exec")
         compile(_CLAUDE_STOP_HOOK_SCRIPT, "roam-verify-stop.py", "exec")
+
+    @pytest.mark.parametrize("body_name", ["_CLAUDE_UPS_HOOK_SCRIPT", "_CLAUDE_STOP_HOOK_SCRIPT"])
+    def test_cross_volume_evidence_root_is_treated_as_outside_repo(
+        self,
+        body_name,
+        tmp_path,
+        monkeypatch,
+    ):
+        """Windows raises ValueError for commonpath(C:\\..., D:\\...).
+
+        That means the evidence root is outside the repo, not unavailable.
+        Simulate the cross-volume result portably for both deployed hooks.
+        """
+        from roam.commands import cmd_hooks
+
+        deployed = getattr(cmd_hooks, body_name)
+        body, marker, tail = deployed.rpartition("\nmain()\n")
+        assert marker and tail == ""
+        namespace = {
+            "__name__": "hook_cross_volume_contract",
+            "__file__": str(tmp_path / "managed-hook.py"),
+        }
+        exec(compile(body, "managed-hook.py", "exec"), namespace)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        evidence = tmp_path / "outside-evidence"
+        monkeypatch.setenv("ROAM_HOOK_EVIDENCE_DIR", str(evidence))
+
+        def different_volumes(_paths):
+            raise ValueError("Paths don't have the same drive")
+
+        monkeypatch.setattr(namespace["os"].path, "commonpath", different_volumes)
+        assert os.path.normcase(namespace["_evidence_base"](str(repo), True)) == os.path.normcase(
+            str(evidence.resolve())
+        )
+
+    def test_stop_hook_receipt_v3_digests_match_verify(self, tmp_path):
+        from roam.commands import cmd_verify
+        from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT
+
+        project = tmp_path / "digest-project"
+        project.mkdir()
+        (project / "alpha.py").write_bytes(b"print('alpha')\n")
+        nested = project / "unicode"
+        nested.mkdir()
+        (nested / "beta.py").write_bytes("value = 'β'\n".encode())
+        paths = ["unicode/beta.py", "missing.py", "alpha.py", "alpha.py"]
+        body, marker, tail = _CLAUDE_STOP_HOOK_SCRIPT.rpartition("\nmain()\n")
+        assert marker and tail == ""
+        namespace = {"__name__": "hook_digest_contract", "__file__": str(tmp_path / "roam-verify-stop.py")}
+        exec(compile(body, "roam-verify-stop.py", "exec"), namespace)
+
+        hook_content, hook_error = namespace["_verification_content_sha256"](str(project), paths)
+        verify_content, verify_error = cmd_verify._verification_content_sha256(project, paths)
+
+        assert hook_error == verify_error is None
+        assert hook_content == verify_content
+        assert namespace["_scope_sha256"](paths) == cmd_verify._verification_scope_sha256(paths)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("content_sha256_before", "b" * 64),
+            ("content_sha256_after", "b" * 64),
+            ("scope_stable", False),
+            ("scope_stable", None),
+        ],
+    )
+    def test_stop_hook_rejects_unstable_receipt_v3_evidence(self, tmp_path, field, value):
+        from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT
+
+        body, marker, tail = _CLAUDE_STOP_HOOK_SCRIPT.rpartition("\nmain()\n")
+        assert marker and tail == ""
+        namespace = {"__name__": "hook_receipt_contract", "__file__": str(tmp_path / "roam-verify-stop.py")}
+        exec(compile(body, "roam-verify-stop.py", "exec"), namespace)
+        digest = "a" * 64
+        expected = {
+            "schema": "roam.verify.receipt.v3",
+            "request_nonce": "c" * 32,
+            "scope_sha256": "d" * 64,
+            "content_sha256": digest,
+            "content_sha256_before": digest,
+            "content_sha256_after": digest,
+            "target_file_count": 1,
+            "scope_stable": True,
+            "request_match": True,
+        }
+        envelope = json.loads(json.dumps(_PASS_ENVELOPE))
+        envelope["summary"]["verification_receipt"] = dict(expected)
+        envelope["_hook_process_returncode"] = 0
+        assert namespace["_verify_protocol_state"](envelope, expected) == "passed"
+
+        envelope["summary"]["verification_receipt"][field] = value
+        assert namespace["_verify_protocol_state"](envelope, expected) == "unavailable"
 
     def test_registry_is_seeded(self):
         """F1 guard: an empty/garbled registry silently disables pre-stamp healing."""
@@ -721,25 +1356,13 @@ class TestHookBodyHeal:
         assert "force-overwrite unrecognized body" in res.output
         assert "print('custom')" in hook.read_text(encoding="utf-8")  # untouched
 
-    def test_surgered_current_body_classifies_current(self):
-        """compile-code's mode-override surgery on the CURRENT body stays quiet
-        (its SHA is registered as a shipped variant)."""
-        import re as _re
+    def test_canonical_stop_body_owns_maintenance_override(self):
+        """Roam owns its global-flag ordering; integrators need no surgery."""
+        from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT
 
-        from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT, _hook_heal_state
-
-        # verbatim copy of compile-code cli.py _override_hook_maintenance_commands
-        script = _CLAUDE_STOP_HOOK_SCRIPT.replace(
-            '["roam", "--json", *args]',
-            '["roam", *(["--override-mode"] if args and args[0] in {"verify", "index"} else []), "--json", *args]',
-        )
-        script = _re.sub(
-            r'(["\']roam["\']\s*,\s*)(["\'])(verify|index)\2',
-            r'\1"--override-mode", \2\3\2',
-            script,
-        )
-        assert script != _CLAUDE_STOP_HOOK_SCRIPT  # surgery actually bites
-        assert _hook_heal_state(script, _CLAUDE_STOP_HOOK_SCRIPT) == "current"
+        assert '["roam", "--override-mode", "verify"' in _CLAUDE_STOP_HOOK_SCRIPT
+        assert 'maintenance_override = ["--override-mode"]' in _CLAUDE_STOP_HOOK_SCRIPT
+        assert '["roam", *maintenance_override, "--json", *args]' in _CLAUDE_STOP_HOOK_SCRIPT
 
     def test_doctor_reports_hook_body_state(self, in_tmp, monkeypatch):
         """F7: doctor surfaces non-current bodies (advisory)."""
@@ -834,7 +1457,7 @@ class TestLoopBReportRefresh:
         stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
         popen_log = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
         # whole-repo (report+persist), NOT --diff-only (that would poison the report)
-        assert "roam verify --auto --report --persist" in popen_log
+        assert "roam --override-mode verify --auto --report --persist" in popen_log
         assert "--diff-only" not in popen_log
 
     def test_throttled_when_report_fresh(self, tmp_path):
@@ -866,12 +1489,12 @@ class TestLoopBReportRefresh:
         (repo / "tracked.txt").write_text("changed\n", encoding="utf-8")
         stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
         first = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
-        assert first.count("roam verify --auto --report --persist") == 1
+        assert first.count("roam --override-mode verify --auto --report --persist") == 1
         assert (repo / ".roam" / "verify-refresh-claim").exists()  # claim taken
         # second stop, report still absent (persist "never landed") -> no respawn
         (repo / "tracked.txt").write_text("changed again\n", encoding="utf-8")
         second = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
-        assert second.count("roam verify --auto --report --persist") == 1  # log unchanged
+        assert second.count("roam --override-mode verify --auto --report --persist") == 1  # log unchanged
 
     def test_stale_claim_respawns(self, tmp_path):
         import os as _os
@@ -886,7 +1509,7 @@ class TestLoopBReportRefresh:
         _os.utime(claim, (old, old))
         stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
         popen_log = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"})
-        assert "roam verify --auto --report --persist" in popen_log
+        assert "roam --override-mode verify --auto --report --persist" in popen_log
 
     def test_throttle_anchored_at_repo_root(self, tmp_path):
         """Review MAJOR-3: a hook running in a repo SUBDIR must see the root

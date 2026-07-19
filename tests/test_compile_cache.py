@@ -305,6 +305,7 @@ def test_compile_cache_evict_no_cache_emits_json_envelope(cli_runner, tmp_path):
 
 def test_compile_cache_vanilla_stats_no_cache_has_concrete_agent_contract(cli_runner, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
     result = invoke_cli(cli_runner, ["compile-cache", "vanilla-stats"], json_mode=True)
 

@@ -24,13 +24,18 @@ The constitution loader is consumed (not modified) — if
 materialise the allow-list from that block. Otherwise we fall back to
 ``DEFAULT_MODE_POLICIES`` defined below.
 
+Generator-owned mode snapshots may follow newer defaults in memory only when
+their recorded semantic digest still matches the on-disk block. A legacy,
+malformed, or user-customized policy remains an authoritative replacement;
+``roam constitution upgrade`` provides the previewable migration path.
+
 Migration mode lives between ``safe_edit`` and ``autonomous_pr`` as
 the home for DB migration commands (BACKLOG R16 spec). Since W37.1
 the constitution loader materialises its default modes directly from
 ``_MODE_EXTRAS``, so a fresh ``roam constitution init`` emits all four
-modes including ``migration``. If a repo's constitution omits
-``migration`` entirely, we still synthesise it from
-``DEFAULT_MODE_POLICIES`` (see ``_materialise_from_constitution``).
+modes including ``migration``. A customized constitution that omits a
+higher mode inherits only its declared lower-mode permissions; it never gains
+the baked-in defaults merely because a key is absent.
 """
 
 from __future__ import annotations
@@ -86,6 +91,9 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "uses",
         "doctor",
         "health",
+        # verify-imports is a pure index/source diagnostic. It opens the index
+        # read-only and never writes source, index, evidence, or configuration.
+        "verify-imports",
         "tour",
         "service-report",  # client report generator; reads the graph + writes a report artifact, no source edits (sibling of tour/describe)
         "next",
@@ -110,16 +118,13 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # lines-added per author (reads indexed git history; read-only, no
         # edits) — same profile as the pr-risk reviewer field it was extracted from.
         "blame-reviewers",
-        # 13.8.0 — four analysis commands shipped this release; all pure
-        # read-side (no source edits): `cycle-break` recommends the smallest
+        # 13.8.0 — read-side analysis commands: `cycle-break` recommends the smallest
         # extraction that breaks each import cycle (reads source, writes
         # nothing); `vue-emits` lists a Vue component's declared/used emits;
-        # `vuln-map` / `vuln-reach` map advisories to symbols and test
-        # reachability — DB/graph reads only. Same profile as `describe`/`deps`.
+        # the vulnerability ingestion/reachability builders live in safe_edit
+        # because they update index tables. Same profile as `describe`/`deps`.
         "cycle-break",
         "vue-emits",
-        "vuln-map",
-        "vuln-reach",
         # W107 — demoted from safe_edit. Both are pure DB queries with no
         # edit semantics: `findings` is a read-side surface over the central
         # findings registry (all subcommands open the DB with readonly=True
@@ -154,33 +159,21 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "proof-bundle",
         "verdict",
         "verification-contract",
-        # Wave 24 — bench-compile dispatches claude -p subprocesses; no edits.
-        "bench-compile",
         # W40 — compile-stats reads .roam/compile-runs.jsonl; no edits.
         "compile-stats",
-        # Episode hooks append JSONL; savings materializes that local telemetry
-        # into .roam/episodes.sqlite. No source files or external state change.
-        "savings",
-        # Transcript backfill writes only keyed, text-free local evidence under
-        # .roam/; it never mutates source files or external systems.
-        "savings-backfill",
-        # W56 — compile-cache (group: stats/clear/build); writes to
-        # .roam/compile-envelope-cache.sqlite, which is local-state.
+        # Mixed groups remain queryable in read_only, while the dispatch gate
+        # raises their mutating subcommands to safe_edit.
+        # W56 — compile-cache: stats/vanilla-stats read; clear/evict/build write.
         "compile-cache",
-        # S2-lite — compile-daemon (group: start/status/stop); serves compile
-        # over loopback; writes only .roam/compile-daemon.json (local-state),
-        # the same basis as compile-cache above.
+        # S2-lite — compile-daemon: status reads; start/stop mutate process and
+        # repo-local daemon state.
         "compile-daemon",
         # Pre-existing untracked alias surfaced by Wave 11-20 ceiling tightening:
         # `vulns` is a read-only vulnerability summary (alias of vuln-map family).
         "vulns",
-        # 2026-06-05 — compiler-diagnostic + inspection family. All read-only;
-        # any disk writes are LOCAL-STATE (compile-runs.jsonl telemetry +
-        # compile-envelope-cache.sqlite), the same basis on which compile-cache /
-        # compile-stats above sit in read_only. Commands with USER-DIRECTED write
+        # 2026-06-05 — compiler-diagnostic + inspection family. Commands with USER-DIRECTED write
         # flags (compiler-health --emit-guard-findings, envelope-diff
         # --update-baseline) are classified one tier up in safe_edit instead.
-        #   compile          — emits a compile envelope (analysis; local-state only)
         #   compiler-corpus  — analyzes a saved prompt corpus (read-only)
         #   dispatch-trace   — classifier path + per-probe fire/skip (read-only)
         #   magic-numbers    — AST/tree-sitter unnamed-constant scan (read-only)
@@ -189,17 +182,17 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         #                      (python/node/php) on tie inputs; no repo reads/writes
         #                      beyond an optional inventory scan (sibling of bench-compile)
         #   at               — show code at FILE:LINE + enclosing symbol (DB read)
-        "compile",
         "compiler-corpus",
         "dispatch-trace",
         "magic-numbers",
         "calc-inventory",
         "calc-probe",
-        # calc-golden reads historical data (DBF/CSV/JSONL) and writes only the
-        # corpus artifact the caller names (local-state, compile-cache basis);
-        # `check` executes a caller-supplied runner — same read_only basis as
-        # bench-compile's subprocess dispatch.
+        # calc-golden audit/check are read-side; extract requires --out and the
+        # dispatch gate raises that artifact-writing form to safe_edit.
         "calc-golden",
+        # Default traversal is a graph read. --import-report and
+        # --merge-imported update coverage tables and escalate at dispatch.
+        "coverage-gaps",
         "at",
         # 2026-06-08 — `cycles` is a pure read-only graph query (Tarjan SCCs of
         # the symbol graph; open_db readonly=True), the focused sibling of
@@ -207,11 +200,177 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # ceiling at 152 after the command was added (W248 precedent: classify
         # the new command rather than raise the ceiling).
         "cycles",
+        # Enforcement-completeness audit (2026-07-17): every remaining
+        # registered capability below explicitly declares side_effect=False
+        # and destructive=False. Classifying the complete read surface removes
+        # the legacy fail-closed gap where a freshly generated constitution
+        # could permanently hide valid diagnostics at every authority tier.
+        "adrs",
+        "adversarial",
+        "affected",
+        "affected-tests",
+        "ai-ratio",
+        "ai-readiness",
+        "alerts",
+        "algo",
+        "api",
+        "api-changes",
+        "api-drift",
+        "architecture-drift",
+        "audit",
+        "batch-search",
+        "bisect",
+        "breaking",
+        "brief",
+        "capabilities",
+        "causal-graph",
+        "changelog",
+        "check-rules",
+        "churn",
+        "closure",
+        "clusters",
+        "codeowners",
+        "compare",
+        "congestion",
+        "coupling",
+        "cut",
+        "dashboard",
+        "debt",
+        "delete-check",
+        "dev-profile",
+        "dict-consistency",
+        "disambiguate",
+        "doc-staleness",
+        "docs-coverage",
+        "dogfood-aggregate",
+        "drift",
+        "effects",
+        "endpoints",
+        "entry-points",
+        "evidence-diff",
+        "evidence-doctor",
+        "flag-dead",
+        "fn-coupling",
+        "forecast",
+        "graph-stats",
+        "idempotency",
+        "index-stats",
+        "intent",
+        "invariants",
+        "layers",
+        "lsp",
+        "math",
+        "module",
+        "onboard",
+        "oracle",
+        "orchestrate",
+        "orphan-routes",
+        "owner",
+        "partition",
+        "path-coverage",
+        "patterns",
+        "postmortem",
+        "py-modern",
+        "py-types",
+        "pytest-fixtures",
+        "recommend",
+        "refs",
+        "relate",
+        "report",
+        "risk",
+        "safe-delete",
+        "safe-zones",
+        "schema",
+        "secrets",
+        "semantic-diff",
+        "side-effects",
+        "simulate-departure",
+        "sketch",
+        "spectral",
+        "split",
+        "suggest-reviewers",
+        "supply-chain",
+        "syntax-check",
+        "test-gaps",
+        "test-impact",
+        "test-map",
+        "test-pyramid",
+        "tx-boundaries",
+        "visualize",
     },
     "safe_edit": {
         "diff",
         "critique",
         "pr-bundle",
+        # Post-edit proof maintenance. Verify may refresh stale index rows and
+        # append run evidence, but it does not edit source files; the normal
+        # safe_edit loop must be able to autofire it. It remains unavailable
+        # in read_only and is inherited by migration/autonomous_pr.
+        "verify",
+        # These commands always mutate repo-local state, index tables, invoke a
+        # metered external model, or materialize evidence. They previously sat
+        # in read_only under a "local writes do not count" exception that
+        # contradicted this module's no-writes contract.
+        "bench-compile",
+        "compile",
+        "savings",
+        "savings-backfill",
+        "vuln-map",
+        "vuln-reach",
+        # Enforcement-readiness audit (2026-07-17). These capabilities all
+        # declare side effects, but their writes are bounded to normal edit
+        # workflow state: repo-local evidence/config, generated artifacts, or
+        # caller-requested source/test scaffolds. Keeping them explicit avoids
+        # an unclassified fail-closed denial while preserving read_only.
+        "budget",
+        "agents-md",
+        "article-12-check",
+        "audit-trail-verify",
+        "auth-gaps",
+        "boundary",
+        "bus-factor",
+        "capsule",
+        "ci-setup",
+        "clones",
+        "compatibility",
+        "complexity",
+        "conventions",
+        "dark-matter",
+        "dead",
+        "digest",
+        "duplicates",
+        "eval-retrieve",
+        "evidence-oscal",
+        "fitness",
+        "fingerprint",
+        "fleet",
+        "graph-diff",
+        "graph-export",
+        "hotspots",
+        "index-export",
+        "ingest-trace",
+        "lease",
+        "llm-smells",
+        "memory",
+        "missing-index",
+        "n1",
+        "orphan-imports",
+        "over-fetch",
+        "reachability-triage",
+        "rules",
+        "rules-suggest",
+        "sbom",
+        "skill-generate",
+        "smells",
+        "snapshot",
+        "suppress",
+        "taint",
+        "test-hermeticity",
+        "test-scaffold",
+        "trend",
+        "trends",
+        "triage",
+        "vibe-check",
         "annotate",
         "annotations",
         "permit",
@@ -272,6 +431,14 @@ _MODE_EXTRAS: dict[str, set[str]] = {
     "migration": {
         "migration-plan",
         "migration-safety",
+        # Destructive index maintenance and automated source rewrites use the
+        # migration tier. Preview/default paths inherit the strictest behavior
+        # because the current policy classifies Click groups/commands rather
+        # than individual flags and subcommands.
+        "clean",
+        "index-import",
+        "reset",
+        "stale-refs",
         # Note: ``validate-plan`` / ``apply-plan`` are MCP-only tools
         # (see roam.mcp_server) — they are not CLI commands and so are
         # NOT listed here. The W37.1 lint
@@ -288,15 +455,20 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "pr-risk",
         "pr-diff",
         "pr-comment-render",
+        # These commands either compose autonomous PR analysis or mutate
+        # integration state outside ordinary repo-local evidence (git hooks or
+        # editor/MCP configuration). Preview modes inherit the strictest path.
+        "dogfood",
+        "hooks",
+        "mcp-setup",
+        "metrics-push",
+        "pre-commit",
         # Note: ``commit`` was a phantom verb here — roam itself does
         # not run git commits. Removed in W37.1 once materialisation
-        # surfaced it via the constitution check. The ``pre-commit``
-        # hook-installer is intentionally left UN-classified (it writes
-        # outside ``.roam/``); add deliberately to a mode if the
-        # workflow needs it.
+        # surfaced it via the constitution check. ``pre-commit`` is now
+        # deliberately classified above at autonomous_pr because installation
+        # writes outside ordinary repo-local evidence.
         "attest",
-        "verify",
-        "verify-imports",
         "cga",
         "agent-plan",
         "agent-context",
@@ -336,6 +508,17 @@ def _materialise(extras_map: dict[str, set[str]]) -> dict[str, set[str]]:
 # Cumulative defaults — what every mode allows when no constitution speaks.
 DEFAULT_MODE_POLICIES: dict[str, set[str]] = _materialise(_MODE_EXTRAS)
 
+# Experimental commands are absent from the static CLI surface and therefore
+# must not be emitted into a fresh constitution while their feature flag is
+# off. They still need an intentional runtime tier under the baked-in policy.
+# Constitution-managed repos remain authoritative and must opt these verbs in
+# explicitly. SPN is propose-only with respect to the consumer tree, but its
+# ``apply`` subcommand can execute a caller-supplied validation command while
+# applying candidate text in a throwaway worktree, so read_only is too weak.
+_CONDITIONAL_MODE_MINIMUMS: dict[str, str] = {
+    "sibling-patch": "safe_edit",
+}
+
 
 # ---------------------------------------------------------------------------
 # Dataclass
@@ -364,12 +547,12 @@ def _materialise_from_constitution(
     Returns ``None`` if no constitution exists OR the constitution has no
     ``modes:`` block. The constitution's ``modes`` lists are treated as
     REPLACEMENTS (not extras), because the loader's default already emits
-    cumulative lists. If a mode is absent from the constitution, we fall
-    back to the hardcoded default for that mode so a partial constitution
-    never produces a partially-empty policy.
+    cumulative lists. For an unproven/customized policy, an absent higher mode
+    inherits only the preceding declared permissions. This preserves the
+    cumulative invariant without silently granting baked-in defaults.
     """
     try:
-        from roam.constitution.loader import load_constitution
+        from roam.constitution.loader import effective_constitution_modes, load_constitution
     except ImportError as exc:
         sys.stderr.write(f"[modes.policy] optional constitution loader unavailable: {exc}\n")
         return None
@@ -382,18 +565,24 @@ def _materialise_from_constitution(
     if constitution is None:
         return None
 
-    declared: dict[str, list[str]] = dict(constitution.modes or {})
+    # Generated snapshots track new defaults only while their recorded
+    # semantic digest still matches the declared block. Legacy, malformed, or
+    # customized constitutions remain authoritative and receive no implicit
+    # permissions; ``roam constitution upgrade`` is their explicit path.
+    declared: dict[str, list[str]] = effective_constitution_modes(constitution)
     if not declared:
         return None
 
     out: dict[str, set[str]] = {}
+    inherited: set[str] = set()
     for mode in VALID_MODES:
-        if mode in declared and declared[mode]:
-            out[mode] = {_bare_command_name(item) for item in declared[mode] if item}
-        else:
-            # Mode absent from constitution -> use baked default so the
-            # caller sees a complete policy.
-            out[mode] = set(DEFAULT_MODE_POLICIES[mode])
+        explicit: set[str] = set()
+        for item in declared.get(mode, []):
+            bare = _bare_command_name(item)
+            if bare:
+                explicit.add(bare)
+        inherited = inherited | explicit
+        out[mode] = set(inherited)
 
     return out
 
@@ -530,6 +719,17 @@ def check_command_allowed(
     if bare in mode.allowed_commands:
         return True, f"'{bare}' allowed in {mode.name} mode"
 
+    conditional_minimum = _CONDITIONAL_MODE_MINIMUMS.get(bare)
+    if conditional_minimum is not None and "constitution" not in mode.source:
+        active_index = VALID_MODES.index(mode.name)
+        required_index = VALID_MODES.index(conditional_minimum)
+        if active_index >= required_index:
+            return True, f"'{bare}' allowed in {mode.name} mode (conditional {conditional_minimum} minimum)"
+        return (
+            False,
+            (f"'{bare}' not allowed in {mode.name} mode; run `roam mode {conditional_minimum}` to enable it"),
+        )
+
     # Find the lowest mode that DOES allow it, so the reason can suggest
     # an upgrade path.
     policies = list_modes(repo_root)
@@ -544,6 +744,18 @@ def check_command_allowed(
             False,
             (f"'{bare}' not allowed in {mode.name} mode; run `roam mode {upgrade_to}` to enable it"),
         )
+
+    # The legacy taxonomy is intentionally incomplete. Under the baked-in
+    # defaults, preserve read-side diagnostics by consulting their declarative
+    # capability metadata only after proving the command has no explicit tier.
+    # A repo constitution remains authoritative: omission there is an
+    # intentional denial, not permission to fall back to metadata.
+    uses_constitution = "constitution" in mode.source or any(
+        "constitution" in policy.source for policy in policies.values()
+    )
+    if not uses_constitution and _declared_read_only_command(bare):
+        return True, f"'{bare}' allowed in {mode.name} mode as a declared read-only diagnostic"
+
     return (
         False,
         (
@@ -552,3 +764,30 @@ def check_command_allowed(
             f"or add it to your constitution's modes block"
         ),
     )
+
+
+def _declared_read_only_command(command_name: str) -> bool:
+    """Return whether a registered command explicitly declares no writes.
+
+    Imports stay lazy so ordinary classified decisions retain the mode
+    substrate's existing cold-start behavior. Missing or malformed metadata is
+    never treated as read-only.
+    """
+    try:
+        import importlib
+
+        from roam.cli import _command_target
+
+        target = _command_target(command_name)
+        if target is None:
+            return False
+        module_name, attr_name = target
+        command = getattr(importlib.import_module(module_name), attr_name)
+        capability = getattr(command, "__roam_capability__", None)
+        return bool(
+            capability is not None
+            and getattr(capability, "side_effect", True) is False
+            and getattr(capability, "destructive", True) is False
+        )
+    except Exception:  # noqa: BLE001 - unknown metadata must not grant authority
+        return False

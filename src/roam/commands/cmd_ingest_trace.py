@@ -76,7 +76,7 @@ def _emit_parse_error(json_mode: bool, trace_path: str, message: str) -> None:
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

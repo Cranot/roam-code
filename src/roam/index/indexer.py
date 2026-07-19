@@ -1268,7 +1268,7 @@ class Indexer:
         quiet: bool = False,
         progress_bar: bool = True,
         light: bool = False,
-    ):
+    ) -> bool:
         """Run the indexing pipeline.
 
         Args:
@@ -1295,9 +1295,10 @@ class Indexer:
         # Lock file to prevent concurrent indexing
         lock_path = self.root / ".roam" / "index.lock"
         if not _claim_index_lock(lock_path):
-            return
+            return False
         try:
             self._do_run(force, verbose=verbose, include_excluded=include_excluded, light=light)
+            return True
         except KeyboardInterrupt:
             # graceful Ctrl-C: drop the lock so the user can
             # rerun without manual cleanup. Periodic commits in

@@ -603,7 +603,7 @@ def _write_guard_findings(path: Path, alerts: list[dict]) -> None:
     tags=("health", "compiler", "dashboard"),
     requires_index=False,
     ai_safe=True,
-    side_effect=False,
+    side_effect=True,
 )
 def compiler_health(ctx: click.Context, root: str, emit_guard_findings: str | None) -> None:
     """One envelope per compiler health snapshot.

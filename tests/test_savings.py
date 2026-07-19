@@ -11,6 +11,7 @@ from roam.commands.cmd_savings import savings
 from roam.savings import (
     _episode_health_state,
     _interpret_historical_pattern,
+    aggregate_savings_result,
     analyze_ledger,
 )
 
@@ -163,6 +164,172 @@ def test_cli_not_initialized_is_honest_and_structured(tmp_path: Path) -> None:
     assert payload["summary"]["partial_success"] is True
     assert payload["sensor_canaries"]["state"] == "passed"
     assert payload["repeat_candidates"] == []
+
+
+def test_savings_aggregate_projects_only_closed_counts_and_static_text() -> None:
+    opaque_episode_id = "ep_0123456789abcdef01234567"
+    canaries = [
+        "TITLE-CANARY-71",
+        "PATTERN-CANARY-72",
+        "COMMAND-CANARY-73",
+        "PROMPT-CANARY-74",
+        "RESPONSE-CANARY-75",
+        "PATH-CANARY-76",
+        "SESSION-CANARY-77",
+        opaque_episode_id,
+    ]
+    aggregate = aggregate_savings_result(
+        {
+            "summary": {
+                "verdict": canaries[3],
+                "state": "policy_ready",
+                "partial_success": False,
+                "measurement_admissible": True,
+                "policy_admissible": True,
+                "integrity_clean": True,
+                "north_star": canaries[4],
+            },
+            "coverage": {
+                "prompt_starts": 12,
+                "terminal_outcomes": 11,
+                "terminal_coverage_pct": 91.7,
+                "private_path": canaries[5],
+            },
+            "sensor_canaries": {
+                "state": "passed",
+                "passed": 3,
+                "total": 3,
+                "failures": [canaries[4]],
+            },
+            "repeat_candidates": [{"episode_id": opaque_episode_id, "task_prefix": canaries[3]}],
+            "historical_candidates": [{"pattern": canaries[1], "command": canaries[2]}],
+            "procedure_atlas": {
+                "opportunities": [{"title": canaries[0]}],
+                "failure_signatures": [{"template": canaries[4]}],
+                "recovery_targets": [{"path": canaries[5]}],
+                "intervention_mappings": [
+                    {"declaration_state": "declared_native", "title": canaries[0]},
+                    {"declaration_state": "unclaimed", "command": canaries[2]},
+                    {"declaration_state": "private-state", "path": canaries[5]},
+                ],
+            },
+            "intervention_evidence": {
+                "assignments": [{"session_id": canaries[6]}],
+                "experiments": [
+                    {
+                        "episode_id": opaque_episode_id,
+                        "intervention_id": canaries[6],
+                        "assignment_counts": {"control": 2, "exposed": 3, "private-arm": 4},
+                    }
+                ],
+            },
+            "materialization": {"database": canaries[5]},
+        }
+    )
+
+    assert set(aggregate) == {
+        "aggregate_schema",
+        "aggregate_schema_version",
+        "summary",
+        "coverage",
+        "sensor_canaries",
+        "opportunity_counts",
+        "intervention_state",
+        "privacy",
+    }
+    assert aggregate["opportunity_counts"] == {
+        "repeated_live_candidates": 1,
+        "historical_pattern_candidates": 1,
+        "ranked_work_opportunities": 1,
+        "failure_signatures": 1,
+        "recovery_targets": 1,
+        "intervention_mappings": 3,
+    }
+    assert aggregate["intervention_state"] == {
+        "declaration_states": {
+            "declared_native": 1,
+            "declared_partial": 0,
+            "unclaimed": 1,
+            "unknown": 1,
+        },
+        "assignments": 9,
+        "experiments": 1,
+        "assignment_states": {"control": 2, "exposed": 3, "shadow": 0, "unknown": 4},
+        "causal_savings_claimed": False,
+    }
+    assert aggregate["privacy"] == {
+        "aggregate_only": True,
+        "raw_transcripts_returned": False,
+        "prompt_or_response_text_returned": False,
+        "shell_command_text_returned": False,
+        "source_or_path_text_returned": False,
+        "per_episode_data_returned": False,
+        "identifiers_returned": False,
+    }
+    serialized = json.dumps(aggregate, sort_keys=True)
+    for canary in canaries:
+        assert canary not in serialized
+    assert "episode_id" not in serialized
+    assert "next_commands" not in serialized
+
+
+def test_cli_aggregate_is_stoa_compatible_and_private(tmp_path: Path) -> None:
+    events, compiles = _fixture_rows()
+    opaque_episode_id = "ep_abcdef0123456789abcdef01"
+    for event in events:
+        if event["episode_id"] == "ep_000":
+            event["episode_id"] = opaque_episode_id
+    compiles[0]["episode_id"] = opaque_episode_id
+    compiles[0]["task_prefix"] = "PROMPT-CANARY-CLI-81"
+    compiles[0]["private_path"] = "PATH-CANARY-CLI-82"
+    _write_jsonl(tmp_path / ".roam" / "episodes.jsonl", events)
+    _write_jsonl(tmp_path / ".roam" / "compile-runs.jsonl", compiles)
+
+    result = CliRunner().invoke(
+        savings,
+        ["--root", str(tmp_path), "--aggregate"],
+        obj={"json": True},
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["aggregate_schema"] == "roam.savings.aggregate"
+    assert payload["aggregate_schema_version"] == 1
+    assert payload["privacy"]["aggregate_only"] is True
+    assert payload["privacy"]["identifiers_returned"] is False
+    assert payload["opportunity_counts"]["repeated_live_candidates"] == 1
+    assert "agent_contract" not in payload
+    for private_key in (
+        "event_distribution",
+        "outcome_distribution",
+        "repeat_candidates",
+        "historical_candidates",
+        "procedure_atlas",
+        "intervention_evidence",
+        "materialization",
+        "thresholds",
+    ):
+        assert private_key not in payload
+    serialized = json.dumps(payload, sort_keys=True)
+    for canary in (
+        opaque_episode_id,
+        "PROMPT-CANARY-CLI-81",
+        "PATH-CANARY-CLI-82",
+        str(tmp_path),
+    ):
+        assert canary not in serialized
+    assert "episode_id" not in serialized
+    assert "next_commands" not in serialized
+
+
+def test_cli_rejects_aggregate_schema_mixture(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        savings,
+        ["--root", str(tmp_path), "--aggregate", "--schema"],
+        obj={"json": True},
+    )
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
 
 
 def test_schema_works_without_telemetry(tmp_path: Path) -> None:

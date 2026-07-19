@@ -235,6 +235,7 @@ def _exit_for_verdict(verdict: str) -> int:
     ai_safe=True,
     requires_index=True,
     since="12.40",
+    side_effect=True,
 )
 @click.group(
     name="permit",

@@ -31,6 +31,7 @@ def _disable_cold_start_guard(monkeypatch):
     ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
     """
     monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
     yield
 
 
@@ -68,15 +69,21 @@ class TestRegistryPresence:
             f"changed without updating this test."
         )
 
-    @pytest.mark.parametrize("tool_name", W300_TOOL_NAMES)
+    @pytest.mark.parametrize("tool_name", tuple(name for name in W300_TOOL_NAMES if name != "roam_graph_diff"))
     def test_wrapper_is_read_only(self, tool_name: str) -> None:
-        """All 10 wrappers are read-only (read_only=True implied default)."""
+        """Pure-query architecture wrappers are read-only."""
         from roam.mcp_server import _TOOL_METADATA
 
         meta = _TOOL_METADATA[tool_name]
         assert meta.get("read_only", True) is True, (
             f"{tool_name} must be read-only -- the architecture cluster only contains pure-query commands."
         )
+
+    def test_graph_diff_is_conservatively_classified_as_writing(self) -> None:
+        """``graph-diff`` can persist a snapshot when ``save_snapshot`` is set."""
+        from roam.mcp_server import _TOOL_METADATA
+
+        assert _TOOL_METADATA["roam_graph_diff"]["read_only"] is False
 
     @pytest.mark.parametrize("tool_name", W300_TOOL_NAMES)
     def test_wrapper_has_description(self, tool_name: str) -> None:

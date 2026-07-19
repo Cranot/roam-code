@@ -1871,9 +1871,10 @@ def _check_claude_hook_bodies() -> dict:
     problems: list[str] = []
     scanned = 0
     for level, user_level in (("project", False), ("user", True)):
-        settings, load_error = _load_claude_settings(_claude_settings_path(user_level))
+        settings, load_error, _settings_bytes = _load_claude_settings(_claude_settings_path(user_level))
         if load_error:
-            continue  # unparseable settings are `hooks claude`'s exit-1 case, not ours
+            problems.append(f"{level}:settings=unreadable_or_unsafe")
+            continue
         states = _scan_hook_bodies(_claude_hook_dir(user_level), managed)
         for event, fname, _script in managed:
             state = states.get(fname)
@@ -1937,7 +1938,7 @@ _ADVISORY_CHECK_NAMES = frozenset(
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=False,

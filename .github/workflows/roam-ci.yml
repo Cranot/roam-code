@@ -21,8 +21,13 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write        # needed for sticky PR comments in self-analysis
-  security-events: write      # needed for SARIF upload in self-analysis
+
+env:
+  # setup-python supplies every interpreter. Never let uv silently fetch a
+  # different runtime, re-lock metadata, or hide progress-dependent output.
+  UV_LOCKED: "1"
+  UV_NO_PROGRESS: "1"
+  UV_PYTHON_DOWNLOADS: "never"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -39,7 +44,8 @@ jobs:
   # 3.9 matrix entry was failing every PR with "Package 'roam-code' requires
   # a different Python: 3.9.25 not in '>=3.10'".
   test:
-    runs-on: ubuntu-latest
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
     # 3.10 is consistently slower than 3.11/3.12/3.13 (no stdlib tomllib,
     # legacy pathlib, slower asyncio). History: 20 min was tight (killed at
     # ~95% on 84343dc4) -> 30 min. The suite kept growing; on the v13.3
@@ -53,19 +59,97 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0   # full history needed for git-stats and pr-risk tests
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync the exact dev graph
+        env:
+          EXPECTED_PYTHON: ${{ matrix.python-version }}
+        run: |
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --extra dev --python python
+          .venv/bin/python - <<'PY'
+          import os
+          import sys
+
+          expected = tuple(map(int, os.environ["EXPECTED_PYTHON"].split(".")))
+          assert sys.version_info[:2] == expected, (sys.version, expected)
+          PY
+          uv pip check --python .venv/bin/python
 
       - name: Run tests
-        run: pytest tests/ -x -q -m "not slow"
+        run: .venv/bin/python -m pytest tests/ -x -q -m "not slow"
+
+  # -- Exact dependency security gate across every supported Python --------
+  # Audit the same lock selections CI executes, including CI-only build and
+  # document tooling. --local audits installed versions rather than resolving
+  # ranges; --strict makes collection failures fatal. No advisory is ignored.
+  dependency-audit:
+    name: Dependency audit (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Materialize the exact audited graph
+        env:
+          EXPECTED_PYTHON: ${{ matrix.python-version }}
+        run: |
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --extra dev --group ci --group ci-fallback --no-install-project --python python
+          .venv/bin/python - <<'PY'
+          import importlib.metadata
+          import os
+          import sys
+
+          expected = tuple(map(int, os.environ["EXPECTED_PYTHON"].split(".")))
+          assert sys.version_info[:2] == expected, (sys.version, expected)
+          distributions = list(importlib.metadata.distributions())
+          assert len(distributions) >= 20, "refusing to audit a vacuous environment"
+          names = {distribution.metadata["Name"].lower() for distribution in distributions}
+          assert "roam-code" not in names, "first-party editable project leaked into the dependency audit"
+          PY
+          uv pip check --python .venv/bin/python
+          test "$(.venv/bin/pip-audit --version)" = "pip-audit 2.10.1"
+
+      - name: Fail on any known vulnerability or collection error
+        run: |
+          .venv/bin/pip-audit \
+            --local \
+            --strict \
+            --progress-spinner off \
+            --vulnerability-service pypi \
+            --timeout 30
 
   # -- No-optional-deps lane: actually exercise fallback paths --------------
   # The 2026-05-01 CI session caught a class of latent bugs where ImportError
@@ -77,45 +161,74 @@ jobs:
   # production users without optional extras will hit. One Python version is
   # enough; the matrix above covers grammar/version drift.
   test-no-optional-deps:
-    runs-on: ubuntu-latest
+    name: Fallback contracts (minimal dependencies)
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
-      - name: Install only the base dependencies (no [dev], no extras)
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync only base and fallback-test dependencies
         run: |
-          pip install -e .
-          pip install pytest pytest-xdist pytest-asyncio
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --group ci-fallback --python python
+          .venv/bin/python - <<'PY'
+          import importlib.util
+
+          for module in ("scipy", "igraph", "leidenalg", "onnxruntime"):
+              assert importlib.util.find_spec(module) is None, f"{module} made the fallback lane non-minimal"
+          PY
+          uv pip check --python .venv/bin/python
 
       - name: Run only the fallback-contract suite
-        run: pytest tests/test_fallback_contracts.py -v
+        run: .venv/bin/python -m pytest tests/test_fallback_contracts.py -v
 
   # -- Lint (ruff) -----------------------------------------------------------
   # Fast code style / lint gate. Only needs to pass on one Python version.
   lint:
-    runs-on: ubuntu-latest
+    name: Ruff
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync the exact lint graph
+        run: |
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --extra dev --python python
+          uv pip check --python .venv/bin/python
 
       - name: Ruff format check
-        run: ruff format --check src/ tests/
+        run: .venv/bin/ruff format --check src/ tests/
 
       - name: Ruff lint
-        run: ruff check src/ tests/
+        run: .venv/bin/ruff check src/ tests/
 
   # -- Doc hygiene: anti-drift gates ---------------------------------------
   # Gates that catch the most common doc-rot patterns:
@@ -128,39 +241,49 @@ jobs:
   #   - strip_metadata.py — fail if any tracked PDF/PNG/SVG has identifying
   #     metadata (author, creator, EXIF, embedded paths).
   doc-hygiene:
-    runs-on: ubuntu-latest
+    name: Documentation hygiene
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0   # for the test that uses git ls-files
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
-      - name: Install
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync the exact documentation graph
         run: |
-          pip install -e ".[dev]"
-          pip install pypdf
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --extra dev --group ci --python python
+          uv pip check --python .venv/bin/python
 
       - name: Anti-leak language gate
-        run: pytest tests/test_no_internal_language.py -v
+        run: .venv/bin/python -m pytest tests/test_no_internal_language.py -v
 
       - name: Surface-count drift gate
-        run: python scripts/sync_surface_counts.py
+        run: .venv/bin/python scripts/sync_surface_counts.py
 
       - name: README/CLAUDE/llms-install count drift gate
-        run: python dev/build_readme_counts.py --check
+        run: .venv/bin/python dev/build_readme_counts.py --check
 
       - name: Changelog-render drift gate
-        run: python scripts/build_changelog_html.py
+        run: .venv/bin/python scripts/build_changelog_html.py
 
       - name: Internal-link integrity
-        run: python scripts/linkcheck.py --strict
+        run: .venv/bin/python scripts/linkcheck.py --strict
 
       - name: Binary metadata gate
-        run: python scripts/strip_metadata.py
+        run: .venv/bin/python scripts/strip_metadata.py
 
   # -- Wheel-built smoke: drift-guards under a real pip install -------------
   # W577: the wheel-drift suite (tests/test_package_data_wheel_drift.py) is a
@@ -177,34 +300,60 @@ jobs:
   # the only resolution path. If any package-data glob regresses, this lane
   # fails before merge — not after the bad wheel ships to PyPI.
   wheel-smoke:
-    runs-on: ubuntu-latest
+    name: Installed-wheel smoke
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
-      - name: Build wheel
-        run: |
-          python -m pip install --upgrade pip build
-          python -m build --wheel
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      - name: Install wheel into a fresh venv (no source checkout)
+      - name: Sync the exact build and smoke-test graph
         run: |
-          python -m venv /tmp/wheel-test
-          /tmp/wheel-test/bin/pip install --upgrade pip
-          /tmp/wheel-test/bin/pip install dist/roam_code-*.whl
-          /tmp/wheel-test/bin/pip install pytest
-          # PyYAML is a documented optional runtime dep
-          # (pyproject.toml note: "In production it stays optional — the
-          # in-tree _parse_simple_yaml fallback covers the documented shapes").
-          # The smoke step below invokes `roam evidence-oscal --kind
-          # control-mapping`, which goes through src/roam/evidence/oscal.py
-          # — that path raises RuntimeError when PyYAML is absent. The
-          # smoke job needs it to verify the full evidence-OSCAL path.
-          /tmp/wheel-test/bin/pip install pyyaml
+          test "$(uv --version)" = "uv 0.11.29"
+          uv sync --locked --no-default-groups --extra dev --group ci --python python
+          uv pip check --python .venv/bin/python
+
+      - name: Build wheel
+        run: .venv/bin/python -m build --no-isolation --wheel
+
+      - name: Install wheel with a hash-locked graph into a fresh venv
+        run: |
+          requirements="${RUNNER_TEMP}/wheel-test-requirements.txt"
+          environment="${RUNNER_TEMP}/wheel-test"
+          uv export \
+            --locked \
+            --no-default-groups \
+            --extra dev \
+            --group ci \
+            --no-emit-project \
+            --no-annotate \
+            --output-file "${requirements}"
+          grep -q -- '--hash=sha256:' "${requirements}"
+          uv venv "${environment}" --python python
+          uv pip sync \
+            --python "${environment}/bin/python" \
+            --require-hashes \
+            --strict \
+            "${requirements}"
+          mapfile -t wheels < <(compgen -G 'dist/roam_code-*.whl')
+          if [[ "${#wheels[@]}" -ne 1 ]]; then
+            echo "Expected exactly one roam-code wheel, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          uv pip install --python "${environment}/bin/python" --no-deps "${wheels[0]}"
+          uv pip check --python "${environment}/bin/python"
 
       - name: Run wheel-drift tests against the installed wheel
         # cwd OUTSIDE the source tree so importlib.resources resolves
@@ -213,7 +362,7 @@ jobs:
         run: |
           cp tests/test_package_data_wheel_drift.py /tmp/test_wheel_drift.py
           cd /tmp
-          /tmp/wheel-test/bin/pytest /tmp/test_wheel_drift.py -x -v
+          "${RUNNER_TEMP}/wheel-test/bin/python" -m pytest /tmp/test_wheel_drift.py -x -v
 
       - name: Smoke-run roam evidence-oscal from the wheel
         # Sanity: the wheel-bundled control-mapping.yaml resolves AND
@@ -222,8 +371,8 @@ jobs:
         # were ever skipped, an actual end-user invocation must work.
         run: |
           cd /tmp
-          /tmp/wheel-test/bin/roam evidence-oscal --kind control-mapping > /tmp/oscal.json
-          python -c "import json,sys; d=json.load(open('/tmp/oscal.json')); assert 'control-mapping' in d or 'controls' in d or 'components' in d or len(d)>0, 'OSCAL JSON empty'; print(f'OSCAL JSON OK: {len(d)} top-level keys')"
+          "${RUNNER_TEMP}/wheel-test/bin/roam" evidence-oscal --kind control-mapping > /tmp/oscal.json
+          "${RUNNER_TEMP}/wheel-test/bin/python" -c "import json; d=json.load(open('/tmp/oscal.json')); assert 'control-mapping' in d or 'controls' in d or 'components' in d or len(d)>0, 'OSCAL JSON empty'; print(f'OSCAL JSON OK: {len(d)} top-level keys')"
 
   # -- Self-analysis: roam eats its own dog food on PRs ----------------------
   # Runs the local composite action (uses: ./) to analyse this repo on every
@@ -231,13 +380,19 @@ jobs:
   # uploads SARIF findings to GitHub Code Scanning, and enforces a soft
   # health gate (>=50) so the job fails loudly if quality degrades.
   self-analysis:
-    runs-on: ubuntu-latest
+    name: Roam self-analysis
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write   # sticky PR comment from the local action
+      security-events: write # SARIF upload from the local action
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0   # full history required for pr-risk and git analysis
+          persist-credentials: false
 
       - uses: ./            # local composite action — tests action.yml itself
         with:

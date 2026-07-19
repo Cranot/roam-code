@@ -32,9 +32,11 @@ from roam.plan.compiler import (
 # ---- W43 P3 — telemetry includes probe_timings_ms ----
 
 
-def test_w43_p3_telemetry_records_probe_timings(tmp_path):
+def test_w43_p3_telemetry_records_probe_timings(tmp_path, monkeypatch):
     """When compile_for_artifact runs against a real-ish project the
     telemetry sidecar should record per-section timings."""
+    monkeypatch.setenv("ROAM_COMPILE_TELEMETRY", "1")
+    monkeypatch.delenv("ROAM_TELEMETRY_OFFTHREAD", raising=False)
     (tmp_path / ".roam").mkdir()
     plan = compile_plan("what does some/file.py do")
     compile_for_artifact(plan, cwd=str(tmp_path))
@@ -51,12 +53,14 @@ def test_w43_p3_telemetry_records_probe_timings(tmp_path):
             assert isinstance(timings[label], (int, float))
 
 
-def test_cache_hit_row_omits_stale_probe_timings(tmp_path):
+def test_cache_hit_row_omits_stale_probe_timings(tmp_path, monkeypatch):
     """2026-07-11 — an envelope-cache HIT reuses the plan object (plan
     cache), which still carries `_w43_timings_ms` from the original MISS.
     The HIT telemetry row must omit probe_timings_ms (a ~1ms row carrying
     hundreds of probe-ms corrupts probe-cost analyses); the MISS row still
     records them. Telemetry-only: the served envelope is untouched."""
+    monkeypatch.setenv("ROAM_COMPILE_TELEMETRY", "1")
+    monkeypatch.delenv("ROAM_TELEMETRY_OFFTHREAD", raising=False)
     (tmp_path / ".roam").mkdir()
     plan = compile_plan("what does telemetry/hit_vs_miss.py do")
     object.__setattr__(plan, "_w43_timings_ms", {"inner_probe": 123.4})

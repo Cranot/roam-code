@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import json
 import os
+import stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
+from click.testing import CliRunner
+
+from roam.commands.cmd_savings_backfill import savings_backfill
 from roam.savings import analyze_ledger
 from roam.transcript_backfill import (
+    TranscriptBackfillSafetyError,
     _action_outcome_tables,
     _compressed_sequence,
     _failure_class,
     _friction_metrics,
     _intent_archetypes,
     _is_correction,
+    _load_or_create_key,
     _project_scope,
     backfill_transcripts,
     sanitize_command_template,
@@ -215,6 +223,157 @@ def test_backfill_persists_templates_but_no_raw_text(tmp_path: Path) -> None:
         "secret-new",
     ):
         assert secret not in raw
+    if os.name != "nt":
+        assert stat.S_IMODE((root / ".roam" / "savings-backfill.key").stat().st_mode) == 0o600
+        assert stat.S_IMODE((root / ".roam" / "transcript-episodes.jsonl").stat().st_mode) == 0o600
+
+
+def test_backfill_rejects_redirected_private_state_without_touching_target(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    victim = tmp_path / "victim"
+    root.mkdir()
+    source.mkdir()
+    victim.mkdir()
+    try:
+        (root / ".roam").symlink_to(victim, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+    _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
+
+    with pytest.raises(TranscriptBackfillSafetyError, match="must not be redirected"):
+        backfill_transcripts(root, source, source="claude")
+
+    assert list(victim.iterdir()) == []
+
+
+def test_backfill_cli_emits_structured_failure_for_redirected_private_state(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    victim = tmp_path / "victim"
+    root.mkdir()
+    source.mkdir()
+    victim.mkdir()
+    try:
+        (root / ".roam").symlink_to(victim, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+    _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
+
+    result = CliRunner().invoke(
+        savings_backfill,
+        ["--transcripts-dir", str(source), "--root", str(root), "--source", "claude"],
+        obj={"json": True},
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert payload["isError"] is True
+    assert payload["error_code"] == "RUN_FAILED"
+    assert payload["summary"]["state"] == "unsafe_path"
+    assert payload["privacy_contract"]["raw_transcripts_persisted"] is False
+
+
+@pytest.mark.parametrize("target_name", ["savings-backfill.key", "transcript-episodes.jsonl"])
+def test_backfill_rejects_linked_private_files_without_clobbering_target(
+    tmp_path: Path,
+    target_name: str,
+) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    state = root / ".roam"
+    state.mkdir(parents=True)
+    source.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("preserve me", encoding="utf-8")
+    try:
+        (state / target_name).symlink_to(victim)
+    except OSError as exc:
+        pytest.skip(f"file symlinks are unavailable: {exc}")
+    _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
+
+    with pytest.raises(TranscriptBackfillSafetyError, match="regular, non-linked"):
+        backfill_transcripts(root, source, source="claude")
+
+    assert victim.read_text(encoding="utf-8") == "preserve me"
+
+
+def test_backfill_ignores_legacy_predictable_temp_link(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    state = root / ".roam"
+    state.mkdir(parents=True)
+    source.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("preserve me", encoding="utf-8")
+    legacy_temp = state / f"transcript-episodes.jsonl.tmp-{os.getpid()}"
+    try:
+        legacy_temp.symlink_to(victim)
+    except OSError as exc:
+        pytest.skip(f"file symlinks are unavailable: {exc}")
+    _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
+
+    result = backfill_transcripts(root, source, source="claude")
+
+    assert result["episodes"] == 1
+    assert victim.read_text(encoding="utf-8") == "preserve me"
+    assert legacy_temp.is_symlink()
+
+
+@pytest.mark.parametrize("target_name", ["savings-backfill.key", "transcript-episodes.jsonl"])
+def test_backfill_rejects_hardlinked_private_files_without_clobbering_target(
+    tmp_path: Path,
+    target_name: str,
+) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    state = root / ".roam"
+    state.mkdir(parents=True)
+    source.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("preserve me", encoding="utf-8")
+    if os.name != "nt":
+        victim.chmod(0o600)
+    try:
+        os.link(victim, state / target_name)
+    except OSError as exc:
+        pytest.skip(f"hard links are unavailable: {exc}")
+    _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
+
+    with pytest.raises(TranscriptBackfillSafetyError, match="must not be hard-linked"):
+        backfill_transcripts(root, source, source="claude")
+
+    assert victim.read_text(encoding="utf-8") == "preserve me"
+
+
+def test_concurrent_first_run_uses_one_complete_private_key(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        keys = list(pool.map(lambda _index: _load_or_create_key(root), range(32)))
+
+    assert len(set(keys)) == 1
+    assert len(keys[0]) == 32
+    assert (root / ".roam" / "savings-backfill.key").read_text(encoding="ascii") == keys[0].hex() + "\n"
+
+
+def test_backfill_skips_transcript_links_that_escape_source_root(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    outside = tmp_path / "outside.jsonl"
+    (root / ".roam").mkdir(parents=True)
+    source.mkdir()
+    _write_claude_session(outside, root, "outside", "git status --short")
+    try:
+        (source / "linked.jsonl").symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"file symlinks are unavailable: {exc}")
+
+    result = backfill_transcripts(root, source, source="claude")
+
+    assert result["files_considered"] == 0
+    assert result["episodes"] == 0
 
 
 def test_repeated_shell_patterns_surface_without_unlocking_live_claims(tmp_path: Path) -> None:
@@ -250,7 +409,7 @@ def test_repeated_shell_patterns_surface_without_unlocking_live_claims(tmp_path:
 def test_dry_run_does_not_create_backfill_files(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     source = tmp_path / "transcripts"
-    (root / ".roam").mkdir(parents=True)
+    root.mkdir()
     source.mkdir()
     _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
 

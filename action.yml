@@ -6,9 +6,13 @@ branding:
 
 inputs:
   version:
-    description: 'roam-code version to install (default: latest)'
+    description: 'Exact roam-code version to install; use latest only with allow-latest=true'
     required: false
-    default: 'latest'
+    default: '13.10.0'
+  allow-latest:
+    description: 'Explicitly permit the mutable version=latest install path (true/false)'
+    required: false
+    default: 'false'
   commands:
     description: 'Space-separated roam commands to run (default: "health")'
     required: false
@@ -98,59 +102,287 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # ---- 1. Setup Python ----------------------------------------------------
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ inputs.python-version }}
+    # ---- 1. Validate and canonicalize every external input ------------------
+    - name: Validate action inputs
+      id: validate-inputs
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_ALLOW_LATEST: ${{ inputs.allow-latest }}
+        INPUT_COMMANDS: ${{ inputs.commands }}
+        INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
+        INPUT_CHANGED_DEPTH: ${{ inputs.changed-depth }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_SARIF_COMMANDS: ${{ inputs.sarif-commands }}
+        INPUT_SARIF_CATEGORY: ${{ inputs.sarif-category }}
+        INPUT_SARIF_MAX_RUNS: ${{ inputs.sarif-max-runs }}
+        INPUT_SARIF_MAX_RESULTS: ${{ inputs.sarif-max-results }}
+        INPUT_SARIF_MAX_BYTES: ${{ inputs.sarif-max-bytes }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_GATE: ${{ inputs.gate }}
+        INPUT_CACHE: ${{ inputs.cache }}
+        INPUT_PYTHON_VERSION: ${{ inputs.python-version }}
+        ACTION_PATH_INPUT: ${{ github.action_path }}
+        EVENT_NAME_INPUT: ${{ github.event_name }}
+        PR_BASE_SHA_INPUT: ${{ github.event.pull_request.base.sha }}
+        PUSH_BEFORE_SHA_INPUT: ${{ github.event.before }}
+      run: |
+        set -euo pipefail
 
-    # ---- 2. Cache pip packages ----------------------------------------------
+        fail_input() {
+          local name="$1"
+          local reason="$2"
+          echo "::error::Invalid ${name}: ${reason}" >&2
+          exit 2
+        }
+
+        validate_scalar() {
+          local name="$1"
+          local value="$2"
+          local max_length="$3"
+          if [[ "${value}" == *$'\n'* || "${value}" == *$'\r'* ]]; then
+            fail_input "${name}" "line breaks are not allowed"
+          fi
+          if (( ${#value} > max_length )); then
+            fail_input "${name}" "length exceeds ${max_length} characters"
+          fi
+        }
+
+        validate_bool() {
+          local name="$1"
+          local value="$2"
+          validate_scalar "${name}" "${value}" 5
+          if [[ ! "${value}" =~ ^(true|false)$ ]]; then
+            fail_input "${name}" "expected true or false"
+          fi
+        }
+
+        validate_uint() {
+          local name="$1"
+          local raw="$2"
+          local minimum="$3"
+          local maximum="$4"
+          validate_scalar "${name}" "${raw}" 12
+          if [[ ! "${raw}" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            fail_input "${name}" "expected an unsigned decimal integer"
+          fi
+          local value=$((10#${raw}))
+          if (( value < minimum || value > maximum )); then
+            fail_input "${name}" "expected ${minimum}..${maximum}"
+          fi
+        }
+
+        validate_optional_sha() {
+          local name="$1"
+          local value="$2"
+          validate_scalar "${name}" "${value}" 64
+          if [[ -n "${value}" && ! "${value}" =~ ^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$ ]]; then
+            fail_input "${name}" "expected an empty, SHA-1, or SHA-256 object ID"
+          fi
+        }
+
+        validate_bool "allow-latest" "${INPUT_ALLOW_LATEST}"
+        validate_bool "changed-only" "${INPUT_CHANGED_ONLY}"
+        validate_bool "sarif" "${INPUT_SARIF}"
+        validate_bool "comment" "${INPUT_COMMENT}"
+        validate_bool "cache" "${INPUT_CACHE}"
+
+        validate_scalar "version" "${INPUT_VERSION}" 64
+        version_re='^[0-9]+(\.[0-9]+){1,3}((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$'
+        if [[ "${INPUT_VERSION}" == "latest" ]]; then
+          if [[ "${INPUT_ALLOW_LATEST}" != "true" ]]; then
+            fail_input "version" "latest requires allow-latest=true"
+          fi
+        elif [[ ! "${INPUT_VERSION}" =~ ${version_re} ]]; then
+          fail_input "version" "expected a closed PEP 440-style release such as 13.10.0 or 13.10.0rc1"
+        fi
+
+        validate_scalar "python-version" "${INPUT_PYTHON_VERSION}" 16
+        if [[ ! "${INPUT_PYTHON_VERSION}" =~ ^3\.(10|11|12|13)(\.[0-9]+)?$ ]]; then
+          fail_input "python-version" "expected Python 3.10 through 3.13, optionally with an exact patch"
+        fi
+
+        validate_scalar "commands" "${INPUT_COMMANDS}" 1024
+        read -r -a command_items <<< "${INPUT_COMMANDS}"
+        if (( ${#command_items[@]} < 1 || ${#command_items[@]} > 32 )); then
+          fail_input "commands" "expected 1..32 command names"
+        fi
+        for command_name in "${command_items[@]}"; do
+          if [[ ! "${command_name}" =~ ^[a-z][a-z0-9-]{0,63}$ ]]; then
+            fail_input "commands" "command names must match [a-z][a-z0-9-]{0,63}"
+          fi
+        done
+        COMMANDS_NORMALIZED="${command_items[*]}"
+
+        validate_scalar "sarif-commands" "${INPUT_SARIF_COMMANDS}" 1024
+        if [[ -z "${INPUT_SARIF_COMMANDS}" || "${INPUT_SARIF_COMMANDS}" == "auto" ]]; then
+          SARIF_COMMANDS_NORMALIZED="auto"
+        else
+          read -r -a sarif_command_items <<< "${INPUT_SARIF_COMMANDS}"
+          if (( ${#sarif_command_items[@]} < 1 || ${#sarif_command_items[@]} > 32 )); then
+            fail_input "sarif-commands" "expected auto or 1..32 command names"
+          fi
+          for command_name in "${sarif_command_items[@]}"; do
+            if [[ ! "${command_name}" =~ ^[a-z][a-z0-9-]{0,63}$ ]]; then
+              fail_input "sarif-commands" "command names must match [a-z][a-z0-9-]{0,63}"
+            fi
+          done
+          SARIF_COMMANDS_NORMALIZED="${sarif_command_items[*]}"
+        fi
+
+        validate_uint "changed-depth" "${INPUT_CHANGED_DEPTH}" 0 32
+        validate_uint "sarif-max-runs" "${INPUT_SARIF_MAX_RUNS}" 1 100
+        validate_uint "sarif-max-results" "${INPUT_SARIF_MAX_RESULTS}" 1 100000
+        validate_uint "sarif-max-bytes" "${INPUT_SARIF_MAX_BYTES}" 1024 100000000
+
+        validate_scalar "base-ref" "${INPUT_BASE_REF}" 255
+        if [[ -n "${INPUT_BASE_REF}" ]]; then
+          if [[ ! "${INPUT_BASE_REF}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+            fail_input "base-ref" "expected a ref/SHA containing only letters, digits, dot, underscore, slash, or dash"
+          fi
+          if [[ "${INPUT_BASE_REF}" == *".."* || "${INPUT_BASE_REF}" == *"//"* ||
+                "${INPUT_BASE_REF}" == */ || "${INPUT_BASE_REF}" == *. ||
+                "${INPUT_BASE_REF}" =~ (^|/)\. || "${INPUT_BASE_REF}" =~ \.lock($|/) ]]; then
+            fail_input "base-ref" "ref contains a forbidden Git ref component"
+          fi
+        fi
+
+        validate_scalar "sarif-category" "${INPUT_SARIF_CATEGORY}" 128
+        if [[ ! "${INPUT_SARIF_CATEGORY}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$ ||
+              "${INPUT_SARIF_CATEGORY}" == *".."* || "${INPUT_SARIF_CATEGORY}" == *"//"* ||
+              "${INPUT_SARIF_CATEGORY}" == */ ]]; then
+          fail_input "sarif-category" "expected a bounded path-like category"
+        fi
+
+        validate_scalar "gate" "${INPUT_GATE}" 512
+        if [[ -n "${INPUT_GATE}" ]]; then
+          IFS=',' read -r -a gate_items <<< "${INPUT_GATE}"
+          if (( ${#gate_items[@]} < 1 || ${#gate_items[@]} > 16 )); then
+            fail_input "gate" "expected 1..16 comma-separated expressions"
+          fi
+          numeric_gate_re='^[A-Za-z_][A-Za-z0-9_]*(\([A-Za-z_][A-Za-z0-9_]*\))?[[:space:]]*(>=|<=|>|<|==|=|!=)[[:space:]]*[-+]?[0-9]+(\.[0-9]+)?$'
+          direction_gate_re='^direction\([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*(==|=|!=)[[:space:]]*[A-Za-z_-]+$'
+          for raw_gate in "${gate_items[@]}"; do
+            gate_expr="${raw_gate#"${raw_gate%%[![:space:]]*}"}"
+            gate_expr="${gate_expr%"${gate_expr##*[![:space:]]}"}"
+            if [[ ! "${gate_expr}" =~ ${numeric_gate_re} && ! "${gate_expr}" =~ ${direction_gate_re} ]]; then
+              fail_input "gate" "unsupported expression grammar"
+            fi
+          done
+        fi
+
+        validate_scalar "github.action_path" "${ACTION_PATH_INPUT}" 4096
+        if [[ -z "${ACTION_PATH_INPUT}" ]]; then
+          fail_input "github.action_path" "path is empty"
+        fi
+        validate_scalar "github.event_name" "${EVENT_NAME_INPUT}" 64
+        if [[ ! "${EVENT_NAME_INPUT}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+          fail_input "github.event_name" "unexpected event name"
+        fi
+        validate_optional_sha "github.event.pull_request.base.sha" "${PR_BASE_SHA_INPUT}"
+        validate_optional_sha "github.event.before" "${PUSH_BEFORE_SHA_INPUT}"
+
+        {
+          printf 'version=%s\n' "${INPUT_VERSION}"
+          printf 'allow-latest=%s\n' "${INPUT_ALLOW_LATEST}"
+          printf 'commands=%s\n' "${COMMANDS_NORMALIZED}"
+          printf 'changed-only=%s\n' "${INPUT_CHANGED_ONLY}"
+          printf 'changed-depth=%s\n' "${INPUT_CHANGED_DEPTH}"
+          printf 'base-ref=%s\n' "${INPUT_BASE_REF}"
+          printf 'sarif=%s\n' "${INPUT_SARIF}"
+          printf 'sarif-commands=%s\n' "${SARIF_COMMANDS_NORMALIZED}"
+          printf 'sarif-category=%s\n' "${INPUT_SARIF_CATEGORY}"
+          printf 'sarif-max-runs=%s\n' "${INPUT_SARIF_MAX_RUNS}"
+          printf 'sarif-max-results=%s\n' "${INPUT_SARIF_MAX_RESULTS}"
+          printf 'sarif-max-bytes=%s\n' "${INPUT_SARIF_MAX_BYTES}"
+          printf 'comment=%s\n' "${INPUT_COMMENT}"
+          printf 'gate=%s\n' "${INPUT_GATE}"
+          printf 'cache=%s\n' "${INPUT_CACHE}"
+          printf 'python-version=%s\n' "${INPUT_PYTHON_VERSION}"
+          printf 'action-path=%s\n' "${ACTION_PATH_INPUT}"
+          printf 'event-name=%s\n' "${EVENT_NAME_INPUT}"
+          printf 'pr-base-sha=%s\n' "${PR_BASE_SHA_INPUT}"
+          printf 'push-before-sha=%s\n' "${PUSH_BEFORE_SHA_INPUT}"
+        } >> "${GITHUB_OUTPUT}"
+
+    # ---- 2. Setup Python ----------------------------------------------------
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      with:
+        python-version: ${{ steps.validate-inputs.outputs.python-version }}
+
+    # ---- 3. Cache pip packages ----------------------------------------------
     - name: Cache pip packages
-      if: inputs.cache == 'true'
-      uses: actions/cache@v4
+      if: steps.validate-inputs.outputs.cache == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/.cache/pip
-        key: roam-pip-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.version }}
+        key: roam-pip-${{ runner.os }}-py${{ steps.validate-inputs.outputs.python-version }}-${{ steps.validate-inputs.outputs.version }}
         restore-keys: |
-          roam-pip-${{ runner.os }}-py${{ inputs.python-version }}-
+          roam-pip-${{ runner.os }}-py${{ steps.validate-inputs.outputs.python-version }}-
 
-    # ---- 3. Cache roam index (SQLite DB) ------------------------------------
+    # ---- 4. Cache roam index (SQLite DB) ------------------------------------
     - name: Cache roam index
-      if: inputs.cache == 'true'
-      uses: actions/cache@v4
+      if: steps.validate-inputs.outputs.cache == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: .roam/
         key: roam-index-${{ runner.os }}-${{ hashFiles('**/*.py', '**/*.js', '**/*.ts', '**/*.go', '**/*.rs', '**/*.java', '**/*.rb', '**/*.php', '**/*.cs', '**/*.c', '**/*.cpp') }}
         restore-keys: |
           roam-index-${{ runner.os }}-
 
-    # ---- 4. Install roam-code -----------------------------------------------
+    # ---- 5. Install roam-code -----------------------------------------------
     - name: Install roam-code
       shell: bash
+      env:
+        ROAM_VERSION: ${{ steps.validate-inputs.outputs.version }}
+        ALLOW_LATEST: ${{ steps.validate-inputs.outputs.allow-latest }}
       run: |
-        if [ "${{ inputs.version }}" = "latest" ]; then
-          pip install --quiet roam-code
+        set -euo pipefail
+        if [[ "${ROAM_VERSION}" == "latest" ]]; then
+          if [[ "${ALLOW_LATEST}" != "true" ]]; then
+            echo "::error::Mutable latest install was not explicitly authorized" >&2
+            exit 2
+          fi
+          python -m pip install --quiet --disable-pip-version-check roam-code
         else
-          pip install --quiet "roam-code==${{ inputs.version }}"
+          python -m pip install --quiet --disable-pip-version-check "roam-code==${ROAM_VERSION}"
+          INSTALLED_VERSION=$(python -c 'from importlib.metadata import version; print(version("roam-code"))')
+          if [[ "${INSTALLED_VERSION}" != "${ROAM_VERSION}" ]]; then
+            echo "::error::Installed roam-code ${INSTALLED_VERSION}; expected ${ROAM_VERSION}" >&2
+            exit 1
+          fi
         fi
+        python -m pip check
 
-    # ---- 5. Build/refresh index ---------------------------------------------
+    # ---- 6. Build/refresh index ---------------------------------------------
     - name: Build index
       shell: bash
       run: roam init
 
-    # ---- 6. Run analysis commands -------------------------------------------
+    # ---- 7. Run analysis commands -------------------------------------------
     - name: Run analysis
       id: run-analysis
       shell: bash
+      env:
+        INPUT_COMMANDS: ${{ steps.validate-inputs.outputs.commands }}
+        INPUT_CHANGED_ONLY: ${{ steps.validate-inputs.outputs.changed-only }}
+        INPUT_CHANGED_DEPTH: ${{ steps.validate-inputs.outputs.changed-depth }}
+        INPUT_BASE_REF: ${{ steps.validate-inputs.outputs.base-ref }}
+        EVENT_NAME_INPUT: ${{ steps.validate-inputs.outputs.event-name }}
+        PR_BASE_SHA_INPUT: ${{ steps.validate-inputs.outputs.pr-base-sha }}
+        PUSH_BEFORE_SHA_INPUT: ${{ steps.validate-inputs.outputs.push-before-sha }}
       run: |
-        COMMANDS="${{ inputs.commands }}"
-        CHANGED_ONLY="${{ inputs.changed-only }}"
-        CHANGED_DEPTH="${{ inputs.changed-depth }}"
-        BASE_REF_INPUT="${{ inputs.base-ref }}"
-        EVENT_NAME="${{ github.event_name }}"
-        PR_BASE_SHA="${{ github.event.pull_request.base.sha }}"
-        PUSH_BEFORE_SHA="${{ github.event.before }}"
+        set -euo pipefail
+        COMMANDS="${INPUT_COMMANDS}"
+        CHANGED_ONLY="${INPUT_CHANGED_ONLY}"
+        CHANGED_DEPTH="${INPUT_CHANGED_DEPTH}"
+        BASE_REF_INPUT="${INPUT_BASE_REF}"
+        EVENT_NAME="${EVENT_NAME_INPUT}"
+        PR_BASE_SHA="${PR_BASE_SHA_INPUT}"
+        PUSH_BEFORE_SHA="${PUSH_BEFORE_SHA_INPUT}"
+        read -r -a COMMAND_LIST <<< "${COMMANDS}"
         FINAL_EXIT=0
         RESULTS_DIR="${RUNNER_TEMP}/roam-results"
         mkdir -p "${RESULTS_DIR}"
@@ -228,7 +460,7 @@ runs:
           fi
         fi
 
-        for CMD in ${COMMANDS}; do
+        for CMD in "${COMMAND_LIST[@]}"; do
           ARGS=("${CMD}")
 
           if [ "${CHANGED_ONLY}" = "true" ]; then
@@ -293,20 +525,41 @@ runs:
           # output is non-JSON (e.g. a Python crash trace), wrap in a
           # structured error envelope so dependents see a deterministic
           # shape.
-          if ! python3 -c "import json,sys; json.load(open('${RESULTS_DIR}/${CMD}.json'))" 2>/dev/null; then
-            python3 - <<EOF > "${RESULTS_DIR}/${CMD}.json"
-        import json, pathlib
-        stdout = pathlib.Path("${RESULTS_DIR}/${CMD}.json").read_text(encoding="utf-8", errors="replace")
-        stderr = pathlib.Path("${RESULTS_DIR}/${CMD}.stderr").read_text(encoding="utf-8", errors="replace")
-        json.dump({
-            "status": "error",
-            "command": "${CMD}",
-            "exit_code": ${CMD_EXIT},
-            "stdout": stdout[:8000],
-            "stderr": stderr[:8000],
-            "reason": "non-JSON output from roam --json",
-        }, open("${RESULTS_DIR}/${CMD}.json", "w"), indent=2)
-        EOF
+          if ! python3 - "${RESULTS_DIR}/${CMD}.json" <<'PY' 2>/dev/null; then
+        import json
+        import sys
+
+        with open(sys.argv[1], encoding="utf-8") as stream:
+            json.load(stream)
+        PY
+            INVALID_JSON="${RESULTS_DIR}/${CMD}.invalid.tmp"
+            python3 - \
+              "${RESULTS_DIR}/${CMD}.json" \
+              "${RESULTS_DIR}/${CMD}.stderr" \
+              "${CMD}" \
+              "${CMD_EXIT}" \
+              > "${INVALID_JSON}" <<'PY'
+        import json
+        import pathlib
+        import sys
+
+        stdout_path, stderr_path, command, exit_code = sys.argv[1:]
+        stdout = pathlib.Path(stdout_path).read_text(encoding="utf-8", errors="replace")
+        stderr = pathlib.Path(stderr_path).read_text(encoding="utf-8", errors="replace")
+        json.dump(
+            {
+                "status": "error",
+                "command": command,
+                "exit_code": int(exit_code),
+                "stdout": stdout[:8000],
+                "stderr": stderr[:8000],
+                "reason": "non-JSON output from roam --json",
+            },
+            sys.stdout,
+            indent=2,
+        )
+        PY
+            mv "${INVALID_JSON}" "${RESULTS_DIR}/${CMD}.json"
           fi
 
           cat "${RESULTS_DIR}/${CMD}.json"
@@ -324,15 +577,29 @@ runs:
 
         # Extract health score if health command was run
         if [ -f "${RESULTS_DIR}/health.json" ]; then
-          HEALTH_SCORE=$(python3 -c "
-        import json, sys
+          HEALTH_SCORE=$(python3 - "${RESULTS_DIR}/health.json" <<'PY'
+        import json
+        import re
+        import sys
+        from decimal import Decimal, InvalidOperation
+
         try:
-            data = json.load(open('${RESULTS_DIR}/health.json'))
+            with open(sys.argv[1], encoding="utf-8") as stream:
+                data = json.load(stream)
             score = data.get('summary', {}).get('health_score', data.get('health_score', ''))
-            print(score)
+            score_text = str(score)
+            if not re.fullmatch(r"(?:0|[1-9][0-9]?|100)(?:\.[0-9]+)?", score_text):
+                raise ValueError("health score is not a bounded decimal")
+            numeric_score = Decimal(score_text)
+            if not Decimal(0) <= numeric_score <= Decimal(100):
+                raise ValueError("health score is outside 0..100")
+            print(score_text)
+        except (InvalidOperation, ValueError):
+            print('')
         except Exception:
             print('')
-        " 2>/dev/null || echo "")
+        PY
+          )
           echo "health-score=${HEALTH_SCORE}" >> "${GITHUB_OUTPUT}"
         fi
 
@@ -342,10 +609,10 @@ runs:
         echo "base-ref=${BASE_REF}" >> "${GITHUB_OUTPUT}"
         echo "affected-count=${AFFECTED_COUNT}" >> "${GITHUB_OUTPUT}"
 
-    # ---- 7. Quality gate ----------------------------------------------------
+    # ---- 8. Quality gate ----------------------------------------------------
     - name: Quality gate
       id: quality-gate
-      if: inputs.gate != ''
+      if: steps.validate-inputs.outputs.gate != ''
       shell: bash
       run: |
         GATE_SCRIPT="${ACTION_PATH}/.github/scripts/gate_eval.py"
@@ -358,6 +625,10 @@ runs:
           --expr "${GATE_EXPR}" \
           --results-dir "${RESULTS_DIR}")
 
+        if [[ ! "${GATE_RESULT}" =~ ^(true|false)$ ]]; then
+          echo "::error::Gate evaluator returned an unexpected result" >&2
+          exit 1
+        fi
         echo "gate-passed=${GATE_RESULT}" >> "${GITHUB_OUTPUT}"
 
         if [ "${GATE_RESULT}" = "false" ]; then
@@ -366,30 +637,45 @@ runs:
         fi
       env:
         RESULTS_DIR: ${{ steps.run-analysis.outputs.results-dir }}
-        GATE_EXPR: ${{ inputs.gate }}
-        ACTION_PATH: ${{ github.action_path }}
+        GATE_EXPR: ${{ steps.validate-inputs.outputs.gate }}
+        ACTION_PATH: ${{ steps.validate-inputs.outputs.action-path }}
 
-    # ---- 8. Generate SARIF --------------------------------------------------
+    # ---- 9. Generate SARIF --------------------------------------------------
     - name: Generate SARIF
       id: generate-sarif
-      if: inputs.sarif == 'true'
+      if: steps.validate-inputs.outputs.sarif == 'true'
       shell: bash
+      env:
+        INPUT_SARIF_COMMANDS: ${{ steps.validate-inputs.outputs.sarif-commands }}
+        INPUT_ANALYSIS_COMMANDS: ${{ steps.validate-inputs.outputs.commands }}
+        INPUT_SARIF_CATEGORY: ${{ steps.validate-inputs.outputs.sarif-category }}
+        INPUT_PYTHON_VERSION: ${{ steps.validate-inputs.outputs.python-version }}
+        INPUT_SARIF_MAX_RUNS: ${{ steps.validate-inputs.outputs.sarif-max-runs }}
+        INPUT_SARIF_MAX_RESULTS: ${{ steps.validate-inputs.outputs.sarif-max-results }}
+        INPUT_SARIF_MAX_BYTES: ${{ steps.validate-inputs.outputs.sarif-max-bytes }}
+        ACTION_PATH: ${{ steps.validate-inputs.outputs.action-path }}
       run: |
+        set -euo pipefail
         SARIF_DIR="${RUNNER_TEMP}/roam-sarif"
         SARIF_FILE="${RUNNER_TEMP}/roam-results.sarif"
         SARIF_SUMMARY="${RUNNER_TEMP}/roam-sarif-summary.json"
         mkdir -p "${SARIF_DIR}"
 
-        REQUESTED_SARIF_COMMANDS="${{ inputs.sarif-commands }}"
-        ANALYSIS_COMMANDS="${{ inputs.commands }}"
+        REQUESTED_SARIF_COMMANDS="${INPUT_SARIF_COMMANDS}"
+        ANALYSIS_COMMANDS="${INPUT_ANALYSIS_COMMANDS}"
+        read -r -a ANALYSIS_COMMAND_LIST <<< "${ANALYSIS_COMMANDS}"
 
         # Build a non-colliding category baseline per job/runtime.
-        UPLOAD_CATEGORY="${{ inputs.sarif-category }}"
+        UPLOAD_CATEGORY="${INPUT_SARIF_CATEGORY}"
         if [ -n "${GITHUB_JOB}" ]; then
+          if [[ ! "${GITHUB_JOB}" =~ ^[A-Za-z0-9_.-]{1,100}$ ]]; then
+            echo "::error::Unexpected GITHUB_JOB grammar" >&2
+            exit 2
+          fi
           UPLOAD_CATEGORY="${UPLOAD_CATEGORY}/${GITHUB_JOB}"
         fi
-        if [ -n "${{ inputs.python-version }}" ]; then
-          UPLOAD_CATEGORY="${UPLOAD_CATEGORY}/py${{ inputs.python-version }}"
+        if [ -n "${INPUT_PYTHON_VERSION}" ]; then
+          UPLOAD_CATEGORY="${UPLOAD_CATEGORY}/py${INPUT_PYTHON_VERSION}"
         fi
         echo "sarif-category=${UPLOAD_CATEGORY}" >> "${GITHUB_OUTPUT}"
 
@@ -600,7 +886,7 @@ runs:
         _SUPPORTED_SARIF="health dead complexity rules secrets algo critique impact affected-tests partition smells clones delete-check auth-gaps test-impact n1 orphan-imports missing-index over-fetch bus-factor laws fan duplicates llm-smells dark-matter hotspots flag-dead orphan-routes verify-imports"
 
         if [ "${REQUESTED_SARIF_COMMANDS}" = "auto" ] || [ -z "${REQUESTED_SARIF_COMMANDS}" ]; then
-          for CMD in ${ANALYSIS_COMMANDS}; do
+          for CMD in "${ANALYSIS_COMMAND_LIST[@]}"; do
             case " ${_SUPPORTED_SARIF} " in
               *" ${CMD} "*) ;;
               *) continue ;;
@@ -614,7 +900,8 @@ runs:
             SARIF_COMMANDS=("health")
           fi
         else
-          for CMD in ${REQUESTED_SARIF_COMMANDS}; do
+          read -r -a REQUESTED_SARIF_COMMAND_LIST <<< "${REQUESTED_SARIF_COMMANDS}"
+          for CMD in "${REQUESTED_SARIF_COMMAND_LIST[@]}"; do
             if [ -z "${_SEEN["${CMD}"]+x}" ]; then
               SARIF_COMMANDS+=("${CMD}")
               _SEEN["${CMD}"]=1
@@ -667,9 +954,9 @@ runs:
         python3 "${ACTION_PATH}/.github/scripts/sarif_guard.py" \
           --output "${SARIF_FILE}" \
           --summary-out "${SARIF_SUMMARY}" \
-          --max-runs "${{ inputs.sarif-max-runs }}" \
-          --max-results "${{ inputs.sarif-max-results }}" \
-          --max-bytes "${{ inputs.sarif-max-bytes }}" \
+          --max-runs "${INPUT_SARIF_MAX_RUNS}" \
+          --max-results "${INPUT_SARIF_MAX_RESULTS}" \
+          --max-bytes "${INPUT_SARIF_MAX_BYTES}" \
           "${SARIF_FILES[@]}"
         GUARD_EXIT=$?
         set -e
@@ -714,28 +1001,29 @@ runs:
                 f"results_after={results_after})."
             )
         PY
-      env:
-        ACTION_PATH: ${{ github.action_path }}
-
-    # ---- 9. Upload SARIF to GitHub Code Scanning ----------------------------
+    # ---- 10. Upload SARIF to GitHub Code Scanning ---------------------------
+    # Advisory by design: fork PRs and repositories without Code Scanning can
+    # deny this API even after local analysis and SARIF validation succeeded.
+    # The validated sarif-file output remains available to the caller.
     - name: Upload SARIF
-      if: inputs.sarif == 'true' && steps.generate-sarif.outputs.sarif-file != ''
-      uses: github/codeql-action/upload-sarif@v3
+      if: steps.validate-inputs.outputs.sarif == 'true' && steps.generate-sarif.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57 # v3.36.0
       with:
         sarif_file: ${{ steps.generate-sarif.outputs.sarif-file }}
         category: ${{ steps.generate-sarif.outputs.sarif-category }}
       continue-on-error: true
 
-    # ---- 10. Post PR comment ------------------------------------------------
+    # ---- 11. Post PR comment ------------------------------------------------
     - name: Post PR comment
-      if: inputs.comment == 'true' && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      if: steps.validate-inputs.outputs.comment == 'true' && steps.validate-inputs.outputs.event-name == 'pull_request'
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
       env:
+        ACTION_PATH: ${{ steps.validate-inputs.outputs.action-path }}
         RESULTS_DIR: ${{ steps.run-analysis.outputs.results-dir }}
         HEALTH_SCORE: ${{ steps.run-analysis.outputs.health-score }}
-        GATE_EXPR: ${{ inputs.gate }}
+        GATE_EXPR: ${{ steps.validate-inputs.outputs.gate }}
         GATE_PASSED: ${{ steps.quality-gate.outputs.gate-passed }}
-        COMMANDS_RUN: ${{ inputs.commands }}
+        COMMANDS_RUN: ${{ steps.validate-inputs.outputs.commands }}
         CHANGED_ONLY: ${{ steps.run-analysis.outputs.changed-only }}
         BASE_REF: ${{ steps.run-analysis.outputs.base-ref }}
         AFFECTED_COUNT: ${{ steps.run-analysis.outputs.affected-count }}
@@ -747,9 +1035,11 @@ runs:
           const fs = require('fs');
           const path = require('path');
 
-          // ${{ github.action_path }} resolves to the action's root directory,
-          // which works both for remote (uses: Cranot/roam-code@main) and
-          // local (uses: ./) references.
-          const scriptPath = path.join('${{ github.action_path }}', '.github', 'scripts', 'pr-comment.js');
+          const actionPath = process.env.ACTION_PATH;
+          if (!actionPath) {
+            core.setFailed('Validated ACTION_PATH environment value is missing.');
+            return;
+          }
+          const scriptPath = path.join(actionPath, '.github', 'scripts', 'pr-comment.js');
           const script = require(scriptPath);
           await script({ github, context, core, fs, path });

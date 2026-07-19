@@ -167,7 +167,7 @@ def _resolve_snapshot(root, label: str | None) -> tuple[dict | None, str | None]
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core", "architecture"),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

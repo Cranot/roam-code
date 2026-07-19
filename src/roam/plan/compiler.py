@@ -15,6 +15,7 @@ Architecture-seal mapping:
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import json
 import math
@@ -22,6 +23,7 @@ import os
 import re
 import shlex
 import sqlite3
+import stat
 import subprocess
 import threading as _w131_threading  # W131 — pre-import for cross-block use
 import time
@@ -60,6 +62,8 @@ from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Callable, NamedTuple
+
+from roam.atomic_io import atomic_write_bytes
 
 # Plan-compile SQLite cache policy now lives in roam.plan.plan_cache. These are
 # compatibility re-exports so existing call sites (and tests) that reference
@@ -2226,16 +2230,391 @@ _RUN_ROAM_CACHE_TTL_S = 60.0
 _RUN_ROAM_CACHE_MISS = object()
 
 
-# W149 — off-thread telemetry writer. The `.roam/compile-runs.jsonl`
-# append currently blocks at the end of every compile (~1-2ms with
-# fsync overhead). Move to a background daemon thread + queue so the
-# compile returns immediately. Queue is bounded (drop on overflow);
-# worker batches writes.
+# Compile telemetry is deliberately local, opt-in, aggregate-only, and bounded.
+# ``ROAM_TELEMETRY_LOCAL=1`` is the existing project-wide opt-in;
+# ``ROAM_COMPILE_TELEMETRY=1`` is the narrower compile-only equivalent.
+# Neither an initialized ``.roam`` directory nor the off-thread flag opts a
+# user in. Rows carry categorical/count signals plus one optional random local
+# join key. Prompts, prompt hashes, and host/session/turn identifiers never
+# reach the persistence boundary; an episode id survives only when it matches
+# the exact opaque ``ep_`` plus 24-lowercase-hex contract.
 import queue as _w149_queue
 
+_COMPILE_TELEMETRY_SCHEMA_VERSION = 2
+_COMPILE_TELEMETRY_RETENTION_DAYS = 30
+_COMPILE_TELEMETRY_MAX_RECORDS = 500
+_COMPILE_TELEMETRY_MAX_BYTES = 1024 * 1024
+_COMPILE_TELEMETRY_READ_BYTES = 2 * _COMPILE_TELEMETRY_MAX_BYTES
+_COMPILE_TELEMETRY_LOCK_STALE_S = 30.0
+_COMPILE_TELEMETRY_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_COMPILE_TELEMETRY_SAFE_MODES = frozenset(
+    {
+        "unknown",
+        "other",
+        "compile",
+        "roam",
+        "vanilla",
+        "hook",
+        "read_only",
+        "safe_edit",
+        "migration",
+        "autonomous_pr",
+        "bench",
+        "corpus",
+        "trace",
+        "envelope_diff",
+        "compile_cache_build",
+        "test",
+    }
+)
+_COMPILE_TELEMETRY_CATEGORY_RE = re.compile(r"^[a-z0-9_.:-]{1,64}$")
+_COMPILE_TELEMETRY_EPISODE_ID_RE = re.compile(r"^ep_[0-9a-f]{24}$")
+_COMPILE_TELEMETRY_TS_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})T(?P<hour>\d{2}):\d{2}:\d{2}Z$")
+_TELEMETRY_WRITE_LOCK = _w131_threading.Lock()
 _TELEMETRY_QUEUE: "_w149_queue.Queue[tuple[str, str] | None]" = _w149_queue.Queue(maxsize=512)
 _TELEMETRY_THREAD_STARTED = False
 _TELEMETRY_THREAD_LOCK = _w131_threading.Lock()
+
+
+def _compile_telemetry_enabled() -> bool:
+    """Return whether the user explicitly enabled local compile telemetry."""
+    return any(
+        os.environ.get(name, "").strip().lower() in _COMPILE_TELEMETRY_TRUTHY
+        for name in ("ROAM_COMPILE_TELEMETRY", "ROAM_TELEMETRY_LOCAL")
+    )
+
+
+def _windows_restrict_file_to_current_user(path: str) -> bool:
+    """Install a protected current-user-only DACL on ``path``.
+
+    ``chmod(0o600)`` does not express Windows ACLs. This small stdlib-only
+    bridge obtains the process token SID and writes a protected DACL granting
+    that SID full access. It is called before telemetry bytes are written.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        token_query = 0x0008
+        token_user_class = 1
+        dacl_security_information = 0x00000004
+        protected_dacl_security_information = 0x80000000
+        sddl_revision_1 = 1
+
+        class _SidAndAttributes(ctypes.Structure):
+            _fields_ = [("sid", wintypes.LPVOID), ("attributes", wintypes.DWORD)]
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        token = wintypes.HANDLE()
+        sid_text = wintypes.LPWSTR()
+        descriptor = wintypes.LPVOID()
+
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        advapi32.OpenProcessToken.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        )
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.ConvertSidToStringSidW.argtypes = (
+            wintypes.LPVOID,
+            ctypes.POINTER(wintypes.LPWSTR),
+        )
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.LPVOID),
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+        advapi32.SetFileSecurityW.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+        )
+        advapi32.SetFileSecurityW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.LocalFree.argtypes = (wintypes.LPVOID,)
+
+        if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), token_query, ctypes.byref(token)):
+            return False
+        try:
+            needed = wintypes.DWORD()
+            advapi32.GetTokenInformation(token, token_user_class, None, 0, ctypes.byref(needed))
+            if not needed.value:
+                return False
+            token_info = ctypes.create_string_buffer(needed.value)
+            if not advapi32.GetTokenInformation(
+                token,
+                token_user_class,
+                token_info,
+                needed,
+                ctypes.byref(needed),
+            ):
+                return False
+            token_user = ctypes.cast(token_info, ctypes.POINTER(_SidAndAttributes)).contents
+            if not advapi32.ConvertSidToStringSidW(token_user.sid, ctypes.byref(sid_text)):
+                return False
+            sddl = f"D:P(A;;FA;;;{sid_text.value})"
+            if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl,
+                sddl_revision_1,
+                ctypes.byref(descriptor),
+                None,
+            ):
+                return False
+            security_information = dacl_security_information | protected_dacl_security_information
+            return bool(advapi32.SetFileSecurityW(path, security_information, descriptor))
+        finally:
+            if descriptor:
+                kernel32.LocalFree(descriptor)
+            if sid_text:
+                kernel32.LocalFree(sid_text)
+            if token:
+                kernel32.CloseHandle(token)
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _ensure_owner_only_file(path: str) -> bool:
+    """Restrict an existing telemetry file to the current OS user."""
+    try:
+        if os.name == "nt":
+            return _windows_restrict_file_to_current_user(path)
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        return bool(mode & stat.S_IRUSR) and not bool(mode & (stat.S_IRWXG | stat.S_IRWXO))
+    except OSError:
+        return False
+
+
+def _safe_telemetry_category(value, *, default: str = "unknown") -> str:
+    raw = str(value or "").strip().lower()
+    return raw if _COMPILE_TELEMETRY_CATEGORY_RE.fullmatch(raw) else default
+
+
+def _bucket_telemetry_ts(value) -> str | None:
+    """Coarsen valid UTC timestamps to an hour, reducing linkage precision."""
+    match = _COMPILE_TELEMETRY_TS_RE.fullmatch(str(value or "").strip())
+    if not match:
+        return None
+    return f"{match.group('date')}T{match.group('hour')}:00:00Z"
+
+
+def _bounded_number(value, *, minimum: float, maximum: float, integer: bool = False):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < minimum or number > maximum:
+        return None
+    return int(number) if integer else number
+
+
+def _sanitize_compile_telemetry_row(row: dict) -> dict | None:
+    """Project a row onto the privacy-safe aggregate schema.
+
+    This is a whitelist, not a blocklist. Rewriting legacy logs therefore
+    removes prompt text/hashes, session/turn identifiers, non-opaque episode
+    identifiers, and every unknown future free-form field. A strictly random
+    local episode id is retained only to join compilation with local outcomes;
+    the SavingsAggregate export never includes it.
+    """
+    if not isinstance(row, dict):
+        return None
+    ts = _bucket_telemetry_ts(row.get("ts"))
+    if ts is None:
+        return None
+
+    keys = row.get("prefetched_keys")
+    safe_keys = sorted(
+        {
+            str(key)
+            for key in (keys if isinstance(keys, list) else [])
+            if _COMPILE_TELEMETRY_CATEGORY_RE.fullmatch(str(key))
+        }
+    )[:128]
+    mode = _safe_telemetry_category(row.get("agent_mode"))
+    if mode not in _COMPILE_TELEMETRY_SAFE_MODES:
+        mode = "other"
+    episode_id = str(row.get("episode_id") or "").strip()
+
+    out: dict = {
+        "schema_version": _COMPILE_TELEMETRY_SCHEMA_VERSION,
+        "ts": ts,
+        "procedure": _safe_telemetry_category(row.get("procedure")),
+        "art_label": _safe_telemetry_category(row.get("art_label")),
+        "prefetched_keys": safe_keys,
+        "prefetched_fact_count": len(safe_keys),
+        "agent_mode": mode,
+        "injection_advice": _safe_telemetry_category(row.get("injection_advice")),
+        "cache_hit": bool(row.get("cache_hit")),
+    }
+    if _COMPILE_TELEMETRY_EPISODE_ID_RE.fullmatch(episode_id):
+        out["episode_id"] = episode_id
+    numeric_fields = {
+        "classifier_conf": (-1.0, 1.0, False),
+        "envelope_bytes": (-1.0, 100 * 1024 * 1024, True),
+        "compile_ms": (0.0, 24 * 60 * 60 * 1000, False),
+        "model_calls_avoided_count": (0.0, 1000.0, True),
+    }
+    for name, (minimum, maximum, integer) in numeric_fields.items():
+        number = _bounded_number(row.get(name), minimum=minimum, maximum=maximum, integer=integer)
+        if number is not None:
+            out[name] = number
+
+    timings = row.get("probe_timings_ms")
+    if isinstance(timings, dict):
+        safe_timings = {}
+        for key, value in timings.items():
+            safe_key = str(key)
+            if not _COMPILE_TELEMETRY_CATEGORY_RE.fullmatch(safe_key):
+                continue
+            number = _bounded_number(value, minimum=0.0, maximum=24 * 60 * 60 * 1000)
+            if number is not None:
+                safe_timings[safe_key] = number
+        if safe_timings:
+            out["probe_timings_ms"] = safe_timings
+
+    avoided_count = int(out.get("model_calls_avoided_count", 0))
+    out["savings"] = {
+        "model_calls_avoided_count": avoided_count,
+        "prefetched_fact_count": len(safe_keys),
+        "cache_reuse_count": int(out["cache_hit"]),
+    }
+    return out
+
+
+def _read_compile_telemetry_rows(path: str) -> list[dict] | None:
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            start = max(0, size - _COMPILE_TELEMETRY_READ_BYTES)
+            fh.seek(start)
+            payload = fh.read(_COMPILE_TELEMETRY_READ_BYTES)
+        if start:
+            newline = payload.find(b"\n")
+            payload = payload[newline + 1 :] if newline >= 0 else b""
+    except OSError as exc:
+        log_swallowed("compile.telemetry.read", exc)
+        return None
+
+    rows: list[dict] = []
+    for raw_line in payload.splitlines():
+        if not raw_line or len(raw_line) > _COMPILE_TELEMETRY_MAX_BYTES:
+            continue
+        try:
+            parsed = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, TypeError):
+            continue
+        sanitized = _sanitize_compile_telemetry_row(parsed)
+        if sanitized is not None:
+            rows.append(sanitized)
+    return rows
+
+
+@contextlib.contextmanager
+def _compile_telemetry_interprocess_lock(log_path: str):
+    """Best-effort lock; telemetry drops rather than blocking a compile."""
+    lock_path = log_path + ".lock"
+    fd = None
+    for _attempt in range(8):
+        try:
+            fd = os.open(
+                lock_path,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                stat.S_IRUSR | stat.S_IWUSR,
+            )
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock_path) > _COMPILE_TELEMETRY_LOCK_STALE_S:
+                    os.unlink(lock_path)
+                    continue
+            except OSError:
+                pass
+            time.sleep(0.01)
+        except OSError:
+            break
+    try:
+        yield fd is not None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+
+
+def _atomic_write_owner_only(path: str, payload: bytes) -> bool:
+    """Atomically replace ``path`` using a file secured before byte one."""
+
+    def secure_empty_temp(tmp_path: str) -> None:
+        if not _ensure_owner_only_file(tmp_path):
+            raise PermissionError("cannot restrict compile telemetry tempfile")
+
+    try:
+        atomic_write_bytes(path, payload, prepare_temp=secure_empty_temp)
+        if not _ensure_owner_only_file(path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            return False
+        return True
+    except OSError as exc:
+        log_swallowed("compile.telemetry.atomic_write", exc)
+        return False
+
+
+def _write_compile_telemetry_line(path: str, line: str) -> None:
+    """Append one sanitized row while enforcing age/count/byte retention."""
+    try:
+        incoming = _sanitize_compile_telemetry_row(json.loads(line))
+    except (TypeError, ValueError):
+        return
+    if incoming is None:
+        return
+
+    with _TELEMETRY_WRITE_LOCK:
+        with _compile_telemetry_interprocess_lock(path) as locked:
+            if not locked:
+                return
+            rows = _read_compile_telemetry_rows(path)
+            if rows is None:
+                return
+            rows.append(incoming)
+            cutoff = time.strftime(
+                "%Y-%m-%dT%H:00:00Z",
+                time.gmtime(time.time() - _COMPILE_TELEMETRY_RETENTION_DAYS * 86400),
+            )
+            rows = [row for row in rows if str(row.get("ts") or "") >= cutoff]
+            rows = rows[-_COMPILE_TELEMETRY_MAX_RECORDS:]
+            encoded = [(_fast_json_dumps(row) + "\n").encode("utf-8") for row in rows]
+            total = sum(len(item) for item in encoded)
+            while encoded and total > _COMPILE_TELEMETRY_MAX_BYTES:
+                total -= len(encoded.pop(0))
+            if encoded:
+                _atomic_write_owner_only(path, b"".join(encoded))
 
 
 def _telemetry_worker():
@@ -2248,9 +2627,8 @@ def _telemetry_worker():
             return
         path, line = item
         try:
-            with open(path, "a", encoding="utf-8") as fh:
-                fh.write(line)
-        except OSError as exc:
+            _write_compile_telemetry_line(path, line)
+        except Exception as exc:  # noqa: BLE001 — telemetry cannot break the worker
             log_swallowed("compile.telemetry.bg_write", exc)
 
 
@@ -11615,79 +11993,67 @@ def _l1_has_procedure_data(procedure: str, prefetched: dict) -> bool:
 def _maybe_append_compile_telemetry(
     plan: "PlanV0", env: dict, art_label: str, compile_ms: float, cwd: str | None
 ) -> None:
-    """W39 D1 — best-effort append to `.roam/compile-runs.jsonl`.
+    """Append one privacy-safe aggregate row to `.roam/compile-runs.jsonl`.
 
-    Records one JSON line per `compile_for_artifact` call so production
-    fire-rate / classifier-confidence / envelope-size distributions can
-    be measured from real workloads (not just synthetic corpora).
+    Persistence is explicitly opt-in via ``ROAM_TELEMETRY_LOCAL=1`` or
+    ``ROAM_COMPILE_TELEMETRY=1``. Prompt text and hashes plus raw host,
+    session and turn identifiers are intentionally absent. The sole identifier
+    exception is a random local episode id matching ``ep_[0-9a-f]{24}``, which
+    enables local outcome joins and is never returned by SavingsAggregate. The
+    remaining categorical/count fields retain aggregate fire-rate, latency,
+    cache-reuse, envelope-size, and avoided-model-call savings signals.
 
     Never raises. Skips when:
+      - local telemetry was not explicitly enabled
       - cwd is None (likely a unit test)
       - `.roam/` doesn't exist (not a roam-initialized project)
-      - log file is >10 MB (rotate by hand)
-    """
-    from roam.observability import log_swallowed
 
-    if not cwd:
+    Writes are current-user-only and enforce age, record-count, and byte caps.
+    Any legacy rows are projected through the same safe whitelist on rewrite.
+    """
+    if not _compile_telemetry_enabled() or not cwd:
         return
     log_dir = os.path.join(cwd, ".roam")
     if not os.path.isdir(log_dir):
         return
     log_path = os.path.join(log_dir, "compile-runs.jsonl")
-    try:
-        if os.path.exists(log_path) and os.path.getsize(log_path) > 10 * 1024 * 1024:
-            return  # rotate manually; never grow unbounded
-    except OSError as exc:
-        log_swallowed("compile.telemetry.size_check", exc)
-        return
     plan_obj = (env or {}).get("plan") or {}
     prefetched = plan_obj.get("prefetched_facts") or {}
     keys = sorted(k for k in prefetched if not k.endswith("_definition"))
-    import hashlib
 
     try:
         envelope_bytes = len(_fast_json_dumps(env))
     except (TypeError, ValueError) as exc:
         log_swallowed("compile.telemetry.envelope_size", exc)
         envelope_bytes = -1
+    cache_hit = bool(getattr(plan, "_w58_cache_hit", False))
+    model_calls_avoided_count = len(plan.model_calls_avoided or [])
     entry = {
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "task_hash": hashlib.sha256(plan.task.encode("utf-8", "replace")).hexdigest()[:12],
-        "task_prefix": plan.task[:80],
+        "schema_version": _COMPILE_TELEMETRY_SCHEMA_VERSION,
+        # Hour buckets preserve bounded trend/retention analysis without a
+        # precise timestamp that can be joined back to an individual prompt.
+        "ts": time.strftime("%Y-%m-%dT%H:00:00Z", time.gmtime()),
         "procedure": plan.procedure,
         "classifier_conf": plan.classifier_confidence,
         "art_label": art_label,
         "prefetched_keys": keys,
+        "prefetched_fact_count": len(keys),
         "envelope_bytes": envelope_bytes,
         "compile_ms": round(compile_ms, 1),
-        # W5: stamp agent_mode from env so `compile-stats --by-mode`
-        # populates. Host platforms set ROAM_AGENT_MODE in their compile exec env.
-        # Rows pre-dating this edit lack the field; `--by-mode` buckets them
-        # as 'unknown'.
+        # Only a closed categorical mode is retained. Arbitrary host-provided
+        # values collapse to ``other`` at the persistence whitelist.
         "agent_mode": os.environ.get("ROAM_AGENT_MODE", "unknown"),
-        # 2026-07-15 — session/turn join key. The compile row records the
-        # envelope's section list but nothing about what the agent did with it;
-        # a consumer-side turn ledger records the outcome (tool calls, result,
-        # session id) but not the section list. Stamping the session id (and an
-        # optional per-turn sequence) here — from env, exactly like agent_mode —
-        # is the one missing field that makes the two joinable, so per-section
-        # value becomes measurable at fleet scale instead of from small replays.
-        # Hosts set ROAM_SESSION_ID; the Claude prompt-submit hook forwards the
-        # editor's session id. Empty string when unset.
-        "session_id": os.environ.get("ROAM_SESSION_ID", ""),
-        "turn_seq": os.environ.get("ROAM_TURN_SEQ", ""),
-        # The episode id is the durable prompt->compile->terminal join key.
-        # Unlike session_id it identifies one user turn, so multiple compiles
-        # inside a resumed session cannot collapse onto the same outcome.
+        # Local-only outcome join. The persistence whitelist drops empty,
+        # malformed, uppercase, or otherwise identifying values.
         "episode_id": os.environ.get("ROAM_EPISODE_ID", ""),
-        # 2026-06-09 — stamp the compiler-code fingerprint so telemetry
-        # shifts (routing distributions, L1 rate, latency) are attributable
-        # to compiler revisions. Without this, a classifier change and a
-        # workload change are indistinguishable in compile-stats.
-        "compiler_fp": _compiler_fingerprint(),
-        # 2026-06-10 — what the hook channel was advised to do, so the
-        # skip rate for generation-shaped tasks is measurable per repo.
         "injection_advice": injection_advice(plan.procedure, plan.task),
+        "cache_hit": cache_hit,
+        "model_calls_avoided_count": model_calls_avoided_count,
+        "savings": {
+            "model_calls_avoided_count": model_calls_avoided_count,
+            "prefetched_fact_count": len(keys),
+            "cache_reuse_count": int(cache_hit),
+        },
     }
     # W43 P3 — per-section timings if the plan attached them as
     # `_W43_TIMINGS_MS`. Optional: only present when L1 routing fired.
@@ -11698,18 +12064,11 @@ def _maybe_append_compile_telemetry(
     # probe-cost analyses (compile-stats / dispatch-trace), so HIT rows omit
     # probe_timings_ms. Telemetry-record-only: the served envelope is
     # untouched.
-    cache_hit = bool(getattr(plan, "_w58_cache_hit", False))
     timings = getattr(plan, "_w43_timings_ms", None)
     if timings and not cache_hit:
         entry["probe_timings_ms"] = {k: round(v, 1) for k, v in timings.items()}
-    # W58 — cache-hit flag for production visibility.
-    entry["cache_hit"] = cache_hit
-    # W149 — off-thread write opt-in via ROAM_TELEMETRY_OFFTHREAD=1.
-    # Default stays synchronous to preserve test contracts that read
-    # the JSONL file immediately after compile. Set the env var when
-    # latency matters more than read-after-write visibility.
     line = _fast_json_dumps(entry) + "\n"
-    if os.environ.get("ROAM_TELEMETRY_OFFTHREAD") in ("1", "true", "yes", "on"):
+    if os.environ.get("ROAM_TELEMETRY_OFFTHREAD", "").strip().lower() in _COMPILE_TELEMETRY_TRUTHY:
         _ensure_telemetry_worker()
         try:
             _TELEMETRY_QUEUE.put_nowait((log_path, line))
@@ -11717,9 +12076,8 @@ def _maybe_append_compile_telemetry(
         except _w149_queue.Full:
             pass  # fall through to sync write
     try:
-        with open(log_path, "a", encoding="utf-8") as fh:
-            fh.write(line)
-    except OSError as exc:
+        _write_compile_telemetry_line(log_path, line)
+    except Exception as exc:  # noqa: BLE001 — telemetry never breaks compilation
         log_swallowed("compile.telemetry.write", exc)
 
 

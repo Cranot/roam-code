@@ -894,7 +894,7 @@ def _iter_indexed_files(conn, project_root: Path) -> list[tuple[str, Path]]:
     maturity="experimental",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import click
 
+from roam.atomic_io import atomic_write_text
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
 from roam.guard_errors import guard_error_envelope
@@ -103,6 +104,7 @@ def _resolve_bundle_path(bundle_arg: str | None) -> Path | None:
         "roam --json proof-bundle --mode autonomous_pr --strict",
     ),
     tags=("planning", "proof-bundle", "g3", "verdict", "roam-guard"),
+    side_effect=True,
 )
 def proof_bundle(
     ctx: click.Context,
@@ -179,13 +181,16 @@ def proof_bundle(
 
     if output:
         out_path = Path(output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
         if fmt == "markdown":
-            out_path.write_text(render_markdown(v1))
+            payload = render_markdown(v1)
         elif fmt == "sarif":
-            out_path.write_text(json.dumps(verdict_to_sarif(v1), indent=2))
+            payload = json.dumps(verdict_to_sarif(v1), indent=2)
         else:
-            out_path.write_text(json.dumps(v1, indent=2, default=str))
+            payload = json.dumps(v1, indent=2, default=str)
+        atomic_write_text(out_path, payload)
+        click.echo(f"Proof bundle written: {out_path}")
+        ctx.exit(exit_code)
+        return
 
     # Explicit --format markdown short-circuits JSON / text branches.
     if fmt == "markdown":

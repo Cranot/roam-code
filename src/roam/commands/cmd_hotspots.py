@@ -606,7 +606,7 @@ def _emit_hotspots_findings(conn, hotspots_data: list[dict], source_version: str
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

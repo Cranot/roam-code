@@ -13,9 +13,15 @@ W1198-audit memo.
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import importlib
+import json
+import math
 import os
 import re
+import stat
+import subprocess
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -25,7 +31,6 @@ import click
 from roam.capability import roam_capability
 from roam.command_advice import validate_command_advice
 from roam.commands.changed_files import (
-    get_changed_files,
     is_test_file,
     resolve_changed_to_db,
 )
@@ -329,7 +334,7 @@ def _parse_changed_lines(spec):
 
 
 def _expand_dir_targets(target_paths: list[str], root: Path) -> list[str]:
-    """Expand any directory argument into the indexed files beneath it.
+    """Expand a directory argument from the filesystem, including new files.
 
     `roam verify src/roam/` used to resolve the bare directory string against the
     DB (exact + basename suffix only) → 0 file matches → false-green PASS (the
@@ -337,25 +342,40 @@ def _expand_dir_targets(target_paths: list[str], root: Path) -> list[str]:
     to the DB files whose path is under it, so a directory arg verifies its tree
     instead of silently passing. Non-directory targets pass through untouched; if
     the DB can't be opened the input is returned verbatim (best-effort)."""
-    dirs = [p for p in target_paths if (root / p).is_dir()]
+    dirs = [p for p in target_paths if (root / p).is_dir() and not (root / p).is_symlink()]
     if not dirs:
         return target_paths
-    prefixes = [p.rstrip("/") + "/" for p in dirs]
     expanded = [p for p in target_paths if p not in dirs]
     seen = set(expanded)
-    try:
-        with open_db(readonly=True) as _conn:
-            rows = _conn.execute("SELECT path FROM files").fetchall()
-        for r in rows:
-            fp = r["path"].replace("\\", "/")
-            if any(fp.startswith(pre) for pre in prefixes) and fp not in seen:
-                expanded.append(fp)
-                seen.add(fp)
-    except Exception as exc:  # noqa: BLE001 — best-effort; never break verify
-        from roam.observability import log_swallowed
-
-        log_swallowed("verify.expand_dir_targets", exc)
-        return target_paths
+    skip_dirs = {".git", ".roam", ".venv", "venv", "node_modules", "__pycache__"}
+    cap = 20_000
+    for directory in dirs:
+        before_count = len(expanded)
+        try:
+            for current, child_dirs, filenames in os.walk(root / directory, followlinks=False):
+                child_dirs[:] = sorted(
+                    name for name in child_dirs if name not in skip_dirs and not (Path(current) / name).is_symlink()
+                )
+                for filename in sorted(filenames):
+                    candidate = Path(current) / filename
+                    if candidate.is_symlink() or not candidate.is_file():
+                        continue
+                    relative = candidate.relative_to(root).as_posix()
+                    if relative not in seen:
+                        expanded.append(relative)
+                        seen.add(relative)
+                    if len(expanded) >= cap:
+                        break
+                if len(expanded) >= cap:
+                    break
+        except (OSError, ValueError):
+            pass
+        # Retain the directory as an explicit unresolved sentinel when it is
+        # empty, inaccessible, linked, or exceeded the bounded expansion cap.
+        if len(expanded) == before_count or len(expanded) >= cap:
+            if directory not in seen:
+                expanded.append(directory)
+                seen.add(directory)
     return expanded
 
 
@@ -736,11 +756,10 @@ def auto_select_checks(target_paths: list[str]) -> list[str]:
         if _verify_env_flag("ROAM_VERIFY_TENANT_SCOPE", False):
             selected.add(_VERIFY_TENANT_SCOPE_CATEGORY)
     # Additional reusable detectors (env-flagged). Default-OFF ones stay OUT of
-    # the auto set unless their switch is on, so the no-arg / Stop-hook gate is
-    # byte-identical to before. Each detector fn ALSO re-checks its flag and
-    # fails open, so `--checks all` never runs a disabled detector either.
+    # the auto set unless their switch is on. Explicit --checks/config selection
+    # overrides auto defaults and runs the requested detector fail-closed.
     if has_nontest_source:
-        if _verify_env_flag("ROAM_VERIFY_DELETE_CHECK", False):
+        if _verify_env_flag("ROAM_VERIFY_DELETE_CHECK", True):
             selected.add(_VERIFY_DELETE_CATEGORY)
         if _verify_env_flag("ROAM_VERIFY_CLONES", False):
             selected.add(_VERIFY_CLONES_CATEGORY)
@@ -3428,7 +3447,8 @@ def _check_calc_divergence(changed_paths: list[str], root: Path) -> dict:
         "advisory": True,
     }
     if capped:
-        result["scan_capped"] = _CALC_DIVERGENCE_SCAN_CAP
+        result["capped"] = True
+        result["scan_cap"] = _CALC_DIVERGENCE_SCAN_CAP
     return result
 
 
@@ -3477,11 +3497,29 @@ _PYTEST_FAIL_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+)", re.MULTILINE)
 
 
 def _tests_unavailable(reason: str) -> dict:
+    """Represent missing executable evidence as an incomplete gate.
+
+    A selected test check that never ran is categorically different from a
+    passing test run.  Keep the category's own failure explicit and let the
+    verification-completeness guard add the non-suppressible gate finding.
+    """
     return {
-        "score": 100,
-        "violations": [],
+        "score": 0,
+        "violations": [
+            {
+                "category": "tests",
+                "severity": SEVERITY_FAIL,
+                "file": "",
+                "line": None,
+                "message": f"impacted test verification unavailable: {reason}",
+                "fix": "Restore impacted-test discovery, then rerun `roam verify`",
+                "hard_block": True,
+            }
+        ],
         "available": False,
         "unavailable_reason": reason,
+        "execution_state": "unavailable",
+        "partial_success": True,
     }
 
 
@@ -3551,18 +3589,21 @@ def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
         proc = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {
-            "score": 100,
+            "score": 0,
             "timed_out": True,
+            "execution_state": "timed_out",
+            "partial_success": True,
             "violations": [
                 {
                     "category": "tests",
-                    "severity": SEVERITY_WARN,
+                    "severity": SEVERITY_FAIL,
                     "file": targets[0],
                     "line": None,
                     "message": (
                         f"impacted tests did not finish in {timeout}s ({len(targets)} test file(s)) — not verified"
                     ),
                     "fix": "Run the impacted tests manually, or narrow the change",
+                    "hard_block": True,
                 }
             ],
             "tests_targeted": len(targets),
@@ -3580,7 +3621,32 @@ def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
         }
         for nodeid in failed
     ]
-    score = 100 if not failed else 0
+    if proc.returncode != 0 and not violations:
+        violations.append(
+            {
+                "category": "tests",
+                "severity": SEVERITY_FAIL,
+                "file": targets[0],
+                "line": None,
+                "message": f"pytest exited {proc.returncode} without a parsed passing result",
+                "fix": "Run the impacted pytest command directly and repair collection or execution",
+                "hard_block": True,
+            }
+        )
+    if capped:
+        violations.append(
+            {
+                "category": "tests",
+                "severity": SEVERITY_FAIL,
+                "file": targets[-1],
+                "line": None,
+                "message": (f"impacted test verification was capped at {len(targets)} of {len(ordered)} test files"),
+                "fix": "Narrow the change or run the remaining impacted tests before accepting the gate",
+                "hard_block": True,
+            }
+        )
+    complete = proc.returncode == 0 and not capped
+    score = 100 if complete else 0
     return {
         "score": score,
         "violations": violations,
@@ -3588,6 +3654,8 @@ def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
         "tests_failed": len(failed),
         "tests_total_impacted": len(ordered),
         "capped": capped,
+        "execution_state": "complete" if complete else "failed",
+        "partial_success": capped,
     }
 
 
@@ -3609,7 +3677,17 @@ def _check_tests(
     if unavailable is not None:
         return unavailable
     if not ordered:
-        return {"score": 100, "violations": [], "no_impacted_tests": True}
+        if os.environ.get("ROAM_COMPILE_VERIFY") == "1":
+            return _verify_check_incomplete(
+                "tests",
+                "no impacted tests were discovered for a proof-mode source edit",
+            )
+        return {
+            "score": 100,
+            "violations": [],
+            "no_impacted_tests": True,
+            "execution_state": "complete",
+        }
     return _run_impacted_pytest(ordered, root, timeout)
 
 
@@ -3634,26 +3712,21 @@ def _symbol_ids_in_file(conn, path: str, name: str) -> list[int]:
 def _breaking_caller_files(conn, symbol_ids: list[int]) -> set[str]:
     """Files that CALL or REFERENCE any of *symbol_ids* (reverse edges, 1-hop).
     Uses the canonical call+reference edge vocabulary so the reach matches
-    blast-radius / affected semantics. Best-effort: empty on any failure (a
-    missed caller is a false-negative gate, never a false block)."""
+    blast-radius / affected semantics. Errors propagate to the selected-check
+    boundary, which records incomplete evidence instead of fabricating a clean
+    caller set."""
     if not symbol_ids:
         return set()
-    try:
-        from roam.db.edge_kinds import call_or_ref_in_clause
+    from roam.db.edge_kinds import call_or_ref_in_clause
 
-        rows = batched_in(
-            conn,
-            "SELECT DISTINCT f.path AS path "
-            "FROM edges e JOIN symbols s ON e.source_id = s.id "
-            "JOIN files f ON s.file_id = f.id "
-            f"WHERE e.target_id IN ({{ph}}) AND {call_or_ref_in_clause('e.kind')}",
-            symbol_ids,
-        )
-    except Exception as exc:  # noqa: BLE001 — caller lookup is advisory to the gate
-        from roam.observability import log_swallowed
-
-        log_swallowed("verify.breaking.callers", exc)
-        return set()
+    rows = batched_in(
+        conn,
+        "SELECT DISTINCT f.path AS path "
+        "FROM edges e JOIN symbols s ON e.source_id = s.id "
+        "JOIN files f ON s.file_id = f.id "
+        f"WHERE e.target_id IN ({{ph}}) AND {call_or_ref_in_clause('e.kind')}",
+        symbol_ids,
+    )
     return {r["path"] for r in rows if r["path"]}
 
 
@@ -3676,13 +3749,7 @@ def _changed_public_signatures_for_caller_gate(
     old_source = git_show(root, "HEAD", path)
     if old_source is None:
         return []  # new file at HEAD — nothing to break
-    try:
-        old_symbols = extract_old_symbols(old_source, path)
-    except Exception as exc:  # noqa: BLE001 — one unparseable file must not break the gate
-        from roam.observability import log_swallowed
-
-        log_swallowed("verify.breaking.extract", exc)
-        return []
+    old_symbols = extract_old_symbols(old_source, path)
     if not old_symbols:
         return []
     new_symbols = get_current_symbols(conn, path)
@@ -3733,6 +3800,21 @@ def _breaking_contract_violations_for_file(
     return violations
 
 
+def _verify_check_incomplete(category: str, reason: str, *, advisory: bool = False) -> dict:
+    """Canonical fail-closed result for a selected check without full evidence."""
+    result = {
+        "score": 0,
+        "violations": [],
+        "available": False,
+        "unavailable_reason": reason,
+        "execution_state": "failed",
+        "partial_success": True,
+    }
+    if advisory:
+        result["advisory"] = True
+    return result
+
+
 def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Path) -> dict:
     """Guardrail: signature change + an un-edited external caller => FAIL (BLOCK).
 
@@ -3741,12 +3823,15 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
     against private-helper churn) and an external-caller blast threshold
     (``ROAM_VERIFY_BREAKING_MIN_CALLERS``). Findings are marked ``hard_block`` so
     they survive --diff-only scoping and pin the verdict to FAIL."""
-    if not _verify_env_flag("ROAM_VERIFY_BREAKING", True):
-        return {"score": 100, "violations": []}
     changed_paths = {p.replace("\\", "/") for p in (target_paths or [])}
     source_paths = [p for p in changed_paths if p.endswith(".py") and not is_test_file(p)]
-    if not source_paths or len(source_paths) > _MAX_BREAKING_FILES:
+    if not source_paths:
         return {"score": 100, "violations": []}
+    if len(source_paths) > _MAX_BREAKING_FILES:
+        return _verify_check_incomplete(
+            _VERIFY_BREAKING_CATEGORY,
+            f"breaking-change scan capped at {_MAX_BREAKING_FILES} of {len(source_paths)} source files",
+        )
     try:
         from roam.commands.cmd_breaking import (
             _compare_file,
@@ -3758,7 +3843,7 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
         from roam.observability import log_swallowed
 
         log_swallowed("verify.breaking.import", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(_VERIFY_BREAKING_CATEGORY, f"breaking detector import failed: {exc!r}")
 
     min_callers = max(1, _verify_env_int("ROAM_VERIFY_BREAKING_MIN_CALLERS", 1))
     violations: list[dict] = []
@@ -3796,11 +3881,9 @@ def _taint_finding_files(finding) -> set[str]:
 def _check_taint(conn, file_ids: list[int], target_paths: list[str], root: Path) -> dict:
     """Opt-in: surface taint source->sink paths whose source/sink/route touches a
     changed file. Best-effort and advisory — never raises, never hard-blocks."""
-    if not _verify_env_flag("ROAM_VERIFY_TAINT", False):
-        return {"score": 100, "violations": []}
     changed = {p.replace("\\", "/") for p in (target_paths or [])}
     if not changed:
-        return {"score": 100, "violations": []}
+        return {"score": 100, "violations": [], "advisory": True}
     try:
         from roam.commands.cmd_taint import _default_rules_dir
         from roam.security.taint_engine import load_rules, run_taint
@@ -3811,7 +3894,7 @@ def _check_taint(conn, file_ids: list[int], target_paths: list[str], root: Path)
         from roam.observability import log_swallowed
 
         log_swallowed("verify.taint", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(_VERIFY_TAINT_CATEGORY, f"taint analysis failed: {exc!r}", advisory=True)
 
     violations: list[dict] = []
     seen: set = set()
@@ -3866,7 +3949,11 @@ def _check_tenant_scope(conn, file_ids: list[int], target_paths: list[str], root
         from roam.observability import log_swallowed
 
         log_swallowed("verify.tenant_scope", exc)
-        return {"score": 100, "violations": [], "advisory": True}
+        return _verify_check_incomplete(
+            _VERIFY_TENANT_SCOPE_CATEGORY,
+            f"tenant-scope analysis failed: {exc!r}",
+            advisory=True,
+        )
 
     violations: list[dict] = []
     for finding in findings:
@@ -3900,9 +3987,9 @@ def _check_tenant_scope(conn, file_ids: list[int], target_paths: list[str], root
 
 # ---------------------------------------------------------------------------
 # Additional reusable detector wires. Each reuses the shipped roam command's
-# engine, is scoped to the changed files (the diff), is independently
-# env-flagged (ROAM_VERIFY_<NAME>) and FULLY fail-open: any import or runtime
-# error yields NO finding and never raises the gate.
+# engine and is scoped to the changed files (the diff). Auto-selection remains
+# env-flagged (ROAM_VERIFY_<NAME>); once selected explicitly, every detector
+# must either return complete evidence or make the gate incomplete.
 # ---------------------------------------------------------------------------
 
 
@@ -4030,8 +4117,6 @@ def _check_delete_safety(conn, target_paths, root):
     delete-check's git-diff parser + the grep survivor engine. Default OFF: the
     grep survivor scan is FP-prone for a live gate. Skips names still DEFINED
     elsewhere (a move/rename, not a dangling delete)."""
-    if not _verify_env_flag("ROAM_VERIFY_DELETE_CHECK", False):
-        return {"score": 100, "violations": []}
     changed = _verify_changed_set(target_paths)
     if not changed:
         return {"score": 100, "violations": []}
@@ -4040,19 +4125,22 @@ def _check_delete_safety(conn, target_paths, root):
         from roam.commands.grep_helpers import indexed_file_scan
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.delete_check.import", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(_VERIFY_DELETE_CATEGORY, f"delete-check import failed: {exc!r}")
     try:
-        diff_text, err = _git_diff(root, "working", "main", None)
+        # HEAD includes staged and unstaged deletions in one proof scope.
+        diff_text, err = _git_diff(root, "head", "main", None)
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.delete_check.diff", exc)
-        return {"score": 100, "violations": []}
-    if err or not diff_text:
+        return _verify_check_incomplete(_VERIFY_DELETE_CATEGORY, f"delete-check diff failed: {exc!r}")
+    if err:
+        return _verify_check_incomplete(_VERIFY_DELETE_CATEGORY, f"delete-check diff unavailable: {err}")
+    if not diff_text:
         return {"score": 100, "violations": []}
     try:
         _deleted_files, deleted_lines = _parse_deletions(diff_text)
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.delete_check.parse", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(_VERIFY_DELETE_CATEGORY, f"delete-check parse failed: {exc!r}")
     candidates = _build_deleted_symbol_candidates(conn, deleted_lines)
     if not candidates:
         return {"score": 100, "violations": []}
@@ -4065,7 +4153,7 @@ def _check_delete_safety(conn, target_paths, root):
         matches = indexed_file_scan([reference_rx], conn, root)
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.delete_check.search", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(_VERIFY_DELETE_CATEGORY, f"delete-check search failed: {exc!r}")
     by_name = _collect_deleted_reference_hits(matches, changed, reference_rx, candidate_lookup)
     violations = _build_delete_check_violations(by_name)
     return {"score": 0 if violations else 100, "violations": violations}
@@ -4083,15 +4171,14 @@ def _run_verify_detector_wire(
     score_with_hard_block: int | None = None,
     scope_filter=None,
 ):
-    """Fail-open scaffolding reused by verify's diff-scoped detector wires.
+    """Fail-closed scaffolding reused by verify's diff-scoped detector wires.
 
-    Centralizes the conservation between uniform safety behavior (env guard,
-    swallowed errors, empty-scope short-circuit) and per-detector specialization
+    Centralizes uniform safety behavior (selected-check evidence and empty-scope
+    short-circuit) and per-detector specialization
     (the analysis call and violation translation). Callers only supply their
     domain-specific parts.
     """
-    if not _verify_env_flag(env_name, default):
-        return {"score": 100, "violations": []}
+    del default  # Auto-selection consumes the default; explicit selection wins.
     scope = _verify_changed_set(target_paths)
     if scope_filter is not None:
         scope = scope_filter(scope)
@@ -4101,7 +4188,10 @@ def _run_verify_detector_wire(
         findings = analyzer(conn)
     except Exception as exc:  # noqa: BLE001
         _swallow_verify(log_tag, exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(
+            log_tag.removeprefix("verify.") or env_name.lower(),
+            f"{log_tag} analysis failed: {exc!r}",
+        )
     violations = build_violations(findings, scope)
     if score_with_hard_block is not None and any(v.get("hard_block") for v in violations):
         return {"score": score_with_hard_block, "violations": violations}
@@ -4204,8 +4294,6 @@ def _check_clones(conn, target_paths):
     """Advisory WARN (ROAM_VERIFY_CLONES=1): AST structural near-duplicate of a
     changed file (reimplemented-existing-code beyond exact dupes). Reuses
     roam.graph.clone_detect.detect_clones. Heavier (re-parses source)."""
-    if not _verify_env_flag("ROAM_VERIFY_CLONES", False):
-        return {"score": 100, "violations": []}
     changed = _verify_changed_set(target_paths)
     if not changed:
         return {"score": 100, "violations": []}
@@ -4215,7 +4303,7 @@ def _check_clones(conn, target_paths):
         pairs, _clusters = detect_clones(conn)
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.clones", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(_VERIFY_CLONES_CATEGORY, f"clone analysis failed: {exc!r}", advisory=True)
     violations = []
     seen = set()
     for p in pairs or []:
@@ -4257,16 +4345,12 @@ def _magic_number_occurrences_by_literal(changed_paths, root, scan_python_file):
     """Group scanned literal occurrences by value while preserving first location."""
     occ = defaultdict(list)
     for rel in changed_paths:
-        try:
-            raw = scan_python_file(root / rel, include_trivial=False)
-        except Exception as exc:  # noqa: BLE001
-            _swallow_verify("verify.magic_numbers.scan", exc)
-            continue
+        raw = scan_python_file(root / rel, include_trivial=False)
         for item in raw or []:
             try:
                 val, line, _snip = item
-            except Exception:  # noqa: BLE001
-                continue
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(f"invalid magic-number occurrence for {rel}") from exc
             occ[val].append((rel, line))
     return occ
 
@@ -4299,8 +4383,6 @@ def _check_magic_numbers(target_paths, root):
     """Advisory WARN (ROAM_VERIFY_MAGIC_NUMBERS=1): a numeric literal repeated
     >= ROAM_VERIFY_MAGIC_MIN (default 3) times across the changed Python.
     Reuses cmd_magic_numbers._scan_python_file."""
-    if not _verify_env_flag("ROAM_VERIFY_MAGIC_NUMBERS", False):
-        return {"score": 100, "violations": []}
     changed_paths = _changed_python_paths_for_magic_number_scan(target_paths)
     if not changed_paths:
         return {"score": 100, "violations": []}
@@ -4308,7 +4390,11 @@ def _check_magic_numbers(target_paths, root):
         from roam.commands.cmd_magic_numbers import _scan_python_file
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.magic_numbers.import", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(
+            _VERIFY_MAGIC_CATEGORY,
+            f"magic-number detector import failed: {exc!r}",
+            advisory=True,
+        )
     threshold = max(2, _verify_env_int("ROAM_VERIFY_MAGIC_MIN", 3))
     occurrences = _magic_number_occurrences_by_literal(changed_paths, root, _scan_python_file)
     violations = _magic_number_repetition_violations(occurrences, threshold)
@@ -4318,8 +4404,6 @@ def _check_magic_numbers(target_paths, root):
 def _check_dead(conn, target_paths):
     """Advisory WARN (ROAM_VERIFY_DEAD=1): an exported symbol in a changed file
     that now has no production consumers. Reuses cmd_dead._analyze_dead."""
-    if not _verify_env_flag("ROAM_VERIFY_DEAD", True):
-        return {"score": 100, "violations": []}
     py_changed = {p for p in _verify_changed_set(target_paths) if p.endswith(".py")}
     if not py_changed:
         return {"score": 100, "violations": []}
@@ -4329,14 +4413,18 @@ def _check_dead(conn, target_paths):
         result = _analyze_dead(conn)
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.dead", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(_VERIFY_DEAD_CATEGORY, f"dead-code analysis failed: {exc!r}", advisory=True)
     high = result[0] if result else []
     try:
         prows = batched_in(conn, "SELECT id, path FROM files WHERE path IN ({ph})", sorted(py_changed))
         id_to_path = {_verify_rowval(r, "id"): _verify_rowval(r, "path") for r in prows}
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.dead.files", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(
+            _VERIFY_DEAD_CATEGORY,
+            f"dead-code file resolution failed: {exc!r}",
+            advisory=True,
+        )
     changed_ids = {i for i in id_to_path if i is not None}
     violations = []
     for r in high or []:
@@ -4408,8 +4496,6 @@ def _check_n1(conn, target_paths):
 def _check_over_fetch(conn, target_paths):
     """Advisory WARN (ROAM_VERIFY_OVER_FETCH=1): a serializer / endpoint in a
     changed file returning more fields than used. Reuses analyze_over_fetch."""
-    if not _verify_env_flag("ROAM_VERIFY_OVER_FETCH", False):
-        return {"score": 100, "violations": []}
     changed = _verify_changed_set(target_paths)
     if not changed:
         return {"score": 100, "violations": []}
@@ -4419,7 +4505,11 @@ def _check_over_fetch(conn, target_paths):
         findings = analyze_over_fetch(conn, 3, 100)
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.over_fetch", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(
+            _VERIFY_OVER_FETCH_CATEGORY,
+            f"over-fetch analysis failed: {exc!r}",
+            advisory=True,
+        )
     violations = []
     for f in findings or []:
         fp = (f.get("file") or "").replace("\\", "/")
@@ -4439,13 +4529,7 @@ def _check_over_fetch(conn, target_paths):
 
 
 def _load_llm_smell_detectors_without_hiding_import_bugs():
-    try:
-        module = importlib.import_module("roam.commands.cmd_llm_smells")
-    except ModuleNotFoundError as exc:
-        if exc.name == "roam.commands.cmd_llm_smells":
-            _swallow_verify("verify.llm_smells.import", exc)
-            return ()
-        raise
+    module = importlib.import_module("roam.commands.cmd_llm_smells")
     return module._DETECTORS
 
 
@@ -4453,8 +4537,6 @@ def _check_llm_smells(target_paths, root):
     """Advisory WARN (ROAM_VERIFY_LLM_SMELLS=1): LLM-API anti-patterns (no model
     pin, no max_tokens / timeout, prompt-injection concat, ...) in a changed
     file that calls an LLM SDK. Reuses cmd_llm_smells._DETECTORS per file."""
-    if not _verify_env_flag("ROAM_VERIFY_LLM_SMELLS", False):
-        return {"score": 100, "violations": []}
     changed = [
         p for p in _verify_changed_set(target_paths) if _is_import_resolution_source_path(p) and not is_test_file(p)
     ]
@@ -4462,7 +4544,11 @@ def _check_llm_smells(target_paths, root):
         return {"score": 100, "violations": []}
     detectors = _load_llm_smell_detectors_without_hiding_import_bugs()
     if not detectors:
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(
+            _VERIFY_LLM_SMELLS_CATEGORY,
+            "LLM-smell detector registry is empty",
+            advisory=True,
+        )
     hints = (
         "openai",
         "anthropic",
@@ -4476,20 +4562,12 @@ def _check_llm_smells(target_paths, root):
     )
     violations = []
     for rel in changed:
-        try:
-            text = (root / rel).read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            _swallow_verify("verify.llm_smells.read", exc)
-            continue
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
         low = text.lower()
         if not any(h in low for h in hints):
             continue
         for kind, fn in detectors:
-            try:
-                hits = fn(rel, text) or []
-            except (OSError, ImportError, ModuleNotFoundError) as exc:
-                _swallow_verify("verify.llm_smells.detector", exc)
-                continue
+            hits = fn(rel, text) or []
             for h in hits:
                 violations.append(
                     {
@@ -4509,8 +4587,6 @@ def _check_test_hermeticity(target_paths, root):
     """Advisory WARN (ROAM_VERIFY_TEST_HERMETICITY=1): non-hermetic patterns
     (wall-clock, network, randomness, env access) in a changed test file.
     Reuses cmd_test_hermeticity._scan_test_file."""
-    if not _verify_env_flag("ROAM_VERIFY_TEST_HERMETICITY", False):
-        return {"score": 100, "violations": []}
     changed = [p for p in _verify_changed_set(target_paths) if is_test_file(p) and p.endswith(".py")]
     if not changed:
         return {"score": 100, "violations": []}
@@ -4518,14 +4594,14 @@ def _check_test_hermeticity(target_paths, root):
         from roam.commands.cmd_test_hermeticity import _scan_test_file
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.test_hermeticity.import", exc)
-        return {"score": 100, "violations": []}
+        return _verify_check_incomplete(
+            _VERIFY_HERMETICITY_CATEGORY,
+            f"test-hermeticity detector import failed: {exc!r}",
+            advisory=True,
+        )
     violations = []
     for rel in changed:
-        try:
-            hits = _scan_test_file(rel, root) or []
-        except Exception as exc:  # noqa: BLE001
-            _swallow_verify("verify.test_hermeticity.scan", exc)
-            continue
+        hits = _scan_test_file(rel, root) or []
         for h in hits:
             violations.append(
                 {
@@ -4728,13 +4804,105 @@ def _emit_verify_disabled(json_mode: bool) -> None:
 def _resolve_verify_threshold(threshold: int | None, cfg: dict) -> int:
     if threshold is not None:
         return threshold
-    return cfg.get("threshold") if cfg.get("threshold") is not None else 70
+    configured = cfg.get("threshold")
+    return (
+        configured
+        if isinstance(configured, int) and not isinstance(configured, bool) and 0 <= configured <= 100
+        else 70
+    )
+
+
+def _parse_verify_status_paths(raw: str | bytes) -> list[str]:
+    """Parse ``git status --porcelain=v1 -z`` into changed paths.
+
+    The zero-delimited form is the only safe representation for unusual file
+    names. Rename records contain the destination in the first record and the
+    source in the following record; include both so deletion-safety checks can
+    inspect the removed name while ordinary checks inspect the destination.
+    Copy records consume the source record without treating that unchanged
+    source as an edit.
+    """
+    records = raw.split(b"\0") if isinstance(raw, bytes) else raw.split("\0")
+    paths: list[str] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if isinstance(record, bytes):
+            record = os.fsdecode(record)
+        if len(record) < 4:
+            continue
+        status = record[:2]
+        path = record[3:].replace("\\", "/")
+        if path:
+            paths.append(path)
+        if "R" in status or "C" in status:
+            source_record = records[index] if index < len(records) else ""
+            source = os.fsdecode(source_record) if isinstance(source_record, bytes) else source_record
+            source = source.replace("\\", "/")
+            index += 1
+            if "R" in status and source:
+                paths.append(source)
+    return list(dict.fromkeys(paths))
+
+
+def _discover_verify_targets(root: Path) -> dict:
+    """Discover every worktree change with explicit resolution state.
+
+    One porcelain-status call covers staged, unstaged, renamed, deleted, and
+    untracked files, including repositories without a first commit. A failed
+    discovery is evidence loss, not an empty changeset, so callers receive a
+    closed failure state and must not emit ``PASS -- no changed files``.
+    """
+    from roam.git_utils import worktree_git_env
+
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=str(root),
+            capture_output=True,
+            timeout=10,
+            env=worktree_git_env(root),
+        )
+    except FileNotFoundError:
+        return {"paths": [], "state": "git_unavailable", "partial_success": True}
+    except subprocess.TimeoutExpired:
+        return {"paths": [], "state": "git_timeout", "partial_success": True}
+    except OSError:
+        return {"paths": [], "state": "git_unlaunchable", "partial_success": True}
+    if result.returncode != 0:
+        return {"paths": [], "state": "git_failed", "partial_success": True}
+    return {
+        "paths": _parse_verify_status_paths(result.stdout or b""),
+        "state": "resolved",
+        "partial_success": False,
+    }
+
+
+def _resolve_verify_target_request(files, root: Path) -> dict:
+    if files:
+        paths = _expand_dir_targets([path.replace("\\", "/") for path in files], root)
+        missing = [path for path in paths if not (root / path).exists()]
+        changed_missing_paths: list[str] = []
+        if missing:
+            discovered = _discover_verify_targets(root)
+            if not discovered.get("partial_success"):
+                changed = set(discovered.get("paths") or [])
+                changed_missing_paths = [path for path in missing if path in changed]
+        return {
+            "paths": paths,
+            "state": "explicit",
+            "partial_success": False,
+            "changed_missing_paths": changed_missing_paths,
+        }
+    discovered = _discover_verify_targets(root)
+    discovered["paths"] = _expand_dir_targets(discovered["paths"], root)
+    return discovered
 
 
 def _resolve_verify_targets(files, root: Path) -> list[str]:
-    if files:
-        return _expand_dir_targets([path.replace("\\", "/") for path in files], root)
-    return get_changed_files(root)
+    """Backward-compatible list projection for internal callers/tests."""
+    return _resolve_verify_target_request(files, root)["paths"]
 
 
 def _auto_deep_enabled(auto: bool, deep: bool) -> bool:
@@ -4780,12 +4948,18 @@ def _empty_verify_envelope(threshold: int) -> dict:
             "violation_count": 0,
             # W805-EEEEE (Pattern-1-Variant-D): disclose the resolution path so
             # an agent can tell this PASS apart from a real verification run.
-            # The empty-paths branch fires when the changed-files helper returns
-            # an empty list — i.e. no changed files to verify. Naming the state
+            # The empty-paths branch fires when status discovery returns an
+            # empty list — i.e. no changed files to verify. Naming the state
             # keeps the clean-tree PASS distinguishable from a populated run.
             "state": "no_changes",
+            "checks_run": [],
+            "verification_complete": True,
+            "partial_success": False,
         },
-        categories={cat: {"score": 100, "violations": []} for cat in _CATEGORY_WEIGHTS},
+        categories={
+            **{cat: {"score": 100, "violations": []} for cat in _CATEGORY_WEIGHTS},
+            "verification": {"score": 100, "violations": [], "available": True},
+        },
         violations=[],
     )
 
@@ -4803,29 +4977,290 @@ def _emit_empty_verify(json_mode: bool, threshold: int, summary_mode: bool = Fal
     click.echo("VERDICT: PASS (score 100/100) -- no changed files")
 
 
-def _refresh_stale_verify_targets(root: Path, target_paths: list[str]) -> None:
-    try:
-        # The index-state comparator is distinct from the git-diff helper
-        # imported at module top for target discovery.
-        from roam.index.incremental import get_index_changed_files
+def _emit_verify_discovery_failure(
+    ctx,
+    json_mode: bool,
+    token_budget: int,
+    threshold: int,
+    resolution: dict,
+) -> None:
+    state = str(resolution.get("state") or "git_failed")
+    violation = {
+        "category": "verification",
+        "severity": SEVERITY_FAIL,
+        "file": "",
+        "line": None,
+        "message": f"changed-file discovery did not complete ({state})",
+        "fix": "Restore Git status discovery, then rerun `roam verify --changed`",
+        "hard_block": True,
+    }
+    envelope = json_envelope(
+        "verify",
+        budget=token_budget,
+        summary={
+            "verdict": "FAIL: changed-file discovery unavailable",
+            "score": 0,
+            "threshold": threshold,
+            "files_checked": 0,
+            "violation_count": 1,
+            "checks_run": [],
+            "state": state,
+            "partial_success": True,
+            "verification_complete": False,
+            "incomplete_reasons": ["changed_file_discovery_failed"],
+        },
+        categories={
+            "verification": {
+                "score": 0,
+                "violation_count": 1,
+                "violations": [violation],
+                "available": False,
+                "unavailable_reason": state,
+            }
+        },
+        violations=[violation],
+    )
+    auto_log(envelope, action="verify", target="")
+    if json_mode:
+        click.echo(to_json(envelope))
+    else:
+        click.echo(f"VERDICT: FAIL -- changed-file discovery unavailable ({state})")
+        click.echo("FIX: Restore Git status discovery, then rerun `roam verify --changed`")
+    ctx.exit(EXIT_GATE_FAILURE)
 
+
+def _refresh_stale_verify_targets(root: Path, target_paths: list[str]) -> dict:
+    """Refresh edited index rows and disclose whether freshness was proven."""
+    try:
+        from roam.index.incremental import file_hash
+
+        normalized = [path.replace("\\", "/") for path in target_paths]
         with open_db(readonly=True) as idx_conn:
-            on_disk = [path for path in target_paths if (root / path).exists()]
-            added, modified, _ = get_index_changed_files(idx_conn, on_disk, root)
-        if added or modified:
+            stored = {
+                row["path"].replace("\\", "/"): row["hash"]
+                for row in idx_conn.execute("SELECT path, hash FROM files").fetchall()
+            }
+
+        before_hashes: dict[str, str] = {}
+        changed: set[str] = set()
+        for path in normalized:
+            candidate = root / path
+            if candidate.is_file() and not candidate.is_symlink():
+                current_hash = file_hash(candidate)
+                before_hashes[path] = current_hash
+                if stored.get(path) != current_hash and not _is_non_code_verify_surface(path):
+                    changed.add(path)
+            elif path in stored:
+                changed.add(path)
+
+        index_ran = False
+        if changed:
             from roam.index.indexer import Indexer
 
-            Indexer().run(quiet=True, progress_bar=False, light=True)
+            index_ran = Indexer(project_root=root).run(quiet=True, progress_bar=False, light=True)
+            if index_ran is not True:
+                return {"state": "index_lock_unavailable", "partial_success": True, "refreshed_file_count": 0}
+        with open_db(readonly=True) as idx_conn:
+            after_stored = {
+                row["path"].replace("\\", "/"): row["hash"]
+                for row in idx_conn.execute("SELECT path, hash FROM files").fetchall()
+            }
+        for path in normalized:
+            candidate = root / path
+            if candidate.is_file() and not candidate.is_symlink():
+                after_hash = file_hash(candidate)
+                if before_hashes.get(path) != after_hash:
+                    return {
+                        "state": "target_changed_during_refresh",
+                        "partial_success": True,
+                        "refreshed_file_count": 0,
+                    }
+                stored_hash = after_stored.get(path)
+                accepted_hashes = {after_hash}
+                if index_ran and path in changed:
+                    accepted_hashes.add("roam-light-pending")
+                if not _is_non_code_verify_surface(path) and stored_hash not in accepted_hashes:
+                    return {"state": "refresh_unproven", "partial_success": True, "refreshed_file_count": 0}
+            elif path in after_stored:
+                return {"state": "deleted_target_still_indexed", "partial_success": True, "refreshed_file_count": 0}
+        return {
+            "state": "refreshed" if changed else "current",
+            "partial_success": False,
+            "refreshed_file_count": len(changed),
+        }
     except Exception as exc:  # noqa: BLE001 — best-effort; never break verify
         from roam.observability import log_swallowed
 
         log_swallowed("verify.index_stale_targets", exc)
+        return {"state": "refresh_failed", "partial_success": True, "refreshed_file_count": 0}
+
+
+def _target_resolved_by_file_map(target: str, file_map: dict[str, int]) -> bool:
+    norm = target.replace("\\", "/").lstrip("./")
+    for indexed in file_map:
+        canonical = indexed.replace("\\", "/").lstrip("./")
+        if canonical == norm or canonical.endswith("/" + norm) or norm.endswith("/" + canonical):
+            return True
+    return False
+
+
+def _verification_gap_violations(
+    root: Path,
+    target_paths: list[str],
+    file_map: dict[str, int],
+    index_refresh: dict,
+    target_resolution: dict | None = None,
+    categories: dict | None = None,
+    selected: list[str] | None = None,
+) -> tuple[list[dict], list[str], int]:
+    """Return non-suppressible findings for evidence the gate could not prove."""
+    violations: list[dict] = []
+    reasons: list[str] = []
+    if index_refresh.get("partial_success"):
+        reasons.append("index_refresh_failed")
+        violations.append(
+            {
+                "category": "verification",
+                "severity": SEVERITY_FAIL,
+                "file": target_paths[0] if target_paths else "",
+                "line": None,
+                "message": "verify could not prove that the edited index rows are current",
+                "fix": "Run `roam index`, then rerun `roam verify` on the same files",
+                "hard_block": True,
+            }
+        )
+
+    resolution_state = (target_resolution or {}).get("state")
+    if resolution_state in {"explicit", "report_scope"}:
+        changed_missing = set((target_resolution or {}).get("changed_missing_paths") or [])
+        for target in target_paths:
+            path = root / target
+            if path.is_file() or target in changed_missing:
+                continue
+            reason = "explicit_target_missing" if not path.exists() else "directory_target_unexpanded"
+            reasons.append(reason)
+            violations.append(
+                {
+                    "category": "verification",
+                    "severity": SEVERITY_FAIL,
+                    "file": target,
+                    "line": None,
+                    "message": (
+                        "explicit verification target does not exist"
+                        if not path.exists()
+                        else "directory verification target did not resolve to files"
+                    ),
+                    "fix": "Pass existing files or run `roam index`, then rerun `roam verify`",
+                    "hard_block": True,
+                }
+            )
+
+    unresolved_existing_code: list[str] = []
+    for target in target_paths:
+        path = root / target
+        if not path.is_file() or _is_non_code_verify_surface(target):
+            continue
+        if not _target_resolved_by_file_map(target, file_map):
+            unresolved_existing_code.append(target)
+    if unresolved_existing_code:
+        reasons.append("existing_code_targets_unresolved")
+        for target in unresolved_existing_code:
+            violations.append(
+                {
+                    "category": "verification",
+                    "severity": SEVERITY_FAIL,
+                    "file": target,
+                    "line": None,
+                    "message": "existing code target was not resolved in the refreshed index",
+                    "fix": "Run `roam index`, then rerun `roam verify` on this file",
+                    "hard_block": True,
+                }
+            )
+
+    categories = categories or {}
+    for category in selected or []:
+        result = categories.get(category) or {}
+        incomplete_reasons: list[str] = []
+        if result.get("available", True) is False:
+            incomplete_reasons.append("unavailable")
+        if result.get("timed_out"):
+            incomplete_reasons.append("timed_out")
+        if int(result.get("parse_failures") or 0) > 0:
+            incomplete_reasons.append("parse_failures")
+        if result.get("partial_success"):
+            incomplete_reasons.append("partial_success")
+        execution_state = result.get("execution_state")
+        if execution_state not in (None, "complete"):
+            incomplete_reasons.append(str(execution_state))
+        if not incomplete_reasons:
+            continue
+        reason = f"{category}_incomplete"
+        reasons.append(reason)
+        violations.append(
+            {
+                "category": "verification",
+                "severity": SEVERITY_FAIL,
+                "file": target_paths[0] if target_paths else "",
+                "line": None,
+                "message": (
+                    f"selected check `{category}` did not produce complete evidence "
+                    f"({', '.join(dict.fromkeys(incomplete_reasons))})"
+                ),
+                "fix": f"Restore `{category}` and rerun `roam verify` on the same files",
+                "hard_block": True,
+            }
+        )
+    return violations, list(dict.fromkeys(reasons)), len(unresolved_existing_code)
+
+
+def _normalize_verify_check_result(name: str, result) -> dict:
+    """Validate and normalize the evidence contract of one selected check."""
+    if not isinstance(result, dict):
+        return _verify_check_incomplete(name, "selected check returned a non-object result")
+    score = result.get("score")
+    violations = result.get("violations")
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not math.isfinite(score)
+        or not 0 <= score <= 100
+    ):
+        return _verify_check_incomplete(name, "selected check returned an invalid score")
+    if not isinstance(violations, list) or any(not isinstance(item, dict) for item in violations):
+        return _verify_check_incomplete(name, "selected check returned invalid violations")
+
+    normalized = dict(result)
+    for counter in ("parse_failures", "tests_targeted", "tests_failed", "tests_total_impacted", "scan_cap"):
+        value = normalized.get(counter)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+            return _verify_check_incomplete(name, f"selected check returned invalid {counter}")
+    for flag in ("available", "timed_out", "partial_success", "capped"):
+        value = normalized.get(flag)
+        if value is not None and not isinstance(value, bool):
+            return _verify_check_incomplete(name, f"selected check returned invalid {flag}")
+    incomplete = (
+        normalized.get("available", True) is False
+        or bool(normalized.get("timed_out"))
+        or bool(normalized.get("capped"))
+        or int(normalized.get("parse_failures") or 0) > 0
+        or normalized.get("execution_state") not in (None, "complete")
+    )
+    if incomplete:
+        normalized["partial_success"] = True
+        if normalized.get("execution_state") is None:
+            normalized["execution_state"] = "incomplete"
+    return normalized
 
 
 def _maybe_run_verify_check(selected: list[str], name: str, fn):
-    if name in selected:
-        return fn()
-    return {"score": 100, "violations": [], "skipped": True}
+    if name not in selected:
+        return {"score": 100, "violations": [], "skipped": True}
+    try:
+        result = fn()
+        return _normalize_verify_check_result(name, result)
+    except Exception as exc:  # noqa: BLE001 — selected checks fail closed at this boundary
+        _swallow_verify(f"verify.{name}", exc)
+        return _verify_check_incomplete(name, f"selected check raised: {exc!r}")
 
 
 def _run_verify_categories(conn, selected: list[str], file_ids: list[int], target_paths: list[str], root: Path) -> dict:
@@ -4953,20 +5388,14 @@ def _apply_secrets_verdict_floor(score: int, verdict: str, categories: dict) -> 
 
 
 def _apply_hard_block_floor(score: int, verdict: str, violations: list[dict]) -> tuple[int, str]:
-    """Behavioral verdict floors, applied AFTER diff scoping so neither the
-    lenient weighted composite nor a no-op diff-scope can launder a real
-    regression back to PASS (the post-edit gate keys on a non-PASS verdict).
+    """Make every non-advisory FAIL finding a failing process-level gate.
 
-      * hard-block guardrail (breaking change) -> FAIL, score floored hard.
-      * impacted-test FAILURE -> at least WARN (secrets-gate pattern): the
-        executable signal must surface even when the failing test file is not
-        itself on a changed line, which is the common case (you edit source,
-        the covering test lives elsewhere)."""
-    if any(v.get("hard_block") and v.get("severity") == SEVERITY_FAIL for v in violations):
+    Apply this after all user scoping so weighted averages, baselines, and
+    diff filters cannot turn a surviving syntax/test/security failure into a
+    PASS.  Callers pass only gating-category violations here.
+    """
+    if any(v.get("severity") == SEVERITY_FAIL for v in violations):
         return min(score, _HARD_BLOCK_SCORE), "FAIL"
-    test_failed = any(v.get("category") == "tests" and v.get("severity") == SEVERITY_FAIL for v in violations)
-    if test_failed and str(verdict).upper().startswith("PASS"):
-        return min(score, 79), "WARN"
     return score, verdict
 
 
@@ -5012,6 +5441,17 @@ def _filter_category_violations(categories: dict, keep_fn) -> None:
             cat_result["violations"] = [violation for violation in violations if keep_fn(violation)]
 
 
+def _is_verify_violation_suppressible(violation: dict) -> bool:
+    """Return whether an acknowledgement may hide a Verify finding.
+
+    Suppressions are for advisory debt.  A hard-block finding or any finding
+    already classified as FAIL remains visible so an acknowledgement cannot
+    turn a failing gate into a passing one.
+    """
+    severity = str(violation.get("severity") or "").upper()
+    return not violation.get("hard_block") and severity != SEVERITY_FAIL
+
+
 def _apply_verify_suppressions(root: Path, categories: dict, violations: list[dict]) -> tuple[list[dict], int]:
     try:
         from roam.commands.suppression import is_suppressed, load_suppressions
@@ -5021,6 +5461,8 @@ def _apply_verify_suppressions(root: Path, categories: dict, violations: list[di
             return violations, 0
 
         def is_suppressed_violation(violation):
+            if not _is_verify_violation_suppressible(violation):
+                return False
             return is_suppressed(
                 suppressions,
                 violation.get("category", ""),
@@ -5200,6 +5642,198 @@ def _verify_scope_summary(target_paths: list[str], file_map: dict) -> dict | Non
     return summary
 
 
+def _verification_scope_paths(target_paths: list[str]) -> list[str]:
+    return sorted({str(path).strip().replace("\\", "/") for path in target_paths if str(path).strip()})
+
+
+def _verification_scope_sha256(target_paths: list[str]) -> str:
+    payload = json.dumps(_verification_scope_paths(target_paths), ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _same_verification_file_state(left: os.stat_result, right: os.stat_result, *, cross_handle: bool = False) -> bool:
+    fields = ["st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns"]
+    # CPython/Windows exposes creation time for path stat but metadata-change
+    # time for descriptor stat. Compare ctime within each evidence channel, not
+    # across the path/descriptor boundary.
+    if cross_handle and os.name == "nt":
+        fields.remove("st_ctime_ns")
+    return all(getattr(left, field) == getattr(right, field) for field in fields)
+
+
+def _verification_stat_state(info: os.stat_result) -> list[int]:
+    return [
+        int(info.st_dev),
+        int(info.st_ino),
+        int(info.st_mode),
+        int(info.st_size),
+        int(info.st_mtime_ns),
+        int(info.st_ctime_ns),
+    ]
+
+
+def _verification_content_evidence(root: Path, target_paths: list[str]) -> tuple[dict | None, str | None]:
+    """Hash exact target bytes and retain mutation-sensitive file identity."""
+    try:
+        canonical_root = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, "verification_root_unavailable"
+    manifest: list[list[str]] = []
+    state_manifest: list[list] = []
+    total_bytes = 0
+    max_file_bytes = 64 * 1024 * 1024
+    max_total_bytes = 256 * 1024 * 1024
+    for relative_path in _verification_scope_paths(target_paths):
+        candidate = canonical_root / Path(relative_path)
+        try:
+            candidate.relative_to(canonical_root)
+        except ValueError:
+            return None, "scope_path_outside_root"
+        try:
+            canonical_parent = candidate.parent.resolve(strict=True)
+        except FileNotFoundError:
+            manifest.append([relative_path, "missing"])
+            state_manifest.append([relative_path, "missing_parent", *_verification_stat_state(canonical_root.stat())])
+            continue
+        except (OSError, RuntimeError):
+            return None, "scope_file_unreadable"
+        try:
+            canonical_parent.relative_to(canonical_root)
+        except ValueError:
+            return None, "scope_path_outside_root"
+        try:
+            path_before = candidate.lstat()
+        except FileNotFoundError:
+            manifest.append([relative_path, "missing"])
+            state_manifest.append([relative_path, "missing", *_verification_stat_state(canonical_parent.stat())])
+            continue
+        except OSError:
+            return None, "scope_file_unreadable"
+        if stat.S_ISLNK(path_before.st_mode):
+            return None, "scope_file_symlink"
+        if not stat.S_ISREG(path_before.st_mode):
+            return None, "scope_file_not_regular"
+        if path_before.st_size > max_file_bytes:
+            return None, "scope_file_too_large"
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        try:
+            descriptor = os.open(candidate, flags)
+        except OSError as exc:
+            return None, "scope_file_symlink" if exc.errno == errno.ELOOP else "scope_file_unreadable"
+        digest = hashlib.sha256()
+        bytes_read = 0
+        try:
+            opened_before = os.fstat(descriptor)
+            if not stat.S_ISREG(opened_before.st_mode) or not _same_verification_file_state(
+                path_before, opened_before, cross_handle=True
+            ):
+                return None, "scope_file_changed_during_hash"
+            while True:
+                chunk = os.read(descriptor, 256 * 1024)
+                if not chunk:
+                    break
+                bytes_read += len(chunk)
+                if bytes_read > max_file_bytes:
+                    return None, "scope_file_too_large"
+                digest.update(chunk)
+            opened_after = os.fstat(descriptor)
+            try:
+                path_after = candidate.lstat()
+            except OSError:
+                return None, "scope_file_changed_during_hash"
+            if (
+                bytes_read != opened_before.st_size
+                or not _same_verification_file_state(opened_before, opened_after)
+                or not _same_verification_file_state(path_before, path_after)
+            ):
+                return None, "scope_file_changed_during_hash"
+        finally:
+            os.close(descriptor)
+        total_bytes += bytes_read
+        if total_bytes > max_total_bytes:
+            return None, "verification_scope_too_large"
+        manifest.append([relative_path, f"sha256:{digest.hexdigest()}"])
+        state_manifest.append([relative_path, "file", *_verification_stat_state(path_after)])
+    payload = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
+    return {
+        "content_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        "manifest": manifest,
+        "state_manifest": state_manifest,
+    }, None
+
+
+def _verification_content_sha256(root: Path, target_paths: list[str]) -> tuple[str | None, str | None]:
+    """Compatibility wrapper returning the byte-manifest digest only."""
+    evidence, error = _verification_content_evidence(root, target_paths)
+    return (evidence.get("content_sha256") if evidence else None), error
+
+
+def _verification_request_receipt(
+    root: Path,
+    target_paths: list[str],
+    *,
+    initial_evidence: dict | None = None,
+) -> tuple[dict, str | None, dict | None]:
+    """Bind platform evidence to exact names, bytes, and stable file identity."""
+    paths = _verification_scope_paths(target_paths)
+    actual_digest = _verification_scope_sha256(paths)
+    nonce = os.environ.get("ROAM_VERIFY_REQUEST_NONCE")
+    expected_digest = os.environ.get("ROAM_VERIFY_SCOPE_SHA256")
+    expected_content_digest = os.environ.get("ROAM_VERIFY_CONTENT_SHA256")
+    expected_count_raw = os.environ.get("ROAM_VERIFY_SCOPE_COUNT")
+    binding_requested = any(
+        value is not None for value in (nonce, expected_digest, expected_content_digest, expected_count_raw)
+    )
+    current_evidence, content_error = _verification_content_evidence(root, paths) if binding_requested else (None, None)
+    actual_content_digest = current_evidence.get("content_sha256") if current_evidence else None
+    binding_error = None
+    if binding_requested:
+        if not nonce or re.fullmatch(r"[0-9a-f]{32}", nonce) is None:
+            binding_error = "request_nonce_invalid"
+        elif not expected_digest or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None:
+            binding_error = "scope_digest_invalid"
+        elif not expected_content_digest or re.fullmatch(r"[0-9a-f]{64}", expected_content_digest) is None:
+            binding_error = "content_digest_invalid"
+        elif content_error:
+            binding_error = content_error
+        else:
+            try:
+                expected_count = int(expected_count_raw or "")
+            except ValueError:
+                expected_count = -1
+            if expected_count != len(paths):
+                binding_error = "scope_count_mismatch"
+            elif expected_digest != actual_digest:
+                binding_error = "scope_digest_mismatch"
+            elif expected_content_digest != actual_content_digest:
+                binding_error = "content_digest_mismatch"
+            elif initial_evidence is not None and (
+                initial_evidence.get("content_sha256") != actual_content_digest
+                or initial_evidence.get("manifest") != current_evidence.get("manifest")
+                or initial_evidence.get("state_manifest") != current_evidence.get("state_manifest")
+            ):
+                binding_error = "verification_scope_mutated"
+    before_digest = initial_evidence.get("content_sha256") if initial_evidence is not None else actual_content_digest
+    scope_stable = (
+        None if not binding_requested else (initial_evidence is None or binding_error != "verification_scope_mutated")
+    )
+    return (
+        {
+            "schema": "roam.verify.receipt.v3",
+            "request_nonce": nonce,
+            "scope_sha256": actual_digest,
+            "content_sha256": actual_content_digest,
+            "content_sha256_before": before_digest,
+            "content_sha256_after": actual_content_digest,
+            "target_file_count": len(paths),
+            "scope_stable": scope_stable,
+            "request_match": None if not binding_requested else binding_error is None,
+        },
+        binding_error,
+        current_evidence,
+    )
+
+
 def _category_summary(categories: dict) -> dict:
     summary = {}
     for cat_name, cat_result in categories.items():
@@ -5214,6 +5848,12 @@ def _category_summary(categories: dict) -> dict:
             entry["available"] = False
             if cat_result.get("unavailable_reason"):
                 entry["unavailable_reason"] = cat_result["unavailable_reason"]
+        for qualifier in ("execution_state", "timed_out", "partial_success", "capped"):
+            if qualifier in cat_result:
+                entry[qualifier] = cat_result[qualifier]
+        for counter in ("tests_targeted", "tests_failed", "tests_total_impacted", "no_impacted_tests"):
+            if counter in cat_result:
+                entry[counter] = cat_result[counter]
         summary[cat_name] = entry
     return summary
 
@@ -5238,6 +5878,10 @@ def _build_verify_summary(
     file_remaining: bool = False,
     target_wave_violation_count: int | None = None,
     residual_violation_count: int = 0,
+    verification_complete: bool = True,
+    incomplete_reasons: list[str] | None = None,
+    index_refresh: dict | None = None,
+    verification_receipt: dict | None = None,
 ) -> dict:
     summary = {
         "verdict": verdict,
@@ -5246,9 +5890,10 @@ def _build_verify_summary(
         "files_checked": files_checked,
         "violation_count": violation_count,
         "checks_run": selected,
+        "verification_complete": verification_complete,
+        "partial_success": bool(degraded),
+        "state": "verified" if verification_complete else "verification_incomplete",
     }
-    if degraded:
-        summary["partial_success"] = True
     if severity:
         summary["severity_filter"] = severity.lower()
         summary["shown_count"] = shown_count
@@ -5274,6 +5919,15 @@ def _build_verify_summary(
         summary["target_wave_violation_count"] = target_wave_violation_count or 0
         summary["residual_violation_count"] = residual_violation_count
         summary["residual_findings_non_gating"] = True
+    if incomplete_reasons:
+        summary["incomplete_reasons"] = incomplete_reasons
+    if index_refresh:
+        summary["index_refresh"] = {
+            "state": index_refresh.get("state", "unknown"),
+            "refreshed_file_count": int(index_refresh.get("refreshed_file_count") or 0),
+        }
+    if verification_receipt:
+        summary["verification_receipt"] = verification_receipt
     return summary
 
 
@@ -5340,6 +5994,14 @@ def _emit_verify_summary(violations: list[dict], files_checked: int) -> None:
             click.echo(f"    TOP: {item_name} @ {loc(top.get('file'), top.get('line'))} -- {top.get('message', '')}")
 
 
+def _verify_gate_failed(summary: dict, score: int, threshold: int, report: bool) -> bool:
+    """Return the single authoritative process-exit decision for Verify."""
+    if report:
+        return False
+    verdict = str(summary.get("verdict") or "").upper()
+    return verdict.startswith("FAIL") or score < threshold or summary.get("verification_complete") is False
+
+
 def _emit_verify_result(
     ctx,
     verify_envelope: dict,
@@ -5364,14 +6026,15 @@ def _emit_verify_result(
     if json_mode:
         if report:
             _render_verify_report(verify_envelope, all_violations, json_mode, root=root, verbose=verbose)
+            return
         else:
             click.echo(to_json(verify_envelope))
-        if score < threshold:
+        if _verify_gate_failed(verify_envelope["summary"], score, threshold, report):
             ctx.exit(EXIT_GATE_FAILURE)
         return
     if summary_mode:
         _emit_verify_summary(all_violations, verify_envelope["summary"]["files_checked"])
-        if score < threshold:
+        if _verify_gate_failed(verify_envelope["summary"], score, threshold, report):
             ctx.exit(EXIT_GATE_FAILURE)
         return
     if report:
@@ -5392,7 +6055,7 @@ def _emit_verify_result(
         all_violations=all_violations,
         file_remaining=file_remaining,
     )
-    if score < threshold:
+    if _verify_gate_failed(summary, score, threshold, report):
         ctx.exit(EXIT_GATE_FAILURE)
 
 
@@ -5427,6 +6090,7 @@ def _emit_verify_text(
         click.echo(f"checks: {', '.join(selected)} (skipped: {skipped})")
     click.echo("")
     for label, key in (
+        ("VERIFICATION", "verification"),
         ("NAMING", "naming"),
         ("IMPORTS", "imports"),
         ("ERROR HANDLING", "error_handling"),
@@ -5460,7 +6124,7 @@ def _emit_verify_text(
             if fix_suggestions and violation.get("fix"):
                 click.echo(f"    FIX: {violation['fix']}")
         click.echo("")
-    gate_result = "PASS" if score >= threshold else "FAIL"
+    gate_result = "FAIL" if str(verdict).upper().startswith("FAIL") or score < threshold else "PASS"
     click.echo(f"\nOverall: {score}/100 (threshold: {threshold}) -- {gate_result}")
 
 
@@ -5478,12 +6142,62 @@ def _build_verify_run(
     token_budget: int,
     json_mode: bool,
     file_remaining: bool = False,
+    index_refresh: dict | None = None,
+    target_resolution: dict | None = None,
 ) -> dict | None:
+    index_refresh = index_refresh or {
+        "state": "current",
+        "partial_success": False,
+        "refreshed_file_count": 0,
+    }
+    pre_receipt, pre_binding_error, initial_content_evidence = _verification_request_receipt(
+        root,
+        target_paths,
+    )
     with open_db(readonly=True) as conn:
         file_map = resolve_changed_to_db(conn, target_paths)
         file_ids = list(file_map.values())
-        categories = _run_verify_categories(conn, selected, file_ids, target_paths, root)
-        _apply_verify_deep(categories, deep, conn, file_ids)
+        if pre_binding_error:
+            categories = {
+                category: _verify_check_incomplete(
+                    category,
+                    f"request binding failed before checks: {pre_binding_error}",
+                )
+                for category in selected
+            }
+        else:
+            categories = _run_verify_categories(conn, selected, file_ids, target_paths, root)
+            _apply_verify_deep(categories, deep, conn, file_ids)
+        verification_gaps, incomplete_reasons, unresolved_existing_count = _verification_gap_violations(
+            root,
+            target_paths,
+            file_map,
+            index_refresh,
+            target_resolution,
+            categories,
+            selected,
+        )
+        if initial_content_evidence is not None and pre_binding_error is None:
+            verification_receipt, binding_error, _post_content_evidence = _verification_request_receipt(
+                root,
+                target_paths,
+                initial_evidence=initial_content_evidence,
+            )
+        else:
+            verification_receipt, binding_error = pre_receipt, pre_binding_error
+        if binding_error:
+            incomplete_reasons.append("request_binding_failed")
+            verification_gaps.append(
+                {
+                    "category": "verification",
+                    "severity": SEVERITY_FAIL,
+                    "file": target_paths[0] if target_paths else "",
+                    "line": None,
+                    "message": f"verification request binding failed ({binding_error})",
+                    "fix": "Rerun `roam verify` with the original nonce and exact target files",
+                    "hard_block": True,
+                }
+            )
 
         score = _compute_composite(categories, selected)
         verdict = _compute_verdict(score)
@@ -5495,7 +6209,7 @@ def _build_verify_run(
         all_violations, suppressed_count = _apply_verify_suppressions(root, categories, all_violations)
         open_violations = list(all_violations)
 
-        if baseline_write:
+        if baseline_write and not verification_gaps:
             _emit_verify_baseline_written(all_violations, root, json_mode)
             return None
 
@@ -5515,9 +6229,28 @@ def _build_verify_run(
         score, verdict = _recompute_filtered_verdict_if_needed(
             score, verdict, all_violations, suppressed_count, baselined_count, diff_scoped, advisory_cats
         )
-        # Hard-block guardrails win last, so neither diff-scoping nor the
-        # recompute can launder a breaking change back to PASS.
-        score, verdict = _apply_hard_block_floor(score, verdict, all_violations)
+        # Completeness findings are generated after every user-controlled
+        # suppression/scope step. They are evidence about the gate itself and
+        # therefore cannot be suppressed, baselined, or line-filtered.
+        categories["verification"] = {
+            "score": 0 if verification_gaps else 100,
+            "violations": verification_gaps,
+            "available": not verification_gaps,
+            "unavailable_reason": ", ".join(incomplete_reasons) if incomplete_reasons else None,
+        }
+        all_violations.extend(verification_gaps)
+        degraded = degraded or bool(verification_gaps)
+
+        # Every surviving non-advisory FAIL wins last, so weighted scoring and
+        # diff scoping cannot launder a real failure back to PASS.
+        score, verdict = _apply_hard_block_floor(
+            score,
+            verdict,
+            _gating_violations(all_violations, advisory_cats),
+        )
+        quality_band = _compute_verdict(score)
+        if score < threshold:
+            verdict = "FAIL"
 
         target_wave_violations = list(all_violations)
         residual_findings: list[dict] = []
@@ -5566,7 +6299,15 @@ def _build_verify_run(
             file_remaining,
             len(target_wave_violations),
             len(residual_findings),
+            not verification_gaps,
+            incomplete_reasons,
+            index_refresh,
+            verification_receipt,
         )
+        verify_summary["quality_band"] = quality_band
+        verify_summary["targets_checked"] = len(target_paths)
+        if scope_summary is not None and unresolved_existing_count:
+            scope_summary["unresolved_existing_code_count"] = unresolved_existing_count
         envelope_data = {
             "summary": verify_summary,
             "categories": _category_summary(categories),
@@ -5612,14 +6353,24 @@ def _resolve_verify_request(
     diff_only: bool,
 ) -> dict:
     resolved_threshold = _resolve_verify_threshold(threshold, cfg)
-    target_paths = _resolve_verify_targets(files, root)
+    target_resolution = _resolve_verify_target_request(files, root)
+    target_paths = target_resolution["paths"]
     selected = resolve_selected_checks(checks_opt, auto, cfg, target_paths)
     selected, target_paths, report_forced_full_files = _resolve_report_scope(
         report, files, checks_opt, selected, target_paths, root
     )
+    if report and not files:
+        target_resolution = {
+            "paths": target_paths,
+            "state": "report_scope",
+            "partial_success": False,
+        }
+    else:
+        target_resolution["paths"] = target_paths
     return {
         "threshold": resolved_threshold,
         "target_paths": target_paths,
+        "target_resolution": target_resolution,
         "selected": selected,
         "deep": _auto_deep_enabled(auto, deep),
         "diff_only": diff_only and not report_forced_full_files,
@@ -5665,6 +6416,7 @@ def _emit_verify_run_result(
     verbose: bool,
     file_remaining: bool,
     summary_mode: bool,
+    index_refresh: dict,
 ) -> None:
     run = _build_verify_run(
         root,
@@ -5680,6 +6432,8 @@ def _emit_verify_run_result(
         token_budget,
         json_mode,
         file_remaining,
+        index_refresh,
+        request["target_resolution"],
     )
     if run is None:
         return
@@ -5735,12 +6489,20 @@ def _dispatch_verify_command(
 
     ensure_index()
     request = _resolve_verify_request(cfg, root, files, threshold, checks_opt, auto, deep, report, diff_only)
+    if request["target_resolution"].get("partial_success"):
+        _emit_verify_discovery_failure(
+            ctx,
+            json_mode,
+            token_budget,
+            request["threshold"],
+            request["target_resolution"],
+        )
     if _emit_empty_verify_if_needed(request["target_paths"], json_mode, request["threshold"], summary_mode):
         return
 
     # Verify reads symbols from the DB; refresh newly edited targets before
     # resolving file IDs so fresh symbols are not invisible to the gate.
-    _refresh_stale_verify_targets(root, request["target_paths"])
+    index_refresh = _refresh_stale_verify_targets(root, request["target_paths"])
     _emit_verify_run_result(
         ctx,
         request,
@@ -5758,6 +6520,7 @@ def _dispatch_verify_command(
         verbose,
         file_remaining,
         summary_mode,
+        index_refresh,
     )
 
 
@@ -5773,7 +6536,8 @@ def _dispatch_verify_command(
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    # Verify may refresh stale index rows and append run telemetry.
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,
@@ -5788,7 +6552,12 @@ def _dispatch_verify_command(
     default=False,
     help="Use git diff to get changed files (default if no files given)",
 )
-@click.option("--threshold", type=int, default=None, help="Fail below this score (default 70, or .roam/verify.yaml).")
+@click.option(
+    "--threshold",
+    type=click.IntRange(0, 100),
+    default=None,
+    help="Fail below this score (0-100; default 70, or .roam/verify.yaml).",
+)
 @click.option(
     "--checks",
     "checks_opt",

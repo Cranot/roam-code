@@ -6,8 +6,8 @@ that CI runs but contributors routinely skip — the exact class of failure
 that produced this session's ~14 CI fix-forward cascade. Every gate here
 is a pure AST / file / registry scan: NO ``roam`` index build, NO graph
 construction, NO network. The whole FAST bundle measures ~43s on a
-Windows host (ruff + count scripts ≈ 2s; the structural-lint pytest
-bundle ≈ 41s).
+Windows host (ruff + count scripts ~2s; the structural-lint pytest
+bundle ~41s).
 
 Design authority: ``(internal memo)`` (the measured
 ~43s design + back-test showing this bundle would have caught the dominant
@@ -30,6 +30,7 @@ Usage::
     python scripts/prepush_check.py            # FAST tier (default)
     python scripts/prepush_check.py --fast      # explicit FAST tier
     python scripts/prepush_check.py --full      # FAST + heavy doc-hygiene
+    python scripts/prepush_check.py --release --workers 2
 
 Exits non-zero on the first failing gate (after running every gate so the
 summary is complete), printing per-gate timing and a copy-pasteable fix
@@ -142,6 +143,24 @@ FULL_PYTEST_GUARDS: tuple[str, ...] = (
     "test_w1005_smells_severity_parity.py",
 )
 
+_MAX_PYTEST_WORKERS = 4
+
+
+def _bounded_worker_count(value: str) -> int:
+    """Parse a local xdist budget without permitting host-sized fan-out."""
+    try:
+        workers = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("workers must be an integer from 1 to 4") from exc
+    if not 1 <= workers <= _MAX_PYTEST_WORKERS:
+        raise argparse.ArgumentTypeError("workers must be an integer from 1 to 4")
+    return workers
+
+
+def _default_worker_count() -> int:
+    """Return a deterministic memory-safe local worker budget."""
+    return min(max(os.cpu_count() or 1, 1), _MAX_PYTEST_WORKERS)
+
 
 @dataclass
 class GateResult:
@@ -155,6 +174,7 @@ class GateResult:
 @dataclass
 class GateRunner:
     root: Path
+    pytest_workers: int = 1
     results: list[GateResult] = field(default_factory=list)
 
     def _env(self) -> dict[str, str]:
@@ -227,14 +247,15 @@ class GateRunner:
             "-m",
             "pytest",
             "-q",
-            # -n auto --dist loadfile: parallelize the independent structural
+            # A bounded worker pool + loadfile distribution parallelizes the independent structural
             # guards ACROSS files (each guard file is a pure in-process AST/
             # registry/file scan with no shared mutable fixtures, so file-level
             # distribution is race-free and deterministic). Folding the 8
             # release drift-guards into FAST pushed the bundle over the 2-min
-            # shell timeout on -n 0; loadfile brings it back down.
+            # shell timeout on -n 0; four or fewer workers bring it back down
+            # without letting high-core hosts exhaust memory/process slots.
             "-n",
-            "auto",
+            str(self.pytest_workers),
             "--dist",
             "loadfile",
             "-p",
@@ -284,6 +305,13 @@ def main(argv: list[str] | None = None) -> int:
             "tag — green here means CI will be green. ~15-25 min."
         ),
     )
+    parser.add_argument(
+        "--workers",
+        type=_bounded_worker_count,
+        default=_default_worker_count(),
+        metavar="N",
+        help="local pytest workers (1-4; defaults to min(cpu_count, 4))",
+    )
     args = parser.parse_args(argv)
 
     release = args.release
@@ -292,8 +320,9 @@ def main(argv: list[str] | None = None) -> int:
     root = repo_root()
     print(f"[prepush] repo root: {root}")
     print(f"[prepush] tier: {'RELEASE' if release else 'FULL' if full else 'FAST'}")
+    print(f"[prepush] pytest workers: {args.workers} (loadfile distribution)")
 
-    runner = GateRunner(root=root)
+    runner = GateRunner(root=root, pytest_workers=args.workers)
     runner._run_leak_gate()
     runner._run_ruff()
     runner._run_count_scripts()
@@ -322,7 +351,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         runner._run(
             "FULL test suite (-m 'not slow', what CI runs)",
-            [sys.executable, "-m", "pytest", "tests/", "-q", "-m", "not slow", "-n", "auto"],
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/",
+                "-q",
+                "-m",
+                "not slow",
+                "-n",
+                str(args.workers),
+                "--dist",
+                "loadfile",
+            ],
             fix_hint="fix the failing tests — CI runs exactly this surface",
         )
 

@@ -236,7 +236,7 @@ def test_command_exists_or_skip():
     )
     module_path, attr = _COMMANDS["dogfood"]
     assert module_path == "roam.commands.cmd_dogfood", module_path
-    assert attr == "dogfood", attr
+    assert attr == "dogfood_cmd", attr
 
 
 # ---------------------------------------------------------------------------

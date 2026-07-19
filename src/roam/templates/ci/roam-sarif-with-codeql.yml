@@ -19,9 +19,11 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
-  security-events: write   # required for SARIF upload to Code Scanning
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -29,18 +31,22 @@ jobs:
   # ---------------------------------------------------------------------------
   roam:
     name: roam SARIF
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write   # required for SARIF upload to Code Scanning
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0   # full history required for pr-risk + git analysis
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
       - name: Install roam-code
-        run: pip install roam-code
+        run: python -m pip install "roam-code==13.10.0"
 
       - name: Index repository
         run: roam init
@@ -49,7 +55,7 @@ jobs:
         run: roam --sarif health > roam-health.sarif
 
       - name: Upload roam SARIF to Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57 # v3.36.0
         with:
           sarif_file: roam-health.sarif
           category: roam-health

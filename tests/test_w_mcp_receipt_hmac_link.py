@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from pathlib import Path
 
 import pytest
 
-from roam.runs.ledger import log_event, read_run_events, run_dir, start_run
+from roam.runs.ledger import end_run, log_event, read_run_events, run_dir, start_run
 from roam.runs.signing import (
     RECEIPT_INTEGRITY_STATES,
     ensure_ledger_key,
@@ -45,7 +47,10 @@ def isolated_repo(tmp_path, monkeypatch):
     monkeypatch.delenv("ROAM_RUN_ID", raising=False)
     monkeypatch.delenv("ROAM_AGENT_ID", raising=False)
     monkeypatch.delenv("ROAM_MCP_CLIENT_ID", raising=False)
-    monkeypatch.delenv("ROAM_MODE_ENFORCEMENT", raising=False)
+    # The synthetic write tool is deliberately unclassified; these tests pin
+    # receipt/ledger linkage, so opt into the explicit audited permissive path.
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
+    monkeypatch.delenv("ROAM_MODE_DRY_RUN", raising=False)
     return tmp_path
 
 
@@ -125,6 +130,303 @@ def test_happy_path_links_receipt_to_ledger(isolated_repo, monkeypatch) -> None:
     assert result["state"] == "ok"
     assert result["receipt_integrity"] == "ok"
     assert result["first_tamper_at_seq"] is None
+
+
+def test_explicit_root_binds_receipt_and_hmac_to_that_repo(isolated_repo, monkeypatch) -> None:
+    """A valid explicit run handle is scoped to the invocation repo, not CWD."""
+    invocation_repo = isolated_repo.parent / f"{isolated_repo.name}_invocation"
+    invocation_repo.mkdir()
+    (invocation_repo / ".git").mkdir()
+    server_run = start_run(isolated_repo, agent="server-cwd")
+    invocation_run = start_run(invocation_repo, agent="explicit-root")
+    monkeypatch.setenv("ROAM_RUN_ID", invocation_run.run_id)
+
+    wrapped = _register_sensitive(monkeypatch, "stub_p03_explicit_root")
+    wrapped(root=str(invocation_repo), symbol="foo")
+
+    receipt_path = next((invocation_repo / ".roam" / "mcp_receipts" / invocation_run.run_id).glob("*.json"))
+    invocation_events = list(read_run_events(invocation_repo, invocation_run.run_id))
+    receipt_events = [event for event in invocation_events if event.get("action") == "mcp_receipt"]
+    assert len(receipt_events) == 1
+    assert receipt_events[0]["tool_call"] == receipt_path.stem
+    assert not (isolated_repo / ".roam" / "mcp_receipts").exists()
+    assert [
+        event for event in read_run_events(isolated_repo, server_run.run_id) if event.get("action") == "mcp_receipt"
+    ] == []
+
+    key = ensure_ledger_key(invocation_repo)
+    verified = verify_chain_with_receipts(invocation_events, key, invocation_repo, invocation_run.run_id)
+    assert verified["state"] == "ok"
+    assert verified["receipt_integrity"] == "ok"
+
+
+def test_explicit_root_discovers_that_repos_active_run(isolated_repo, monkeypatch) -> None:
+    """Without an env handle, root=B discovers B's run even while CWD is A."""
+    invocation_repo = isolated_repo.parent / f"{isolated_repo.name}_active"
+    invocation_repo.mkdir()
+    (invocation_repo / ".git").mkdir()
+    start_run(isolated_repo, agent="server-cwd")
+    invocation_run = start_run(invocation_repo, agent="root-scan")
+    monkeypatch.delenv("ROAM_RUN_ID", raising=False)
+
+    wrapped = _register_sensitive(monkeypatch, "stub_p03_root_scan")
+    wrapped(root=str(invocation_repo), symbol="foo")
+
+    receipts = list((invocation_repo / ".roam" / "mcp_receipts" / invocation_run.run_id).glob("*.json"))
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["run_event_id"] == invocation_run.run_id
+    events = list(read_run_events(invocation_repo, invocation_run.run_id))
+    assert len([event for event in events if event.get("action") == "mcp_receipt"]) == 1
+    assert not (isolated_repo / ".roam" / "mcp_receipts").exists()
+
+
+def test_omitted_root_and_run_id_are_pinned_before_tool_mutation(isolated_repo, monkeypatch) -> None:
+    """A tool cannot redirect its completed call by changing CWD/environment."""
+    import roam.mcp_server as m
+
+    foreign_repo = isolated_repo.parent / f"{isolated_repo.name}_post_dispatch"
+    foreign_repo.mkdir()
+    (foreign_repo / ".git").mkdir()
+    local_run = start_run(isolated_repo, agent="bound-before-call")
+    foreign_run = start_run(foreign_repo, agent="must-not-receive")
+    monkeypatch.setenv("ROAM_RUN_ID", local_run.run_id)
+    name = "stub_p03_process_global_mutator"
+    _register_sensitive(monkeypatch, name)
+
+    def _mutate_process_globals():
+        os.chdir(foreign_repo)
+        os.environ["ROAM_RUN_ID"] = foreign_run.run_id
+        return {"command": name, "summary": {"verdict": "ok"}}
+
+    wrapped = m._wrap_with_receipt(name, _mutate_process_globals)
+    original_cwd = Path.cwd()
+    try:
+        result = wrapped()
+    finally:
+        os.chdir(original_cwd)
+
+    assert result["summary"]["verdict"] == "ok"
+    local_receipts = list((isolated_repo / ".roam" / "mcp_receipts" / local_run.run_id).glob("*.json"))
+    assert len(local_receipts) == 1
+    assert not (foreign_repo / ".roam" / "mcp_receipts").exists()
+    assert (
+        len(
+            [
+                event
+                for event in read_run_events(isolated_repo, local_run.run_id)
+                if event.get("action") == "mcp_receipt"
+            ]
+        )
+        == 1
+    )
+    assert [
+        event for event in read_run_events(foreign_repo, foreign_run.run_id) if event.get("action") == "mcp_receipt"
+    ] == []
+
+
+def test_run_started_during_tool_is_not_retroactively_attributed(isolated_repo, monkeypatch) -> None:
+    """A call that began without a run remains in the ``_no_run`` bucket."""
+    import roam.mcp_server as m
+
+    name = "stub_p03_late_run_start"
+    _register_sensitive(monkeypatch, name)
+    started = []
+
+    def _start_run_mid_call():
+        run = start_run(isolated_repo, agent="started-too-late")
+        started.append(run)
+        os.environ["ROAM_RUN_ID"] = run.run_id
+        return {"command": name, "summary": {"verdict": "ok"}}
+
+    result = m._wrap_with_receipt(name, _start_run_mid_call)()
+
+    assert result["summary"]["verdict"] == "ok"
+    receipts = list((isolated_repo / ".roam" / "mcp_receipts" / "_no_run").glob("*.json"))
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["run_event_id"] is None
+    assert [
+        event for event in read_run_events(isolated_repo, started[0].run_id) if event.get("action") == "mcp_receipt"
+    ] == []
+
+
+@pytest.mark.parametrize("aliased_file", ["meta.json", "events.jsonl", ".ledger_key"])
+def test_hardlinked_run_evidence_routes_to_no_run(
+    isolated_repo,
+    monkeypatch,
+    aliased_file,
+) -> None:
+    """Metadata, ledger, and key hardlinks cannot redirect run attribution."""
+    run = start_run(isolated_repo, agent=f"hardlink-{aliased_file}")
+    source = (
+        isolated_repo / ".roam" / "runs" / ".ledger_key"
+        if aliased_file == ".ledger_key"
+        else run_dir(isolated_repo, run.run_id) / aliased_file
+    )
+    original = source.read_bytes()
+    outside = isolated_repo.parent / f"{isolated_repo.name}_{aliased_file.replace('.', '_')}_outside"
+    source.unlink()
+    outside.write_bytes(original)
+    try:
+        os.link(outside, source)
+    except OSError as exc:
+        pytest.skip(f"hardlinks unavailable: {exc}")
+    monkeypatch.setenv("ROAM_RUN_ID", run.run_id)
+
+    result = _register_sensitive(monkeypatch, f"stub_p03_hardlink_{aliased_file.replace('.', '_')}")()
+
+    assert result["summary"]["verdict"] == "ok"
+    assert outside.read_bytes() == original
+    receipts = list((isolated_repo / ".roam" / "mcp_receipts" / "_no_run").glob("*.json"))
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["run_event_id"] is None
+    assert not (isolated_repo / ".roam" / "mcp_receipts" / run.run_id).exists()
+
+
+def test_foreign_env_run_id_cannot_contaminate_explicit_root(isolated_repo, monkeypatch) -> None:
+    """A process-global run from A cannot create/link B evidence.
+
+    B deliberately has its own active run.  The invalid explicit handle must
+    route the receipt to B's ``_no_run`` bucket rather than silently falling
+    back to either A's env-selected run or B's newest run.
+    """
+    invocation_repo = isolated_repo.parent / f"{isolated_repo.name}_foreign_handle"
+    invocation_repo.mkdir()
+    (invocation_repo / ".git").mkdir()
+    server_run = start_run(isolated_repo, agent="server-cwd")
+    invocation_run = start_run(invocation_repo, agent="invocation-root")
+    monkeypatch.setenv("ROAM_RUN_ID", server_run.run_id)
+
+    wrapped = _register_sensitive(monkeypatch, "stub_p03_foreign_env")
+    wrapped(root=str(invocation_repo), symbol="foo")
+
+    no_run_receipts = list((invocation_repo / ".roam" / "mcp_receipts" / "_no_run").glob("*.json"))
+    assert len(no_run_receipts) == 1
+    receipt = json.loads(no_run_receipts[0].read_text(encoding="utf-8"))
+    assert receipt["run_event_id"] is None
+    assert not (invocation_repo / ".roam" / "mcp_receipts" / server_run.run_id).exists()
+    assert not (invocation_repo / ".roam" / "mcp_receipts" / invocation_run.run_id).exists()
+    assert not (isolated_repo / ".roam" / "mcp_receipts").exists()
+    assert [
+        event for event in read_run_events(isolated_repo, server_run.run_id) if event.get("action") == "mcp_receipt"
+    ] == []
+    assert [
+        event
+        for event in read_run_events(invocation_repo, invocation_run.run_id)
+        if event.get("action") == "mcp_receipt"
+    ] == []
+
+
+def test_foreign_env_run_id_cannot_contaminate_omitted_root(isolated_repo, monkeypatch) -> None:
+    """Omitted root still scopes process-global run attribution to server CWD."""
+    foreign_repo = isolated_repo.parent / f"{isolated_repo.name}_foreign_cwd_handle"
+    foreign_repo.mkdir()
+    (foreign_repo / ".git").mkdir()
+    cwd_run = start_run(isolated_repo, agent="server-cwd")
+    foreign_run = start_run(foreign_repo, agent="foreign-repo")
+    monkeypatch.setenv("ROAM_RUN_ID", foreign_run.run_id)
+
+    wrapped = _register_sensitive(monkeypatch, "stub_p03_foreign_cwd_env")
+    wrapped(symbol="foo")
+
+    no_run_receipts = list((isolated_repo / ".roam" / "mcp_receipts" / "_no_run").glob("*.json"))
+    assert len(no_run_receipts) == 1
+    receipt = json.loads(no_run_receipts[0].read_text(encoding="utf-8"))
+    assert receipt["run_event_id"] is None
+    assert not (isolated_repo / ".roam" / "mcp_receipts" / foreign_run.run_id).exists()
+    assert not (isolated_repo / ".roam" / "mcp_receipts" / cwd_run.run_id).exists()
+    assert not (foreign_repo / ".roam" / "mcp_receipts").exists()
+    assert [
+        event for event in read_run_events(isolated_repo, cwd_run.run_id) if event.get("action") == "mcp_receipt"
+    ] == []
+    assert [
+        event for event in read_run_events(foreign_repo, foreign_run.run_id) if event.get("action") == "mcp_receipt"
+    ] == []
+
+
+def test_inactive_env_run_id_is_not_attributed_to_explicit_root(isolated_repo, monkeypatch) -> None:
+    """A repo-local but completed handle is not an active evidence target."""
+    invocation_repo = isolated_repo.parent / f"{isolated_repo.name}_inactive_handle"
+    invocation_repo.mkdir()
+    (invocation_repo / ".git").mkdir()
+    completed_run = start_run(invocation_repo, agent="completed-run")
+    end_run(invocation_repo, completed_run.run_id)
+    monkeypatch.setenv("ROAM_RUN_ID", completed_run.run_id)
+
+    wrapped = _register_sensitive(monkeypatch, "stub_p03_inactive_env")
+    wrapped(root=str(invocation_repo), symbol="foo")
+
+    no_run_receipts = list((invocation_repo / ".roam" / "mcp_receipts" / "_no_run").glob("*.json"))
+    assert len(no_run_receipts) == 1
+    receipt = json.loads(no_run_receipts[0].read_text(encoding="utf-8"))
+    assert receipt["run_event_id"] is None
+    assert not (invocation_repo / ".roam" / "mcp_receipts" / completed_run.run_id).exists()
+    assert [
+        event
+        for event in read_run_events(invocation_repo, completed_run.run_id)
+        if event.get("action") == "mcp_receipt"
+    ] == []
+
+
+def test_explicit_root_rejects_symlinked_ledger_target(isolated_repo, monkeypatch) -> None:
+    """An active run cannot redirect its MCP HMAC event through a symlink."""
+    invocation_repo = isolated_repo.parent / f"{isolated_repo.name}_ledger_symlink"
+    invocation_repo.mkdir()
+    (invocation_repo / ".git").mkdir()
+    invocation_run = start_run(invocation_repo, agent="symlink-ledger")
+    events_path = run_dir(invocation_repo, invocation_run.run_id) / "events.jsonl"
+    outside = isolated_repo.parent / f"{isolated_repo.name}_outside_events.jsonl"
+    outside.write_text("sentinel\n", encoding="utf-8")
+    events_path.unlink()
+    try:
+        events_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"file symlinks unavailable: {exc}")
+    monkeypatch.setenv("ROAM_RUN_ID", invocation_run.run_id)
+
+    wrapped = _register_sensitive(monkeypatch, "stub_p03_ledger_symlink")
+    wrapped(root=str(invocation_repo), symbol="foo")
+
+    assert outside.read_text(encoding="utf-8") == "sentinel\n"
+    no_run_receipts = list((invocation_repo / ".roam" / "mcp_receipts" / "_no_run").glob("*.json"))
+    assert len(no_run_receipts) == 1
+    receipt = json.loads(no_run_receipts[0].read_text(encoding="utf-8"))
+    assert receipt["run_event_id"] is None
+    assert not (invocation_repo / ".roam" / "mcp_receipts" / invocation_run.run_id).exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not permit unlinking this open ledger handle")
+def test_ledger_path_swap_during_append_never_writes_through_alias(isolated_repo, monkeypatch) -> None:
+    """The final append targets its pinned inode, not a raced hardlink path."""
+    import roam.mcp_server as m
+
+    run = start_run(isolated_repo, agent="append-race")
+    monkeypatch.setenv("ROAM_RUN_ID", run.run_id)
+    events_path = run_dir(isolated_repo, run.run_id) / "events.jsonl"
+    outside = isolated_repo.parent / f"{isolated_repo.name}_append_race_outside.jsonl"
+    outside.write_bytes(b"")
+    real_write = os.write
+    raced = False
+
+    def _swap_then_write(fd: int, payload: bytes) -> int:
+        nonlocal raced
+        if not raced:
+            raced = True
+            events_path.unlink()
+            os.link(outside, events_path)
+        return real_write(fd, payload)
+
+    monkeypatch.setattr(m.os, "write", _swap_then_write)
+    result = _register_sensitive(monkeypatch, "stub_p03_append_race")()
+
+    assert result["summary"]["verdict"] == "ok"
+    assert raced is True
+    assert outside.read_bytes() == b""
+    receipt_files = list((isolated_repo / ".roam" / "mcp_receipts" / run.run_id).glob("*.json"))
+    assert len(receipt_files) == 1
+    assert [event for event in read_run_events(isolated_repo, run.run_id) if event.get("action") == "mcp_receipt"] == []
 
 
 # ---------------------------------------------------------------------------

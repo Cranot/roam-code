@@ -45,18 +45,18 @@ permissions:
   pull-requests: write
 jobs:
   roam:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+      # Resolve v13.10.0 after release and pin its reviewed 40-character SHA.
+      - uses: Cranot/roam-code@v13.10.0
         with:
+          version: "13.10.0"
+          commands: "fitness pr-risk"
           python-version: "3.12"
-      - run: pip install roam-code
-      - run: roam index
-      - run: roam fitness
-      - run: roam pr-risk --json
 """
 
 # Conservative .roamignore template — every line commented out so the

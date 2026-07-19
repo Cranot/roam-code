@@ -86,6 +86,17 @@ class TestCiSetupText:
         result = invoke_cli(cli_runner, ["ci-setup", "--platform", "github"], cwd=ci_project)
         assert "roam" in result.output.lower()
 
+    def test_github_template_pins_runner_checkout_and_roam_release(self, cli_runner, ci_project, monkeypatch):
+        monkeypatch.chdir(ci_project)
+        result = invoke_cli(cli_runner, ["ci-setup", "--platform", "github"], cwd=ci_project)
+        assert result.exit_code == 0, result.output
+        assert "runs-on: ubuntu-24.04" in result.output
+        assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in result.output
+        assert "persist-credentials: false" in result.output
+        assert "Cranot/roam-code@v13.10.0" in result.output
+        assert "@main" not in result.output
+        assert "ubuntu-latest" not in result.output
+
     def test_auto_detect_with_github_marker(self, cli_runner, ci_project, monkeypatch):
         monkeypatch.chdir(ci_project)
         gh = ci_project / ".github" / "workflows"

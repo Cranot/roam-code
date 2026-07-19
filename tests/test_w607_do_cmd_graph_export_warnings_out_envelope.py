@@ -725,8 +725,12 @@ def test_pattern_2_silent_fallback_eliminated_on_do_degraded_path(cli_runner, gr
     )
     # Verdict must NOT contain default-success vocabulary.
     verdict = (summary.get("verdict") or "").lower()
+    # The verdict embeds the caller-selected output path.  Remove that exact
+    # data value before scanning semantic verdict language so a workspace such
+    # as ``D:\\Safe\\...`` cannot masquerade as a silent-SAFE claim.
+    semantic_verdict = verdict.replace(str(out).lower(), "<output-path>")
     for forbidden in ("safe", "passed", "all clear"):
-        assert forbidden not in verdict, (
+        assert forbidden not in semantic_verdict, (
             f"verdict contains default-success vocabulary {forbidden!r} -- "
             f"Pattern-2 silent-fallback violation; got {verdict!r}"
         )

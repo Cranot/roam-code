@@ -234,6 +234,7 @@ def test_pr_replay_evidence_contains_findings_from_persist(tmp_path):
     # contract from CLAUDE.md Pattern 3.
     for f in findings:
         assert "detector" in f, f"finding without detector field: {f}"
+        assert f.get("source_detector") == f["detector"]
 
 
 # ---------------------------------------------------------------------------
@@ -1589,6 +1590,21 @@ def test_pr_replay_q8_scores_complete_with_real_approval():
 # ---------------------------------------------------------------------------
 
 
+def test_pr_replay_detector_scope_is_deterministic_policy_floor():
+    """A fresh replay records detector selection without claiming pass/fail."""
+    from roam.commands import cmd_pr_replay
+    from roam.evidence.policy import PolicyDecision
+
+    row = cmd_pr_replay._pr_replay_detector_policy_decision()
+
+    assert row["rule_id"] == "pr-replay:detector-scope"
+    assert row["decision"] == "not_evaluated"
+    assert row["evidence_ref"] == "pr-replay:detector-scope"
+    assert row["scope"] == "current_roam_detector_set"
+    assert row.get("provenance")
+    assert PolicyDecision.from_dict(row).decision == "not_evaluated"
+
+
 def _make_repo_with_dotroam(tmp_path):
     """Create a fixture repo with a ``.roam/`` directory; return repo root."""
     repo = tmp_path / "fake-repo"
@@ -1787,7 +1803,7 @@ def test_w447_pr_replay_lease_dir_missing_warns_when_mode_expects_leases(monkeyp
 
 
 def test_pr_replay_forwards_extra_policy_decisions_to_collector(monkeypatch, tmp_path):
-    """The dispatcher merges all three gatherers into ``extra_policy_decisions``.
+    """The dispatcher merges its policy floor plus all three gatherers.
 
     Stubs every gatherer to return controlled outputs and asserts the
     collector receives the concatenated list as the new kwarg. This pins
@@ -1878,12 +1894,14 @@ def test_pr_replay_forwards_extra_policy_decisions_to_collector(monkeypatch, tmp
         generated_at="2026-05-14 00:00 UTC",
     )
     extras = capture.get("extra_policy_decisions") or []
-    assert len(extras) == 3, (
-        f"expected 3 forwarded rows (1 constitution + 1 permit + 1 lease), got {len(extras)}: {extras!r}"
+    assert len(extras) == 4, (
+        "expected 4 forwarded rows (detector scope + 1 constitution + "
+        f"1 permit + 1 lease), got {len(extras)}: {extras!r}"
     )
     rule_ids = [row["rule_id"] for row in extras]
-    # Stable order: constitution first, permits second, leases last.
+    # Stable order: replay policy floor, constitution, permits, leases.
     assert rule_ids == [
+        "pr-replay:detector-scope",
         "constitution:before_edit",
         "permit:p1",
         "lease:l1",

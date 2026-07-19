@@ -430,21 +430,12 @@ class TestW805HHHHHInvariantsPreserved:
         )
 
     def test_cmd_verify_still_consumes_shared_helper(self):
-        """Source-level: cmd_verify line 706 still calls
-        ``get_changed_files(root)`` (W805-EEEEE W978-precondition)."""
+        """Source-level: verify retains failure-aware status discovery."""
         src = (Path(__file__).resolve().parent.parent / "src" / "roam" / "commands" / "cmd_verify.py").read_text(
             encoding="utf-8"
         )
-        assert "from roam.commands.changed_files import" in src, (
-            "W805-JJJJJ sister cross-check: cmd_verify must still import "
-            "from roam.commands.changed_files (W805-EEEEE W978-"
-            "precondition)."
-        )
-        assert "get_changed_files(root)" in src, (
-            "W805-JJJJJ sister cross-check: cmd_verify must still call "
-            "get_changed_files(root) on the default-branch; if "
-            "refactored, graduate the W805-EEEEE xfail-strict pins."
-        )
+        assert "def _discover_verify_targets(root: Path) -> dict:" in src
+        assert "_discover_verify_targets(root)" in src
 
     def test_cmd_why_slow_signature_bug_still_present(self):
         """Source-level: cmd_why_slow still has the broken ``base=``

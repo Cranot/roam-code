@@ -184,6 +184,15 @@ class TestInitSideEffects:
         assert result.exit_code == 0
         workflow = fresh_project / ".github" / "workflows" / "roam.yml"
         assert workflow.exists(), "--with-ci=github should create the workflow file"
+        content = workflow.read_text(encoding="utf-8")
+        assert "runs-on: ubuntu-24.04" in content
+        assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in content
+        assert "persist-credentials: false" in content
+        assert "Cranot/roam-code@v13.10.0" in content
+        assert 'version: "13.10.0"' in content
+        assert "@main" not in content
+        assert "ubuntu-latest" not in content
+        assert "pip install" not in content
 
     def test_roamignore_template_created(self, cli_runner, fresh_project, monkeypatch):
         """G14: starter .roamignore template is written when absent.

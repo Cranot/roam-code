@@ -210,7 +210,7 @@ def _pair_classify(pair: dict) -> tuple[str, str]:
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

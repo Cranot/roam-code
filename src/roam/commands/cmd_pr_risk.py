@@ -881,7 +881,7 @@ def _minor_contributor_risk(conn, author, changed_files):
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core", "review"),
-    side_effect=False,
+    side_effect=True,
     task_required=False,
     destructive=False,
     stale_sensitive=True,

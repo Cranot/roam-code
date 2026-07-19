@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -61,7 +62,14 @@ def test_w149_telemetry_off_thread_writes_eventually(tmp_path):
     """Worker thread eventually drains the queue + writes to file."""
     log_path = str(tmp_path / "compile-runs.jsonl")
     M._ensure_telemetry_worker()
-    M._TELEMETRY_QUEUE.put((log_path, '{"x":1}\n'))
+    row = {
+        "ts": time.strftime("%Y-%m-%dT%H:00:00Z", time.gmtime()),
+        "procedure": "test",
+        "art_label": "full",
+        "prefetched_keys": [],
+        "cache_hit": False,
+    }
+    M._TELEMETRY_QUEUE.put((log_path, json.dumps(row) + "\n"))
     # Worker reads with up to 5s timeout but processes immediately when item available
     for _ in range(50):
         if os.path.exists(log_path):
@@ -69,7 +77,10 @@ def test_w149_telemetry_off_thread_writes_eventually(tmp_path):
         time.sleep(0.05)
     assert os.path.exists(log_path)
     with open(log_path) as fh:
-        assert fh.read().strip() == '{"x":1}'
+        written = json.loads(fh.read())
+    assert written["schema_version"] == M._COMPILE_TELEMETRY_SCHEMA_VERSION
+    assert written["procedure"] == "test"
+    assert M._ensure_owner_only_file(log_path)
 
 
 def test_w147_cap_enforced_lru(tmp_path):

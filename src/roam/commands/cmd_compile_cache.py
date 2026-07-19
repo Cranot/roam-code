@@ -65,6 +65,7 @@ def _open_db(root: str) -> sqlite3.Connection | None:
         "roam compile-cache clear --stale",
     ),
     tags=("planning", "compiler", "cache"),
+    side_effect=True,
 )
 def compile_cache() -> None:
     """Manage the persistent envelope cache."""
@@ -642,6 +643,7 @@ def _emit_build_summary(summary: dict, json_mode: bool) -> None:
     outputs=("summary_envelope",),
     examples=("roam compile-cache clear --stale",),
     tags=("planning", "compiler", "cache"),
+    side_effect=True,
 )
 def cache_clear(ctx: click.Context, root: str, drop_all: bool, drop_stale: bool) -> None:
     """Drop rows from the cache."""
@@ -766,6 +768,7 @@ def cache_clear(ctx: click.Context, root: str, drop_all: bool, drop_stale: bool)
     outputs=("summary_envelope",),
     examples=("roam compile-cache evict --diff HEAD~5", "roam compile-cache evict --diff main"),
     tags=("planning", "compiler", "cache", "diff-aware"),
+    side_effect=True,
 )
 def cache_evict_diff(ctx: click.Context, root: str, diff_ref: str) -> None:
     """W78 — evict cache rows whose deps changed since a git ref."""
@@ -867,6 +870,7 @@ def cache_evict_diff(ctx: click.Context, root: str, diff_ref: str) -> None:
         "roam compile-cache build --top-misses --miss-limit 20",
     ),
     tags=("planning", "compiler", "cache"),
+    side_effect=True,
 )
 def cache_build(
     ctx: click.Context, root: str, corpus_path: str | None, top_misses: bool, miss_limit: int, all_files: bool

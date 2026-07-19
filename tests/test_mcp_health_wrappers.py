@@ -32,6 +32,7 @@ def _disable_cold_start_guard(monkeypatch):
     ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
     """
     monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
     yield
 
 

@@ -326,6 +326,8 @@ from roam.capability import roam_capability
     ],
     tags=["compliance", "eu-ai-act", "audit", "phase0"],
     ai_safe=True,
+    side_effect=True,
+    destructive=False,
     requires_index=False,
     since="12.40",
 )

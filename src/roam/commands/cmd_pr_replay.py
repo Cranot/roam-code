@@ -1212,6 +1212,27 @@ def _producer_provenance(detail: str) -> str | None:
         return None
 
 
+def _pr_replay_detector_policy_decision() -> dict:
+    """Describe the detector-scope policy selected by every replay.
+
+    PR Replay always evaluates the commit window with the currently
+    installed Roam detector set.  That selection is a policy fact even when
+    the repository has no optional rules, constitution, permits, leases, or
+    audit trail.  Record it as ``not_evaluated`` because the detector set is
+    not itself an allow/deny gate; per-detector findings carry the outcomes.
+    """
+    entry: dict = {
+        "rule_id": "pr-replay:detector-scope",
+        "decision": "not_evaluated",
+        "evidence_ref": "pr-replay:detector-scope",
+        "scope": "current_roam_detector_set",
+    }
+    provenance = _producer_provenance("pr_replay_detector_scope")
+    if provenance is not None:
+        entry["provenance"] = provenance
+    return entry
+
+
 def _constitution_policy_decision(gate_id, commands, prov: str | None) -> dict | None:
     if not isinstance(gate_id, str) or not gate_id:
         return None
@@ -1782,7 +1803,11 @@ def _gather_pr_replay_producer_inputs(
         [],
         lambda: _gather_lease_policy_decisions(pre_warnings),
     )
-    extra_policy_decisions: list[dict] = []
+    # The replay's detector-set selection is the deterministic policy floor;
+    # repository-local authority decisions are additive.  This keeps Q6
+    # honest and stable on a fresh checkout instead of depending on incidental
+    # ``.roam/`` history.
+    extra_policy_decisions: list[dict] = [_pr_replay_detector_policy_decision()]
     extra_policy_decisions.extend(constitution_policy_decisions)
     extra_policy_decisions.extend(permit_policy_decisions)
     extra_policy_decisions.extend(lease_policy_decisions)
@@ -2211,6 +2236,28 @@ def _collect_change_evidence(
 
     # W272: merge producer-derived env_refs (workspace ref) into the packet.
     packet = _merge_env_refs_into_packet(packet, w272_env_refs_tuple)
+
+    # PR Replay's public evidence contract predates the registry's canonical
+    # ``source_detector`` vocabulary and promises ``detector`` on every
+    # detector-shaped finding. Producer envelopes now arrive through both
+    # vocabularies (notably vuln-reach uses ``source_detector``), so preserve
+    # both explicit aliases at this adapter boundary. This avoids forcing
+    # downstream consumers to guess which producer supplied a row.
+    detector_aliased_findings: list[dict] = []
+    detector_aliases_changed = False
+    for raw_finding in packet.findings:
+        finding = dict(raw_finding)
+        detector = finding.get("detector")
+        source_detector = finding.get("source_detector")
+        if detector and not source_detector:
+            finding["source_detector"] = detector
+            detector_aliases_changed = True
+        elif source_detector and not detector:
+            finding["detector"] = source_detector
+            detector_aliases_changed = True
+        detector_aliased_findings.append(finding)
+    if detector_aliases_changed:
+        packet = dataclasses.replace(packet, findings=tuple(detector_aliased_findings))
 
     # Stable per-(range, generation moment) evidence_id — overrides the
     # collector-derived one so the value stays human-readable for tickets.
@@ -4061,6 +4108,7 @@ def _emit_pr_replay_json_output(
     ai_safe=True,
     requires_index=True,
     since="12.48",
+    side_effect=True,
 )
 @click.command(name="pr-replay")
 @click.option(

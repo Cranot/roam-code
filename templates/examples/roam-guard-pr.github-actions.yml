@@ -19,65 +19,104 @@ on:
   pull_request:
     branches: [main]
 
+permissions: {}
+
+concurrency:
+  group: roam-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   roam-guard:
-    runs-on: ubuntu-latest
+    name: Roam Guard verdict
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       checks: write          # required to POST a Check Run
-      pull-requests: write   # optional, only if you also post a PR comment
 
     steps:
       - name: Checkout PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
 
-      - name: Install roam-code
-        run: pip install roam-code
+      - name: Install the exact reviewed Roam release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -e .roam-guard-venv ] || [ -L .roam-guard-venv ]; then
+            echo '::error::Reserved path .roam-guard-venv already exists' >&2
+            exit 1
+          fi
+          python -I -m venv .roam-guard-venv
+          .roam-guard-venv/bin/python -I -m pip --isolated --disable-pip-version-check install \
+            --no-input --no-cache-dir --only-binary=:all: 'roam-code==13.10.0'
+          .roam-guard-venv/bin/python -I -m pip check
+          .roam-guard-venv/bin/python -I -c \
+            "from importlib.metadata import version; actual = version('roam-code'); raise SystemExit(0 if actual == '13.10.0' else 1)"
 
       - name: Index the repo
-        run: roam init --quiet || true
+        shell: bash
+        run: .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam init --quiet
 
       - name: Run Roam Guard verdict
         id: guard
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -uo pipefail
           set +e
           # --ci is shorthand for --strict --init-if-missing --format markdown
           # Output is markdown; exit code drives the gate (5 = blocked).
-          roam guard-pr --ci --output guard.md
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam guard-pr --ci --output guard.md
+          status=$?
           set -e
+          case "${status}" in
+            0|4|5) ;;
+            *)
+              echo "::error::Roam Guard failed before producing a verdict (exit ${status})" >&2
+              exit "${status}"
+              ;;
+          esac
+          if [ ! -s guard.md ]; then
+            echo '::error::Roam Guard did not produce required non-empty guard.md evidence' >&2
+            exit 1
+          fi
+          .roam-guard-venv/bin/python -I -c \
+            "from pathlib import Path; text = Path('guard.md').read_text(encoding='utf-8'); raise SystemExit(0 if text.startswith('## ') and 'Roam Guard verdict:' in text else 1)"
+          printf 'exit_code=%s\n' "${status}" >> "${GITHUB_OUTPUT}"
 
       - name: Post Check Run to GitHub
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          TARGET_SHA: ${{ github.event.pull_request.head.sha }}
+          DETAILS_URL: ${{ github.event.pull_request.html_url }}
         run: |
-          roam guard-pr \
+          set -euo pipefail
+          .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam guard-pr \
             --skip-collect \
             --format markdown \
             --post-check \
-            --gh-repo ${{ github.repository }} \
-            --gh-sha ${{ github.event.pull_request.head.sha }} \
+            --gh-repo "${TARGET_REPOSITORY}" \
+            --gh-sha "${TARGET_SHA}" \
             --gh-name "Roam Guard" \
-            --details-url ${{ github.event.pull_request.html_url }}
+            --details-url "${DETAILS_URL}"
 
       - name: Upload guard.md as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: roam-guard-verdict
           path: guard.md
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       - name: Fail the build on blocked verdict
         if: steps.guard.outputs.exit_code == '5'

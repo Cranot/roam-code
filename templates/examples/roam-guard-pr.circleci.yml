@@ -2,37 +2,85 @@
 #
 # Copy into `.circleci/config.yml`. The `roam-guard` job runs on every
 # branch push; filter to PR branches in the workflow if you prefer.
+#
+# The image tag is retained for readability. The OCI index digest selects the
+# immutable bytes. It was obtained from Docker Hub's registry and recomputed
+# over the returned manifest bytes on 2026-07-18.
 
 version: 2.1
 
 jobs:
   roam-guard:
     docker:
-      - image: cimg/python:3.12
+      - image: cimg/python:3.12.13@sha256:9c796c23c84e84a66a964acb508d39dc5433c81a47e07efd56dccbbc2427e07c
     steps:
       - checkout
       - run:
-          name: Install roam-code
-          command: pip install --quiet roam-code
-      - run:
-          name: Index repo
-          command: roam init --quiet || true
-      - run:
-          name: Roam Guard verdict (gates the build)
+          name: Create isolated, exact Roam runtime
           command: |
-            # --ci is shorthand for --strict + --init-if-missing + --format markdown.
-            # Exit codes: pass=0, needs_review=4, blocked=5.
-            roam guard-pr --ci --output guard.md
+            set -eu
+            if [ -e .roam-guard-venv ] || [ -L .roam-guard-venv ]; then
+              printf '%s\n' 'ERROR: reserved path .roam-guard-venv already exists' >&2
+              exit 1
+            fi
+            python -I -m venv .roam-guard-venv
+            PATH='/usr/local/bin:/usr/bin:/bin'
+            export PATH
+            .roam-guard-venv/bin/python -I -m pip --isolated --disable-pip-version-check install \
+              --no-input --no-cache-dir --only-binary=:all: 'roam-code==13.10.0'
+            .roam-guard-venv/bin/python -I -m pip check
+            .roam-guard-venv/bin/python -I -c "from importlib.metadata import version; actual = version('roam-code'); print(f'roam-code {actual}'); raise SystemExit(0 if actual == '13.10.0' else 1)"
+            git --version
       - run:
-          name: Emit SARIF for downstream tools
-          when: always
-          command: roam proof-bundle --format sarif --output guard.sarif || true
+          name: Produce required Guard evidence and advisory SARIF
+          command: |
+            set -eu
+            PATH='/usr/local/bin:/usr/bin:/bin'
+            export PATH
+            if [ -e roam-guard-artifacts ] || [ -L roam-guard-artifacts ]; then
+              printf '%s\n' 'ERROR: reserved path roam-guard-artifacts already exists' >&2
+              exit 1
+            fi
+            mkdir -- roam-guard-artifacts
+
+            # Indexing and guard.md are required. Any failure remains fatal.
+            .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam init --quiet
+            set +e
+            .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam guard-pr --ci \
+              --output roam-guard-artifacts/guard.md
+            guard_status=$?
+            set -e
+            if [ ! -s roam-guard-artifacts/guard.md ]; then
+              printf '%s\n' 'ERROR: Roam Guard did not produce required non-empty guard.md evidence' >&2
+              exit 1
+            fi
+            if ! .roam-guard-venv/bin/python -I -c "from pathlib import Path; text = Path('roam-guard-artifacts/guard.md').read_text(encoding='utf-8'); raise SystemExit(0 if text.startswith('## ') and 'Roam Guard verdict:' in text else 1)"; then
+              printf '%s\n' 'ERROR: guard.md is not a structurally valid Roam Guard verdict' >&2
+              exit 1
+            fi
+
+            # SARIF is supplemental. Its status is logged and never replaces
+            # the required Roam Guard exit status (pass=0, review=4, blocked=5).
+            printf '%s\n' 'ADVISORY: SARIF is supplemental and does not affect the Guard gate' >&2
+            set +e
+            .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam proof-bundle \
+              --validate --format sarif \
+              --output roam-guard-artifacts/guard.sarif
+            sarif_status=$?
+            if [ "$sarif_status" -eq 0 ]; then
+              .roam-guard-venv/bin/python -I -c "import json; from pathlib import Path; payload = json.loads(Path('roam-guard-artifacts/guard.sarif').read_text(encoding='utf-8')); runs = payload.get('runs'); first = runs[0] if isinstance(runs, list) and runs else {}; driver = first.get('tool', {}).get('driver', {}); raise SystemExit(0 if payload.get('version') == '2.1.0' and driver.get('name') == 'roam-guard' and isinstance(first.get('results'), list) else 1)"
+              sarif_status=$?
+            fi
+            set -e
+            if [ "$sarif_status" -ne 0 ]; then
+              printf '%s\n' "ADVISORY: SARIF generation or validation failed with status $sarif_status; guard.md remains the required evidence" >&2
+              rm -f -- roam-guard-artifacts/guard.sarif
+            fi
+
+            exit "$guard_status"
       - store_artifacts:
-          path: guard.md
-          destination: roam-guard.md
-      - store_artifacts:
-          path: guard.sarif
-          destination: roam-guard.sarif
+          path: roam-guard-artifacts
+          destination: roam-guard
 
 workflows:
   version: 2

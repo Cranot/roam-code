@@ -55,11 +55,15 @@ disclaimer "does not certify" is the one allowed negation). See
 from __future__ import annotations
 
 import json as _json
+import os as _os
+import subprocess as _subprocess
+import sys as _sys
+import time as _time
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 import click
-from click.testing import CliRunner
 
 from roam.capability import roam_capability
 
@@ -155,36 +159,143 @@ _REPORT_TYPES: dict[str, dict] = {
 
 
 # ---------------------------------------------------------------------------
-# Primitive invocation — run ``roam --json <cmd>`` in-process, return the
-# parsed envelope. Mirror of ``cmd_pr_replay._run_postmortem``: never
-# raises, returns ``{}`` on any failure so a renderer can still emit an
-# honest "not available" section rather than crashing on the buyer.
+# Primitive invocation — run ``roam --json <cmd>`` in an isolated child,
+# return the parsed envelope. Commands such as ``clones`` create their own
+# process pools; invoking them through Click's in-process ``CliRunner`` can
+# deadlock at the multiprocessing spawn boundary (observed on Windows) and
+# also retains command-global caches across an 11-component report. Literal
+# subprocess argv keeps every component independent and lets the parent bound
+# time, output, and process-tree cleanup.
 # ---------------------------------------------------------------------------
 
 
-def _run_roam_json(args: list[str]) -> dict:
-    """Invoke ``roam --json <args>`` in-process and return the parsed envelope.
+_COMPONENT_TIMEOUT_SECONDS = 180
+_COMPONENT_MAX_OUTPUT_BYTES = 32 * 1024 * 1024
+_COMPONENT_MAX_WORKERS = 3
+_DUE_DILIGENCE_BUDGET_SECONDS = 240
+_DEADLINE_CLEANUP_RESERVE_SECONDS = 15
 
-    Returns ``{}`` on any failure (non-zero exit, empty output, unparseable
-    JSON). Progress-bar / auto-index chrome written to stdout before the
-    JSON payload is stripped by locating the first ``{`` (same defence
-    ``cmd_pr_replay._run_postmortem`` uses for ``roam postmortem``).
+
+def _component_failure(command: str, state: str, detail: str) -> dict:
+    """Return a structured absent-component envelope without raw payloads."""
+    return {
+        "command": command,
+        "status": "hard_failure",
+        "isError": True,
+        "summary": {
+            "verdict": f"{command} evidence unavailable: {detail}",
+            "state": state,
+            "partial_success": True,
+        },
+        "error_code": "COMMAND_FAILED",
+        "error": detail,
+    }
+
+
+def _strict_json_object_pairs(pairs):
+    """Reject ambiguous duplicate keys in a component envelope."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _terminate_component_process_tree(proc: _subprocess.Popen) -> bool:
+    """Terminate a timed-out component and every worker it spawned."""
+    from roam.sibling_patch.replay_gate import _terminate_process_tree
+
+    return _terminate_process_tree(proc)
+
+
+def _component_popen_kwargs() -> dict:
+    """Return cross-platform process-group isolation for component commands."""
+    if _os.name == "nt":
+        return {
+            "creationflags": (
+                getattr(_subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+                | getattr(_subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            )
+        }
+    return {"start_new_session": True}
+
+
+def _run_roam_json(args: list[str], *, deadline: float | None = None) -> dict:
+    """Invoke ``roam --json <args>`` in an isolated, bounded child process.
+
+    Never raises for an expected component failure. Progress / auto-index
+    chrome before the JSON payload is tolerated by locating the first ``{``;
+    duplicate keys, empty/malformed output, oversized output, launch errors,
+    and timeouts become explicit failure envelopes. A valid non-zero command
+    envelope is preserved because gate exits can carry useful report evidence.
     """
-    from roam.cli import cli
-
-    runner = CliRunner()
+    command = args[0] if args else "component"
+    timeout_seconds: float = _COMPONENT_TIMEOUT_SECONDS
+    deadline_limited = False
+    if deadline is not None:
+        remaining = deadline - _time.monotonic() - _DEADLINE_CLEANUP_RESERVE_SECONDS
+        if remaining <= 0:
+            return _component_failure(
+                command,
+                "report_deadline_exhausted",
+                "report time budget exhausted before component launch",
+            )
+        timeout_seconds = min(timeout_seconds, remaining)
+        deadline_limited = timeout_seconds < _COMPONENT_TIMEOUT_SECONDS
+    argv = [_os.path.realpath(_sys.executable), "-m", "roam", "--json", *args]
+    child_env = dict(_os.environ)
+    child_env["PYTHONUTF8"] = "1"
     try:
-        result = runner.invoke(cli, ["--json", *args], catch_exceptions=True)
-    except Exception:  # noqa: BLE001 — the report must not crash on one section
-        return {}
-    text = result.output or ""
+        proc = _subprocess.Popen(
+            argv,
+            cwd=str(Path.cwd()),
+            env=child_env,
+            shell=False,
+            stdin=_subprocess.DEVNULL,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.PIPE,
+            close_fds=True,
+            **_component_popen_kwargs(),
+        )
+    except OSError as exc:
+        return _component_failure(command, "component_unavailable", f"runtime launch failed ({type(exc).__name__})")
+
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_seconds)
+    except _subprocess.TimeoutExpired:
+        tree_terminated = _terminate_component_process_tree(proc)
+        try:
+            proc.communicate(timeout=5)
+        except (OSError, _subprocess.TimeoutExpired):
+            pass
+        cleanup = "process tree terminated" if tree_terminated else "process-tree cleanup incomplete"
+        state = "report_deadline_exhausted" if deadline_limited else "component_timeout"
+        detail = (
+            "report time budget exhausted" if deadline_limited else f"timed out after {_COMPONENT_TIMEOUT_SECONDS}s"
+        )
+        return _component_failure(command, state, f"{detail}; {cleanup}")
+
+    if len(stdout) + len(stderr) > _COMPONENT_MAX_OUTPUT_BYTES:
+        return _component_failure(
+            command,
+            "component_output_oversized",
+            f"output exceeded {_COMPONENT_MAX_OUTPUT_BYTES} bytes",
+        )
+    text = stdout.decode("utf-8", "replace")
     brace = text.find("{")
     if brace < 0:
-        return {}
+        return _component_failure(command, "component_empty_output", "command emitted no JSON envelope")
     try:
-        return _json.loads(text[brace:])
-    except _json.JSONDecodeError:
-        return {}
+        parsed = _json.loads(text[brace:], object_pairs_hook=_strict_json_object_pairs)
+    except (_json.JSONDecodeError, ValueError):
+        return _component_failure(command, "component_malformed_output", "command emitted invalid JSON")
+    if not isinstance(parsed, dict):
+        return _component_failure(command, "component_malformed_output", "command emitted a non-object envelope")
+    if proc.returncode:
+        meta = parsed.get("_meta") if isinstance(parsed.get("_meta"), dict) else {}
+        parsed["_meta"] = {**meta, "service_report_component_exit_code": proc.returncode}
+    return parsed
 
 
 def _summary(env: dict) -> dict:
@@ -241,7 +352,15 @@ _DISCLAIMER_BANNER = (
 
 
 def _header(
-    *, type_meta: dict, report_type: str, client: str | None, index_sha: str | None, generated_at: str, subject: str
+    *,
+    type_meta: dict,
+    report_type: str,
+    client: str | None,
+    index_sha: str | None,
+    generated_at: str,
+    subject: str,
+    component_failures: tuple[str, ...] = (),
+    component_degraded: tuple[str, ...] = (),
 ) -> list[str]:
     """Build the shared report header block."""
     out: list[str] = []
@@ -261,6 +380,20 @@ def _header(
     out.append("")
     out.append(_DISCLAIMER_BANNER)
     out.append("")
+    if component_failures:
+        out.append(
+            "> **Partial report:** required evidence is unavailable for "
+            + ", ".join(f"`{name}`" for name in component_failures)
+            + ". Treat affected conclusions as unresolved."
+        )
+        out.append("")
+    elif component_degraded:
+        out.append(
+            "> **Degraded evidence:** partial results were reported by "
+            + ", ".join(f"`{name}`" for name in component_degraded)
+            + ". Review those component envelopes before acting."
+        )
+        out.append("")
     out.append(type_meta["purpose_line"])
     out.append("")
     return out
@@ -322,21 +455,89 @@ def _footer(*, report_type: str, generated_at: str, extra_scope: list[str]) -> l
 # ---------------------------------------------------------------------------
 
 
+def _gather_components(
+    components: tuple[tuple[str, list[str]], ...],
+    *,
+    max_workers: int = _COMPONENT_MAX_WORKERS,
+    deadline: float | None = None,
+) -> dict:
+    """Run independent read-side components concurrently, preserving order."""
+    if not components:
+        return {}
+    worker_count = min(max(1, max_workers), len(components))
+    if worker_count <= 1:
+        return {key: _run_roam_json(args, deadline=deadline) for key, args in components}
+
+    results: dict[str, dict] = {}
+    with _ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="roam-service-report") as pool:
+        jobs = [(key, pool.submit(_run_roam_json, args, deadline=deadline)) for key, args in components]
+        for key, future in jobs:
+            try:
+                results[key] = future.result()
+            except Exception as exc:  # noqa: BLE001 — one component must not erase the report
+                results[key] = _component_failure(
+                    key.replace("_", "-"),
+                    "component_internal_failure",
+                    f"component orchestration failed ({type(exc).__name__})",
+                )
+    return results
+
+
+_DUE_DILIGENCE_COMPONENTS: tuple[tuple[str, list[str]], ...] = (
+    ("health", ["health"]),
+    ("bus_factor", ["bus-factor"]),
+    ("complexity", ["complexity"]),
+    ("dead", ["dead"]),
+    ("clones", ["clones"]),
+    ("smells", ["smells"]),
+    ("test_pyramid", ["test-pyramid"]),
+    ("sbom", ["sbom"]),
+    ("supply_chain", ["supply-chain"]),
+    ("vulns", ["vulns"]),
+    ("arch_drift", ["architecture-drift"]),
+)
+
+
 def _gather_due_diligence() -> dict:
     """Run the due-diligence primitives, return {command: envelope}."""
-    return {
-        "health": _run_roam_json(["health"]),
-        "bus_factor": _run_roam_json(["bus-factor"]),
-        "complexity": _run_roam_json(["complexity"]),
-        "dead": _run_roam_json(["dead"]),
-        "clones": _run_roam_json(["clones"]),
-        "smells": _run_roam_json(["smells"]),
-        "test_pyramid": _run_roam_json(["test-pyramid"]),
-        "sbom": _run_roam_json(["sbom"]),
-        "supply_chain": _run_roam_json(["supply-chain"]),
-        "vulns": _run_roam_json(["vulns"]),
-        "arch_drift": _run_roam_json(["architecture-drift"]),
-    }
+    # Cost-aware scheduling matters more than theoretical parallelism here.
+    # ``clones`` owns a ProcessPoolExecutor and must run exclusively; placing
+    # it beside the source scanners oversubscribes CPUs and measured slower
+    # than serial execution. Lightweight DB summaries can overlap, followed
+    # by two compatible source scans and two dependency scans. Reconstruct in
+    # registry order so report JSON stays deterministic.
+    by_key = dict(_DUE_DILIGENCE_COMPONENTS)
+    gathered: dict[str, dict] = {}
+    deadline = _time.monotonic() + _DUE_DILIGENCE_BUDGET_SECONDS
+    gathered.update(
+        _gather_components(
+            tuple((key, by_key[key]) for key in ("health", "bus_factor", "complexity", "test_pyramid")),
+            deadline=deadline,
+        )
+    )
+    gathered.update(_gather_components((("clones", by_key["clones"]),), max_workers=1, deadline=deadline))
+    gathered.update(
+        _gather_components(
+            tuple((key, by_key[key]) for key in ("dead", "smells")),
+            max_workers=2,
+            deadline=deadline,
+        )
+    )
+    gathered.update(
+        _gather_components(
+            tuple((key, by_key[key]) for key in ("sbom", "vulns")),
+            max_workers=2,
+            deadline=deadline,
+        )
+    )
+    gathered.update(
+        _gather_components(
+            tuple((key, by_key[key]) for key in ("supply_chain", "arch_drift")),
+            max_workers=2,
+            deadline=deadline,
+        )
+    )
+    return {key: gathered[key] for key, _args in _DUE_DILIGENCE_COMPONENTS}
 
 
 def _render_due_diligence(*, env: dict, meta: dict) -> str:
@@ -496,12 +697,14 @@ def _render_due_diligence(*, env: dict, meta: dict) -> str:
 
 
 def _gather_ai_readiness() -> dict:
-    return {
-        "readiness": _run_roam_json(["ai-readiness"]),
-        "ai_ratio": _run_roam_json(["ai-ratio"]),
-        "agent_score": _run_roam_json(["agent-score"]),
-        "mode": _run_roam_json(["mode"]),
-    }
+    return _gather_components(
+        (
+            ("readiness", ["ai-readiness"]),
+            ("ai_ratio", ["ai-ratio"]),
+            ("agent_score", ["agent-score"]),
+            ("mode", ["mode"]),
+        )
+    )
 
 
 def _render_ai_readiness(*, env: dict, meta: dict) -> str:
@@ -619,14 +822,16 @@ def _render_ai_readiness(*, env: dict, meta: dict) -> str:
 
 
 def _gather_reachability_triage() -> dict:
-    return {
-        "sbom": _run_roam_json(["sbom"]),
-        "supply_chain": _run_roam_json(["supply-chain"]),
-        "vulns": _run_roam_json(["vulns"]),
-        "vuln_reach": _run_roam_json(["vuln-reach"]),
-        "taint": _run_roam_json(["taint"]),
-        "secrets": _run_roam_json(["secrets"]),
-    }
+    return _gather_components(
+        (
+            ("sbom", ["sbom"]),
+            ("supply_chain", ["supply-chain"]),
+            ("vulns", ["vulns"]),
+            ("vuln_reach", ["vuln-reach"]),
+            ("taint", ["taint"]),
+            ("secrets", ["secrets"]),
+        )
+    )
 
 
 def _render_reachability_triage(*, env: dict, meta: dict) -> str:
@@ -906,6 +1111,26 @@ def _headline(report_type: str, env: dict) -> str:
     return "not available"
 
 
+def _component_health(env: dict) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return explicit failed/degraded component names for report disclosure."""
+    failed: list[str] = []
+    degraded: list[str] = []
+    for name, envelope in env.items():
+        if not isinstance(envelope, dict):
+            failed.append(name)
+            continue
+        summary = envelope.get("summary")
+        if not isinstance(summary, dict):
+            failed.append(name)
+            continue
+        status = envelope.get("status")
+        if envelope.get("isError") is True or status == "hard_failure":
+            failed.append(name)
+        elif summary.get("partial_success") is True or status == "soft_failure":
+            degraded.append(name)
+    return tuple(failed), tuple(degraded)
+
+
 # ---------------------------------------------------------------------------
 # Engagement ledger — append-only JSONL next to .roam/index.db. Same file
 # ``cmd_pr_replay`` writes to; the ``kind`` discriminator distinguishes
@@ -967,6 +1192,7 @@ def _record_engagement(
     ai_safe=True,
     requires_index=True,
     since="13.5",
+    side_effect=True,
 )
 @click.command(name="service-report")
 @click.option(
@@ -1075,12 +1301,22 @@ def service_report_cmd(
     index_sha = _git_head_sha()
     subject = client or "target repository"
 
-    # Gather (best-effort — a single failing section returns {} and the
-    # renderer emits an honest "not available" line rather than crashing).
+    # Gather best-effort, but never collapse a failed component into an empty
+    # successful-looking report. Each expected failure is already represented
+    # by a structured component envelope; this outer guard handles only an
+    # unexpected orchestration defect.
     try:
         env = _GATHER[report_type](commit_range)
-    except Exception:  # noqa: BLE001 — the report must survive a bad section
-        env = {}
+    except Exception as exc:  # noqa: BLE001 — the report must survive a bad section
+        env = {
+            report_type: _component_failure(
+                report_type,
+                "report_gather_failure",
+                f"report gathering failed ({type(exc).__name__})",
+            )
+        }
+
+    component_failures, component_degraded = _component_health(env)
 
     meta = {
         "type_meta": type_meta,
@@ -1089,9 +1325,15 @@ def service_report_cmd(
         "index_sha": index_sha,
         "generated_at": generated_at,
         "subject": subject,
+        "component_failures": component_failures,
+        "component_degraded": component_degraded,
     }
     report_md = _render(report_type, env=env, meta=meta, commit_range=commit_range)
     headline = _headline(report_type, env)
+    if component_failures:
+        headline = f"{headline} — partial report: {len(component_failures)} unavailable components"
+    elif component_degraded:
+        headline = f"{headline} — degraded evidence: {len(component_degraded)} partial components"
 
     # --pdf without --output writes the markdown sibling next to the PDF.
     if pdf_path and not output_path:
@@ -1141,6 +1383,16 @@ def service_report_cmd(
                 "pdf_backend": pdf_backend,
                 "engagement_logged_to": str(engagement_record) if engagement_record else None,
                 "sections_present": sorted(k for k, v in env.items() if v),
+                "sections_failed": list(component_failures),
+                "sections_degraded": list(component_degraded),
+                "state": (
+                    "component_failure"
+                    if component_failures
+                    else "component_degraded"
+                    if component_degraded
+                    else "complete"
+                ),
+                "partial_success": bool(component_failures or component_degraded),
             },
             report_markdown=report_md,
             sections=env,

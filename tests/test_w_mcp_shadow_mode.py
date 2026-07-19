@@ -22,6 +22,8 @@ This test pins:
 5. ``ROAM_MODE_DRY_RUN`` parsing accepts the documented truthy set
    (case-insensitive, surrounding whitespace stripped).
 6. A single WARN log line is emitted per dry-run-blocked call.
+7. Explicit global disable is an audited shadow override, not an unenforced
+   ``deny`` receipt.
 """
 
 from __future__ import annotations
@@ -433,19 +435,15 @@ def test_dry_run_env_unset_is_off(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. Dry-run + enforcement OFF → advisory path (deny) unchanged
+# 6. Explicit enforcement disable remains a visible shadow decision
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_with_enforcement_off_is_a_noop(isolated_repo, monkeypatch) -> None:
-    """``ROAM_MODE_DRY_RUN`` only matters when enforcement is ON. With
-    enforcement OFF (the default advisory-shadow path), dry-run is a no-op
-    — the receipt still records the steady-state ``deny`` verdict so
-    auditors see what WOULD have been blocked under enforcement.
-    """
+def test_dry_run_with_explicit_enforcement_disable_is_audited(isolated_repo, monkeypatch) -> None:
+    """The explicit global bypass never records an unenforced deny."""
     monkeypatch.setenv("ROAM_AGENT_MODE", "read_only")
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
     monkeypatch.setenv("ROAM_MODE_DRY_RUN", "1")
-    # ROAM_MODE_ENFORCEMENT intentionally NOT set.
 
     raw = {"command": "shadow_no_enforce", "summary": {"verdict": "ran anyway"}}
     wrapped, call_count = _register_destructive_tool(
@@ -462,7 +460,7 @@ def test_dry_run_with_enforcement_off_is_a_noop(isolated_repo, monkeypatch) -> N
     receipts = _read_receipts(isolated_repo / ".roam" / "mcp_receipts")
     assert len(receipts) == 1
     r = receipts[0]
-    # Advisory path: classic ``deny``, NOT the shadow-mode verdict.
-    assert r["policy_decision"] == "deny"
+    assert r["policy_decision"] == "would_deny_dry_run"
     extra = r.get("extra") or {}
-    assert "shadow_mode" not in extra
+    assert extra.get("shadow_mode") is True
+    assert "ROAM_MODE_ENFORCEMENT=0 emergency override" in extra.get("would_deny_reason", "")

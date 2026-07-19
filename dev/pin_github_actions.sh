@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pin every GitHub Action in .github/workflows/ to a commit SHA.
+# Pin every GitHub Action in .github/workflows/ and action.yml to a commit SHA.
 #
 # Why: floating major tags (@v4, @v5, @v3) let an action publisher
 # silently move HEAD — exactly the supply-chain takeover risk that
@@ -26,10 +26,14 @@ sha_for() {
   gh api "repos/${repo}/commits/${ref}" --jq '.sha'
 }
 
-# Every floating @v* (or @release/v*) reference in the workflows.
+# Include both workflow syntax (``- uses:``) and composite-action syntax
+# (``uses:``). Extract the reference itself rather than a whitespace column:
+# the old ``awk '{print $2}'`` read workflow lines as the literal ``uses:``.
+shopt -s nullglob
+files=(.github/workflows/*.yml .github/workflows/*.yaml action.yml)
 mapfile -t refs < <(
-  grep -hE 'uses:\s+[a-zA-Z0-9_./-]+@[a-zA-Z0-9._/-]+' .github/workflows/*.yml |
-    awk '{print $2}' |
+  grep -hE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[a-zA-Z0-9_./-]+@[a-zA-Z0-9._/-]+' "${files[@]}" |
+    sed -E 's|^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*([^[:space:]#]+).*|\2|' |
     sort -u
 )
 
@@ -46,15 +50,17 @@ for ref in "${refs[@]}"; do
     continue
   fi
 
-  # Replace `@$tag` with `@$sha  # $tag` in every workflow.
-  pinned="@${sha}  # ${tag}"
+  # Replace this complete owner/repo reference only. Replacing a bare ``@v4``
+  # globally can pin unrelated actions to the wrong repository's commit.
+  pinned="${repo}@${sha}  # ${tag}"
+  escaped_ref=$(printf '%s\n' "${ref}" | sed 's/[][\.^$*]/\\&/g')
   echo "pin: $ref -> $pinned"
-  for f in .github/workflows/*.yml; do
+  for f in "${files[@]}"; do
     # macOS sed needs `-i ''`; GNU sed accepts `-i` alone. Detect.
     if sed --version >/dev/null 2>&1; then
-      sed -i "s|@${tag}\b|${pinned}|g" "$f"
+      sed -i "s|${escaped_ref}|${pinned}|g" "$f"
     else
-      sed -i '' "s|@${tag}\b|${pinned}|g" "$f"
+      sed -i '' "s|${escaped_ref}|${pinned}|g" "$f"
     fi
   done
 done

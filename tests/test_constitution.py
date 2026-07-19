@@ -16,6 +16,8 @@ Covers:
 from __future__ import annotations
 
 import builtins
+import json
+import shlex
 import sys
 from pathlib import Path
 
@@ -30,20 +32,35 @@ from conftest import (  # noqa: E402
 )
 
 from roam.constitution.loader import (  # noqa: E402
+    CONSTITUTION_GENERATOR_FORMAT_VERSION,
+    CONSTITUTION_GENERATOR_NAME,
     Constitution,
+    ConstitutionConcurrentUpdate,
+    ConstitutionUpgradePreviewMismatch,
+    ConstitutionUpgradeRequiresAcceptance,
     _deprecated_commands,
     _known_commands,
     _project_name,
     apply_constitution,
+    assess_constitution_upgrade,
     check_constitution,
     constitution_path,
     init_constitution,
     load_constitution,
+    mode_policy_digest,
+    upgrade_constitution,
 )
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _constitution_commands_run_in_declared_mode(monkeypatch):
+    """This suite tests constitution behavior, not dispatch-mode denials."""
+    monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
+    monkeypatch.delenv("ROAM_MODE_ENFORCEMENT", raising=False)
 
 
 @pytest.fixture
@@ -566,3 +583,273 @@ def test_where_envelope_when_missing(empty_repo, cli_runner):
     assert_json_envelope(data, command="constitution-where")
     assert data["summary"]["exists"] is False
     assert data["summary"]["state"] == "not_initialized"
+
+
+# ---------------------------------------------------------------------------
+# 16. generated mode-policy provenance and fail-safe upgrades
+# ---------------------------------------------------------------------------
+
+
+def _read_constitution_doc(repo: Path) -> dict:
+    from roam.constitution import loader as loader_mod
+
+    path = constitution_path(repo)
+    return loader_mod._load_yaml(path.read_text(encoding="utf-8"))
+
+
+def _write_constitution_doc(repo: Path, doc: dict) -> None:
+    from roam.constitution import loader as loader_mod
+
+    loader_mod._write_constitution(constitution_path(repo), doc)
+
+
+def _remove_mode_command(doc: dict, command: str) -> None:
+    for commands in doc["modes"].values():
+        while command in commands:
+            commands.remove(command)
+
+
+def test_init_records_semantic_mode_policy_provenance(empty_repo):
+    init_constitution(empty_repo)
+    constitution = load_constitution(empty_repo)
+    assert constitution is not None
+
+    generator = constitution.metadata["generator"]
+    assert constitution.version == 1  # additive metadata does not bump the document schema
+    assert generator["name"] == CONSTITUTION_GENERATOR_NAME
+    assert generator["format_version"] == CONSTITUTION_GENERATOR_FORMAT_VERSION
+    assert generator["managed_modes_sha256"] == mode_policy_digest(constitution.modes)
+
+    report = assess_constitution_upgrade(constitution)
+    assert report.state == "up_to_date"
+    assert report.provenance == "managed_unchanged"
+    assert report.changed is False
+    assert report.safe_to_apply is True
+
+
+def test_mode_policy_digest_is_semantic_and_fallback_yaml_preserves_marker():
+    from roam.constitution import loader as loader_mod
+
+    modes_a = {"read_only": ["module", "audit"]}
+    modes_b = {"read_only": ["audit", "module", "audit"]}
+    assert mode_policy_digest(modes_a) == mode_policy_digest(modes_b)
+
+    doc = {
+        "version": 1,
+        "metadata": {
+            "generator": {
+                "name": CONSTITUTION_GENERATOR_NAME,
+                "format_version": CONSTITUTION_GENERATOR_FORMAT_VERSION,
+                "managed_modes_sha256": mode_policy_digest(modes_a),
+            }
+        },
+        "modes": modes_a,
+    }
+    rendered = loader_mod._fallback_dump(doc)
+    assert loader_mod._fallback_parse(rendered) == doc
+
+
+def test_unchanged_generated_snapshot_tracks_new_defaults_and_upgrades(empty_repo):
+    from roam.modes import list_modes
+
+    init_constitution(empty_repo)
+    doc = _read_constitution_doc(empty_repo)
+    _remove_mode_command(doc, "module")
+    doc["metadata"]["generator"]["managed_modes_sha256"] = mode_policy_digest(doc["modes"])
+    doc["metadata"]["owner_extension"] = {"team": "safety"}
+    doc["vendor_extension"] = {"preserve": True}
+    _write_constitution_doc(empty_repo, doc)
+
+    constitution = load_constitution(empty_repo)
+    assert constitution is not None
+    assert "module" not in constitution.modes["read_only"]
+    preview = assess_constitution_upgrade(constitution)
+    assert preview.state == "upgrade_available"
+    assert preview.provenance == "managed_unchanged"
+    assert preview.safe_to_apply is True
+    assert "module" in preview.additions["read_only"]
+
+    # Runtime may follow the latest defaults only because the recorded digest
+    # proves the generated modes were not customized.
+    assert "module" in list_modes(empty_repo)["read_only"].allowed_commands
+
+    applied = upgrade_constitution(empty_repo)
+    assert applied.state == "upgraded"
+    assert applied.applied is True
+    assert applied.addition_total >= 4
+    upgraded_doc = _read_constitution_doc(empty_repo)
+    assert upgraded_doc["vendor_extension"] == {"preserve": True}
+    assert upgraded_doc["metadata"]["owner_extension"] == {"team": "safety"}
+    assert "module" in upgraded_doc["modes"]["read_only"]
+
+
+def test_customized_modes_never_gain_permissions_without_acknowledgement(empty_repo):
+    from roam.modes import list_modes
+
+    init_constitution(empty_repo)
+    doc = _read_constitution_doc(empty_repo)
+    # Leave the recorded digest untouched: this is now a proven customization.
+    _remove_mode_command(doc, "module")
+    _write_constitution_doc(empty_repo, doc)
+    before = constitution_path(empty_repo).read_bytes()
+
+    constitution = load_constitution(empty_repo)
+    assert constitution is not None
+    preview = assess_constitution_upgrade(constitution)
+    assert preview.state == "review_required"
+    assert preview.provenance == "customized"
+    assert preview.safe_to_apply is False
+    assert preview.requires_explicit_acceptance is True
+    assert "module" not in list_modes(empty_repo)["read_only"].allowed_commands
+
+    with pytest.raises(ConstitutionUpgradeRequiresAcceptance):
+        upgrade_constitution(empty_repo)
+    assert constitution_path(empty_repo).read_bytes() == before
+
+    with pytest.raises(ConstitutionUpgradePreviewMismatch):
+        upgrade_constitution(empty_repo, accept_mode_replacement=True)
+    with pytest.raises(ConstitutionUpgradePreviewMismatch):
+        upgrade_constitution(
+            empty_repo,
+            accept_mode_replacement=True,
+            expected_modes_digest="sha256:" + "0" * 64,
+        )
+    assert constitution_path(empty_repo).read_bytes() == before
+
+    applied = upgrade_constitution(
+        empty_repo,
+        accept_mode_replacement=True,
+        expected_modes_digest=preview.current_modes_digest,
+    )
+    assert applied.applied is True
+    assert "module" in load_constitution(empty_repo).modes["read_only"]  # type: ignore[union-attr]
+
+
+def test_legacy_upgrade_is_previewable_and_requires_explicit_replacement(empty_repo, cli_runner):
+    init_constitution(empty_repo)
+    doc = _read_constitution_doc(empty_repo)
+    _remove_mode_command(doc, "module")
+    doc["metadata"].pop("generator")
+    _write_constitution_doc(empty_repo, doc)
+    before = constitution_path(empty_repo).read_bytes()
+
+    preview_result = invoke_cli(
+        cli_runner,
+        ["constitution", "upgrade"],
+        cwd=empty_repo,
+        json_mode=True,
+    )
+    preview = parse_json_output(preview_result, command="constitution-upgrade")
+    assert preview["summary"]["state"] == "review_required"
+    assert preview["summary"]["safe_to_apply"] is False
+    assert preview["upgrade"]["provenance"] == "legacy_generated_unproven"
+    assert "module" in preview["upgrade"]["additions"]["read_only"]
+
+    blocked_result = invoke_cli(
+        cli_runner,
+        ["constitution", "upgrade", "--apply"],
+        cwd=empty_repo,
+        json_mode=True,
+    )
+    assert blocked_result.exit_code == 5
+    blocked = json.loads(blocked_result.output)
+    assert blocked["summary"]["state"] == "blocked"
+    assert blocked["summary"]["partial_success"] is True
+    assert constitution_path(empty_repo).read_bytes() == before
+
+    next_argv = shlex.split(preview["agent_contract"]["next_commands"][0])
+    assert next_argv[0] == "roam"
+    applied_result = invoke_cli(cli_runner, next_argv[1:], cwd=empty_repo, json_mode=True)
+    applied = parse_json_output(applied_result, command="constitution-upgrade")
+    assert applied_result.exit_code == 0
+    assert applied["summary"]["state"] == "upgraded"
+    assert applied["summary"]["applied"] is True
+
+
+def test_constitution_check_surfaces_advisory_legacy_upgrade(empty_repo, cli_runner):
+    init_constitution(empty_repo)
+    doc = _read_constitution_doc(empty_repo)
+    _remove_mode_command(doc, "report")
+    doc["metadata"].pop("generator")
+    _write_constitution_doc(empty_repo, doc)
+
+    result = invoke_cli(
+        cli_runner,
+        ["constitution", "check"],
+        cwd=empty_repo,
+        json_mode=True,
+    )
+    data = parse_json_output(result, command="constitution-check")
+    assert data["summary"]["ok"] is True
+    assert data["summary"]["mode_upgrade_state"] == "review_required"
+    assert data["mode_upgrade"]["requires_explicit_acceptance"] is True
+    assert "report" in data["mode_upgrade"]["additions"]["read_only"]
+
+
+def test_unsupported_provenance_version_never_auto_broadens(empty_repo):
+    from roam.modes import list_modes
+
+    init_constitution(empty_repo)
+    doc = _read_constitution_doc(empty_repo)
+    _remove_mode_command(doc, "audit")
+    doc["metadata"]["generator"]["format_version"] = CONSTITUTION_GENERATOR_FORMAT_VERSION + 1
+    doc["metadata"]["generator"]["managed_modes_sha256"] = mode_policy_digest(doc["modes"])
+    _write_constitution_doc(empty_repo, doc)
+
+    constitution = load_constitution(empty_repo)
+    assert constitution is not None
+    preview = assess_constitution_upgrade(constitution)
+    assert preview.provenance == "unsupported_generator_provenance"
+    assert preview.requires_explicit_acceptance is True
+    assert "audit" not in list_modes(empty_repo)["read_only"].allowed_commands
+
+
+def test_partial_custom_policy_inherits_declared_permissions_not_baked_defaults(empty_repo):
+    from roam.modes import list_modes
+
+    _write_constitution_doc(
+        empty_repo,
+        {
+            "version": 1,
+            "metadata": {"owner": "user"},
+            "sources": {},
+            "required_checks": {},
+            "modes": {
+                "read_only": ["search"],
+                "safe_edit": [],
+                # migration intentionally omitted
+                "autonomous_pr": ["attest"],
+            },
+            "policy": {},
+            "metadata_signals": {},
+        },
+    )
+
+    policies = list_modes(empty_repo)
+    assert policies["read_only"].allowed_commands == frozenset({"search"})
+    assert policies["safe_edit"].allowed_commands == frozenset({"search"})
+    assert policies["migration"].allowed_commands == frozenset({"search"})
+    assert policies["autonomous_pr"].allowed_commands == frozenset({"search", "attest"})
+    assert all("module" not in policy.allowed_commands for policy in policies.values())
+
+
+def test_upgrade_compare_and_swap_rejects_concurrent_edit(empty_repo, monkeypatch):
+    from roam.constitution import loader as loader_mod
+
+    init_constitution(empty_repo)
+    doc = _read_constitution_doc(empty_repo)
+    _remove_mode_command(doc, "module")
+    doc["metadata"]["generator"]["managed_modes_sha256"] = mode_policy_digest(doc["modes"])
+    _write_constitution_doc(empty_repo, doc)
+
+    path = constitution_path(empty_repo)
+    real_atomic_write = loader_mod.atomic_write_bytes
+
+    def racing_atomic_write(target, content, **kwargs):
+        path.write_bytes(path.read_bytes() + b"# concurrent user edit\n")
+        return real_atomic_write(target, content, **kwargs)
+
+    monkeypatch.setattr(loader_mod, "atomic_write_bytes", racing_atomic_write)
+    with pytest.raises(ConstitutionConcurrentUpdate):
+        upgrade_constitution(empty_repo)
+    assert path.read_bytes().endswith(b"# concurrent user edit\n")

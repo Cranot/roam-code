@@ -651,6 +651,7 @@ def _emit_text_compile(
         'roam compile "refactor auth module" --artifact facts',
     ),
     tags=("planning", "artifact-selector", "facts-envelope"),
+    side_effect=True,
 )
 def compile_(
     ctx: click.Context,

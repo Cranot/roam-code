@@ -713,7 +713,7 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
-    side_effect=False,
+    side_effect=True,
     task_required=True,
     destructive=False,
     stale_sensitive=True,

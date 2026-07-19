@@ -59,6 +59,10 @@ def isolated_repo(tmp_path, monkeypatch):
     monkeypatch.delenv("ROAM_RUN_ID", raising=False)
     monkeypatch.delenv("ROAM_AGENT_ID", raising=False)
     monkeypatch.delenv("ROAM_MCP_CLIENT_ID", raising=False)
+    # Synthetic tools are intentionally absent from policy allow-lists; keep
+    # these marker-only tests on the explicit audited permissive path.
+    monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
+    monkeypatch.delenv("ROAM_MODE_DRY_RUN", raising=False)
     return tmp_path
 
 

@@ -19,15 +19,15 @@ collapse has regressed.
 
 from __future__ import annotations
 
-# The pre-collapse hardcoded set, copied verbatim from mcp_server.py line
-# 294-301 (now replaced by the derived view at module-load finalization).
-# Treat this as the regression floor.
+# Audited source-of-truth membership. The original entries are the W108/W365
+# regression floor; the 13.10 entries conservatively describe each wrapper's
+# maximum callable effects, including opt-in persist/write/output controls.
 #
 # W365 extension: ``roam_reset`` and ``roam_clean`` joined the floor when
 # the W365 capability-parity audit found they had been silently flagged
 # read_only=True even though they delete the index DB (reset) / remove
 # orphaned rows (clean). Both are destructive=True per the same wave.
-PRE_COLLAPSE_NON_READ_ONLY = {
+AUDITED_NON_READ_ONLY = {
     "roam_annotate_symbol",
     "roam_ingest_trace",
     "roam_vuln_map",
@@ -40,6 +40,23 @@ PRE_COLLAPSE_NON_READ_ONLY = {
     "roam_guard_pr",
     # Wave 20: guard-clean atomically rewrites verdict-log.jsonl.
     "roam_guard_clean",
+    # 13.10 maximum callable effects audit.
+    "roam_boundary",
+    "roam_cga_emit",
+    "roam_compile",
+    "roam_dogfood",
+    "roam_evidence_oscal",
+    "roam_fan",
+    "roam_fingerprint",
+    "roam_graph_diff",
+    "roam_metrics_push",
+    "roam_pr_analyze",
+    "roam_stale_refs",
+    "roam_test_hermeticity",
+    "roam_test_scaffold",
+    "roam_trends",
+    "roam_verify",
+    "roam_vuln_reach",
 }
 
 
@@ -89,7 +106,7 @@ def test_non_read_only_tools_membership_unchanged() -> None:
     """
     from roam.mcp_server import _NON_READ_ONLY_TOOLS
 
-    missing = PRE_COLLAPSE_NON_READ_ONLY - _NON_READ_ONLY_TOOLS
+    missing = AUDITED_NON_READ_ONLY - _NON_READ_ONLY_TOOLS
     assert not missing, (
         f"Non-read-only markers lost during collapse: {sorted(missing)}. "
         f"These tools were marked non-read-only before ROADMAP A1 W108 but "
@@ -101,11 +118,11 @@ def test_non_read_only_tools_membership_unchanged() -> None:
     # And the reverse — if the derived view has GROWN, that's also worth
     # surfacing (so a new non-read-only tool gets a deliberate test
     # update rather than silently widening the set).
-    extra = _NON_READ_ONLY_TOOLS - PRE_COLLAPSE_NON_READ_ONLY
+    extra = _NON_READ_ONLY_TOOLS - AUDITED_NON_READ_ONLY
     assert not extra, (
         f"_NON_READ_ONLY_TOOLS gained unexpected members: {sorted(extra)}. "
         f"If a new tool was intentionally marked read_only=False on its "
-        f"@_tool decorator, update PRE_COLLAPSE_NON_READ_ONLY in this test "
+        f"@_tool decorator, update AUDITED_NON_READ_ONLY in this test "
         f"file to reflect the new floor."
     )
 
@@ -131,7 +148,7 @@ def test_default_read_only_is_true() -> None:
     )
 
     # Sample a well-known read-only tool and assert its metadata reflects
-    # the default. ``roam_health`` was not in PRE_COLLAPSE_NON_READ_ONLY,
+    # the default. ``roam_health`` was not in AUDITED_NON_READ_ONLY,
     # so it must metadata-read-only=True via the decorator default.
     meta = mcp._TOOL_METADATA.get("roam_health")
     assert meta is not None, (
@@ -152,7 +169,7 @@ def test_read_only_decorator_kwarg_propagates_to_metadata() -> None:
     """
     import roam.mcp_server as mcp
 
-    for name in PRE_COLLAPSE_NON_READ_ONLY:
+    for name in AUDITED_NON_READ_ONLY:
         meta = mcp._TOOL_METADATA.get(name)
         assert meta is not None, f"_TOOL_METADATA missing {name!r} — decorator did not register it."
         assert meta.get("read_only") is False, (

@@ -43,7 +43,9 @@ DOCS_DIFF = FIXTURES / "docs_typo.diff"
 PY = sys.executable
 
 # Long enough for the slowest deliverable observed on this repo
-# (due-diligence measured 105-157s locally).
+# (due-diligence measured 105-157s locally). Its two cases are marked slow:
+# running the same multi-process report beside xdist workers creates resource
+# contention and tests the scheduler rather than the report contract.
 SLOW = 300
 FAST = 120
 
@@ -116,7 +118,13 @@ SERVICE_REPORT_REQUIRED = {
 }
 
 
-@pytest.mark.parametrize("rtype", sorted(SERVICE_REPORT_REQUIRED))
+@pytest.mark.parametrize(
+    "rtype",
+    [
+        pytest.param(rtype, marks=pytest.mark.slow) if rtype == "due-diligence" else rtype
+        for rtype in sorted(SERVICE_REPORT_REQUIRED)
+    ],
+)
 def test_service_report_renders_required_sections(rtype: str) -> None:
     """Each service-report --type emits its required sections, exit 0, clean stderr."""
     extra = ["--range", "HEAD~20..HEAD"] if rtype == "post-incident" else []
@@ -140,6 +148,7 @@ def test_service_report_stderr_is_clean() -> None:
             assert noise not in low, f"{rtype}: stderr leaked {noise!r}\n{proc.stderr[:800]}"
 
 
+@pytest.mark.slow
 def test_service_report_due_diligence_has_no_empty_placeholder_verdict() -> None:
     """The executive summary must carry a concrete health verdict, not a stub."""
     proc = _roam("service-report", "--type", "due-diligence", timeout=SLOW)

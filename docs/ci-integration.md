@@ -2,10 +2,10 @@
 
 Two supported paths:
 
-1. **Plain pip** -- `pip install roam-code`, run any commands, upload SARIF
+1. **Plain pip** -- `pip install "roam-code==13.10.0"`, run any commands, upload SARIF
    yourself. Works on every CI platform (GitHub Actions, GitLab CI, Jenkins,
    Azure Pipelines, BitBucket, CircleCI, ...).
-2. **Composite GitHub Action** -- `uses: Cranot/roam-code@main`. Adds sticky
+2. **Composite GitHub Action** -- `uses: Cranot/roam-code@v13.10.0`. Adds sticky
    PR comments, guardrail-enforced SARIF upload, and quality gates with one
    block.
 
@@ -15,7 +15,7 @@ experience. Both share the same underlying CLI and SARIF output.
 
 ## Quickstart -- plain pip (any CI)
 
-Five lines of real work. Copy into `.github/workflows/roam.yml`:
+Copy this minimal workflow into `.github/workflows/roam.yml`:
 
 ```yaml
 name: Roam scan
@@ -25,16 +25,20 @@ permissions:
   security-events: write  # required for SARIF upload
 jobs:
   roam:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - run: pip install roam-code
+      - run: |
+          python -m pip install --disable-pip-version-check "roam-code==13.10.0"
+          python -m pip check
       - run: roam init
       - run: roam --sarif health > roam-health.sarif
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57 # v3.36.0
         with:
           sarif_file: roam-health.sarif
 ```
@@ -75,19 +79,29 @@ permissions:
 
 jobs:
   analyze:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: Cranot/roam-code@main
+      # The release tag is readable here because its commit does not exist
+      # while release documentation is prepared. Resolve v13.10.0 after
+      # publication and replace the tag with its reviewed 40-character SHA.
+      - uses: Cranot/roam-code@v13.10.0
         with:
+          version: '13.10.0'
+          allow-latest: 'false'
           commands: 'health pr-risk'
           sarif: 'true'
           comment: 'true'
           gate: 'health_score>=60'
 ```
+
+For production, pin `Cranot/roam-code` to the reviewed 40-character commit SHA
+behind `v13.10.0`; a release tag is human-readable but remains movable. Keep the
+version comment beside the SHA so Dependabot can propose reviewable updates.
 
 That is all you need. The action installs roam-code, indexes your codebase,
 runs the requested analysis commands, posts a sticky PR comment with results,
@@ -97,7 +111,8 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `latest` | roam-code version to install from PyPI. Use a pinned version for reproducibility (e.g., `11.1.2`). |
+| `version` | `13.10.0` | Exact roam-code version to install from PyPI. Accepts a closed PEP 440-style release grammar; URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
+| `allow-latest` | `false` | Explicit opt-in required when `version: latest` is requested. This keeps the mutable package path visible in review. |
 | `commands` | `health` | Space-separated roam commands to run. Each command produces JSON output that feeds into the PR comment and quality gate. |
 | `changed-only` | `false` | Incremental CI mode. Adapts supported commands to changed files and transitive dependents (when detectable). |
 | `changed-depth` | `3` | Dependency depth used when computing changed+dependent file scope in `changed-only` mode. |
@@ -112,6 +127,14 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 | `gate` | _(empty)_ | Quality gate expression. Supports scalar checks (`key>=value`) and trend-aware functions (`velocity(metric)<=0`, `direction(metric)!=worsening`). The action exits with code 5 when the gate fails. |
 | `cache` | `true` | Cache pip packages and the `.roam/` SQLite index between runs for faster incremental analysis. |
 | `python-version` | `3.11` | Python version to use. Supports 3.10 through 3.13 (roam-code requires Python 3.10+). |
+
+The exact default pins the first-party roam-code artifact for a release. Its
+transitive dependencies still follow that package version's declared PyPI
+ranges, because a copied downstream action cannot consume this repository's
+`uv.lock`. Repositories requiring a byte-for-byte dependency graph should
+check out roam-code and materialize `uv.lock`, as Roam's own source workflows
+do. `version: latest` trades that release-level reproducibility for automatic
+first-party upgrades and therefore requires `allow-latest: 'true'`.
 
 ## Outputs
 
@@ -213,11 +236,11 @@ Any other command run with `--sarif` falls back to its native JSON envelope
 
 ### Upload to GitHub Code Scanning
 
-Use the official `github/codeql-action/upload-sarif@v3` step:
+Use the official CodeQL upload step pinned to its reviewed release commit:
 
 ```yaml
 - run: roam --sarif health > roam-health.sarif
-- uses: github/codeql-action/upload-sarif@v3
+- uses: github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57 # v3.36.0
   with:
     sarif_file: roam-health.sarif
     category: roam-health          # optional; distinguishes multiple uploads
@@ -302,7 +325,7 @@ Set `changed-only: 'true'` to run incremental PR analysis.
 Example:
 
 ```yaml
-- uses: Cranot/roam-code@main
+- uses: Cranot/roam-code@v13.10.0
   with:
     commands: 'verify pr-risk api-changes'
     changed-only: 'true'
@@ -341,7 +364,7 @@ Run `roam --help` for all 281 commands.
 ### Multiple commands with strict gate
 
 ```yaml
-- uses: Cranot/roam-code@main
+- uses: Cranot/roam-code@v13.10.0
   with:
     commands: 'health complexity dead'
     sarif-commands: 'health complexity dead'
@@ -353,7 +376,7 @@ Run `roam --help` for all 281 commands.
 ### PR risk only, no comment
 
 ```yaml
-- uses: Cranot/roam-code@main
+- uses: Cranot/roam-code@v13.10.0
   id: roam
   with:
     commands: 'pr-risk'
@@ -364,12 +387,12 @@ Run `roam --help` for all 281 commands.
   run: echo "Analysis found issues (exit ${{ steps.roam.outputs.exit-code }})"
 ```
 
-### Pinned version without caching
+### Exact release without caching
 
 ```yaml
-- uses: Cranot/roam-code@v11.1.2
+- uses: Cranot/roam-code@v13.10.0
   with:
-    version: '11.1.2'
+    version: '13.10.0'
     cache: 'false'
     commands: 'health'
 ```
@@ -377,7 +400,7 @@ Run `roam --help` for all 281 commands.
 ### Use outputs in subsequent steps
 
 ```yaml
-- uses: Cranot/roam-code@main
+- uses: Cranot/roam-code@v13.10.0
   id: analysis
   with:
     commands: 'health'

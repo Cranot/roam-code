@@ -230,6 +230,7 @@ class CompileDaemonServer:
         "roam compile-daemon stop",
     ),
     tags=("planning", "compiler", "daemon", "performance"),
+    side_effect=True,
 )
 def compile_daemon() -> None:
     """S2-lite warm compile server (per-repo, manual lifecycle, fail-open)."""

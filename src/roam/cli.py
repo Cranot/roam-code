@@ -14,8 +14,8 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 275 invokable command names (268 canonical commands + 7 alias names).
-# If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
+# Total: 281 invokable command names (274 canonical commands + 7 alias names).
+# Guarded against registry drift by scripts/sync_surface_counts.py.
 # Deprecated commands map to a structured record. When a user invokes a
 # deprecated name we still resolve it (no breaking change) and print a
 # note on stderr. Each entry is:
@@ -1048,6 +1048,14 @@ class LazyGroup(click.Group):
         # Clear any leftover notice from a previous invocation in the same
         # Python process (matters for `CliRunner`-driven tests where many
         # commands run inside one interpreter).
+        #
+        # Click consumes the subcommand's remaining argv before the group
+        # callback runs, so ``ctx.args`` is empty by the time the dispatch
+        # mode gate executes.  Preserve the normalized tokens here.  The gate
+        # uses them to distinguish a read-side invocation (``doctor``) from an
+        # option-dependent write (``doctor --persist``) without eagerly
+        # running the subcommand's Click callbacks or type conversions.
+        ctx.meta[_MODE_INVOCATION_ARGS_META_KEY] = tuple(str(arg) for arg in args)
         _set_active_deprecation_notice(None)
         _emit_deprecation_notice_for_args(args)
         try:
@@ -1165,24 +1173,26 @@ class LazyGroup(click.Group):
 #
 # Two intentional constraints, both per the task spec:
 #
-#   1. Enforcement is OPT-IN via `ROAM_MODE_ENFORCEMENT=1`. Flipping it
-#      on by default would break long-standing workflows where a repo
-#      has a stale `.roam/active_mode = read_only` from a previous
-#      session and the next `roam attest` call expects to run, not
-#      exit 5. The opt-in keeps the substrate ready for agents that
-#      WANT a hard gate while leaving humans/CI on the permissive path.
+#   1. Enforcement is explicitly enabled via ``ROAM_MODE_ENFORCEMENT=1``.
+#      The CLI taxonomy still contains legacy option-dependent commands whose
+#      capability metadata is not a complete authority model, and version-1
+#      constitutions predate many registered commands.  Default-on dispatch
+#      would therefore either strand valid diagnostics or trust stale metadata
+#      for a write path.  Keep the hardened gate opt-in until both migrations
+#      are closed; the independently hardened MCP boundary remains default-on.
 #
-#   2. Meta-commands ALWAYS run, even with enforcement on. These are
+#   2. Meta-commands ALWAYS run. These are
 #      the commands an agent needs to recover from a wrong-mode state:
 #      `mode`, `intent-check`, `surface`, `doctor`, plus help/version
 #      affordances. Without these the gate becomes a deadlock (you
 #      can't switch mode without running `roam mode`, and `roam mode`
 #      itself would be blocked).
 #
-# The gate is also fail-open: if `find_project_root()` raises, if the
-# policy module is unimportable, or anything else trips, we let the
-# command through and emit a stderr hint. Never block dispatch over a
-# gate bug — that would be worse than the bug it's protecting against.
+# Policy failures are classified through the command's capability metadata.
+# Declared read-only diagnostics remain available so an operator can inspect
+# and repair the repo. Commands that write, destroy, or lack trustworthy
+# metadata fail closed. ``--override-mode`` remains the explicit per-call
+# recovery path and is both visible on stderr and auditable in the run ledger.
 
 _MODE_ALWAYS_ALLOWED: frozenset[str] = frozenset(
     {
@@ -1207,12 +1217,14 @@ _MODE_ALWAYS_ALLOWED: frozenset[str] = frozenset(
         # meta operations available regardless.
         "plugins",
         "mcp-status",
+        # Starting or inspecting the MCP server is control-plane bootstrap.
+        # It must remain reachable before any repository policy can be queried.
+        "mcp",
         # Index bootstrap: an agent that can't index can't do anything
         # else. A fresh repo has no `.roam/active_mode`, so the default
         # resolves to `safe_edit`, which does not list `init`/`index`
-        # in its allow-set. Without these here, exporting
-        # `ROAM_MODE_ENFORCEMENT=1` (e.g. in CI) creates a
-        # chicken-and-egg deadlock: the user can't initialise the
+        # in its allow-set. Without these here, explicit enforcement
+        # creates a chicken-and-egg deadlock: the user can't initialise the
         # index, and can't switch mode meaningfully until they have
         # one. Keep these always-on so the bootstrap path is reachable
         # from any mode in any repo state.
@@ -1241,8 +1253,96 @@ def _resolve_invoked_command_name(ctx: click.Context) -> str | None:
     return None
 
 
+_MODE_ENFORCEMENT_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
+
+# Click commands can be capability-polymorphic: the default invocation is a
+# pure query, while one option or group subcommand writes state.  The static
+# mode policy intentionally keeps the query form in ``read_only``; this table
+# raises only the mutating invocation to its minimum authority.  Entries are a
+# closed, audited enumeration and match exact argv tokens (plus Click's
+# ``--option=value`` and ``-ovalue`` spellings).
+_MODE_INVOCATION_ARGS_META_KEY = "roam.mode_gate.invocation_args"
+_MODE_INVOCATION_ESCALATIONS: dict[str, dict[str, str]] = {
+    "agent-opt": {"--persist": "safe_edit"},
+    "audit-trail-conformance-check": {
+        "--persist": "safe_edit",
+        "--sarif-output": "safe_edit",
+    },
+    "calc-golden": {"--out": "safe_edit"},
+    "compile-cache": {
+        "build": "safe_edit",
+        "clear": "safe_edit",
+        "evict": "safe_edit",
+    },
+    "compile-daemon": {"start": "safe_edit", "stop": "safe_edit"},
+    "coverage-gaps": {
+        "--import-report": "safe_edit",
+        "--merge-imported": "safe_edit",
+    },
+    "describe": {"--write": "safe_edit"},
+    "doctor": {"--persist": "safe_edit"},
+    "fan": {"--persist": "safe_edit"},
+    "health": {"--persist": "safe_edit"},
+    "minimap": {
+        "--init-notes": "safe_edit",
+        "--output": "safe_edit",
+        "--update": "safe_edit",
+        "-o": "safe_edit",
+    },
+    "observability-opt": {"--persist": "safe_edit"},
+    "proof-bundle": {"--output": "safe_edit", "-o": "safe_edit"},
+    "service-report": {"--output": "safe_edit", "--pdf": "safe_edit"},
+    "tour": {"--write": "safe_edit"},
+    "version": {"--check": "safe_edit"},
+    "vulns": {"--persist": "safe_edit"},
+}
+
+
+def _mode_invocation_tokens(ctx: click.Context) -> tuple[str, ...]:
+    raw = ctx.meta.get(_MODE_INVOCATION_ARGS_META_KEY, ())
+    if not isinstance(raw, (tuple, list)):
+        return ()
+    return tuple(token for token in raw if isinstance(token, str))
+
+
+def _mode_trigger_matches(token: str, trigger: str) -> bool:
+    if token == trigger:
+        return True
+    if trigger.startswith("--"):
+        return token.startswith(f"{trigger}=")
+    if trigger.startswith("-") and len(trigger) == 2:
+        return token.startswith(trigger) and len(token) > len(trigger)
+    return False
+
+
+def _mode_invocation_requirement(ctx: click.Context, canonical: str) -> tuple[str, str] | None:
+    requirements = _MODE_INVOCATION_ESCALATIONS.get(canonical)
+    if not requirements:
+        return None
+
+    matched: list[tuple[str, str]] = []
+    for token in _mode_invocation_tokens(ctx):
+        for trigger, minimum in requirements.items():
+            if _mode_trigger_matches(token, trigger):
+                matched.append((minimum, trigger))
+    if not matched:
+        return None
+
+    from roam.modes.policy import VALID_MODES
+
+    return max(matched, key=lambda item: VALID_MODES.index(item[0]))
+
+
 def _mode_enforcement_enabled() -> bool:
-    return os.environ.get("ROAM_MODE_ENFORCEMENT", "").strip() in {"1", "true", "yes", "on"}
+    """Return whether hard mode enforcement is active for this invocation.
+
+    CLI enforcement is deliberately opt-in until the full command authority
+    taxonomy and version-1 constitution migration are closed.  When enabled,
+    policy resolution and dispatch still fail closed for non-diagnostic
+    commands.
+    """
+    raw = os.environ.get("ROAM_MODE_ENFORCEMENT", "")
+    return raw.strip().lower() in _MODE_ENFORCEMENT_TRUTHY
 
 
 def _canonical_mode_command(cmd_name: str) -> str:
@@ -1261,11 +1361,10 @@ def _mode_gate_dependencies():
         from roam.modes import check_command_allowed
 
         return find_project_root, check_command_allowed
-    except ImportError:  # mode substrate is optional; absent import means gating fails open (no policy)
-        # Log so the intentional fail-open stays observable when tracing why a command was allowed.
+    except ImportError:  # mode substrate unavailable; caller applies metadata-based fail-closed handling
         import logging
 
-        logging.getLogger(__name__).debug("mode-gate dependencies unavailable; gating fails open")
+        logging.getLogger(__name__).warning("mode-gate dependencies unavailable")
         return None
 
 
@@ -1277,14 +1376,124 @@ def _mode_gate_decision(canonical: str):
     find_project_root, check_command_allowed = dependencies
     try:
         repo_root = find_project_root()
-        allowed, reason = check_command_allowed(repo_root, canonical)
+        result = check_command_allowed(repo_root, canonical)
+        if not isinstance(result, tuple) or len(result) != 2:
+            raise TypeError("mode policy must return an (allowed, reason) tuple")
+        allowed, reason = result
+        if not isinstance(allowed, bool):
+            raise TypeError(f"mode policy allowed flag must be bool, got {type(allowed).__name__}")
+        if not isinstance(reason, str):
+            raise TypeError(f"mode policy reason must be str, got {type(reason).__name__}")
         return repo_root, allowed, reason
-    except Exception as exc:  # noqa: BLE001 — mode policy lookup is opt-in and must fail open
-        # Log (not pass) so the silent fail-open stays observable when tracing why a command was allowed despite enforcement.
+    except Exception as exc:  # noqa: BLE001 — caller applies metadata-based fail-closed handling
         import logging
 
-        logging.getLogger(__name__).debug("mode-gate decision skipped for command %r: %s", canonical, exc)
+        logging.getLogger(__name__).warning("mode-gate decision failed for command %r: %s", canonical, exc)
         return None
+
+
+_MODE_POLICY_FAILURE_READ_ONLY_DIAGNOSTICS: frozenset[str] = frozenset(
+    {
+        "agent-opt",
+        "audit-trail-conformance-check",
+        "calc-golden",
+        "causal-graph",
+        "clusters",
+        "compile-cache",
+        "compile-daemon",
+        "complexity",
+        "context",
+        "coverage-gaps",
+        "cycles",
+        "dead",
+        "deps",
+        "describe",
+        "doctor",
+        "fan",
+        "file",
+        "grep",
+        "health",
+        "history-grep",
+        "hotspots",
+        "idempotency",
+        "impact",
+        "index-stats",
+        "layers",
+        "map",
+        "metrics",
+        "minimap",
+        "observability-opt",
+        "proof-bundle",
+        "refs-text",
+        "retrieve",
+        "search",
+        "search-semantic",
+        "service-report",
+        "side-effects",
+        "stats",
+        "symbol",
+        "tour",
+        "trace",
+        "tx-boundaries",
+        "understand",
+        "uses",
+        "vulns",
+        "weather",
+        "why",
+        "why-fail",
+        "why-slow",
+    }
+)
+
+
+def _mode_command_is_read_only_diagnostic(ctx: click.Context, canonical: str) -> bool:
+    """Return True only for audited recovery diagnostics declared read-only.
+
+    Click resolves and imports the selected lazy command before the group
+    callback runs, so its ``@roam_capability`` metadata is normally already
+    present. The closed recovery allow-list protects against legacy capability
+    metadata that understates an option-dependent write (for example
+    ``mutate --apply``). Missing, malformed, or unimportable metadata is
+    intentionally treated as unsafe.
+    """
+    if canonical not in _MODE_POLICY_FAILURE_READ_ONLY_DIAGNOSTICS:
+        return False
+    target = _command_target(canonical)
+    if target is None:
+        return False
+    module_path, attr_name = target
+    try:
+        import importlib
+
+        command = getattr(importlib.import_module(module_path), attr_name)
+        capability = getattr(command, "__roam_capability__", None)
+        if capability is None:
+            # Some legacy decorators are attached below ``@click.command``;
+            # their metadata lives on the callback rather than the Command.
+            capability = getattr(getattr(command, "callback", None), "__roam_capability__", None)
+        if capability is None:
+            from roam.capability import REGISTRY
+
+            capability = REGISTRY.get(canonical)
+        if capability is None or getattr(capability, "destructive", True) is not False:
+            return False
+        if getattr(capability, "side_effect", True) is False:
+            return True
+        # A max-effect capability can still have an audited read-side shape.
+        # It is recoverable only when no mutating trigger is present in this
+        # exact invocation; missing argv evidence therefore fails closed.
+        return canonical in _MODE_INVOCATION_ESCALATIONS and _mode_invocation_requirement(ctx, canonical) is None
+    except Exception as exc:  # noqa: BLE001 — unknown classification must fail closed
+        import logging
+
+        logging.getLogger(__name__).warning("mode-gate metadata unavailable for command %r: %s", canonical, exc)
+        return False
+
+
+def _mode_policy_fallback_root():
+    from pathlib import Path
+
+    return Path.cwd()
 
 
 def _active_mode_name(repo_root) -> str:
@@ -1296,7 +1505,14 @@ def _active_mode_name(repo_root) -> str:
         return "<unknown>"
 
 
-def _log_mode_override(canonical: str, active_name: str, repo_root) -> None:
+def _log_mode_override(
+    canonical: str,
+    active_name: str,
+    repo_root,
+    *,
+    source: str,
+    policy_reason: str,
+) -> None:
     try:
         from roam.runs.helpers import auto_log
 
@@ -1304,7 +1520,7 @@ def _log_mode_override(canonical: str, active_name: str, repo_root) -> None:
             {
                 "command": canonical,
                 "summary": {
-                    "verdict": f"override-mode used: active={active_name}",
+                    "verdict": (f"mode override used via {source}: active={active_name}; reason={policy_reason}"),
                     "partial_success": True,
                 },
             },
@@ -1319,16 +1535,31 @@ def _log_mode_override(canonical: str, active_name: str, repo_root) -> None:
         logging.getLogger(__name__).debug("mode-override audit log skipped for command %r: %s", canonical, exc)
 
 
-def _allow_mode_override(canonical: str, repo_root) -> None:
+def _allow_mode_override(
+    canonical: str,
+    repo_root,
+    *,
+    source: str = "--override-mode",
+    policy_reason: str = "command denied by active mode",
+) -> None:
     active_name = _active_mode_name(repo_root)
     click.echo(
-        f"WARNING: Mode enforcement overridden. Active mode: {active_name}. Command: {canonical}.",
+        (
+            f"WARNING: Mode enforcement overridden via {source}. "
+            f"Active mode: {active_name}. Command: {canonical}. Reason: {policy_reason}"
+        ),
         err=True,
     )
-    _log_mode_override(canonical, active_name, repo_root)
+    _log_mode_override(
+        canonical,
+        active_name,
+        repo_root,
+        source=source,
+        policy_reason=policy_reason,
+    )
 
 
-def _block_mode_command(ctx: click.Context, reason: str) -> None:
+def _block_mode_command(ctx: click.Context, reason: str, *, command_name: str | None = None) -> None:
     from roam.exit_codes import EXIT_GATE_FAILURE
 
     click.echo(f"BLOCKED: {reason}", err=True)
@@ -1336,7 +1567,7 @@ def _block_mode_command(ctx: click.Context, reason: str) -> None:
     # subcommand (`roam --override-mode <cmd>`), not after it. Spell the full
     # form out — agents/users naturally try `roam <cmd> --override-mode`, which
     # click rejects and re-blocks with this same message (confusing loop).
-    invoked = ctx.info_name or "<cmd>"
+    invoked = command_name or getattr(ctx, "invoked_subcommand", None) or ctx.info_name or "<cmd>"
     click.echo(
         f"Pass `--override-mode` BEFORE the subcommand (`roam --override-mode {invoked} …`) "
         "to bypass for this one call, or `roam mode <name>` to switch modes.",
@@ -1345,8 +1576,34 @@ def _block_mode_command(ctx: click.Context, reason: str) -> None:
     ctx.exit(EXIT_GATE_FAILURE)
 
 
+def _handle_mode_policy_failure(ctx: click.Context, canonical: str, detail: str) -> None:
+    """Allow diagnostics and fail closed for unsafe policy failures."""
+    if _mode_command_is_read_only_diagnostic(ctx, canonical):
+        click.echo(
+            (f"WARNING: Mode policy unavailable ({detail}); allowing declared read-only diagnostic `{canonical}`."),
+            err=True,
+        )
+        return
+
+    obj = ctx.ensure_object(dict)
+    override_source: str | None = None
+    if bool(obj.get("override_mode", False)):
+        override_source = "--override-mode"
+    reason = f"{detail}; `{canonical}` is not declared read-only, so mode enforcement failed closed"
+    if override_source is not None:
+        _allow_mode_override(
+            canonical,
+            _mode_policy_fallback_root(),
+            source=override_source,
+            policy_reason=reason,
+        )
+        return
+
+    _block_mode_command(ctx, reason, command_name=canonical)
+
+
 def _enforce_mode_gate(ctx: click.Context) -> None:
-    """Run the opt-in mode-enforcement gate before command dispatch."""
+    """Run the explicitly enabled mode-enforcement gate before dispatch."""
     if not _mode_enforcement_enabled():
         return
 
@@ -1355,23 +1612,47 @@ def _enforce_mode_gate(ctx: click.Context) -> None:
         return
 
     canonical = _canonical_mode_command(cmd_name)
-    if _mode_gate_should_skip(cmd_name, canonical):
+    invocation_requirement = _mode_invocation_requirement(ctx, canonical)
+    if invocation_requirement is None and _mode_gate_should_skip(cmd_name, canonical):
         return
 
     decision = _mode_gate_decision(canonical)
     if decision is None:
+        _handle_mode_policy_failure(ctx, canonical, "mode policy import or resolution failed")
         return
     repo_root, allowed, reason = decision
+
+    if invocation_requirement is not None:
+        required_mode, trigger = invocation_requirement
+        try:
+            from roam.modes.policy import VALID_MODES
+
+            active_mode = _active_mode_name(repo_root)
+            active_rank = VALID_MODES.index(active_mode)
+            required_rank = VALID_MODES.index(required_mode)
+        except (ValueError, TypeError):
+            allowed = False
+            reason = (
+                f"cannot prove the active mode for `{canonical}` invocation using `{trigger}`; "
+                f"run `roam mode {required_mode}` to enable it"
+            )
+        else:
+            if active_rank < required_rank:
+                allowed = False
+                reason = (
+                    f"`{canonical}` invocation uses `{trigger}` and requires {required_mode} mode "
+                    f"(active mode: {active_mode}); run `roam mode {required_mode}` to enable it"
+                )
 
     if allowed:
         return
 
     obj = ctx.ensure_object(dict)
     if bool(obj.get("override_mode", False)):
-        _allow_mode_override(canonical, repo_root)
+        _allow_mode_override(canonical, repo_root, policy_reason=reason)
         return
 
-    _block_mode_command(ctx, reason)
+    _block_mode_command(ctx, reason, command_name=canonical)
 
 
 # `_short_help_via_ast` is called 126x by `roam --help`,
@@ -1754,9 +2035,9 @@ def _ci_mode_enabled(ci_mode: bool) -> bool:
     return env_ci in {"1", "true", "yes", "on"}
 
 
-def _warn_mode_gate_skipped() -> None:
+def _warn_mode_gate_skipped(detail: str = "internal error with no command to classify") -> None:
     try:
-        click.echo("WARNING: mode-enforcement gate skipped (internal error)", err=True)
+        click.echo(f"WARNING: mode-enforcement gate skipped ({detail})", err=True)
     except Exception as exc:  # noqa: BLE001 — the gate must never block a command via its own bug
         import logging
 
@@ -1768,8 +2049,24 @@ def _run_mode_gate_safely(ctx: click.Context) -> None:
         _enforce_mode_gate(ctx)
     except click.exceptions.Exit:
         raise
-    except Exception:  # noqa: BLE001 — the mode gate must never block via its own bug
-        _warn_mode_gate_skipped()
+    except Exception as exc:  # noqa: BLE001 — recover via metadata-based fail-closed handling
+        # A bug in the gate no longer grants blanket authority. Recover the
+        # selected command from Click's context, allow declared read-only
+        # diagnostics, and fail closed for write/destructive/unknown commands.
+        cmd_name = getattr(ctx, "invoked_subcommand", None)
+        if not isinstance(cmd_name, str) or not cmd_name:
+            _warn_mode_gate_skipped(type(exc).__name__)
+            return
+        canonical = _canonical_mode_command(cmd_name)
+        try:
+            if _mode_gate_should_skip(cmd_name, canonical):
+                _warn_mode_gate_skipped(f"{type(exc).__name__}; recovery command remains available")
+                return
+        except Exception:
+            # Inability to prove that a command is an always-allowed recovery
+            # command is not authority to dispatch it.
+            pass
+        _handle_mode_policy_failure(ctx, canonical, f"mode gate internal error: {type(exc).__name__}")
 
 
 def _install_local_telemetry(ctx: click.Context) -> None:

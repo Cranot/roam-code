@@ -203,8 +203,10 @@ def test_w39_c2_blast_backtick_routes_l1_for_backticked_symbol():
 # ---- D1 ----
 
 
-def test_w39_d1_telemetry_writes_jsonl_line(tmp_path):
-    """When cwd has a .roam/ dir, compile_for_artifact appends one line."""
+def test_w39_d1_telemetry_writes_jsonl_line(tmp_path, monkeypatch):
+    """Explicitly opted-in telemetry appends one aggregate-only line."""
+    monkeypatch.setenv("ROAM_COMPILE_TELEMETRY", "1")
+    monkeypatch.delenv("ROAM_TELEMETRY_OFFTHREAD", raising=False)
     (tmp_path / ".roam").mkdir()
     plan = compile_plan("what does some_module.py do")
     env, label = compile_for_artifact(plan, cwd=str(tmp_path))
@@ -214,23 +216,25 @@ def test_w39_d1_telemetry_writes_jsonl_line(tmp_path):
     assert len(lines) == 1
     entry = json.loads(lines[0])
     for field in (
+        "schema_version",
         "ts",
-        "task_hash",
-        "task_prefix",
         "procedure",
         "classifier_conf",
         "art_label",
         "prefetched_keys",
+        "prefetched_fact_count",
         "envelope_bytes",
         "compile_ms",
-        "episode_id",
+        "model_calls_avoided_count",
+        "savings",
     ):
         assert field in entry, f"missing telemetry field: {field}"
+    assert {"task_hash", "task_prefix", "session_id", "turn_seq", "episode_id"}.isdisjoint(entry)
     assert entry["art_label"] == label
     assert entry["procedure"] == plan.procedure
 
 
-def test_w39_d1_telemetry_silently_skips_when_no_roam_dir(tmp_path):
+def test_w39_d1_telemetry_silently_skips_when_no_roam_dir(tmp_path, monkeypatch):
     """No .roam/ → telemetry helper writes nothing.
 
     Tests the helper directly so any subprocess side-effects from
@@ -238,6 +242,7 @@ def test_w39_d1_telemetry_silently_skips_when_no_roam_dir(tmp_path):
     """
     from roam.plan.compiler import _maybe_append_compile_telemetry
 
+    monkeypatch.setenv("ROAM_COMPILE_TELEMETRY", "1")
     plan = compile_plan("what does X do")
     # tmp_path has NO .roam dir → helper must skip
     _maybe_append_compile_telemetry(plan, {}, "full", 1.0, str(tmp_path))
@@ -245,21 +250,25 @@ def test_w39_d1_telemetry_silently_skips_when_no_roam_dir(tmp_path):
     assert not (tmp_path / ".roam" / "compile-runs.jsonl").exists()
 
 
-def test_w39_d1_telemetry_silently_skips_when_cwd_none():
+def test_w39_d1_telemetry_silently_skips_when_cwd_none(monkeypatch):
     """cwd=None → helper short-circuits without error."""
     from roam.plan.compiler import _maybe_append_compile_telemetry
 
+    monkeypatch.setenv("ROAM_COMPILE_TELEMETRY", "1")
     plan = compile_plan("what does X do")
     # No raise, no side-effect
     _maybe_append_compile_telemetry(plan, {}, "full", 1.0, None)
 
 
-def test_w39_d1_telemetry_skips_when_log_exceeds_10mb(tmp_path):
+def test_w39_d1_telemetry_rewrites_oversized_legacy_log_to_bound(tmp_path, monkeypatch):
+    from roam.plan import compiler as compiler_module
+
+    monkeypatch.setenv("ROAM_COMPILE_TELEMETRY", "1")
+    monkeypatch.delenv("ROAM_TELEMETRY_OFFTHREAD", raising=False)
     (tmp_path / ".roam").mkdir()
     log = tmp_path / ".roam" / "compile-runs.jsonl"
-    # Write 11 MB of placeholder so the rotation trip-wire kicks in
+    # An old unbounded/corrupt log is compacted rather than growing forever.
     log.write_bytes(b"x" * (11 * 1024 * 1024))
-    size_before = log.stat().st_size
     plan = compile_plan("what is X")
     compile_for_artifact(plan, cwd=str(tmp_path))
-    assert log.stat().st_size == size_before, "should not append once >10MB"
+    assert 0 < log.stat().st_size <= compiler_module._COMPILE_TELEMETRY_MAX_BYTES

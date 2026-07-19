@@ -76,6 +76,13 @@ def cli_runner():
     return CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _constitution_commands_run_in_declared_mode(monkeypatch):
+    """This shape suite intentionally exercises the command, not its mode gate."""
+    monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
+    monkeypatch.delenv("ROAM_MODE_ENFORCEMENT", raising=False)
+
+
 def _parse_json_any_exit(result, command="constitution"):
     """Parse JSON regardless of exit code.
 

@@ -24,15 +24,17 @@ SUBSTRATE — failing to load it must not derail an agent.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from roam.atomic_io import atomic_write_text
+from roam.atomic_io import atomic_write_bytes, atomic_write_text
 from roam.commands._command_utils import bare_command_name as _bare_command_name
 
 # ---------------------------------------------------------------------------
@@ -42,6 +44,15 @@ from roam.commands._command_utils import bare_command_name as _bare_command_name
 CONSTITUTION_DIR_NAME = ".roam"
 CONSTITUTION_FILE_NAME = "constitution.yml"
 CONSTITUTION_SCHEMA_VERSION = 1
+
+# The constitution schema remains v1: generator provenance is additive
+# metadata, not a change to the user-authored document shape. This separate
+# version governs only the provenance contract used to distinguish an
+# unchanged generated ``modes`` snapshot from a customized policy.
+CONSTITUTION_GENERATOR_FORMAT_VERSION = 1
+CONSTITUTION_GENERATOR_NAME = "roam constitution init"
+_GENERATOR_METADATA_KEY = "generator"
+_MANAGED_MODES_DIGEST_KEY = "managed_modes_sha256"
 
 VALID_GATES = ("before_edit", "after_edit", "before_pr")
 
@@ -172,6 +183,7 @@ class CheckReport:
     sources: list[SourceStatus] = field(default_factory=list)
     commands: list[CommandStatus] = field(default_factory=list)
     mode_issues: list[dict] = field(default_factory=list)
+    mode_upgrade: Optional[ModePolicyUpgradeReport] = None
     summary_verdict: str = ""
 
     def to_dict(self) -> dict:
@@ -190,8 +202,103 @@ class CheckReport:
             "sources": [s.to_dict() for s in self.sources],
             "commands": [c.to_dict() for c in self.commands],
             "mode_issues": self.mode_issues,
+            "mode_upgrade": self.mode_upgrade.to_dict() if self.mode_upgrade else None,
             "summary_verdict": self.summary_verdict,
         }
+
+
+@dataclass(frozen=True)
+class ModePolicyUpgradeReport:
+    """Preview of a generated constitution mode-policy upgrade.
+
+    ``safe_to_apply`` is true only when applying cannot silently broaden a
+    customized policy: either the current modes still match their recorded
+    generator digest, or the modes already equal today's defaults and only a
+    provenance stamp is missing. Legacy and modified policies require an
+    explicit replacement acknowledgement.
+    """
+
+    state: str
+    provenance: str
+    summary_verdict: str
+    safe_to_apply: bool
+    requires_explicit_acceptance: bool
+    policy_change: bool
+    metadata_change: bool
+    current_generator_format: Optional[int]
+    target_generator_format: int
+    recorded_modes_digest: str
+    current_modes_digest: str
+    target_modes_digest: str
+    additions: dict[str, list[str]] = field(default_factory=dict)
+    removals: dict[str, list[str]] = field(default_factory=dict)
+    applied: bool = False
+
+    @property
+    def changed(self) -> bool:
+        return self.policy_change or self.metadata_change
+
+    @property
+    def addition_total(self) -> int:
+        return sum(len(items) for items in self.additions.values())
+
+    @property
+    def removal_total(self) -> int:
+        return sum(len(items) for items in self.removals.values())
+
+    @property
+    def unique_addition_total(self) -> int:
+        return len({command for commands in self.additions.values() for command in commands})
+
+    @property
+    def unique_removal_total(self) -> int:
+        return len({command for commands in self.removals.values() for command in commands})
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "provenance": self.provenance,
+            "summary_verdict": self.summary_verdict,
+            "safe_to_apply": self.safe_to_apply,
+            "requires_explicit_acceptance": self.requires_explicit_acceptance,
+            "changed": self.changed,
+            "policy_change": self.policy_change,
+            "metadata_change": self.metadata_change,
+            "applied": self.applied,
+            "current_generator_format": self.current_generator_format,
+            "target_generator_format": self.target_generator_format,
+            "recorded_modes_digest": self.recorded_modes_digest,
+            "current_modes_digest": self.current_modes_digest,
+            "target_modes_digest": self.target_modes_digest,
+            "addition_total": self.addition_total,
+            "removal_total": self.removal_total,
+            "change_metric_definition": "per_mode_allow_list_entries",
+            "unique_addition_total": self.unique_addition_total,
+            "unique_removal_total": self.unique_removal_total,
+            "unique_change_metric_definition": "distinct_command_names_across_modes",
+            "additions": self.additions,
+            "removals": self.removals,
+        }
+
+
+class ConstitutionUpgradeRequiresAcceptance(RuntimeError):
+    """Raised when an unproven/customized mode policy needs opt-in."""
+
+    def __init__(self, report: ModePolicyUpgradeReport):
+        super().__init__(report.summary_verdict)
+        self.report = report
+
+
+class ConstitutionUpgradePreviewMismatch(RuntimeError):
+    """Raised when apply is not bound to the exact previewed modes digest."""
+
+    def __init__(self, report: ModePolicyUpgradeReport, detail: str):
+        super().__init__(detail)
+        self.report = report
+
+
+class ConstitutionConcurrentUpdate(RuntimeError):
+    """Raised when constitution.yml changes during an upgrade write."""
 
 
 @dataclass(frozen=True)
@@ -712,6 +819,211 @@ def _default_modes() -> dict[str, list[str]]:
     return out
 
 
+def _normalise_modes(modes: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Return the semantic mode-policy shape used for provenance hashing.
+
+    Ordering and duplicate entries do not change policy semantics, so they do
+    not invalidate generator ownership. Command flags are normalized through
+    the same bare-command helper used by enforcement.
+    """
+
+    normalised: dict[str, list[str]] = {}
+    for mode, commands in modes.items():
+        if not isinstance(mode, str) or not isinstance(commands, list):
+            continue
+        names = {_bare_command_name(str(command)) for command in commands if command}
+        normalised[mode] = sorted(name for name in names if name)
+    return dict(sorted(normalised.items()))
+
+
+def mode_policy_digest(modes: dict[str, list[str]]) -> str:
+    """Return a stable semantic SHA-256 for a constitution ``modes`` block."""
+
+    payload = json.dumps(
+        _normalise_modes(modes),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _valid_modes_digest(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
+def _generator_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    value = metadata.get(_GENERATOR_METADATA_KEY)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _classify_modes_provenance(
+    metadata: dict[str, Any],
+    current_digest: str,
+) -> tuple[str, Optional[int], str]:
+    """Return ``(state, format_version, recorded_digest)`` fail-closed."""
+
+    generator = _generator_metadata(metadata)
+    raw_format = generator.get("format_version")
+    current_format = raw_format if isinstance(raw_format, int) and not isinstance(raw_format, bool) else None
+    recorded_digest = generator.get(_MANAGED_MODES_DIGEST_KEY)
+    recorded_digest = recorded_digest if isinstance(recorded_digest, str) else ""
+    if not generator:
+        state = (
+            "legacy_generated_unproven" if metadata.get("generated_by") == CONSTITUTION_GENERATOR_NAME else "unmanaged"
+        )
+    elif current_format != CONSTITUTION_GENERATOR_FORMAT_VERSION:
+        state = "unsupported_generator_provenance"
+    elif generator.get("name") != CONSTITUTION_GENERATOR_NAME or not _valid_modes_digest(recorded_digest):
+        state = "invalid_generator_provenance"
+    elif recorded_digest == current_digest:
+        state = "managed_unchanged"
+    else:
+        state = "customized"
+    return state, current_format, recorded_digest
+
+
+def _stamp_modes_provenance(metadata: dict[str, Any], modes: dict[str, list[str]]) -> dict[str, Any]:
+    """Copy metadata and record ownership of the exact generated modes."""
+
+    stamped = dict(metadata)
+    generator = _generator_metadata(stamped)
+    generator.update(
+        {
+            "name": CONSTITUTION_GENERATOR_NAME,
+            "format_version": CONSTITUTION_GENERATOR_FORMAT_VERSION,
+            _MANAGED_MODES_DIGEST_KEY: mode_policy_digest(modes),
+        }
+    )
+    stamped["generated_by"] = CONSTITUTION_GENERATOR_NAME
+    stamped[_GENERATOR_METADATA_KEY] = generator
+    return stamped
+
+
+def _mode_deltas(
+    current: dict[str, list[str]],
+    target: dict[str, list[str]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    current_normalised = _normalise_modes(current)
+    target_normalised = _normalise_modes(target)
+    additions: dict[str, list[str]] = {}
+    removals: dict[str, list[str]] = {}
+    mode_names = dict.fromkeys([*target_normalised, *current_normalised])
+    for mode in mode_names:
+        current_names = set(current_normalised.get(mode, []))
+        target_names = set(target_normalised.get(mode, []))
+        added = sorted(target_names - current_names)
+        removed = sorted(current_names - target_names)
+        if added:
+            additions[mode] = added
+        if removed:
+            removals[mode] = removed
+    return additions, removals
+
+
+def assess_constitution_upgrade(constitution: Constitution) -> ModePolicyUpgradeReport:
+    """Preview whether and how the generated mode policy can be upgraded.
+
+    A digest match proves only that the ``modes`` block is byte-independent,
+    semantically unchanged from the snapshot the generator recorded. It is not
+    an authenticity signature. That is sufficient for the narrow ownership
+    decision here: automatic tracking is allowed only while users leave the
+    generated policy unchanged.
+    """
+
+    target_modes = _default_modes()
+    current_modes = dict(constitution.modes or {})
+    current_digest = mode_policy_digest(current_modes)
+    target_digest = mode_policy_digest(target_modes)
+    additions, removals = _mode_deltas(current_modes, target_modes)
+    policy_change = bool(additions or removals)
+    unique_change_total = len({command for commands in additions.values() for command in commands}) + len(
+        {command for commands in removals.values() for command in commands}
+    )
+
+    if not current_modes:
+        return ModePolicyUpgradeReport(
+            state="not_applicable",
+            provenance="no_declared_modes",
+            summary_verdict="constitution has no explicit modes block; runtime defaults remain authoritative",
+            safe_to_apply=True,
+            requires_explicit_acceptance=False,
+            policy_change=False,
+            metadata_change=False,
+            current_generator_format=None,
+            target_generator_format=CONSTITUTION_GENERATOR_FORMAT_VERSION,
+            recorded_modes_digest="",
+            current_modes_digest=current_digest,
+            target_modes_digest=target_digest,
+        )
+
+    provenance, current_format, recorded_digest = _classify_modes_provenance(
+        constitution.metadata,
+        current_digest,
+    )
+
+    metadata_change = not (
+        provenance == "managed_unchanged"
+        and current_format == CONSTITUTION_GENERATOR_FORMAT_VERSION
+        and recorded_digest == target_digest
+    )
+
+    if not policy_change:
+        if not metadata_change:
+            state = "up_to_date"
+            verdict = "constitution mode policy matches current generated defaults"
+        else:
+            state = "provenance_upgrade"
+            verdict = "mode policy matches current defaults; apply to record managed provenance"
+        safe_to_apply = True
+    elif provenance == "managed_unchanged":
+        state = "upgrade_available"
+        safe_to_apply = True
+        verdict = f"{unique_change_total} generated command changes can be applied safely"
+    else:
+        state = "review_required"
+        safe_to_apply = False
+        verdict = (
+            f"{unique_change_total} command changes require explicit mode-policy review and replacement acknowledgement"
+        )
+
+    return ModePolicyUpgradeReport(
+        state=state,
+        provenance=provenance,
+        summary_verdict=verdict,
+        safe_to_apply=safe_to_apply,
+        requires_explicit_acceptance=policy_change and not safe_to_apply,
+        policy_change=policy_change,
+        metadata_change=metadata_change,
+        current_generator_format=current_format,
+        target_generator_format=CONSTITUTION_GENERATOR_FORMAT_VERSION,
+        recorded_modes_digest=recorded_digest,
+        current_modes_digest=current_digest,
+        target_modes_digest=target_digest,
+        additions=additions,
+        removals=removals,
+    )
+
+
+def effective_constitution_modes(constitution: Constitution) -> dict[str, list[str]]:
+    """Return declared modes, tracking new defaults only when ownership is proven."""
+
+    declared = {mode: list(commands) for mode, commands in constitution.modes.items()}
+    generator = _generator_metadata(constitution.metadata)
+    if not declared or not generator:
+        return declared
+    provenance, _, _ = _classify_modes_provenance(
+        constitution.metadata,
+        mode_policy_digest(declared),
+    )
+    if provenance == "managed_unchanged":
+        return _default_modes()
+    return declared
+
+
 def _default_policy() -> dict[str, Any]:
     return {
         "blast_radius": {
@@ -773,20 +1085,25 @@ def _discover_sources(repo_root: Path, init_options: ConstitutionInitOptions) ->
 def _build_constitution_doc(repo_root: Path, init_options: ConstitutionInitOptions) -> dict[str, Any]:
     """Assemble the constitution document dict from repo state."""
     sources = _discover_sources(repo_root, init_options)
+    modes = _default_modes()
 
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-    return {
-        "version": CONSTITUTION_SCHEMA_VERSION,
-        "metadata": {
+    metadata = _stamp_modes_provenance(
+        {
             "name": _project_name(repo_root),
             "description": "Constitution for AI agents working on this codebase",
             "generated_at": now,
-            "generated_by": "roam constitution init",
+            "generated_by": CONSTITUTION_GENERATOR_NAME,
         },
+        modes,
+    )
+
+    return {
+        "version": CONSTITUTION_SCHEMA_VERSION,
+        "metadata": metadata,
         "sources": sources,
         "required_checks": _default_required_checks(),
-        "modes": _default_modes(),
+        "modes": modes,
         "policy": _default_policy(),
         "metadata_signals": _default_metadata_signals(),
     }
@@ -841,47 +1158,24 @@ def init_constitution(
 # ---------------------------------------------------------------------------
 
 
-def load_constitution(repo_root: Path) -> Optional[Constitution]:
-    """Read ``.roam/constitution.yml``. Returns ``None`` if not found.
+def _constitution_from_loaded_data(data: dict, *, path: Path, source_text: str) -> Constitution:
+    """Build a :class:`Constitution` from one already-read YAML snapshot."""
 
-    Tolerates an unparseable file by returning a near-empty Constitution
-    so the caller can still emit a diagnostic envelope; the loader never
-    raises.
-    """
-    path = constitution_path(Path(repo_root))
-    if not path.exists():
-        return None
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        # Fail-soft by contract ("the loader never raises"), but disclose
-        # the degraded state: the file EXISTS yet cannot be read, which is
-        # not the same as "no constitution". Silent None here would be the
-        # Pattern-2 silent fallback this module avoids elsewhere.
-        sys.stderr.write(f"[constitution] cannot read {path}: {exc}\n")
-        return None
-    data = _load_yaml(text)
     if not data:
-        # Empty / unparseable -- still return a marker so callers know
-        # the file is there but unreadable. Stamp the parse-error reason
-        # when _load_yaml left one, so the diagnostic envelope can name
-        # WHY the file failed to parse instead of conflating it with the
-        # empty-file case (Pattern-2 lineage discipline).
         meta: dict[str, Any] = {"unparseable": True}
         if _last_yaml_parse_error:
             meta["parse_error"] = _last_yaml_parse_error
-        elif not text.strip():
+        elif not source_text.strip():
             meta["reason"] = "empty_file"
-        c = Constitution(version=0, metadata=meta, _path=path)
-        return c
+        return Constitution(version=0, metadata=meta, _path=path)
 
-    def _as_dict(v: Any) -> dict:
-        return v if isinstance(v, dict) else {}
+    def _as_dict(value: Any) -> dict:
+        return value if isinstance(value, dict) else {}
 
-    def _as_list_of_str(v: Any) -> list[str]:
-        if not isinstance(v, list):
+    def _as_list_of_str(value: Any) -> list[str]:
+        if not isinstance(value, list):
             return []
-        return [str(item) for item in v if isinstance(item, (str, int))]
+        return [str(item) for item in value if isinstance(item, (str, int))]
 
     required_checks_raw = _as_dict(data.get("required_checks"))
     required_checks: dict[str, list[str]] = {}
@@ -904,6 +1198,125 @@ def load_constitution(repo_root: Path) -> Optional[Constitution]:
         policy=_as_dict(data.get("policy")),
         metadata_signals=_as_dict(data.get("metadata_signals")),
         _path=path,
+    )
+
+
+def load_constitution(repo_root: Path) -> Optional[Constitution]:
+    """Read ``.roam/constitution.yml``. Returns ``None`` if not found.
+
+    Tolerates an unparseable file by returning a near-empty Constitution
+    so the caller can still emit a diagnostic envelope; the loader never
+    raises.
+    """
+    path = constitution_path(Path(repo_root))
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        # Fail-soft by contract ("the loader never raises"), but disclose
+        # the degraded state: the file EXISTS yet cannot be read, which is
+        # not the same as "no constitution". Silent None here would be the
+        # Pattern-2 silent fallback this module avoids elsewhere.
+        sys.stderr.write(f"[constitution] cannot read {path}: {exc}\n")
+        return None
+    data = _load_yaml(text)
+    return _constitution_from_loaded_data(data, path=path, source_text=text)
+
+
+def upgrade_constitution(
+    repo_root: Path,
+    *,
+    accept_mode_replacement: bool = False,
+    expected_modes_digest: Optional[str] = None,
+) -> ModePolicyUpgradeReport:
+    """Apply the current generated mode policy with fail-safe ownership checks.
+
+    The whole YAML document is read once, unknown top-level and metadata keys
+    are retained, and only ``modes`` plus generator provenance are replaced.
+    A compare-and-swap check immediately before the atomic rename prevents a
+    concurrent user edit from being overwritten.
+    """
+
+    path = constitution_path(Path(repo_root))
+    if not path.exists():
+        raise FileNotFoundError(f"constitution does not exist at {path}")
+    if path.is_symlink():
+        raise OSError(f"refusing to upgrade symlinked constitution at {path}")
+
+    original_bytes = path.read_bytes()
+    try:
+        original_text = original_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"constitution is not valid UTF-8: {exc}") from exc
+
+    data = _load_yaml(original_text)
+    constitution = _constitution_from_loaded_data(data, path=path, source_text=original_text)
+    if constitution.metadata.get("unparseable"):
+        raise ValueError("constitution is unparseable; repair it before upgrading")
+
+    report = assess_constitution_upgrade(constitution)
+    if report.requires_explicit_acceptance and not accept_mode_replacement:
+        raise ConstitutionUpgradeRequiresAcceptance(report)
+    if report.requires_explicit_acceptance:
+        if not expected_modes_digest:
+            raise ConstitutionUpgradePreviewMismatch(
+                report,
+                "an unproven mode replacement requires --expect-modes-digest from the preview",
+            )
+        if expected_modes_digest != report.current_modes_digest:
+            raise ConstitutionUpgradePreviewMismatch(
+                report,
+                "mode policy changed since preview; run `roam constitution upgrade` again",
+            )
+    if not report.changed:
+        return report
+
+    target_modes = _default_modes()
+    updated = dict(data)
+    updated["modes"] = target_modes
+    raw_metadata = updated.get("metadata")
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+    updated["metadata"] = _stamp_modes_provenance(metadata, target_modes)
+    rendered = _dump_yaml(updated)
+    if not rendered.endswith("\n"):
+        rendered += "\n"
+    rendered_bytes = rendered.encode("utf-8")
+
+    def _assert_unchanged() -> None:
+        try:
+            current_bytes = path.read_bytes()
+        except OSError as exc:
+            raise ConstitutionConcurrentUpdate(
+                f"constitution changed or became unreadable during upgrade: {exc}"
+            ) from exc
+        if current_bytes != original_bytes:
+            raise ConstitutionConcurrentUpdate("constitution changed during upgrade; preview again before applying")
+
+    atomic_write_bytes(
+        path,
+        rendered_bytes,
+        before_replace=_assert_unchanged,
+        durable=True,
+        create_parents=False,
+    )
+    upgraded = _constitution_from_loaded_data(updated, path=path, source_text=rendered)
+    post = assess_constitution_upgrade(upgraded)
+    return replace(
+        report,
+        state="upgraded",
+        provenance=post.provenance,
+        summary_verdict=(
+            f"constitution mode policy upgraded with {report.unique_addition_total} added command(s) "
+            f"and {report.unique_removal_total} removed command(s)"
+        ),
+        safe_to_apply=True,
+        requires_explicit_acceptance=False,
+        metadata_change=False,
+        current_generator_format=post.current_generator_format,
+        recorded_modes_digest=post.recorded_modes_digest,
+        current_modes_digest=post.current_modes_digest,
+        applied=True,
     )
 
 
@@ -1119,6 +1532,7 @@ def check_constitution(repo_root: Path, constitution: Constitution) -> CheckRepo
     deprecated = _deprecated_commands()
     commands_out = _resolve_required_checks(constitution.required_checks, known, deprecated)
     mode_issues = _check_mode_allow_lists(constitution.modes, known, deprecated)
+    mode_upgrade = assess_constitution_upgrade(constitution)
     check_inputs = _CheckVerdictInputs(
         sources=sources_out,
         commands=commands_out,
@@ -1134,6 +1548,7 @@ def check_constitution(repo_root: Path, constitution: Constitution) -> CheckRepo
         sources=sources_out,
         commands=commands_out,
         mode_issues=mode_issues,
+        mode_upgrade=mode_upgrade,
         summary_verdict=verdict,
     )
 

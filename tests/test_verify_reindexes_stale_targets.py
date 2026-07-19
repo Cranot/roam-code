@@ -121,10 +121,10 @@ def test_verify_source_pins_stale_target_reindex():
     from roam.commands import cmd_verify
 
     src = inspect.getsource(cmd_verify)
-    assert "get_index_changed_files" in src, (
-        "verify must detect stale targets via get_index_changed_files (added+modified), "
-        "not an absence-only check — the latter false-greens on edits"
+    assert "file_hash" in src and "index_lock_unavailable" in src and "refresh_unproven" in src, (
+        "verify must hash every target, detect an index-lock refusal, and fail closed "
+        "when the refreshed DB cannot be tied to those bytes"
     )
-    assert "Indexer().run(" in src, (
+    assert "Indexer(project_root=root).run(" in src, (
         "verify must run the incremental indexer to refresh stale targets before reading symbols from the DB"
     )

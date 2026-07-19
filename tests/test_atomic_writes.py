@@ -18,7 +18,9 @@ These tests pin both fixes so we cannot regress.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
 from pathlib import Path
 
 import pytest
@@ -56,6 +58,88 @@ def test_atomic_write_bytes_happy_path(tmp_path):
     target = tmp_path / "data.bin"
     atomic_write_bytes(target, b"\x00\x01\x02\xff")
     assert target.read_bytes() == b"\x00\x01\x02\xff"
+
+
+def test_atomic_write_bytes_prepares_empty_temp_before_content(tmp_path):
+    target = tmp_path / "private.bin"
+    observations = []
+
+    def prepare_temp(temp_path: str) -> None:
+        temp = Path(temp_path)
+        observations.append((temp.parent, temp.stat().st_size))
+
+    atomic_write_bytes(target, b"private", prepare_temp=prepare_temp)
+
+    assert observations == [(tmp_path, 0)]
+    assert target.read_bytes() == b"private"
+
+
+def test_atomic_write_bytes_prepare_failure_preserves_existing_target(tmp_path):
+    target = tmp_path / "private.bin"
+    target.write_bytes(b"old")
+
+    def reject_temp(_temp_path: str) -> None:
+        raise PermissionError("ACL unavailable")
+
+    with pytest.raises(PermissionError, match="ACL unavailable"):
+        atomic_write_bytes(target, b"new", prepare_temp=reject_temp)
+
+    assert target.read_bytes() == b"old"
+    assert list(tmp_path.glob(".private.bin.*.tmp")) == []
+
+
+def test_atomic_write_bytes_fd_prepare_receives_live_descriptor(tmp_path):
+    target = tmp_path / "private.bin"
+    observations = []
+
+    def prepare_temp_fd(fd: int, temp_path: str) -> None:
+        observations.append((Path(temp_path).parent, os.fstat(fd).st_size))
+
+    atomic_write_bytes(target, b"private", prepare_temp_fd=prepare_temp_fd)
+
+    assert observations == [(tmp_path, 0)]
+    assert target.read_bytes() == b"private"
+
+
+def test_atomic_write_bytes_pre_replace_failure_preserves_target(tmp_path):
+    target = tmp_path / "private.bin"
+    target.write_bytes(b"old")
+
+    def reject_replace() -> None:
+        raise RuntimeError("compare-and-swap conflict")
+
+    with pytest.raises(RuntimeError, match="compare-and-swap conflict"):
+        atomic_write_bytes(target, b"new", before_replace=reject_replace, durable=True)
+
+    assert target.read_bytes() == b"old"
+    assert list(tmp_path.glob(".private.bin.*.tmp")) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no portable directory-fsync primitive")
+def test_atomic_write_bytes_durable_syncs_file_then_parent(tmp_path, monkeypatch):
+    target = tmp_path / "private.bin"
+    calls: list[str] = []
+    real_fsync = os.fsync
+
+    def recording_fsync(fd: int) -> None:
+        mode = os.fstat(fd).st_mode
+        calls.append("directory" if stat.S_ISDIR(mode) else "file")
+        real_fsync(fd)
+
+    monkeypatch.setattr("roam.atomic_io.os.fsync", recording_fsync)
+
+    atomic_write_bytes(target, b"private", durable=True)
+
+    assert calls == ["file", "directory"]
+
+
+def test_atomic_write_bytes_can_require_existing_parent(tmp_path):
+    target = tmp_path / "missing" / "private.bin"
+
+    with pytest.raises(FileNotFoundError):
+        atomic_write_bytes(target, b"private", create_parents=False)
+
+    assert not target.parent.exists()
 
 
 def test_atomic_write_creates_parent_dir(tmp_path):

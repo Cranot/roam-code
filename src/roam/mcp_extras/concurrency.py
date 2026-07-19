@@ -193,6 +193,21 @@ def _release(per_tool: threading.BoundedSemaphore | None) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _preserve_runtime_annotations(wrapper, fn):
+    """Copy annotations that ``functools.wraps`` no longer assigns on 3.14.
+
+    Python 3.14 moved lazy annotations behind ``__annotate__`` and removed
+    ``__annotations__`` from ``functools.WRAPPER_ASSIGNMENTS``.  Roam's MCP
+    alias layer intentionally synthesises runtime annotations after creating
+    its wrapper, so the following concurrency wrapper must copy that realised
+    mapping explicitly.  Otherwise FastMCP sees the synthesised signature but
+    Pydantic sees no matching type hints and raises ``KeyError`` while the
+    server module is importing.
+    """
+    wrapper.__annotations__ = dict(getattr(fn, "__annotations__", {}) or {})
+    return wrapper
+
+
 def busy_envelope(name: str) -> dict:
     """Structured response when the server is over capacity.
 
@@ -283,7 +298,7 @@ def _wrap_async_with_guard(name: str, fn):
             finally:
                 _release(per_tool)
 
-    return async_wrapper
+    return _preserve_runtime_annotations(async_wrapper, fn)
 
 
 def _wrap_sync_with_guard(name: str, fn):
@@ -294,7 +309,7 @@ def _wrap_sync_with_guard(name: str, fn):
             return _rate_limited_result(name)
         return _run_sync_with_guard(name, fn, per_tool, args, kwargs)
 
-    return sync_wrapper
+    return _preserve_runtime_annotations(sync_wrapper, fn)
 
 
 def wrap_with_guard(name: str, fn):

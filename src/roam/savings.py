@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 from collections import Counter, defaultdict
@@ -40,6 +41,65 @@ TRANSCRIPT_EVENT_LOG_NAME = "transcript-episodes.jsonl"
 COMPILE_LOG_NAME = "compile-runs.jsonl"
 LEDGER_DB_NAME = "episodes.sqlite"
 VALIDATED_HEALTH_STATES = frozenset({"verification_passed", "verification_failed"})
+
+SAVINGS_AGGREGATE_SCHEMA = "roam.savings.aggregate"
+SAVINGS_AGGREGATE_SCHEMA_VERSION = 1
+SAVINGS_COVERAGE_DEFINITIONS = {
+    "terminal_coverage_definition": (
+        "eligible prompt starts with a terminal stop event / prompt starts older than the grace window"
+    ),
+    "episode_join_coverage_definition": (
+        "eligible prospective prompt starts with a terminal event and either the expected compile "
+        "record or an explicit compile_expected=false skip / eligible prospective prompt starts"
+    ),
+    "compile_identity_coverage_definition": (
+        "production compile rows with an opaque local outcome join key / "
+        "production compile rows since the first prompt-start event"
+    ),
+    "health_context_coverage_definition": (
+        "eligible edited episodes with explicit verification_passed or verification_failed state / "
+        "eligible edited episodes"
+    ),
+    "hook_version_coverage_definition": (
+        f"eligible prospective prompt starts emitted by hook version >= {MIN_LIVE_HOOK_VERSION} / "
+        "eligible prospective prompt starts"
+    ),
+}
+
+_AGGREGATE_SUMMARY_VERDICTS = {
+    "not_initialized": "Savings ledger not initialized",
+    "insufficient_evidence": "Savings claims withheld because aggregate evidence is insufficient",
+    "measurement_ready": "Aggregate episode joins are measurement-ready",
+    "policy_ready": "Aggregate episode evidence is policy-ready",
+    "unknown": "Savings aggregate unavailable because the source state is unknown",
+}
+_AGGREGATE_COVERAGE_COUNT_FIELDS = (
+    "prompt_starts",
+    "prospective_prompt_starts",
+    "historical_prompt_starts",
+    "eligible_prompt_starts",
+    "terminal_outcomes",
+    "compile_expected_episodes",
+    "compile_joined_episodes",
+    "fully_joined_episodes",
+    "health_context_episodes",
+    "health_expected_episodes",
+    "current_hook_episodes",
+)
+_AGGREGATE_COVERAGE_PERCENT_FIELDS = (
+    "terminal_coverage_pct",
+    "episode_join_coverage_pct",
+    "health_context_coverage_pct",
+    "hook_version_coverage_pct",
+    "compile_identity_coverage_pct",
+)
+_AGGREGATE_DECLARATION_STATES = (
+    "declared_native",
+    "declared_partial",
+    "unclaimed",
+    "unknown",
+)
+_AGGREGATE_ASSIGNMENT_STATES = ("control", "exposed", "shadow", "unknown")
 
 EVENT_FIELD_DEFINITIONS: dict[str, str] = {
     "event_id": "stable unique event identifier used for idempotent ingestion",
@@ -1005,24 +1065,7 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
         "health_context_coverage_pct": _pct(len(health_known), len(health_expected)),
         "hook_version_coverage_pct": _pct(len(current_hook), len(eligible)),
         "compile_identity_coverage_pct": _pct(len(identified_compiles), len(production_compiles)),
-        "terminal_coverage_definition": (
-            "eligible prompt starts with a terminal stop event / prompt starts older than the grace window"
-        ),
-        "episode_join_coverage_definition": (
-            "eligible prospective prompt starts with a terminal event and either the expected compile "
-            "record or an explicit compile_expected=false skip / eligible prospective prompt starts"
-        ),
-        "compile_identity_coverage_definition": (
-            "production compile rows with episode_id / production compile rows since the first prompt-start event"
-        ),
-        "health_context_coverage_definition": (
-            "eligible edited episodes with explicit verification_passed or verification_failed state / "
-            "eligible edited episodes"
-        ),
-        "hook_version_coverage_definition": (
-            f"eligible prospective prompt starts emitted by hook version >= {MIN_LIVE_HOOK_VERSION} / "
-            "eligible prospective prompt starts"
-        ),
+        **SAVINGS_COVERAGE_DEFINITIONS,
     }
 
     integrity_clean = materialization["invalid_event_rows"] == 0 and materialization["invalid_compile_rows"] == 0
@@ -1086,5 +1129,130 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
             "minimum_eligible_episodes": MIN_ADMISSIBLE_EPISODES,
             "minimum_coverage_pct": MIN_COVERAGE_PCT,
             "terminal_grace_seconds": TERMINAL_GRACE_SECONDS,
+        },
+    }
+
+
+def _aggregate_nonnegative_int(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _aggregate_percentage(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0.0 or number > 100.0:
+        return None
+    return number
+
+
+def _aggregate_dict_rows(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [row for row in value if isinstance(row, dict)]
+
+
+def aggregate_savings_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Project a rich local analysis onto the browser-safe SavingsAggregate contract.
+
+    The projection reconstructs every string from closed producer vocabulary and
+    derives only counts from transcript-backed rows. It never copies titles,
+    patterns, commands, prompts, responses, paths, identifiers, or per-episode
+    records into the returned value.
+    """
+    source = result if isinstance(result, dict) else {}
+    source_summary = source.get("summary") if isinstance(source.get("summary"), dict) else {}
+    source_state = str(source_summary.get("state") or "")
+    state = source_state if source_state in _AGGREGATE_SUMMARY_VERDICTS else "unknown"
+
+    source_coverage = source.get("coverage") if isinstance(source.get("coverage"), dict) else {}
+    coverage = {
+        field: _aggregate_nonnegative_int(source_coverage.get(field)) for field in _AGGREGATE_COVERAGE_COUNT_FIELDS
+    }
+    coverage.update(
+        {field: _aggregate_percentage(source_coverage.get(field)) for field in _AGGREGATE_COVERAGE_PERCENT_FIELDS}
+    )
+    coverage.update(SAVINGS_COVERAGE_DEFINITIONS)
+
+    source_canaries = source.get("sensor_canaries") if isinstance(source.get("sensor_canaries"), dict) else {}
+    canaries_passed = _aggregate_nonnegative_int(source_canaries.get("passed"))
+    canaries_total = _aggregate_nonnegative_int(source_canaries.get("total"))
+    canary_state = str(source_canaries.get("state") or "")
+    if canary_state not in {"passed", "failed"}:
+        canary_state = "unknown"
+    if canaries_total and canaries_passed > canaries_total:
+        canaries_passed = canaries_total
+        canary_state = "failed"
+
+    atlas = source.get("procedure_atlas") if isinstance(source.get("procedure_atlas"), dict) else {}
+    opportunities = _aggregate_dict_rows(atlas.get("opportunities"))
+    failure_signatures = _aggregate_dict_rows(atlas.get("failure_signatures"))
+    recovery_targets = _aggregate_dict_rows(atlas.get("recovery_targets"))
+    intervention_mappings = _aggregate_dict_rows(atlas.get("intervention_mappings"))
+
+    declaration_states = {name: 0 for name in _AGGREGATE_DECLARATION_STATES}
+    for row in intervention_mappings:
+        raw_state = str(row.get("declaration_state") or "")
+        declaration_state = raw_state if raw_state in declaration_states else "unknown"
+        declaration_states[declaration_state] += 1
+
+    intervention_evidence = (
+        source.get("intervention_evidence") if isinstance(source.get("intervention_evidence"), dict) else {}
+    )
+    experiments = _aggregate_dict_rows(intervention_evidence.get("experiments"))
+    assignment_states = {name: 0 for name in _AGGREGATE_ASSIGNMENT_STATES}
+    for experiment in experiments:
+        counts = experiment.get("assignment_counts")
+        if not isinstance(counts, dict):
+            continue
+        for raw_state, raw_count in counts.items():
+            count = _aggregate_nonnegative_int(raw_count)
+            assignment_state = str(raw_state) if str(raw_state) in assignment_states else "unknown"
+            assignment_states[assignment_state] += count
+
+    return {
+        "aggregate_schema": SAVINGS_AGGREGATE_SCHEMA,
+        "aggregate_schema_version": SAVINGS_AGGREGATE_SCHEMA_VERSION,
+        "summary": {
+            "verdict": _AGGREGATE_SUMMARY_VERDICTS[state],
+            "state": state,
+            "partial_success": state != "policy_ready",
+            "measurement_admissible": source_summary.get("measurement_admissible") is True,
+            "policy_admissible": source_summary.get("policy_admissible") is True,
+            "integrity_clean": source_summary.get("integrity_clean") is True,
+            "north_star": "durable successful outcomes per unit of constrained resource",
+            "causal_savings_claimed": False,
+        },
+        "coverage": coverage,
+        "sensor_canaries": {
+            "state": canary_state,
+            "passed": canaries_passed,
+            "total": canaries_total,
+        },
+        "opportunity_counts": {
+            "repeated_live_candidates": len(_aggregate_dict_rows(source.get("repeat_candidates"))),
+            "historical_pattern_candidates": len(_aggregate_dict_rows(source.get("historical_candidates"))),
+            "ranked_work_opportunities": len(opportunities),
+            "failure_signatures": len(failure_signatures),
+            "recovery_targets": len(recovery_targets),
+            "intervention_mappings": len(intervention_mappings),
+        },
+        "intervention_state": {
+            "declaration_states": declaration_states,
+            "assignments": sum(assignment_states.values()),
+            "experiments": len(experiments),
+            "assignment_states": assignment_states,
+            "causal_savings_claimed": False,
+        },
+        "privacy": {
+            "aggregate_only": True,
+            "raw_transcripts_returned": False,
+            "prompt_or_response_text_returned": False,
+            "shell_command_text_returned": False,
+            "source_or_path_text_returned": False,
+            "per_episode_data_returned": False,
+            "identifiers_returned": False,
         },
     }

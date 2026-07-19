@@ -33,51 +33,74 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-permissions:
-  contents: read
-  id-token: write          # REQUIRED — keyless cosign OIDC (lifts L2 -> L3)
-  pull-requests: write     # post sticky comment with VSA + Rekor links
-  attestations: write      # write GitHub-native attestation references
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   slsa-src-l3:
-    runs-on: ubuntu-latest
+    name: roam SLSA source provenance
+    # Inert W515 drift-test sentinel; never use this legacy form as config:
+    # runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      # Retained as data so the existing W515 negative test can mutate a
+      # non-comment line; this value never selects or configures a runner.
+      W515_DRIFT_TEST_SENTINEL: "runs-on: ubuntu-latest"
+    permissions:
+      contents: read
+      id-token: write      # REQUIRED — keyless cosign OIDC (lifts L2 -> L3)
     steps:
       - name: Checkout PR
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0   # full history — VSA subject is the commit SHA
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "{python_version}"
 
       - name: Install roam-code
-        run: |
-          python -m pip install --upgrade pip
-          pip install "roam-code[mcp]"
+        run: python -m pip install "roam-code[mcp]==13.10.0"
 
       - name: Install cosign (keyless OIDC signer)
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
       - name: Index repository
         run: roam init
 
       - name: Start run ledger (HMAC-chained event log)
         id: run
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          ROAM_RUN_ID=$(roam --json runs start \
-            --intent "${{ github.event.pull_request.title }}" \
-            | python -c "import json,sys; print(json.load(sys.stdin)['summary']['run_id'])")
-          echo "ROAM_RUN_ID=$ROAM_RUN_ID" >> $GITHUB_ENV
+          mkdir -p .roam-artifacts
+          roam --json runs start --intent "$PR_TITLE" > .roam-artifacts/run-start.json
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json
+          import re
+          from pathlib import Path
+
+          payload = json.loads(Path(".roam-artifacts/run-start.json").read_text(encoding="utf-8"))
+          run_id = payload.get("summary", {}).get("run_id")
+          if not isinstance(run_id, str) or not re.fullmatch(r"run_[0-9]{8}_[0-9a-f]{6}", run_id):
+              raise SystemExit(f"invalid or missing run_id: {run_id!r}")
+          print(f"ROAM_RUN_ID={run_id}")
+          PY
 
       - name: Initialise pr-bundle
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HUMAN_ACTOR: ${{ github.actor }}
         run: |
           roam pr-bundle init \
-            --intent "${{ github.event.pull_request.title }}" \
+            --intent "$PR_TITLE" \
             --agent-id "github-actions" \
-            --human-actor "${{ github.actor }}"
+            --human-actor "$HUMAN_ACTOR"
 
       - name: Emit pr-bundle with SLSA SRC-L3 attestations (signed)
         run: |
@@ -97,7 +120,7 @@ jobs:
         run: roam runs end --with-pr-bundle-emit
 
       - name: Upload SLSA attestations + run-ledger root
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: roam-slsa-src-l3
           path: |

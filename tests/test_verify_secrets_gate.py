@@ -199,28 +199,30 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
     hook = tmp_path / "stop.py"
     hook.write_text(_CLAUDE_STOP_HOOK_SCRIPT, encoding="utf-8")
 
+    violation = {
+        "category": "secrets",
+        "severity": "FAIL",
+        "file": "app.py",
+        "line": 3,
+        "message": "credential-shaped string (github_pat_classic) in `app.py`",
+        "fix": "Remove the credential and rotate it",
+    }
     envelope = {
-        "summary": {"verdict": "WARN 79/100"},
-        "categories": {
-            "secrets": {
-                "score": 75,
-                "violations": [
-                    {
-                        "category": "secrets",
-                        "severity": "FAIL",
-                        "file": "app.py",
-                        "line": 3,
-                        "message": "credential-shaped string (github_pat_classic) in `app.py`",
-                        "fix": "Remove the credential and rotate it",
-                    }
-                ],
-            }
+        "command": "verify",
+        "summary": {
+            "verdict": "FAIL",
+            "violation_count": 1,
+            "files_checked": 1,
+            "verification_complete": True,
+            "partial_success": False,
         },
+        "categories": {"secrets": {"score": 0, "violations": [violation]}},
+        "violations": [violation],
     }
     stub_dir = tmp_path / "bin"
     stub_dir.mkdir()
     stub = stub_dir / "roam"
-    stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{_json.dumps(envelope)}\nEOF\n", encoding="utf-8")
+    stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{_json.dumps(envelope)}\nEOF\nexit 5\n", encoding="utf-8")
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{stub_dir}:{os.environ['PATH']}")
 
@@ -242,7 +244,8 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
     assert "AUTO-FIX" in out["reason"]
     assert "app.py:3" in out["reason"]
 
-    # And the loop guard: when stop_hook_active, stay silent.
+    # A correction continuation must re-run the gate and remain blocked while
+    # the secret finding survives; Claude Code provides the global loop cap.
     proc2 = subprocess.run(
         [_sys.executable, str(hook)],
         input=_json.dumps({"stop_hook_active": True}),
@@ -251,4 +254,6 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
         timeout=30,
         cwd=tmp_path,
     )
-    assert proc2.returncode == 0 and proc2.stdout == ""
+    assert proc2.returncode == 0
+    assert _json.loads(proc2.stdout)["decision"] == "block"
+    assert "app.py:3" in _json.loads(proc2.stdout)["reason"]
