@@ -558,7 +558,10 @@ def status(ctx):
 # as safely outside the repository. ``os.path.commonpath`` raises ValueError
 # across drive letters; v11 accidentally collapsed that safe case into an
 # unavailable evidence root and dropped episode identity.
-_HOOK_BODY_VERSION = 12
+# v13 (2026-07-20): bind receipt target counts to ``targets_checked`` rather
+# than indexed ``files_checked`` so deleted and non-code episode targets retain
+# exact receipt coverage. Deployed v12 bodies heal to the strict v13 contract.
+_HOOK_BODY_VERSION = 13
 _HOOK_VERSION_MARKER = "# roam-hook-version:"
 
 _CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
@@ -913,7 +916,7 @@ def _start_episode(payload, prompt):
             _release_lock(lock_path, fd)
         event = {
             "schema_version": _EPISODE_SCHEMA,
-            "hook_version": 12,
+            "hook_version": 13,
             "evidence_source": "live_hook",
             "event_id": "evt_" + hashlib.sha256((episode_id + ":start").encode("utf-8")).hexdigest()[:24],
             "episode_id": episode_id,
@@ -1161,7 +1164,7 @@ _ADVISORY_CATEGORIES = frozenset({
     "llm_smells", "test_hermeticity", "smells",
 })
 _EPISODE_SCHEMA = 1
-_EPISODE_HOOK_VERSION = 12
+_EPISODE_HOOK_VERSION = 13
 _EPISODE_LOCK_ATTEMPTS = 20
 _EPISODE_LOCK_SLEEP_S = 0.005
 _EPISODE_LOCK_STALE_S = 30.0
@@ -1910,6 +1913,7 @@ def _verify_protocol_state(envelope, expected_receipt):
     verdict = str(summary.get("verdict") or "").strip().upper().split(":", 1)[0].split(None, 1)[0]
     issue_count = summary.get("violation_count")
     files_checked = summary.get("files_checked")
+    targets_checked = summary.get("targets_checked")
     violations = envelope.get("violations")
     returncode = envelope.get("_hook_process_returncode")
     receipt = summary.get("verification_receipt")
@@ -1918,6 +1922,8 @@ def _verify_protocol_state(envelope, expected_receipt):
     if type(issue_count) is not int or issue_count < 0:
         return "unavailable"
     if type(files_checked) is not int or files_checked < 0:
+        return "unavailable"
+    if type(targets_checked) is not int or targets_checked < 0:
         return "unavailable"
     if not isinstance(violations, list) or len(violations) != issue_count:
         return "unavailable"
@@ -1952,7 +1958,7 @@ def _verify_protocol_state(envelope, expected_receipt):
         or receipt.get("target_file_count") != expected_receipt.get("target_file_count")
         or receipt.get("scope_stable") is not True
         or receipt.get("request_match") is not True
-        or files_checked != expected_receipt.get("target_file_count")
+        or targets_checked != expected_receipt.get("target_file_count")
     ):
         return "unavailable"
     has_fail_finding = any(
@@ -2517,6 +2523,16 @@ _CLAUDE_STOP_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_STOP_HOOK_SCRIPT)
 # defect that shipped in #77).
 _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
     {
+        "25e552061e4737bac27cbd547cade4189c84f207b2f466d410e1d036a1b1f1ca",  # ups v12 pristine (2026-07-19 cross-volume evidence)
+        "4df987f04f024d36867c608ce971bf4a6c18b36b36a1a11babf9f569eb36e9e3",  # ups v12 pristine (2026-07-19 evidence hardening)
+        "d6521a89e559fb875e2d949f2a13e9710aa378edd505b688362c07137bb1e0d1",  # stop v12 pristine (2026-07-19 cross-volume evidence)
+        "2ef11d5bccf7a80699bae5b2686f36d27f1d9cb5e30cefc21db493f920833143",  # stop v12 surgered (2026-07-20 compatibility variant)
+        "d91b18607d6175b4aa90023172f52663a6c8f3d16a714f78615a559d2913e7ef",  # ups v2 pristine (2026-07-16 rewritten history)
+        "f83329cc80eed97f62b388c2a5ee8c8e81118475dc04b04eca6cc2fac28fac1b",  # stop pre-stamp pristine (2026-06-10 rewritten history)
+        "fa249e6a5bd660cd9d6592bab09321552d7c8bc4e01206ffec724ee0d8e85904",  # stop pre-stamp pristine (2026-06-11 rewritten history)
+        "c15f23363571215a5d168d150ba650ca1a6c2cf1480573957bcb9eaadbdfcc3f",  # ups pre-stamp pristine (2026-07-11 rewritten history)
+        "feab198c56d960eb310746712cc170bdbe60a38c78f0508095f1d9ebca9dbdb9",  # ups pre-stamp pristine (2026-07-16 rewritten history)
+        "5c0fde3d99b0d23474d142016487ad0c6e4fb74a978cc113f274fd02a99aef08",  # ups pre-stamp pristine (2026-07-16 rewritten history)
         "6ab4f91dc4c407c2fa82cb4e51bb5fd5268563150598650e4928618834a59a04",  # ups v11 pristine (canonical override ownership)
         "391fd8b9044037b20000fc301415137647b51f7bf60bfcf35a84a05ec94a3bb8",  # stop v11 pristine (canonical override ownership)
         "62e71df1b62b44860b5eccb181022bb5d1dfa1a751d5c0593c787c99d13e59ed",  # ups v10 pristine (2026-07-17 receipt-v3 identity binding)
