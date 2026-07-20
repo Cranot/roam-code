@@ -1234,8 +1234,9 @@ def upgrade_constitution(
 
     The whole YAML document is read once, unknown top-level and metadata keys
     are retained, and only ``modes`` plus generator provenance are replaced.
-    A compare-and-swap check immediately before the atomic rename prevents a
-    concurrent user edit from being overwritten.
+    A content check immediately before the atomic rename rejects edits visible
+    at that final user-space check.  The rename itself remains an ordinary
+    last-writer-wins replacement if another writer races after the check.
     """
 
     path = constitution_path(Path(repo_root))

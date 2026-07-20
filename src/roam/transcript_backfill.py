@@ -3,7 +3,7 @@
 The extractor reads raw Claude Code or Codex JSONL locally and emits a compact
 derived snapshot. Raw prompts, responses, command values, paths, and tool
 arguments never enter the snapshot. Sanitized shell templates retain the
-executable, safe subcommand/flags, and control-flow shape. Historical episodes
+closed executable/subcommand/flag categories and control-flow shape. Historical episodes
 are discovery evidence only; they cannot satisfy the prospective measurement
 gate in :mod:`roam.savings`.
 """
@@ -11,6 +11,7 @@ gate in :mod:`roam.savings`.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import hmac
 import json
 import os
@@ -21,16 +22,38 @@ import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
 from roam.atomic_io import atomic_write_bytes
 from roam.observability import log_swallowed
+from roam.security.bounded_json import loads_bounded, strict_json_object_pairs
+from roam.security.owner_only import (
+    create_owner_only_directory,
+    ensure_owner_only_file_descriptor,
+    ensure_owner_only_path,
+    path_is_owner_only,
+    pinned_owner_only_directory,
+)
 
-BACKFILL_VERSION = 5
-MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024
-MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024
+BACKFILL_VERSION = 6
+MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024
+MAX_TRANSCRIPT_LINE_BYTES = 2 * 1024 * 1024
+MAX_TRANSCRIPT_ROWS_PER_FILE = 20_000
+MAX_TRANSCRIPT_EVENTS_PER_FILE = 10_000
+MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024
+MAX_SNAPSHOT_EVENTS = 50_000
+DEFAULT_MAX_TRANSCRIPT_FILES = 2_000
+MAX_TRANSCRIPT_FILES_PER_SOURCE = 10_000
+MAX_TOTAL_TRANSCRIPT_FILES = 10_000
+MAX_TRANSCRIPT_SOURCES = 16
+MAX_TRANSCRIPT_DIRECTORIES = 100_000
+MAX_TRANSCRIPT_DIRECTORY_ENTRIES = 1_000_000
+MAX_TRANSCRIPT_AGGREGATE_BYTES = 512 * 1024 * 1024
+MAX_TRANSCRIPT_AGGREGATE_ROWS = 1_000_000
+MAX_TRANSCRIPT_ELAPSED_SECONDS = 120.0
+MAX_TOKEN_COUNT = 1_000_000_000_000
+MAX_DURATION_MS = 366 * 24 * 60 * 60 * 1000
 OUTPUT_NAME = "transcript-episodes.jsonl"
 SALT_NAME = "savings-backfill.key"
 _MAX_KEY_BYTES = 129
@@ -217,6 +240,176 @@ _KNOWN_SUBCOMMAND_EXECUTABLES = frozenset(
         "pip3",
     }
 )
+_SAFE_EXECUTABLES = frozenset(
+    {
+        "ansible",
+        "awk",
+        "black",
+        "cargo",
+        "cat",
+        "cd",
+        "cmd",
+        "cut",
+        "dir",
+        "docker",
+        "dotnet",
+        "find",
+        "findstr",
+        "get-childitem",
+        "get-content",
+        "get-location",
+        "git",
+        "go",
+        "gofmt",
+        "gradle",
+        "grep",
+        "head",
+        "helm",
+        "java",
+        "journalctl",
+        "jq",
+        "kubectl",
+        "less",
+        "ls",
+        "make",
+        "mvn",
+        "mypy",
+        "nl",
+        "node",
+        "npm",
+        "npx",
+        "pnpm",
+        "poetry",
+        "powershell",
+        "pwsh",
+        "py",
+        "pyright",
+        "pytest",
+        "pip",
+        "pip3",
+        "python",
+        "python3",
+        "rg",
+        "roam",
+        "rsync",
+        "ruff",
+        "rustfmt",
+        "scp",
+        "sed",
+        "select-object",
+        "select-string",
+        "ssh",
+        "systemctl",
+        "tail",
+        "terraform",
+        "tree",
+        "tsc",
+        "uv",
+        "vitest",
+        "where",
+        "yarn",
+    }
+)
+_SAFE_SUBCOMMANDS_BY_EXECUTABLE: dict[str, frozenset[str]] = {
+    "cargo": frozenset({"build", "check", "clippy", "fmt", "test"}),
+    "docker": frozenset({"build", "compose", "inspect", "logs", "ps", "pull", "push", "run"}),
+    "dotnet": frozenset({"build", "format", "restore", "test"}),
+    "git": frozenset(
+        {
+            "add",
+            "branch",
+            "cherry-pick",
+            "commit",
+            "diff",
+            "fetch",
+            "grep",
+            "log",
+            "merge",
+            "pull",
+            "push",
+            "rebase",
+            "remote",
+            "rev-parse",
+            "show",
+            "status",
+            "tag",
+        }
+    ),
+    "go": frozenset({"build", "fmt", "get", "mod", "test", "vet"}),
+    "kubectl": frozenset({"apply", "describe", "diff", "get", "logs", "rollout"}),
+    "npm": frozenset({"add", "audit", "ci", "install", "remove", "run", "test", "update"}),
+    "pip": frozenset({"check", "install", "list", "show", "uninstall"}),
+    "pip3": frozenset({"check", "install", "list", "show", "uninstall"}),
+    "pnpm": frozenset({"add", "audit", "install", "remove", "run", "test", "update"}),
+    "roam": frozenset(
+        {
+            "compile",
+            "compile-stats",
+            "context",
+            "critique",
+            "diff",
+            "health",
+            "impact",
+            "init",
+            "preflight",
+            "retrieve",
+            "savings",
+            "understand",
+            "uses",
+            "verify",
+        }
+    ),
+    "systemctl": frozenset({"daemon-reload", "disable", "enable", "restart", "start", "status", "stop"}),
+    "yarn": frozenset({"add", "audit", "install", "remove", "run", "test", "upgrade"}),
+}
+_SAFE_FLAGS = frozenset(
+    {
+        "-a",
+        "-c",
+        "-e",
+        "-f",
+        "-h",
+        "-i",
+        "-l",
+        "-m",
+        "-n",
+        "-o",
+        "-p",
+        "-q",
+        "-r",
+        "-s",
+        "-v",
+        "-x",
+        "--all",
+        "--cached",
+        "--changed",
+        "--check",
+        "--command",
+        "--dry-run",
+        "--eval",
+        "--exclude",
+        "--filter",
+        "--format",
+        "--glob",
+        "--help",
+        "--include",
+        "--json",
+        "--maxdepth",
+        "--mindepth",
+        "--name",
+        "--no-cache",
+        "--output",
+        "--pattern",
+        "--quiet",
+        "--recursive",
+        "--root",
+        "--select",
+        "--short",
+        "--stat",
+        "--verbose",
+        "--version",
+    }
+)
 _FLAGS_WITH_VALUES = frozenset(
     {
         "-c",
@@ -312,17 +505,26 @@ def _private_state_directory(root: Path, *, create: bool) -> Path:
         raise TranscriptBackfillSafetyError(f"project root must be a concrete directory: {root}")
 
     state = root / ".roam"
-    if create:
-        try:
-            state.mkdir(mode=0o700)
-        except FileExistsError:
-            pass
     try:
         state_info = os.lstat(state)
     except FileNotFoundError:
         if not create:
             return state
-        raise TranscriptBackfillSafetyError(f"private state directory disappeared during creation: {state}") from None
+        if not create_owner_only_directory(state):
+            # A concurrent creator may have won between lstat and creation.
+            try:
+                state_info = os.lstat(state)
+            except OSError as exc:
+                raise TranscriptBackfillSafetyError(
+                    f"private state directory could not be created owner-only: {state}: {exc}"
+                ) from exc
+        else:
+            try:
+                state_info = os.lstat(state)
+            except OSError as exc:
+                raise TranscriptBackfillSafetyError(
+                    f"private state directory disappeared during creation: {state}: {exc}"
+                ) from exc
     except OSError as exc:
         raise TranscriptBackfillSafetyError(f"private state directory is unavailable: {state}: {exc}") from exc
     if (
@@ -332,11 +534,64 @@ def _private_state_directory(root: Path, *, create: bool) -> Path:
         or os.path.normcase(str(state.resolve(strict=True))) != os.path.normcase(str(state))
     ):
         raise TranscriptBackfillSafetyError(f"private state directory must not be redirected: {state}")
-    if os.name != "nt":
+    if os.name == "nt":
+        # Check pre-existing sensitive children before changing the parent
+        # DACL. Installing inheritable ACEs can safely tighten unprotected
+        # children, but silently repairing a key or snapshot would hide that
+        # it had already been exposed under a broader policy.
+        for child, label, max_bytes in (
+            (state / SALT_NAME, "savings backfill key", _MAX_KEY_BYTES),
+            (state / OUTPUT_NAME, "derived transcript snapshot", MAX_SNAPSHOT_BYTES),
+        ):
+            if os.path.lexists(child):
+                _private_file_state(
+                    child,
+                    label=label,
+                    max_bytes=max_bytes,
+                    allow_missing=False,
+                )
+        if not ensure_owner_only_path(state):
+            raise TranscriptBackfillSafetyError(
+                f"private state directory could not be restricted to the current user: {state}"
+            )
+        try:
+            secured_state_info = os.lstat(state)
+        except OSError as exc:
+            raise TranscriptBackfillSafetyError(
+                f"private state directory changed while being secured: {state}: {exc}"
+            ) from exc
+        if (state_info.st_dev, state_info.st_ino) != (
+            secured_state_info.st_dev,
+            secured_state_info.st_ino,
+        ):
+            raise TranscriptBackfillSafetyError(f"private state directory changed while being secured: {state}")
+    else:
         if state_info.st_uid != os.geteuid():
             raise TranscriptBackfillSafetyError(f"private state directory is not owned by this user: {state}")
         if stat.S_IMODE(state_info.st_mode) & 0o022:
             raise TranscriptBackfillSafetyError(f"private state directory is group/world writable: {state}")
+        # ``roam init`` historically created ``.roam`` through an ordinary
+        # ``mkdir`` call, so the common umask-derived mode is 0755.  That is
+        # safe to tighten when the directory is concrete, current-user-owned,
+        # and not writable by anyone else.  Do it before callers pin the
+        # directory: the pin deliberately requires an exact owner-only mode.
+        if stat.S_IMODE(state_info.st_mode) & 0o077:
+            identity = (state_info.st_dev, state_info.st_ino)
+            try:
+                os.chmod(state, 0o700, follow_symlinks=False)
+                secured_state_info = os.lstat(state)
+            except OSError as exc:
+                raise TranscriptBackfillSafetyError(
+                    f"private state directory could not be restricted to the current user: {state}: {exc}"
+                ) from exc
+            if (
+                (secured_state_info.st_dev, secured_state_info.st_ino) != identity
+                or not stat.S_ISDIR(secured_state_info.st_mode)
+                or stat.S_ISLNK(secured_state_info.st_mode)
+                or secured_state_info.st_uid != os.geteuid()
+                or stat.S_IMODE(secured_state_info.st_mode) & 0o077
+            ):
+                raise TranscriptBackfillSafetyError(f"private state directory changed while being secured: {state}")
     return state
 
 
@@ -355,7 +610,10 @@ def _private_file_state(path: Path, *, label: str, max_bytes: int, allow_missing
         raise TranscriptBackfillSafetyError(f"{label} must not be hard-linked: {path}")
     if value.st_size > max_bytes:
         raise TranscriptBackfillSafetyError(f"{label} exceeds the {max_bytes}-byte limit: {path}")
-    if os.name != "nt":
+    if os.name == "nt":
+        if not path_is_owner_only(path):
+            raise TranscriptBackfillSafetyError(f"{label} is not owner-only: {path}")
+    else:
         if value.st_uid != os.geteuid():
             raise TranscriptBackfillSafetyError(f"{label} is not owned by this user: {path}")
         if stat.S_IMODE(value.st_mode) & 0o077:
@@ -411,66 +669,54 @@ def _read_private_key(path: Path, *, transient_retries: int = 0) -> bytes | None
     raise AssertionError("bounded key-read loop did not terminate")  # pragma: no cover
 
 
-def _write_all(descriptor: int, payload: bytes) -> None:
-    offset = 0
-    while offset < len(payload):
-        written = os.write(descriptor, payload[offset:])
-        if written <= 0:  # pragma: no cover - defensive OS contract guard
-            raise OSError("private key write made no forward progress")
-        offset += written
-
-
 def _create_private_key(path: Path) -> bytes:
     key = os.urandom(32)
     payload = key.hex().encode("ascii") + b"\n"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+
+    def prepare_private_temp(descriptor: int, temporary: str) -> None:
+        if not ensure_owner_only_file_descriptor(descriptor, temporary):
+            raise TranscriptBackfillSafetyError(
+                f"savings backfill key tempfile was not created for the current user only: {temporary}"
+            )
+
     try:
-        descriptor = os.open(path, flags, 0o600)
+        atomic_write_bytes(
+            path,
+            payload,
+            prepare_temp_fd=prepare_private_temp,
+            durable=True,
+            create_parents=False,
+            secure_parent=True,
+            require_absent=True,
+        )
     except FileExistsError:
         concurrent = _read_private_key(path, transient_retries=20)
         if concurrent is None:  # pragma: no cover - FileExistsError contract
             raise TranscriptBackfillSafetyError(f"savings backfill key disappeared during creation: {path}")
         return concurrent
+    except TranscriptBackfillSafetyError:
+        raise
     except OSError as exc:
         raise TranscriptBackfillSafetyError(f"cannot create savings backfill key: {path}: {exc}") from exc
-    created = os.fstat(descriptor)
-    try:
-        if hasattr(os, "fchmod"):
-            os.fchmod(descriptor, 0o600)
-        _write_all(descriptor, payload)
-        os.fsync(descriptor)
-        created = os.fstat(descriptor)
-    except BaseException:
-        try:
-            current = os.lstat(path)
-            if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
-                os.unlink(path)
-        except OSError:
-            pass
-        raise
-    finally:
-        os.close(descriptor)
-    final = _private_file_state(path, label="savings backfill key", max_bytes=_MAX_KEY_BYTES, allow_missing=False)
-    if not _same_private_file_state(created, final):
+
+    installed = _read_private_key(path, transient_retries=0)
+    if installed != key:
         raise TranscriptBackfillSafetyError(f"savings backfill key changed during creation: {path}")
-    if os.name != "nt":
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
     return key
 
 
 def _load_or_create_key(root: Path, *, create: bool = True) -> bytes:
     state = _private_state_directory(root, create=create)
-    path = state / SALT_NAME
-    key = _read_private_key(path, transient_retries=20)
-    if key is not None:
-        return key
-    if not create:
+    if not create and not state.exists():
         return os.urandom(32)
-    return _create_private_key(path)
+    with pinned_owner_only_directory(state):
+        path = state / SALT_NAME
+        key = _read_private_key(path, transient_retries=20)
+        if key is not None:
+            return key
+        if not create:
+            return os.urandom(32)
+        return _create_private_key(path)
 
 
 def _keyed_hex(key: bytes, purpose: str, value: str, length: int = 24) -> str:
@@ -660,23 +906,40 @@ def _elapsed_ms(started_at: datetime, observed_at: datetime | None) -> int | Non
     return max(0, int((observed_at - started_at).total_seconds() * 1000))
 
 
-@lru_cache(maxsize=8192)
-def _project_scope(cwd: str) -> tuple[str, str]:
-    """Return the nearest live Git root, otherwise the normalized workspace."""
-    if not cwd:
-        return "", "missing"
-    path = Path(cwd).expanduser()
+def _normalize_transcript_path(value: str) -> str:
+    """Normalize transcript path text without consulting the filesystem."""
+    if not value:
+        return ""
+    return os.path.normcase(os.path.normpath(value))
+
+
+def _is_lexically_within(candidate: str, root: str) -> bool:
+    """Return whether two already-normalized paths have lexical containment."""
+    if not candidate or not root:
+        return False
     try:
-        resolved = path.resolve()
-    except OSError:
-        resolved = path
-    for candidate in (resolved, *resolved.parents):
-        try:
-            if (candidate / ".git").exists():
-                return os.path.normcase(os.path.normpath(str(candidate))), "git_root"
-        except OSError:
-            break
-    return os.path.normcase(os.path.normpath(str(resolved))), "workspace"
+        return os.path.commonpath((candidate, root)) == root
+    except ValueError:
+        # Different drives, or a relative/absolute mismatch. Both are inert
+        # classification failures rather than reasons to resolve either path.
+        return False
+
+
+def _project_scope(cwd: str, trusted_root: str = "") -> tuple[str, str]:
+    """Classify transcript-provided CWD text using lexical operations only.
+
+    ``trusted_root`` is the explicit command root after command-boundary
+    validation. A transcript CWD lexically contained by that root shares the
+    root's project fingerprint. Other CWD values remain isolated workspaces.
+    No value originating in transcript data is expanded, resolved, or probed.
+    """
+    normalized_cwd = _normalize_transcript_path(cwd)
+    if not normalized_cwd:
+        return "", "missing"
+    normalized_root = _normalize_transcript_path(trusted_root)
+    if _is_lexically_within(normalized_cwd, normalized_root):
+        return normalized_root, "workspace"
+    return normalized_cwd, "workspace"
 
 
 def _friction_metrics(
@@ -801,11 +1064,21 @@ def _action_outcome_tables(
     }
 
 
-def _int_nonnegative(value: Any) -> int:
+def _bounded_nonnegative_int(value: Any, *, maximum: int) -> int | None:
+    if isinstance(value, bool):
+        return None
     try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return 0
+        number = int(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if number < 0 or number > maximum:
+        return None
+    return number
+
+
+def _int_nonnegative(value: Any) -> int:
+    number = _bounded_nonnegative_int(value, maximum=MAX_TRANSCRIPT_BYTES)
+    return number if number is not None else 0
 
 
 def _run_length_values(values: list[str]) -> list[tuple[str, int]]:
@@ -866,7 +1139,7 @@ def _command_from_input(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     try:
-        decoded = json.loads(value)
+        decoded = loads_bounded(value, object_pairs_hook=strict_json_object_pairs)
     except (TypeError, ValueError):
         return value
     return _command_from_input(decoded)
@@ -877,7 +1150,12 @@ def _safe_executable(token: str) -> str:
     base = re.split(r"[/\\]", token)[-1].lower()
     if base.endswith(".exe"):
         base = base[:-4]
-    return base if _SAFE_WORD_RE.fullmatch(base) else "<EXEC>"
+    return base if base in _SAFE_EXECUTABLES else "<EXEC>"
+
+
+def _safe_flag(value: str) -> str:
+    normalized = value.strip().lower()
+    return normalized if normalized in _SAFE_FLAGS else "<FLAG>"
 
 
 def _safe_argument(token: str, *, executable: str, positional_index: int) -> str:
@@ -894,19 +1172,20 @@ def _safe_argument(token: str, *, executable: str, positional_index: int) -> str
     if "=" in clean and not clean.startswith(("==", "!=")):
         name, _value = clean.split("=", 1)
         if name.startswith("-"):
-            flag = name if _SAFE_WORD_RE.fullmatch(name.lstrip("-")) else "--<FLAG>"
+            flag = _safe_flag(name)
             return f"{flag}=<ARG>"
         return "<ENV>=<VALUE>"
     if _SECRET_RE.search(clean) or re.fullmatch(r"[A-Za-z0-9+/=_-]{32,}", clean):
         return "<SECRET>"
     if clean.startswith("-"):
-        if len(clean) <= 32 and re.fullmatch(r"--?[A-Za-z0-9][A-Za-z0-9_.-]*", clean):
-            return clean.lower()
-        return "-<FLAG>"
+        return _safe_flag(clean)
     if re.fullmatch(r"\d+(?:\.\d+)*", clean):
         return "<N>"
     if positional_index == 0 and executable in _KNOWN_SUBCOMMAND_EXECUTABLES:
-        return clean.lower() if _SAFE_WORD_RE.fullmatch(clean) else "<SUBCOMMAND>"
+        normalized = clean.lower()
+        return (
+            normalized if normalized in _SAFE_SUBCOMMANDS_BY_EXECUTABLE.get(executable, frozenset()) else "<SUBCOMMAND>"
+        )
     if (
         positional_index == 1
         and executable in {"npm", "pnpm", "yarn"}
@@ -1048,9 +1327,9 @@ def _cwd_matches(cwd: str, root: Path, all_projects: bool) -> bool:
         return True
     if not cwd:
         return False
-    left = os.path.normcase(os.path.normpath(cwd))
-    right = os.path.normcase(os.path.normpath(str(root)))
-    return left == right or left.startswith(right + os.sep)
+    left = _normalize_transcript_path(cwd)
+    right = _normalize_transcript_path(str(root))
+    return _is_lexically_within(left, right)
 
 
 @dataclass
@@ -1061,6 +1340,7 @@ class _Episode:
     started_at: datetime
     prompt: str
     cwd: str
+    project_root: str
     key: bytes
     last_at: datetime | None = None
     explicit_duration_ms: int | None = None
@@ -1200,7 +1480,8 @@ class _Episode:
             "session_id": session_id,
             "turn_seq": self.turn_seq,
         }
-        project_scope, project_identity_basis = _project_scope(self.cwd)
+        normalized_cwd = _normalize_transcript_path(self.cwd)
+        project_scope, project_identity_basis = _project_scope(normalized_cwd, self.project_root)
         project_id = "proj_" + _keyed_hex(self.key, "project", project_scope, 20) if project_scope else ""
         phases = [str(action.get("phase") or "other") for action in self.actions]
         friction = _friction_metrics(
@@ -1222,7 +1503,7 @@ class _Episode:
             "prompt_tokens_bucket": _bucket(token_count, 25),
             "project_id": project_id,
             "project_identity_basis": project_identity_basis,
-            "cwd_hmac_sha256": _keyed_hex(self.key, "cwd", self.cwd, 24),
+            "cwd_hmac_sha256": _keyed_hex(self.key, "cwd", normalized_cwd, 24),
             "intent_archetypes": _intent_archetypes(self.prompt),
             "health_state": "unknown",
         }
@@ -1278,9 +1559,37 @@ class _Episode:
         return start, terminal
 
 
-def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
+def _iter_jsonl(
+    path: Path,
+    source_root: Path | None = None,
+    diagnostics: dict[str, Any] | None = None,
+    *,
+    byte_budget: int | None = None,
+    row_budget: int | None = None,
+    deadline: float | None = None,
+) -> Iterable[dict[str, Any]]:
+    if diagnostics is not None:
+        diagnostics.update(state="ok", invalid_rows=0, oversized_lines=0, bytes_read=0, rows_seen=0)
+
+    def set_state(value: str) -> None:
+        if diagnostics is not None:
+            diagnostics["state"] = value
+
+    def mark_invalid(*, oversized: bool = False) -> None:
+        if diagnostics is not None:
+            diagnostics["invalid_rows"] += 1
+            diagnostics["oversized_lines"] += int(oversized)
+
+    def mark_read(size: int, *, row: bool = False) -> None:
+        if diagnostics is not None:
+            diagnostics["bytes_read"] += size
+            diagnostics["rows_seen"] += int(row)
+
     descriptor = -1
     try:
+        if deadline is not None and time.monotonic() >= deadline:
+            set_state("aggregate_time_limit_reached")
+            return
         before = os.lstat(path)
         if (
             not stat.S_ISREG(before.st_mode)
@@ -1288,7 +1597,14 @@ def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
             or _is_reparse_point(before)
             or before.st_nlink != 1
             or before.st_size > MAX_TRANSCRIPT_BYTES
+            or (byte_budget is not None and before.st_size > max(0, byte_budget))
         ):
+            if before.st_size > MAX_TRANSCRIPT_BYTES:
+                set_state("oversized")
+            elif byte_budget is not None and before.st_size > max(0, byte_budget):
+                set_state("aggregate_byte_limit_reached")
+            else:
+                set_state("unsafe_path")
             return
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
         descriptor = os.open(path, flags)
@@ -1299,22 +1615,97 @@ def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
             or opened.st_nlink != 1
             or opened.st_size > MAX_TRANSCRIPT_BYTES
         ):
+            set_state("changed_or_unsafe_path")
             return
+        if source_root is not None:
+            try:
+                resolved = path.resolve(strict=True)
+                resolved.relative_to(source_root)
+                current = os.lstat(path)
+            except (OSError, RuntimeError, ValueError):
+                set_state("escaped_or_changed_path")
+                return
+            if (
+                (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+                or not stat.S_ISREG(current.st_mode)
+                or stat.S_ISLNK(current.st_mode)
+                or _is_reparse_point(current)
+                or current.st_nlink != 1
+            ):
+                set_state("escaped_or_changed_path")
+                return
         fh = os.fdopen(descriptor, "rb")
         descriptor = -1
+        rows: list[dict[str, Any]] = []
+        effective_row_limit = MAX_TRANSCRIPT_ROWS_PER_FILE
+        aggregate_row_limit = False
+        if row_budget is not None and row_budget < effective_row_limit:
+            effective_row_limit = max(0, row_budget)
+            aggregate_row_limit = True
         with fh:
-            size = 0
-            for raw_line in fh:
-                size += len(raw_line)
-                if size > MAX_TRANSCRIPT_BYTES:
+            remaining = opened.st_size
+            while remaining:
+                if deadline is not None and time.monotonic() >= deadline:
+                    set_state("aggregate_time_limit_reached")
                     return
+                if diagnostics is not None and diagnostics["rows_seen"] >= effective_row_limit:
+                    set_state("aggregate_row_limit_reached" if aggregate_row_limit else "row_limit_reached")
+                    return
+                raw_line = fh.readline(min(MAX_TRANSCRIPT_LINE_BYTES + 1, remaining))
+                if not raw_line:
+                    set_state("changed_during_read")
+                    return
+                remaining -= len(raw_line)
+                mark_read(len(raw_line), row=True)
+                if len(raw_line) > MAX_TRANSCRIPT_LINE_BYTES:
+                    while remaining and not raw_line.endswith(b"\n"):
+                        raw_line = fh.readline(min(MAX_TRANSCRIPT_LINE_BYTES + 1, remaining))
+                        if not raw_line:
+                            set_state("changed_during_read")
+                            return
+                        remaining -= len(raw_line)
+                        mark_read(len(raw_line))
+                    mark_invalid(oversized=True)
+                    continue
                 try:
-                    value = json.loads(raw_line.decode("utf-8", errors="replace"))
-                except (TypeError, ValueError):
+                    value = loads_bounded(
+                        raw_line.decode("utf-8"),
+                        object_pairs_hook=strict_json_object_pairs,
+                    )
+                except (UnicodeDecodeError, TypeError, ValueError):
+                    mark_invalid()
                     continue
                 if isinstance(value, dict):
-                    yield value
+                    rows.append(value)
+                else:
+                    mark_invalid()
+            after_opened = os.fstat(fh.fileno())
+        try:
+            after_path = os.lstat(path)
+            if source_root is not None:
+                path.resolve(strict=True).relative_to(source_root)
+        except (OSError, RuntimeError, ValueError):
+            set_state("escaped_or_changed_path")
+            return
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns")
+        if os.name != "nt":
+            stable_fields += ("st_ctime_ns",)
+        if (
+            not stat.S_ISREG(after_opened.st_mode)
+            or after_opened.st_nlink != 1
+            or stat.S_ISLNK(after_path.st_mode)
+            or _is_reparse_point(after_path)
+            or after_path.st_nlink != 1
+            or any(getattr(opened, field) != getattr(after_opened, field) for field in stable_fields)
+            or any(getattr(after_opened, field) != getattr(after_path, field) for field in stable_fields)
+        ):
+            set_state("changed_during_read")
+            return
+        if diagnostics is not None and diagnostics["invalid_rows"]:
+            set_state("partial_invalid_rows")
+        yield from rows
     except OSError:
+        set_state("unavailable")
         return
     finally:
         if descriptor >= 0:
@@ -1324,14 +1715,29 @@ def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
                 log_swallowed("transcript_backfill._iter_jsonl.fd_close", exc)
 
 
-def _scan_claude(path: Path, root: Path, key: bytes, all_projects: bool) -> list[dict[str, Any]]:
+def _extend_bounded_events(events: list[dict[str, Any]], produced: tuple[dict[str, Any], dict[str, Any]]) -> None:
+    if len(events) + len(produced) > MAX_TRANSCRIPT_EVENTS_PER_FILE:
+        raise TranscriptBackfillSafetyError(
+            f"one transcript exceeds the {MAX_TRANSCRIPT_EVENTS_PER_FILE}-event per-file limit"
+        )
+    events.extend(produced)
+
+
+def _scan_claude(
+    path: Path,
+    root: Path,
+    key: bytes,
+    all_projects: bool,
+    source_root: Path | None = None,
+    parsed_rows: Iterable[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     current: _Episode | None = None
     turn_seq = 0
     session_key = path.stem
     session_cwd = ""
     last_ts: datetime | None = None
-    for row in _iter_jsonl(path):
+    for row in parsed_rows if parsed_rows is not None else _iter_jsonl(path, source_root):
         ts = _parse_ts(row.get("timestamp")) or last_ts
         if ts:
             last_ts = ts
@@ -1346,10 +1752,15 @@ def _scan_claude(path: Path, root: Path, key: bytes, all_projects: bool) -> list
             current.assistant_messages += 1
             usage = message.get("usage")
             if isinstance(usage, dict):
-                current.input_tokens += int(usage.get("input_tokens") or 0)
-                current.output_tokens += int(usage.get("output_tokens") or 0)
-                current.cached_input_tokens += int(usage.get("cache_read_input_tokens") or 0)
-                current.cache_creation_tokens += int(usage.get("cache_creation_input_tokens") or 0)
+                for attribute, key_name in (
+                    ("input_tokens", "input_tokens"),
+                    ("output_tokens", "output_tokens"),
+                    ("cached_input_tokens", "cache_read_input_tokens"),
+                    ("cache_creation_tokens", "cache_creation_input_tokens"),
+                ):
+                    number = _bounded_nonnegative_int(usage.get(key_name), maximum=MAX_TOKEN_COUNT)
+                    if number is not None:
+                        setattr(current, attribute, min(MAX_TOKEN_COUNT, getattr(current, attribute) + number))
             if isinstance(content, list):
                 for block in content:
                     if not isinstance(block, dict) or block.get("type") != "tool_use":
@@ -1381,7 +1792,7 @@ def _scan_claude(path: Path, root: Path, key: bytes, all_projects: bool) -> list
             continue
         if current:
             current.correction_after = _is_correction(prompt)
-            events.extend(current.finish(ts))
+            _extend_bounded_events(events, current.finish(ts))
         turn_seq += 1
         effective_cwd = cwd or session_cwd
         if not _cwd_matches(effective_cwd, root, all_projects):
@@ -1394,21 +1805,29 @@ def _scan_claude(path: Path, root: Path, key: bytes, all_projects: bool) -> list
             started_at=ts or datetime.now(timezone.utc),
             prompt=prompt,
             cwd=effective_cwd,
+            project_root=str(root),
             key=key,
         )
     if current:
-        events.extend(current.finish(last_ts))
+        _extend_bounded_events(events, current.finish(last_ts))
     return events
 
 
-def _scan_codex(path: Path, root: Path, key: bytes, all_projects: bool) -> list[dict[str, Any]]:
+def _scan_codex(
+    path: Path,
+    root: Path,
+    key: bytes,
+    all_projects: bool,
+    source_root: Path | None = None,
+    parsed_rows: Iterable[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     current: _Episode | None = None
     turn_seq = 0
     session_key = path.stem
     cwd = ""
     last_ts: datetime | None = None
-    for row in _iter_jsonl(path):
+    for row in parsed_rows if parsed_rows is not None else _iter_jsonl(path, source_root):
         ts = _parse_ts(row.get("timestamp")) or last_ts
         if ts:
             last_ts = ts
@@ -1424,7 +1843,7 @@ def _scan_codex(path: Path, root: Path, key: bytes, all_projects: bool) -> list[
                 continue
             if current:
                 current.correction_after = _is_correction(prompt)
-                events.extend(current.finish(ts))
+                _extend_bounded_events(events, current.finish(ts))
             turn_seq += 1
             current = _Episode(
                 source="codex",
@@ -1433,6 +1852,7 @@ def _scan_codex(path: Path, root: Path, key: bytes, all_projects: bool) -> list[
                 started_at=ts or datetime.now(timezone.utc),
                 prompt=prompt,
                 cwd=cwd,
+                project_root=str(root),
                 key=key,
             )
             continue
@@ -1469,30 +1889,34 @@ def _scan_codex(path: Path, root: Path, key: bytes, all_projects: bool) -> list[
             info = payload.get("info")
             last_usage = info.get("last_token_usage") if isinstance(info, dict) else {}
             if isinstance(last_usage, dict):
-                current.input_tokens = int(last_usage.get("input_tokens") or 0)
-                current.output_tokens = int(last_usage.get("output_tokens") or 0)
-                current.cached_input_tokens = int(last_usage.get("cached_input_tokens") or 0)
-                current.reasoning_output_tokens = int(last_usage.get("reasoning_output_tokens") or 0)
+                for attribute, key_name in (
+                    ("input_tokens", "input_tokens"),
+                    ("output_tokens", "output_tokens"),
+                    ("cached_input_tokens", "cached_input_tokens"),
+                    ("reasoning_output_tokens", "reasoning_output_tokens"),
+                ):
+                    number = _bounded_nonnegative_int(last_usage.get(key_name), maximum=MAX_TOKEN_COUNT)
+                    if number is not None:
+                        setattr(current, attribute, number)
         elif row.get("type") == "event_msg" and payload_type == "task_complete":
             current.explicit_complete = True
-            try:
-                current.explicit_duration_ms = int(payload.get("duration_ms"))
-            except (TypeError, ValueError):
-                pass
+            duration_ms = _bounded_nonnegative_int(payload.get("duration_ms"), maximum=MAX_DURATION_MS)
+            if duration_ms is not None:
+                current.explicit_duration_ms = duration_ms
             current.last_at = ts or current.last_at
-            events.extend(current.finish(ts))
+            _extend_bounded_events(events, current.finish(ts))
             current = None
             continue
         current.last_at = ts or current.last_at
     if current:
-        events.extend(current.finish(last_ts))
+        _extend_bounded_events(events, current.finish(last_ts))
     if all_projects or _cwd_matches(cwd, root, False):
         return events
     return []
 
 
-def _detect_source(path: Path) -> str:
-    for row in _iter_jsonl(path):
+def _detect_source_from_rows(rows: Iterable[dict[str, Any]]) -> str:
+    for row in rows:
         if set(row) == {"timestamp", "type", "payload"}:
             return "codex"
         if "message" in row or "sessionId" in row:
@@ -1501,53 +1925,173 @@ def _detect_source(path: Path) -> str:
     return "unknown"
 
 
+def _detect_source(path: Path, source_root: Path | None = None) -> str:
+    return _detect_source_from_rows(_iter_jsonl(path, source_root))
+
+
 def _candidate_files(
     transcripts_dir: Path,
     *,
     since: datetime | None,
     max_files: int,
-) -> list[Path]:
+    deadline: float | None = None,
+    directory_budget: int | None = None,
+    entry_budget: int | None = None,
+) -> tuple[list[Path], dict[str, int]]:
+    candidate_files_seen = 0
+    oversized_files = 0
+    directory_entries_scanned = 0
+    directories_scanned = 0
+    traversal_truncated = False
+    elapsed_limit_reached = False
+    directory_budget_reached = False
+    entry_budget_reached = False
+
+    def result(selected: list[Path]) -> tuple[list[Path], dict[str, int]]:
+        return selected, {
+            "candidate_files_seen": candidate_files_seen,
+            "oversized_files": oversized_files,
+            "files_truncated": max(0, candidate_files_seen - len(selected)),
+            "directories_scanned": directories_scanned,
+            "directory_entries_scanned": directory_entries_scanned,
+            "traversal_truncated": int(traversal_truncated),
+            "elapsed_limit_reached": int(elapsed_limit_reached),
+            "directory_budget_reached": int(directory_budget_reached),
+            "entry_budget_reached": int(entry_budget_reached),
+        }
+
+    effective_directory_budget = max(
+        0,
+        min(
+            MAX_TRANSCRIPT_DIRECTORIES,
+            MAX_TRANSCRIPT_DIRECTORIES if directory_budget is None else directory_budget,
+        ),
+    )
+    effective_entry_budget = max(
+        0,
+        min(
+            MAX_TRANSCRIPT_DIRECTORY_ENTRIES,
+            MAX_TRANSCRIPT_DIRECTORY_ENTRIES if entry_budget is None else entry_budget,
+        ),
+    )
+    if deadline is not None and time.monotonic() >= deadline:
+        elapsed_limit_reached = True
+        traversal_truncated = True
+        return result([])
+    if effective_directory_budget == 0:
+        directory_budget_reached = True
+        traversal_truncated = True
+        return result([])
+    if effective_entry_budget == 0:
+        entry_budget_reached = True
+        traversal_truncated = True
+        return result([])
     try:
         source_root = transcripts_dir.resolve(strict=True)
     except OSError:
-        return []
-    paths: list[tuple[float, Path]] = []
-    for directory, dirnames, filenames in os.walk(source_root, topdown=True, onerror=lambda _error: None):
-        base = Path(directory)
-        safe_directories: list[str] = []
-        for name in dirnames:
-            candidate = base / name
-            try:
-                value = candidate.lstat()
-            except OSError:
-                continue
-            if stat.S_ISDIR(value.st_mode) and not stat.S_ISLNK(value.st_mode) and not _is_reparse_point(value):
-                safe_directories.append(name)
-        dirnames[:] = safe_directories
-        for name in filenames:
-            if not name.endswith(".jsonl"):
-                continue
-            path = base / name
-            try:
-                value = path.lstat()
-                path.resolve(strict=True).relative_to(source_root)
-            except (OSError, ValueError):
-                continue
-            if (
-                not stat.S_ISREG(value.st_mode)
-                or stat.S_ISLNK(value.st_mode)
-                or _is_reparse_point(value)
-                or value.st_nlink != 1
-                or value.st_size > MAX_TRANSCRIPT_BYTES
-            ):
-                continue
-            if since and datetime.fromtimestamp(value.st_mtime, timezone.utc) < since:
-                continue
-            paths.append((value.st_mtime, path))
-    paths.sort(key=lambda item: (item[0], str(item[1])))
-    if max_files > 0:
-        paths = paths[-max_files:]
-    return [path for _mtime, path in paths]
+        return result([])
+    limit = max(1, min(max_files, MAX_TRANSCRIPT_FILES_PER_SOURCE))
+    newest: list[tuple[float, str]] = []
+    stack = [source_root]
+    seen_directories: set[tuple[int, int]] = set()
+    while stack:
+        if deadline is not None and time.monotonic() >= deadline:
+            elapsed_limit_reached = True
+            traversal_truncated = True
+            break
+        if directories_scanned >= effective_directory_budget:
+            directory_budget_reached = True
+            traversal_truncated = True
+            break
+        base = stack.pop()
+        try:
+            base_info = base.lstat()
+        except OSError:
+            continue
+        identity = (base_info.st_dev, base_info.st_ino)
+        if (
+            identity in seen_directories
+            or not stat.S_ISDIR(base_info.st_mode)
+            or stat.S_ISLNK(base_info.st_mode)
+            or _is_reparse_point(base_info)
+        ):
+            continue
+        seen_directories.add(identity)
+        directories_scanned += 1
+        if deadline is not None and time.monotonic() >= deadline:
+            elapsed_limit_reached = True
+            traversal_truncated = True
+            break
+        try:
+            entries = os.scandir(base)
+        except OSError:
+            continue
+        with entries:
+            while True:
+                # Check before asking the iterator for another entry. This
+                # prevents one extra directory read after the shared deadline
+                # or entry budget has expired.
+                if deadline is not None and time.monotonic() >= deadline:
+                    elapsed_limit_reached = True
+                    traversal_truncated = True
+                    stack.clear()
+                    break
+                if directory_entries_scanned >= effective_entry_budget:
+                    entry_budget_reached = True
+                    traversal_truncated = True
+                    stack.clear()
+                    break
+                try:
+                    entry = next(entries)
+                except StopIteration:
+                    break
+                if deadline is not None and time.monotonic() >= deadline:
+                    elapsed_limit_reached = True
+                    traversal_truncated = True
+                    stack.clear()
+                    break
+                directory_entries_scanned += 1
+                path = Path(entry.path)
+                try:
+                    # ``DirEntry.stat`` reports zero identity/link fields on
+                    # current Windows Python builds; ``Path.lstat`` reaches
+                    # the native file-id implementation used by the later
+                    # pinned-open checks while remaining non-following.
+                    value = path.lstat()
+                except OSError:
+                    continue
+                if stat.S_ISDIR(value.st_mode):
+                    if stat.S_ISLNK(value.st_mode) or _is_reparse_point(value):
+                        continue
+                    if len(stack) + directories_scanned >= effective_directory_budget:
+                        directory_budget_reached = True
+                        traversal_truncated = True
+                        continue
+                    stack.append(path)
+                    continue
+                if not entry.name.endswith(".jsonl"):
+                    continue
+                unsafe = (
+                    not stat.S_ISREG(value.st_mode)
+                    or stat.S_ISLNK(value.st_mode)
+                    or _is_reparse_point(value)
+                    or value.st_nlink != 1
+                )
+                if unsafe:
+                    continue
+                if value.st_size > MAX_TRANSCRIPT_BYTES:
+                    oversized_files += 1
+                    continue
+                if since and datetime.fromtimestamp(value.st_mtime, timezone.utc) < since:
+                    continue
+                candidate_files_seen += 1
+                item = (value.st_mtime, str(path))
+                if len(newest) < limit:
+                    heapq.heappush(newest, item)
+                elif item > newest[0]:
+                    heapq.heapreplace(newest, item)
+    selected = [Path(rendered) for _mtime, rendered in sorted(newest)]
+    return result(selected)
 
 
 def backfill_transcripts(
@@ -1556,66 +2100,245 @@ def backfill_transcripts(
     *,
     source: str = "auto",
     since: datetime | None = None,
-    max_files: int = 0,
+    max_files: int = DEFAULT_MAX_TRANSCRIPT_FILES,
     all_projects: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    root_path = Path(root).resolve()
+    try:
+        root_path = Path(root).resolve()
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise TranscriptBackfillSafetyError("project root could not be resolved safely") from exc
     if isinstance(transcripts_dir, (str, Path)):
         source_values = [transcripts_dir]
     else:
-        source_values = list(transcripts_dir)
+        source_values = []
+        for value in transcripts_dir:
+            source_values.append(value)
+            if len(source_values) > MAX_TRANSCRIPT_SOURCES:
+                break
+    if len(source_values) > MAX_TRANSCRIPT_SOURCES:
+        raise TranscriptBackfillSafetyError(
+            f"transcript source count exceeds the {MAX_TRANSCRIPT_SOURCES}-source limit"
+        )
+    if isinstance(max_files, bool) or not isinstance(max_files, int):
+        raise TranscriptBackfillSafetyError("max_files must be an integer")
+    effective_max_files = max_files if max_files > 0 else DEFAULT_MAX_TRANSCRIPT_FILES
+    if effective_max_files > MAX_TRANSCRIPT_FILES_PER_SOURCE:
+        raise TranscriptBackfillSafetyError(
+            f"max_files exceeds the {MAX_TRANSCRIPT_FILES_PER_SOURCE}-file per-source limit"
+        )
     source_paths: list[Path] = []
     seen_sources: set[str] = set()
     for value in source_values:
-        path = Path(value).expanduser().resolve()
+        try:
+            path = Path(value).expanduser().resolve()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise TranscriptBackfillSafetyError("transcript source could not be resolved safely") from exc
         identity = os.path.normcase(str(path))
         if identity not in seen_sources:
             seen_sources.add(identity)
             source_paths.append(path)
-    key = _load_or_create_key(root_path, create=not dry_run)
-    files: list[Path] = []
+    # One monotonic budget covers key setup, discovery across every source,
+    # candidate consolidation, and transcript processing. Explicit command
+    # roots are validated before the timer starts; transcript-derived values
+    # are never involved in that validation.
+    started_at = time.monotonic()
+    deadline = started_at + MAX_TRANSCRIPT_ELAPSED_SECONDS
+    aggregate_limit_reached = "none"
+    # A preview must be observational. Use an ephemeral fingerprint key so a
+    # Windows dry run neither creates nor tightens `.roam` or its children.
+    key = os.urandom(32) if dry_run else _load_or_create_key(root_path)
+    file_heap: list[tuple[float, str, Path, Path]] = []
     seen_files: set[str] = set()
-    for source_path in source_paths:
-        for path in _candidate_files(source_path, since=since, max_files=max_files):
+    candidate_files_seen = 0
+    oversized_files = 0
+    files_truncated = 0
+    global_limit_drops = 0
+    directories_scanned = 0
+    directory_entries_scanned = 0
+    traversal_truncated = 0
+    discovery_limit_reached = "none"
+    remaining_directories = MAX_TRANSCRIPT_DIRECTORIES
+    remaining_directory_entries = MAX_TRANSCRIPT_DIRECTORY_ENTRIES
+    for source_index, source_path in enumerate(source_paths):
+        if time.monotonic() >= deadline:
+            aggregate_limit_reached = "elapsed"
+            discovery_limit_reached = "elapsed"
+            traversal_truncated += 1
+            break
+        candidates, candidate_stats = _candidate_files(
+            source_path,
+            since=since,
+            max_files=effective_max_files,
+            deadline=deadline,
+            directory_budget=remaining_directories,
+            entry_budget=remaining_directory_entries,
+        )
+        candidate_files_seen += candidate_stats["candidate_files_seen"]
+        oversized_files += candidate_stats["oversized_files"]
+        files_truncated += candidate_stats["files_truncated"]
+        directories_scanned += candidate_stats["directories_scanned"]
+        directory_entries_scanned += candidate_stats["directory_entries_scanned"]
+        traversal_truncated += candidate_stats["traversal_truncated"]
+        remaining_directories = max(0, remaining_directories - candidate_stats["directories_scanned"])
+        remaining_directory_entries = max(
+            0,
+            remaining_directory_entries - candidate_stats["directory_entries_scanned"],
+        )
+        if candidate_stats["elapsed_limit_reached"]:
+            aggregate_limit_reached = "elapsed"
+            discovery_limit_reached = "elapsed"
+            break
+        stop_discovery = False
+        for path in candidates:
+            if time.monotonic() >= deadline:
+                aggregate_limit_reached = "elapsed"
+                discovery_limit_reached = "elapsed"
+                traversal_truncated += int(not candidate_stats["traversal_truncated"])
+                stop_discovery = True
+                break
             identity = os.path.normcase(str(path.resolve()))
-            if identity not in seen_files:
+            if identity in seen_files:
+                continue
+            if time.monotonic() >= deadline:
+                aggregate_limit_reached = "elapsed"
+                discovery_limit_reached = "elapsed"
+                traversal_truncated += int(not candidate_stats["traversal_truncated"])
+                stop_discovery = True
+                break
+            try:
+                mtime = path.lstat().st_mtime
+            except OSError:
+                continue
+            if time.monotonic() >= deadline:
+                aggregate_limit_reached = "elapsed"
+                discovery_limit_reached = "elapsed"
+                traversal_truncated += int(not candidate_stats["traversal_truncated"])
+                stop_discovery = True
+                break
+            item = (mtime, identity, path, source_path)
+            if len(file_heap) < MAX_TOTAL_TRANSCRIPT_FILES:
+                heapq.heappush(file_heap, item)
                 seen_files.add(identity)
-                files.append(path)
-    files.sort(key=str)
-    events: list[dict[str, Any]] = []
+            elif item > file_heap[0]:
+                removed = heapq.heapreplace(file_heap, item)
+                seen_files.remove(removed[1])
+                seen_files.add(identity)
+                global_limit_drops += 1
+            else:
+                global_limit_drops += 1
+        if stop_discovery:
+            break
+        budget_reason = (
+            "entries"
+            if candidate_stats["entry_budget_reached"] or remaining_directory_entries == 0
+            else "directories"
+            if candidate_stats["directory_budget_reached"] or remaining_directories == 0
+            else "none"
+        )
+        if budget_reason != "none" and source_index + 1 < len(source_paths):
+            discovery_limit_reached = budget_reason
+            traversal_truncated += int(not candidate_stats["traversal_truncated"])
+            break
+    files_truncated += global_limit_drops
+    files = [(item[2], item[3]) for item in sorted(file_heap, key=lambda item: (item[0], item[1]), reverse=True)]
+    encoded_events: list[tuple[str, str, bytes]] = []
+    event_count = 0
+    snapshot_bytes = 0
     source_counts: Counter[str] = Counter()
+    transcript_read_states: Counter[str] = Counter()
+    invalid_transcript_rows = 0
+    oversized_transcript_lines = 0
     skipped_unknown = 0
-    for path in files:
-        detected = source if source != "auto" else _detect_source(path)
+    aggregate_input_bytes = 0
+    aggregate_rows_scanned = 0
+    files_processed = 0
+    for path, source_root in files:
+        if aggregate_limit_reached == "elapsed" or time.monotonic() >= deadline:
+            aggregate_limit_reached = "elapsed"
+            break
+        read_diagnostics: dict[str, Any] = {}
+        parsed_rows = list(
+            _iter_jsonl(
+                path,
+                source_root,
+                read_diagnostics,
+                byte_budget=MAX_TRANSCRIPT_AGGREGATE_BYTES - aggregate_input_bytes,
+                row_budget=MAX_TRANSCRIPT_AGGREGATE_ROWS - aggregate_rows_scanned,
+                deadline=deadline,
+            )
+        )
+        if time.monotonic() >= deadline:
+            read_diagnostics["state"] = "aggregate_time_limit_reached"
+        read_state = str(read_diagnostics.get("state") or "unknown")
+        transcript_read_states[read_state] += 1
+        invalid_transcript_rows += int(read_diagnostics.get("invalid_rows") or 0)
+        oversized_transcript_lines += int(read_diagnostics.get("oversized_lines") or 0)
+        aggregate_input_bytes += int(read_diagnostics.get("bytes_read") or 0)
+        aggregate_rows_scanned += int(read_diagnostics.get("rows_seen") or 0)
+        if read_state == "aggregate_byte_limit_reached":
+            aggregate_limit_reached = "bytes"
+            break
+        if read_state == "aggregate_row_limit_reached":
+            aggregate_limit_reached = "rows"
+            break
+        if read_state == "aggregate_time_limit_reached":
+            aggregate_limit_reached = "elapsed"
+            break
+        detected = source if source != "auto" else _detect_source_from_rows(parsed_rows)
         if detected == "claude":
-            extracted = _scan_claude(path, root_path, key, all_projects)
+            extracted = _scan_claude(path, root_path, key, all_projects, source_root, parsed_rows)
         elif detected == "codex":
-            extracted = _scan_codex(path, root_path, key, all_projects)
+            extracted = _scan_codex(path, root_path, key, all_projects, source_root, parsed_rows)
         else:
+            files_processed += 1
             skipped_unknown += 1
             continue
+        if time.monotonic() >= deadline:
+            aggregate_limit_reached = "elapsed"
+            break
         if extracted:
+            pending_events: list[tuple[str, str, bytes]] = []
+            pending_snapshot_bytes = 0
+            encoding_elapsed = False
+            for event in extracted:
+                if time.monotonic() >= deadline:
+                    encoding_elapsed = True
+                    break
+                if event_count + len(pending_events) + 1 > MAX_SNAPSHOT_EVENTS:
+                    raise TranscriptBackfillSafetyError(
+                        f"derived transcript snapshot exceeds the {MAX_SNAPSHOT_EVENTS}-event limit"
+                    )
+                encoded = (json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+                if time.monotonic() >= deadline:
+                    encoding_elapsed = True
+                    break
+                pending_snapshot_bytes += len(encoded)
+                if snapshot_bytes + pending_snapshot_bytes > MAX_SNAPSHOT_BYTES:
+                    raise TranscriptBackfillSafetyError(
+                        f"derived transcript snapshot exceeds the {MAX_SNAPSHOT_BYTES}-byte limit"
+                    )
+                pending_events.append((str(event.get("ts") or ""), str(event.get("event_id") or ""), encoded))
+            if encoding_elapsed:
+                aggregate_limit_reached = "elapsed"
+                break
+            event_count += len(pending_events)
+            snapshot_bytes += pending_snapshot_bytes
+            if not dry_run:
+                encoded_events.extend(pending_events)
             source_counts[detected] += 1
-            events.extend(extracted)
-    events.sort(key=lambda row: (str(row.get("ts") or ""), str(row.get("event_id") or "")))
-    state_dir = _private_state_directory(root_path, create=not dry_run)
+        files_processed += 1
+    state_dir = root_path / ".roam" if dry_run else _private_state_directory(root_path, create=True)
     output = state_dir / OUTPUT_NAME
     if not dry_run:
-        payload = bytearray()
-        for event in events:
-            encoded = (json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
-            if len(payload) + len(encoded) > MAX_SNAPSHOT_BYTES:
-                raise TranscriptBackfillSafetyError(
-                    f"derived transcript snapshot exceeds the {MAX_SNAPSHOT_BYTES}-byte limit"
-                )
-            payload.extend(encoded)
+        encoded_events.sort(key=lambda item: (item[0], item[1]))
+        payload = b"".join(item[2] for item in encoded_events)
 
         def prepare_private_temp(descriptor: int, temporary: str) -> None:
-            if hasattr(os, "fchmod"):
-                os.fchmod(descriptor, 0o600)
-            elif os.name != "nt":  # pragma: no cover - supported POSIX builds expose fchmod
-                os.chmod(temporary, 0o600)
+            if not ensure_owner_only_file_descriptor(descriptor, temporary):
+                raise TranscriptBackfillSafetyError(
+                    f"derived transcript snapshot temp could not be restricted to the current user: {temporary}"
+                )
 
         def validate_destination() -> None:
             _private_state_directory(root_path, create=False)
@@ -1626,30 +2349,67 @@ def backfill_transcripts(
                 allow_missing=True,
             )
 
-        atomic_write_bytes(
-            output,
-            bytes(payload),
-            prepare_temp_fd=prepare_private_temp,
-            before_replace=validate_destination,
-            durable=True,
-            create_parents=False,
-        )
-        _private_file_state(
-            output,
-            label="derived transcript snapshot",
-            max_bytes=MAX_SNAPSHOT_BYTES,
-            allow_missing=False,
-        )
+        with pinned_owner_only_directory(state_dir):
+            atomic_write_bytes(
+                output,
+                payload,
+                prepare_temp_fd=prepare_private_temp,
+                before_replace=validate_destination,
+                durable=True,
+                create_parents=False,
+                secure_parent=True,
+            )
+            _private_file_state(
+                output,
+                label="derived transcript snapshot",
+                max_bytes=MAX_SNAPSHOT_BYTES,
+                allow_missing=False,
+            )
     return {
         "state": "dry_run" if dry_run else "written",
         "output": str(output),
         "files_considered": len(files),
+        "files_processed": files_processed,
+        "input_files_skipped": len(files) - files_processed,
+        "candidate_files_seen": candidate_files_seen,
+        "files_truncated": files_truncated,
+        "oversized_files": oversized_files,
+        "directories_scanned": directories_scanned,
+        "directory_entries_scanned": directory_entries_scanned,
+        "traversal_truncated": traversal_truncated,
+        "discovery_limit_reached": discovery_limit_reached,
         "source_directories": [str(path) for path in source_paths],
         "files_with_episodes": sum(source_counts.values()),
         "files_by_source": dict(sorted(source_counts.items())),
         "unknown_format_files": skipped_unknown,
-        "episodes": len(events) // 2,
-        "events": len(events),
+        "transcript_read_states": dict(sorted(transcript_read_states.items())),
+        "degraded_transcript_files": sum(count for state, count in transcript_read_states.items() if state != "ok"),
+        "invalid_transcript_rows": invalid_transcript_rows,
+        "oversized_transcript_lines": oversized_transcript_lines,
+        "aggregate_input_bytes": aggregate_input_bytes,
+        "aggregate_rows_scanned": aggregate_rows_scanned,
+        "aggregate_limit_reached": aggregate_limit_reached,
+        "episodes": event_count // 2,
+        "events": event_count,
+        "snapshot_bytes": snapshot_bytes,
+        "resource_limits": {
+            "max_sources": MAX_TRANSCRIPT_SOURCES,
+            "max_files_per_source": effective_max_files,
+            "max_total_files": MAX_TOTAL_TRANSCRIPT_FILES,
+            "max_directories": MAX_TRANSCRIPT_DIRECTORIES,
+            "max_directories_global": MAX_TRANSCRIPT_DIRECTORIES,
+            "max_directory_entries_per_source": MAX_TRANSCRIPT_DIRECTORY_ENTRIES,
+            "max_directory_entries_global": MAX_TRANSCRIPT_DIRECTORY_ENTRIES,
+            "max_aggregate_input_bytes": MAX_TRANSCRIPT_AGGREGATE_BYTES,
+            "max_aggregate_rows": MAX_TRANSCRIPT_AGGREGATE_ROWS,
+            "max_elapsed_seconds": MAX_TRANSCRIPT_ELAPSED_SECONDS,
+            "max_transcript_bytes": MAX_TRANSCRIPT_BYTES,
+            "max_transcript_line_bytes": MAX_TRANSCRIPT_LINE_BYTES,
+            "max_rows_per_file": MAX_TRANSCRIPT_ROWS_PER_FILE,
+            "max_snapshot_bytes": MAX_SNAPSHOT_BYTES,
+            "max_snapshot_events": MAX_SNAPSHOT_EVENTS,
+            "max_events_per_file": MAX_TRANSCRIPT_EVENTS_PER_FILE,
+        },
         "privacy_contract": {
             "prompt_text_persisted": False,
             "assistant_text_persisted": False,
@@ -1663,6 +2423,8 @@ def backfill_transcripts(
             "sanitized_template_outcomes_persisted": True,
             "search_no_results_separated_from_failures": True,
             "closed_failure_classes_persisted": True,
+            "closed_shell_identifier_vocabularies": True,
+            "resource_bounds_disclosed": True,
             "tool_result_content_persisted": False,
         },
     }

@@ -88,6 +88,10 @@ def test_next_suggests_mode_upgrade_after_blocked_intent_check(cli_runner, tmp_p
 
     # Open a run so get_active_run_id() resolves.
     run = start_run(proj, agent="claude-code")
+    # Bind the command to the run created by this test. An ambient
+    # ROAM_RUN_ID intentionally has precedence over disk discovery; allowing a
+    # developer/CI value to leak here made the event appear to vanish.
+    monkeypatch.setenv("ROAM_RUN_ID", run.run_id)
 
     # Log an intent-check BLOCKED event. The shape mirrors what
     # cmd_intent_check.py's auto_log call emits in production.

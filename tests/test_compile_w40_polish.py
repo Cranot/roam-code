@@ -12,6 +12,16 @@ import os
 
 import pytest
 
+from roam.security.owner_only import ensure_owner_only_path
+
+
+def _secure_compile_log_fixture(log_dir) -> None:
+    """Make a synthetic legacy log satisfy the production read boundary."""
+
+    assert ensure_owner_only_path(log_dir)
+    assert ensure_owner_only_path(log_dir / "compile-runs.jsonl")
+
+
 # xdist: these tests compile against the MAIN repo (shared
 # .roam/compile-envelope-cache.sqlite + live probe subprocesses), so they
 # serialize on one worker. Surfaced on the first parallel CI run
@@ -148,6 +158,7 @@ def test_w40_e1_compile_stats_parses_telemetry(tmp_path):
         },
     ]
     log.write_text("\n".join(json.dumps(e) for e in entries))
+    _secure_compile_log_fixture(log_dir)
 
     from click.testing import CliRunner
 
@@ -182,6 +193,7 @@ def test_w40_e1_compile_stats_json_mode(tmp_path):
         )
         + "\n"
     )
+    _secure_compile_log_fixture(log_dir)
     from click.testing import CliRunner
 
     from roam.commands.cmd_compile_stats import compile_stats
@@ -209,6 +221,7 @@ def test_w40_e1_compile_stats_tolerates_corrupted_lines(tmp_path):
         '{"ts": "y", "procedure": "y", "classifier_conf": 0.6, "art_label": "l1_probe", '
         '"prefetched_keys": ["x"], "envelope_bytes": 200, "compile_ms": 20, "task_hash": "b", "task_prefix": "q"}\n'
     )
+    _secure_compile_log_fixture(log_dir)
     from click.testing import CliRunner
 
     from roam.commands.cmd_compile_stats import compile_stats

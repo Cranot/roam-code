@@ -13,7 +13,12 @@ import click
 
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
-from roam.transcript_backfill import TranscriptBackfillSafetyError, backfill_transcripts
+from roam.transcript_backfill import (
+    DEFAULT_MAX_TRANSCRIPT_FILES,
+    MAX_TRANSCRIPT_FILES_PER_SOURCE,
+    TranscriptBackfillSafetyError,
+    backfill_transcripts,
+)
 
 
 def _since_value(_ctx: click.Context, _param: click.Parameter, value: str | None) -> datetime | None:
@@ -43,10 +48,10 @@ def _since_value(_ctx: click.Context, _param: click.Parameter, value: str | None
 @click.option("--since", callback=_since_value, help="Include transcript files modified on/after YYYY-MM-DD.")
 @click.option(
     "--max-files",
-    type=click.IntRange(min=0),
-    default=0,
+    type=click.IntRange(min=1, max=MAX_TRANSCRIPT_FILES_PER_SOURCE),
+    default=DEFAULT_MAX_TRANSCRIPT_FILES,
     show_default=True,
-    help="Newest files to scan per --transcripts-dir; 0 scans all.",
+    help="Newest files to scan per --transcripts-dir under the hard resource cap.",
 )
 @click.option(
     "--all-projects",
@@ -127,14 +132,29 @@ def savings_backfill(
             click.echo(f"reason: {exc}")
         ctx.exit(1)
         return
-    verdict = (
+    base_verdict = (
         f"Derived {result['episodes']} historical discovery episodes from "
         f"{result['files_with_episodes']} transcript files"
     )
+    partial_reasons = [
+        name
+        for name, present in (
+            ("unknown_formats", result["unknown_format_files"]),
+            ("file_selection_truncated", result["files_truncated"]),
+            ("oversized_files", result["oversized_files"]),
+            ("traversal_truncated", result["traversal_truncated"]),
+            ("degraded_files", result["degraded_transcript_files"]),
+            ("aggregate_input_truncated", result["aggregate_limit_reached"] != "none"),
+        )
+        if present
+    ]
+    verdict = base_verdict
+    if partial_reasons:
+        verdict += f"; incomplete evidence: {', '.join(partial_reasons)}"
     summary = {
         "verdict": verdict,
         "state": result["state"],
-        "partial_success": bool(result["unknown_format_files"]),
+        "partial_success": bool(partial_reasons),
         "episodes": result["episodes"],
         "files_with_episodes": result["files_with_episodes"],
         "policy_admissible": False,
@@ -164,6 +184,11 @@ def savings_backfill(
     click.echo(f"VERDICT: {verdict}")
     click.echo(f"events:             {result['events']}")
     click.echo(f"unknown formats:    {result['unknown_format_files']}")
+    click.echo(f"files truncated:    {result['files_truncated']}")
+    click.echo(f"oversized files:    {result['oversized_files']}")
+    click.echo(f"traversal capped:   {result['traversal_truncated']}")
+    click.echo(f"degraded files:     {result['degraded_transcript_files']}")
+    click.echo(f"input budget:       {result['aggregate_limit_reached']}")
     click.echo(f"output:              {result['output']}")
     click.echo("privacy:             raw values excluded; sanitized shell templates retained")
     click.echo("Run `roam savings` to rank historical candidates separately from live evidence.")

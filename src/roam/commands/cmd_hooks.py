@@ -984,9 +984,9 @@ def main():
         session_id, episode_id, turn_seq = _start_episode(payload, prompt)
         if len(prompt) < _MIN_PROMPT_CHARS:
             return
-        # Forward Claude's session id so the compile telemetry row carries a
-        # join key to the session's downstream outcome. Fail-open: an absent id
-        # just leaves the key empty, never breaks the hook.
+        # Forward hook correlation state to the compiler. The privacy boundary
+        # persists only the opaque episode join key; session and turn values
+        # remain transient inputs used by the hook lifecycle.
         d = _try_daemon(prompt, session_id, episode_id, turn_seq)
         if d is None:
             env = os.environ.copy()
@@ -2615,7 +2615,7 @@ class _UnsafeClaudePathError(OSError):
 
 
 class _HookBodyStates(dict[str, str]):
-    """Mapping-compatible scan result carrying exact compare-and-swap bytes."""
+    """Mapping-compatible scan result carrying exact pre-write-check bytes."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -2748,7 +2748,7 @@ def _capture_claude_write_state(
     max_bytes: int,
     expected_content: bytes | None | object,
 ) -> bytes | None:
-    """Validate the parent and resolve the expected compare-and-swap bytes."""
+    """Validate the parent and resolve the expected pre-write-check bytes."""
     _validate_concrete_directory(path.parent, allow_missing=False)
     initial_content = _read_claude_file(path, label=label, max_bytes=max_bytes)
     if expected_content is _CAPTURE_CURRENT_CONTENT:
@@ -2767,7 +2767,7 @@ def _atomic_write_claude_file(
     mode: int,
     expected_content: bytes | None | object = _CAPTURE_CURRENT_CONTENT,
 ) -> None:
-    """Atomically compare-and-swap one validated Claude control file."""
+    """Atomically update one validated Claude control file after a final content check."""
     if len(payload) > max_bytes:
         raise ValueError(f"{label} exceeds the {max_bytes}-byte limit: {path}")
     expected_content = _capture_claude_write_state(
@@ -3036,7 +3036,7 @@ def _remove_ups_entry(settings: dict) -> bool:
 
 
 def _load_claude_settings(settings_path: Path) -> tuple[dict, str | None, bytes | None]:
-    """Parse settings.json and retain the exact bytes for compare-and-swap."""
+    """Parse settings.json and retain the exact bytes for the final pre-write check."""
     try:
         _validate_concrete_directory(settings_path.parent, allow_missing=True)
         raw = _read_claude_file(

@@ -22,9 +22,28 @@ from roam.bridges.bridge_salesforce import SalesforceBridge
 # ---------------------------------------------------------------------------
 
 
-def _reset_registry():
-    """Clear the global bridge registry for isolation."""
+@pytest.fixture
+def isolated_bridge_registry():
+    """Isolate explicit-registry tests without warming built-in modules.
+
+    These tests register the exact bridge instances they want to exercise.
+    Letting ``detect_bridges()`` auto-discover here imports every built-in and
+    mutates both the registry and ``sys.modules``.  Clearing only ``_BRIDGES``
+    afterwards then leaves a split state: ``_DISCOVERED`` is true and the
+    modules are cached, so their import-time registration cannot run again.
+
+    Preserve the process state exactly and mark discovery complete only for
+    the duration of each explicit-registry test.
+    """
+    previous_bridges = list(bridge_registry._BRIDGES)
+    previous_discovered = bridge_registry._DISCOVERED
     bridge_registry._BRIDGES.clear()
+    bridge_registry._DISCOVERED = True
+    try:
+        yield
+    finally:
+        bridge_registry._BRIDGES[:] = previous_bridges
+        bridge_registry._DISCOVERED = previous_discovered
 
 
 # ---------------------------------------------------------------------------
@@ -55,13 +74,8 @@ class TestLanguageBridgeABC:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("isolated_bridge_registry")
 class TestBridgeRegistry:
-    def setup_method(self):
-        _reset_registry()
-
-    def teardown_method(self):
-        _reset_registry()
-
     def test_registry_starts_empty_after_clear(self):
         assert bridge_registry.get_bridges() == []
 

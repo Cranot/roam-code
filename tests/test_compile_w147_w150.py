@@ -64,9 +64,10 @@ def test_w149_telemetry_off_thread_writes_eventually(tmp_path):
     M._ensure_telemetry_worker()
     row = {
         "ts": time.strftime("%Y-%m-%dT%H:00:00Z", time.gmtime()),
-        "procedure": "test",
+        "procedure": "freeform_explore",
         "art_label": "full",
         "prefetched_keys": [],
+        "agent_mode": "test",
         "cache_hit": False,
     }
     M._TELEMETRY_QUEUE.put((log_path, json.dumps(row) + "\n"))
@@ -79,7 +80,8 @@ def test_w149_telemetry_off_thread_writes_eventually(tmp_path):
     with open(log_path) as fh:
         written = json.loads(fh.read())
     assert written["schema_version"] == M._COMPILE_TELEMETRY_SCHEMA_VERSION
-    assert written["procedure"] == "test"
+    assert written["procedure"] == "freeform_explore"
+    assert written["agent_mode"] == "test"
     assert M._ensure_owner_only_file(log_path)
 
 

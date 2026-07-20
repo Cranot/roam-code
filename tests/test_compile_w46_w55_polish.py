@@ -16,6 +16,17 @@ from roam.plan.compiler import (
     _REACHABILITY_RE,
     _probe_reachability_for_task,
 )
+from roam.security.owner_only import ensure_owner_only_path
+
+
+def _task_fingerprint(character: str) -> str:
+    return "tfp_" + character * 32
+
+
+def _secure_compile_log_fixture(log_dir) -> None:
+    assert ensure_owner_only_path(log_dir)
+    assert ensure_owner_only_path(log_dir / "compile-runs.jsonl")
+
 
 # ---- W47 parallel coupling probe ----
 
@@ -220,6 +231,7 @@ def test_w52_compile_stats_by_procedure_summarizes(tmp_path):
         },
     ]
     (log_dir / "compile-runs.jsonl").write_text("\n".join(json.dumps(e) for e in entries))
+    _secure_compile_log_fixture(log_dir)
     from click.testing import CliRunner
 
     from roam.commands.cmd_compile_stats import compile_stats
@@ -268,6 +280,7 @@ def test_w52_compile_stats_slow_probes(tmp_path):
         },
     ]
     (log_dir / "compile-runs.jsonl").write_text("\n".join(json.dumps(e) for e in entries))
+    _secure_compile_log_fixture(log_dir)
     from click.testing import CliRunner
 
     from roam.commands.cmd_compile_stats import compile_stats
@@ -293,8 +306,7 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
     entries = [
         {
             "ts": "x",
-            "task_hash": "stale",
-            "task_prefix": "now cached",
+            "task_fingerprint": _task_fingerprint("a"),
             "procedure": "structural_coupling",
             "classifier_conf": 0.95,
             "art_label": "l1_probe",
@@ -305,8 +317,7 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
         },
         {
             "ts": "x",
-            "task_hash": "stale",
-            "task_prefix": "now cached",
+            "task_fingerprint": _task_fingerprint("a"),
             "procedure": "structural_coupling",
             "classifier_conf": 0.95,
             "art_label": "l1_probe",
@@ -317,8 +328,7 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
         },
         {
             "ts": "x",
-            "task_hash": "built",
-            "task_prefix": "builder warmed",
+            "task_fingerprint": _task_fingerprint("b"),
             "procedure": "structural_coupling",
             "classifier_conf": 0.95,
             "art_label": "l1_probe",
@@ -329,8 +339,7 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
         },
         {
             "ts": "x",
-            "task_hash": "built",
-            "task_prefix": "builder warmed",
+            "task_fingerprint": _task_fingerprint("b"),
             "procedure": "structural_coupling",
             "classifier_conf": 0.95,
             "art_label": "l1_probe",
@@ -341,8 +350,7 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
         },
         {
             "ts": "x",
-            "task_hash": "built",
-            "task_prefix": "builder warmed",
+            "task_fingerprint": _task_fingerprint("b"),
             "procedure": "structural_coupling",
             "classifier_conf": 0.95,
             "art_label": "l1_probe",
@@ -354,8 +362,7 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
         },
         {
             "ts": "x",
-            "task_hash": "build-only",
-            "task_prefix": "warmer only",
+            "task_fingerprint": _task_fingerprint("c"),
             "procedure": "structural_coupling",
             "classifier_conf": 0.95,
             "art_label": "l1_probe",
@@ -367,8 +374,7 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
         },
         {
             "ts": "x",
-            "task_hash": "active",
-            "task_prefix": "still missing",
+            "task_fingerprint": _task_fingerprint("d"),
             "procedure": "freeform_explore",
             "classifier_conf": 0.35,
             "art_label": "facts",
@@ -379,6 +385,7 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
         },
     ]
     (log_dir / "compile-runs.jsonl").write_text("\n".join(json.dumps(e) for e in entries))
+    _secure_compile_log_fixture(log_dir)
     from click.testing import CliRunner
 
     from roam.commands.cmd_compile_stats import compile_stats
@@ -392,14 +399,116 @@ def test_w91_top_misses_marks_active_vs_stale_cache_misses(tmp_path):
     assert result.exit_code == 0
     env = json.loads(result.output)
     misses = env["summary"]["top_cache_misses"]
-    assert misses[0]["task_hash"] == "active"
+    assert misses[0]["task_fingerprint"] == _task_fingerprint("d")
     assert misses[0]["active_miss"] is True
-    stale = next(m for m in misses if m["task_hash"] == "stale")
+    stale = next(m for m in misses if m["task_fingerprint"] == _task_fingerprint("a"))
     assert stale["active_miss"] is False
     assert stale["hit_count"] == 1
     assert stale["miss_rate_pct"] == 50
-    built = next(m for m in misses if m["task_hash"] == "built")
+    built = next(m for m in misses if m["task_fingerprint"] == _task_fingerprint("b"))
     assert built["active_miss"] is False
     assert built["hit_count"] == 1
     assert built["miss_count"] == 1
-    assert "build-only" not in {m["task_hash"] for m in misses}
+    assert _task_fingerprint("c") not in {m["task_fingerprint"] for m in misses}
+
+
+def test_top_misses_discloses_privacy_v2_identity_is_unavailable(tmp_path):
+    log_dir = tmp_path / ".roam"
+    log_dir.mkdir()
+    entries = [
+        {
+            "schema_version": 2,
+            "ts": "2026-07-19T10:00:00Z",
+            "procedure": "freeform_explore",
+            "classifier_conf": 0.35,
+            "art_label": "facts",
+            "prefetched_keys": [],
+            "prefetched_fact_count": 0,
+            "envelope_bytes": 500,
+            "compile_ms": 10,
+            "cache_hit": False,
+            "agent_mode": "compile_codex",
+        }
+    ]
+    (log_dir / "compile-runs.jsonl").write_text(
+        "\n".join(json.dumps(entry) for entry in entries),
+        encoding="utf-8",
+    )
+    _secure_compile_log_fixture(log_dir)
+    from click.testing import CliRunner
+
+    from roam.commands.cmd_compile_stats import compile_stats
+
+    runner = CliRunner()
+    result = runner.invoke(
+        compile_stats,
+        ["--root", str(tmp_path), "--top-misses", "--slow-probes"],
+        obj={"json": True},
+    )
+
+    assert result.exit_code == 0, result.output
+    summary = json.loads(result.output)["summary"]
+    assert summary["top_cache_misses"] == []
+    assert summary["top_cache_misses_state"] == "unavailable_repeat_identity"
+    assert summary["top_cache_misses_fingerprint_rows"] == 0
+    assert summary["top_cache_misses_legacy_rows"] == 0
+    assert summary["top_cache_misses_unavailable_rows"] == 1
+    assert summary["partial_success"] is True
+    assert summary["verdict"].endswith("; repeat identity unavailable for 1 telemetry rows")
+    assert "probe_section_latency_ms" in summary
+
+    text_result = runner.invoke(
+        compile_stats,
+        ["--root", str(tmp_path), "--top-misses", "--slow-probes"],
+        obj={"json": False},
+    )
+    assert text_result.exit_code == 0, text_result.output
+    assert "telemetry rows carry no safe repeat identity" in text_result.output
+    assert "Probe section latency" in text_result.output
+
+
+def test_top_misses_discloses_mixed_legacy_and_privacy_v2_rows(tmp_path):
+    log_dir = tmp_path / ".roam"
+    log_dir.mkdir()
+    common = {
+        "ts": "2026-07-19T10:00:00Z",
+        "procedure": "freeform_explore",
+        "classifier_conf": 0.35,
+        "art_label": "facts",
+        "prefetched_keys": [],
+        "envelope_bytes": 500,
+        "compile_ms": 10,
+        "cache_hit": False,
+        "agent_mode": "compile_codex",
+    }
+    entries = [
+        {**common, "task_hash": "legacy", "task_prefix": "PROMPT-LEGACY-CANARY-92"},
+        {**common, "schema_version": 2, "prefetched_fact_count": 0},
+    ]
+    (log_dir / "compile-runs.jsonl").write_text(
+        "\n".join(json.dumps(entry) for entry in entries),
+        encoding="utf-8",
+    )
+    _secure_compile_log_fixture(log_dir)
+    from click.testing import CliRunner
+
+    from roam.commands.cmd_compile_stats import compile_stats
+
+    runner = CliRunner()
+    result = runner.invoke(
+        compile_stats,
+        ["--root", str(tmp_path), "--top-misses"],
+        obj={"json": True},
+    )
+
+    assert result.exit_code == 0, result.output
+    summary = json.loads(result.output)["summary"]
+    assert summary["top_cache_misses_state"] == "partial_legacy_redacted_rows"
+    assert summary["top_cache_misses_fingerprint_rows"] == 0
+    assert summary["top_cache_misses_legacy_rows"] == 1
+    assert summary["top_cache_misses_unavailable_rows"] == 1
+    assert summary["top_cache_misses"][0]["task_ref"] == "legacy_task_001"
+    assert "task_hash" not in summary["top_cache_misses"][0]
+    assert "task_prefix" not in summary["top_cache_misses"][0]
+    assert "PROMPT-LEGACY-CANARY-92" not in result.output
+    assert summary["partial_success"] is True

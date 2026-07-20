@@ -7,11 +7,18 @@ ledgers, without file-located findings or source coordinates.
 
 from __future__ import annotations
 
+import sqlite3
+
 import click
 
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
-from roam.savings import EVENT_FIELD_DEFINITIONS, aggregate_savings_result, analyze_ledger
+from roam.savings import (
+    EVENT_FIELD_DEFINITIONS,
+    SavingsLedgerSafetyError,
+    aggregate_savings_result,
+    analyze_ledger,
+)
 
 
 @click.command(name="savings")
@@ -70,7 +77,36 @@ def savings(ctx: click.Context, root: str, schema: bool, aggregate: bool) -> Non
                 click.echo(f"  {field:<18s} {meaning}")
         return
 
-    result = analyze_ledger(root)
+    try:
+        result = analyze_ledger(root)
+    except (OSError, SavingsLedgerSafetyError, TimeoutError, sqlite3.Error) as exc:
+        verdict = "Savings ledger unavailable because materialization stopped safely"
+        failure_summary = {
+            "verdict": verdict,
+            "state": "materialization_failed",
+            "partial_success": True,
+            "measurement_admissible": False,
+            "policy_admissible": False,
+        }
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "savings",
+                        budget=token_budget,
+                        summary=failure_summary,
+                        status="error",
+                        isError=True,
+                        error_code="RUN_FAILED",
+                        error=str(exc),
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(f"reason: {exc}")
+        ctx.exit(1)
+        return
     if aggregate:
         aggregate_result = aggregate_savings_result(result)
         aggregate_summary = aggregate_result["summary"]
@@ -144,6 +180,7 @@ def savings(ctx: click.Context, root: str, schema: bool, aggregate: bool) -> Non
     click.echo(f"terminal coverage:             {coverage.get('terminal_coverage_pct')}%")
     click.echo(f"compile + terminal join:       {coverage.get('episode_join_coverage_pct')}%")
     click.echo(f"compile identity coverage:     {coverage.get('compile_identity_coverage_pct')}%")
+    click.echo(f"keyed repeat identity:         {coverage.get('repeat_identity_coverage_pct')}%")
     click.echo(f"execution-health coverage:     {coverage.get('health_context_coverage_pct')}%")
     click.echo(
         f"sensor canaries:               {result['sensor_canaries']['passed']}/"
@@ -154,7 +191,8 @@ def savings(ctx: click.Context, root: str, schema: bool, aggregate: bool) -> Non
         click.echo("Repeated candidates (observed, not promoted):")
         for candidate in result["repeat_candidates"][:10]:
             click.echo(
-                f"  {candidate['episodes']:>3} episodes  {candidate['procedure']:<22s} {candidate['task_prefix'][:70]}"
+                f"  {candidate['episodes']:>3} episodes  {candidate['procedure']:<22s} "
+                f"{candidate['task_fingerprint'][:20]}"
             )
     if result["historical_candidates"]:
         click.echo("")

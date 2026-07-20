@@ -24,7 +24,13 @@ and fast. One ``@pytest.mark.slow`` test runs the real end-to-end path.
 
 from __future__ import annotations
 
+import io as _io
 import json as _json
+import os as _os
+import subprocess as _subprocess
+import sys as _sys
+import time as _time
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -414,22 +420,142 @@ def test_component_failure_is_visible_in_text_and_json(stub_primitives, monkeypa
     assert envelope["sections"]["health"]["isError"] is True
 
 
+@pytest.mark.parametrize("raises", [False, True])
+def test_pdf_render_failure_is_an_explicit_partial_undelivered_artifact(
+    stub_primitives,
+    tmp_path,
+    monkeypatch,
+    raises,
+):
+    mod = stub_primitives
+    requested = tmp_path / "buyer-report.pdf"
+    leaked_detail = "renderer failed at C:\\private\\buyer with token-secret"
+
+    def _fail_render(*_args, **_kwargs):
+        if raises:
+            raise RuntimeError(leaked_detail)
+        return False, leaked_detail
+
+    monkeypatch.setattr(mod, "_render_pdf", _fail_render)
+
+    code, output = _invoke(
+        "--type",
+        "ai-readiness",
+        "--pdf",
+        str(requested),
+        "--no-track-engagement",
+        json_mode=True,
+    )
+
+    assert code == 0
+    assert leaked_detail not in output
+    assert "requested artifact was not delivered" in output
+    envelope = _json.loads(output[output.find("{") :])
+    summary = envelope["summary"]
+    assert summary["state"] == "artifact_failure"
+    assert summary["partial_success"] is True
+    assert summary["pdf_requested_path"] == str(requested)
+    assert summary["pdf_path"] is None
+    assert summary["pdf_backend"] is None
+    assert summary["pdf_state"] == "render_failed"
+    assert summary["pdf_failure"] == "pdf_render_failed"
+    assert summary["artifact_failures"] == ["pdf_render_failed"]
+    assert "partial delivery" in summary["verdict"]
+    assert not requested.exists()
+
+
 # ---------------------------------------------------------------------------
 # Component process boundary
 # ---------------------------------------------------------------------------
 
 
+def _pid_is_alive(pid: int) -> bool:
+    if _os.name != "nt":
+        try:
+            _os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == 0x00000102  # WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _force_kill_pid(pid: int) -> None:
+    if not _pid_is_alive(pid):
+        return
+    if _os.name != "nt":
+        import signal
+
+        try:
+            _os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+    if handle:
+        try:
+            kernel32.TerminateProcess(handle, 1)
+        finally:
+            kernel32.CloseHandle(handle)
+
+
+def _component_test_env(mod) -> dict[str, str]:
+    """Make source-checkout subprocesses importable on every test host."""
+    env = dict(_os.environ)
+    source_root = str(mod.Path(mod.__file__).resolve().parents[2])
+    env["PYTHONPATH"] = _os.pathsep.join(value for value in (source_root, env.get("PYTHONPATH")) if value)
+    return env
+
+
 def test_component_runner_uses_literal_isolated_argv(monkeypatch):
     from roam.commands import cmd_service_report as mod
+
+    # This test isolates argv construction with a fake Popen. The real Linux
+    # supervisor boundary is exercised by the escaped-descendant regression.
+    if mod._sys.platform.startswith("linux"):
+        monkeypatch.setattr(mod._sys, "platform", "darwin")
 
     seen = {}
 
     class _Process:
         returncode = 0
+        pid = 12345
+        stdin = _io.BytesIO()
+        stdout = _io.BytesIO(b'progress\n{"summary":{"verdict":"ok"}}')
+        stderr = _io.BytesIO()
 
-        def communicate(self, timeout):
-            seen["timeout"] = timeout
-            return b'progress\n{"summary":{"verdict":"ok"}}', b""
+        def poll(self):
+            return self.returncode
+
+        def communicate(self, timeout):  # pragma: no cover - regression sentinel
+            raise AssertionError(f"post-hoc communicate({timeout}) must not be used")
 
     def _popen(argv, **kwargs):
         seen["argv"] = argv
@@ -437,12 +563,16 @@ def test_component_runner_uses_literal_isolated_argv(monkeypatch):
         return _Process()
 
     monkeypatch.setattr(mod._subprocess, "Popen", _popen)
+    monkeypatch.setattr(mod, "_create_windows_component_job", lambda: 99)
+    monkeypatch.setattr(mod, "_assign_windows_component_job", lambda handle, proc: handle == 99)
+    monkeypatch.setattr(mod, "_close_windows_component_job_handle", lambda handle: handle == 99)
+    monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda proc: True)
     result = mod._run_roam_json(["version"])
 
-    assert seen["argv"][1:] == ["-m", "roam", "--json", "version"]
+    assert seen["argv"][-4:] == ["-m", "roam", "--json", "version"]
     assert seen["kwargs"]["shell"] is False
-    assert seen["kwargs"]["stdin"] is mod._subprocess.DEVNULL
-    assert seen["timeout"] == mod._COMPONENT_TIMEOUT_SECONDS
+    expected_stdin = mod._subprocess.PIPE if mod._os.name == "nt" else mod._subprocess.DEVNULL
+    assert seen["kwargs"]["stdin"] is expected_stdin
     assert result["summary"]["verdict"] == "ok"
 
 
@@ -451,18 +581,12 @@ def test_component_runner_terminates_process_tree_on_timeout(monkeypatch):
 
     class _TimedOutProcess:
         returncode = None
-
-        def __init__(self):
-            self.calls = 0
-
-        def communicate(self, timeout):
-            self.calls += 1
-            if self.calls == 1:
-                raise mod._subprocess.TimeoutExpired(cmd="roam", timeout=timeout)
-            return b"", b""
+        stdout = _io.BytesIO()
+        stderr = _io.BytesIO()
 
     proc = _TimedOutProcess()
-    monkeypatch.setattr(mod._subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(mod, "_start_component_process", lambda *a, **k: proc)
+    monkeypatch.setattr(mod, "_wait_for_component_root", lambda *a, **k: "timeout")
     terminated = []
     monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda value: terminated.append(value) or True)
 
@@ -474,13 +598,432 @@ def test_component_runner_terminates_process_tree_on_timeout(monkeypatch):
     assert result["summary"]["partial_success"] is True
 
 
+def test_component_runner_enforces_one_bounded_budget_across_both_pipes(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    read_sizes = []
+
+    class _TrackingStream(_io.BytesIO):
+        def read1(self, size=-1):
+            read_sizes.append(size)
+            return self.read(size)
+
+    class _Process:
+        returncode = 0
+        stdout = _TrackingStream(b"o" * 700)
+        stderr = _TrackingStream(b"e" * 700)
+
+        def poll(self):
+            return self.returncode
+
+        def communicate(self, timeout):  # pragma: no cover - regression sentinel
+            raise AssertionError(f"post-hoc communicate({timeout}) must not be used")
+
+    proc = _Process()
+    terminated = []
+    monkeypatch.setattr(mod, "_COMPONENT_MAX_OUTPUT_BYTES", 1024)
+    monkeypatch.setattr(mod, "_COMPONENT_CAPTURE_CHUNK_BYTES", 128)
+    monkeypatch.setattr(mod, "_start_component_process", lambda *a, **k: proc)
+    monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda value: terminated.append(value) or True)
+
+    result = mod._run_roam_json(["health"])
+
+    assert result["summary"]["state"] == "component_output_oversized"
+    assert terminated == [proc]
+    assert read_sizes
+    assert max(read_sizes) == 128
+
+
+def test_component_runner_stops_live_noisy_child_before_post_hoc_timeout(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    real_popen = mod._subprocess.Popen
+    children = []
+    script = (
+        "import sys,time; "
+        "sys.stdout.buffer.write(b'o'*768); sys.stdout.buffer.flush(); "
+        "sys.stderr.buffer.write(b'e'*768); sys.stderr.buffer.flush(); "
+        "time.sleep(30)"
+    )
+
+    def _noisy_start(_argv, *, cwd, env):
+        proc = real_popen(
+            [mod._sys.executable, "-c", script],
+            cwd=cwd,
+            env=env,
+            shell=False,
+            stdin=mod._subprocess.DEVNULL,
+            stdout=mod._subprocess.PIPE,
+            stderr=mod._subprocess.PIPE,
+            close_fds=True,
+            **mod._component_popen_kwargs(),
+        )
+        children.append(proc)
+        return proc
+
+    def _terminate(proc):
+        proc.kill()
+        proc.wait(timeout=5)
+        return True
+
+    monkeypatch.setattr(mod, "_COMPONENT_MAX_OUTPUT_BYTES", 1024)
+    monkeypatch.setattr(mod, "_COMPONENT_TIMEOUT_SECONDS", 2)
+    monkeypatch.setattr(mod, "_start_component_process", _noisy_start)
+    monkeypatch.setattr(mod, "_terminate_component_process_tree", _terminate)
+
+    result = mod._run_roam_json(["health"])
+
+    assert result["summary"]["state"] == "component_output_oversized"
+    assert "process tree terminated" in result["summary"]["verdict"]
+    assert len(children) == 1
+    assert children[0].poll() is not None
+
+
+def test_component_capture_kills_pipe_inheriting_descendant_after_root_exit(tmp_path):
+    from roam.commands import cmd_service_report as mod
+
+    pid_path = tmp_path / "descendant.pid"
+    child_code = "import time; time.sleep(3)"
+    root_code = (
+        "import pathlib,subprocess,sys; "
+        "child=subprocess.Popen([sys.executable,'-c',sys.argv[1]], "
+        "stdout=sys.stdout,stderr=sys.stderr,close_fds=False); "
+        "pathlib.Path(sys.argv[2]).write_text(str(child.pid),encoding='ascii'); "
+        "print(child.pid,flush=True)"
+    )
+    child_pid = None
+    try:
+        proc = mod._start_component_process(
+            [mod._sys.executable, "-c", root_code, child_code, str(pid_path)],
+            cwd=str(tmp_path),
+            env=_component_test_env(mod),
+        )
+        launch_deadline = _time.perf_counter() + 15.0
+        while not pid_path.exists() and proc.poll() is None and _time.perf_counter() < launch_deadline:
+            _time.sleep(0.02)
+        assert pid_path.exists(), proc.returncode
+        capture_started = _time.perf_counter()
+        stdout, stderr, state, tree_terminated, capture_error = mod._capture_component_output(
+            proc,
+            timeout_seconds=1.0,
+        )
+        child_pid = int(stdout.decode("ascii").strip())
+
+        assert state == "completed"
+        assert tree_terminated is True
+        assert capture_error is None
+        assert stderr == b""
+        assert _time.perf_counter() - capture_started < 2.5
+        deadline = _time.perf_counter() + 1.0
+        while _pid_is_alive(child_pid) and _time.perf_counter() < deadline:
+            _time.sleep(0.02)
+        assert not _pid_is_alive(child_pid)
+    finally:
+        if child_pid is None and pid_path.exists():
+            child_pid = int(pid_path.read_text(encoding="ascii"))
+        if child_pid is not None:
+            _force_kill_pid(child_pid)
+
+
+def test_linux_component_capture_kills_setsid_descendant_with_redirected_pipes(tmp_path):
+    from roam.commands import cmd_service_report as mod
+
+    if not mod._sys.platform.startswith("linux"):
+        pytest.skip("Linux subreaper and pidfd regression")
+
+    identity_path = tmp_path / "escaped-descendant.identity"
+    child_code = """
+import os
+import pathlib
+import sys
+import time
+
+os.setsid()
+devnull = os.open(os.devnull, os.O_RDWR)
+for stream_fd in (0, 1, 2):
+    os.dup2(devnull, stream_fd)
+if devnull > 2:
+    os.close(devnull)
+pathlib.Path(sys.argv[1]).write_text(
+    f"{os.getpid()}:{os.getsid(0)}",
+    encoding="ascii",
+)
+time.sleep(30)
+"""
+    root_code = """
+import pathlib
+import subprocess
+import sys
+import time
+
+identity_path = pathlib.Path(sys.argv[2])
+child = subprocess.Popen(
+    [sys.executable, "-c", sys.argv[1], str(identity_path)],
+    close_fds=True,
+)
+deadline = time.monotonic() + 2
+while not identity_path.exists() and time.monotonic() < deadline:
+    time.sleep(0.01)
+print(child.pid, flush=True)
+"""
+    child_pid = None
+    started = _time.perf_counter()
+    try:
+        proc = mod._start_component_process(
+            [mod._sys.executable, "-c", root_code, child_code, str(identity_path)],
+            cwd=str(tmp_path),
+            env=_component_test_env(mod),
+        )
+        launch_deadline = _time.perf_counter() + 15.0
+        while not identity_path.exists() and proc.poll() is None and _time.perf_counter() < launch_deadline:
+            _time.sleep(0.02)
+        launch_error = b""
+        if not identity_path.exists() and proc.poll() is not None:
+            launch_error = proc.stderr.read()
+        assert identity_path.exists(), (proc.returncode, launch_error)
+        stdout, stderr, state, tree_terminated, capture_error = mod._capture_component_output(
+            proc,
+            timeout_seconds=3.0,
+        )
+        assert state == "completed", (state, tree_terminated, capture_error, stderr)
+        assert tree_terminated is True
+        assert capture_error is None
+        assert stderr == b""
+        assert stdout
+        child_pid = int(stdout.decode("ascii").strip())
+        recorded_pid, recorded_sid = (int(value) for value in identity_path.read_text(encoding="ascii").split(":"))
+
+        assert recorded_pid == child_pid
+        assert recorded_sid == child_pid
+        assert _time.perf_counter() - started < 20.0
+        deadline = _time.perf_counter() + 1.0
+        while _pid_is_alive(child_pid) and _time.perf_counter() < deadline:
+            _time.sleep(0.02)
+        assert not _pid_is_alive(child_pid)
+    finally:
+        if child_pid is None and identity_path.exists():
+            child_pid = int(identity_path.read_text(encoding="ascii").split(":", 1)[0])
+        if child_pid is not None:
+            _force_kill_pid(child_pid)
+
+
+def test_linux_pidfd_identity_rejects_recycled_numeric_pid(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    stats = iter(((7, 111, "S"), (7, 222, "S")))
+    pidfd, keepalive_fd = _os.pipe()
+    monkeypatch.setattr(mod, "_linux_process_stat", lambda _pid: next(stats))
+    monkeypatch.setattr(mod._os, "pidfd_open", lambda _pid, _flags: pidfd, raising=False)
+    try:
+        assert mod._linux_open_pidfd_identity(4242) is None
+        with pytest.raises(OSError):
+            _os.fstat(pidfd)
+    finally:
+        _os.close(keepalive_fd)
+
+
+def test_linux_pidfd_identity_rejects_exited_bound_process(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    pidfd, keepalive_fd = _os.pipe()
+    monkeypatch.setattr(mod, "_linux_process_stat", lambda _pid: (7, 111, "S"))
+    monkeypatch.setattr(mod._os, "pidfd_open", lambda _pid, _flags: pidfd, raising=False)
+    monkeypatch.setattr(mod, "_linux_pidfd_is_alive", lambda _pidfd: False)
+    try:
+        assert mod._linux_open_pidfd_identity(4242) is None
+        with pytest.raises(OSError):
+            _os.fstat(pidfd)
+    finally:
+        _os.close(keepalive_fd)
+
+
+def test_linux_cleanup_receipt_reports_explicit_degraded_reason():
+    from roam.commands import cmd_service_report as mod
+
+    status_fd, writer_fd = _os.pipe()
+
+    class _ExitedSupervisor:
+        _roam_component_status_fd = status_fd
+
+    proc = _ExitedSupervisor()
+    try:
+        _os.write(writer_fd, mod._LINUX_CONTAINMENT_CLEANUP_FAILED)
+    finally:
+        _os.close(writer_fd)
+
+    assert mod._read_linux_supervisor_receipt(proc) is False
+    assert proc._roam_component_status_fd is None
+    assert proc._roam_component_containment_error == "linux_containment_cleanup_failed"
+
+
+def test_component_capture_never_closes_pipes_under_live_readers(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    release = mod._threading.Event()
+
+    class _BlockingStream:
+        close_called = False
+
+        def read1(self, _size):
+            release.wait(2)
+            return b""
+
+        read = read1
+
+        def close(self):
+            self.close_called = True
+            raise AssertionError("cross-thread pipe close must not run")
+
+    class _ExitedRoot:
+        returncode = 0
+        stdout = _BlockingStream()
+        stderr = _BlockingStream()
+
+        def poll(self):
+            return self.returncode
+
+    proc = _ExitedRoot()
+    monkeypatch.setattr(mod, "_COMPONENT_CLEANUP_SECONDS", 0.02)
+    # Even a lying/buggy lower-level terminator must not become a true receipt
+    # while inherited writer handles prove that the tree is still alive.
+    monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda value: True)
+    started = _time.perf_counter()
+    try:
+        _stdout, _stderr, state, tree_terminated, error = mod._capture_component_output(
+            proc,
+            timeout_seconds=0.02,
+        )
+        assert _time.perf_counter() - started < 0.5
+        assert state == "timeout"
+        assert tree_terminated is False
+        assert error == "process_tree_unverified"
+        assert proc.stdout.close_called is False
+        assert proc.stderr.close_called is False
+    finally:
+        release.set()
+
+
+def test_posix_group_cleanup_targets_saved_group_after_root_exit(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    calls = []
+
+    def _killpg(pgid, sig):
+        calls.append((pgid, sig))
+        if sig == 0:
+            raise ProcessLookupError
+
+    class _ExitedRoot:
+        returncode = 0
+        _roam_component_pgid = 4242
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(mod._os, "killpg", _killpg, raising=False)
+    monkeypatch.setattr(mod._signal, "SIGKILL", 9, raising=False)
+
+    assert mod._terminate_posix_component_group(_ExitedRoot()) is True
+    assert calls == [(4242, 9), (4242, 0)]
+
+
+def test_non_linux_posix_cleanup_returns_degraded_receipt(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    proc = object()
+    monkeypatch.setattr(mod._os, "name", "posix")
+    monkeypatch.setattr(mod._sys, "platform", "darwin")
+    monkeypatch.setattr(mod, "_terminate_posix_component_group", lambda value: value is proc)
+    monkeypatch.setattr(
+        mod,
+        "_terminate_linux_component_supervisor",
+        lambda _value: pytest.fail("non-Linux POSIX cleanup must not use the Linux supervisor"),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_terminate_windows_component_job",
+        lambda _value: pytest.fail("POSIX cleanup must not use a Windows Job"),
+    )
+
+    assert mod._terminate_component_process_tree(proc) is None
+
+
+def test_non_linux_posix_degraded_cleanup_preserves_success(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    class _Process:
+        returncode = 0
+        stdout = _io.BytesIO(b'{"summary":{"verdict":"ok"}}')
+        stderr = _io.BytesIO()
+
+        def poll(self):
+            return self.returncode
+
+    proc = _Process()
+    monkeypatch.setattr(mod, "_start_component_process", lambda *args, **kwargs: proc)
+    monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda value: None if value is proc else False)
+
+    result = mod._run_roam_json(["health"])
+
+    assert result["summary"]["verdict"] == "ok"
+    assert result["_meta"]["service_report_component_cleanup"] == (
+        "process_group_terminated_descendant_proof_unavailable"
+    )
+
+
+def test_platform_degraded_cleanup_reaches_markdown_and_outer_json(stub_primitives, monkeypatch):
+    mod = stub_primitives
+
+    def _degraded_component(args, **_kwargs):
+        value = _json.loads(_json.dumps(_CANNED.get(args[0], {})))
+        if args[0] == "ai-readiness":
+            value["_meta"] = {
+                "service_report_component_cleanup": ("process_group_terminated_descendant_proof_unavailable")
+            }
+        return value
+
+    monkeypatch.setattr(mod, "_run_roam_json", _degraded_component)
+
+    code, markdown = _invoke("--type", "ai-readiness")
+    assert code == 0
+    assert "**Degraded evidence:**" in markdown
+    assert "`readiness`" in markdown
+
+    code, output = _invoke("--type", "ai-readiness", json_mode=True)
+    assert code == 0
+    envelope = _json.loads(output[output.find("{") :])
+    summary = envelope["summary"]
+    assert summary["sections_degraded"] == ["readiness"]
+    assert summary["state"] == "component_degraded"
+    assert summary["partial_success"] is True
+    assert "degraded evidence" in summary["verdict"]
+
+
+def test_non_linux_posix_degraded_timeout_reports_limited_proof(monkeypatch):
+    from roam.commands import cmd_service_report as mod
+
+    proc = object()
+    monkeypatch.setattr(mod, "_start_component_process", lambda *args, **kwargs: proc)
+    monkeypatch.setattr(
+        mod,
+        "_capture_component_output",
+        lambda value, *, timeout_seconds: (b"", b"", "timeout", None, None),
+    )
+
+    result = mod._run_roam_json(["health"])
+
+    assert result["summary"]["state"] == "component_timeout"
+    assert "process group terminated; descendant proof unavailable" in result["summary"]["verdict"]
+    assert "process tree terminated" not in result["summary"]["verdict"]
+
+
 def test_component_runner_refuses_launch_after_report_deadline(monkeypatch):
     from roam.commands import cmd_service_report as mod
 
     monkeypatch.setattr(mod._time, "monotonic", lambda: 100.0)
     monkeypatch.setattr(
-        mod._subprocess,
-        "Popen",
+        mod,
+        "_start_component_process",
         lambda *a, **k: pytest.fail("expired report component must not launch"),
     )
 
@@ -499,20 +1042,16 @@ def test_component_runner_uses_remaining_report_budget_and_cleans_tree(monkeypat
     class _TimedOutProcess:
         returncode = None
 
-        def __init__(self):
-            self.calls = 0
-
-        def communicate(self, timeout):
-            self.calls += 1
-            if self.calls == 1:
-                seen["timeout"] = timeout
-                raise mod._subprocess.TimeoutExpired(cmd="roam", timeout=timeout)
-            return b"", b""
-
     proc = _TimedOutProcess()
     monkeypatch.setattr(mod._time, "monotonic", lambda: 100.0)
-    monkeypatch.setattr(mod._subprocess, "Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda value: value is proc)
+    monkeypatch.setattr(mod, "_start_component_process", lambda *a, **k: proc)
+
+    def _capture(value, *, timeout_seconds):
+        assert value is proc
+        seen["timeout"] = timeout_seconds
+        return b"", b"", "timeout", True, None
+
+    monkeypatch.setattr(mod, "_capture_component_output", _capture)
 
     result = mod._run_roam_json(["sbom"], deadline=150.0)
 
@@ -545,6 +1084,7 @@ def test_due_diligence_uses_one_bounded_report_deadline(monkeypatch):
     ("payload", "state"),
     [
         (b'{"summary":{"verdict":"first"},"summary":{"verdict":"last"}}', "component_malformed_output"),
+        (b'{"summary":' + b"[" * 200 + b"0" + b"]" * 200 + b"}", "component_malformed_output"),
         (b"[]", "component_empty_output"),
         (b"no json here", "component_empty_output"),
     ],
@@ -554,11 +1094,14 @@ def test_component_runner_rejects_ambiguous_or_invalid_envelopes(monkeypatch, pa
 
     class _Process:
         returncode = 0
+        stdout = _io.BytesIO(payload)
+        stderr = _io.BytesIO()
 
-        def communicate(self, timeout):
-            return payload, b""
+        def poll(self):
+            return self.returncode
 
-    monkeypatch.setattr(mod._subprocess, "Popen", lambda *a, **k: _Process())
+    monkeypatch.setattr(mod, "_start_component_process", lambda *a, **k: _Process())
+    monkeypatch.setattr(mod, "_terminate_component_process_tree", lambda proc: True)
     result = mod._run_roam_json(["health"])
     assert result["isError"] is True
     assert result["summary"]["state"] == state
@@ -649,6 +1192,190 @@ def test_engagement_ledger_appends_not_overwrites(tmp_path, monkeypatch):
     assert len(lines) == 2
     assert _json.loads(lines[0])["client"] == "Acme Inc"
     assert _json.loads(lines[1])["report_type"] == "reachability-triage"
+
+
+def test_engagement_ledger_rejects_hardlink_without_mutating_victim_and_discloses_failure(
+    stub_primitives,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    state = tmp_path / ".roam"
+    assert stub_primitives.create_owner_only_directory(state)
+    victim = tmp_path / "victim.jsonl"
+    original = b'{"private":"unchanged"}\n'
+    victim.write_bytes(original)
+    ledger = state / "engagements.jsonl"
+    try:
+        _os.link(victim, ledger)
+    except OSError as exc:
+        pytest.skip(f"hard links unavailable: {exc}")
+    victim_mode_before = victim.stat().st_mode
+    victim_owner_only_before = stub_primitives.path_is_owner_only(victim)
+    output_path = tmp_path / "report.md"
+
+    code, output = _invoke(
+        "--type",
+        "ai-readiness",
+        "--output",
+        str(output_path),
+        json_mode=True,
+    )
+
+    assert code == 0
+    assert victim.read_bytes() == original
+    assert ledger.read_bytes() == original
+    assert victim.stat().st_mode == victim_mode_before
+    assert stub_primitives.path_is_owner_only(victim) is victim_owner_only_before
+    envelope = _json.loads(output[output.find("{") :])
+    summary = envelope["summary"]
+    assert summary["engagement_logged_to"] is None
+    assert summary["engagement_ledger_state"] == "unsafe_path"
+    assert summary["engagement_ledger_failure"] == "unsafe_path"
+    assert summary["state"] == "engagement_persistence_failure"
+    assert summary["partial_success"] is True
+    assert "engagement ledger unavailable" in summary["verdict"]
+    assert "Engagement ledger persistence failed" in output
+
+
+def test_engagement_ledger_serializes_concurrent_process_writers(tmp_path):
+    from roam.commands import cmd_service_report as mod
+
+    source_root = str(Path(mod.__file__).resolve().parents[2])
+    env = dict(_os.environ)
+    env["PYTHONPATH"] = _os.pathsep.join(value for value in (source_root, env.get("PYTHONPATH")) if value)
+    script = """
+import sys
+from roam.commands.cmd_service_report import _record_engagement
+
+index = sys.argv[1]
+result = _record_engagement(
+    report_type="due-diligence",
+    client=f"client-{index}",
+    subject=f"subject-{index}",
+    headline=f"headline-{index}",
+    output_path=f"report-{index}.md",
+    generated_at="2026-07-19 00:00 UTC",
+)
+raise SystemExit(0 if result is not None else 3)
+"""
+    processes = [
+        _subprocess.Popen(
+            [_sys.executable, "-c", script, str(index)],
+            cwd=tmp_path,
+            env=env,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.PIPE,
+            text=True,
+        )
+        for index in range(12)
+    ]
+    failures = []
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=45)
+        if process.returncode != 0:
+            failures.append((process.returncode, stdout, stderr))
+    assert failures == []
+
+    ledger = tmp_path / ".roam" / "engagements.jsonl"
+    rows = [_json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 12
+    assert {row["client"] for row in rows} == {f"client-{index}" for index in range(12)}
+    assert all(row["kind"] == "service-report" for row in rows)
+
+
+def test_engagement_ledger_serializes_mixed_service_and_replay_process_writers(tmp_path):
+    from roam.commands import cmd_service_report as mod
+
+    source_root = str(Path(mod.__file__).resolve().parents[2])
+    env = dict(_os.environ)
+    env["PYTHONPATH"] = _os.pathsep.join(value for value in (source_root, env.get("PYTHONPATH")) if value)
+    script = """
+import sys
+from roam.commands.cmd_pr_replay import _record_engagement as record_replay
+from roam.commands.cmd_service_report import _record_engagement as record_service
+
+index = int(sys.argv[1])
+if index % 2:
+    result = record_replay(
+        tier="team",
+        client=f"replay-{index}",
+        commit_range="HEAD~1..HEAD",
+        commits_scanned=1,
+        commits_with_findings=0,
+        top_detector=None,
+        output_path=f"replay-{index}.md",
+        generated_at="2026-07-19 00:00 UTC",
+    )
+else:
+    result = record_service(
+        report_type="due-diligence",
+        client=f"service-{index}",
+        subject=f"subject-{index}",
+        headline=f"headline-{index}",
+        output_path=f"service-{index}.md",
+        generated_at="2026-07-19 00:00 UTC",
+    )
+raise SystemExit(0 if result is not None else 3)
+"""
+    processes = [
+        _subprocess.Popen(
+            [_sys.executable, "-c", script, str(index)],
+            cwd=tmp_path,
+            env=env,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.PIPE,
+            text=True,
+        )
+        for index in range(12)
+    ]
+    failures = []
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=45)
+        if process.returncode != 0:
+            failures.append((process.returncode, stdout, stderr))
+    assert failures == []
+
+    ledger = tmp_path / ".roam" / "engagements.jsonl"
+    rows = [_json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 12
+    assert sum(row["kind"] == "service-report" for row in rows) == 6
+    assert sum(row["kind"] == "pr-replay" for row in rows) == 6
+
+
+def test_engagement_ledger_retention_is_bounded_and_disclosed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from roam.commands import cmd_service_report as mod
+
+    monkeypatch.setattr(mod, "_ENGAGEMENT_LEDGER_MAX_RECORDS", 3)
+    monkeypatch.setattr(mod, "_ENGAGEMENT_LEDGER_MAX_BYTES", 2_048)
+    diagnostics = {}
+    for index in range(7):
+        result = mod._record_engagement(
+            report_type="due-diligence",
+            client=f"client-{index}",
+            subject=f"subject-{index}",
+            headline=f"headline-{index}",
+            output_path=f"report-{index}.md",
+            generated_at="2026-07-19 00:00 UTC",
+            diagnostics=diagnostics,
+        )
+        assert result is not None
+
+    ledger = tmp_path / ".roam" / "engagements.jsonl"
+    payload = ledger.read_bytes()
+    rows = [_json.loads(line) for line in payload.splitlines()]
+    assert len(payload) <= mod._ENGAGEMENT_LEDGER_MAX_BYTES
+    assert len(rows) == 3
+    assert [row["client"] for row in rows] == ["client-4", "client-5", "client-6"]
+    assert mod.path_is_owner_only(tmp_path / ".roam")
+    assert mod.path_is_owner_only(ledger)
+    assert mod.path_is_owner_only(tmp_path / ".roam" / "engagements.jsonl.lock")
+    assert diagnostics == {
+        "state": "logged_retention_pruned",
+        "retention_pruned": True,
+        "records_retained": 3,
+    }
 
 
 def test_no_track_engagement_skips_ledger(stub_primitives, tmp_path, monkeypatch):

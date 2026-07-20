@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import contextlib
 import glob
+import hmac
 import json
 import math
 import os
 import re
 import shlex
 import sqlite3
-import stat
 import subprocess
 import threading as _w131_threading  # W131 — pre-import for cross-block use
 import time
@@ -31,6 +31,14 @@ from functools import lru_cache as _w144_lru_cache
 
 from roam.observability import log_swallowed
 from roam.plan.import_audit import scan_named_dirs_import_effects
+from roam.security.owner_only import (
+    ensure_owner_only_file_descriptor,
+    ensure_owner_only_path,
+    file_descriptor_is_owner_only,
+    open_new_owner_only_file,
+    pinned_owner_only_directory,
+    restrict_path_to_current_user,
+)
 from roam.security.redact import (
     redact_secrets_in_value,
     scan_prompt_injection_in_value,
@@ -64,6 +72,17 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 from roam.atomic_io import atomic_write_bytes
+from roam.compile_telemetry import (
+    COMPILE_TELEMETRY_EPISODE_ID_RE,
+    COMPILE_TELEMETRY_SAFE_MODES,
+    COMPILE_TELEMETRY_SCHEMA_VERSION,
+    COMPILE_TELEMETRY_TASK_FINGERPRINT_RE,
+    COMPILE_TELEMETRY_TS_RE,
+    bounded_number,
+    bucket_telemetry_ts,
+    safe_telemetry_category,
+    sanitize_compile_telemetry_row,
+)
 
 # Plan-compile SQLite cache policy now lives in roam.plan.plan_cache. These are
 # compatibility re-exports so existing call sites (and tests) that reference
@@ -86,6 +105,7 @@ from roam.plan.plan_cache import (
     _run_roam_persist_put,
     _set_wal,
 )
+from roam.security.bounded_json import loads_bounded, strict_json_object_pairs
 
 # ---- procedure classifier — same taxonomy as v13_harness.py:STRUCTURAL_RE etc. ----
 # v0.1 additions: "zero callers" / "cyclical" / "god-component".
@@ -2240,40 +2260,22 @@ _RUN_ROAM_CACHE_MISS = object()
 # the exact opaque ``ep_`` plus 24-lowercase-hex contract.
 import queue as _w149_queue
 
-_COMPILE_TELEMETRY_SCHEMA_VERSION = 2
+_COMPILE_TELEMETRY_SCHEMA_VERSION = COMPILE_TELEMETRY_SCHEMA_VERSION
 _COMPILE_TELEMETRY_RETENTION_DAYS = 30
 _COMPILE_TELEMETRY_MAX_RECORDS = 500
 _COMPILE_TELEMETRY_MAX_BYTES = 1024 * 1024
 _COMPILE_TELEMETRY_READ_BYTES = 2 * _COMPILE_TELEMETRY_MAX_BYTES
-_COMPILE_TELEMETRY_LOCK_STALE_S = 30.0
 _COMPILE_TELEMETRY_TRUTHY = frozenset({"1", "true", "yes", "on"})
-_COMPILE_TELEMETRY_SAFE_MODES = frozenset(
-    {
-        "unknown",
-        "other",
-        "compile",
-        "roam",
-        "vanilla",
-        "hook",
-        "read_only",
-        "safe_edit",
-        "migration",
-        "autonomous_pr",
-        "bench",
-        "corpus",
-        "trace",
-        "envelope_diff",
-        "compile_cache_build",
-        "test",
-    }
-)
-_COMPILE_TELEMETRY_CATEGORY_RE = re.compile(r"^[a-z0-9_.:-]{1,64}$")
-_COMPILE_TELEMETRY_EPISODE_ID_RE = re.compile(r"^ep_[0-9a-f]{24}$")
-_COMPILE_TELEMETRY_TS_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})T(?P<hour>\d{2}):\d{2}:\d{2}Z$")
+_COMPILE_TELEMETRY_SAFE_MODES = COMPILE_TELEMETRY_SAFE_MODES
+_COMPILE_TELEMETRY_EPISODE_ID_RE = COMPILE_TELEMETRY_EPISODE_ID_RE
+_COMPILE_TELEMETRY_TASK_FINGERPRINT_RE = COMPILE_TELEMETRY_TASK_FINGERPRINT_RE
+_COMPILE_TELEMETRY_TS_RE = COMPILE_TELEMETRY_TS_RE
 _TELEMETRY_WRITE_LOCK = _w131_threading.Lock()
 _TELEMETRY_QUEUE: "_w149_queue.Queue[tuple[str, str] | None]" = _w149_queue.Queue(maxsize=512)
 _TELEMETRY_THREAD_STARTED = False
 _TELEMETRY_THREAD_LOCK = _w131_threading.Lock()
+_TELEMETRY_FINGERPRINT_KEYS: dict[str, bytes] = {}
+_TELEMETRY_FINGERPRINT_KEY_LOCK = _w131_threading.Lock()
 
 
 def _compile_telemetry_enabled() -> bool:
@@ -2284,229 +2286,109 @@ def _compile_telemetry_enabled() -> bool:
     )
 
 
-def _windows_restrict_file_to_current_user(path: str) -> bool:
-    """Install a protected current-user-only DACL on ``path``.
+def _compile_task_fingerprint(task: str, cwd: str) -> str | None:
+    """Return a repo-local keyed repeat identity without persisting prompt text."""
 
-    ``chmod(0o600)`` does not express Windows ACLs. This small stdlib-only
-    bridge obtains the process token SID and writes a protected DACL granting
-    that SID full access. It is called before telemetry bytes are written.
-    """
-    if os.name != "nt":
-        return False
+    root = str(Path(cwd).resolve())
     try:
-        import ctypes
-        from ctypes import wintypes
+        with _TELEMETRY_FINGERPRINT_KEY_LOCK:
+            key = _TELEMETRY_FINGERPRINT_KEYS.get(root)
+            if key is None:
+                from roam.transcript_backfill import _load_or_create_key
 
-        token_query = 0x0008
-        token_user_class = 1
-        dacl_security_information = 0x00000004
-        protected_dacl_security_information = 0x80000000
-        sddl_revision_1 = 1
+                key = _load_or_create_key(Path(root))
+                _TELEMETRY_FINGERPRINT_KEYS[root] = key
+        canonical = _canonicalize_task(task)
+        digest = hmac.new(
+            key,
+            f"compile-task\0{canonical}".encode("utf-8", "replace"),
+            sha256,
+        ).hexdigest()[:32]
+        return f"tfp_{digest}"
+    except Exception as exc:  # noqa: BLE001 — telemetry remains fail-open
+        log_swallowed("compile.telemetry.task_fingerprint", exc)
+        return None
 
-        class _SidAndAttributes(ctypes.Structure):
-            _fields_ = [("sid", wintypes.LPVOID), ("attributes", wintypes.DWORD)]
 
-        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        token = wintypes.HANDLE()
-        sid_text = wintypes.LPWSTR()
-        descriptor = wintypes.LPVOID()
+def _windows_restrict_file_to_current_user(path: str) -> bool:
+    """Compatibility wrapper for the shared Windows DACL implementation."""
 
-        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-        advapi32.OpenProcessToken.argtypes = (
-            wintypes.HANDLE,
-            wintypes.DWORD,
-            ctypes.POINTER(wintypes.HANDLE),
-        )
-        advapi32.OpenProcessToken.restype = wintypes.BOOL
-        advapi32.GetTokenInformation.argtypes = (
-            wintypes.HANDLE,
-            wintypes.DWORD,
-            wintypes.LPVOID,
-            wintypes.DWORD,
-            ctypes.POINTER(wintypes.DWORD),
-        )
-        advapi32.GetTokenInformation.restype = wintypes.BOOL
-        advapi32.ConvertSidToStringSidW.argtypes = (
-            wintypes.LPVOID,
-            ctypes.POINTER(wintypes.LPWSTR),
-        )
-        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
-        advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = (
-            wintypes.LPCWSTR,
-            wintypes.DWORD,
-            ctypes.POINTER(wintypes.LPVOID),
-            ctypes.POINTER(wintypes.DWORD),
-        )
-        advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
-        advapi32.SetFileSecurityW.argtypes = (
-            wintypes.LPCWSTR,
-            wintypes.DWORD,
-            wintypes.LPVOID,
-        )
-        advapi32.SetFileSecurityW.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-        kernel32.LocalFree.argtypes = (wintypes.LPVOID,)
-
-        if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), token_query, ctypes.byref(token)):
-            return False
-        try:
-            needed = wintypes.DWORD()
-            advapi32.GetTokenInformation(token, token_user_class, None, 0, ctypes.byref(needed))
-            if not needed.value:
-                return False
-            token_info = ctypes.create_string_buffer(needed.value)
-            if not advapi32.GetTokenInformation(
-                token,
-                token_user_class,
-                token_info,
-                needed,
-                ctypes.byref(needed),
-            ):
-                return False
-            token_user = ctypes.cast(token_info, ctypes.POINTER(_SidAndAttributes)).contents
-            if not advapi32.ConvertSidToStringSidW(token_user.sid, ctypes.byref(sid_text)):
-                return False
-            sddl = f"D:P(A;;FA;;;{sid_text.value})"
-            if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                sddl,
-                sddl_revision_1,
-                ctypes.byref(descriptor),
-                None,
-            ):
-                return False
-            security_information = dacl_security_information | protected_dacl_security_information
-            return bool(advapi32.SetFileSecurityW(path, security_information, descriptor))
-        finally:
-            if descriptor:
-                kernel32.LocalFree(descriptor)
-            if sid_text:
-                kernel32.LocalFree(sid_text)
-            if token:
-                kernel32.CloseHandle(token)
-    except (AttributeError, OSError, ValueError):
-        return False
+    return os.name == "nt" and restrict_path_to_current_user(path)
 
 
 def _ensure_owner_only_file(path: str) -> bool:
-    """Restrict an existing telemetry file to the current OS user."""
+    """Restrict one proven single-link telemetry file via its descriptor."""
+
+    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
-        if os.name == "nt":
-            return _windows_restrict_file_to_current_user(path)
-        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-        mode = stat.S_IMODE(os.stat(path).st_mode)
-        return bool(mode & stat.S_IRUSR) and not bool(mode & (stat.S_IRWXG | stat.S_IRWXO))
+        descriptor = os.open(path, flags)
     except OSError:
         return False
+    try:
+        return ensure_owner_only_file_descriptor(descriptor, path)
+    finally:
+        os.close(descriptor)
+
+
+def _owner_only_file_is_safe(path: str) -> bool:
+    """Non-mutating post-install proof for a telemetry file."""
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return False
+    try:
+        return file_descriptor_is_owner_only(descriptor, path)
+    finally:
+        os.close(descriptor)
 
 
 def _safe_telemetry_category(value, *, default: str = "unknown") -> str:
-    raw = str(value or "").strip().lower()
-    return raw if _COMPILE_TELEMETRY_CATEGORY_RE.fullmatch(raw) else default
+    return safe_telemetry_category(value, default=default)
 
 
 def _bucket_telemetry_ts(value) -> str | None:
     """Coarsen valid UTC timestamps to an hour, reducing linkage precision."""
-    match = _COMPILE_TELEMETRY_TS_RE.fullmatch(str(value or "").strip())
-    if not match:
-        return None
-    return f"{match.group('date')}T{match.group('hour')}:00:00Z"
+    return bucket_telemetry_ts(value)
 
 
 def _bounded_number(value, *, minimum: float, maximum: float, integer: bool = False):
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number) or number < minimum or number > maximum:
-        return None
-    return int(number) if integer else number
+    return bounded_number(value, minimum=minimum, maximum=maximum, integer=integer)
 
 
 def _sanitize_compile_telemetry_row(row: dict) -> dict | None:
-    """Project a row onto the privacy-safe aggregate schema.
-
-    This is a whitelist, not a blocklist. Rewriting legacy logs therefore
-    removes prompt text/hashes, session/turn identifiers, non-opaque episode
-    identifiers, and every unknown future free-form field. A strictly random
-    local episode id is retained only to join compilation with local outcomes;
-    the SavingsAggregate export never includes it.
-    """
-    if not isinstance(row, dict):
-        return None
-    ts = _bucket_telemetry_ts(row.get("ts"))
-    if ts is None:
-        return None
-
-    keys = row.get("prefetched_keys")
-    safe_keys = sorted(
-        {
-            str(key)
-            for key in (keys if isinstance(keys, list) else [])
-            if _COMPILE_TELEMETRY_CATEGORY_RE.fullmatch(str(key))
-        }
-    )[:128]
-    mode = _safe_telemetry_category(row.get("agent_mode"))
-    if mode not in _COMPILE_TELEMETRY_SAFE_MODES:
-        mode = "other"
-    episode_id = str(row.get("episode_id") or "").strip()
-
-    out: dict = {
-        "schema_version": _COMPILE_TELEMETRY_SCHEMA_VERSION,
-        "ts": ts,
-        "procedure": _safe_telemetry_category(row.get("procedure")),
-        "art_label": _safe_telemetry_category(row.get("art_label")),
-        "prefetched_keys": safe_keys,
-        "prefetched_fact_count": len(safe_keys),
-        "agent_mode": mode,
-        "injection_advice": _safe_telemetry_category(row.get("injection_advice")),
-        "cache_hit": bool(row.get("cache_hit")),
-    }
-    if _COMPILE_TELEMETRY_EPISODE_ID_RE.fullmatch(episode_id):
-        out["episode_id"] = episode_id
-    numeric_fields = {
-        "classifier_conf": (-1.0, 1.0, False),
-        "envelope_bytes": (-1.0, 100 * 1024 * 1024, True),
-        "compile_ms": (0.0, 24 * 60 * 60 * 1000, False),
-        "model_calls_avoided_count": (0.0, 1000.0, True),
-    }
-    for name, (minimum, maximum, integer) in numeric_fields.items():
-        number = _bounded_number(row.get(name), minimum=minimum, maximum=maximum, integer=integer)
-        if number is not None:
-            out[name] = number
-
-    timings = row.get("probe_timings_ms")
-    if isinstance(timings, dict):
-        safe_timings = {}
-        for key, value in timings.items():
-            safe_key = str(key)
-            if not _COMPILE_TELEMETRY_CATEGORY_RE.fullmatch(safe_key):
-                continue
-            number = _bounded_number(value, minimum=0.0, maximum=24 * 60 * 60 * 1000)
-            if number is not None:
-                safe_timings[safe_key] = number
-        if safe_timings:
-            out["probe_timings_ms"] = safe_timings
-
-    avoided_count = int(out.get("model_calls_avoided_count", 0))
-    out["savings"] = {
-        "model_calls_avoided_count": avoided_count,
-        "prefetched_fact_count": len(safe_keys),
-        "cache_reuse_count": int(out["cache_hit"]),
-    }
-    return out
+    return sanitize_compile_telemetry_row(row)
 
 
-def _read_compile_telemetry_rows(path: str) -> list[dict] | None:
-    if not os.path.exists(path):
-        return []
+def _read_compile_telemetry_rows(path: str, descriptor: int) -> list[dict] | None:
+    """Read one bounded tail from the already validated telemetry object."""
+
     try:
-        with open(path, "rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            start = max(0, size - _COMPILE_TELEMETRY_READ_BYTES)
-            fh.seek(start)
-            payload = fh.read(_COMPILE_TELEMETRY_READ_BYTES)
+        opened = os.fstat(descriptor)
+        size = opened.st_size
+        start = max(0, size - _COMPILE_TELEMETRY_READ_BYTES)
+        os.lseek(descriptor, start, os.SEEK_SET)
+        remaining = min(size - start, _COMPILE_TELEMETRY_READ_BYTES)
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                return None
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        lexical = os.lstat(path)
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns")
+        if os.name != "nt":
+            stable_fields += ("st_ctime_ns",)
+        if any(getattr(opened, field) != getattr(after, field) for field in stable_fields) or any(
+            getattr(after, field) != getattr(lexical, field) for field in stable_fields
+        ):
+            return None
         if start:
             newline = payload.find(b"\n")
             payload = payload[newline + 1 :] if newline >= 0 else b""
@@ -2519,7 +2401,10 @@ def _read_compile_telemetry_rows(path: str) -> list[dict] | None:
         if not raw_line or len(raw_line) > _COMPILE_TELEMETRY_MAX_BYTES:
             continue
         try:
-            parsed = json.loads(raw_line.decode("utf-8"))
+            parsed = loads_bounded(
+                raw_line.decode("utf-8"),
+                object_pairs_hook=strict_json_object_pairs,
+            )
         except (UnicodeDecodeError, ValueError, TypeError):
             continue
         sanitized = _sanitize_compile_telemetry_row(parsed)
@@ -2530,55 +2415,98 @@ def _read_compile_telemetry_rows(path: str) -> list[dict] | None:
 
 @contextlib.contextmanager
 def _compile_telemetry_interprocess_lock(log_path: str):
-    """Best-effort lock; telemetry drops rather than blocking a compile."""
+    """Best-effort OS lock; process exit releases it without stale unlinking."""
     lock_path = log_path + ".lock"
-    fd = None
-    for _attempt in range(8):
-        try:
-            fd = os.open(
-                lock_path,
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                stat.S_IRUSR | stat.S_IWUSR,
-            )
-            break
-        except FileExistsError:
-            try:
-                if time.time() - os.path.getmtime(lock_path) > _COMPILE_TELEMETRY_LOCK_STALE_S:
-                    os.unlink(lock_path)
-                    continue
-            except OSError:
-                pass
-            time.sleep(0.01)
-        except OSError:
-            break
+    fd = -1
+    created = False
     try:
-        yield fd is not None
-    finally:
-        if fd is not None:
+        try:
+            fd = open_new_owner_only_file(lock_path)
+            created = True
+        except FileExistsError:
+            flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(lock_path, flags)
+        if not ensure_owner_only_file_descriptor(fd, lock_path):
+            os.close(fd)
+            fd = -1
+            yield False
+            return
+        if created:
+            os.write(fd, b"\0")
+            if not ensure_owner_only_file_descriptor(fd, lock_path):
+                os.close(fd)
+                fd = -1
+                yield False
+                return
+        elif os.fstat(fd).st_size != 1:
+            # Never initialize or mutate an existing pathname.  Only the
+            # exclusive creator writes the single lock byte.
+            os.close(fd)
+            fd = -1
+            yield False
+            return
+        os.lseek(fd, 0, os.SEEK_SET)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        if fd >= 0:
             try:
                 os.close(fd)
             except OSError:
                 pass
-            try:
-                os.unlink(lock_path)
-            except OSError:
-                pass
+            fd = -1
+        yield False
+        return
+
+    try:
+        yield True
+    finally:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def _atomic_write_owner_only(path: str, payload: bytes) -> bool:
     """Atomically replace ``path`` using a file secured before byte one."""
 
-    def secure_empty_temp(tmp_path: str) -> None:
-        if not _ensure_owner_only_file(tmp_path):
+    def secure_empty_temp(descriptor: int, tmp_path: str) -> None:
+        if not ensure_owner_only_file_descriptor(descriptor, tmp_path):
             raise PermissionError("cannot restrict compile telemetry tempfile")
 
     try:
-        atomic_write_bytes(path, payload, prepare_temp=secure_empty_temp)
-        if not _ensure_owner_only_file(path):
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        atomic_write_bytes(
+            path,
+            payload,
+            prepare_temp_fd=secure_empty_temp,
+            create_parents=False,
+            secure_parent=True,
+        )
+        if not _owner_only_file_is_safe(path):
+            # The complete, owner-only tempfile has already been installed.
+            # A failed post-install pathname check may indicate a race, so
+            # unlinking by path could delete an attacker-supplied replacement;
+            # even without a race it would discard the last valid log. Leave
+            # the installed object intact and report the failed receipt.
             return False
         return True
     except OSError as exc:
@@ -2589,32 +2517,54 @@ def _atomic_write_owner_only(path: str, payload: bytes) -> bool:
 def _write_compile_telemetry_line(path: str, line: str) -> None:
     """Append one sanitized row while enforcing age/count/byte retention."""
     try:
-        incoming = _sanitize_compile_telemetry_row(json.loads(line))
+        incoming = _sanitize_compile_telemetry_row(loads_bounded(line, object_pairs_hook=strict_json_object_pairs))
     except (TypeError, ValueError):
         return
     if incoming is None:
         return
 
-    with _TELEMETRY_WRITE_LOCK:
-        with _compile_telemetry_interprocess_lock(path) as locked:
-            if not locked:
-                return
-            rows = _read_compile_telemetry_rows(path)
-            if rows is None:
-                return
-            rows.append(incoming)
-            cutoff = time.strftime(
-                "%Y-%m-%dT%H:00:00Z",
-                time.gmtime(time.time() - _COMPILE_TELEMETRY_RETENTION_DAYS * 86400),
-            )
-            rows = [row for row in rows if str(row.get("ts") or "") >= cutoff]
-            rows = rows[-_COMPILE_TELEMETRY_MAX_RECORDS:]
-            encoded = [(_fast_json_dumps(row) + "\n").encode("utf-8") for row in rows]
-            total = sum(len(item) for item in encoded)
-            while encoded and total > _COMPILE_TELEMETRY_MAX_BYTES:
-                total -= len(encoded.pop(0))
-            if encoded:
-                _atomic_write_owner_only(path, b"".join(encoded))
+    parent = os.path.dirname(path)
+    if not ensure_owner_only_path(parent):
+        return
+    try:
+        with pinned_owner_only_directory(parent):
+            with _TELEMETRY_WRITE_LOCK:
+                with _compile_telemetry_interprocess_lock(path) as locked:
+                    if not locked:
+                        return
+                    descriptor = -1
+                    if os.path.lexists(path):
+                        flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+                        flags |= getattr(os, "O_NOFOLLOW", 0)
+                        try:
+                            descriptor = os.open(path, flags)
+                            if not ensure_owner_only_file_descriptor(descriptor, path):
+                                return
+                            rows = _read_compile_telemetry_rows(path, descriptor)
+                            if rows is None:
+                                return
+                        except OSError:
+                            return
+                        finally:
+                            if descriptor >= 0:
+                                os.close(descriptor)
+                    else:
+                        rows = []
+                    rows.append(incoming)
+                    cutoff = time.strftime(
+                        "%Y-%m-%dT%H:00:00Z",
+                        time.gmtime(time.time() - _COMPILE_TELEMETRY_RETENTION_DAYS * 86400),
+                    )
+                    rows = [row for row in rows if str(row.get("ts") or "") >= cutoff]
+                    rows = rows[-_COMPILE_TELEMETRY_MAX_RECORDS:]
+                    encoded = [(_fast_json_dumps(row) + "\n").encode("utf-8") for row in rows]
+                    total = sum(len(item) for item in encoded)
+                    while encoded and total > _COMPILE_TELEMETRY_MAX_BYTES:
+                        total -= len(encoded.pop(0))
+                    if encoded:
+                        _atomic_write_owner_only(path, b"".join(encoded))
+    except PermissionError as exc:
+        log_swallowed("compile.telemetry.parent_guard", exc)
 
 
 def _telemetry_worker():
@@ -11997,11 +11947,12 @@ def _maybe_append_compile_telemetry(
 
     Persistence is explicitly opt-in via ``ROAM_TELEMETRY_LOCAL=1`` or
     ``ROAM_COMPILE_TELEMETRY=1``. Prompt text and hashes plus raw host,
-    session and turn identifiers are intentionally absent. The sole identifier
-    exception is a random local episode id matching ``ep_[0-9a-f]{24}``, which
-    enables local outcome joins and is never returned by SavingsAggregate. The
-    remaining categorical/count fields retain aggregate fire-rate, latency,
-    cache-reuse, envelope-size, and avoided-model-call savings signals.
+    session and turn identifiers are intentionally absent. A random local
+    episode id enables outcome joins, while a keyed repo-local task fingerprint
+    enables repeat detection without persisting reversible prompt identity.
+    SavingsAggregate returns neither identifier. The remaining categorical and
+    count fields retain fire-rate, latency, cache-reuse, envelope-size, and
+    avoided-model-call savings signals.
 
     Never raises. Skips when:
       - local telemetry was not explicitly enabled
@@ -12017,6 +11968,9 @@ def _maybe_append_compile_telemetry(
     if not os.path.isdir(log_dir):
         return
     log_path = os.path.join(log_dir, "compile-runs.jsonl")
+    task_fingerprint = _compile_task_fingerprint(plan.task, cwd)
+    if task_fingerprint is None:
+        return
     plan_obj = (env or {}).get("plan") or {}
     prefetched = plan_obj.get("prefetched_facts") or {}
     keys = sorted(k for k in prefetched if not k.endswith("_definition"))
@@ -12043,6 +11997,9 @@ def _maybe_append_compile_telemetry(
         # Only a closed categorical mode is retained. Arbitrary host-provided
         # values collapse to ``other`` at the persistence whitelist.
         "agent_mode": os.environ.get("ROAM_AGENT_MODE", "unknown"),
+        # Keyed with an owner-only repo-local secret. This is stable only inside
+        # one local project and cannot be dictionary-attacked without the key.
+        "task_fingerprint": task_fingerprint,
         # Local-only outcome join. The persistence whitelist drops empty,
         # malformed, uppercase, or otherwise identifying values.
         "episode_id": os.environ.get("ROAM_EPISODE_ID", ""),

@@ -3527,7 +3527,7 @@ def _render_report(
 
 
 # ---------------------------------------------------------------------------
-# Engagement ledger — append-only JSONL written next to .roam/index.db.
+# Engagement ledger — bounded JSONL projection written next to .roam/index.db.
 # ---------------------------------------------------------------------------
 
 
@@ -3542,7 +3542,7 @@ def _record_engagement(
     output_path: str,
     generated_at: str,
 ) -> Path | None:
-    """Append one record to ``.roam/engagements.jsonl``.
+    """Persist one record to the shared bounded engagement ledger.
 
     Returns the ledger path on success, ``None`` on failure (we never
     raise — telemetry must not break a buyer-facing run).
@@ -3551,12 +3551,15 @@ def _record_engagement(
     ``cat .roam/engagements.jsonl | jq -s 'group_by(.tier)'`` without
     nested-key acrobatics. Schema version bump = additive only.
     """
-    try:
-        ledger_dir = Path(".roam")
-        ledger_dir.mkdir(exist_ok=True)
-        ledger = ledger_dir / "engagements.jsonl"
-        record = {
+    # Local import avoids a module-load cycle: service-report reuses the PDF
+    # and replay helpers above, while both commands must converge on exactly
+    # one cross-process lock/read/retention/publication implementation.
+    from roam.commands.cmd_service_report import _persist_engagement_record
+
+    return _persist_engagement_record(
+        {
             "ledger_schema": 1,
+            "kind": "pr-replay",
             "tier": tier,
             "client": client,
             "commit_range": commit_range,
@@ -3566,13 +3569,7 @@ def _record_engagement(
             "output_path": output_path,
             "generated_at": generated_at,
         }
-        with ledger.open("a", encoding="utf-8") as f:
-            f.write(_json.dumps(record) + "\n")
-        return ledger
-    except OSError:
-        # Filesystem refused us (read-only mount, no permission, …) —
-        # silently skip rather than crash the report run.
-        return None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -4640,8 +4637,9 @@ def pr_replay_cmd(
             click.echo(f"WARNING: PDF render failed — {info}", err=True)
 
     # Engagement ledger — paid tiers only, only when an output artefact
-    # exists. Cheap, append-only JSONL the operator can `cat | jq` later
-    # to see every paid engagement at a glance. No external service.
+    # exists. The shared serializer retains the bounded JSONL history under
+    # one cross-process lock, so service-report and pr-replay cannot lose one
+    # another's records. The operator can still `cat | jq` it locally.
     engagement_record = None
     if track_engagement and tier in ("team", "deep") and output_path:
         engagement_record = _record_engagement(

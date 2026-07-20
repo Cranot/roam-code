@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import stat
 import time
 from pathlib import Path
 
@@ -33,6 +34,13 @@ from roam.output.formatter import json_envelope, to_json
 
 _CACHE_FILENAME = "compile-envelope-cache.sqlite"
 _TELEMETRY_TASK_PREFIX_LIMIT = 80
+_MAX_BUILD_TASKS = 10_000
+_MAX_CORPUS_BYTES = 2 * 1024 * 1024
+_MAX_CORPUS_LINE_BYTES = 16 * 1024
+_MAX_CORPUS_TASKS = 10_000
+_MAX_GIT_OUTPUT_BYTES = 2 * 1024 * 1024
+_MAX_ALL_FILE_PATHS = 3_000
+_GIT_ENUMERATION_TIMEOUT_SECONDS = 10.0
 
 
 def _cache_path(root: str) -> Path:
@@ -425,15 +433,25 @@ def _top_miss_task_candidate(entry: dict, root_abs: str) -> tuple[str | None, st
 def _active_top_miss_tasks(root_abs: str, limit: int) -> tuple[list[str], dict]:
     """Return reconstructable active cache-miss tasks from compile telemetry.
 
-    Telemetry intentionally stores only an 80-character task prefix. Prefixes
-    at that limit may be truncated, so warming them would create cache rows for
-    a different task string. Keep those out and surface the count instead.
+    Only legacy telemetry contains a reconstructable 80-character task prefix;
+    privacy-safe v3+ rows carry a keyed fingerprint and therefore cannot be
+    replayed as task text. Legacy prefixes at the limit may be truncated, so
+    warming them would create cache rows for a different task string. Keep
+    those out and surface the count instead.
     """
     from roam.commands.cmd_compile_stats import _read_telemetry, _top_cache_misses
 
     rows = _read_telemetry(root_abs)
+    telemetry_read_state = getattr(rows, "read_state", "ok")
+    invalid_telemetry_rows = getattr(rows, "invalid_rows", 0)
     requested = max(1, int(limit))
-    candidates = _top_cache_misses(rows, limit=max(requested * 4, requested + 20))
+    # This local side-effecting command needs the legacy prefix to compile it,
+    # but the public compile-stats boundary uses the privacy-safe projection.
+    candidates = _top_cache_misses(
+        rows,
+        limit=max(requested * 4, requested + 20),
+        include_sensitive_task_text=True,
+    )
     tasks: list[str] = []
     counts = {
         "active_misses_seen": 0,
@@ -455,33 +473,180 @@ def _active_top_miss_tasks(root_abs: str, limit: int) -> tuple[list[str], dict]:
             break
     return tasks, counts | {
         "telemetry_rows": len(rows),
+        "telemetry_read_state": telemetry_read_state,
+        "invalid_telemetry_rows": invalid_telemetry_rows,
         "top_miss_candidates": len(candidates),
     }
 
 
-def _read_corpus_tasks(corpus_path: str) -> list[str]:
+def _top_miss_telemetry_degraded(top_misses: bool, top_miss_meta: dict) -> bool:
+    """Return whether an explicitly requested top-miss input was incomplete."""
+
+    return bool(top_misses and top_miss_meta.get("telemetry_read_state", "ok") != "ok")
+
+
+def _build_input_degradations(top_misses: bool, input_meta: dict) -> list[str]:
+    """Return closed, standalone reasons that requested build input was partial."""
+
+    reasons: list[str] = []
+    if _top_miss_telemetry_degraded(top_misses, input_meta):
+        reasons.append(f"telemetry_{input_meta['telemetry_read_state']}")
+    if input_meta.get("corpus_truncated"):
+        reasons.append("corpus_truncated")
+    if input_meta.get("corpus_invalid_lines"):
+        reasons.append("corpus_invalid_lines")
+    if input_meta.get("corpus_oversized_lines"):
+        reasons.append("corpus_oversized_lines")
+    all_files_state = input_meta.get("all_files_read_state")
+    if all_files_state not in {None, "ok"}:
+        reasons.append(f"all_files_{all_files_state}")
+    if input_meta.get("all_files_invalid_paths"):
+        reasons.append("all_files_invalid_paths")
+    if input_meta.get("build_tasks_truncated"):
+        reasons.append("build_tasks_truncated")
+    return reasons
+
+
+def _read_corpus_tasks(corpus_path: str) -> tuple[list[str], dict]:
     tasks: list[str] = []
-    for line in Path(corpus_path).read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            tasks.append(line)
-    return tasks
+    invalid_lines = 0
+    oversized_lines = 0
+    consumed = 0
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(corpus_path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise click.ClickException("compile-cache corpus must be a regular file")
+        budget = min(opened.st_size, _MAX_CORPUS_BYTES)
+        fh = os.fdopen(descriptor, "rb")
+        descriptor = -1
+        with fh:
+            while consumed < budget and len(tasks) < _MAX_CORPUS_TASKS:
+                raw = fh.readline(min(_MAX_CORPUS_LINE_BYTES + 1, budget - consumed))
+                if not raw:
+                    raise click.ClickException("compile-cache corpus changed while it was read")
+                consumed += len(raw)
+                if len(raw) > _MAX_CORPUS_LINE_BYTES:
+                    oversized_lines += 1
+                    while consumed < budget and not raw.endswith(b"\n"):
+                        raw = fh.readline(min(_MAX_CORPUS_LINE_BYTES + 1, budget - consumed))
+                        if not raw:
+                            raise click.ClickException("compile-cache corpus changed while it was read")
+                        consumed += len(raw)
+                    continue
+                try:
+                    line = raw.decode("utf-8").strip()
+                except UnicodeDecodeError:
+                    invalid_lines += 1
+                    continue
+                if line and not line.startswith("#"):
+                    tasks.append(line)
+            after = os.fstat(fh.fileno())
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns")
+        if os.name != "nt":
+            stable_fields += ("st_ctime_ns",)
+        if any(getattr(opened, field) != getattr(after, field) for field in stable_fields):
+            raise click.ClickException("compile-cache corpus changed while it was read")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    truncated = consumed < opened.st_size or len(tasks) >= _MAX_CORPUS_TASKS
+    return tasks, {
+        "corpus_bytes_read": consumed,
+        "corpus_tasks_read": len(tasks),
+        "corpus_invalid_lines": invalid_lines,
+        "corpus_oversized_lines": oversized_lines,
+        "corpus_truncated": truncated,
+    }
 
 
-def _all_file_tasks(root_abs: str) -> list[str]:
+def _all_file_tasks(root_abs: str) -> tuple[list[str], dict]:
+    import concurrent.futures
     import subprocess as _sp
 
     try:
-        r = _sp.run(["git", "ls-files", "*.py"], capture_output=True, text=True, timeout=10.0, cwd=root_abs)
-        files = [ln for ln in r.stdout.splitlines() if ln.strip()]
-    except (OSError, _sp.SubprocessError):
-        files = []
+        process = _sp.Popen(
+            ["git", "ls-files", "-z", "--", "*.py"],
+            cwd=root_abs,
+            stdin=_sp.DEVNULL,
+            stdout=_sp.PIPE,
+            stderr=_sp.DEVNULL,
+        )
+    except OSError:
+        return [], {"all_files_read_state": "unavailable", "all_files_truncated": False}
+    assert process.stdout is not None
+
+    def read_bounded_stdout() -> bytes:
+        chunks: list[bytes] = []
+        remaining = _MAX_GIT_OUTPUT_BYTES + 1
+        while remaining:
+            chunk = process.stdout.read(min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(read_bounded_stdout)
+    read_state = "ok"
+    try:
+        try:
+            payload = future.result(timeout=_GIT_ENUMERATION_TIMEOUT_SECONDS)
+        except TimeoutError:
+            read_state = "timeout"
+            process.kill()
+            payload = future.result(timeout=2.0)
+        output_truncated = len(payload) > _MAX_GIT_OUTPUT_BYTES
+        if output_truncated:
+            process.kill()
+        try:
+            returncode = process.wait(timeout=2.0)
+        except _sp.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2.0)
+            returncode = -1
+            read_state = "timeout"
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+        process.stdout.close()
+    if returncode != 0 and read_state == "ok" and not output_truncated:
+        return [], {"all_files_read_state": "git_failed", "all_files_truncated": False}
+
+    files: list[str] = []
+    invalid_paths = 0
+    bounded_payload = payload[:_MAX_GIT_OUTPUT_BYTES]
+    raw_paths = bounded_payload.split(b"\0")
+    for raw in raw_paths:
+        if not raw:
+            continue
+        if len(files) >= _MAX_ALL_FILE_PATHS:
+            break
+        try:
+            path = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            invalid_paths += 1
+            continue
+        if path.strip():
+            files.append(path)
+    path_truncated = len([raw for raw in raw_paths if raw]) > len(files) + invalid_paths
+    truncated = output_truncated or path_truncated
+    if truncated and read_state == "ok":
+        read_state = "truncated"
     tasks: list[str] = []
     for f in files:
         tasks.append(f"what does {f} do")
         tasks.append(f"what files are coupled to {f}")
         tasks.append(f"what changed in {f} recently")
-    return tasks
+    return tasks, {
+        "all_files_read_state": read_state,
+        "all_files_paths_read": len(files),
+        "all_files_invalid_paths": invalid_paths,
+        "all_files_output_bytes": len(bounded_payload),
+        "all_files_truncated": truncated,
+    }
 
 
 def _default_corpus_path(root_abs: str, corpus_path: str | None, top_misses: bool, all_files: bool) -> str | None:
@@ -503,19 +668,27 @@ def _gather_build_tasks(
     corpus_path = _default_corpus_path(root_abs, corpus_path, top_misses, all_files)
     if corpus_path:
         corpus_label = corpus_path
-        tasks.extend(_read_corpus_tasks(corpus_path))
+        corpus_tasks, corpus_meta = _read_corpus_tasks(corpus_path)
+        tasks.extend(corpus_tasks)
+        top_miss_meta.update(corpus_meta)
     if top_misses:
-        miss_tasks, top_miss_meta = _active_top_miss_tasks(root_abs, miss_limit)
+        miss_tasks, miss_meta = _active_top_miss_tasks(root_abs, miss_limit)
+        top_miss_meta.update(miss_meta)
         top_miss_tasks_added = len(miss_tasks)
         tasks.extend(miss_tasks)
     if all_files:
-        file_tasks = _all_file_tasks(root_abs)
-        all_files_empty = not file_tasks
+        file_tasks, file_meta = _all_file_tasks(root_abs)
+        top_miss_meta.update(file_meta)
+        all_files_empty = not file_tasks and file_meta["all_files_read_state"] == "ok"
         corpus_label = corpus_label or "(--all-files)"
         tasks.extend(file_tasks)
     if not corpus_label and top_misses:
         corpus_label = "(--top-misses)"
-    return _dedupe_tasks(tasks), top_miss_meta, corpus_label, top_miss_tasks_added, all_files_empty
+    deduped = _dedupe_tasks(tasks)
+    build_tasks_truncated = max(0, len(deduped) - _MAX_BUILD_TASKS)
+    top_miss_meta["build_task_limit"] = _MAX_BUILD_TASKS
+    top_miss_meta["build_tasks_truncated"] = build_tasks_truncated
+    return deduped[:_MAX_BUILD_TASKS], top_miss_meta, corpus_label, top_miss_tasks_added, all_files_empty
 
 
 def _empty_build_summary(
@@ -526,8 +699,12 @@ def _empty_build_summary(
     top_miss_tasks_added: int,
     top_miss_meta: dict,
 ) -> dict:
+    degradations = _build_input_degradations(top_misses, top_miss_meta)
+    verdict = "empty corpus and no warmable telemetry tasks"
+    if degradations:
+        verdict = f"build inputs incomplete ({', '.join(degradations)}); no warmable tasks"
     return {
-        "verdict": "empty corpus and no warmable telemetry tasks",
+        "verdict": verdict,
         "built": 0,
         "skipped": 0,
         "corpus": corpus_label,
@@ -591,8 +768,12 @@ def _build_success_summary(
     top_miss_tasks_added: int,
     top_miss_meta: dict,
 ) -> dict:
+    degradations = _build_input_degradations(top_misses, top_miss_meta)
+    verdict = f"warmed {built} envelopes in {elapsed_s:.1f}s ({skipped} skipped)"
+    if degradations:
+        verdict += f"; build inputs incomplete: {', '.join(degradations)}"
     return {
-        "verdict": f"warmed {built} envelopes in {elapsed_s:.1f}s ({skipped} skipped)",
+        "verdict": verdict,
         "built": built,
         "skipped": skipped,
         "elapsed_s": round(elapsed_s, 2),
@@ -601,7 +782,7 @@ def _build_success_summary(
         "top_misses": top_misses,
         "top_miss_limit": max(1, int(miss_limit)),
         "top_miss_tasks_added": top_miss_tasks_added,
-        "partial_success": skipped > 0,
+        "partial_success": skipped > 0 or bool(degradations),
         **top_miss_meta,
     }
 

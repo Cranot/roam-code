@@ -16,6 +16,7 @@ from roam.plan.agent_mode import (
     agent_mode,
     is_non_production,
 )
+from roam.security.owner_only import ensure_owner_only_path
 
 
 def test_agent_mode_context_sets_and_restores():
@@ -53,7 +54,10 @@ def test_hook_is_production():
 def _write_telemetry(root, rows):
     d = root / ".roam"
     d.mkdir(parents=True, exist_ok=True)
-    (d / "compile-runs.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    log = d / "compile-runs.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    assert ensure_owner_only_path(d)
+    assert ensure_owner_only_path(log)
 
 
 def _row(mode, label="l1_probe", ms=100.0):

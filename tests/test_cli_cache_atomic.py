@@ -5,11 +5,14 @@ The CLI's short-help cache used to be written via a naked
 could clobber each other's bytes and leave a corrupt JSON file on disk
 that ``_load_short_help_cache`` would silently throw away.
 
-These tests assert the new atomic rename pattern:
+These tests assert the shared conditional native-install pattern:
 
-  1. The save helper uses a temp-file + ``os.replace`` (no in-place
+  1. The save helper stages a complete sibling tempfile and publishes the
+     source generation proved by the atomic-write substrate (no in-place
      truncate-then-write).
-  2. The temp file is removed if the write itself fails (no leaks).
+  2. A failed native install never exposes a partial cache. Windows removes
+     the exact tempfile by identity; POSIX retains the complete recovery
+     artifact because it cannot conditionally unlink by inode.
   3. Two parallel writers can never produce a corrupt JSON file —
      one wins, the other's payload is lost, but the on-disk result
      is always valid JSON.
@@ -17,6 +20,7 @@ These tests assert the new atomic rename pattern:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -24,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from roam import atomic_io
 from roam import cli as cli_mod
 
 
@@ -39,60 +44,92 @@ def tmp_cache_path(tmp_path, monkeypatch):
 
 
 def test_run_check_uses_atomic_rename(tmp_cache_path, monkeypatch):
-    """_save_short_help_cache_if_dirty should write via temp-file + os.replace.
+    """The CLI cache publishes one proved, complete sibling generation.
 
-    We assert the behaviour by spying on ``os.replace`` — the atomic
-    primitive that distinguishes the new helper from the old direct
-    open/write/close path.
+    Windows intentionally bypasses ``os.replace``: the hardened substrate
+    holds an exclusive no-follow descriptor from its final source proof
+    through ``SetFileInformationByHandle(FileRenameInfo)``. Spy at the shared
+    native-install boundary so this test covers both that path and POSIX.
     """
     monkeypatch.setattr(cli_mod, "_short_help_disk_cache", {"foo:bar": {"mtime": 1.0, "text": "hi"}})
     monkeypatch.setattr(cli_mod, "_short_help_disk_cache_dirty", True)
 
-    replace_calls: list[tuple[str, str]] = []
-    real_replace = os.replace
+    install_observations: list[dict] = []
+    real_install = atomic_io._native_conditional_install
 
-    def spy_replace(src, dst):
-        replace_calls.append((str(src), str(dst)))
-        return real_replace(src, dst)
+    def observe_install(source, destination, **kwargs):
+        source_path = Path(source)
+        staged = source_path.read_bytes()
+        install_observations.append(
+            {
+                "source": source_path,
+                "destination": Path(destination),
+                "staged": staged,
+                "generation": kwargs["expected_temp"],
+                "identity": kwargs["temp_identity"],
+            }
+        )
+        return real_install(source, destination, **kwargs)
 
-    monkeypatch.setattr(os, "replace", spy_replace)
+    monkeypatch.setattr(atomic_io, "_native_conditional_install", observe_install)
 
     cli_mod._save_short_help_cache_if_dirty()
 
-    # os.replace must have been the path to the final file.
-    assert replace_calls, "expected at least one os.replace call"
-    src, dst = replace_calls[-1]
-    assert dst == str(tmp_cache_path)
-    # Temp file must have lived next to the target so the rename is
-    # same-filesystem (POSIX-atomic).
-    assert os.path.dirname(src) == os.path.dirname(str(tmp_cache_path))
-    # And the result is a valid JSON file with our payload.
+    assert len(install_observations) == 1
+    observed = install_observations[0]
+    assert observed["destination"] == Path(tmp_cache_path).resolve()
+    assert observed["source"].parent == Path(tmp_cache_path).parent.resolve()
+    assert observed["source"].name.startswith(".short-help.json.")
+    assert observed["source"].name.endswith(".tmp")
+    assert json.loads(observed["staged"]) == {"foo:bar": {"mtime": 1.0, "text": "hi"}}
+    assert observed["generation"].identity == observed["identity"]
+    assert observed["generation"].size == len(observed["staged"])
+    assert observed["generation"].nlink == 1
+    assert observed["generation"].sha256 == hashlib.sha256(observed["staged"]).hexdigest()
+    assert not observed["source"].exists(), "successful publication must consume the staged path"
+
     data = json.loads(Path(tmp_cache_path).read_text(encoding="utf-8"))
     assert data == {"foo:bar": {"mtime": 1.0, "text": "hi"}}
+    assert cli_mod._short_help_disk_cache_dirty is False
 
 
-def test_run_check_cleans_up_temp_on_failure(tmp_cache_path, monkeypatch):
-    """If os.replace fails, the temp file must not be left on disk."""
+def test_run_check_cleans_up_temp_on_failure(tmp_cache_path, monkeypatch, capsys):
+    """A native-install failure never exposes a partial cache generation."""
     monkeypatch.setattr(cli_mod, "_short_help_disk_cache", {"baz": {"mtime": 2.0, "text": "y"}})
     monkeypatch.setattr(cli_mod, "_short_help_disk_cache_dirty", True)
 
-    # Force os.replace to blow up so the cleanup path runs.
-    def boom(src, dst):
+    # Fail at the real shared publication boundary. Patching ``os.replace`` is
+    # no longer meaningful on Windows because descriptor-bound rename is a
+    # deliberate part of the source-generation security proof.
+    def boom(*_args, **_kwargs):
         raise OSError("simulated rename failure")
 
-    monkeypatch.setattr(os, "replace", boom)
+    monkeypatch.setattr(atomic_io, "_native_conditional_install", boom)
 
     # The save helper swallows OSError (best-effort cache); so this
     # call must not raise.
     cli_mod._save_short_help_cache_if_dirty()
 
-    # The cache dir was created, but the target file should not exist
-    # and no `.tmp` orphans should remain inside it.
+    # The consumer path remains absent and the failed cache stays dirty so a
+    # later invocation can retry instead of treating the generation as saved.
     cache_dir = Path(tmp_cache_path).parent
     assert cache_dir.exists()
     assert not Path(tmp_cache_path).exists(), "no partial cache file should survive"
-    leftovers = [p for p in cache_dir.iterdir() if p.name.startswith("short-help.json.") and p.name.endswith(".tmp")]
-    assert leftovers == [], f"temp files leaked: {leftovers}"
+    assert cli_mod._short_help_disk_cache_dirty is True
+    assert "[short-help-cache] write failed: simulated rename failure" in capsys.readouterr().err
+
+    leftovers = list(cache_dir.glob(".short-help.json.*.tmp"))
+    if os.name == "nt":
+        # Windows can delete the exact object through an identity-bound handle.
+        assert leftovers == [], f"identity-bound temp cleanup failed: {leftovers}"
+    else:
+        # POSIX has no conditional unlink-by-inode primitive. Retaining the
+        # complete private artifact is safer than deleting a raced replacement.
+        assert len(leftovers) == 1
+        assert json.loads(leftovers[0].read_text(encoding="utf-8")) == {"baz": {"mtime": 2.0, "text": "y"}}
+        retained = leftovers[0].stat()
+        assert retained.st_nlink == 1
+        assert retained.st_mode & 0o077 == 0
 
 
 def test_concurrent_run_check_writes_no_corruption(tmp_cache_path, monkeypatch):

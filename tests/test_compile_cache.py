@@ -13,6 +13,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli
 
 
+def _write_private_compile_telemetry(root: Path, content: str) -> Path:
+    from roam.security.owner_only import ensure_owner_only_path
+
+    state = root / ".roam"
+    state.mkdir(exist_ok=True)
+    log = state / "compile-runs.jsonl"
+    log.write_text(content, encoding="utf-8")
+    assert ensure_owner_only_path(state)
+    assert ensure_owner_only_path(log)
+    return log
+
+
 def _git_init(path: Path) -> str:
     (path / "tracked.txt").write_text("tracked\n", encoding="utf-8")
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
@@ -175,10 +187,7 @@ def test_compile_cache_build_top_misses_warms_active_reconstructable_tasks(cli_r
         {"task_hash": "warmer", "task_prefix": "builder only", "cache_hit": False, "agent_mode": "compile_cache_build"},
         {"task_hash": "second", "task_prefix": "what's the blast radius of `compile_plan`", "cache_hit": False},
     ]
-    (tmp_path / ".roam" / "compile-runs.jsonl").write_text(
-        "\n".join(json.dumps(e) for e in entries),
-        encoding="utf-8",
-    )
+    _write_private_compile_telemetry(tmp_path, "\n".join(json.dumps(e) for e in entries))
     seen: list[tuple[str, Path, str | None]] = []
 
     class _Plan:
@@ -226,10 +235,7 @@ def test_compile_cache_build_top_misses_skips_already_cached_tasks(cli_runner, t
         {"task_hash": "cached", "task_prefix": "what files are coupled to `compile_plan`", "cache_hit": False},
         {"task_hash": "next", "task_prefix": "what's the blast radius of `compile_plan`", "cache_hit": False},
     ]
-    (tmp_path / ".roam" / "compile-runs.jsonl").write_text(
-        "\n".join(json.dumps(e) for e in entries),
-        encoding="utf-8",
-    )
+    _write_private_compile_telemetry(tmp_path, "\n".join(json.dumps(e) for e in entries))
     seen: list[str] = []
 
     class _Plan:
@@ -268,7 +274,7 @@ def test_compile_cache_build_top_misses_skips_already_cached_tasks(cli_runner, t
 
 def test_compile_cache_build_top_misses_empty_emits_json_envelope(cli_runner, tmp_path):
     (tmp_path / ".roam").mkdir()
-    (tmp_path / ".roam" / "compile-runs.jsonl").write_text("", encoding="utf-8")
+    _write_private_compile_telemetry(tmp_path, "")
 
     result = invoke_cli(
         cli_runner,
@@ -286,6 +292,83 @@ def test_compile_cache_build_top_misses_empty_emits_json_envelope(cli_runner, tm
         "0 skipped records",
         "0 telemetry records",
     ]
+
+
+def test_compile_cache_build_discloses_degraded_top_miss_telemetry(
+    cli_runner,
+    tmp_path,
+    monkeypatch,
+):
+    roam_dir = tmp_path / ".roam"
+    roam_dir.mkdir()
+    _write_private_compile_telemetry(
+        tmp_path,
+        '{"task_hash":"one","task_hash":"two","task_prefix":"ambiguous"}\n',
+    )
+    corpus = tmp_path / "corpus.txt"
+    corpus.write_text("inspect the compile cache\n", encoding="utf-8")
+
+    class _Plan:
+        pass
+
+    from roam.plan import compiler as compiler_mod
+
+    monkeypatch.setattr(compiler_mod, "compile_plan", lambda task, cwd=None: _Plan())
+    monkeypatch.setattr(compiler_mod, "compile_for_artifact", lambda plan, cwd=None: ({}, "facts"))
+
+    result = invoke_cli(
+        cli_runner,
+        [
+            "compile-cache",
+            "build",
+            "--root",
+            str(tmp_path),
+            "--corpus",
+            str(corpus),
+            "--top-misses",
+        ],
+        json_mode=True,
+    )
+
+    assert result.exit_code == 0, result.output
+    summary = json.loads(result.output)["summary"]
+    assert summary["built"] == 1
+    assert summary["telemetry_read_state"] == "partial_invalid_rows"
+    assert summary["invalid_telemetry_rows"] == 1
+    assert summary["partial_success"] is True
+    assert "telemetry_partial_invalid_rows" in summary["verdict"]
+
+
+def test_compile_cache_corpus_reader_enforces_byte_budget(tmp_path, monkeypatch):
+    from roam.commands import cmd_compile_cache as cache_mod
+
+    corpus = tmp_path / "tasks.txt"
+    corpus.write_text("first task\nsecond task\nthird task\n", encoding="utf-8")
+    monkeypatch.setattr(cache_mod, "_MAX_CORPUS_BYTES", len(b"first task\n"))
+
+    tasks, meta = cache_mod._read_corpus_tasks(str(corpus))
+
+    assert tasks == ["first task"]
+    assert meta["corpus_bytes_read"] == len(b"first task\n")
+    assert meta["corpus_truncated"] is True
+
+
+def test_compile_cache_all_files_enumeration_caps_paths_and_discloses_truncation(tmp_path, monkeypatch):
+    from roam.commands import cmd_compile_cache as cache_mod
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "a.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("b = 2\n", encoding="utf-8")
+    subprocess.run(["git", "add", "a.py", "b.py"], cwd=tmp_path, check=True, capture_output=True)
+    monkeypatch.setattr(cache_mod, "_MAX_ALL_FILE_PATHS", 1)
+
+    tasks, meta = cache_mod._all_file_tasks(str(tmp_path))
+
+    assert len(tasks) == 3
+    assert all("a.py" in task for task in tasks)
+    assert meta["all_files_paths_read"] == 1
+    assert meta["all_files_read_state"] == "truncated"
+    assert meta["all_files_truncated"] is True
 
 
 def test_compile_cache_evict_no_cache_emits_json_envelope(cli_runner, tmp_path):

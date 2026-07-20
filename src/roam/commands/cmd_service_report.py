@@ -55,16 +55,23 @@ disclaimer "does not certify" is the one allowed negation). See
 from __future__ import annotations
 
 import json as _json
+import math as _math
 import os as _os
+import secrets as _secrets
+import signal as _signal
+import stat as _stat
 import subprocess as _subprocess
 import sys as _sys
+import threading as _threading
 import time as _time
 from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
+from contextlib import contextmanager as _contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 
+from roam.atomic_io import capture_file_generation, conditional_install_file
 from roam.capability import roam_capability
 
 # Reuse pr-replay's render/output infrastructure — genuine sibling reuse,
@@ -81,6 +88,13 @@ from roam.commands.resolve import ensure_index
 from roam.exit_codes import EXIT_SUCCESS
 from roam.output.formatter import json_envelope, to_json
 from roam.runs.helpers import auto_log
+from roam.security.bounded_json import loads_bounded
+from roam.security.owner_only import (
+    create_owner_only_directory,
+    open_new_owner_only_file,
+    path_is_owner_only,
+    pinned_owner_only_directory,
+)
 
 # ---------------------------------------------------------------------------
 # Report-type registry — single source of truth for what each type means.
@@ -171,9 +185,44 @@ _REPORT_TYPES: dict[str, dict] = {
 
 _COMPONENT_TIMEOUT_SECONDS = 180
 _COMPONENT_MAX_OUTPUT_BYTES = 32 * 1024 * 1024
+_COMPONENT_CAPTURE_CHUNK_BYTES = 64 * 1024
+_COMPONENT_CAPTURE_POLL_SECONDS = 0.05
+_COMPONENT_CLEANUP_SECONDS = 5
 _COMPONENT_MAX_WORKERS = 3
 _DUE_DILIGENCE_BUDGET_SECONDS = 240
 _DEADLINE_CLEANUP_RESERVE_SECONDS = 15
+_WINDOWS_COMPONENT_WRAPPER = (
+    "import subprocess,sys\n"
+    "if sys.stdin.buffer.read(1) != b'1': raise SystemExit(125)\n"
+    "child = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, close_fds=True)\n"
+    "try:\n"
+    "    raise SystemExit(child.wait())\n"
+    "except BaseException:\n"
+    "    child.kill()\n"
+    "    child.wait()\n"
+    "    raise\n"
+)
+_LINUX_COMPONENT_WRAPPER = (
+    "import sys\n"
+    "from roam.commands.cmd_service_report import _linux_component_supervisor_main\n"
+    "raise SystemExit(_linux_component_supervisor_main(int(sys.argv[1]), sys.argv[2:]))\n"
+)
+_LINUX_CONTAINMENT_VERIFIED = b"1"
+_LINUX_CONTAINMENT_PREREQUISITE_FAILED = b"P"
+_LINUX_CONTAINMENT_GATE_FAILED = b"G"
+_LINUX_CONTAINMENT_LAUNCH_FAILED = b"L"
+_LINUX_CONTAINMENT_CLEANUP_FAILED = b"C"
+_LINUX_CONTAINMENT_INTERNAL_FAILED = b"E"
+_LINUX_CONTAINMENT_ERRORS = {
+    _LINUX_CONTAINMENT_PREREQUISITE_FAILED: "linux_containment_prerequisite_failed",
+    _LINUX_CONTAINMENT_GATE_FAILED: "linux_containment_gate_failed",
+    _LINUX_CONTAINMENT_LAUNCH_FAILED: "linux_containment_launch_failed",
+    _LINUX_CONTAINMENT_CLEANUP_FAILED: "linux_containment_cleanup_failed",
+    _LINUX_CONTAINMENT_INTERNAL_FAILED: "linux_containment_internal_failed",
+}
+_LINUX_PR_SET_PDEATHSIG = 1
+_LINUX_PR_SET_CHILD_SUBREAPER = 36
+_LINUX_PR_GET_CHILD_SUBREAPER = 37
 
 
 def _component_failure(command: str, state: str, detail: str) -> dict:
@@ -202,11 +251,632 @@ def _strict_json_object_pairs(pairs):
     return result
 
 
-def _terminate_component_process_tree(proc: _subprocess.Popen) -> bool:
-    """Terminate a timed-out component and every worker it spawned."""
-    from roam.sibling_patch.replay_gate import _terminate_process_tree
+def _terminate_component_process_tree(proc: _subprocess.Popen) -> bool | None:
+    """Terminate the launch boundary and return its verification receipt.
 
-    return _terminate_process_tree(proc)
+    ``True`` means the platform containment primitive proved the full process
+    tree empty. ``None`` means a non-Linux POSIX process group was proved empty
+    but descendants that escaped that group cannot be enumerated honestly.
+    ``False`` means even the available containment boundary was not verified.
+    """
+    if _os.name == "nt":
+        return _terminate_windows_component_job(proc)
+    if _sys.platform.startswith("linux"):
+        return _terminate_linux_component_supervisor(proc)
+    # Other POSIX systems can verify the saved process group but cannot prove
+    # that a setsid(2) descendant did not escape it. Preserve that successful,
+    # explicitly degraded receipt instead of turning it into command failure.
+    return None if _terminate_posix_component_group(proc) else False
+
+
+def _component_cleanup_detail(receipt: bool | None) -> str:
+    """Render the tri-state cleanup receipt without overstating proof."""
+    if receipt is True:
+        return "process tree terminated"
+    if receipt is None:
+        return "process group terminated; descendant proof unavailable"
+    return "process-tree cleanup incomplete"
+
+
+def _create_windows_component_job() -> int | None:
+    from roam.sibling_patch.replay_gate import _create_windows_kill_job
+
+    return _create_windows_kill_job()
+
+
+def _assign_windows_component_job(handle: int, proc: _subprocess.Popen) -> bool:
+    from roam.sibling_patch.replay_gate import _assign_windows_kill_job
+
+    return _assign_windows_kill_job(handle, proc)
+
+
+def _close_windows_component_job_handle(handle: int | None) -> bool:
+    from roam.sibling_patch.replay_gate import _close_windows_job_handle
+
+    return _close_windows_job_handle(handle)
+
+
+def _windows_component_job_active_processes(handle: int) -> int | None:
+    """Return the kernel-reported live process count for one Job Object."""
+    if _os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _BasicAccountingInformation(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_longlong),
+                ("TotalKernelTime", ctypes.c_longlong),
+                ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+                ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+                ("TotalPageFaultCount", wintypes.DWORD),
+                ("TotalProcesses", wintypes.DWORD),
+                ("ActiveProcesses", wintypes.DWORD),
+                ("TotalTerminatedProcesses", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        info = _BasicAccountingInformation()
+        if not kernel32.QueryInformationJobObject(
+            wintypes.HANDLE(handle),
+            1,  # JobObjectBasicAccountingInformation
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+            None,
+        ):
+            return None
+        return int(info.ActiveProcesses)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _terminate_windows_component_job(proc: _subprocess.Popen) -> bool:
+    """Terminate a Job Object and prove that it has no active processes."""
+    handle = getattr(proc, "_roam_component_job", None)
+    if not handle:
+        return False
+    setattr(proc, "_roam_component_job", None)
+    deadline = _time.perf_counter() + _COMPONENT_CLEANUP_SECONDS
+    verified = False
+    try:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            kernel32.TerminateJobObject.restype = wintypes.BOOL
+            kernel32.TerminateJobObject(wintypes.HANDLE(handle), 1)
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+
+        active_processes: int | None = None
+        while _time.perf_counter() < deadline:
+            active_processes = _windows_component_job_active_processes(handle)
+            if active_processes == 0:
+                break
+            if active_processes is None:
+                break
+            _time.sleep(_COMPONENT_CAPTURE_POLL_SECONDS)
+
+        root_reaped = proc.poll() is not None
+        if not root_reaped:
+            try:
+                proc.wait(timeout=max(0.0, deadline - _time.perf_counter()))
+                root_reaped = True
+            except (OSError, _subprocess.TimeoutExpired):
+                root_reaped = False
+        verified = active_processes == 0 and root_reaped
+    finally:
+        closed = _close_windows_component_job_handle(handle)
+    # The kill-on-close handle is the final containment fallback. A close
+    # failure makes successful teardown unverifiable.
+    return verified and closed
+
+
+def _linux_process_stat(pid: int) -> tuple[int, int, str] | None:
+    """Return ``(ppid, start_time, state)`` from procfs for one PID.
+
+    ``start_time`` is Linux's boot-relative process identity token. Callers
+    pair it with a pidfd before signalling so a recycled numeric PID can never
+    redirect cleanup to an unrelated process.
+    """
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_bytes()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    except OSError as exc:
+        raise RuntimeError("Linux process identity is unreadable") from exc
+
+    command_end = raw.rfind(b")")
+    fields = raw[command_end + 2 :].split() if command_end >= 0 else []
+    if len(fields) < 20:
+        raise RuntimeError("Linux process identity is malformed")
+    try:
+        return int(fields[1]), int(fields[19]), fields[0].decode("ascii")
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise RuntimeError("Linux process identity is malformed") from exc
+
+
+def _linux_open_pidfd_identity(pid: int) -> tuple[int, int, int] | None:
+    """Open an identity-bound pidfd and return ``(pid, start_time, fd)``."""
+    pidfd_open = getattr(_os, "pidfd_open", None)
+    if not callable(pidfd_open):
+        raise RuntimeError("Linux pidfd process identity is unavailable")
+
+    before = _linux_process_stat(pid)
+    if before is None:
+        return None
+    try:
+        pidfd = pidfd_open(pid, 0)
+    except ProcessLookupError:
+        return None
+    except OSError as exc:
+        raise RuntimeError("Linux pidfd process identity is unavailable") from exc
+
+    try:
+        after = _linux_process_stat(pid)
+        if after is None or after[1] != before[1] or not _linux_pidfd_is_alive(pidfd):
+            _os.close(pidfd)
+            return None
+    except BaseException:
+        _os.close(pidfd)
+        raise
+    return pid, before[1], pidfd
+
+
+def _linux_pidfd_is_alive(pidfd: int) -> bool:
+    """Use the identity-bound fd rather than a numeric PID for liveness."""
+    try:
+        import select
+
+        poller = select.poll()
+        poller.register(pidfd, select.POLLIN)
+        return not poller.poll(0)
+    except (AttributeError, OSError, ValueError) as exc:
+        raise RuntimeError("Linux pidfd liveness proof is unavailable") from exc
+
+
+def _linux_task_children(
+    pid: int,
+    expected_start_time: int,
+    identity_pidfd: int | None = None,
+) -> set[int]:
+    """Read every thread's direct children without crossing a PID reuse."""
+    if identity_pidfd is not None and not _linux_pidfd_is_alive(identity_pidfd):
+        return set()
+    before = _linux_process_stat(pid)
+    if before is None or before[1] != expected_start_time:
+        return set()
+    task_root = Path(f"/proc/{pid}/task")
+    try:
+        task_ids = tuple(path.name for path in task_root.iterdir() if path.name.isdigit())
+    except FileNotFoundError:
+        return set()
+    except OSError as exc:
+        raise RuntimeError("Linux descendant enumeration is unavailable") from exc
+
+    child_pids: set[int] = set()
+    for task_id in task_ids:
+        try:
+            raw_children = (task_root / task_id / "children").read_text(encoding="ascii")
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise RuntimeError("Linux descendant enumeration is unavailable") from exc
+        for token in raw_children.split():
+            if not token.isdigit():
+                raise RuntimeError("Linux descendant enumeration is malformed")
+            child_pids.add(int(token))
+
+    after = _linux_process_stat(pid)
+    if (
+        after is None
+        or after[1] != expected_start_time
+        or (identity_pidfd is not None and not _linux_pidfd_is_alive(identity_pidfd))
+    ):
+        # Children of the vanished identity are reparented to our subreaper and
+        # will be found from its root on the next bounded scan.
+        return set()
+    return child_pids
+
+
+def _linux_descendant_pidfds(
+    supervisor_pid: int,
+    supervisor_start_time: int,
+) -> list[tuple[int, int, int]]:
+    """Snapshot all descendants as pidfd-bound process identities."""
+    supervisor_stat = _linux_process_stat(supervisor_pid)
+    if supervisor_stat is None or supervisor_stat[1] != supervisor_start_time:
+        raise RuntimeError("Linux supervisor identity changed during cleanup")
+
+    descendants: list[tuple[int, int, int]] = []
+    queue: list[tuple[int, int, int | None]] = [(supervisor_pid, supervisor_start_time, None)]
+    seen = {supervisor_pid}
+    try:
+        while queue:
+            parent_pid, parent_start_time, parent_pidfd = queue.pop()
+            for child_pid in _linux_task_children(parent_pid, parent_start_time, parent_pidfd):
+                if child_pid in seen:
+                    continue
+                seen.add(child_pid)
+                identity = _linux_open_pidfd_identity(child_pid)
+                if identity is None:
+                    continue
+                descendants.append(identity)
+                queue.append(identity)
+        return descendants
+    except BaseException:
+        for _pid, _start_time, pidfd in descendants:
+            try:
+                _os.close(pidfd)
+            except OSError:
+                pass
+        raise
+
+
+def _linux_pidfd_send_signal(pidfd: int, sig: int) -> None:
+    sender = getattr(_signal, "pidfd_send_signal", None)
+    if not callable(sender):
+        raise RuntimeError("Linux pidfd signalling is unavailable")
+    sender(pidfd, sig, None, 0)
+
+
+def _linux_enable_component_supervision(expected_parent_pid: int) -> bool:
+    """Become a subreaper and arm parent-death cleanup before launch."""
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        prctl = libc.prctl
+        prctl.restype = ctypes.c_int
+        if prctl(_LINUX_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+            return False
+        current = ctypes.c_int()
+        if prctl(_LINUX_PR_GET_CHILD_SUBREAPER, ctypes.byref(current), 0, 0, 0) != 0:
+            return False
+        if current.value != 1:
+            return False
+        if prctl(_LINUX_PR_SET_PDEATHSIG, int(_signal.SIGTERM), 0, 0, 0) != 0:
+            return False
+        # PR_SET_PDEATHSIG has a documented parent-death race. Checking PPID
+        # after arming it closes that window before the launch gate is read.
+        return _os.getppid() == expected_parent_pid
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
+def _linux_reap_adopted_children(target: _subprocess.Popen) -> None:
+    """Reap subreaper-adopted zombies after the direct target is reaped."""
+    if target.poll() is None:
+        return
+    while True:
+        try:
+            child_pid, _status = _os.waitpid(-1, _os.WNOHANG)
+        except (ChildProcessError, OSError):
+            return
+        if child_pid == 0:
+            return
+
+
+def _linux_cleanup_supervised_descendants(
+    target: _subprocess.Popen,
+    supervisor_pid: int,
+    supervisor_start_time: int,
+) -> bool:
+    """Kill, reap, and prove absence of every supervised descendant."""
+    deadline = _time.perf_counter() + max(0.1, _COMPONENT_CLEANUP_SECONDS - 0.5)
+    empty_scans = 0
+    while _time.perf_counter() < deadline:
+        try:
+            descendants = _linux_descendant_pidfds(supervisor_pid, supervisor_start_time)
+        except RuntimeError:
+            try:
+                if target.poll() is None:
+                    target.kill()
+            except OSError:
+                pass
+            return False
+
+        try:
+            if descendants:
+                empty_scans = 0
+                for _pid, _start_time, pidfd in descendants:
+                    try:
+                        _linux_pidfd_send_signal(pidfd, _signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except OSError:
+                        # A later zero-descendant scan is the authoritative
+                        # proof; transient signal errors cannot create one.
+                        pass
+            elif target.poll() is not None:
+                _linux_reap_adopted_children(target)
+                empty_scans += 1
+                if empty_scans >= 2:
+                    return True
+            else:
+                # A live direct target missing from procfs makes proof
+                # impossible. Kill it through Popen, then fail closed unless a
+                # subsequent complete scan observes and reaps it.
+                empty_scans = 0
+                try:
+                    target.kill()
+                except OSError:
+                    pass
+        finally:
+            for _pid, _start_time, pidfd in descendants:
+                try:
+                    _os.close(pidfd)
+                except OSError:
+                    pass
+
+        if target.poll() is not None:
+            _linux_reap_adopted_children(target)
+        _time.sleep(_COMPONENT_CAPTURE_POLL_SECONDS)
+
+    try:
+        if target.poll() is None:
+            target.kill()
+    except OSError as exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_service_report:linux_target_final_kill", exc)
+    return False
+
+
+def _linux_component_supervisor_main(status_fd: int, argv: list[str]) -> int:
+    """Supervise one Linux component in a private subreaper process."""
+    verified = False
+    receipt = _LINUX_CONTAINMENT_PREREQUISITE_FAILED
+    target: _subprocess.Popen | None = None
+    target_returncode = 125
+    stop_requested = False
+    supervisor_start_time: int | None = None
+
+    def _request_stop(_signum, _frame) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+
+    try:
+        if not argv:
+            return target_returncode
+        if not callable(getattr(_os, "pidfd_open", None)) or not callable(getattr(_signal, "pidfd_send_signal", None)):
+            return target_returncode
+        expected_parent_pid = _os.getppid()
+        if not _linux_enable_component_supervision(expected_parent_pid):
+            return target_returncode
+        supervisor_stat = _linux_process_stat(_os.getpid())
+        if supervisor_stat is None:
+            return target_returncode
+        supervisor_start_time = supervisor_stat[1]
+
+        receipt = _LINUX_CONTAINMENT_GATE_FAILED
+        _signal.signal(_signal.SIGTERM, _request_stop)
+        _signal.signal(_signal.SIGINT, _request_stop)
+        if _os.read(0, 1) != b"1":
+            return target_returncode
+
+        receipt = _LINUX_CONTAINMENT_LAUNCH_FAILED
+        target = _subprocess.Popen(
+            argv,
+            stdin=_subprocess.DEVNULL,
+            close_fds=True,
+        )
+        receipt = _LINUX_CONTAINMENT_CLEANUP_FAILED
+        while target.poll() is None and not stop_requested:
+            _time.sleep(_COMPONENT_CAPTURE_POLL_SECONDS)
+        if target.returncode is not None:
+            target_returncode = int(target.returncode)
+
+        verified = _linux_cleanup_supervised_descendants(
+            target,
+            _os.getpid(),
+            supervisor_start_time,
+        )
+        if target.poll() is not None:
+            target_returncode = int(target.returncode)
+        if not verified:
+            return 125
+        receipt = _LINUX_CONTAINMENT_VERIFIED
+        if 0 <= target_returncode <= 255:
+            return target_returncode
+        if target_returncode < 0:
+            return min(255, 128 + abs(target_returncode))
+        return 1
+    except BaseException:
+        receipt = _LINUX_CONTAINMENT_INTERNAL_FAILED
+        if target is not None and supervisor_start_time is not None:
+            try:
+                verified = _linux_cleanup_supervised_descendants(
+                    target,
+                    _os.getpid(),
+                    supervisor_start_time,
+                )
+            except (OSError, RuntimeError, TypeError):
+                verified = False
+            if verified:
+                receipt = _LINUX_CONTAINMENT_VERIFIED
+        return 125
+    finally:
+        try:
+            _os.write(status_fd, receipt)
+        except OSError:
+            pass
+        try:
+            _os.close(status_fd)
+        except OSError:
+            pass
+
+
+def _read_linux_supervisor_receipt(proc: _subprocess.Popen) -> bool:
+    status_fd = getattr(proc, "_roam_component_status_fd", None)
+    setattr(proc, "_roam_component_status_fd", None)
+    if not isinstance(status_fd, int) or status_fd < 0:
+        setattr(proc, "_roam_component_containment_error", "linux_containment_receipt_missing")
+        return False
+    try:
+        receipt = _os.read(status_fd, 2)
+        if receipt == _LINUX_CONTAINMENT_VERIFIED:
+            setattr(proc, "_roam_component_containment_error", None)
+            return True
+        error = _LINUX_CONTAINMENT_ERRORS.get(
+            receipt,
+            f"linux_containment_receipt_invalid_{receipt.hex() or 'empty'}",
+        )
+        setattr(proc, "_roam_component_containment_error", error)
+        return False
+    except OSError:
+        setattr(proc, "_roam_component_containment_error", "linux_containment_receipt_unreadable")
+        return False
+    finally:
+        try:
+            _os.close(status_fd)
+        except OSError:
+            pass
+
+
+def _close_linux_supervisor_pidfd(proc: _subprocess.Popen) -> None:
+    pidfd = getattr(proc, "_roam_component_pidfd", None)
+    setattr(proc, "_roam_component_pidfd", None)
+    if isinstance(pidfd, int) and pidfd >= 0:
+        try:
+            _os.close(pidfd)
+        except OSError:
+            pass
+
+
+def _close_linux_supervisor_status_fd(proc: _subprocess.Popen) -> None:
+    status_fd = getattr(proc, "_roam_component_status_fd", None)
+    setattr(proc, "_roam_component_status_fd", None)
+    if isinstance(status_fd, int) and status_fd >= 0:
+        try:
+            _os.close(status_fd)
+        except OSError:
+            pass
+
+
+def _signal_linux_supervisor(proc: _subprocess.Popen, sig: int) -> bool:
+    identity = getattr(proc, "_roam_component_identity", None)
+    pidfd = getattr(proc, "_roam_component_pidfd", None)
+    if not (
+        isinstance(identity, tuple)
+        and len(identity) == 2
+        and isinstance(identity[0], int)
+        and isinstance(identity[1], int)
+        and isinstance(pidfd, int)
+    ):
+        return False
+    try:
+        if not _linux_pidfd_is_alive(pidfd):
+            return False
+        current = _linux_process_stat(identity[0])
+        if current is None or current[1] != identity[1]:
+            return False
+        _linux_pidfd_send_signal(pidfd, sig)
+        return True
+    except (OSError, RuntimeError):
+        return False
+
+
+def _kill_live_linux_supervisor_group(proc: _subprocess.Popen) -> None:
+    """Best-effort emergency kill while the original group leader is live."""
+    identity = getattr(proc, "_roam_component_identity", None)
+    pgid = getattr(proc, "_roam_component_pgid", None)
+    if not (isinstance(identity, tuple) and len(identity) == 2 and isinstance(pgid, int) and pgid == identity[0]):
+        return
+    try:
+        current = _linux_process_stat(identity[0])
+        if current is not None and current[1] == identity[1]:
+            _os.killpg(pgid, _signal.SIGKILL)
+    except (OSError, RuntimeError):
+        pass
+
+
+def _terminate_linux_component_supervisor(proc: _subprocess.Popen) -> bool:
+    """Request bounded cleanup and verify the supervisor's private receipt."""
+    cached = getattr(proc, "_roam_component_tree_verified", None)
+    if isinstance(cached, bool):
+        return cached
+
+    deadline = _time.perf_counter() + _COMPONENT_CLEANUP_SECONDS
+    root_reaped = proc.poll() is not None
+    if not root_reaped:
+        if not _signal_linux_supervisor(proc, _signal.SIGTERM):
+            _signal_linux_supervisor(proc, _signal.SIGKILL)
+        try:
+            proc.wait(timeout=max(0.0, deadline - _time.perf_counter()))
+            root_reaped = True
+        except (OSError, _subprocess.TimeoutExpired):
+            root_reaped = False
+
+    if not root_reaped:
+        _kill_live_linux_supervisor_group(proc)
+        try:
+            proc.wait(timeout=0.25)
+            root_reaped = True
+        except (OSError, _subprocess.TimeoutExpired):
+            root_reaped = False
+
+    if root_reaped:
+        receipt_verified = _read_linux_supervisor_receipt(proc)
+    else:
+        _close_linux_supervisor_status_fd(proc)
+        setattr(proc, "_roam_component_containment_error", "linux_supervisor_unreaped")
+        receipt_verified = False
+    _close_linux_supervisor_pidfd(proc)
+    verified = bool(root_reaped and receipt_verified)
+    setattr(proc, "_roam_component_tree_verified", verified)
+    return verified
+
+
+def _posix_component_group_alive(pgid: int) -> bool | None:
+    try:
+        _os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return None
+
+
+def _terminate_posix_component_group(proc: _subprocess.Popen) -> bool:
+    """Kill the saved session group even after its original leader exits."""
+    pgid = getattr(proc, "_roam_component_pgid", None)
+    if not isinstance(pgid, int) or pgid <= 0:
+        return False
+    try:
+        _os.killpg(pgid, _signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+
+    deadline = _time.perf_counter() + _COMPONENT_CLEANUP_SECONDS
+    root_reaped = proc.poll() is not None
+    if not root_reaped:
+        try:
+            proc.wait(timeout=max(0.0, deadline - _time.perf_counter()))
+            root_reaped = True
+        except (OSError, _subprocess.TimeoutExpired):
+            root_reaped = False
+    while _time.perf_counter() < deadline:
+        group_alive = _posix_component_group_alive(pgid)
+        if group_alive is False:
+            return root_reaped
+        if group_alive is None:
+            return False
+        _time.sleep(_COMPONENT_CAPTURE_POLL_SECONDS)
+    return False
 
 
 def _component_popen_kwargs() -> dict:
@@ -219,6 +889,360 @@ def _component_popen_kwargs() -> dict:
             )
         }
     return {"start_new_session": True}
+
+
+def _kill_uncontained_component_root(proc: _subprocess.Popen) -> None:
+    """Kill a gated wrapper before it has been allowed to spawn."""
+    try:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=_COMPONENT_CLEANUP_SECONDS)
+    except (OSError, _subprocess.TimeoutExpired):
+        pass
+
+
+def _start_component_process(
+    argv: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str],
+) -> _subprocess.Popen:
+    """Launch inside a Linux subreaper or Windows kill-on-close job."""
+    process_argv = argv
+    child_stdin = _subprocess.DEVNULL
+    job_handle: int | None = None
+    status_read_fd: int | None = None
+    status_write_fd: int | None = None
+    linux_supervisor = _os.name != "nt" and _sys.platform.startswith("linux")
+    linux_gate_opened = False
+    popen_extras: dict = {}
+    if _os.name == "nt":
+        job_handle = _create_windows_component_job()
+        if job_handle is None:
+            raise RuntimeError("Windows process-tree containment is unavailable")
+        process_argv = [_os.path.realpath(_sys.executable), "-c", _WINDOWS_COMPONENT_WRAPPER, *argv]
+        child_stdin = _subprocess.PIPE
+    elif linux_supervisor:
+        if not callable(getattr(_os, "pidfd_open", None)) or not callable(getattr(_signal, "pidfd_send_signal", None)):
+            raise RuntimeError("Linux process-tree identity tracking is unavailable")
+        if callable(getattr(_os, "pipe2", None)):
+            status_read_fd, status_write_fd = _os.pipe2(getattr(_os, "O_CLOEXEC", 0))
+        else:  # pragma: no cover - Linux supported Pythons expose pipe2
+            status_read_fd, status_write_fd = _os.pipe()
+            _os.set_inheritable(status_read_fd, False)
+            _os.set_inheritable(status_write_fd, False)
+        process_argv = [
+            _os.path.realpath(_sys.executable),
+            "-c",
+            _LINUX_COMPONENT_WRAPPER,
+            str(status_write_fd),
+            *argv,
+        ]
+        child_stdin = _subprocess.PIPE
+        popen_extras["pass_fds"] = (status_write_fd,)
+
+    proc: _subprocess.Popen | None = None
+    try:
+        proc = _subprocess.Popen(
+            process_argv,
+            cwd=cwd,
+            env=env,
+            shell=False,
+            stdin=child_stdin,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.PIPE,
+            close_fds=True,
+            **popen_extras,
+            **_component_popen_kwargs(),
+        )
+        if status_write_fd is not None:
+            _os.close(status_write_fd)
+            status_write_fd = None
+        if job_handle is not None:
+            if not _assign_windows_component_job(job_handle, proc):
+                _close_windows_component_job_handle(job_handle)
+                job_handle = None
+                _kill_uncontained_component_root(proc)
+                raise RuntimeError("Windows component could not enter its kill-on-close job")
+            setattr(proc, "_roam_component_job", job_handle)
+            job_handle = None
+            if proc.stdin is None:
+                raise RuntimeError("Windows component launch gate is unavailable")
+            proc.stdin.write(b"1")
+            proc.stdin.close()
+        elif linux_supervisor:
+            setattr(proc, "_roam_component_pgid", proc.pid)
+            identity = _linux_open_pidfd_identity(proc.pid)
+            if identity is None:
+                raise RuntimeError("Linux supervisor identity could not be established")
+            setattr(proc, "_roam_component_identity", (identity[0], identity[1]))
+            setattr(proc, "_roam_component_pidfd", identity[2])
+            setattr(proc, "_roam_component_status_fd", status_read_fd)
+            status_read_fd = None
+            if proc.stdin is None:
+                raise RuntimeError("Linux component launch gate is unavailable")
+            if _os.write(proc.stdin.fileno(), b"1") != 1:
+                raise RuntimeError("Linux component launch gate could not be released")
+            linux_gate_opened = True
+            proc.stdin.close()
+        else:
+            setattr(proc, "_roam_component_pgid", proc.pid)
+        return proc
+    except BaseException:
+        if proc is not None:
+            if getattr(proc, "_roam_component_job", None) or linux_gate_opened:
+                _terminate_component_process_tree(proc)
+            else:
+                if getattr(proc, "stdin", None) is not None:
+                    try:
+                        proc.stdin.close()
+                    except (OSError, ValueError):
+                        pass
+                _kill_uncontained_component_root(proc)
+                _read_linux_supervisor_receipt(proc)
+                _close_linux_supervisor_pidfd(proc)
+        if job_handle is not None:
+            _close_windows_component_job_handle(job_handle)
+        for fd in (status_read_fd, status_write_fd):
+            if isinstance(fd, int):
+                try:
+                    _os.close(fd)
+                except OSError:
+                    pass
+        raise
+
+
+class _BoundedComponentCapture:
+    """Thread-safe combined stdout/stderr capture with a hard byte ceiling."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._stdout = bytearray()
+        self._stderr = bytearray()
+        self._stored = 0
+        self._accepting = True
+        self._error: str | None = None
+        self._lock = _threading.Lock()
+        self.oversized = _threading.Event()
+        self.failed = _threading.Event()
+
+    def append(self, stream_name: str, chunk: bytes) -> None:
+        """Store at most ``limit`` bytes across both streams."""
+        with self._lock:
+            if not self._accepting or self.oversized.is_set():
+                return
+            remaining = self._limit - self._stored
+            accepted = min(remaining, len(chunk))
+            if accepted:
+                target = self._stdout if stream_name == "stdout" else self._stderr
+                target.extend(chunk[:accepted])
+                self._stored += accepted
+            if accepted < len(chunk):
+                self.oversized.set()
+
+    def note_error(self, exc: BaseException) -> None:
+        with self._lock:
+            if self._error is None:
+                self._error = type(exc).__name__
+            self.failed.set()
+
+    def finish(self) -> tuple[bytes, bytes, str | None]:
+        with self._lock:
+            return bytes(self._stdout), bytes(self._stderr), self._error
+
+    def stop_and_discard(self) -> str | None:
+        """Prevent later reader writes and release retained output."""
+        with self._lock:
+            self._accepting = False
+            self._stdout.clear()
+            self._stderr.clear()
+            return self._error
+
+
+def _drain_component_pipe(stream, stream_name: str, capture: _BoundedComponentCapture) -> None:
+    """Drain one binary pipe in bounded chunks so its sibling cannot deadlock."""
+    read_chunk = getattr(stream, "read1", stream.read)
+    try:
+        while True:
+            chunk = read_chunk(_COMPONENT_CAPTURE_CHUNK_BYTES)
+            if not chunk:
+                return
+            if not isinstance(chunk, (bytes, bytearray)):
+                raise TypeError("component pipe returned non-bytes output")
+            capture.append(stream_name, chunk)
+    except (OSError, TypeError, ValueError) as exc:
+        capture.note_error(exc)
+
+
+def _close_component_pipes(
+    proc: _subprocess.Popen,
+    threads: tuple[_threading.Thread, ...] = (),
+) -> bool:
+    """Close pipes only after readers exit; cross-thread close can deadlock."""
+    if any(thread.is_alive() for thread in threads):
+        return False
+    closed = True
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(proc, stream_name, None)
+        if stream is not None:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                closed = False
+    return closed
+
+
+def _wait_for_component_root(
+    proc: _subprocess.Popen,
+    capture: _BoundedComponentCapture,
+    deadline: float,
+) -> str:
+    """Wait for root exit while remaining immediately responsive to overflow."""
+    while True:
+        if capture.oversized.is_set():
+            return "oversized"
+        if capture.failed.is_set():
+            return "capture_error"
+        try:
+            if proc.poll() is not None:
+                return "exited"
+        except OSError as exc:
+            capture.note_error(exc)
+            return "wait_error"
+        remaining = deadline - _time.perf_counter()
+        if remaining <= 0:
+            return "timeout"
+        capture.oversized.wait(min(_COMPONENT_CAPTURE_POLL_SECONDS, remaining))
+
+
+def _wait_for_component_drainers(
+    threads: tuple[_threading.Thread, ...],
+    capture: _BoundedComponentCapture,
+    deadline: float,
+    *,
+    observe_capture_state: bool = True,
+) -> str:
+    """Wait for pipe EOF without letting inherited handles defeat the deadline."""
+    while any(thread.is_alive() for thread in threads):
+        if observe_capture_state:
+            if capture.oversized.is_set():
+                return "oversized"
+            if capture.failed.is_set():
+                return "capture_error"
+        remaining = deadline - _time.perf_counter()
+        if remaining <= 0:
+            return "timeout"
+        join_slice = min(_COMPONENT_CAPTURE_POLL_SECONDS, remaining)
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(join_slice)
+                break
+    return "oversized" if capture.oversized.is_set() else "completed"
+
+
+def _capture_component_output(
+    proc: _subprocess.Popen,
+    *,
+    timeout_seconds: float,
+) -> tuple[bytes, bytes, str, bool | None, str | None]:
+    """Capture both pipes and return the tri-state containment receipt."""
+    capture = _BoundedComponentCapture(_COMPONENT_MAX_OUTPUT_BYTES)
+    streams = (getattr(proc, "stdout", None), getattr(proc, "stderr", None))
+    if any(stream is None for stream in streams):
+        try:
+            tree_terminated = _terminate_component_process_tree(proc)
+        except (OSError, RuntimeError, ValueError):
+            tree_terminated = False
+        _close_component_pipes(proc)
+        return b"", b"", "capture_error", tree_terminated, "missing_pipe"
+
+    threads = tuple(
+        _threading.Thread(
+            target=_drain_component_pipe,
+            args=(stream, stream_name, capture),
+            name=f"roam-service-report-{stream_name}",
+            daemon=True,
+        )
+        for stream, stream_name in zip(streams, ("stdout", "stderr"), strict=True)
+    )
+    deadline = _time.perf_counter() + timeout_seconds
+    started_threads: list[_threading.Thread] = []
+    try:
+        for thread in threads:
+            thread.start()
+            started_threads.append(thread)
+    except RuntimeError as exc:
+        capture.note_error(exc)
+        capture.stop_and_discard()
+        try:
+            tree_terminated = _terminate_component_process_tree(proc)
+        except (ImportError, OSError, RuntimeError, ValueError):
+            tree_terminated = False
+        started = tuple(started_threads)
+        _wait_for_component_drainers(
+            started,
+            capture,
+            _time.perf_counter() + _COMPONENT_CLEANUP_SECONDS,
+            observe_capture_state=False,
+        )
+        readers_done = not any(thread.is_alive() for thread in started)
+        pipes_closed = _close_component_pipes(proc, started)
+        if not readers_done or not pipes_closed:
+            tree_terminated = False
+        return b"", b"", "capture_error", tree_terminated, type(exc).__name__
+
+    state = _wait_for_component_root(proc, capture, deadline)
+    tree_terminated: bool | None = None
+    cleanup_attempted = False
+    if state == "exited":
+        # The root's PID is no longer a useful tree anchor. Tear down the
+        # durable launch boundary first, then wait a short bounded interval
+        # for every inherited writer handle to reach EOF.
+        try:
+            cleanup_attempted = True
+            tree_terminated = _terminate_component_process_tree(proc)
+        except (ImportError, OSError, RuntimeError, ValueError):
+            tree_terminated = False
+        state = _wait_for_component_drainers(
+            threads,
+            capture,
+            _time.perf_counter() + _COMPONENT_CLEANUP_SECONDS,
+        )
+        if state == "completed" and tree_terminated is False:
+            state = "cleanup_error"
+
+    if state != "completed":
+        capture.stop_and_discard()
+        if not cleanup_attempted:
+            try:
+                cleanup_attempted = True
+                tree_terminated = _terminate_component_process_tree(proc)
+            except (ImportError, OSError, RuntimeError, ValueError):
+                tree_terminated = False
+        cleanup_deadline = _time.perf_counter() + _COMPONENT_CLEANUP_SECONDS
+        _wait_for_component_drainers(
+            threads,
+            capture,
+            cleanup_deadline,
+            observe_capture_state=False,
+        )
+        readers_done = not any(thread.is_alive() for thread in threads)
+        pipes_closed = _close_component_pipes(proc, threads)
+        if not readers_done or not pipes_closed:
+            tree_terminated = False
+        capture_error = capture.stop_and_discard()
+        if tree_terminated is False and capture_error is None:
+            capture_error = getattr(proc, "_roam_component_containment_error", None) or "process_tree_unverified"
+        return b"", b"", state, tree_terminated, capture_error
+
+    stdout, stderr, capture_error = capture.finish()
+    capture.stop_and_discard()
+    pipes_closed = _close_component_pipes(proc, threads)
+    if not pipes_closed:
+        return b"", b"", "cleanup_error", False, "pipe_close_failed"
+    if capture_error is not None:
+        return b"", b"", "capture_error", tree_terminated, capture_error
+    return stdout, stderr, "completed", tree_terminated, None
 
 
 def _run_roam_json(args: list[str], *, deadline: float | None = None) -> dict:
@@ -247,51 +1271,54 @@ def _run_roam_json(args: list[str], *, deadline: float | None = None) -> dict:
     child_env = dict(_os.environ)
     child_env["PYTHONUTF8"] = "1"
     try:
-        proc = _subprocess.Popen(
-            argv,
-            cwd=str(Path.cwd()),
-            env=child_env,
-            shell=False,
-            stdin=_subprocess.DEVNULL,
-            stdout=_subprocess.PIPE,
-            stderr=_subprocess.PIPE,
-            close_fds=True,
-            **_component_popen_kwargs(),
-        )
-    except OSError as exc:
-        return _component_failure(command, "component_unavailable", f"runtime launch failed ({type(exc).__name__})")
+        proc = _start_component_process(argv, cwd=str(Path.cwd()), env=child_env)
+    except (OSError, RuntimeError) as exc:
+        detail = f"runtime launch failed ({type(exc).__name__})"
+        if isinstance(exc, RuntimeError) and str(exc):
+            detail = f"{detail}: {exc}"
+        return _component_failure(command, "component_unavailable", detail)
 
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout_seconds)
-    except _subprocess.TimeoutExpired:
-        tree_terminated = _terminate_component_process_tree(proc)
-        try:
-            proc.communicate(timeout=5)
-        except (OSError, _subprocess.TimeoutExpired):
-            pass
-        cleanup = "process tree terminated" if tree_terminated else "process-tree cleanup incomplete"
+    stdout, stderr, capture_state, tree_terminated, capture_error = _capture_component_output(
+        proc,
+        timeout_seconds=timeout_seconds,
+    )
+    if capture_state == "oversized":
+        cleanup = _component_cleanup_detail(tree_terminated)
+        return _component_failure(
+            command,
+            "component_output_oversized",
+            f"output exceeded {_COMPONENT_MAX_OUTPUT_BYTES} bytes; {cleanup}",
+        )
+    if capture_state == "timeout":
+        cleanup = _component_cleanup_detail(tree_terminated)
         state = "report_deadline_exhausted" if deadline_limited else "component_timeout"
         detail = (
             "report time budget exhausted" if deadline_limited else f"timed out after {_COMPONENT_TIMEOUT_SECONDS}s"
         )
         return _component_failure(command, state, f"{detail}; {cleanup}")
-
-    if len(stdout) + len(stderr) > _COMPONENT_MAX_OUTPUT_BYTES:
+    if capture_state != "completed":
+        detail = f"output capture failed ({capture_error or capture_state})"
         return _component_failure(
             command,
-            "component_output_oversized",
-            f"output exceeded {_COMPONENT_MAX_OUTPUT_BYTES} bytes",
+            "component_unavailable",
+            detail,
         )
     text = stdout.decode("utf-8", "replace")
     brace = text.find("{")
     if brace < 0:
         return _component_failure(command, "component_empty_output", "command emitted no JSON envelope")
     try:
-        parsed = _json.loads(text[brace:], object_pairs_hook=_strict_json_object_pairs)
-    except (_json.JSONDecodeError, ValueError):
+        parsed = loads_bounded(text[brace:], object_pairs_hook=_strict_json_object_pairs)
+    except (_json.JSONDecodeError, RecursionError, ValueError):
         return _component_failure(command, "component_malformed_output", "command emitted invalid JSON")
     if not isinstance(parsed, dict):
         return _component_failure(command, "component_malformed_output", "command emitted a non-object envelope")
+    if tree_terminated is None:
+        meta = parsed.get("_meta") if isinstance(parsed.get("_meta"), dict) else {}
+        parsed["_meta"] = {
+            **meta,
+            "service_report_component_cleanup": "process_group_terminated_descendant_proof_unavailable",
+        }
     if proc.returncode:
         meta = parsed.get("_meta") if isinstance(parsed.get("_meta"), dict) else {}
         parsed["_meta"] = {**meta, "service_report_component_exit_code": proc.returncode}
@@ -387,7 +1414,7 @@ def _header(
             + ". Treat affected conclusions as unresolved."
         )
         out.append("")
-    elif component_degraded:
+    if component_degraded:
         out.append(
             "> **Degraded evidence:** partial results were reported by "
             + ", ".join(f"`{name}`" for name in component_degraded)
@@ -1126,16 +2153,694 @@ def _component_health(env: dict) -> tuple[tuple[str, ...], tuple[str, ...]]:
         status = envelope.get("status")
         if envelope.get("isError") is True or status == "hard_failure":
             failed.append(name)
-        elif summary.get("partial_success") is True or status == "soft_failure":
+            continue
+        meta = envelope.get("_meta")
+        cleanup_degraded = isinstance(meta, dict) and meta.get("service_report_component_cleanup") == (
+            "process_group_terminated_descendant_proof_unavailable"
+        )
+        if summary.get("partial_success") is True or status == "soft_failure" or cleanup_degraded:
             degraded.append(name)
     return tuple(failed), tuple(degraded)
 
 
 # ---------------------------------------------------------------------------
-# Engagement ledger — append-only JSONL next to .roam/index.db. Same file
+# Engagement ledger — bounded JSONL next to .roam/index.db. Same file
 # ``cmd_pr_replay`` writes to; the ``kind`` discriminator distinguishes
-# service-report rows from pr-replay rows. Flat schema, additive only.
+# service-report rows from pr-replay rows. Service-report persistence is an
+# owner-only atomic rewrite under a private cross-process lock: it never opens
+# an existing ledger for append or write, so a hard-linked target cannot turn
+# into a write primitive against another pathname.
 # ---------------------------------------------------------------------------
+
+
+_ENGAGEMENT_LEDGER_NAME = "engagements.jsonl"
+_ENGAGEMENT_LOCK_NAME = "engagements.jsonl.lock"
+_ENGAGEMENT_LEDGER_MAX_BYTES = 2 * 1024 * 1024
+_ENGAGEMENT_LEDGER_MAX_RECORDS = 5_000
+_ENGAGEMENT_LEDGER_MAX_LINE_BYTES = 64 * 1024
+_ENGAGEMENT_LOCK_TIMEOUT_SECONDS = 10.0
+_ENGAGEMENT_LOCK_RETRY_SECONDS = 0.01
+_ENGAGEMENT_WRITE_CHUNK_BYTES = 64 * 1024
+_ENGAGEMENT_THREAD_LOCK = _threading.Lock()
+_ENGAGEMENT_LEDGER_STATES = frozenset(
+    {
+        "not_requested",
+        "logged",
+        "logged_retention_pruned",
+        "unsafe_path",
+        "lock_timeout",
+        "invalid_ledger",
+        "io_failure",
+    }
+)
+_ENGAGEMENT_FAILURE_STATES = frozenset(
+    {
+        "unsafe_path",
+        "lock_timeout",
+        "invalid_ledger",
+        "io_failure",
+    }
+)
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
+
+
+class _EngagementLedgerError(RuntimeError):
+    """Internal fixed-vocabulary engagement persistence failure."""
+
+    def __init__(self, state: str):
+        if state not in _ENGAGEMENT_FAILURE_STATES:
+            raise ValueError(f"unknown engagement ledger failure state: {state}")
+        super().__init__(state)
+        self.state = state
+
+
+class _EngagementLockInitializing(RuntimeError):
+    """A peer created the lock pathname but has not initialized its byte."""
+
+
+def _engagement_is_reparse_point(value: _os.stat_result) -> bool:
+    return bool(getattr(value, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _engagement_identity(value: _os.stat_result) -> tuple[int, int]:
+    return int(value.st_dev), int(value.st_ino)
+
+
+def _engagement_snapshot(value: _os.stat_result) -> tuple[int, ...]:
+    return (
+        int(value.st_dev),
+        int(value.st_ino),
+        int(value.st_size),
+        int(getattr(value, "st_mtime_ns", value.st_mtime * 1_000_000_000)),
+        int(getattr(value, "st_ctime_ns", value.st_ctime * 1_000_000_000)),
+        int(value.st_mode),
+        int(value.st_nlink),
+    )
+
+
+def _engagement_resolves_to_itself(path: Path) -> bool:
+    return _os.path.normcase(str(path.resolve(strict=True))) == _os.path.normcase(str(path))
+
+
+def _secure_engagement_directory() -> Path:
+    """Return a private, real ``.roam`` directory rooted at the current repo."""
+
+    try:
+        root = Path.cwd().resolve(strict=True)
+    except OSError as exc:
+        raise _EngagementLedgerError("unsafe_path") from exc
+    state = root / ".roam"
+    if not _os.path.lexists(state):
+        if not create_owner_only_directory(state) and not _os.path.lexists(state):
+            raise _EngagementLedgerError("io_failure")
+    try:
+        before = _os.lstat(state)
+        if (
+            not _stat.S_ISDIR(before.st_mode)
+            or _stat.S_ISLNK(before.st_mode)
+            or _engagement_is_reparse_point(before)
+            or state.parent != root
+            or not _engagement_resolves_to_itself(state)
+        ):
+            raise _EngagementLedgerError("unsafe_path")
+        if _os.name == "nt":
+            secured = path_is_owner_only(state)
+        else:
+            flags = _os.O_RDONLY | getattr(_os, "O_DIRECTORY", 0) | getattr(_os, "O_CLOEXEC", 0)
+            flags |= getattr(_os, "O_NOFOLLOW", 0)
+            directory_fd = _os.open(state, flags)
+            try:
+                opened = _os.fstat(directory_fd)
+                current = _os.lstat(state)
+                if (
+                    not _stat.S_ISDIR(opened.st_mode)
+                    or opened.st_uid != _os.geteuid()
+                    or _engagement_identity(opened) != _engagement_identity(before)
+                    or _engagement_identity(opened) != _engagement_identity(current)
+                ):
+                    raise _EngagementLedgerError("unsafe_path")
+                secured = not bool(_stat.S_IMODE(opened.st_mode) & 0o077)
+            finally:
+                _os.close(directory_fd)
+        after = _os.lstat(state)
+        path_private = path_is_owner_only(state) if _os.name == "nt" else secured
+        final = _os.lstat(state)
+        if (
+            not secured
+            or not path_private
+            or _engagement_identity(after) != _engagement_identity(before)
+            or _engagement_identity(final) != _engagement_identity(before)
+        ):
+            raise _EngagementLedgerError("unsafe_path")
+    except _EngagementLedgerError:
+        raise
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        raise _EngagementLedgerError("unsafe_path") from exc
+    return state
+
+
+@_contextmanager
+def _pinned_engagement_directory():
+    """Pin the private state directory and expose a POSIX-relative handle."""
+
+    state = _secure_engagement_directory()
+    try:
+        with pinned_owner_only_directory(state):
+            if _os.name == "nt":
+                yield state, None
+                return
+            flags = _os.O_RDONLY | getattr(_os, "O_DIRECTORY", 0) | getattr(_os, "O_CLOEXEC", 0)
+            flags |= getattr(_os, "O_NOFOLLOW", 0)
+            directory_fd = _os.open(state, flags)
+            try:
+                opened = _os.fstat(directory_fd)
+                current = _os.lstat(state)
+                if (
+                    not _stat.S_ISDIR(opened.st_mode)
+                    or opened.st_uid != _os.geteuid()
+                    or _stat.S_IMODE(opened.st_mode) & 0o077
+                    or _engagement_identity(opened) != _engagement_identity(current)
+                ):
+                    raise _EngagementLedgerError("unsafe_path")
+                yield state, directory_fd
+                current_after = _os.lstat(state)
+                if _engagement_identity(current_after) != _engagement_identity(opened):
+                    raise _EngagementLedgerError("unsafe_path")
+            finally:
+                _os.close(directory_fd)
+    except PermissionError as exc:
+        raise _EngagementLedgerError("unsafe_path") from exc
+
+
+def _engagement_child_stat(state: Path, name: str, directory_fd: int | None) -> _os.stat_result:
+    if directory_fd is not None:
+        return _os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    return _os.lstat(state / name)
+
+
+def _engagement_validate_regular(value: _os.stat_result) -> None:
+    if (
+        not _stat.S_ISREG(value.st_mode)
+        or _stat.S_ISLNK(value.st_mode)
+        or _engagement_is_reparse_point(value)
+        or value.st_nlink != 1
+    ):
+        raise _EngagementLedgerError("unsafe_path")
+
+
+def _engagement_secure_descriptor(
+    descriptor: int,
+    *,
+    state: Path,
+    name: str,
+    directory_fd: int | None,
+) -> _os.stat_result:
+    """Validate one child descriptor before any data mutation or read."""
+
+    opened = _os.fstat(descriptor)
+    current = _engagement_child_stat(state, name, directory_fd)
+    _engagement_validate_regular(opened)
+    _engagement_validate_regular(current)
+    if _engagement_identity(opened) != _engagement_identity(current):
+        raise _EngagementLedgerError("unsafe_path")
+    path = state / name
+    if _os.name == "nt":
+        secured = path_is_owner_only(path)
+    else:
+        secured = opened.st_uid == _os.geteuid() and not bool(_stat.S_IMODE(opened.st_mode) & 0o077)
+    opened_after = _os.fstat(descriptor)
+    current_after = _engagement_child_stat(state, name, directory_fd)
+    _engagement_validate_regular(opened_after)
+    _engagement_validate_regular(current_after)
+    if (
+        not secured
+        or _engagement_identity(opened_after) != _engagement_identity(opened)
+        or _engagement_identity(opened_after) != _engagement_identity(current_after)
+        or (_os.name == "nt" and not path_is_owner_only(path))
+    ):
+        raise _EngagementLedgerError("unsafe_path")
+    return opened_after
+
+
+def _engagement_open_existing(
+    *,
+    state: Path,
+    name: str,
+    directory_fd: int | None,
+    writable: bool,
+) -> tuple[int, _os.stat_result]:
+    before = _engagement_child_stat(state, name, directory_fd)
+    _engagement_validate_regular(before)
+    flags = (_os.O_RDWR if writable else _os.O_RDONLY) | getattr(_os, "O_CLOEXEC", 0)
+    flags |= getattr(_os, "O_BINARY", 0) | getattr(_os, "O_NOFOLLOW", 0)
+    if directory_fd is not None:
+        descriptor = _os.open(name, flags, dir_fd=directory_fd)
+    else:
+        descriptor = _os.open(state / name, flags)
+    try:
+        opened = _engagement_secure_descriptor(
+            descriptor,
+            state=state,
+            name=name,
+            directory_fd=directory_fd,
+        )
+        if _engagement_identity(opened) != _engagement_identity(before):
+            raise _EngagementLedgerError("unsafe_path")
+        return descriptor, opened
+    except BaseException:
+        _os.close(descriptor)
+        raise
+
+
+def _engagement_open_new(
+    *,
+    state: Path,
+    name: str,
+    directory_fd: int | None,
+    request_delete_access: bool = True,
+) -> tuple[int, _os.stat_result]:
+    if directory_fd is None:
+        descriptor = open_new_owner_only_file(
+            state / name,
+            request_delete_access=request_delete_access,
+        )
+    else:
+        flags = _os.O_RDWR | _os.O_CREAT | _os.O_EXCL | getattr(_os, "O_CLOEXEC", 0)
+        flags |= getattr(_os, "O_NOFOLLOW", 0)
+        descriptor = _os.open(name, flags, 0o600, dir_fd=directory_fd)
+    try:
+        opened = _engagement_secure_descriptor(
+            descriptor,
+            state=state,
+            name=name,
+            directory_fd=directory_fd,
+        )
+        return descriptor, opened
+    except BaseException:
+        _os.close(descriptor)
+        raise
+
+
+def _engagement_write_all(descriptor: int, payload: bytes) -> None:
+    offset = 0
+    while offset < len(payload):
+        written = _os.write(descriptor, payload[offset : offset + _ENGAGEMENT_WRITE_CHUNK_BYTES])
+        if written <= 0:
+            raise OSError("engagement ledger write made no progress")
+        offset += written
+
+
+def _open_engagement_lock(state: Path, directory_fd: int | None) -> int:
+    try:
+        descriptor, _opened = _engagement_open_new(
+            state=state,
+            name=_ENGAGEMENT_LOCK_NAME,
+            directory_fd=directory_fd,
+            request_delete_access=False,
+        )
+    except (FileExistsError, PermissionError) as create_error:
+        # A Windows creator pins the lock pathname by denying delete sharing.
+        # A concurrent CREATE_NEW can consequently report sharing violation
+        # (PermissionError) instead of ERROR_FILE_EXISTS.  Prove and open the
+        # already-created owner-only lock before treating that result as
+        # contention; an absent or unsafe path still fails closed.
+        try:
+            descriptor, opened = _engagement_open_existing(
+                state=state,
+                name=_ENGAGEMENT_LOCK_NAME,
+                directory_fd=directory_fd,
+                writable=True,
+            )
+        except FileNotFoundError:
+            if isinstance(create_error, PermissionError):
+                raise create_error
+            raise
+        if opened.st_size == 0:
+            _os.close(descriptor)
+            raise _EngagementLockInitializing
+        if opened.st_size != 1:
+            _os.close(descriptor)
+            raise _EngagementLedgerError("unsafe_path")
+        _os.lseek(descriptor, 0, _os.SEEK_SET)
+        return descriptor
+    try:
+        _engagement_write_all(descriptor, b"\0")
+        _os.fsync(descriptor)
+        initialized = _engagement_secure_descriptor(
+            descriptor,
+            state=state,
+            name=_ENGAGEMENT_LOCK_NAME,
+            directory_fd=directory_fd,
+        )
+        if initialized.st_size != 1:
+            raise _EngagementLedgerError("io_failure")
+        _os.lseek(descriptor, 0, _os.SEEK_SET)
+        return descriptor
+    except BaseException:
+        _os.close(descriptor)
+        raise
+
+
+def _try_lock_engagement(descriptor: int) -> bool:
+    _os.lseek(descriptor, 0, _os.SEEK_SET)
+    if _os.name == "nt":
+        import msvcrt
+
+        try:
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    import fcntl
+
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
+def _unlock_engagement(descriptor: int) -> None:
+    _os.lseek(descriptor, 0, _os.SEEK_SET)
+    if _os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
+@_contextmanager
+def _exclusive_engagement_write(state: Path, directory_fd: int | None):
+    acquired_thread = _ENGAGEMENT_THREAD_LOCK.acquire(timeout=_ENGAGEMENT_LOCK_TIMEOUT_SECONDS)
+    if not acquired_thread:
+        raise _EngagementLedgerError("lock_timeout")
+    descriptor = -1
+    locked = False
+    try:
+        deadline = _time.monotonic() + _ENGAGEMENT_LOCK_TIMEOUT_SECONDS
+        while descriptor < 0:
+            try:
+                descriptor = _open_engagement_lock(state, directory_fd)
+            except _EngagementLockInitializing:
+                if _time.monotonic() >= deadline:
+                    raise _EngagementLedgerError("lock_timeout") from None
+                _time.sleep(_ENGAGEMENT_LOCK_RETRY_SECONDS)
+        while not _try_lock_engagement(descriptor):
+            if _time.monotonic() >= deadline:
+                raise _EngagementLedgerError("lock_timeout")
+            _time.sleep(_ENGAGEMENT_LOCK_RETRY_SECONDS)
+        locked = True
+        locked_value = _engagement_secure_descriptor(
+            descriptor,
+            state=state,
+            name=_ENGAGEMENT_LOCK_NAME,
+            directory_fd=directory_fd,
+        )
+        if locked_value.st_size != 1:
+            raise _EngagementLedgerError("unsafe_path")
+        yield
+    finally:
+        if locked:
+            try:
+                _unlock_engagement(descriptor)
+            except OSError:
+                pass
+        if descriptor >= 0:
+            _os.close(descriptor)
+        _ENGAGEMENT_THREAD_LOCK.release()
+
+
+def _engagement_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not _math.isfinite(parsed):
+        raise ValueError("non-finite JSON number")
+    return parsed
+
+
+def _engagement_reject_constant(_value: str):
+    raise ValueError("non-finite JSON constant")
+
+
+def _read_engagement_rows(
+    *,
+    state: Path,
+    directory_fd: int | None,
+) -> tuple[list[bytes], bool, tuple[int, ...] | None]:
+    try:
+        descriptor, opened = _engagement_open_existing(
+            state=state,
+            name=_ENGAGEMENT_LEDGER_NAME,
+            directory_fd=directory_fd,
+            writable=False,
+        )
+    except FileNotFoundError:
+        return [], False, None
+    try:
+        descriptor_snapshot = _engagement_snapshot(opened)
+        path_snapshot = _engagement_snapshot(_engagement_child_stat(state, _ENGAGEMENT_LEDGER_NAME, directory_fd))
+        read_budget = _ENGAGEMENT_LEDGER_MAX_BYTES + _ENGAGEMENT_LEDGER_MAX_LINE_BYTES + 1
+        read_size = min(opened.st_size, read_budget)
+        start = opened.st_size - read_size
+        _os.lseek(descriptor, start, _os.SEEK_SET)
+        chunks: list[bytes] = []
+        remaining = read_size
+        while remaining:
+            chunk = _os.read(descriptor, min(remaining, _ENGAGEMENT_WRITE_CHUNK_BYTES))
+            if not chunk:
+                raise _EngagementLedgerError("invalid_ledger")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        prefix_pruned = start > 0
+        if prefix_pruned:
+            boundary = payload.find(b"\n")
+            if boundary < 0:
+                raise _EngagementLedgerError("invalid_ledger")
+            payload = payload[boundary + 1 :]
+        opened_after = _os.fstat(descriptor)
+        current_after = _engagement_child_stat(state, _ENGAGEMENT_LEDGER_NAME, directory_fd)
+        path_private = _os.name != "nt" or path_is_owner_only(state / _ENGAGEMENT_LEDGER_NAME)
+        current_final = _engagement_child_stat(state, _ENGAGEMENT_LEDGER_NAME, directory_fd)
+        if (
+            _engagement_snapshot(opened_after) != descriptor_snapshot
+            or _engagement_snapshot(current_after) != path_snapshot
+            or _engagement_snapshot(current_final) != path_snapshot
+            or _engagement_identity(opened_after) != _engagement_identity(current_after)
+            or not path_private
+        ):
+            raise _EngagementLedgerError("unsafe_path")
+    finally:
+        _os.close(descriptor)
+
+    rows: list[bytes] = []
+    for raw_line in payload.splitlines():
+        if not raw_line:
+            continue
+        if len(raw_line) > _ENGAGEMENT_LEDGER_MAX_LINE_BYTES:
+            raise _EngagementLedgerError("invalid_ledger")
+        try:
+            decoded = raw_line.decode("utf-8", "strict")
+            value = loads_bounded(
+                decoded,
+                object_pairs_hook=_strict_json_object_pairs,
+                parse_constant=_engagement_reject_constant,
+                parse_float=_engagement_finite_float,
+            )
+        except (UnicodeDecodeError, _json.JSONDecodeError, RecursionError, TypeError, ValueError) as exc:
+            raise _EngagementLedgerError("invalid_ledger") from exc
+        if not isinstance(value, dict):
+            raise _EngagementLedgerError("invalid_ledger")
+        encoded = _json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded) > _ENGAGEMENT_LEDGER_MAX_LINE_BYTES:
+            raise _EngagementLedgerError("invalid_ledger")
+        rows.append(encoded)
+    return rows, prefix_pruned, path_snapshot
+
+
+def _engagement_destination_matches(
+    *,
+    state: Path,
+    directory_fd: int | None,
+    expected: tuple[int, ...] | None,
+) -> bool:
+    try:
+        current = _engagement_child_stat(state, _ENGAGEMENT_LEDGER_NAME, directory_fd)
+    except FileNotFoundError:
+        return expected is None
+    try:
+        _engagement_validate_regular(current)
+    except _EngagementLedgerError:
+        return False
+    return expected is not None and _engagement_snapshot(current) == expected
+
+
+def _install_engagement_payload(
+    payload: bytes,
+    *,
+    state: Path,
+    directory_fd: int | None,
+    expected: tuple[int, ...] | None,
+) -> Path:
+    descriptor = -1
+    temporary_name: str | None = None
+    for _attempt in range(128):
+        candidate = f".{_ENGAGEMENT_LEDGER_NAME}.{_secrets.token_hex(8)}.tmp"
+        try:
+            descriptor, _opened = _engagement_open_new(
+                state=state,
+                name=candidate,
+                directory_fd=directory_fd,
+            )
+        except FileExistsError:
+            continue
+        temporary_name = candidate
+        break
+    if descriptor < 0 or temporary_name is None:
+        raise _EngagementLedgerError("io_failure")
+    try:
+        _engagement_write_all(descriptor, payload)
+        _os.fsync(descriptor)
+        temporary = _engagement_secure_descriptor(
+            descriptor,
+            state=state,
+            name=temporary_name,
+            directory_fd=directory_fd,
+        )
+        source_generation = capture_file_generation(
+            descriptor,
+            max_bytes=_ENGAGEMENT_LEDGER_MAX_BYTES,
+        )
+        if temporary.st_size != len(payload) or not _engagement_destination_matches(
+            state=state,
+            directory_fd=directory_fd,
+            expected=expected,
+        ):
+            raise _EngagementLedgerError("unsafe_path")
+        # Windows owner-only descriptors deliberately deny delete sharing, so
+        # close the identity-pinning producer handle before publication.  The
+        # public installer re-proves both metadata and SHA-256 immediately
+        # before its native move; this also closes the same-size rewrite gap on
+        # POSIX without weakening lock-file pinning.
+        _os.close(descriptor)
+        descriptor = -1
+
+        def _assert_destination_unchanged() -> None:
+            if not _engagement_destination_matches(
+                state=state,
+                directory_fd=directory_fd,
+                expected=expected,
+            ):
+                raise _EngagementLedgerError("unsafe_path")
+
+        conditional_install_file(
+            state / temporary_name,
+            state / _ENGAGEMENT_LEDGER_NAME,
+            source_generation=source_generation,
+            before_install=_assert_destination_unchanged,
+            durable=True,
+        )
+        current = _engagement_child_stat(state, _ENGAGEMENT_LEDGER_NAME, directory_fd)
+        path_private = _os.name != "nt" or path_is_owner_only(state / _ENGAGEMENT_LEDGER_NAME)
+        current_final = _engagement_child_stat(state, _ENGAGEMENT_LEDGER_NAME, directory_fd)
+        if (
+            _engagement_identity(current) != _engagement_identity(temporary)
+            or _engagement_identity(current_final) != _engagement_identity(temporary)
+            or current.st_size != len(payload)
+            or current_final.st_size != len(payload)
+            or current.st_nlink != 1
+            or current_final.st_nlink != 1
+            or not path_private
+        ):
+            raise _EngagementLedgerError("io_failure")
+        if directory_fd is not None:
+            _os.fsync(directory_fd)
+        return state / _ENGAGEMENT_LEDGER_NAME
+    finally:
+        if descriptor >= 0:
+            _os.close(descriptor)
+        # If installation did not happen, deliberately leave the random,
+        # owner-only tempfile in place. A pathname check followed by unlink is
+        # not an identity-bound delete on POSIX and could remove a raced
+        # replacement. Failing safely is preferable to unsafe cleanup.
+
+
+def _set_engagement_diagnostics(
+    diagnostics: dict | None,
+    *,
+    state: str,
+    retention_pruned: bool = False,
+    records_retained: int = 0,
+) -> None:
+    if state not in _ENGAGEMENT_LEDGER_STATES:
+        raise ValueError(f"unknown engagement ledger state: {state}")
+    if diagnostics is not None:
+        diagnostics.clear()
+        diagnostics.update(
+            {
+                "state": state,
+                "retention_pruned": bool(retention_pruned),
+                "records_retained": int(records_retained),
+            }
+        )
+
+
+def _persist_engagement_record(
+    record: dict,
+    *,
+    diagnostics: dict | None = None,
+) -> Path | None:
+    """Persist one bounded engagement record under the shared ledger lock.
+
+    Returns the ledger path on success, ``None`` on failure (never raises —
+    telemetry must not break a buyer-facing run). When supplied, *diagnostics*
+    receives only closed-vocabulary state and bounded numeric fields.
+    """
+    _set_engagement_diagnostics(diagnostics, state="not_requested")
+    try:
+        encoded_record = _json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(encoded_record) > _ENGAGEMENT_LEDGER_MAX_LINE_BYTES:
+            raise _EngagementLedgerError("invalid_ledger")
+        with _pinned_engagement_directory() as (state, directory_fd):
+            with _exclusive_engagement_write(state, directory_fd):
+                rows, prefix_pruned, expected = _read_engagement_rows(
+                    state=state,
+                    directory_fd=directory_fd,
+                )
+                rows.append(encoded_record)
+                retention_pruned = prefix_pruned
+                while len(rows) > _ENGAGEMENT_LEDGER_MAX_RECORDS:
+                    del rows[0]
+                    retention_pruned = True
+                payload_size = sum(len(row) + 1 for row in rows)
+                while rows and payload_size > _ENGAGEMENT_LEDGER_MAX_BYTES:
+                    removed = rows.pop(0)
+                    payload_size -= len(removed) + 1
+                    retention_pruned = True
+                if not rows or rows[-1] != encoded_record:
+                    raise _EngagementLedgerError("invalid_ledger")
+                payload = b"\n".join(rows) + b"\n"
+                ledger = _install_engagement_payload(
+                    payload,
+                    state=state,
+                    directory_fd=directory_fd,
+                    expected=expected,
+                )
+                _set_engagement_diagnostics(
+                    diagnostics,
+                    state="logged_retention_pruned" if retention_pruned else "logged",
+                    retention_pruned=retention_pruned,
+                    records_retained=len(rows),
+                )
+                return ledger
+    except _EngagementLedgerError as exc:
+        _set_engagement_diagnostics(diagnostics, state=exc.state)
+        return None
+    except (OSError, RuntimeError, TypeError, UnicodeError, ValueError):
+        _set_engagement_diagnostics(diagnostics, state="io_failure")
+        return None
 
 
 def _record_engagement(
@@ -1146,17 +2851,12 @@ def _record_engagement(
     headline: str,
     output_path: str,
     generated_at: str,
+    diagnostics: dict | None = None,
 ) -> Path | None:
-    """Append one service-report record to ``.roam/engagements.jsonl``.
+    """Persist one bounded service-report engagement record safely."""
 
-    Returns the ledger path on success, ``None`` on failure (never raises —
-    telemetry must not break a buyer-facing run).
-    """
-    try:
-        ledger_dir = Path(".roam")
-        ledger_dir.mkdir(exist_ok=True)
-        ledger = ledger_dir / "engagements.jsonl"
-        record = {
+    return _persist_engagement_record(
+        {
             "ledger_schema": 1,
             "kind": "service-report",
             "report_type": report_type,
@@ -1165,12 +2865,9 @@ def _record_engagement(
             "headline": headline,
             "output_path": output_path,
             "generated_at": generated_at,
-        }
-        with ledger.open("a", encoding="utf-8") as f:
-            f.write(_json.dumps(record) + "\n")
-        return ledger
-    except OSError:
-        return None
+        },
+        diagnostics=diagnostics,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1332,7 +3029,7 @@ def service_report_cmd(
     headline = _headline(report_type, env)
     if component_failures:
         headline = f"{headline} — partial report: {len(component_failures)} unavailable components"
-    elif component_degraded:
+    if component_degraded:
         headline = f"{headline} — degraded evidence: {len(component_degraded)} partial components"
 
     # --pdf without --output writes the markdown sibling next to the PDF.
@@ -1344,17 +3041,35 @@ def service_report_cmd(
         if not json_mode:
             click.echo(f"Wrote {len(report_md):,} bytes to {output_path}")
 
+    requested_pdf_path = pdf_path
+    delivered_pdf_path = None
     pdf_backend = None
-    if pdf_path:
-        ok, info = _render_pdf(report_md, Path(pdf_path))
+    pdf_state = "not_requested"
+    pdf_failure = None
+    artifact_failures: list[str] = []
+    if requested_pdf_path:
+        try:
+            ok, info = _render_pdf(report_md, Path(requested_pdf_path))
+        except Exception:  # noqa: BLE001 — renderer failures are a bounded delivery state
+            ok, info = False, None
         if ok:
+            delivered_pdf_path = requested_pdf_path
             pdf_backend = info
+            pdf_state = "delivered"
             if not json_mode:
-                click.echo(f"Wrote PDF to {pdf_path} (backend: {info})")
+                click.echo(f"Wrote PDF to {requested_pdf_path} (backend: {info})")
         else:
-            click.echo(f"WARNING: PDF render failed — {info}", err=True)
+            pdf_state = "render_failed"
+            pdf_failure = "pdf_render_failed"
+            artifact_failures.append("pdf_render_failed")
+            click.echo("WARNING: PDF render failed — requested artifact was not delivered", err=True)
 
     engagement_record = None
+    engagement_diagnostics: dict = {
+        "state": "not_requested",
+        "retention_pruned": False,
+        "records_retained": 0,
+    }
     if track_engagement and output_path:
         engagement_record = _record_engagement(
             report_type=report_type,
@@ -1363,15 +3078,36 @@ def service_report_cmd(
             headline=headline,
             output_path=output_path,
             generated_at=generated_at,
+            diagnostics=engagement_diagnostics,
         )
         if engagement_record and not json_mode:
             click.echo(f"Logged engagement to {engagement_record}")
+        elif not engagement_record:
+            click.echo("WARNING: Engagement ledger persistence failed", err=True)
+
+    engagement_failed = engagement_diagnostics["state"] in _ENGAGEMENT_FAILURE_STATES
+    summary_verdict = headline
+    if artifact_failures:
+        summary_verdict = f"{summary_verdict} — partial delivery: PDF artifact unavailable"
+    if engagement_failed:
+        summary_verdict = f"{summary_verdict} — engagement ledger unavailable"
+    if component_failures:
+        summary_state = "component_failure"
+    elif artifact_failures:
+        summary_state = "artifact_failure"
+    elif engagement_failed:
+        summary_state = "engagement_persistence_failure"
+    elif component_degraded:
+        summary_state = "component_degraded"
+    else:
+        summary_state = "complete"
+    partial_success = bool(component_failures or component_degraded or artifact_failures or engagement_failed)
 
     if json_mode:
         envelope = json_envelope(
             "service-report",
             summary={
-                "verdict": headline,
+                "verdict": summary_verdict,
                 "report_type": report_type,
                 "client": client,
                 "subject": subject,
@@ -1379,20 +3115,22 @@ def service_report_cmd(
                 "index_sha": index_sha,
                 "generated_at": generated_at,
                 "output_path": output_path,
-                "pdf_path": pdf_path,
+                "pdf_requested_path": requested_pdf_path,
+                "pdf_path": delivered_pdf_path,
                 "pdf_backend": pdf_backend,
+                "pdf_state": pdf_state,
+                "pdf_failure": pdf_failure,
+                "artifact_failures": artifact_failures,
                 "engagement_logged_to": str(engagement_record) if engagement_record else None,
+                "engagement_ledger_state": engagement_diagnostics["state"],
+                "engagement_ledger_failure": (engagement_diagnostics["state"] if engagement_failed else None),
+                "engagement_retention_pruned": engagement_diagnostics["retention_pruned"],
+                "engagement_records_retained": engagement_diagnostics["records_retained"],
                 "sections_present": sorted(k for k, v in env.items() if v),
                 "sections_failed": list(component_failures),
                 "sections_degraded": list(component_degraded),
-                "state": (
-                    "component_failure"
-                    if component_failures
-                    else "component_degraded"
-                    if component_degraded
-                    else "complete"
-                ),
-                "partial_success": bool(component_failures or component_degraded),
+                "state": summary_state,
+                "partial_success": partial_success,
             },
             report_markdown=report_md,
             sections=env,

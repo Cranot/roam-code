@@ -17,20 +17,40 @@ Frequency alone never promotes a savings claim.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
+import os
 import re
+import secrets
 import sqlite3
+import stat
+import threading
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from roam.atomic_io import capture_file_generation, conditional_install_file
+from roam.compile_telemetry import bounded_number, sanitize_compile_telemetry_row
 from roam.procedure_mining import build_procedure_atlas, normalized_episode_tokens
+from roam.security.bounded_json import loads_bounded, strict_json_object_pairs
+from roam.security.owner_only import (
+    delete_file_if_matches_descriptor,
+    delete_file_if_matches_identity,
+    ensure_owner_only_file_descriptor,
+    ensure_owner_only_path,
+    file_descriptor_identity,
+    file_descriptor_is_owner_only,
+    open_new_owner_only_file,
+    path_is_owner_only,
+    pinned_owner_only_directory,
+)
 
 EPISODE_SCHEMA_VERSION = 1
-LEDGER_SCHEMA_VERSION = 3
+LEDGER_SCHEMA_VERSION = 4
 MIN_ADMISSIBLE_EPISODES = 30
 MIN_COVERAGE_PCT = 95.0
 TERMINAL_GRACE_SECONDS = 600
@@ -40,7 +60,22 @@ EVENT_LOG_NAME = "episodes.jsonl"
 TRANSCRIPT_EVENT_LOG_NAME = "transcript-episodes.jsonl"
 COMPILE_LOG_NAME = "compile-runs.jsonl"
 LEDGER_DB_NAME = "episodes.sqlite"
+MAX_EVENT_LOG_BYTES = 16 * 1024 * 1024
+MAX_COMPILE_LOG_BYTES = 32 * 1024 * 1024
+MAX_TRANSCRIPT_EVENT_LOG_BYTES = 32 * 1024 * 1024
+MAX_JSONL_LINE_BYTES = 2 * 1024 * 1024
+MAX_JSONL_ROWS = 60_000
+MAX_JSONL_PARSE_SECONDS = 30.0
+MAX_LEDGER_TEMPFILES = 512
+MAX_LEDGER_DB_BYTES = 64 * 1024 * 1024
+MAX_LEDGER_SIDECAR_BYTES = 16 * 1024 * 1024
+MAX_LEDGER_LOCK_BYTES = 1024
+LEDGER_TEMP_ORPHAN_GRACE_SECONDS = 5 * 60
+LEDGER_MATERIALIZATION_LOCK_TIMEOUT_SECONDS = 120.0
+LEDGER_MATERIALIZATION_LOCK_RETRY_SECONDS = 0.025
 VALIDATED_HEALTH_STATES = frozenset({"verification_passed", "verification_failed"})
+
+_LEDGER_MATERIALIZATION_THREAD_LOCK = threading.Lock()
 
 SAVINGS_AGGREGATE_SCHEMA = "roam.savings.aggregate"
 SAVINGS_AGGREGATE_SCHEMA_VERSION = 1
@@ -53,8 +88,9 @@ SAVINGS_COVERAGE_DEFINITIONS = {
         "record or an explicit compile_expected=false skip / eligible prospective prompt starts"
     ),
     "compile_identity_coverage_definition": (
-        "production compile rows with an opaque local outcome join key / "
-        "production compile rows since the first prompt-start event"
+        "unambiguously post-prompt production compile rows with an opaque local outcome join key / "
+        "production compile rows since the start of the coarse UTC hour containing the first prompt; "
+        "identified rows in the overlapping hour bucket do not promote the numerator"
     ),
     "health_context_coverage_definition": (
         "eligible edited episodes with explicit verification_passed or verification_failed state / "
@@ -63,6 +99,10 @@ SAVINGS_COVERAGE_DEFINITIONS = {
     "hook_version_coverage_definition": (
         f"eligible prospective prompt starts emitted by hook version >= {MIN_LIVE_HOOK_VERSION} / "
         "eligible prospective prompt starts"
+    ),
+    "repeat_identity_coverage_definition": (
+        "terminal compile-expected prospective episodes joined to a keyed repo-local task fingerprint / "
+        "terminal compile-expected prospective episodes"
     ),
 }
 
@@ -85,6 +125,8 @@ _AGGREGATE_COVERAGE_COUNT_FIELDS = (
     "health_context_episodes",
     "health_expected_episodes",
     "current_hook_episodes",
+    "repeat_identity_episodes",
+    "repeat_expected_episodes",
 )
 _AGGREGATE_COVERAGE_PERCENT_FIELDS = (
     "terminal_coverage_pct",
@@ -92,6 +134,7 @@ _AGGREGATE_COVERAGE_PERCENT_FIELDS = (
     "health_context_coverage_pct",
     "hook_version_coverage_pct",
     "compile_identity_coverage_pct",
+    "repeat_identity_coverage_pct",
 )
 _AGGREGATE_DECLARATION_STATES = (
     "declared_native",
@@ -132,6 +175,618 @@ EVENT_FIELD_DEFINITIONS: dict[str, str] = {
 
 _INTERVENTION_ASSIGNMENTS = frozenset({"control", "exposed", "shadow"})
 _INTERVENTION_EVENT_TYPES = frozenset({"intervention_assignment", "intervention_observation"})
+_EVENT_TYPES = frozenset(
+    {
+        "prompt_submitted",
+        "stop_decision",
+        "stop_continuation",
+        "transcript_terminal",
+        *_INTERVENTION_EVENT_TYPES,
+    }
+)
+_EVENT_OUTCOMES = frozenset(
+    {
+        "pending",
+        "unknown",
+        "no_edit",
+        "verified_clean",
+        "verify_unavailable",
+        "verification_blocked",
+        "verification_failed_without_findings",
+        "second_opinion_blocked",
+        "continued_after_block",
+        "policy_evidence_unavailable",
+        "policy_tampering",
+        "verification_race",
+        "verification_snapshot_unavailable",
+        "historical_acted_verified_proxy",
+        "historical_acted_verification_failed_proxy",
+        "historical_acted_unverified",
+        "historical_no_edit_tool_error",
+        "historical_no_edit",
+        "intervention_measurement",
+    }
+)
+_HEALTH_STATES = frozenset(
+    {
+        "unknown",
+        "verification_passed",
+        "verification_failed",
+        "verification_unavailable",
+        "continuation_unverified",
+        "not_applicable",
+        "proxy_verification_passed",
+        "proxy_verification_failed",
+        "proxy_unverified",
+        "proxy_tool_error",
+    }
+)
+_EVIDENCE_SOURCES = frozenset({"live_hook", "transcript_backfill"})
+_TRANSCRIPT_SOURCES = frozenset({"claude", "codex"})
+_PROJECT_IDENTITY_BASES = frozenset({"git_root", "workspace", "missing"})
+_INTENT_ARCHETYPES = frozenset(
+    {
+        "debug",
+        "implement",
+        "refactor",
+        "review",
+        "verify",
+        "performance",
+        "security",
+        "deploy",
+        "research",
+        "document",
+        "plan",
+        "data",
+        "ui",
+        "git",
+        "other",
+    }
+)
+_TOOL_FAMILIES = frozenset({"edit", "shell", "read", "search", "roam", "web", "agent", "other"})
+_PHASES = frozenset(
+    {
+        "verify",
+        "format",
+        "review",
+        "publish",
+        "deploy",
+        "setup",
+        "search",
+        "inspect",
+        "orient",
+        "shell",
+        "edit",
+        "intelligence",
+        "research",
+        "delegate",
+        "other",
+    }
+)
+_COMMAND_CLASSES = frozenset(
+    {
+        "verify",
+        "build",
+        "format",
+        "review",
+        "vcs_write",
+        "deploy",
+        "dependency",
+        "search",
+        "inspect",
+        "orient",
+        "git",
+        "other",
+    }
+)
+_FAILURE_CLASSES = frozenset(
+    {
+        "invalid_invocation",
+        "command_unavailable",
+        "dependency_unavailable",
+        "path_unavailable",
+        "permission_or_auth",
+        "timeout",
+        "network",
+        "resource_exhausted",
+        "state_conflict",
+        "syntax_or_compile",
+        "test_failure",
+        "unknown",
+    }
+)
+_FRICTION_FIELDS = frozenset(
+    {
+        "orientation_calls",
+        "search_calls",
+        "inspection_calls",
+        "slice_calls",
+        "output_postprocess_calls",
+        "structured_output_postprocess_calls",
+        "help_calls",
+        "exact_shell_replays",
+        "adjacent_shell_replays",
+        "failed_action_retries",
+        "verification_retries",
+        "post_edit_context_calls",
+        "search_inspect_cycles",
+        "phase_switches",
+    }
+)
+_REGISTERED_INTERVENTIONS = frozenset({"repeated_code_slicing"})
+_REGISTERED_INTERVENTION_VERSIONS = frozenset({"grep-packets-v1"})
+_REGISTERED_ELIGIBILITY_RULES = frozenset({"slice-transition-v1"})
+_EPISODE_ID_RE = re.compile(r"^(?:ep_|hist_)[0-9a-f]{24}$|^orphan_[0-9a-f]{20}$")
+_EVENT_ID_RE = re.compile(r"^evt_[0-9a-f]{20,24}(?:_(?:start|terminal))?$")
+_HEX_16_RE = re.compile(r"^[0-9a-f]{16}$")
+_HEX_24_RE = re.compile(r"^[0-9a-f]{24}$")
+_HEX_32_RE = re.compile(r"^[0-9a-f]{32}$")
+_HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
+_SAFE_SHELL_EXECUTABLES = frozenset(
+    {
+        "ansible",
+        "awk",
+        "bash",
+        "black",
+        "cargo",
+        "cat",
+        "cmd",
+        "cmake",
+        "cut",
+        "dir",
+        "docker",
+        "dotnet",
+        "eslint",
+        "findstr",
+        "get-childitem",
+        "get-content",
+        "get-location",
+        "git",
+        "go",
+        "gofmt",
+        "gradle",
+        "head",
+        "helm",
+        "journalctl",
+        "jq",
+        "kubectl",
+        "less",
+        "ls",
+        "make",
+        "more",
+        "mvn",
+        "mypy",
+        "ninja",
+        "nl",
+        "node",
+        "npm",
+        "npx",
+        "pnpm",
+        "poetry",
+        "powershell",
+        "prettier",
+        "pwsh",
+        "py",
+        "pyright",
+        "pytest",
+        "python",
+        "python3",
+        "rg",
+        "roam",
+        "rsync",
+        "ruff",
+        "rustfmt",
+        "scp",
+        "sed",
+        "select-object",
+        "sh",
+        "ssh",
+        "systemctl",
+        "tail",
+        "terraform",
+        "tox",
+        "tree",
+        "tsc",
+        "uv",
+        "vitest",
+        "yarn",
+    }
+)
+_SAFE_SHELL_WORDS = frozenset(
+    {
+        "add",
+        "branch",
+        "build",
+        "check",
+        "checkout",
+        "commit",
+        "context",
+        "diff",
+        "fetch",
+        "format",
+        "grep",
+        "health",
+        "init",
+        "install",
+        "lint",
+        "log",
+        "merge",
+        "pull",
+        "push",
+        "rebase",
+        "rev-parse",
+        "run",
+        "show",
+        "status",
+        "tag",
+        "test",
+        "typecheck",
+        "unittest",
+        "verify",
+    }
+)
+_SAFE_SHELL_FLAGS = frozenset(
+    {
+        "-a",
+        "-c",
+        "-f",
+        "-h",
+        "-m",
+        "-n",
+        "-q",
+        "-r",
+        "-v",
+        "--all",
+        "--auto",
+        "--check",
+        "--diff-only",
+        "--dry-run",
+        "--exclude",
+        "--files",
+        "--format",
+        "--help",
+        "--json",
+        "--max-count",
+        "--no-cache",
+        "--quiet",
+        "--root",
+        "--short",
+        "--verbose",
+        "--version",
+    }
+)
+_SHELL_PLACEHOLDERS = frozenset(
+    {
+        "<ARG>",
+        "<CODE>",
+        "<EXEC>",
+        "<MODULE>",
+        "<N>",
+        "<PATH>",
+        "<REDIR>",
+        "<SECRET>",
+        "<SUBCOMMAND>",
+        "<URL>",
+        "<ENV>=<VALUE>",
+        "--<FLAG>",
+        "-<FLAG>",
+        "--<FLAG>=<ARG>",
+    }
+)
+
+# Only fields consumed by savings analysis may enter the derived SQLite cache.
+# This blocks legacy or malformed source rows from smuggling prompt text or
+# other unknown transcript fields into ``payload_json``.
+_EPISODE_PAYLOAD_FIELDS = frozenset(
+    {
+        "compile_expected",
+        "transcript_source",
+        "project_id",
+        "project_identity_basis",
+        "intent_archetypes",
+        "intent_simhash64",
+        "prompt_hmac_sha256",
+        "prompt_tokens_bucket",
+        "trajectory_fingerprint",
+        "trajectory_template",
+        "phase_sequence_template",
+        "command_sequence_fingerprint",
+        "command_sequence_template",
+        "shell_templates",
+        "shell_ngrams",
+        "tool_ngrams",
+        "phase_ngrams",
+        "friction",
+        "shell_template_outcomes",
+        "phase_outcomes",
+        "command_class_outcomes",
+        "tool_calls",
+        "tool_errors",
+        "tool_result_bytes_bucket",
+        "assistant_messages",
+        "time_to_first_tool_ms",
+        "time_to_first_edit_ms",
+        "edit_actions",
+        "verification_attempts",
+        "verification_failures",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "cache_creation_tokens",
+        "reasoning_output_tokens",
+        "correction_after",
+        "intervention_id",
+        "intervention_version",
+        "eligibility_rule_version",
+        "assignment",
+        "assignment_cluster",
+        "eligible_transition",
+        "delivered",
+        "adopted",
+        "downstream_transition_count",
+    }
+)
+
+
+def _bounded_event_int(value: Any, *, maximum: int = 10**12) -> int | None:
+    number = bounded_number(value, minimum=0.0, maximum=float(maximum), integer=True)
+    return int(number) if number is not None else None
+
+
+def _closed_value(value: Any, allowed: frozenset[str]) -> str | None:
+    raw = value.strip().lower() if isinstance(value, str) else ""
+    return raw if raw in allowed else None
+
+
+def _session_join_id(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return "sid_" + hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:24]
+
+
+def _sanitize_closed_sequence(value: Any, allowed: frozenset[str], *, limit: int) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 320 or any(char in value for char in "\r\n\t"):
+        return None
+    has_more = value == "<MORE>" or value.endswith("><MORE>")
+    core = "" if value == "<MORE>" else value[: -len("><MORE>")] if has_more else value
+    segments = core.split(">") if core else []
+    rendered: list[str] = []
+    for segment in segments:
+        match = re.fullmatch(r"([a-z_]+)(?:\*([1-9][0-9]{0,5}))?", segment)
+        if match is None or match.group(1) not in allowed:
+            return None
+        count = int(match.group(2) or "1")
+        rendered.append(f"{match.group(1)}*{count}" if count > 1 else match.group(1))
+        if len(rendered) > limit:
+            return None
+    if has_more:
+        rendered.append("<MORE>")
+    if not rendered or len(rendered) > limit:
+        return None
+    return ">".join(rendered)
+
+
+def _sanitize_shell_template(value: Any) -> str | None:
+    """Canonicalize an already-redacted shell shape through a closed grammar."""
+
+    if not isinstance(value, str) or not value or len(value) > 320 or any(char in value for char in "\r\n\t"):
+        return None
+    tokens = value.split()
+    if not tokens or len(tokens) > 96:
+        return None
+    rendered: list[str] = []
+    command_start = True
+    unknown_executable = False
+    for token in tokens:
+        if token in {"&&", "||", "|", ";"}:
+            if command_start:
+                return None
+            rendered.append(token)
+            command_start = True
+            continue
+        if command_start:
+            executable = token.lower().removesuffix(".exe")
+            if executable not in _SAFE_SHELL_EXECUTABLES:
+                unknown_executable = True
+                rendered.append("<EXEC>")
+            else:
+                rendered.append(executable)
+            command_start = False
+            continue
+        if token in _SHELL_PLACEHOLDERS:
+            rendered.append(token)
+        elif token in _SAFE_SHELL_FLAGS:
+            rendered.append(token)
+        elif token.lower() in _SAFE_SHELL_WORDS:
+            rendered.append(token.lower())
+        elif "=" in token:
+            flag, assigned = token.split("=", 1)
+            if flag in _SAFE_SHELL_FLAGS and assigned in _SHELL_PLACEHOLDERS:
+                rendered.append(f"{flag}={assigned}")
+            else:
+                rendered.append("--<FLAG>=<ARG>" if flag.startswith("-") else "<ARG>")
+        else:
+            rendered.append("<ARG>")
+    if command_start or unknown_executable:
+        return None
+    return " ".join(rendered)
+
+
+def _sanitize_shell_sequence(value: Any, *, limit: int) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 4096:
+        return None
+    rendered: list[str] = []
+    segments = value.split(" => ")
+    for index, segment in enumerate(segments):
+        if segment == "<MORE>" and index == len(segments) - 1:
+            rendered.append(segment)
+            continue
+        match = re.fullmatch(r"(.+?)(?: ×([1-9][0-9]{0,5}))?", segment)
+        if match is None:
+            return None
+        template = _sanitize_shell_template(match.group(1))
+        if template is None:
+            return None
+        count = int(match.group(2) or "1")
+        rendered.append(f"{template} ×{count}" if count > 1 else template)
+        if len(rendered) > limit:
+            return None
+    return " => ".join(rendered)
+
+
+def _sanitize_count_map(
+    value: Any,
+    *,
+    key_sanitizer,
+    limit: int = 128,
+) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key, raw_count in list(value.items())[:limit]:
+        safe_key = key_sanitizer(key)
+        count = _bounded_event_int(raw_count, maximum=10**9)
+        if safe_key and count is not None and count > 0:
+            out[safe_key] = min(10**9, out.get(safe_key, 0) + count)
+    return out
+
+
+def _sanitize_outcome_map(value: Any, *, key_sanitizer) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, raw_record in list(value.items())[:128]:
+        safe_key = key_sanitizer(key)
+        if not safe_key or not isinstance(raw_record, dict):
+            continue
+        record: dict[str, Any] = {}
+        for field in ("attempts", "failures", "no_results", "retries_after_failure", "result_bytes_bucket"):
+            number = _bounded_event_int(raw_record.get(field), maximum=10**12)
+            if number is not None:
+                record[field] = number
+        failures = _sanitize_count_map(
+            raw_record.get("failure_classes"),
+            key_sanitizer=lambda item: _closed_value(item, _FAILURE_CLASSES),
+            limit=len(_FAILURE_CLASSES),
+        )
+        if failures:
+            record["failure_classes"] = failures
+        if record:
+            out[safe_key] = record
+    return out
+
+
+def _sanitize_episode_payload(row: dict[str, Any]) -> dict[str, Any]:
+    """Project one source row onto the closed, non-text episode schema."""
+
+    payload: dict[str, Any] = {}
+    for field in ("compile_expected", "correction_after", "eligible_transition", "delivered", "adopted"):
+        if isinstance(row.get(field), bool):
+            payload[field] = row[field]
+    scalar_categories = {
+        "transcript_source": _TRANSCRIPT_SOURCES,
+        "project_identity_basis": _PROJECT_IDENTITY_BASES,
+        "assignment": _INTERVENTION_ASSIGNMENTS,
+        "intervention_id": _REGISTERED_INTERVENTIONS,
+        "intervention_version": _REGISTERED_INTERVENTION_VERSIONS,
+        "eligibility_rule_version": _REGISTERED_ELIGIBILITY_RULES,
+    }
+    for field, allowed in scalar_categories.items():
+        safe = _closed_value(row.get(field), allowed)
+        if safe is not None:
+            payload[field] = safe
+    if isinstance(row.get("intent_archetypes"), list):
+        intents = [
+            safe
+            for item in row["intent_archetypes"][:4]
+            if (safe := _closed_value(item, _INTENT_ARCHETYPES)) is not None
+        ]
+        if intents:
+            payload["intent_archetypes"] = list(dict.fromkeys(intents))
+    regex_fields = {
+        "project_id": re.compile(r"^proj_[0-9a-f]{20}$"),
+        "intent_simhash64": _HEX_16_RE,
+        "prompt_hmac_sha256": _HEX_32_RE,
+        "trajectory_fingerprint": _HEX_24_RE,
+        "command_sequence_fingerprint": _HEX_24_RE,
+    }
+    for field, pattern in regex_fields.items():
+        value = str(row.get(field) or "").strip().lower()
+        if pattern.fullmatch(value):
+            payload[field] = value
+    if row.get("assignment_cluster"):
+        payload["assignment_cluster"] = _session_join_id(row.get("assignment_cluster"))
+    trajectory = _sanitize_closed_sequence(row.get("trajectory_template"), _TOOL_FAMILIES, limit=21)
+    if trajectory:
+        payload["trajectory_template"] = trajectory
+    phases = _sanitize_closed_sequence(row.get("phase_sequence_template"), _PHASES, limit=21)
+    if phases:
+        payload["phase_sequence_template"] = phases
+    commands = _sanitize_shell_sequence(row.get("command_sequence_template"), limit=13)
+    if commands:
+        payload["command_sequence_template"] = commands
+    map_specs = {
+        "shell_templates": lambda item: _sanitize_shell_template(item),
+        "shell_ngrams": lambda item: _sanitize_shell_sequence(item, limit=4),
+        "tool_ngrams": lambda item: _sanitize_ngram(item, _TOOL_FAMILIES, maximum=5),
+        "phase_ngrams": lambda item: _sanitize_ngram(item, _PHASES, maximum=5),
+    }
+    for field, sanitizer in map_specs.items():
+        safe_map = _sanitize_count_map(row.get(field), key_sanitizer=sanitizer)
+        if safe_map:
+            payload[field] = safe_map
+    friction = _sanitize_count_map(
+        row.get("friction"),
+        key_sanitizer=lambda item: _closed_value(item, _FRICTION_FIELDS),
+        limit=len(_FRICTION_FIELDS),
+    )
+    if friction:
+        payload["friction"] = friction
+    outcome_specs = {
+        "shell_template_outcomes": lambda item: _sanitize_shell_template(item),
+        "phase_outcomes": lambda item: _closed_value(item, _PHASES),
+        "command_class_outcomes": lambda item: _closed_value(item, _COMMAND_CLASSES),
+    }
+    for field, sanitizer in outcome_specs.items():
+        safe_map = _sanitize_outcome_map(row.get(field), key_sanitizer=sanitizer)
+        if safe_map:
+            payload[field] = safe_map
+    numeric_fields = (
+        "prompt_tokens_bucket",
+        "tool_calls",
+        "tool_errors",
+        "tool_result_bytes_bucket",
+        "assistant_messages",
+        "time_to_first_tool_ms",
+        "time_to_first_edit_ms",
+        "edit_actions",
+        "verification_attempts",
+        "verification_failures",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "cache_creation_tokens",
+        "reasoning_output_tokens",
+        "downstream_transition_count",
+    )
+    for field in numeric_fields:
+        number = _bounded_event_int(row.get(field))
+        if number is not None:
+            payload[field] = number
+    # Keep the field-name allowlist authoritative as well as the value grammar;
+    # future edits must satisfy both boundaries before data can persist.
+    return {field: payload[field] for field in _EPISODE_PAYLOAD_FIELDS if field in payload}
+
+
+def _sanitize_ngram(value: Any, allowed: frozenset[str], *, maximum: int) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > 320:
+        return None
+    parts = value.split(" => ")
+    if not 2 <= len(parts) <= maximum:
+        return None
+    safe = [_closed_value(part, allowed) for part in parts]
+    return " => ".join(safe) if all(safe) else None
 
 
 def _parse_ts(value: Any) -> datetime | None:
@@ -144,28 +799,104 @@ def _parse_ts(value: Any) -> datetime | None:
         return None
 
 
-def _read_jsonl(path: Path) -> tuple[list[dict[str, Any]], int]:
-    if not path.exists():
+def _read_jsonl(
+    path: Path,
+    *,
+    label: str,
+    max_bytes: int,
+) -> tuple[list[dict[str, Any]], int]:
+    if not os.path.lexists(path):
         return [], 0
-    rows: list[dict[str, Any]] = []
-    invalid = 0
-    with path.open(encoding="utf-8", errors="replace") as fh:
-        for line_number, line in enumerate(fh, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                value = json.loads(line)
-            except json.JSONDecodeError:
-                invalid += 1
-                continue
-            if isinstance(value, dict):
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise SavingsLedgerSafetyError(f"cannot open {label}: {path}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_size > max_bytes
+            or not ensure_owner_only_file_descriptor(descriptor, path)
+        ):
+            raise SavingsLedgerSafetyError(f"{label} must be a bounded owner-only regular file: {path}")
+        # Permission repair, where needed for a legacy single-link file, has
+        # completed. Capture the exact post-repair object before reading so the
+        # coherence check does not mistake our own ACL update for source churn.
+        opened = os.fstat(descriptor)
+        # Read exactly the open-time size without materializing a second full
+        # payload or ``splitlines`` list. Any concurrent append or same-size
+        # rewrite invalidates the whole buffered snapshot below.
+        remaining = opened.st_size
+        rows: list[dict[str, Any]] = []
+        invalid = 0
+        line_number = 0
+        parse_deadline = time.monotonic() + MAX_JSONL_PARSE_SECONDS
+
+        def _assert_parse_deadline() -> None:
+            if time.monotonic() > parse_deadline:
+                raise SavingsLedgerSafetyError(
+                    f"{label} exceeds the {MAX_JSONL_PARSE_SECONDS:g}-second parse limit: {path}"
+                )
+
+        fh = os.fdopen(descriptor, "rb", buffering=64 * 1024)
+        descriptor = -1
+        with fh:
+            while remaining:
+                line_number += 1
+                if line_number > MAX_JSONL_ROWS:
+                    raise SavingsLedgerSafetyError(f"{label} exceeds the {MAX_JSONL_ROWS}-row limit: {path}")
+                _assert_parse_deadline()
+                raw_line = fh.readline(min(MAX_JSONL_LINE_BYTES + 1, remaining))
+                _assert_parse_deadline()
+                if not raw_line:
+                    raise SavingsLedgerSafetyError(f"{label} changed while it was read: {path}")
+                remaining -= len(raw_line)
+                if len(raw_line) > MAX_JSONL_LINE_BYTES:
+                    # Drain this one oversized logical line in bounded pieces.
+                    while remaining and not raw_line.endswith(b"\n"):
+                        raw_line = fh.readline(min(MAX_JSONL_LINE_BYTES + 1, remaining))
+                        if not raw_line:
+                            raise SavingsLedgerSafetyError(f"{label} changed while it was read: {path}")
+                        remaining -= len(raw_line)
+                        _assert_parse_deadline()
+                    invalid += 1
+                    continue
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    value = loads_bounded(raw_line, object_pairs_hook=strict_json_object_pairs)
+                except (TypeError, ValueError):
+                    _assert_parse_deadline()
+                    invalid += 1
+                    continue
+                _assert_parse_deadline()
+                if not isinstance(value, dict):
+                    invalid += 1
+                    continue
                 value = dict(value)
                 value["__source_line"] = line_number
                 rows.append(value)
-            else:
-                invalid += 1
-    return rows, invalid
+            after_descriptor = os.fstat(fh.fileno())
+        try:
+            after_path = os.lstat(path)
+        except OSError as exc:
+            raise SavingsLedgerSafetyError(f"{label} changed while it was read: {path}") from exc
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns")
+        if os.name != "nt":
+            stable_fields += ("st_ctime_ns",)
+        if any(getattr(opened, field) != getattr(after_descriptor, field) for field in stable_fields) or any(
+            getattr(after_descriptor, field) != getattr(after_path, field) for field in stable_fields
+        ):
+            raise SavingsLedgerSafetyError(f"{label} changed while it was read: {path}")
+        _assert_parse_deadline()
+        return rows, invalid
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _canonical_hash(prefix: str, value: dict[str, Any]) -> str:
@@ -173,24 +904,353 @@ def _canonical_hash(prefix: str, value: dict[str, Any]) -> str:
     return prefix + hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:24]
 
 
-def _open_ledger(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    prior_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    if prior_version and prior_version < LEDGER_SCHEMA_VERSION:
-        conn.executescript(
-            """
-            DROP TABLE IF EXISTS episode_events;
-            DROP TABLE IF EXISTS compile_records;
-            DROP TABLE IF EXISTS ledger_meta;
-            """
+class SavingsLedgerSafetyError(ValueError):
+    """The derived ledger could not be kept inside owner-only state."""
+
+
+def _is_reparse_point(value: os.stat_result) -> bool:
+    attributes = getattr(value, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    return bool(attributes & reparse_flag)
+
+
+def _validate_ledger_artifact(
+    path: Path,
+    *,
+    parent_was_private: bool,
+    max_bytes: int = MAX_LEDGER_DB_BYTES,
+) -> None:
+    try:
+        value = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise SavingsLedgerSafetyError(f"cannot inspect savings ledger artifact: {path}") from exc
+    if (
+        not stat.S_ISREG(value.st_mode)
+        or stat.S_ISLNK(value.st_mode)
+        or _is_reparse_point(value)
+        or value.st_nlink != 1
+        or value.st_size > max_bytes
+    ):
+        raise SavingsLedgerSafetyError(f"savings ledger artifact must be a bounded regular private file: {path}")
+    if not path_is_owner_only(path):
+        if not parent_was_private or not ensure_owner_only_path(path):
+            raise SavingsLedgerSafetyError(f"savings ledger artifact is not owner-only: {path}")
+
+
+def _prepare_ledger_directory(path: Path) -> Path:
+    state = path.parent
+    parent_was_private = path_is_owner_only(state) if os.path.lexists(state) else False
+    for suffix, max_bytes in (
+        ("", MAX_LEDGER_DB_BYTES),
+        ("-journal", MAX_LEDGER_SIDECAR_BYTES),
+        ("-wal", MAX_LEDGER_SIDECAR_BYTES),
+        ("-shm", MAX_LEDGER_SIDECAR_BYTES),
+        (".materialize.lock", MAX_LEDGER_LOCK_BYTES),
+    ):
+        _validate_ledger_artifact(
+            Path(f"{path}{suffix}"),
+            parent_was_private=parent_was_private,
+            max_bytes=max_bytes,
         )
+    try:
+        from roam.transcript_backfill import _private_state_directory
+
+        secured = _private_state_directory(state.parent, create=True)
+    except (OSError, ValueError) as exc:
+        raise SavingsLedgerSafetyError(f"savings ledger directory is unsafe: {state}") from exc
+    if secured != state:
+        raise SavingsLedgerSafetyError(f"savings ledger directory escaped project state: {state}")
+    if not ensure_owner_only_path(state):
+        raise SavingsLedgerSafetyError(f"savings ledger directory is not owner-only: {state}")
+    return state
+
+
+def _ledger_lock_path(path: Path) -> Path:
+    return Path(f"{path}.materialize.lock")
+
+
+def _open_ledger_materialization_lock(path: Path) -> int:
+    """Open one private, single-link lock file without following links."""
+
+    lock_path = _ledger_lock_path(path)
+    try:
+        descriptor = open_new_owner_only_file(lock_path)
+    except FileExistsError:
+        _validate_ledger_artifact(lock_path, parent_was_private=True)
+        flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            before = os.lstat(lock_path)
+            descriptor = os.open(lock_path, flags)
+        except OSError as exc:
+            raise SavingsLedgerSafetyError(f"cannot open savings ledger materialization lock: {lock_path}") from exc
+        try:
+            opened = os.fstat(descriptor)
+            current = os.lstat(lock_path)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+                or not path_is_owner_only(lock_path)
+            ):
+                raise SavingsLedgerSafetyError(f"savings ledger materialization lock changed: {lock_path}")
+        except BaseException:
+            os.close(descriptor)
+            raise
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise SavingsLedgerSafetyError(f"invalid savings ledger materialization lock: {lock_path}")
+        if opened.st_size == 0:
+            os.write(descriptor, b"\0")
+        elif opened.st_size != 1:
+            raise SavingsLedgerSafetyError(f"invalid savings ledger materialization lock: {lock_path}")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        if not ensure_owner_only_file_descriptor(descriptor, lock_path):
+            raise SavingsLedgerSafetyError(f"savings ledger materialization lock is not private: {lock_path}")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _try_lock_ledger_materialization(descriptor: int) -> bool:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    import fcntl
+
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
+def _unlock_ledger_materialization(descriptor: int) -> None:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def _exclusive_ledger_materialization(path: Path):
+    """Serialize cleanup and replacement across threads and processes."""
+
+    acquired_thread_lock = _LEDGER_MATERIALIZATION_THREAD_LOCK.acquire(
+        timeout=LEDGER_MATERIALIZATION_LOCK_TIMEOUT_SECONDS
+    )
+    if not acquired_thread_lock:
+        raise TimeoutError("timed out acquiring savings ledger materialization thread lock")
+    descriptor = -1
+    locked = False
+    try:
+        descriptor = _open_ledger_materialization_lock(path)
+        deadline = time.monotonic() + LEDGER_MATERIALIZATION_LOCK_TIMEOUT_SECONDS
+        while not _try_lock_ledger_materialization(descriptor):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("timed out acquiring savings ledger materialization process lock")
+            time.sleep(LEDGER_MATERIALIZATION_LOCK_RETRY_SECONDS)
+        locked = True
+        opened = os.fstat(descriptor)
+        current = os.lstat(_ledger_lock_path(path))
+        if (
+            opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)
+            or not ensure_owner_only_file_descriptor(descriptor, _ledger_lock_path(path))
+        ):
+            raise SavingsLedgerSafetyError("savings ledger materialization lock changed after acquisition")
+        yield
+    finally:
+        if locked:
+            with contextlib.suppress(OSError):
+                _unlock_ledger_materialization(descriptor)
+        if descriptor >= 0:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+        _LEDGER_MATERIALIZATION_THREAD_LOCK.release()
+
+
+def _new_ledger_temp(path: Path) -> tuple[int, Path]:
+    for _attempt in range(128):
+        temporary = path.parent / f".{path.name}.{secrets.token_hex(8)}.tmp"
+        try:
+            return open_new_owner_only_file(temporary, allow_delete_sharing=True), temporary
+        except FileExistsError:
+            continue
+    raise SavingsLedgerSafetyError("could not allocate a private savings-ledger tempfile")
+
+
+def _unlink_if_same_file(path: Path, descriptor: int) -> bool:
+    if os.name != "nt":
+        # POSIX exposes no portable unlink-by-open-file-identity operation.
+        # A stat-then-unlink sequence can delete a replacement installed in
+        # between, so failed cleanup deliberately leaves the private random
+        # tempfile for the bounded orphan inventory to disclose.
+        return False
+    return delete_file_if_matches_descriptor(path, descriptor)
+
+
+def _cleanup_orphaned_ledger_temps(path: Path) -> tuple[int, int]:
+    """Remove bounded, identity-checked tempfiles left by interrupted rebuilds.
+
+    Production callers hold the materialization lock for both this sweep and
+    tempfile creation, so another current writer can never be mistaken for an
+    orphan. The grace period is a second fail-safe for legacy writers that did
+    not yet participate in that lock protocol.
+    """
+
+    pattern = re.compile(rf"^\.{re.escape(path.name)}\.[0-9a-f]{{16}}\.tmp$")
+    candidates: list[Path] = []
+    try:
+        with os.scandir(path.parent) as entries:
+            for entry in entries:
+                if pattern.fullmatch(entry.name):
+                    candidates.append(Path(entry.path))
+                    if len(candidates) > MAX_LEDGER_TEMPFILES:
+                        raise SavingsLedgerSafetyError(f"too many orphaned savings-ledger tempfiles in {path.parent}")
+    except OSError as exc:
+        raise SavingsLedgerSafetyError(f"cannot inspect savings ledger directory: {path.parent}") from exc
+
+    removed = 0
+    retained = 0
+    for candidate in candidates:
+        try:
+            before = os.lstat(candidate)
+        except OSError as exc:
+            raise SavingsLedgerSafetyError(f"cannot inspect savings ledger tempfile: {candidate}") from exc
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_ISLNK(before.st_mode)
+            or _is_reparse_point(before)
+            or before.st_nlink != 1
+            or not path_is_owner_only(candidate)
+        ):
+            raise SavingsLedgerSafetyError(
+                f"orphaned savings ledger tempfile must be a regular owner-only file: {candidate}"
+            )
+        modified_ns = int(getattr(before, "st_mtime_ns", before.st_mtime * 1_000_000_000))
+        age_ns = time.time_ns() - modified_ns
+        if age_ns < int(LEDGER_TEMP_ORPHAN_GRACE_SECONDS * 1_000_000_000):
+            continue
+        if os.name != "nt":
+            retained += 1
+            continue
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(candidate, flags)
+        except OSError as exc:
+            raise SavingsLedgerSafetyError(f"cannot pin savings ledger tempfile: {candidate}") from exc
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                or not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+            ):
+                raise SavingsLedgerSafetyError(f"orphaned savings ledger tempfile changed: {candidate}")
+            # A CRT descriptor opened for inspection does not share DELETE,
+            # so release it before opening the dedicated delete handle. The
+            # second handle is still bound to the captured native file
+            # identity; a pathname replacement is never removed.
+            identity = file_descriptor_identity(descriptor)
+            if identity is None:
+                raise SavingsLedgerSafetyError(f"cannot identify savings ledger tempfile: {candidate}")
+            os.close(descriptor)
+            descriptor = -1
+            if not delete_file_if_matches_identity(candidate, identity):
+                raise SavingsLedgerSafetyError(f"orphaned savings ledger tempfile changed: {candidate}")
+            removed += 1
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+    return removed, retained
+
+
+def _prior_ledger_ids(
+    path: Path,
+    current_event_ids: set[str],
+    current_compile_ids: set[str],
+) -> tuple[set[str], set[str]]:
+    if not path.exists():
+        return set(), set()
+    try:
+        uri = path.resolve().as_uri() + "?mode=ro"
+        with contextlib.closing(sqlite3.connect(uri, uri=True)) as conn:
+            if int(conn.execute("PRAGMA user_version").fetchone()[0]) != LEDGER_SCHEMA_VERSION:
+                return set(), set()
+
+            def existing_ids(table: str, column: str, current: set[str]) -> set[str]:
+                found: set[str] = set()
+                values = list(current)
+                for start in range(0, len(values), 400):
+                    batch = values[start : start + 400]
+                    placeholders = ",".join("?" for _ in batch)
+                    query = f"SELECT {column} FROM {table} WHERE {column} IN ({placeholders})"
+                    found.update(str(row[0]) for row in conn.execute(query, batch))
+                return found
+
+            events = existing_ids("episode_events", "event_id", current_event_ids)
+            compiles = existing_ids("compile_records", "record_id", current_compile_ids)
+            return events, compiles
+    except sqlite3.DatabaseError:
+        # The ledger is a rebuildable projection. A crash-corrupted prior cache
+        # contributes no idempotency baseline and is replaced from source logs.
+        return set(), set()
+
+
+@contextlib.contextmanager
+def _open_ledger(path: Path):
+    state = _prepare_ledger_directory(path)
+    with pinned_owner_only_directory(state):
+        _validate_ledger_artifact(path, parent_was_private=True)
+        if not path.exists():
+            raise SavingsLedgerSafetyError(f"savings ledger is not initialized: {path}")
+        uri = path.resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            if version != LEDGER_SCHEMA_VERSION:
+                raise SavingsLedgerSafetyError(
+                    f"savings ledger schema mismatch: expected {LEDGER_SCHEMA_VERSION}, found {version}"
+                )
+            yield conn
+        finally:
+            conn.close()
+            if not path_is_owner_only(path):
+                raise SavingsLedgerSafetyError(f"savings ledger lost owner-only protection: {path}")
+
+
+def _initialize_ledger(conn: sqlite3.Connection) -> None:
+    # MEMORY journaling ensures SQLite never writes a rollback/WAL copy of
+    # transcript-derived rows. The whole database is a fresh disposable
+    # projection and is atomically installed only after quick_check succeeds.
+    conn.execute("PRAGMA journal_mode=MEMORY")
+    conn.execute("PRAGMA synchronous=FULL")
+    conn.execute("PRAGMA temp_store=MEMORY")
     conn.executescript(
         """
-        CREATE TABLE IF NOT EXISTS episode_events (
+        CREATE TABLE episode_events (
             event_id TEXT PRIMARY KEY,
             episode_id TEXT NOT NULL,
             event_type TEXT NOT NULL,
@@ -207,17 +1267,14 @@ def _open_ledger(path: Path) -> sqlite3.Connection:
             hook_version INTEGER,
             payload_json TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_episode_events_episode
-            ON episode_events(episode_id, ts);
-        CREATE INDEX IF NOT EXISTS idx_episode_events_type
-            ON episode_events(event_type, ts);
+        CREATE INDEX idx_episode_events_episode ON episode_events(episode_id, ts);
+        CREATE INDEX idx_episode_events_type ON episode_events(event_type, ts);
 
-        CREATE TABLE IF NOT EXISTS compile_records (
+        CREATE TABLE compile_records (
             record_id TEXT PRIMARY KEY,
             episode_id TEXT NOT NULL DEFAULT '',
             ts TEXT NOT NULL,
-            task_hash TEXT NOT NULL DEFAULT '',
-            task_prefix TEXT NOT NULL DEFAULT '',
+            task_fingerprint TEXT NOT NULL DEFAULT '',
             procedure TEXT NOT NULL DEFAULT '',
             classifier_conf REAL,
             art_label TEXT NOT NULL DEFAULT '',
@@ -225,36 +1282,46 @@ def _open_ledger(path: Path) -> sqlite3.Connection:
             compile_ms REAL,
             injection_advice TEXT NOT NULL DEFAULT '',
             cache_hit INTEGER NOT NULL DEFAULT 0,
-            agent_mode TEXT NOT NULL DEFAULT 'unknown',
-            payload_json TEXT NOT NULL
+            agent_mode TEXT NOT NULL DEFAULT 'unknown'
         );
-        CREATE INDEX IF NOT EXISTS idx_compile_records_episode
-            ON compile_records(episode_id, ts);
-        CREATE INDEX IF NOT EXISTS idx_compile_records_task
-            ON compile_records(task_hash, ts);
+        CREATE INDEX idx_compile_records_episode ON compile_records(episode_id, ts);
+        CREATE INDEX idx_compile_records_task ON compile_records(task_fingerprint, ts);
 
-        CREATE TABLE IF NOT EXISTS ledger_meta (
+        CREATE TABLE ledger_meta (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
         """
     )
     conn.execute(f"PRAGMA user_version={LEDGER_SCHEMA_VERSION}")
-    return conn
 
 
-def _ingest_events(conn: sqlite3.Connection, rows: Iterable[dict[str, Any]]) -> tuple[int, int]:
+def _ingest_events(
+    conn: sqlite3.Connection,
+    rows: Iterable[dict[str, Any]],
+) -> tuple[int, int, set[str]]:
     inserted = 0
     rejected = 0
+    seen_event_ids: set[str] = set()
     for row in rows:
         episode_id = str(row.get("episode_id") or "").strip()
-        event_type = str(row.get("event_type") or "").strip()
-        ts = str(row.get("ts") or "").strip()
-        if not episode_id or not event_type or _parse_ts(ts) is None:
+        event_type = _closed_value(row.get("event_type"), _EVENT_TYPES)
+        parsed_ts = _parse_ts(row.get("ts"))
+        if not _EPISODE_ID_RE.fullmatch(episode_id) or event_type is None or parsed_ts is None:
             rejected += 1
             continue
-        event_id = str(row.get("event_id") or "").strip() or _canonical_hash("evt_", row)
-        payload = {key: value for key, value in row.items() if key != "__source_line"}
+        ts = parsed_ts.isoformat().replace("+00:00", "Z")
+        supplied_event_id = str(row.get("event_id") or "").strip().lower()
+        event_id = supplied_event_id if _EVENT_ID_RE.fullmatch(supplied_event_id) else _canonical_hash("evt_", row)
+        payload = _sanitize_episode_payload(row)
+        session_id = _session_join_id(row.get("session_id"))
+        outcome = _closed_value(row.get("outcome"), _EVENT_OUTCOMES) or "unknown"
+        health_state = _closed_value(row.get("health_state"), _HEALTH_STATES) or "unknown"
+        evidence_source = _closed_value(row.get("evidence_source"), _EVIDENCE_SOURCES) or "live_hook"
+        diff_sha256 = str(row.get("diff_sha256") or "").strip().lower()
+        if not _HEX_64_RE.fullmatch(diff_sha256):
+            diff_sha256 = ""
+        seen_event_ids.add(event_id)
         cur = conn.execute(
             """
             INSERT OR IGNORE INTO episode_events (
@@ -268,111 +1335,211 @@ def _ingest_events(conn: sqlite3.Connection, rows: Iterable[dict[str, Any]]) -> 
                 episode_id,
                 event_type,
                 ts,
-                str(row.get("session_id") or ""),
-                _int_or_none(row.get("turn_seq")),
-                int(bool(row.get("terminal"))),
-                str(row.get("outcome") or ""),
-                _int_or_none(row.get("duration_ms")),
-                _int_or_none(row.get("changed_files")),
-                str(row.get("diff_sha256") or ""),
-                str(row.get("health_state") or "unknown"),
-                str(row.get("evidence_source") or "live_hook"),
-                _int_or_none(row.get("hook_version")),
-                json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str),
+                session_id,
+                _bounded_event_int(row.get("turn_seq"), maximum=10**9),
+                int(row.get("terminal") is True),
+                outcome,
+                _bounded_event_int(row.get("duration_ms"), maximum=10 * 365 * 24 * 60 * 60 * 1000),
+                _bounded_event_int(row.get("changed_files"), maximum=10**7),
+                diff_sha256,
+                health_state,
+                evidence_source,
+                _bounded_event_int(row.get("hook_version"), maximum=10**6),
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
             ),
         )
         inserted += int(cur.rowcount > 0)
-    return inserted, rejected
+    return inserted, rejected, seen_event_ids
 
 
-def _ingest_compiles(conn: sqlite3.Connection, rows: Iterable[dict[str, Any]]) -> tuple[int, int]:
+def _ingest_compiles(
+    conn: sqlite3.Connection,
+    rows: Iterable[dict[str, Any]],
+) -> tuple[int, int, set[str]]:
     inserted = 0
     rejected = 0
+    seen_record_ids: set[str] = set()
     for row in rows:
-        ts = str(row.get("ts") or "").strip()
-        if _parse_ts(ts) is None:
+        safe = sanitize_compile_telemetry_row(row)
+        if safe is None:
             rejected += 1
             continue
         source_line = _int_or_none(row.get("__source_line"))
-        payload = {key: value for key, value in row.items() if key != "__source_line"}
-        record_id = _canonical_hash("cmp_", {"source_line": source_line, "payload": payload})
+        record_id = _canonical_hash("cmp_", {"source_line": source_line, "payload": safe})
+        seen_record_ids.add(record_id)
         cur = conn.execute(
             """
             INSERT OR IGNORE INTO compile_records (
-                record_id, episode_id, ts, task_hash, task_prefix, procedure,
+                record_id, episode_id, ts, task_fingerprint, procedure,
                 classifier_conf, art_label, envelope_bytes, compile_ms,
-                injection_advice, cache_hit, agent_mode, payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                injection_advice, cache_hit, agent_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_id,
-                str(row.get("episode_id") or ""),
-                ts,
-                str(row.get("task_hash") or ""),
-                str(row.get("task_prefix") or ""),
-                str(row.get("procedure") or ""),
-                _float_or_none(row.get("classifier_conf")),
-                str(row.get("art_label") or ""),
-                _int_or_none(row.get("envelope_bytes")),
-                _float_or_none(row.get("compile_ms")),
-                str(row.get("injection_advice") or ""),
-                int(row.get("cache_hit") is True),
-                str(row.get("agent_mode") or "unknown"),
-                json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str),
+                str(safe.get("episode_id") or ""),
+                str(safe["ts"]),
+                str(safe.get("task_fingerprint") or ""),
+                str(safe.get("procedure") or "unknown"),
+                _float_or_none(safe.get("classifier_conf")),
+                str(safe.get("art_label") or "unknown"),
+                _int_or_none(safe.get("envelope_bytes")),
+                _float_or_none(safe.get("compile_ms")),
+                str(safe.get("injection_advice") or "unknown"),
+                int(safe.get("cache_hit") is True),
+                str(safe.get("agent_mode") or "unknown"),
             ),
         )
         inserted += int(cur.rowcount > 0)
-    return inserted, rejected
+    return inserted, rejected, seen_record_ids
 
 
 def _int_or_none(value: Any) -> int | None:
     if isinstance(value, bool):
         return int(value)
     try:
-        return int(value)
-    except (TypeError, ValueError):
+        number = int(value)
+    except (OverflowError, TypeError, ValueError):
         return None
+    return number if abs(number) <= 10**12 else None
 
 
 def _float_or_none(value: Any) -> float | None:
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
         return None
+    return number if math.isfinite(number) else None
 
 
 def materialize_ledger(root: str | Path) -> dict[str, Any]:
     root_path = Path(root).resolve()
     roam_dir = root_path / ".roam"
-    live_event_rows, invalid_live_events = _read_jsonl(roam_dir / EVENT_LOG_NAME)
-    transcript_event_rows, invalid_transcript_events = _read_jsonl(roam_dir / TRANSCRIPT_EVENT_LOG_NAME)
-    for row in live_event_rows:
-        row.setdefault("evidence_source", "live_hook")
-    for row in transcript_event_rows:
-        row["evidence_source"] = "transcript_backfill"
-    event_rows = [*live_event_rows, *transcript_event_rows]
-    invalid_events = invalid_live_events + invalid_transcript_events
-    compile_rows, invalid_compiles = _read_jsonl(roam_dir / COMPILE_LOG_NAME)
-    conn = _open_ledger(roam_dir / LEDGER_DB_NAME)
-    try:
-        # transcript-episodes.jsonl is a replaceable derived snapshot, unlike
-        # the append-only live hook stream. Reconcile it exactly on every run.
-        conn.execute("DELETE FROM episode_events WHERE evidence_source='transcript_backfill'")
-        event_inserted, event_rejected = _ingest_events(conn, event_rows)
-        compile_inserted, compile_rejected = _ingest_compiles(conn, compile_rows)
-        conn.execute(
-            "INSERT OR REPLACE INTO ledger_meta(key, value) VALUES ('last_materialized_at', ?)",
-            (datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),),
+    database = roam_dir / LEDGER_DB_NAME
+    state = _prepare_ledger_directory(database)
+    with pinned_owner_only_directory(state), _exclusive_ledger_materialization(database):
+        orphan_temps_removed, orphan_temps_retained = _cleanup_orphaned_ledger_temps(database)
+        live_event_rows, invalid_live_events = _read_jsonl(
+            roam_dir / EVENT_LOG_NAME,
+            label="live episode log",
+            max_bytes=MAX_EVENT_LOG_BYTES,
         )
-        conn.commit()
-        totals = {
-            "event_records": conn.execute("SELECT COUNT(*) FROM episode_events").fetchone()[0],
-            "compile_records": conn.execute("SELECT COUNT(*) FROM compile_records").fetchone()[0],
-        }
-    finally:
-        conn.close()
+        transcript_event_rows, invalid_transcript_events = _read_jsonl(
+            roam_dir / TRANSCRIPT_EVENT_LOG_NAME,
+            label="transcript episode snapshot",
+            max_bytes=MAX_TRANSCRIPT_EVENT_LOG_BYTES,
+        )
+        compile_rows, invalid_compiles = _read_jsonl(
+            roam_dir / COMPILE_LOG_NAME,
+            label="compile telemetry log",
+            max_bytes=MAX_COMPILE_LOG_BYTES,
+        )
+        for row in live_event_rows:
+            row.setdefault("evidence_source", "live_hook")
+        for row in transcript_event_rows:
+            row["evidence_source"] = "transcript_backfill"
+        event_rows = [*live_event_rows, *transcript_event_rows]
+        invalid_events = invalid_live_events + invalid_transcript_events
+        # Stale sidecars from the former in-place ledger can contain historical
+        # rows. A pathname unlink cannot be made identity-conditional on every
+        # supported platform, so fail closed instead of deleting a raced
+        # replacement. The new projection never creates these sidecars.
+        for suffix in ("-journal", "-wal", "-shm"):
+            sidecar = Path(f"{database}{suffix}")
+            if os.path.lexists(sidecar):
+                raise SavingsLedgerSafetyError(f"stale savings ledger sidecar requires explicit removal: {sidecar}")
+
+        descriptor, temporary = _new_ledger_temp(database)
+        conn: sqlite3.Connection | None = None
+        replaced = False
+        source_generation = None
+        prior_event_ids: set[str] = set()
+        prior_compile_ids: set[str] = set()
+        try:
+            if not ensure_owner_only_file_descriptor(descriptor, temporary):
+                raise SavingsLedgerSafetyError(f"savings ledger tempfile was not private at creation: {temporary}")
+            conn = sqlite3.connect(temporary)
+            conn.row_factory = sqlite3.Row
+            _initialize_ledger(conn)
+            event_written, event_rejected, current_event_ids = _ingest_events(conn, event_rows)
+            compile_written, compile_rejected, current_compile_ids = _ingest_compiles(conn, compile_rows)
+            conn.execute(
+                "INSERT INTO ledger_meta(key, value) VALUES ('last_materialized_at', ?)",
+                (datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),),
+            )
+            conn.commit()
+            integrity = str(conn.execute("PRAGMA quick_check").fetchone()[0])
+            if integrity != "ok":
+                raise SavingsLedgerSafetyError(f"rebuilt savings ledger failed quick_check: {integrity}")
+            totals = {
+                "event_records": event_written,
+                "compile_records": compile_written,
+            }
+            conn.close()
+            conn = None
+            os.fsync(descriptor)
+            if os.fstat(descriptor).st_size > MAX_LEDGER_DB_BYTES:
+                raise SavingsLedgerSafetyError(f"rebuilt savings ledger exceeds the {MAX_LEDGER_DB_BYTES}-byte limit")
+            if not ensure_owner_only_file_descriptor(descriptor, temporary):
+                raise SavingsLedgerSafetyError(f"savings ledger tempfile changed: {temporary}")
+            source_generation = capture_file_generation(descriptor, max_bytes=MAX_LEDGER_DB_BYTES)
+            os.close(descriptor)
+            descriptor = -1
+
+            def capture_prior_generation() -> None:
+                nonlocal prior_event_ids, prior_compile_ids
+                prior_event_ids, prior_compile_ids = _prior_ledger_ids(
+                    database,
+                    current_event_ids,
+                    current_compile_ids,
+                )
+                _validate_ledger_artifact(database, parent_was_private=True)
+
+            conditional_install_file(
+                temporary,
+                database,
+                source_generation=source_generation,
+                before_install=capture_prior_generation,
+            )
+            replaced = True
+            open_flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
+            open_flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(database, open_flags)
+            if file_descriptor_identity(descriptor) != source_generation.identity or not file_descriptor_is_owner_only(
+                descriptor, database
+            ):
+                raise SavingsLedgerSafetyError(f"installed savings ledger changed: {database}")
+            os.fsync(descriptor)
+            if os.name != "nt":
+                directory_fd = os.open(state, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            if capture_file_generation(
+                descriptor, max_bytes=MAX_LEDGER_DB_BYTES
+            ) != source_generation or not file_descriptor_is_owner_only(descriptor, database):
+                raise SavingsLedgerSafetyError(f"installed savings ledger changed after durability sync: {database}")
+        except BaseException:
+            if conn is not None:
+                conn.close()
+            # Before installation, remove only the exact Windows tempfile
+            # identity; POSIX retains it because there is no conditional
+            # unlink-by-inode primitive. After installation, a later fsync or
+            # validation failure must never delete the valid current ledger.
+            if not replaced:
+                if descriptor >= 0:
+                    _unlink_if_same_file(temporary, descriptor)
+                elif source_generation is not None:
+                    delete_file_if_matches_identity(temporary, source_generation.identity)
+            raise
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        event_inserted = len(current_event_ids - prior_event_ids)
+        compile_inserted = len(current_compile_ids - prior_compile_ids)
     return {
-        "database": str(roam_dir / LEDGER_DB_NAME),
+        "database": str(database),
         "event_rows_read": len(event_rows),
         "live_event_rows_read": len(live_event_rows),
         "transcript_event_rows_read": len(transcript_event_rows),
@@ -381,6 +1548,9 @@ def materialize_ledger(root: str | Path) -> dict[str, Any]:
         "compile_rows_inserted": compile_inserted,
         "invalid_event_rows": invalid_events + event_rejected,
         "invalid_compile_rows": invalid_compiles + compile_rejected,
+        "orphan_temps_removed": orphan_temps_removed,
+        "orphan_temps_retained": orphan_temps_retained,
+        "ledger_db_byte_limit": MAX_LEDGER_DB_BYTES,
         **totals,
     }
 
@@ -452,7 +1622,10 @@ def _episode_health_state(
 
 def _payload(row: dict[str, Any]) -> dict[str, Any]:
     try:
-        value = json.loads(row.get("payload_json") or "{}")
+        value = loads_bounded(
+            row.get("payload_json") or "{}",
+            object_pairs_hook=strict_json_object_pairs,
+        )
     except (TypeError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
@@ -566,8 +1739,7 @@ def _episode_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 "cache_creation_tokens": (_int_or_none(terminal_payload.get("cache_creation_tokens")) or 0),
                 "reasoning_output_tokens": (_int_or_none(terminal_payload.get("reasoning_output_tokens")) or 0),
                 "correction_after": bool(terminal_payload.get("correction_after")),
-                "task_hash": str((compile_row or {}).get("task_hash") or ""),
-                "task_prefix": str((compile_row or {}).get("task_prefix") or ""),
+                "task_fingerprint": str((compile_row or {}).get("task_fingerprint") or ""),
                 "procedure": str((compile_row or {}).get("procedure") or ""),
                 "art_label": str((compile_row or {}).get("art_label") or ""),
                 "classifier_conf": (compile_row or {}).get("classifier_conf"),
@@ -742,10 +1914,10 @@ def _intervention_evidence(conn: sqlite3.Connection) -> dict[str, Any]:
 def _repeat_candidates(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for episode in episodes:
-        if episode["task_hash"] and episode["terminal"]:
-            grouped[episode["task_hash"]].append(episode)
+        if episode["task_fingerprint"] and episode["terminal"]:
+            grouped[episode["task_fingerprint"]].append(episode)
     candidates: list[dict[str, Any]] = []
-    for task_hash, rows in grouped.items():
+    for task_fingerprint, rows in grouped.items():
         if len(rows) < 3:
             continue
         outcomes = Counter(row["outcome"] or "unknown" for row in rows)
@@ -757,8 +1929,7 @@ def _repeat_candidates(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         health_known = sum(row["health_state"] in VALIDATED_HEALTH_STATES for row in rows)
         candidates.append(
             {
-                "task_hash": task_hash,
-                "task_prefix": rows[-1]["task_prefix"],
+                "task_fingerprint": task_fingerprint,
                 "procedure": rows[-1]["procedure"],
                 "episodes": len(rows),
                 "outcomes": dict(outcomes.most_common()),
@@ -769,7 +1940,13 @@ def _repeat_candidates(episodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 ),
             }
         )
-    candidates.sort(key=lambda row: (-row["observed_wall_ms"], -row["episodes"], row["task_hash"]))
+    candidates.sort(
+        key=lambda row: (
+            -row["observed_wall_ms"],
+            -row["episodes"],
+            row["task_fingerprint"],
+        )
+    )
     return candidates[:20]
 
 
@@ -989,8 +2166,7 @@ def _historical_candidates(episodes: list[dict[str, Any]]) -> list[dict[str, Any
 def analyze_ledger(root: str | Path) -> dict[str, Any]:
     materialization = materialize_ledger(root)
     db_path = Path(materialization["database"])
-    conn = _open_ledger(db_path)
-    try:
+    with _open_ledger(db_path) as conn:
         episodes = _episode_rows(conn)
         event_counts = dict(
             conn.execute(
@@ -1005,17 +2181,31 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
         ).fetchone()
         first_start = first_start_row[0] if first_start_row else None
         compile_window = []
-        if first_start:
+        first_start_time = _parse_ts(first_start)
+        if first_start_time is not None:
+            # Compile telemetry intentionally coarsens timestamps to the hour.
+            # Comparing those buckets with an exact prompt timestamp would
+            # exclude every compile from the overlapping hour and could make
+            # identity coverage look better than it is. Include the complete
+            # overlapping bucket; any pre-prompt rows in that bucket make the
+            # gate conservatively harder to satisfy, never easier.
+            compile_window_start = (
+                first_start_time.replace(
+                    minute=0,
+                    second=0,
+                    microsecond=0,
+                )
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
             compile_window = [
                 dict(row)
                 for row in conn.execute(
-                    "SELECT episode_id, agent_mode FROM compile_records WHERE ts >= ?",
-                    (first_start,),
+                    "SELECT episode_id, agent_mode, ts FROM compile_records WHERE ts >= ?",
+                    (compile_window_start,),
                 )
             ]
         intervention_evidence = _intervention_evidence(conn)
-    finally:
-        conn.close()
 
     canaries = _known_answer_canaries()
     prospective = [episode for episode in episodes if episode["evidence_source"] == "live_hook"]
@@ -1040,13 +2230,22 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
         for episode in eligible
         if isinstance(episode.get("hook_version"), int) and episode["hook_version"] >= MIN_LIVE_HOOK_VERSION
     ]
+    repeat_expected = [episode for episode in compile_expected if episode["terminal"] and episode["compile_joined"]]
+    repeat_identified = [episode for episode in repeat_expected if episode.get("task_fingerprint")]
     production_compiles = [
         row
         for row in compile_window
         if (row.get("agent_mode") or "unknown")
         not in {"bench", "corpus", "trace", "envelope_diff", "compile_cache_build", "test"}
     ]
-    identified_compiles = [row for row in production_compiles if row.get("episode_id")]
+    identified_compiles = [
+        row
+        for row in production_compiles
+        if row.get("episode_id")
+        and first_start_time is not None
+        and (row_time := _parse_ts(row.get("ts"))) is not None
+        and row_time > first_start_time
+    ]
 
     coverage = {
         "prompt_starts": len(episodes),
@@ -1060,11 +2259,14 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
         "health_context_episodes": len(health_known),
         "health_expected_episodes": len(health_expected),
         "current_hook_episodes": len(current_hook),
+        "repeat_identity_episodes": len(repeat_identified),
+        "repeat_expected_episodes": len(repeat_expected),
         "terminal_coverage_pct": _pct(len(terminal), len(eligible)),
         "episode_join_coverage_pct": _pct(len(fully_joined), len(eligible)),
         "health_context_coverage_pct": _pct(len(health_known), len(health_expected)),
         "hook_version_coverage_pct": _pct(len(current_hook), len(eligible)),
         "compile_identity_coverage_pct": _pct(len(identified_compiles), len(production_compiles)),
+        "repeat_identity_coverage_pct": _pct(len(repeat_identified), len(repeat_expected)),
         **SAVINGS_COVERAGE_DEFINITIONS,
     }
 
@@ -1082,6 +2284,8 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
         measurement_admissible
         and bool(health_expected)
         and (coverage["health_context_coverage_pct"] or 0) >= MIN_COVERAGE_PCT
+        and bool(repeat_expected)
+        and (coverage["repeat_identity_coverage_pct"] or 0) >= MIN_COVERAGE_PCT
     )
 
     if not episodes:
@@ -1098,10 +2302,20 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
             )
     elif not policy_admissible:
         state = "measurement_ready"
-        verdict = "Episode joins are measurement-ready; routing savings remain gated on execution-health context"
+        if (coverage["repeat_identity_coverage_pct"] or 0) < MIN_COVERAGE_PCT:
+            verdict = "Episode joins are measurement-ready; routing savings remain gated on keyed repeat identity"
+        else:
+            verdict = "Episode joins are measurement-ready; routing savings remain gated on execution-health context"
     else:
         state = "policy_ready"
         verdict = "Episode ledger is admissible for outcome-conditioned savings experiments"
+
+    cleanup_degraded = materialization["orphan_temps_retained"] > 0
+    if cleanup_degraded:
+        verdict += (
+            f"; {materialization['orphan_temps_retained']} private orphan tempfiles retained "
+            "because identity-bound deletion is unavailable"
+        )
 
     candidates = _repeat_candidates(eligible) if measurement_admissible else []
     historical_candidates = _historical_candidates(historical)
@@ -1110,7 +2324,7 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
         "summary": {
             "verdict": verdict,
             "state": state,
-            "partial_success": state != "policy_ready",
+            "partial_success": state != "policy_ready" or cleanup_degraded,
             "measurement_admissible": measurement_admissible,
             "policy_admissible": policy_admissible,
             "integrity_clean": integrity_clean,
@@ -1142,7 +2356,10 @@ def _aggregate_nonnegative_int(value: Any) -> int:
 def _aggregate_percentage(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        return None
     if not math.isfinite(number) or number < 0.0 or number > 100.0:
         return None
     return number

@@ -13,6 +13,7 @@ from pathlib import Path
 import click.testing as _ctest
 
 from roam.commands.cmd_compile_stats import compile_stats
+from roam.security.owner_only import ensure_owner_only_path
 
 
 def _write_jsonl(tmp_path: Path, rows: list[dict]) -> Path:
@@ -23,6 +24,8 @@ def _write_jsonl(tmp_path: Path, rows: list[dict]) -> Path:
     with log.open("w") as fh:
         for r in rows:
             fh.write(json.dumps(r) + "\n")
+    assert ensure_owner_only_path(log_dir)
+    assert ensure_owner_only_path(log)
     return log
 
 
