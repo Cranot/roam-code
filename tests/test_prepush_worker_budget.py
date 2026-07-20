@@ -95,6 +95,69 @@ def test_pytest_retains_only_one_failed_temp_tree() -> None:
     assert 'tmp_path_retention_policy = "failed"' in config
 
 
+def test_gate_subprocess_env_drops_outer_repository_control_vars(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fixture Git commands cannot inherit the hook worktree's index path."""
+
+    gate = _load_gate_module()
+    poisoned = {
+        "GIT_INDEX_FILE": str(tmp_path / "outer-index"),
+        "GIT_DIR": str(tmp_path / "outer-git-dir"),
+        "GIT_WORK_TREE": str(tmp_path / "outer-work-tree"),
+        "GIT_COMMON_DIR": str(tmp_path / "outer-common-dir"),
+    }
+    for name, value in poisoned.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "fixture-author")
+
+    env = gate.GateRunner(root=repo_root())._env()
+
+    assert all(name not in env for name in poisoned)
+    assert env["GIT_AUTHOR_NAME"] == "fixture-author"
+
+
+def test_sanitized_gate_env_keeps_foreign_git_add_out_of_outer_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reproduce the hook/pytest boundary with two isolated repositories."""
+
+    outer = tmp_path / "outer"
+    foreign = tmp_path / "foreign"
+    outer.mkdir()
+    foreign.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=outer, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=foreign, check=True)
+    (outer / "outer.txt").write_text("outer\n", encoding="utf-8")
+    (foreign / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "add", "outer.txt"], cwd=outer, check=True)
+    outer_index = outer / ".git" / "index"
+    before = outer_index.read_bytes()
+    monkeypatch.setenv("GIT_INDEX_FILE", str(outer_index))
+    monkeypatch.setenv("GIT_DIR", str(outer / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(outer))
+
+    env = _load_gate_module().GateRunner(root=repo_root())._env()
+    subprocess.run(["git", "add", "fixture.txt"], cwd=foreign, env=env, check=True)
+
+    assert outer_index.read_bytes() == before
+    listed = subprocess.run(["git", "ls-files"], cwd=foreign, env=env, check=True, capture_output=True, text=True)
+    assert listed.stdout.splitlines() == ["fixture.txt"]
+
+
+def test_shell_hook_clears_git_local_env_before_running_pytest() -> None:
+    """The hook itself must sanitize Git's complete local-env vocabulary."""
+
+    hook = (repo_root() / ".githooks" / "pre-push").read_text(encoding="utf-8")
+    resolve_pos = hook.index("git rev-parse --show-toplevel")
+    enumerate_pos = hook.index("git rev-parse --local-env-vars")
+    unset_pos = hook.index('unset "$var"')
+    gate_pos = hook.index('exec $PY "$REPO_ROOT/scripts/prepush_check.py" --fast')
+
+    assert resolve_pos < enumerate_pos < unset_pos < gate_pos
+    assert 'cd "$REPO_ROOT"' in hook[unset_pos:gate_pos]
+
+
 def test_help_renders_on_legacy_windows_code_page() -> None:
     """The release gate must remain operable on a non-UTF-8 console."""
     path = repo_root() / "scripts" / "prepush_check.py"

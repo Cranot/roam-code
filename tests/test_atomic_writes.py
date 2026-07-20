@@ -235,7 +235,10 @@ def test_conditional_install_file_rejects_same_size_rewrite_with_restored_mtime(
     source.write_bytes(b"EVIL")
     os.utime(source, ns=(before.st_atime_ns, generation.mtime_ns))
 
-    with pytest.raises(FileExistsError, match="tempfile content changed"):
+    # POSIX ctime exposes the rewrite during the source-snapshot check;
+    # Windows can reach the later descriptor/SHA proof after mtime is restored.
+    # Both stages must reject the producer generation before publication.
+    with pytest.raises(FileExistsError, match=r"(?:source|tempfile content) changed"):
         conditional_install_file(source, destination, source_generation=generation)
 
     assert destination.read_bytes() == b"prior-generation"

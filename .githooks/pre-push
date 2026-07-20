@@ -40,6 +40,20 @@ set -e
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
+# Git exports repository-local control variables to hooks. They are valid
+# while this hook operates on REPO_ROOT, but the FAST gate runs pytest suites
+# that create and mutate their own temporary repositories. In a linked
+# worktree, inheriting GIT_INDEX_FILE makes a fixture's `git add` replace the
+# real worktree index. Resolve the root first, then clear every variable Git
+# itself classifies as repository-local and anchor subsequent Git commands by
+# cwd. Author/committer identity and other non-local Git settings survive.
+GIT_LOCAL_ENV_VARS="$(git rev-parse --local-env-vars 2>/dev/null || true)"
+for var in $GIT_LOCAL_ENV_VARS; do
+    unset "$var"
+done
+unset GIT_LOCAL_ENV_VARS
+cd "$REPO_ROOT"
+
 PY="${PYTHON:-python}"
 if ! command -v "$PY" >/dev/null 2>&1; then
     if command -v py >/dev/null 2>&1; then
