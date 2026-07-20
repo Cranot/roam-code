@@ -191,6 +191,41 @@ class GateRunner:
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
+        # Git invokes hooks with repository-local control variables such as
+        # GIT_INDEX_FILE. Pytest gates create foreign repositories and run
+        # `git add` inside them; forwarding an outer linked-worktree index
+        # redirects those writes into the real repository. Ask Git for its
+        # authoritative local-variable vocabulary and remove it at the
+        # subprocess boundary. Keep this defense even though the shell hook
+        # sanitizes too: prepush_check.py is also invoked directly.
+        local_vars = {
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_CONFIG",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_DIR",
+            "GIT_GRAFT_FILE",
+            "GIT_IMPLICIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_REPLACE_REF_BASE",
+            "GIT_SHALLOW_FILE",
+            "GIT_WORK_TREE",
+        }
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(self.root), "rev-parse", "--local-env-vars"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                local_vars.update(name.strip() for name in proc.stdout.splitlines() if name.strip())
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        for name in local_vars:
+            env.pop(name, None)
         src = str(self.root / "src")
         current = env.get("PYTHONPATH")
         env["PYTHONPATH"] = src if not current else f"{src}{os.pathsep}{current}"
