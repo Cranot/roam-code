@@ -32,6 +32,17 @@ def test_git_history_is_decoded_as_utf8_not_host_locale(monkeypatch):
     }
 
 
+def test_legacy_surgery_is_never_invented_for_v11_or_newer():
+    body = '#!/usr/bin/env python3\nsubprocess.run(["roam", "verify"])\n'
+
+    assert [name for name, _body in seed_hook_body_shas.shipped_variants(body, "10")] == [
+        "pristine",
+        "surgered",
+    ]
+    assert list(seed_hook_body_shas.shipped_variants(body, "11")) == [("pristine", body)]
+    assert list(seed_hook_body_shas.shipped_variants(body, "13")) == [("pristine", body)]
+
+
 def test_every_body_in_current_git_history_is_registered(capsys):
     from roam.commands.cmd_hooks import (
         _CLAUDE_STOP_HOOK_SCRIPT,

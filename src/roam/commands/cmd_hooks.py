@@ -2526,7 +2526,6 @@ _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
         "25e552061e4737bac27cbd547cade4189c84f207b2f466d410e1d036a1b1f1ca",  # ups v12 pristine (2026-07-19 cross-volume evidence)
         "4df987f04f024d36867c608ce971bf4a6c18b36b36a1a11babf9f569eb36e9e3",  # ups v12 pristine (2026-07-19 evidence hardening)
         "d6521a89e559fb875e2d949f2a13e9710aa378edd505b688362c07137bb1e0d1",  # stop v12 pristine (2026-07-19 cross-volume evidence)
-        "2ef11d5bccf7a80699bae5b2686f36d27f1d9cb5e30cefc21db493f920833143",  # stop v12 surgered (2026-07-20 compatibility variant)
         "d91b18607d6175b4aa90023172f52663a6c8f3d16a714f78615a559d2913e7ef",  # ups v2 pristine (2026-07-16 rewritten history)
         "f83329cc80eed97f62b388c2a5ee8c8e81118475dc04b04eca6cc2fac28fac1b",  # stop pre-stamp pristine (2026-06-10 rewritten history)
         "fa249e6a5bd660cd9d6592bab09321552d7c8bc4e01206ffec724ee0d8e85904",  # stop pre-stamp pristine (2026-06-11 rewritten history)
