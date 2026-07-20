@@ -13,6 +13,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+from roam.atomic_io import atomic_write_text
 from roam.db.connection import batched_in, find_project_root, get_db_path, open_db
 from roam.index.discovery import discover_files
 
@@ -1296,8 +1297,16 @@ class Indexer:
         lock_path = self.root / ".roam" / "index.lock"
         if not _claim_index_lock(lock_path):
             return False
+        state_path = self.root / ".roam" / "index.state"
         try:
+            # Publish the lifecycle marker before the first database mutation.
+            # A killed process leaves ``in_progress`` behind, allowing every
+            # consumer-side ensure_index() call to distinguish a resumable,
+            # partial SQLite file from a completed index. Atomic replacement
+            # prevents a torn marker from being mistaken for completion.
+            atomic_write_text(state_path, f"in_progress:{os.getpid()}\n")
             self._do_run(force, verbose=verbose, include_excluded=include_excluded, light=light)
+            atomic_write_text(state_path, "complete\n")
             return True
         except KeyboardInterrupt:
             # graceful Ctrl-C: drop the lock so the user can
