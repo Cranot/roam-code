@@ -882,6 +882,11 @@ def test_backfill_shares_discovery_budgets_across_sources(
     real_scandir = os.scandir
 
     def tracking_scandir(path: object) -> object:
+        # pytest 9 may clean temporary directories with a directory file
+        # descriptor while this process-wide monkeypatch is still active.
+        # Observe only the path-based discovery calls owned by this test.
+        if isinstance(path, int):
+            return real_scandir(path)
         scanned_roots.append(os.path.normcase(os.path.normpath(os.fsdecode(os.fspath(path)))))
         return real_scandir(path)
 
@@ -925,6 +930,8 @@ def test_backfill_elapsed_budget_starts_before_discovery_and_stops_later_sources
     real_scandir = os.scandir
 
     def expiring_scandir(path: object) -> object:
+        if isinstance(path, int):
+            return real_scandir(path)
         scanned_roots.append(os.path.normcase(os.path.normpath(os.fsdecode(os.fspath(path)))))
         iterator = real_scandir(path)
         clock.now = 2.0
