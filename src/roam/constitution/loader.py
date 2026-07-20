@@ -1330,7 +1330,7 @@ def _known_commands() -> set[str]:
     """Return the set of currently-registered roam command names.
 
     Lazy import inside the function: ``roam.cli`` is ~100ms to load
-    (LazyGroup with 241 commands) and most ``load_constitution`` callers
+    (LazyGroup with 281 commands) and most ``load_constitution`` callers
     never hit this code path. No cycle exists with ``roam.cli`` — W902 /
     W878 verified the prior "avoid import cycle" hedge was false; the
     laziness is purely a cold-start cost optimisation. (Pattern-2

@@ -3,15 +3,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from scripts.verify_uv_runtime import EXPECTED_UV_VERSION
 from tests._helpers.repo_root import repo_root
 
 ROOT = repo_root()
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 
 UV_ACTION_SHA = "11f9893b081a58869d3b5fccaea48c9e9e46f990"
-UV_VERSION = "0.11.29"
-EXAMPLE_ACTION_SHA = "0506aede419c5446dff8d3ac31dbd7b3c32ff23d"
-EXAMPLE_ROAM_VERSION = "13.9.0"
+UV_VERSION = EXPECTED_UV_VERSION
+UV_RUNTIME_GUARD = "python -I -S -B scripts/verify_uv_runtime.py"
+EXAMPLE_ACTION_SHA = "24f29f646748bc63adbdebc3b4440f6a72e599af"
+EXAMPLE_ROAM_VERSION = "13.10.0"
 
 EXPECTED_WORKFLOWS = {
     "architecture-guardian.yml",
@@ -76,7 +78,8 @@ def test_source_checkout_workflows_materialize_only_from_uv_lock() -> None:
         text = _text(name)
         assert text.count(setup_uv) == environment_count, name
         assert text.count(f'version: "{UV_VERSION}"') == environment_count, name
-        assert text.count(f'test "$(uv --version)" = "uv {UV_VERSION}"') == environment_count, name
+        assert text.count(UV_RUNTIME_GUARD) == environment_count, name
+        assert "$(uv --version)" not in text, name
         assert text.count("cache-dependency-glob: uv.lock") == environment_count, name
         assert text.count("uv sync --locked --no-default-groups") == environment_count, name
         assert text.count("uv pip check --python .venv/bin/python") == environment_count, name
@@ -87,7 +90,9 @@ def test_source_checkout_workflows_materialize_only_from_uv_lock() -> None:
         assert ".venv/bin/roam" in text, name
 
         bare_runtime_calls = [
-            line for line in _executable_lines(text) if re.match(r"^(?:python(?:\d+(?:\.\d+)?)?|roam)(?:\s|$)", line)
+            line
+            for line in _executable_lines(text)
+            if line != UV_RUNTIME_GUARD and re.match(r"^(?:python(?:\d+(?:\.\d+)?)?|roam)(?:\s|$)", line)
         ]
         assert not bare_runtime_calls, (name, bare_runtime_calls)
 

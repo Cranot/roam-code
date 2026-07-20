@@ -64,7 +64,7 @@ jobs:
 
       - name: Sync the exact runtime graph
         run: |
-          test "$(uv --version)" = "uv 0.11.29"
+          python -I -S -B scripts/verify_uv_runtime.py
           uv sync --locked --no-default-groups --python python
           uv pip check --python .venv/bin/python
 

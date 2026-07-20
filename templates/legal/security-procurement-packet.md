@@ -1,7 +1,7 @@
 # Security and procurement packet — Roam Code
 
-> **REVIEW BEFORE USE.** v2 draft, 2026-05-18 (engine `roam-code`
-> v13.2). The single bundle a vendor reviewer receives during a
+> **REVIEW BEFORE USE.** v2 draft, 2026-07-19 (engine `roam-code`
+> v13.10). The single bundle a vendor reviewer receives during a
 > procurement review of Roam Code's services. Pre-fills the questions a
 > typical security or procurement review will ask. Pair with the
 > [DPA](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md)
@@ -24,9 +24,9 @@
 This packet covers:
 
 - **Roam Code CLI** (live; Apache 2.0; 100% local — `pip install
-  roam-code`; 267 commands / 243 MCP tools, 16 in the default `core`
+  roam-code`; 281 commands / 244 MCP tools, 16 in the default `core`
   preset / 28 languages; evidence: `roam surface --json` generated on
-  2026-06-13).
+  2026-07-19).
 - **PR Replay** (live; one-shot structural-review engagement priced
   per [SOW §1](https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md#1-engagement)
   — Team / Deep tiers).

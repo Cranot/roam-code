@@ -626,7 +626,7 @@ def _windows_rename_descriptor(
     _windows_set_descriptor_name(descriptor, destination, replace=replace)
     try:
         published = capture_file_generation(descriptor, max_bytes=expected_temp.size)
-        if published != expected_temp:
+        if not _published_generation_matches(expected_temp, published):
             raise _atomic_conflict("atomic-write source changed during publication", destination)
     except BaseException as exc:
         quarantine = _windows_quarantine_published_descriptor(descriptor, destination)
@@ -825,6 +825,32 @@ def _generation_matches_snapshot(expected: FileGeneration, actual: _DestinationS
         and actual.mtime_ns == expected.mtime_ns
         and actual.ctime_ns == expected.ctime_ns
         and actual.nlink == expected.nlink
+    )
+
+
+def _published_generation_matches(expected: FileGeneration, actual: FileGeneration) -> bool:
+    """Match one Windows source generation after its handle-bound rename.
+
+    ``BY_HANDLE_FILE_INFORMATION.ftCreationTime`` is exposed as ``ctime_ns``
+    by this module. NTFS tunnelling may replace that creation timestamp when a
+    file is renamed onto a recently deleted pathname, even though the open file
+    object, bytes, write time, and link count did not change. Treating that
+    documented namespace side effect as a source mutation quarantines a valid
+    create-only publication.
+
+    The post-publication proof therefore binds every mutation-bearing field
+    (stable file identity, size, last-write time, link count, and SHA-256) but
+    deliberately excludes the Windows creation timestamp. The exclusive source
+    handle remains live across both captures, so pathname replacement cannot
+    substitute a different object between them.
+    """
+
+    return bool(
+        actual.identity == expected.identity
+        and actual.size == expected.size
+        and actual.mtime_ns == expected.mtime_ns
+        and actual.nlink == expected.nlink
+        and actual.sha256 == expected.sha256
     )
 
 

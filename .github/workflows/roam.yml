@@ -46,9 +46,9 @@ jobs:
       # This copied downstream template cannot consume this repository's
       # uv.lock. Pin both the action source and its PyPI package version;
       # active source-checkout workflows use uv.lock directly.
-      - uses: Cranot/roam-code@0506aede419c5446dff8d3ac31dbd7b3c32ff23d # roam-code 13.9.0 source
+      - uses: Cranot/roam-code@24f29f646748bc63adbdebc3b4440f6a72e599af # roam-code 13.10.0 source
         with:
-          version: '13.9.0'
+          version: '13.10.0'
           commands: 'health pr-risk'
           sarif: 'true'
           sarif-commands: 'health'

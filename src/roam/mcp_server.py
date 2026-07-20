@@ -143,7 +143,7 @@ except Exception as exc:  # noqa: BLE001 — optional-feature import; degrades g
 # and remain part of the specialised presets (review / refactor /
 # debug / architecture) so power users keep their full surface area.
 # Authoritative count via `python -m roam.surface_counts` (mcp.core_tools).
-# Override: ROAM_MCP_PRESET=review|refactor|debug|architecture|full
+# Override: ROAM_MCP_PRESET=review|refactor|debug|architecture|compliance|compile-curated|full
 # Legacy: ROAM_MCP_LITE=0 maps to "full" preset.
 # ---------------------------------------------------------------------------
 
@@ -425,7 +425,8 @@ if FastMCP is not None:
         instructions=(
             "Codebase intelligence for AI coding agents. "
             "TIP: call `roam_expand_toolset` first to scope tools to your task "
-            "(core / review / refactor / debug / architecture / compliance / full) — "
+            "(core / review / refactor / debug / architecture / compliance / "
+            "compile-curated / full) — "
             "the default surface is intentionally narrow to keep the prompt tight. "
             "For multi-symbol verification use `roam_batch_get` instead of N "
             # W787: canonical MCP tool name is `roam_search_symbol` (bare `roam_search` is not registered)
@@ -19838,7 +19839,7 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
 
     \b
     environment:
-      ROAM_MCP_PRESET=core        # tool preset (core/review/refactor/debug/architecture/full)
+      ROAM_MCP_PRESET=core        # core/review/refactor/debug/architecture/compliance/compile-curated/full
       ROAM_MCP_LITE=0             # legacy: same as ROAM_MCP_PRESET=full
 
     \b

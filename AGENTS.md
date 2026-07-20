@@ -513,7 +513,7 @@ roam supports third-party `roam-plugin-*` packages — the substrate is in
 `src/roam/plugins/` and the reference example is at `dev/example-plugin/`.
 Framework-specific knowledge (nextjs, laravel, prisma, django, …) should ship
 as a plugin rather than landing in core. Plugin-registered commands do NOT count
-toward the "241 commands" headline (W319) — the figure pins core-tree commands
+toward the "281 commands" headline (W319) — the figure pins core-tree commands
 only; the plugin count surfaces separately in `roam plugins list`.
 
 **Entry-point pattern.** Plugins register via Python entry points; roam

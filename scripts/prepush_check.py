@@ -41,8 +41,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -144,6 +146,9 @@ FULL_PYTEST_GUARDS: tuple[str, ...] = (
 )
 
 _MAX_PYTEST_WORKERS = 4
+_GIB = 1024**3
+_MIN_RELEASE_TEMP_FREE_GIB = 4
+_MIN_RELEASE_TEMP_FREE_GIB_PER_WORKER = 2
 
 
 def _bounded_worker_count(value: str) -> int:
@@ -160,6 +165,13 @@ def _bounded_worker_count(value: str) -> int:
 def _default_worker_count() -> int:
     """Return a deterministic memory-safe local worker budget."""
     return min(max(os.cpu_count() or 1, 1), _MAX_PYTEST_WORKERS)
+
+
+def _release_temp_required_bytes(workers: int) -> int:
+    """Reserve enough fixture space for one bounded release-suite worker pool."""
+
+    gib = max(_MIN_RELEASE_TEMP_FREE_GIB, workers * _MIN_RELEASE_TEMP_FREE_GIB_PER_WORKER)
+    return gib * _GIB
 
 
 @dataclass
@@ -197,6 +209,40 @@ class GateRunner:
         return result
 
     # -- individual gate groups -------------------------------------------
+
+    def run_release_temp_capacity_gate(self) -> GateResult:
+        """Fail before expensive tests when their temp volume lacks headroom."""
+
+        name = "release temp-volume capacity"
+        print(f"[prepush] {name} ...", flush=True)
+        start = time.perf_counter()
+        required = _release_temp_required_bytes(self.pytest_workers)
+        passed = False
+        detail = ""
+        try:
+            temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
+            if not temp_root.is_dir():
+                raise NotADirectoryError(temp_root)
+            free = shutil.disk_usage(temp_root).free
+            passed = free >= required
+            detail = f"temp_root={temp_root} free={free / _GIB:.2f} GiB required={required / _GIB:.2f} GiB"
+        except OSError as exc:
+            detail = f"temp root unavailable: {exc}"
+        elapsed = time.perf_counter() - start
+        result = GateResult(
+            name=name,
+            passed=passed,
+            seconds=elapsed,
+            fix_hint=(
+                "remove abandoned pytest fixture trees or point TEMP/TMP at a volume with enough free space"
+                if not passed
+                else ""
+            ),
+            detail=detail,
+        )
+        print(f"[prepush] {name}: {'PASS' if passed else 'FAIL'} ({elapsed:.1f}s; {detail})", flush=True)
+        self.results.append(result)
+        return result
 
     def _run_ruff(self) -> None:
         self._run(
@@ -323,6 +369,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[prepush] pytest workers: {args.workers} (loadfile distribution)")
 
     runner = GateRunner(root=root, pytest_workers=args.workers)
+    if release and not runner.run_release_temp_capacity_gate().passed:
+        _print_summary(runner.results)
+        return 1
     runner._run_leak_gate()
     runner._run_ruff()
     runner._run_count_scripts()
