@@ -416,30 +416,14 @@ class TestPrReplayQ17ProducerCoverageDisclosure:
             "affected axis."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-YYYY-C: the synthetic pr_bundle_envelope built at "
-            "cmd_pr_replay.py:1624-1893 mints fields for Q1 (actor at "
-            "1656-1662), Q3 (context_files at 1829-1830), Q5 (risk_level "
-            "at 1626-1627), and Q8 (approvals/redactions at 1879-1889). "
-            "It does NOT mint a parallel ``tests_required`` / ``tests_run`` "
-            "field for Q7 — even though the collector reads those on the "
-            "synth envelope (see change_evidence.py:929 ``tests_run OR "
-            "artifacts -> complete``). The Q7 harvester _gather_test_impact_"
-            "envelopes (line 797) flows to ``findings_envelopes`` only, "
-            "NOT to the tests_run / tests_required channels."
-        ),
-    )
-    def test_synth_envelope_mints_q7_tests_channels(self, tmp_path):
+    def test_synth_envelope_emits_q7_partial_signal(self, tmp_path):
         """The synthetic pr_bundle_envelope must populate tests_required /
         tests_run from the test-impact harvester (or explicitly disclose
-        the absence). Today these channels are never set.
+        the absence). A report-context manifest is an honest partial signal:
+        it proves the replay producer ran while making no claim that tests ran.
 
-        Expected on fix: the synth envelope at cmd_pr_replay.py:1624
-        gains a tests_run / tests_required block lifted from the
-        _gather_test_impact_envelopes output, OR a producer_not_available
-        marker on the Q7 axis.
+        A future real test harvester can still lift Q7 from partial to complete
+        through tests_run or a verification-shaped artifact.
         """
         proj = _make_two_commit_project(tmp_path)
         evidence_path = proj / "ev.json"
@@ -470,6 +454,12 @@ class TestPrReplayQ17ProducerCoverageDisclosure:
             f"tests_run={tests_run!r}, tests_required={tests_required!r}, "
             f"artifacts={len(artifacts)}, redactions={list(packet.redactions or ())!r}."
         )
+        assert any(
+            artifact.kind == "manifest" and artifact.extra.get("producer") == "pr-replay"
+            for artifact in artifacts
+        )
+        assert packet.evidence_completeness()["Q7"] == "partial"
+        assert not tests_run
 
 
 # ---------------------------------------------------------------------------
