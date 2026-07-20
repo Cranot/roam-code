@@ -1226,7 +1226,6 @@ class TestHookBodyHeal:
             "25e552061e4737bac27cbd547cade4189c84f207b2f466d410e1d036a1b1f1ca",
             "4df987f04f024d36867c608ce971bf4a6c18b36b36a1a11babf9f569eb36e9e3",
             "d6521a89e559fb875e2d949f2a13e9710aa378edd505b688362c07137bb1e0d1",
-            "2ef11d5bccf7a80699bae5b2686f36d27f1d9cb5e30cefc21db493f920833143",
         } <= _KNOWN_HOOK_BODY_SHAS
 
     def test_heal_state_classification(self, monkeypatch):

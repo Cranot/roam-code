@@ -46,6 +46,16 @@ def surgered(script: str) -> str:
     )
 
 
+def shipped_variants(body: str, version: str):
+    """Yield variants that could actually have been deployed at ``version``."""
+    yield "pristine", body
+    legacy_surgery = version == "pre-stamp" or (version.isdigit() and int(version) < 11)
+    if legacy_surgery:
+        transformed = surgered(body)
+        if transformed != body:
+            yield "surgered", transformed
+
+
 def git(*args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(REPO), *args],
@@ -100,9 +110,7 @@ def main() -> int:
             continue
         ver = found.pop("_version", "pre-stamp")
         for kind, body in found.items():
-            for variant, text in (("pristine", body), ("surgered", surgered(body))):
-                if variant == "surgered" and text == body:
-                    continue  # surgery is a no-op on this body
+            for variant, text in shipped_variants(body, ver):
                 sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
                 if sha not in seen:
                     label = f"v{ver}" if ver != "pre-stamp" else "pre-stamp"
