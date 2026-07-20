@@ -79,7 +79,7 @@ jobs:
         env:
           EXPECTED_PYTHON: ${{ matrix.python-version }}
         run: |
-          test "$(uv --version)" = "uv 0.11.29"
+          python -I -S -B scripts/verify_uv_runtime.py
           uv sync --locked --no-default-groups --extra dev --python python
           .venv/bin/python - <<'PY'
           import os
@@ -125,7 +125,7 @@ jobs:
         env:
           EXPECTED_PYTHON: ${{ matrix.python-version }}
         run: |
-          test "$(uv --version)" = "uv 0.11.29"
+          python -I -S -B scripts/verify_uv_runtime.py
           uv sync --locked --no-default-groups --extra dev --group ci --group ci-fallback --no-install-project --python python
           .venv/bin/python - <<'PY'
           import importlib.metadata
@@ -183,7 +183,7 @@ jobs:
 
       - name: Sync only base and fallback-test dependencies
         run: |
-          test "$(uv --version)" = "uv 0.11.29"
+          python -I -S -B scripts/verify_uv_runtime.py
           uv sync --locked --no-default-groups --group ci-fallback --python python
           .venv/bin/python - <<'PY'
           import importlib.util
@@ -220,7 +220,7 @@ jobs:
 
       - name: Sync the exact lint graph
         run: |
-          test "$(uv --version)" = "uv 0.11.29"
+          python -I -S -B scripts/verify_uv_runtime.py
           uv sync --locked --no-default-groups --extra dev --python python
           uv pip check --python .venv/bin/python
 
@@ -263,7 +263,7 @@ jobs:
 
       - name: Sync the exact documentation graph
         run: |
-          test "$(uv --version)" = "uv 0.11.29"
+          python -I -S -B scripts/verify_uv_runtime.py
           uv sync --locked --no-default-groups --extra dev --group ci --python python
           uv pip check --python .venv/bin/python
 
@@ -321,7 +321,7 @@ jobs:
 
       - name: Sync the exact build and smoke-test graph
         run: |
-          test "$(uv --version)" = "uv 0.11.29"
+          python -I -S -B scripts/verify_uv_runtime.py
           uv sync --locked --no-default-groups --extra dev --group ci --python python
           uv pip check --python .venv/bin/python
 

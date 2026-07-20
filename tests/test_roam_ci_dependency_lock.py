@@ -7,6 +7,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 CI lane
     import tomli as tomllib
 
+from scripts.verify_uv_runtime import EXPECTED_UV_VERSION
 from tests._helpers.repo_root import repo_root
 
 ROOT = repo_root()
@@ -15,7 +16,8 @@ PYPROJECT = ROOT / "pyproject.toml"
 UV_LOCK = ROOT / "uv.lock"
 
 UV_ACTION_SHA = "11f9893b081a58869d3b5fccaea48c9e9e46f990"
-UV_VERSION = "0.11.29"
+UV_VERSION = EXPECTED_UV_VERSION
+UV_RUNTIME_GUARD = "python -I -S -B scripts/verify_uv_runtime.py"
 PIP_AUDIT_VERSION = "2.10.1"
 SUPPORTED_PYTHONS = {"3.10", "3.11", "3.12", "3.13"}
 
@@ -40,8 +42,10 @@ def test_every_remote_action_is_commit_pinned_and_uv_is_version_pinned() -> None
             continue
         assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", ref), ref
 
-    assert f"astral-sh/setup-uv@{UV_ACTION_SHA}" in text
-    assert f'version: "{UV_VERSION}"' in text
+    assert text.count(f"astral-sh/setup-uv@{UV_ACTION_SHA}") == 6
+    assert text.count(f'version: "{UV_VERSION}"') == 6
+    assert text.count(UV_RUNTIME_GUARD) == 6
+    assert "$(uv --version)" not in text
     assert "astral-sh/setup-uv@v" not in text
 
 
@@ -117,6 +121,10 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
     pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     lock = tomllib.loads(UV_LOCK.read_text(encoding="utf-8"))
 
+    assert pyproject["build-system"] == {
+        "requires": ["setuptools==83.0.0", "wheel==0.47.0"],
+        "build-backend": "setuptools.build_meta",
+    }
     assert pyproject["dependency-groups"]["ci"] == [
         f"pip-audit=={PIP_AUDIT_VERSION}",
         "pypdf==6.14.2",

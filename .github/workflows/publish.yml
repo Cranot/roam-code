@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to publish (for example v13.9.0)"
+        description: "Existing release tag to publish (for example v13.10.0)"
         required: true
         type: string
 

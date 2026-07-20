@@ -100,7 +100,7 @@ def mcp(transport, host, port, no_auto_index, list_tools, list_tools_json, compa
 
     \b
     environment:
-      ROAM_MCP_PRESET=core        # tool preset (core/review/refactor/debug/architecture/full)
+      ROAM_MCP_PRESET=core        # core/review/refactor/debug/architecture/compliance/compile-curated/full
       ROAM_MCP_LITE=0             # legacy: same as ROAM_MCP_PRESET=full
 
     \b

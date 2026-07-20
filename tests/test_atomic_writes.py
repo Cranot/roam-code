@@ -21,6 +21,7 @@ import json
 import os
 import sqlite3
 import stat
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,49 @@ def test_atomic_write_bytes_happy_path(tmp_path):
     target = tmp_path / "data.bin"
     atomic_write_bytes(target, b"\x00\x01\x02\xff")
     assert target.read_bytes() == b"\x00\x01\x02\xff"
+
+
+def test_published_generation_match_ignores_only_windows_creation_time():
+    """NTFS may tunnel creation time across a rename to a deleted name."""
+    expected = atomic_io.FileGeneration(
+        identity=(7, 11),
+        size=3,
+        mtime_ns=13,
+        ctime_ns=17,
+        nlink=1,
+        sha256="a" * 64,
+    )
+    tunneled = atomic_io.FileGeneration(
+        identity=expected.identity,
+        size=expected.size,
+        mtime_ns=expected.mtime_ns,
+        ctime_ns=19,
+        nlink=expected.nlink,
+        sha256=expected.sha256,
+    )
+
+    assert atomic_io._published_generation_matches(expected, tunneled)
+    mutations = (
+        replace(tunneled, identity=(7, 12)),
+        replace(tunneled, size=4),
+        replace(tunneled, mtime_ns=14),
+        replace(tunneled, nlink=2),
+        replace(tunneled, sha256="b" * 64),
+    )
+    for mutated in mutations:
+        assert not atomic_io._published_generation_matches(expected, mutated)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="NTFS deleted-name tunnelling contract")
+def test_windows_recreates_recently_deleted_name_without_false_quarantine(tmp_path):
+    target = tmp_path / "control.json"
+    atomic_write_bytes(target, b"old", durable=True)
+    target.unlink()
+
+    atomic_write_bytes(target, b"new", durable=True)
+
+    assert target.read_bytes() == b"new"
+    assert list(tmp_path.glob(".control.json.*.atomic-conflict")) == []
 
 
 def test_atomic_write_bytes_prepares_empty_temp_before_content(tmp_path):

@@ -2,7 +2,8 @@
 
 companion to ``roam doctor``. Reports:
 
-  * preset (core / review / refactor / debug / architecture / full)
+  * preset (core / review / refactor / debug / architecture / compliance /
+    compile-curated / full)
   * registered tool count + core tool count
   * backpressure limits (max_concurrent, in_flight, per-tool overrides)
   * MCP-level result cache size + hit-rate (if anything cached this session)
@@ -115,8 +116,8 @@ def mcp_status(ctx) -> None:
     # SEMANTICALLY CORRECT for "what's active under the current preset",
     # which is the whole point of ``roam mcp-status``. But surfacing only
     # the active number hides the ceiling — an operator on the ``core``
-    # preset sees "57 tools registered" with no signal that widening to
-    # ``full`` would unlock 227. Mirror the cmd_doctor:430 Option B pattern:
+    # preset sees only its active tool count with no signal that widening to
+    # ``full`` would unlock the shipped ceiling. Mirror the cmd_doctor:430 Option B pattern:
     # keep the live runtime numbers AND emit the AST-sourced ceiling
     # side-by-side so plugin-loading / preset-state drift is visible at a
     # glance. Additive only — existing ``tools_registered`` /

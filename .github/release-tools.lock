@@ -1,8 +1,8 @@
 # Hash lock for the CPython 3.12.13 / Ubuntu x86_64 release environment.
 # Generated with uv for x86_64-manylinux_2_34 from these roots:
 # build, click>=8.0, cyclonedx-bom, networkx>=3.0, pip,
-# pypi-attestations==0.0.29, setuptools>=77.0, tree-sitter>=0.23,
-# tree-sitter-language-pack==1.6.2, twine, wheel.
+# pypi-attestations==0.0.29, setuptools==83.0.0, tree-sitter>=0.23,
+# tree-sitter-language-pack==1.6.2, twine, wheel==0.47.0.
 # Resolution cutoff: 2026-07-17T00:00:00Z. Install with --require-hashes
 # and --only-binary=:all:; the workflow also disables build isolation/indexes.
 

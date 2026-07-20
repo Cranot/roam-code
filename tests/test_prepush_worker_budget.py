@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -60,6 +61,38 @@ def test_structural_bundle_uses_bounded_loadfile_workers(monkeypatch: pytest.Mon
     argv = captured["argv"]
     assert argv[argv.index("-n") + 1] == "3"
     assert argv[argv.index("--dist") + 1] == "loadfile"
+
+
+def test_release_temp_capacity_scales_with_bounded_worker_budget() -> None:
+    gate = _load_gate_module()
+
+    assert gate._release_temp_required_bytes(1) == 4 * 1024**3
+    assert gate._release_temp_required_bytes(2) == 4 * 1024**3
+    assert gate._release_temp_required_bytes(4) == 8 * 1024**3
+
+
+def test_release_temp_capacity_fails_closed_before_expensive_tests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gate = _load_gate_module()
+    required = gate._release_temp_required_bytes(2)
+    monkeypatch.setattr(gate.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(gate.shutil, "disk_usage", lambda _path: SimpleNamespace(free=required - 1))
+    runner = gate.GateRunner(root=Path("."), pytest_workers=2)
+
+    result = runner.run_release_temp_capacity_gate()
+
+    assert result.passed is False
+    assert result.fix_hint.startswith("remove abandoned pytest fixture trees")
+    assert "required=4.00 GiB" in result.detail
+    assert runner.results == [result]
+
+
+def test_pytest_retains_only_one_failed_temp_tree() -> None:
+    config = (repo_root() / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "tmp_path_retention_count = 1" in config
+    assert 'tmp_path_retention_policy = "failed"' in config
 
 
 def test_help_renders_on_legacy_windows_code_page() -> None:

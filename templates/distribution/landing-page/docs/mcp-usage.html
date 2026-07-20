@@ -177,7 +177,7 @@ roam mcp-setup                  # write the per-client MCP config snippet</code>
           <tr><td><code>roam_reindex</code></td><td>Rebuild the index (incremental by default).</td></tr>
           <tr><td><code>roam_doctor</code></td><td>Diagnose the install — Python, extras, grammars, schema version, stale index.</td></tr>
           <tr><td><code>roam_catalog</code></td><td>Machine-readable list of every registered MCP tool plus capability flags.</td></tr>
-          <tr><td><code>roam_expand_toolset</code></td><td>Switch the active preset (core / review / refactor / debug / architecture / full).</td></tr>
+          <tr><td><code>roam_expand_toolset</code></td><td>Switch the active preset (core / review / refactor / debug / architecture / compliance / compile-curated / full).</td></tr>
           <tr><td><code>roam_session_metrics</code></td><td>Per-session counters for the current MCP connection.</td></tr>
           <tr><td><code>roam_evidence_doctor</code></td><td>Validate a <code>ChangeEvidence</code> packet passed in by the caller.</td></tr>
           <tr><td><code>roam_fetch_handle</code></td><td>Fetch all or part of a large MCP payload by handle (byte slice, section pick, jq projection).</td></tr>
@@ -434,7 +434,7 @@ roam --json mcp-setup vscode                  # structured envelope for scriptin
       <ul>
         <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> &mdash; every command, every flag, every JSON envelope.</li>
         <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> &mdash; the five discipline rules behind the canonical flow.</li>
-        <li><strong>MCP server card:</strong> <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/mcp-server-card.json">mcp-server-card.json</a> &mdash; machine-readable capability manifest (244 MCP tools, 7 presets, 10 resources, 5 prompts).</li>
+        <li><strong>MCP server card:</strong> <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/mcp-server-card.json">mcp-server-card.json</a> &mdash; machine-readable capability manifest (244 MCP tools, 8 presets, 10 resources, 5 prompts).</li>
         <li><strong>Want a worked example on your own repo?</strong> <a href="/audit">Run a paid PR Replay</a> &mdash; we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>
       </ul>
       <p class="footer-meta">

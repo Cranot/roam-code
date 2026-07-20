@@ -50,9 +50,9 @@ roam mcp-setup vscode --preset full     # VS Code Copilot Agent Mode
 roam --json mcp-setup codex-cli         # structured envelope
 ```
 
-Presets (env var `ROAM_MCP_PRESET`): `core` (57 tools, default, balanced for
-daily agent use), `compliance` (13, AI-governance evidence), `review`,
-`refactor`, `debug`, `architecture` (task-specific subsets), `full` (227).
+Presets (env var `ROAM_MCP_PRESET`): `core`, `review`, `refactor`, `debug`,
+`architecture`, `compliance`, `compile-curated`, `full`. `core` is the narrow
+default; use `roam_expand_toolset` to inspect the live contents of any preset.
 
 Fallback manual config (any MCP client that accepts a JSON command block):
 
