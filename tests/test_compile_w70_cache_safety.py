@@ -27,6 +27,7 @@ from roam.plan.compiler import (
     _envelope_cache_store,
     _envelope_dep_files,
     _envelope_deps_are_fresh,
+    _index_freshness_signals,
     compile_for_artifact,
     compile_plan,
 )
@@ -506,16 +507,24 @@ def test_generation_sweep_wipes_derived_tables_on_reindex(tmp_path):
 # named files must SAY so instead of silently serving drifted coordinates.
 
 
-def test_stale_index_discloses_files_newer_than_index(tmp_path):
+def test_stale_index_discloses_files_newer_than_index(tmp_path, monkeypatch):
+    from roam.index.indexer import Indexer
+
     repo = _setup_repo(tmp_path)
+    Indexer(project_root=repo).run(quiet=True)
     plan = compile_plan("what does src/a.py do", cwd=str(repo))
-    compile_for_artifact(plan, cwd=str(repo))  # builds the index via ensure_index
+    compile_for_artifact(plan, cwd=str(repo))
 
     # Edit a named file AFTER the index was built (2s past the tolerance).
     idx = repo / ".roam" / "index.db"
     future = os.path.getmtime(idx) + 5
     (repo / "src" / "a.py").write_text("def alpha(x):\n    return x\n")
     os.utime(repo / "src" / "a.py", (future, future))
+
+    # Hold the index generation fixed so this test exercises the disclosure
+    # path. In ordinary operation a successful probe may refresh the index,
+    # in which case there is no stale state left to disclose.
+    monkeypatch.setattr("roam.plan.compiler._run_roam", lambda *_args, **_kwargs: None)
 
     _clear_in_memory()
     plan2 = compile_plan("what does src/a.py do", cwd=str(repo))
@@ -531,6 +540,20 @@ def test_stale_index_discloses_files_newer_than_index(tmp_path):
     plan3 = compile_plan("what does src/a.py do", cwd=str(repo))
     env3, _ = compile_for_artifact(plan3, cwd=str(repo))
     assert (env3.get("plan") or {}).get("index_stale") is None, "fresh index must not flag"
+
+
+def test_index_freshness_fails_closed_when_process_cwd_was_deleted(monkeypatch):
+    def unavailable_cwd() -> str:
+        raise FileNotFoundError("working directory was removed")
+
+    monkeypatch.setattr(os, "getcwd", unavailable_cwd)
+    staleness, newer = _index_freshness_signals(["src/a.py"], None)
+
+    assert newer is None
+    assert staleness is not None
+    assert staleness["is_stale"] is True
+    assert staleness["working_directory_unavailable"] is True
+    assert staleness["missing_paths"] == []
 
 
 # ---- Secret / prompt redaction in the persistent envelope cache --------

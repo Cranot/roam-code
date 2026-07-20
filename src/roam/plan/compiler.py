@@ -11249,12 +11249,12 @@ class PlanV0:
             return list(self.forbidden_paths)
         return []
 
-    def to_envelope(self) -> dict:
+    def to_envelope(self, cwd: str | None = None) -> dict:
         d = asdict(self)
         # W21: stale-index warning on the FULL envelope. Check both task-extracted
         # paths AND any likely_files the compiler resolved via search.
-        named = _extract_file_paths(self.task) + list(self.likely_files or [])
-        staleness = _named_path_staleness(named, None)
+        named = _extract_file_paths(self.task, cwd) + list(self.likely_files or [])
+        staleness = _named_path_staleness(named, cwd)
         if staleness:
             d["index_staleness"] = staleness
         return {
@@ -12818,7 +12818,7 @@ def _fallback_envelope_after_probe_degrades(
             _attach_degraded_probe_signal(plan.to_lean_envelope(cwd=cwd), probe_attempted),
             "lean",
         )
-    return _attach_degraded_probe_signal(plan.to_envelope(), probe_attempted), "full"
+    return _attach_degraded_probe_signal(plan.to_envelope(cwd=cwd), probe_attempted), "full"
 
 
 def _emit_result_after_required_compile_side_effects(
@@ -12843,6 +12843,11 @@ def _cached_compile_result_if_fresh(plan: "PlanV0", cwd: str | None, started_at:
     if cached is None:
         return None
     cached_env, cached_label = cached
+    # The cache's dependency fingerprint is an invalidation optimization,
+    # not the disclosure boundary. Re-evaluate post-index edits on every hit
+    # so an omitted/legacy dependency row can never make stale coordinates
+    # look current.
+    _stamp_index_staleness(cached_env, plan, cwd)
     # W58 — flag cache hit on the plan so telemetry can record it.
     object.__setattr__(plan, "_w58_cache_hit", True)
     _maybe_append_compile_telemetry(
@@ -13558,7 +13563,24 @@ def _index_freshness_signals(named_paths: list[str], cwd: str | None) -> tuple[d
       * newer_files: {"files_newer_than_index": [...]} for paths edited
         after the index mtime (post-index edits).
     """
-    base = cwd or os.getcwd()
+    try:
+        base = cwd or os.getcwd()
+    except OSError:
+        if not named_paths:
+            return None, None
+        return (
+            {
+                "is_stale": True,
+                "missing_paths": [],
+                "index_age_seconds": None,
+                "working_directory_unavailable": True,
+                "warning": (
+                    "named_paths may be unreliable: current working directory is unavailable. "
+                    "Verify with Read/Grep before trusting."
+                ),
+            },
+            None,
+        )
     index_db = os.path.join(base, ".roam", "index.db")
     index_mtime = _index_mtime_or_none_for_resilient_diagnostics(index_db)
     missing, newer_files = _scan_named_paths_for_index_drift(base, named_paths, index_mtime)

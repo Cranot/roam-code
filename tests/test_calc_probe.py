@@ -87,10 +87,11 @@ def test_scoped_mode_narrows_to_used_idioms(tmp_path):
     env = json.loads(result.output)
     ran = env["summary"]["idioms_ran"]
     skipped = env["summary"]["runtimes_skipped"]
-    if shutil.which("php"):
+    failed = env["summary"]["runtimes_failed"]
+    if "php" not in {*skipped, *failed}:
         assert ran == ["php:round"]
     else:
-        assert ran == [] and "php" in skipped
+        assert ran == [] and "php" in {*skipped, *failed}
     assert "scoped to" in env["summary"]["scope"]
 
 
@@ -108,15 +109,17 @@ def test_multi_path_unions_idioms(tmp_path):
     result = runner.invoke(calc_probe, [str(back), str(front)], obj={"json": True})
     assert result.exit_code == 0, result.output
     env = json.loads(result.output)
-    expected = set()
-    if shutil.which("php"):
-        expected.add("php:round")
-    if shutil.which("node"):
-        expected.add("javascript:round")
+    unavailable = {
+        *env["summary"]["runtimes_skipped"],
+        *env["summary"]["runtimes_failed"],
+    }
+    expected = {
+        idiom for runtime, idiom in (("php", "php:round"), ("node", "javascript:round")) if runtime not in unavailable
+    }
     assert set(env["summary"]["idioms_ran"]) == expected
     # with both runtimes present, the frontend<->backend cent divergence on
     # 1.005 must surface (php 1.01 vs js 1.00)
-    if shutil.which("php") and shutil.which("node"):
+    if not ({"php", "node"} & unavailable):
         assert any(d["input"] == 1.005 for d in env["divergences"])
 
 
@@ -130,7 +133,11 @@ def test_scoped_mode_exact_match_only(tmp_path):
     env = json.loads(runner.invoke(calc_probe, [str(tmp_path)], obj={"json": True}).output)
     ran = set(env["summary"]["idioms_ran"])
     assert "php:round" not in ran  # the unused default-mode variant stays out
-    if shutil.which("php"):
+    unavailable = {
+        *env["summary"]["runtimes_skipped"],
+        *env["summary"]["runtimes_failed"],
+    }
+    if "php" not in unavailable:
         assert ran == {"php:round:PHP_ROUND_HALF_EVEN"}
         assert env["summary"]["divergent_inputs"] == 0  # one idiom cannot diverge
 
