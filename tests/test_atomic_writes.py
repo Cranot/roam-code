@@ -48,6 +48,19 @@ def test_atomic_write_text_happy_path(tmp_path):
     assert target.read_text(encoding="utf-8") == "hello world"
 
 
+def test_atomic_write_text_forwards_durable_barrier(tmp_path, monkeypatch):
+    calls: list[tuple[Path, bytes, bool]] = []
+
+    def observe(path, content, *, durable=False):
+        calls.append((Path(path), content, durable))
+
+    monkeypatch.setattr(atomic_io, "atomic_write_bytes", observe)
+
+    atomic_io.atomic_write_text(tmp_path / "state", "complete\n", durable=True)
+
+    assert calls == [(tmp_path / "state", b"complete\n", True)]
+
+
 def test_atomic_write_json_happy_path(tmp_path):
     """JSON round-trip with default formatting."""
     target = tmp_path / "data.json"

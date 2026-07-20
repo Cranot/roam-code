@@ -1239,9 +1239,21 @@ def conditional_install_file(
         os.close(parent_fd)
 
 
-def atomic_write_text(path: PathLike, content: str, *, encoding: str = "utf-8") -> None:
-    """Encode *content* and use the shared conditional byte installer."""
-    atomic_write_bytes(path, content.encode(encoding))
+def atomic_write_text(
+    path: PathLike,
+    content: str,
+    *,
+    encoding: str = "utf-8",
+    durable: bool = False,
+) -> None:
+    """Encode *content* and use the shared conditional byte installer.
+
+    ``durable=True`` fsyncs the completed file and, where the platform
+    supports it, its parent directory.  Text callers that publish lifecycle
+    or authority state can therefore use the same crash boundary as binary
+    artifacts without bypassing the conditional installer.
+    """
+    atomic_write_bytes(path, content.encode(encoding), durable=durable)
 
 
 def atomic_write_bytes(

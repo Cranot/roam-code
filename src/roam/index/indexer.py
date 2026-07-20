@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import json
 import logging
 import os
+import secrets
+import sqlite3
+import stat
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -141,12 +146,15 @@ def _log(msg: str):
 def _pid_is_running(pid: int) -> bool:
     """Return True when *pid* appears to refer to a live process.
 
-    On Windows, probing a process owned by another integrity level can raise
-    ``PermissionError``. Treat that as "running or inaccessible" so we do not
-    delete another process's lock by mistake.
+    Windows must not use ``os.kill(pid, 0)``: signal zero maps to a console
+    control event there and can interrupt the caller's process group. Native
+    process-handle inspection is side-effect free. Inaccessible Windows
+    processes are treated as live so recovery fails closed.
     """
     if pid <= 0:
         return False
+    if os.name == "nt":
+        return _windows_pid_is_running(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -158,57 +166,536 @@ def _pid_is_running(pid: int) -> bool:
     return True
 
 
-def _claim_index_lock(lock_path: Path) -> bool:
-    """Claim the index lock, tolerating stale locks that cannot be deleted."""
-    lock_path.parent.mkdir(exist_ok=True)
-    if lock_path.exists():
-        try:
-            raw_pid = lock_path.read_text().strip()
-            pid = int(raw_pid)
-        except (ValueError, OSError):
-            pid = 0
+def _windows_pid_is_running(pid: int) -> bool:
+    """Side-effect-free Windows liveness probe using a process handle."""
+    try:
+        import ctypes
+        from ctypes import wintypes
 
-        if pid and _pid_is_running(pid):
-            _log(f"Another indexing process (PID {pid}) is running. Exiting.")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            error = ctypes.get_last_error()
+            if error == 87:  # ERROR_INVALID_PARAMETER: no such PID
+                return False
+            return True
+        try:
+            exit_code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return True
+            return int(exit_code.value) == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    except (AttributeError, OSError, ValueError):
+        return True
+
+
+_INDEX_LIFECYCLE_VERSION = 1
+_MAX_INDEX_CONTROL_BYTES = 4096
+
+
+@dataclass(frozen=True)
+class _IndexOwner:
+    """Generation-bound identity of one index writer."""
+
+    pid: int
+    process_start: str | None
+    generation: str
+
+
+@dataclass
+class _IndexLockClaim:
+    """A held kernel lock plus the ownership generation published within it."""
+
+    path: Path
+    descriptor: int
+    identity: tuple[int, int]
+    owner: _IndexOwner
+    recovery_required: bool
+    recovery_reason: str | None
+    locked: bool = True
+
+
+def _process_start_identity(pid: int) -> str | None:
+    """Return a PID-reuse-resistant process-start identity where available."""
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.GetProcessTimes.argtypes = (
+                wintypes.HANDLE,
+                ctypes.POINTER(wintypes.FILETIME),
+                ctypes.POINTER(wintypes.FILETIME),
+                ctypes.POINTER(wintypes.FILETIME),
+                ctypes.POINTER(wintypes.FILETIME),
+            )
+            kernel32.GetProcessTimes.restype = wintypes.BOOL
+            kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return None
+            try:
+                creation = wintypes.FILETIME()
+                exit_time = wintypes.FILETIME()
+                kernel = wintypes.FILETIME()
+                user = wintypes.FILETIME()
+                if not kernel32.GetProcessTimes(handle, creation, exit_time, kernel, user):
+                    return None
+                ticks = (int(creation.dwHighDateTime) << 32) | int(creation.dwLowDateTime)
+                return f"windows-filetime:{ticks}"
+            finally:
+                kernel32.CloseHandle(handle)
+        except (AttributeError, OSError, ValueError):
+            return None
+
+    proc_stat = Path(f"/proc/{pid}/stat")
+    try:
+        raw = proc_stat.read_text(encoding="ascii")
+        # The command name in field 2 may contain spaces and parentheses.
+        fields_after_name = raw[raw.rfind(")") + 2 :].split()
+        start_ticks = fields_after_name[19]  # field 22 overall
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        if not boot_id or not start_ticks.isdigit():
+            return None
+        return f"linux-proc:{boot_id}:{start_ticks}"
+    except (IndexError, OSError, UnicodeError):
+        return None
+
+
+def _owner_liveness(owner: _IndexOwner) -> bool | None:
+    """Return True/False for a proven generation, or None when unprovable."""
+    if not _pid_is_running(owner.pid):
+        return False
+    observed_start = _process_start_identity(owner.pid)
+    if owner.process_start is None or observed_start is None:
+        return None
+    return secrets.compare_digest(owner.process_start, observed_start)
+
+
+def _owner_payload(owner: _IndexOwner) -> dict[str, object]:
+    return {
+        "generation": owner.generation,
+        "pid": owner.pid,
+        "process_start": owner.process_start,
+    }
+
+
+def _serialize_lock_owner(owner: _IndexOwner) -> str:
+    payload = {
+        "kind": "roam-index-lock",
+        "owner": _owner_payload(owner),
+        "version": _INDEX_LIFECYCLE_VERSION,
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+
+
+def _serialize_index_state(state: str, owner: _IndexOwner) -> str:
+    payload: dict[str, object] = {
+        "generation": owner.generation,
+        "state": state,
+        "version": _INDEX_LIFECYCLE_VERSION,
+    }
+    if state == "in_progress":
+        payload["owner"] = _owner_payload(owner)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+
+
+def _parse_owner(value: object) -> _IndexOwner | None:
+    if not isinstance(value, dict):
+        return None
+    pid = value.get("pid")
+    process_start = value.get("process_start")
+    generation = value.get("generation")
+    if (
+        not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid <= 0
+        or (process_start is not None and not isinstance(process_start, str))
+        or not isinstance(generation, str)
+        or len(generation) != 64
+    ):
+        return None
+    try:
+        bytes.fromhex(generation)
+    except ValueError:
+        return None
+    return _IndexOwner(pid=pid, process_start=process_start, generation=generation)
+
+
+def _decode_index_state(raw: str | None) -> tuple[str, _IndexOwner | int | None]:
+    """Decode current and legacy state markers without guessing."""
+    if raw is None:
+        return "missing", None
+    value = raw.strip()
+    if value == "complete":
+        return "complete", None
+    if value.startswith("in_progress:"):
+        try:
+            return "legacy_in_progress", int(value.partition(":")[2])
+        except ValueError:
+            return "unknown", None
+    try:
+        payload = json.loads(value)
+    except (json.JSONDecodeError, UnicodeError):
+        return "unknown", None
+    if not isinstance(payload, dict) or payload.get("version") != _INDEX_LIFECYCLE_VERSION:
+        return "unknown", None
+    state = payload.get("state")
+    generation = payload.get("generation")
+    if state == "complete" and isinstance(generation, str) and len(generation) == 64:
+        try:
+            bytes.fromhex(generation)
+        except ValueError:
+            return "unknown", None
+        return "complete", None
+    if state == "in_progress":
+        owner = _parse_owner(payload.get("owner"))
+        if owner is not None and owner.generation == generation:
+            return "in_progress", owner
+    return "unknown", None
+
+
+def _decode_index_lock(raw: str | None) -> tuple[str, _IndexOwner | int | None]:
+    """Decode current and legacy lock records."""
+    if raw is None:
+        return "missing", None
+    value = raw.strip()
+    if value == "released":
+        return "released", None
+    try:
+        return "legacy", int(value)
+    except ValueError:
+        pass
+    try:
+        payload = json.loads(value)
+    except (json.JSONDecodeError, UnicodeError):
+        return "unknown", None
+    if (
+        isinstance(payload, dict)
+        and payload.get("version") == _INDEX_LIFECYCLE_VERSION
+        and payload.get("kind") == "roam-index-lock"
+    ):
+        owner = _parse_owner(payload.get("owner"))
+        if owner is not None:
+            return "owned", owner
+    return "unknown", None
+
+
+def _read_control_text(path: Path) -> str | None:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return handle.read(_MAX_INDEX_CONTROL_BYTES + 1)
+    except FileNotFoundError:
+        return None
+
+
+def _lock_descriptor(descriptor: int) -> bool:
+    """Acquire one non-blocking cross-platform kernel byte-range lock."""
+    if os.name != "nt":
+        import fcntl
+
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
             return False
 
-        if pid:
-            _log(f"Removing stale lock file (PID {pid} is not running).")
-        try:
-            lock_path.unlink()
-        except OSError as exc:
-            _log(f"  Could not delete stale lock ({exc}); reusing lock file.")
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
 
+    class _Overlapped(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.LockFileEx.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(_Overlapped),
+    )
+    kernel32.LockFileEx.restype = wintypes.BOOL
+    overlapped = _Overlapped()
+    ok = kernel32.LockFileEx(
+        wintypes.HANDLE(msvcrt.get_osfhandle(descriptor)),
+        0x00000002 | 0x00000001,  # EXCLUSIVE_LOCK | FAIL_IMMEDIATELY
+        0,
+        1,
+        0,
+        ctypes.byref(overlapped),
+    )
+    if ok:
+        return True
+    error = ctypes.get_last_error()
+    if error in {32, 33}:  # sharing/lock violation
+        return False
+    raise ctypes.WinError(error)
+
+
+def _unlock_descriptor(descriptor: int) -> None:
+    if os.name != "nt":
+        import fcntl
+
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class _Overlapped(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", wintypes.DWORD),
+            ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.UnlockFileEx.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(_Overlapped),
+    )
+    kernel32.UnlockFileEx.restype = wintypes.BOOL
+    overlapped = _Overlapped()
+    if not kernel32.UnlockFileEx(
+        wintypes.HANDLE(msvcrt.get_osfhandle(descriptor)),
+        0,
+        1,
+        0,
+        ctypes.byref(overlapped),
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _descriptor_path_identity(descriptor: int, path: Path) -> tuple[int, int] | None:
+    opened = os.fstat(descriptor)
+    if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+        return None
+    current = os.stat(path, follow_symlinks=False)
+    identity = int(opened.st_dev), int(opened.st_ino)
+    if identity != (int(current.st_dev), int(current.st_ino)):
+        return None
+    return identity
+
+
+def _write_locked_owner(descriptor: int, owner: _IndexOwner) -> None:
+    payload = _serialize_lock_owner(owner).encode("utf-8")
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    written = 0
+    while written < len(payload):
+        count = os.write(descriptor, payload[written:])
+        if count <= 0:
+            raise OSError("short write while publishing index lock ownership")
+        written += count
+    os.ftruncate(descriptor, len(payload))
+    os.fsync(descriptor)
+
+
+def _claim_still_owned(claim: _IndexLockClaim) -> bool:
     try:
-        lock_path.write_text(str(os.getpid()))
+        if _descriptor_path_identity(claim.descriptor, claim.path) != claim.identity:
+            return False
+        os.lseek(claim.descriptor, 0, os.SEEK_SET)
+        raw = os.read(claim.descriptor, _MAX_INDEX_CONTROL_BYTES + 1).decode("utf-8")
+    except (OSError, UnicodeError):
+        return False
+    kind, owner = _decode_index_lock(raw)
+    return kind == "owned" and owner == claim.owner
+
+
+def _read_locked_control(descriptor: int) -> str:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    return os.read(descriptor, _MAX_INDEX_CONTROL_BYTES + 1).decode("utf-8")
+
+
+def _recovery_requirement(state_path: Path, prior_lock_raw: str) -> tuple[bool, str | None] | None:
+    """Classify a held claim as normal, recovery-required, or blocked.
+
+    ``None`` means ownership cannot be proven safe and the claim must fail
+    closed. A true first tuple element is carried into :meth:`Indexer.run` so
+    direct callers cannot accidentally complete an interrupted DB using an
+    incremental or light refresh.
+    """
+    try:
+        raw = _read_control_text(state_path)
+    except (OSError, UnicodeError):
+        return None
+    state, owner = _decode_index_state(raw)
+    if state == "complete":
+        return False, None
+    if state == "legacy_in_progress" and isinstance(owner, int):
+        if owner <= 0 or _pid_is_running(owner):
+            return None
+        return True, "legacy_interrupted_state"
+    if state == "in_progress" and isinstance(owner, _IndexOwner):
+        if _owner_liveness(owner) is not False:
+            return None
+        return True, "interrupted_generation"
+    if state != "missing":
+        return None
+
+    # Pre-marker compatibility. The descriptor is already kernel-locked, so
+    # this exact prior content cannot be changed by a cooperating writer while
+    # it is classified and replaced. Empty content is a freshly created lock;
+    # ``released`` is the legacy successful-cleanup marker.
+    if not prior_lock_raw.strip():
+        return False, None
+    lock_kind, lock_owner = _decode_index_lock(prior_lock_raw)
+    if lock_kind == "released":
+        return False, None
+    if lock_kind == "legacy" and isinstance(lock_owner, int):
+        if lock_owner <= 0 or _pid_is_running(lock_owner):
+            return None
+        return True, "legacy_stale_lock"
+    if lock_kind == "owned" and isinstance(lock_owner, _IndexOwner):
+        if _owner_liveness(lock_owner) is not False:
+            return None
+        return True, "orphaned_lock_generation"
+    return None
+
+
+def _claim_index_lock(lock_path: Path) -> _IndexLockClaim | None:
+    """Atomically claim the index through a held kernel lock.
+
+    The lock pathname is never deleted during recovery or release.  Stale
+    ownership is replaced only while this process holds the exact file
+    descriptor's OS lock, eliminating exists/write and unlink-successor races.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        _log(f"Could not open index lock: {exc}")
+        return None
+    locked = False
+    claim: _IndexLockClaim | None = None
+    try:
+        locked = _lock_descriptor(descriptor)
+        if not locked:
+            _log("Another indexing process owns the workspace. Exiting.")
+            return None
+        identity = _descriptor_path_identity(descriptor, lock_path)
+        if identity is None:
+            _log("Could not prove the index lock pathname identity. Exiting.")
+            return None
+        try:
+            prior_lock_raw = _read_locked_control(descriptor)
+        except (OSError, UnicodeError):
+            _log("Could not read the held index lock generation. Exiting.")
+            return None
+        recovery = _recovery_requirement(lock_path.with_name("index.state"), prior_lock_raw)
+        if recovery is None:
+            _log("An index lifecycle owner is live or cannot be proven stale. Exiting.")
+            return None
+        recovery_required, recovery_reason = recovery
+        owner = _IndexOwner(
+            pid=os.getpid(),
+            process_start=_process_start_identity(os.getpid()),
+            generation=secrets.token_hex(32),
+        )
+        _write_locked_owner(descriptor, owner)
+        if _descriptor_path_identity(descriptor, lock_path) != identity:
+            _log("The index lock pathname changed during claim. Exiting.")
+            return None
+        claim = _IndexLockClaim(
+            lock_path,
+            descriptor,
+            identity,
+            owner,
+            recovery_required,
+            recovery_reason,
+        )
     except OSError as exc:
         _log(f"Could not claim index lock: {exc}")
         _log("  If this looks unexpected, run `roam doctor` to diagnose your install.")
-        return False
-    return True
+    finally:
+        if claim is None:
+            if locked:
+                with contextlib.suppress(OSError):
+                    _unlock_descriptor(descriptor)
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
+    return claim
 
 
-def _release_index_lock(lock_path: Path) -> None:
-    """Release the index lock best-effort.
-
-    Some Windows/cloud-sync folders allow overwrites but deny deletes. Marking
-    the lock as released lets the next run overwrite it without failing.
-    """
-    try:
-        lock_path.unlink()
+def _release_index_lock(claim: _IndexLockClaim) -> None:
+    """Release only this claim's held descriptor; never mutate the pathname."""
+    if not claim.locked:
         return
-    except OSError:
-        # Expected on Windows/cloud-sync folders that deny deletes — the
-        # write-text fallback below handles it. Not surfaced because the
-        # fallback fully recovers; only the fallback's own failure is loud.
-        pass
     try:
-        lock_path.write_text("released")
+        if not _claim_still_owned(claim):
+            _log("Index lock ownership changed before release; preserving the current pathname.")
+        _unlock_descriptor(claim.descriptor)
     except OSError as exc:
-        # Loud-fallback per CLAUDE.md §"Make fallback chains loud" — if BOTH
-        # unlink and write fail the lock file is now stale-and-stuck; the
-        # next index run will treat it as a live lock. Surface the lineage.
-        log_swallowed(f"index.indexer:release_lock:{lock_path}", exc)
+        log_swallowed(f"index.indexer:release_lock:{claim.path}", exc)
+    finally:
+        claim.locked = False
+        try:
+            os.close(claim.descriptor)
+        except OSError as exc:
+            log_swallowed(f"index.indexer:close_lock:{claim.path}", exc)
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _establish_sqlite_durability(project_root: Path) -> None:
+    """Checkpoint and fsync the completed index before publishing completion."""
+    db_path = get_db_path(project_root)
+    connection = sqlite3.connect(str(db_path), timeout=30)
+    try:
+        connection.execute("PRAGMA busy_timeout=30000")
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if checkpoint is not None and int(checkpoint[0]) != 0:
+            raise sqlite3.OperationalError("index WAL checkpoint remained busy")
+        connection.commit()
+    finally:
+        connection.close()
+
+    sync_flags = (os.O_RDWR if os.name == "nt" else os.O_RDONLY) | getattr(os, "O_CLOEXEC", 0)
+    for candidate in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-journal")):
+        try:
+            descriptor = os.open(candidate, sync_flags)
+        except FileNotFoundError:
+            continue
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    _fsync_directory(db_path.parent)
 
 
 def _semantic_activation_advice(conn, project_root: Path) -> str | None:
@@ -1295,18 +1782,48 @@ class Indexer:
 
         # Lock file to prevent concurrent indexing
         lock_path = self.root / ".roam" / "index.lock"
-        if not _claim_index_lock(lock_path):
+        claim = _claim_index_lock(lock_path)
+        if claim is None:
             return False
         state_path = self.root / ".roam" / "index.state"
+        effective_force = force or claim.recovery_required
+        effective_light = light and not claim.recovery_required
+        if claim.recovery_required:
+            self._log(
+                "Interrupted index ownership was recovered; running a full forced rebuild "
+                f"before completion ({claim.recovery_reason})."
+            )
         try:
             # Publish the lifecycle marker before the first database mutation.
             # A killed process leaves ``in_progress`` behind, allowing every
             # consumer-side ensure_index() call to distinguish a resumable,
             # partial SQLite file from a completed index. Atomic replacement
             # prevents a torn marker from being mistaken for completion.
-            atomic_write_text(state_path, f"in_progress:{os.getpid()}\n")
-            self._do_run(force, verbose=verbose, include_excluded=include_excluded, light=light)
-            atomic_write_text(state_path, "complete\n")
+            atomic_write_text(
+                state_path,
+                _serialize_index_state("in_progress", claim.owner),
+                durable=True,
+            )
+            # Re-prove both sides of the ownership join immediately before
+            # the first SQLite mutation. A missing/replaced lock pathname or
+            # a changed marker fails closed without touching the database.
+            state_kind, state_owner = _decode_index_state(_read_control_text(state_path))
+            if not _claim_still_owned(claim) or state_kind != "in_progress" or state_owner != claim.owner:
+                raise RuntimeError("index ownership changed before database mutation")
+            self._do_run(
+                effective_force,
+                verbose=verbose,
+                include_excluded=include_excluded,
+                light=effective_light,
+            )
+            _establish_sqlite_durability(self.root)
+            if not _claim_still_owned(claim):
+                raise RuntimeError("index ownership changed before completion publication")
+            atomic_write_text(
+                state_path,
+                _serialize_index_state("complete", claim.owner),
+                durable=True,
+            )
             return True
         except KeyboardInterrupt:
             # graceful Ctrl-C: drop the lock so the user can
@@ -1317,7 +1834,7 @@ class Indexer:
             raise
         finally:
             _quiet_mode = False
-            _release_index_lock(lock_path)
+            _release_index_lock(claim)
 
     def _extract_file_refs(
         self,
