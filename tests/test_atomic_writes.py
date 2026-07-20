@@ -465,7 +465,11 @@ def test_atomic_write_bytes_rejects_same_size_temp_rewrite_with_restored_mtime(
         captured_temp.write_bytes(b"EVIL")
         os.utime(captured_temp, ns=(before.st_atime_ns, before.st_mtime_ns))
 
-    with pytest.raises(FileExistsError, match="tempfile content changed"):
+    # Windows reaches the content-hash guard while POSIX can reject the same
+    # rewrite earlier from the stronger inode-generation snapshot.  Both are
+    # valid tamper detections; keep the assertion about the security outcome,
+    # not the platform-specific guard that fires first.
+    with pytest.raises(FileExistsError, match=r"tempfile (?:content )?changed"):
         atomic_write_bytes(
             target,
             b"GOOD",
