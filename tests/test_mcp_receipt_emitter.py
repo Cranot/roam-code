@@ -308,7 +308,7 @@ def test_ledger_link_rejects_traversal_run_id_before_log_event(
 
 
 def test_receipt_target_rejects_symlinked_bucket_escape(isolated_repo) -> None:
-    """Resolved containment rejects a canonical bucket redirected outside."""
+    """Component validation rejects a bucket redirect before containment."""
     import roam.mcp_server as m
 
     valid_run_id = "run_20260514_deadbeef"
@@ -322,7 +322,7 @@ def test_receipt_target_rejects_symlinked_bucket_escape(isolated_repo) -> None:
     except OSError as exc:
         pytest.skip(f"directory symlinks unavailable: {exc}")
 
-    with pytest.raises(ValueError, match="receipt bucket escaped"):
+    with pytest.raises(ValueError, match="receipt bucket contains a filesystem redirect"):
         m._mcp_receipt_target(valid_run_id, "stub_call")
 
 
