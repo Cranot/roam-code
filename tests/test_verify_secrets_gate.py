@@ -222,14 +222,44 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
     stub_dir = tmp_path / "bin"
     stub_dir.mkdir()
     stub = stub_dir / "roam"
-    stub.write_text(f"#!/bin/sh\ncat <<'EOF'\n{_json.dumps(envelope)}\nEOF\nexit 5\n", encoding="utf-8")
+    stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        f"envelope = {_json.dumps(envelope)!r}\n"
+        "envelope = json.loads(envelope)\n"
+        "summary = envelope['summary']\n"
+        "content_sha256 = os.environ['ROAM_VERIFY_CONTENT_SHA256']\n"
+        "summary['verification_receipt'] = {\n"
+        "    'schema': 'roam.verify.receipt.v3',\n"
+        "    'request_nonce': os.environ['ROAM_VERIFY_REQUEST_NONCE'],\n"
+        "    'scope_sha256': os.environ['ROAM_VERIFY_SCOPE_SHA256'],\n"
+        "    'content_sha256': content_sha256,\n"
+        "    'content_sha256_before': content_sha256,\n"
+        "    'content_sha256_after': content_sha256,\n"
+        "    'target_file_count': int(os.environ['ROAM_VERIFY_SCOPE_COUNT']),\n"
+        "    'scope_stable': True,\n"
+        "    'request_match': True,\n"
+        "}\n"
+        "summary['files_checked'] = summary['verification_receipt']['target_file_count']\n"
+        "sys.stdout.write(json.dumps(envelope))\n"
+        "raise SystemExit(5)\n",
+        encoding="utf-8",
+    )
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{stub_dir}:{os.environ['PATH']}")
 
-    # cwd is pinned to tmp_path (NOT a git repo) so the hook's empty-diff
-    # fast-exit stays out of play (git error -> fail-open -> verify runs) and
-    # the test no longer depends on the checkout's working-tree state — on CI
-    # the clean repo tree made the fast-exit skip verify and emit nothing.
+    # Exercise the finding formatter through the complete fail-closed protocol:
+    # a real Git snapshot with one dirty file and a receipt-v3 response bound to
+    # the hook-generated nonce, scope, and exact content digest.
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Roam Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "roam-test@example.invalid"], cwd=tmp_path, check=True)
+    app = tmp_path / "app.py"
+    app.write_text("print('baseline')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "test baseline"], cwd=tmp_path, check=True)
+    app.write_text("print('changed')\n", encoding="utf-8")
+
     proc = subprocess.run(
         [_sys.executable, str(hook)],
         input=_json.dumps({"stop_hook_active": False}),
