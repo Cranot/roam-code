@@ -6334,7 +6334,13 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
     EXIT_GATE_FAILURE = _EXIT_GATE_FAILURE
     _success_codes = _SUCCESS_EXIT_CODES
 
-    cmd = ["roam", "--json"] + args
+    # Invoke the package through the interpreter that loaded this MCP
+    # server.  A locked/dev environment can import ``roam`` without
+    # installing the console-script shim on PATH; using a bare ``roam``
+    # executable therefore made every non-local-root tool fail in CI and
+    # in embedded MCP hosts. ``python -m roam`` is the same installed
+    # package and remains valid for wheel installs.
+    cmd = [sys.executable, "-m", "roam", "--json"] + args
     try:
         result = subprocess.run(
             cmd,
