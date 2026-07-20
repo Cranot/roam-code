@@ -240,7 +240,7 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
         "    'scope_stable': True,\n"
         "    'request_match': True,\n"
         "}\n"
-        "summary['files_checked'] = summary['verification_receipt']['target_file_count']\n"
+        "summary['targets_checked'] = summary['verification_receipt']['target_file_count']\n"
         "sys.stdout.write(json.dumps(envelope))\n"
         "raise SystemExit(5)\n",
         encoding="utf-8",

@@ -260,6 +260,47 @@ def test_verify_receipt_binds_exact_requested_scope(tmp_path, monkeypatch):
     }
     assert envelope["summary"]["verification_complete"] is True
     assert envelope["summary"]["partial_success"] is False
+    assert envelope["summary"]["targets_checked"] == receipt["target_file_count"] == 1
+
+
+def test_deleted_target_receipt_uses_verified_scope_not_index_rows(tmp_path, monkeypatch):
+    from roam.commands import cmd_verify
+    from roam.commands.cmd_hooks import _CLAUDE_STOP_HOOK_SCRIPT
+
+    project = _indexed_project(tmp_path)
+    (project / "app.py").unlink()
+    nonce = "0123456789abcdef0123456789abcdef"
+    scope_digest = cmd_verify._verification_scope_sha256(["app.py"])
+    content_digest, content_error = cmd_verify._verification_content_sha256(project, ["app.py"])
+    assert content_error is None
+    monkeypatch.setenv("ROAM_VERIFY_REQUEST_NONCE", nonce)
+    monkeypatch.setenv("ROAM_VERIFY_SCOPE_SHA256", scope_digest)
+    monkeypatch.setenv("ROAM_VERIFY_CONTENT_SHA256", content_digest)
+    monkeypatch.setenv("ROAM_VERIFY_SCOPE_COUNT", "1")
+
+    result = invoke_cli(
+        CliRunner(),
+        ["verify", "--checks", "syntax", "app.py"],
+        cwd=project,
+        json_mode=True,
+    )
+
+    assert result.exit_code in {0, 5}, result.output
+    envelope = json.loads(result.stdout)
+    summary = envelope["summary"]
+    receipt = summary["verification_receipt"]
+    assert summary["files_checked"] == 0
+    assert summary["targets_checked"] == receipt["target_file_count"] == 1
+    assert summary["verification_complete"] is True
+    assert receipt["request_match"] is True
+
+    body, marker, tail = _CLAUDE_STOP_HOOK_SCRIPT.rpartition("\nmain()\n")
+    assert marker and tail == ""
+    namespace = {"__name__": "deleted_target_hook_contract", "__file__": str(project / "stop.py")}
+    exec(compile(body, "stop.py", "exec"), namespace)
+    envelope["_hook_process_returncode"] = result.exit_code
+    expected_state = "passed" if result.exit_code == 0 else "failed"
+    assert namespace["_verify_protocol_state"](envelope, receipt) == expected_state
 
 
 def test_verify_scope_binding_mismatch_fails_closed(tmp_path, monkeypatch):

@@ -47,7 +47,14 @@ def surgered(script: str) -> str:
 
 
 def git(*args: str) -> str:
-    return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True).stdout
+    return subprocess.run(
+        ["git", "-C", str(REPO), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="strict",
+        check=True,
+    ).stdout
 
 
 def bodies_at(commit: str) -> dict[str, str] | None:
