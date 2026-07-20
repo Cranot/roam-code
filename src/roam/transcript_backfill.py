@@ -2350,15 +2350,27 @@ def backfill_transcripts(
             )
 
         with pinned_owner_only_directory(state_dir):
-            atomic_write_bytes(
-                output,
-                payload,
-                prepare_temp_fd=prepare_private_temp,
-                before_replace=validate_destination,
-                durable=True,
-                create_parents=False,
-                secure_parent=True,
-            )
+            # Validate before entering the atomic writer so a pre-existing
+            # linked destination is reported through this module's public
+            # safety contract. Keep the callback as the race-closing check
+            # immediately before replacement.
+            validate_destination()
+            try:
+                atomic_write_bytes(
+                    output,
+                    payload,
+                    prepare_temp_fd=prepare_private_temp,
+                    before_replace=validate_destination,
+                    durable=True,
+                    create_parents=False,
+                    secure_parent=True,
+                )
+            except TranscriptBackfillSafetyError:
+                raise
+            except OSError as exc:
+                raise TranscriptBackfillSafetyError(
+                    f"cannot safely write derived transcript snapshot: {output}: {exc}"
+                ) from exc
             _private_file_state(
                 output,
                 label="derived transcript snapshot",
