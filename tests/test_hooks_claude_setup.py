@@ -384,8 +384,11 @@ class TestUpsDaemonPath:
         import sys
 
         hook = in_tmp / ".claude" / "hooks" / _CLAUDE_UPS_HOOK_FILENAME
-        env = {**_os.environ, **(env_extra or {})}
-        env.setdefault("ROAM_HOOK_EVIDENCE_DIR", str(in_tmp.parent / f"{in_tmp.name}-hook-evidence"))
+        env = {
+            **_os.environ,
+            "ROAM_HOOK_EVIDENCE_DIR": str(in_tmp.parent / f"{in_tmp.name}-hook-evidence"),
+            **(env_extra or {}),
+        }
         return subprocess.run(
             [sys.executable, str(hook)],
             input=stdin_payload,
