@@ -182,8 +182,8 @@ def _existing_index_recovery_state() -> str | None:
     Older Roam versions did not publish ``index.state``. Preserve those
     completed indexes as valid by default, while treating a stale numeric
     ``index.lock`` as evidence that an old indexer died mid-run. New indexers
-    publish ``in_progress:<pid>`` before mutating SQLite and replace it with
-    ``complete`` only after every phase returns successfully.
+    publish a generation-bound owner before mutating SQLite and publish
+    completion only after the database crosses its durability barrier.
     """
     try:
         root = find_project_root()
@@ -197,41 +197,52 @@ def _existing_index_recovery_state() -> str | None:
     lock_path = roam_dir / "index.lock"
     state_path = roam_dir / "index.state"
 
-    lock_raw: str | None = None
-    if lock_path.exists():
-        try:
-            lock_raw = lock_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            # An unreadable lock cannot prove that mutation has stopped.
-            return "active"
-        try:
-            lock_pid = int(lock_raw)
-        except (TypeError, ValueError):
-            lock_pid = 0
-        if lock_pid > 0:
-            from roam.index.indexer import _pid_is_running
+    from roam.index.indexer import (
+        _decode_index_lock,
+        _decode_index_state,
+        _IndexOwner,
+        _owner_liveness,
+        _pid_is_running,
+        _read_control_text,
+    )
 
-            if _pid_is_running(lock_pid):
-                return "active"
+    try:
+        state_raw = _read_control_text(state_path)
+    except (OSError, UnicodeError):
+        return "incomplete"
+    state_kind, state_owner = _decode_index_state(state_raw)
 
-    state_raw: str | None = None
-    if state_path.exists():
-        try:
-            state_raw = state_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return "incomplete"
-        if state_raw == "complete":
-            return None
-        # Unknown state values fail closed; they may be torn or from a newer
-        # producer whose completion vocabulary this consumer cannot prove.
+    # Completion is authoritative over a leftover lock record. A new writer
+    # must durably replace this marker before its first database mutation, so
+    # a stale PID (including a reused live PID) cannot block a completed DB.
+    if state_kind == "complete":
+        return None
+    if state_kind == "in_progress" and isinstance(state_owner, _IndexOwner):
+        liveness = _owner_liveness(state_owner)
+        return "incomplete" if liveness is False else "active"
+    if state_kind == "legacy_in_progress" and isinstance(state_owner, int):
+        return "active" if _pid_is_running(state_owner) else "incomplete"
+    if state_kind == "unknown":
+        return "incomplete"
+
+    try:
+        lock_raw = _read_control_text(lock_path)
+    except (OSError, UnicodeError):
+        # An unreadable lock cannot prove that mutation has stopped.
+        return "active"
+    lock_kind, lock_owner = _decode_index_lock(lock_raw)
+    if lock_kind == "owned" and isinstance(lock_owner, _IndexOwner):
+        liveness = _owner_liveness(lock_owner)
+        return "incomplete" if liveness is False else "active"
+    if lock_kind == "legacy" and isinstance(lock_owner, int):
+        return "active" if _pid_is_running(lock_owner) else "incomplete"
+    if lock_kind == "unknown":
         return "incomplete"
 
     # Backward-compatible crash recovery for pre-marker versions: a dead
     # numeric lock alongside an existing DB is the durable evidence that the
     # writer did not reach its normal cleanup path. ``released`` is the
     # documented successful fallback when lock deletion is unavailable.
-    if lock_raw and lock_raw != "released":
-        return "incomplete"
     return None
 
 
