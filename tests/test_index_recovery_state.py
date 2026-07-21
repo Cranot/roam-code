@@ -13,6 +13,8 @@ from pathlib import Path
 import click
 import pytest
 
+from tests._helpers.repo_root import repo_root
+
 
 def _state_payload(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -119,7 +121,7 @@ if claim is not None:
     workers = [
         subprocess.Popen(  # noqa: S603 -- exact interpreter and literal regression argv
             [sys.executable, "-c", script, str(lock_path), str(start), str(release), str(result_path)],
-            cwd=Path(__file__).parents[1],
+            cwd=repo_root(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -185,7 +187,7 @@ indexer.run(quiet=True)
 """
     crashed = subprocess.run(  # noqa: S603 -- exact interpreter and literal regression argv
         [sys.executable, "-c", script, str(tmp_path)],
-        cwd=Path(__file__).parents[1],
+        cwd=repo_root(),
         capture_output=True,
         text=True,
         timeout=30,
