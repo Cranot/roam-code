@@ -721,9 +721,7 @@ def _load_or_create_key(root: Path, *, create: bool = True) -> bytes:
     except TranscriptBackfillSafetyError:
         raise
     except (OSError, RuntimeError) as exc:
-        raise TranscriptBackfillSafetyError(
-            f"cannot safely access savings backfill key state: {state}: {exc}"
-        ) from exc
+        raise TranscriptBackfillSafetyError(f"cannot safely access savings backfill key state: {state}: {exc}") from exc
 
 
 def _keyed_hex(key: bytes, purpose: str, value: str, length: int = 24) -> str:

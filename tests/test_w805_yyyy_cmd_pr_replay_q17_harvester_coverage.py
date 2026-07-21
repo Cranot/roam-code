@@ -455,8 +455,7 @@ class TestPrReplayQ17ProducerCoverageDisclosure:
             f"artifacts={len(artifacts)}, redactions={list(packet.redactions or ())!r}."
         )
         assert any(
-            artifact.kind == "manifest" and artifact.extra.get("producer") == "pr-replay"
-            for artifact in artifacts
+            artifact.kind == "manifest" and artifact.extra.get("producer") == "pr-replay" for artifact in artifacts
         )
         assert packet.evidence_completeness()["Q7"] == "partial"
         assert not tests_run
