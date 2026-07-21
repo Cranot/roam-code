@@ -111,7 +111,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `13.10.0` | Exact roam-code version to install from PyPI. Accepts a closed PEP 440-style release grammar; URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
+| `version` | `13.10.0` | Exact roam-code version to install from PyPI. The explicit `source` mode installs from the selected action checkout; `latest` requires `allow-latest: true`. URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
 | `allow-latest` | `false` | Explicit opt-in required when `version: latest` is requested. This keeps the mutable package path visible in review. |
 | `commands` | `health` | Space-separated roam commands to run. Each command produces JSON output that feeds into the PR comment and quality gate. |
 | `changed-only` | `false` | Incremental CI mode. Adapts supported commands to changed files and transitive dependents (when detectable). |
@@ -135,6 +135,11 @@ ranges, because a copied downstream action cannot consume this repository's
 check out roam-code and materialize `uv.lock`, as Roam's own source workflows
 do. `version: latest` trades that release-level reproducibility for automatic
 first-party upgrades and therefore requires `allow-latest: 'true'`.
+`version: source` is intended for prerelease validation of a selected action
+checkout. It installs only from the action's validated `github.action_path`,
+requires matching non-editable PEP 610 provenance, and has no PyPI fallback.
+It binds first-party Roam code to that checkout, while transitive dependencies
+still follow declared package ranges rather than this repository's `uv.lock`.
 
 ## Outputs
 

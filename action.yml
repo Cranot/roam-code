@@ -6,7 +6,7 @@ branding:
 
 inputs:
   version:
-    description: 'Exact roam-code version to install; use latest only with allow-latest=true'
+    description: 'Exact roam-code version to install; source installs this action checkout; latest requires allow-latest=true'
     required: false
     default: '13.10.0'
   allow-latest:
@@ -190,7 +190,11 @@ runs:
 
         validate_scalar "version" "${INPUT_VERSION}" 64
         version_re='^[0-9]+(\.[0-9]+){1,3}((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$'
-        if [[ "${INPUT_VERSION}" == "latest" ]]; then
+        if [[ "${INPUT_VERSION}" == "source" ]]; then
+          if [[ "${INPUT_ALLOW_LATEST}" != "false" ]]; then
+            fail_input "version" "source requires allow-latest=false"
+          fi
+        elif [[ "${INPUT_VERSION}" == "latest" ]]; then
           if [[ "${INPUT_ALLOW_LATEST}" != "true" ]]; then
             fail_input "version" "latest requires allow-latest=true"
           fi
@@ -338,22 +342,69 @@ runs:
       env:
         ROAM_VERSION: ${{ steps.validate-inputs.outputs.version }}
         ALLOW_LATEST: ${{ steps.validate-inputs.outputs.allow-latest }}
+        ROAM_ACTION_PATH: ${{ steps.validate-inputs.outputs.action-path }}
       run: |
         set -euo pipefail
-        if [[ "${ROAM_VERSION}" == "latest" ]]; then
-          if [[ "${ALLOW_LATEST}" != "true" ]]; then
-            echo "::error::Mutable latest install was not explicitly authorized" >&2
-            exit 2
-          fi
-          python -m pip install --quiet --disable-pip-version-check roam-code
-        else
-          python -m pip install --quiet --disable-pip-version-check "roam-code==${ROAM_VERSION}"
-          INSTALLED_VERSION=$(python -c 'from importlib.metadata import version; print(version("roam-code"))')
-          if [[ "${INSTALLED_VERSION}" != "${ROAM_VERSION}" ]]; then
-            echo "::error::Installed roam-code ${INSTALLED_VERSION}; expected ${ROAM_VERSION}" >&2
-            exit 1
-          fi
-        fi
+        case "${ROAM_VERSION}" in
+          source)
+            if [[ "${ALLOW_LATEST}" != "false" ]]; then
+              echo "::error::Source install must not enable the mutable latest path" >&2
+              exit 2
+            fi
+            if [[ ! -f "${ROAM_ACTION_PATH}/pyproject.toml" ]]; then
+              echo "::error::Source install requires pyproject.toml in the validated action checkout" >&2
+              exit 1
+            fi
+            python -m pip install --quiet --disable-pip-version-check --no-cache-dir --force-reinstall "${ROAM_ACTION_PATH}"
+            python - <<'PY'
+        import importlib.metadata
+        import json
+        import os
+        from pathlib import Path
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
+
+        expected = Path(os.environ["ROAM_ACTION_PATH"]).resolve(strict=True)
+        distribution = importlib.metadata.distribution("roam-code")
+        installed_name = str(distribution.metadata.get("Name", "")).lower().replace("_", "-")
+        if installed_name != "roam-code":
+            raise SystemExit(f"installed unexpected distribution name: {installed_name!r}")
+        raw_direct_url = distribution.read_text("direct_url.json")
+        if not raw_direct_url:
+            raise SystemExit("source install produced no PEP 610 direct_url.json")
+        direct_url = json.loads(raw_direct_url)
+        parsed = urlparse(direct_url.get("url", ""))
+        if parsed.scheme != "file" or parsed.netloc not in ("", "localhost"):
+            raise SystemExit("source install provenance is not a local file URL")
+        if parsed.params or parsed.query or parsed.fragment:
+            raise SystemExit("source install provenance contains unexpected URL components")
+        actual = Path(url2pathname(parsed.path)).resolve(strict=True)
+        if actual != expected:
+            raise SystemExit(f"source install provenance mismatch: {actual} != {expected}")
+        dir_info = direct_url.get("dir_info")
+        if not isinstance(dir_info, dict):
+            raise SystemExit("source install provenance has no directory information")
+        editable = dir_info.get("editable")
+        if editable is not None and editable is not False:
+            raise SystemExit("source install unexpectedly used editable mode")
+        PY
+            ;;
+          latest)
+            if [[ "${ALLOW_LATEST}" != "true" ]]; then
+              echo "::error::Mutable latest install was not explicitly authorized" >&2
+              exit 2
+            fi
+            python -m pip install --quiet --disable-pip-version-check roam-code
+            ;;
+          *)
+            python -m pip install --quiet --disable-pip-version-check "roam-code==${ROAM_VERSION}"
+            INSTALLED_VERSION=$(python -c 'from importlib.metadata import version; print(version("roam-code"))')
+            if [[ "${INSTALLED_VERSION}" != "${ROAM_VERSION}" ]]; then
+              echo "::error::Installed roam-code ${INSTALLED_VERSION}; expected ${ROAM_VERSION}" >&2
+              exit 1
+            fi
+            ;;
+        esac
         python -m pip check
 
     # ---- 6. Build/refresh index ---------------------------------------------
