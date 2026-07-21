@@ -932,7 +932,7 @@ def _start_component_process(
             _os.set_inheritable(status_read_fd, False)
             _os.set_inheritable(status_write_fd, False)
         process_argv = [
-            _os.path.realpath(_sys.executable),
+            _sys.executable,
             "-c",
             _LINUX_COMPONENT_WRAPPER,
             str(status_write_fd),
