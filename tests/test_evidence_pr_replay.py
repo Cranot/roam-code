@@ -280,6 +280,15 @@ def test_collect_change_evidence_returns_content_hashed_packet(tmp_path, monkeyp
     # risk_level derives from total_medium
     assert packet.risk_level in {"low", "medium", "high"}
     assert packet.git_range == "HEAD~1..HEAD"
+    report_manifests = [
+        artifact
+        for artifact in packet.artifacts
+        if artifact.kind == "manifest" and artifact.extra.get("producer") == "pr-replay"
+    ]
+    assert len(report_manifests) == 1
+    assert report_manifests[0].extra.get("assurance_role") == "report_context"
+    assert packet.evidence_completeness()["Q7"] == "partial"
+    assert packet.tests_run == ()
 
 
 # ---------------------------------------------------------------------------

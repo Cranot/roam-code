@@ -269,12 +269,12 @@ def _artifact_for_request(plan, artifact: str, cwd: str) -> tuple[dict, str]:
     if artifact == "auto":
         return compile_for_artifact(plan, cwd=cwd)
     if artifact == "facts":
-        return plan.to_facts_envelope(), "facts"
+        return plan.to_facts_envelope(cwd=cwd), "facts"
     if artifact == "lean":
-        return plan.to_lean_envelope(), "lean"
+        return plan.to_lean_envelope(cwd=cwd), "lean"
     if artifact == "contract":
-        return plan.to_facts_contract_envelope(), "contract"
-    return plan.to_envelope(), "full"
+        return plan.to_facts_contract_envelope(cwd=cwd), "contract"
+    return plan.to_envelope(cwd=cwd), "full"
 
 
 def _compile_verify_hint(cwd: str) -> str | None:

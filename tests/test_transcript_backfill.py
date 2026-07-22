@@ -6,6 +6,7 @@ import json
 import os
 import stat
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -421,6 +422,80 @@ def test_backfill_rejects_linked_private_files_without_clobbering_target(
         backfill_transcripts(root, source, source="claude")
 
     assert victim.read_text(encoding="utf-8") == "preserve me"
+
+
+def test_backfill_normalizes_private_key_pin_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    root.mkdir()
+    source.mkdir()
+    _load_or_create_key(root)
+    _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
+
+    @contextmanager
+    def failing_pin(_path: Path):
+        raise PermissionError("injected private-state pin failure")
+        yield  # pragma: no cover - required to make this a context manager
+
+    monkeypatch.setattr(transcript_backfill_module, "pinned_owner_only_directory", failing_pin)
+
+    with pytest.raises(TranscriptBackfillSafetyError, match="cannot safely access savings backfill key state"):
+        backfill_transcripts(root, source, source="claude")
+
+    assert not (root / ".roam" / "transcript-episodes.jsonl").exists()
+
+
+def test_backfill_normalizes_snapshot_pin_exit_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    root.mkdir()
+    source.mkdir()
+    _load_or_create_key(root)
+    _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
+    pin_calls = 0
+
+    @contextmanager
+    def failing_second_pin(_path: Path):
+        nonlocal pin_calls
+        pin_calls += 1
+        yield
+        if pin_calls == 2:
+            raise PermissionError("injected snapshot pin exit failure")
+
+    monkeypatch.setattr(transcript_backfill_module, "pinned_owner_only_directory", failing_second_pin)
+
+    with pytest.raises(TranscriptBackfillSafetyError, match="cannot safely write derived transcript snapshot"):
+        backfill_transcripts(root, source, source="claude")
+
+    assert pin_calls == 2
+
+
+def test_backfill_normalizes_atomic_parent_identity_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    source = tmp_path / "transcripts"
+    root.mkdir()
+    source.mkdir()
+    _load_or_create_key(root)
+    _write_claude_session(source / "session.jsonl", root, "session", "git status --short")
+
+    def failing_atomic_write(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("atomic-write parent changed while opening its directory handle")
+
+    monkeypatch.setattr(transcript_backfill_module, "atomic_write_bytes", failing_atomic_write)
+
+    with pytest.raises(TranscriptBackfillSafetyError, match="cannot safely write derived transcript snapshot"):
+        backfill_transcripts(root, source, source="claude")
+
+    assert not (root / ".roam" / "transcript-episodes.jsonl").exists()
 
 
 def test_backfill_ignores_legacy_predictable_temp_link(tmp_path: Path) -> None:
@@ -882,6 +957,11 @@ def test_backfill_shares_discovery_budgets_across_sources(
     real_scandir = os.scandir
 
     def tracking_scandir(path: object) -> object:
+        # pytest 9 may clean temporary directories with a directory file
+        # descriptor while this process-wide monkeypatch is still active.
+        # Observe only the path-based discovery calls owned by this test.
+        if isinstance(path, int):
+            return real_scandir(path)
         scanned_roots.append(os.path.normcase(os.path.normpath(os.fsdecode(os.fspath(path)))))
         return real_scandir(path)
 
@@ -925,6 +1005,8 @@ def test_backfill_elapsed_budget_starts_before_discovery_and_stops_later_sources
     real_scandir = os.scandir
 
     def expiring_scandir(path: object) -> object:
+        if isinstance(path, int):
+            return real_scandir(path)
         scanned_roots.append(os.path.normcase(os.path.normpath(os.fsdecode(os.fspath(path)))))
         iterator = real_scandir(path)
         clock.now = 2.0

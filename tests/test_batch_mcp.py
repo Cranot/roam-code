@@ -33,11 +33,15 @@ def _disable_cold_start_guard(monkeypatch):
     shape (no ``queries_executed`` / ``symbols_resolved`` field).
 
     Mirrors the same fixture in ``test_mcp_refactoring_wrappers.py`` etc.
-    ``ROAM_MCP_DISABLE_COLD_START_GUARD`` flips the guard to a no-op for
-    the duration of each test (see
-    ``roam.mcp_extras.preflight.maybe_cold_start_envelope``).
+    Patch the guard boundary itself for the duration of each test.  The
+    environment switch remains a supported one-off escape hatch, but an
+    in-process contract test should not depend on process-wide environment
+    ordering under pytest-xdist.
     """
-    monkeypatch.setenv("ROAM_MCP_DISABLE_COLD_START_GUARD", "1")
+    monkeypatch.setattr(
+        "roam.mcp_extras.preflight.maybe_cold_start_envelope",
+        lambda _tool_name, _root=".": None,
+    )
     yield
 
 
@@ -380,6 +384,7 @@ class TestBatchSearch:
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=[], root=".")
+        assert "summary" in result, result
         assert result["summary"]["queries_executed"] == 0
         assert result["summary"]["total_matches"] == 0
         assert result["results"] == {}

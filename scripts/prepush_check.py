@@ -146,6 +146,17 @@ FULL_PYTEST_GUARDS: tuple[str, ...] = (
 )
 
 _MAX_PYTEST_WORKERS = 4
+_NATIVE_THREAD_ENV = (
+    "BLIS_NUM_THREADS",
+    "GOTO_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "OMP_THREAD_LIMIT",
+    "OPENBLAS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
+_NATIVE_THREADS_PER_WORKER = "1"
 _GIB = 1024**3
 _MIN_RELEASE_TEMP_FREE_GIB = 4
 _MIN_RELEASE_TEMP_FREE_GIB_PER_WORKER = 2
@@ -226,6 +237,12 @@ class GateRunner:
             pass
         for name in local_vars:
             env.pop(name, None)
+        # Keep --workers as the total concurrency budget. NumPy/SciPy may load
+        # a native math runtime in each xdist worker; inherited host-sized
+        # defaults otherwise multiply a bounded worker pool into dozens of
+        # threads. Override poisoned outer values as well as absent defaults.
+        for name in _NATIVE_THREAD_ENV:
+            env[name] = _NATIVE_THREADS_PER_WORKER
         src = str(self.root / "src")
         current = env.get("PYTHONPATH")
         env["PYTHONPATH"] = src if not current else f"{src}{os.pathsep}{current}"
@@ -402,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[prepush] repo root: {root}")
     print(f"[prepush] tier: {'RELEASE' if release else 'FULL' if full else 'FAST'}")
     print(f"[prepush] pytest workers: {args.workers} (loadfile distribution)")
+    print(f"[prepush] native math threads per worker: {_NATIVE_THREADS_PER_WORKER}")
 
     runner = GateRunner(root=root, pytest_workers=args.workers)
     if release and not runner.run_release_temp_capacity_gate().passed:

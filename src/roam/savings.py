@@ -1505,8 +1505,20 @@ def materialize_ledger(root: str | Path) -> dict[str, Any]:
             open_flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
             open_flags |= getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(database, open_flags)
-            if file_descriptor_identity(descriptor) != source_generation.identity or not file_descriptor_is_owner_only(
-                descriptor, database
+            installed_generation = capture_file_generation(descriptor, max_bytes=MAX_LEDGER_DB_BYTES)
+            # A successful rename preserves the file object and bytes but can
+            # legitimately update ctime (POSIX metadata-change time; Windows
+            # creation time).  Bind the published object to every stable
+            # source-generation field, then use that post-rename generation as
+            # the baseline for the durability check below.
+            if (
+                installed_generation.identity != source_generation.identity
+                or installed_generation.size != source_generation.size
+                or installed_generation.mtime_ns != source_generation.mtime_ns
+                or installed_generation.nlink != source_generation.nlink
+                or installed_generation.sha256 != source_generation.sha256
+                or file_descriptor_identity(descriptor) != source_generation.identity
+                or not file_descriptor_is_owner_only(descriptor, database)
             ):
                 raise SavingsLedgerSafetyError(f"installed savings ledger changed: {database}")
             os.fsync(descriptor)
@@ -1518,7 +1530,7 @@ def materialize_ledger(root: str | Path) -> dict[str, Any]:
                     os.close(directory_fd)
             if capture_file_generation(
                 descriptor, max_bytes=MAX_LEDGER_DB_BYTES
-            ) != source_generation or not file_descriptor_is_owner_only(descriptor, database):
+            ) != installed_generation or not file_descriptor_is_owner_only(descriptor, database):
                 raise SavingsLedgerSafetyError(f"installed savings ledger changed after durability sync: {database}")
         except BaseException:
             if conn is not None:

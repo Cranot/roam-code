@@ -394,8 +394,12 @@ jobs:
           fetch-depth: 0   # full history required for pr-risk and git analysis
           persist-credentials: false
 
+      # Bind prerelease self-analysis to this exact local action checkout.
+      # Explicit source mode has no PyPI fallback, so an unpublished version
+      # can test itself without weakening downstream exact-version defaults.
       - uses: ./            # local composite action — tests action.yml itself
         with:
+          version: 'source'
           commands: 'health pr-risk'
           changed-only: 'true'
           sarif: 'true'
