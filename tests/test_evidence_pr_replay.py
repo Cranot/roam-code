@@ -280,6 +280,15 @@ def test_collect_change_evidence_returns_content_hashed_packet(tmp_path, monkeyp
     # risk_level derives from total_medium
     assert packet.risk_level in {"low", "medium", "high"}
     assert packet.git_range == "HEAD~1..HEAD"
+    report_manifests = [
+        artifact
+        for artifact in packet.artifacts
+        if artifact.kind == "manifest" and artifact.extra.get("producer") == "pr-replay"
+    ]
+    assert len(report_manifests) == 1
+    assert report_manifests[0].extra.get("assurance_role") == "report_context"
+    assert packet.evidence_completeness()["Q7"] == "partial"
+    assert packet.tests_run == ()
 
 
 # ---------------------------------------------------------------------------
@@ -1396,7 +1405,7 @@ def test_pr_replay_synth_bundle_scrubs_actor_secrets(monkeypatch):
     """
     from roam.commands import cmd_pr_replay
 
-    secret = "ghp_realsecret1234567890abcdefghijklmnop"  # 40 char ghp_ token
+    secret = "ghp_realsecret1234567890abcdefghijklmnop"  # 40 char ghp_ token  # secretsallow
     monkeypatch.setenv("ROAM_AGENT_ID", secret)
     monkeypatch.delenv("ROAM_HUMAN_ACTOR", raising=False)
     monkeypatch.delenv("ROAM_MCP_CLIENT_ID", raising=False)

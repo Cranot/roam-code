@@ -243,14 +243,22 @@ def _parse_for_catalog_isolated_clone_scan(path: Path, language: str | None):
 
     grammar = _CLONE_SCAN_GRAMMAR_ALIASES.get(language, language)
 
-    from tree_sitter_language_pack import get_parser
+    from roam.parser_pack import LanguageNotFoundError, get_parser, has_language
+
+    if not has_language(grammar):
+        print(  # noqa: T201
+            f"[rename-invariant-clones] grammar unavailable for {path}: {grammar}",
+            file=sys.stderr,
+        )
+        return None
 
     try:
         parser = get_parser(grammar)
         tree = parser.parse(source)
-    except (LookupError, ValueError) as exc:
+    except (LanguageNotFoundError, LookupError, ValueError) as exc:
         # Isolated clone scan is best-effort: unsupported/invalid grammars
         # and unparseable files are skipped rather than failing the whole run.
+        # Download, cache, and integrity failures remain loud.
         print(  # noqa: T201
             f"[rename-invariant-clones] isolated parse failed for {path}: {exc}",
             file=sys.stderr,
@@ -477,7 +485,7 @@ def _vectorise_source(source: str, language: str = "python") -> list[_FuncVector
     Used by the tests to exercise the vector / cosine layer without
     needing a full project + SQLite DB.
     """
-    from tree_sitter_language_pack import get_parser
+    from roam.parser_pack import get_parser
 
     grammar = _CLONE_SCAN_GRAMMAR_ALIASES.get(language, language)
     parser = get_parser(grammar)

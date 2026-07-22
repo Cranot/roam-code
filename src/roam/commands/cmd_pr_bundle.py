@@ -2988,6 +2988,12 @@ def pr_bundle_emit(
     reviewers can see the bundle even when proofs are missing.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    if sign and not slsa_l3:
+        raise click.UsageError("--sign requires --slsa-l3")
+    if (sign_key is not None or sign_keyless) and not sign:
+        raise click.UsageError("--key and --keyless require --sign")
+    if sign and (bool(sign_key) == bool(sign_keyless)):
+        raise click.UsageError("--sign requires exactly one signing method: --key PATH or --keyless")
     # W21.6 --ci composition: under --ci, default strict=True so CI fails
     # on incomplete bundles. strict is a tri-state Click option
     # (--strict/--no-strict/None=unset); explicit user flags ALWAYS win

@@ -6,7 +6,7 @@ roam-code (`pip install roam-code`, Python 3.10+) is a local code-graph
 engine. It parses your repo once, stores structural facts in a local SQLite
 graph (symbols, dependencies, call graphs, architecture layers, git history,
 runtime traces), and exposes the graph through 281 CLI commands and 244 MCP
-tools (16 in the default `core` preset) across 28 languages. AI agents
+tools (17 in the default `core` preset) across 28 languages. AI agents
 (Claude Code, Cursor, Codex, Aider, your own) call it before, during, and
 after every change.
 
@@ -41,7 +41,7 @@ nothing else in the AI-code-review space catches it deterministically.
 Roam complements linters, SAST, and AI semantic reviewers — it answers
 graph-aware change questions they don't.
 
-Evidence stays on your machine and hash-verifies offline. No telemetry; 100% local by default (opt-in `metrics-push` is the only outbound surface). Apache 2.0. 28 languages supported.
+Evidence generation stays on your machine and hash-verifies offline. No automatic source-code or telemetry upload. A cold parser cache retrieves one checksum-verified grammar bundle and retains it locally; prewarm it before air-gap use. Explicit network features are inventoried in docs/network-boundary.md. Apache 2.0. 28 languages supported.
 
 ## Products
 

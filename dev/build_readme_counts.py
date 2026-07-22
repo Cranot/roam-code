@@ -105,7 +105,7 @@ class Counts:
     canonical_commands: int  # alias-collapsed command count
     alias_names: int  # number of alias names (command_names - canonical)
     category_count: int  # number of categories in _CATEGORIES
-    mcp_core: int  # tools in the default ``core`` preset
+    mcp_core: int  # query tools selected by ``_CORE_TOOLS`` (excludes meta-tool)
     mcp_full: int  # tools in the full preset (every @_tool decorator)
     mcp_presets: dict[str, int]  # every named preset, in runtime declaration order
     mcp_default_preset: int  # core + 1 meta-tool (``roam_expand_toolset``)
@@ -135,7 +135,7 @@ def collect_counts(root: Path | None = None) -> Counts:
         mcp_core=int(mcp["core_tools"]),
         mcp_full=int(mcp["registered_tools"]),
         mcp_presets={str(name): int(count) for name, count in mcp["preset_counts"].items()},
-        mcp_default_preset=int(mcp["core_tools"]) + 1,
+        mcp_default_preset=int(mcp["preset_counts"]["core"]),
         pyproject_version=_pyproject_version(root),
     )
 
@@ -271,7 +271,7 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
     return {
         # ``readme-headline-prose`` was dropped in v13.2 per the
         # 2026-05-16 ecosystem refresh — README hero now leads with the
-        # positioning core (credential-free + zero-egress + tamper-evident
+        # positioning core (credential-free + no repository egress + tamper-evident
         # evidence) rather than the count headline. Authoritative counts
         # still flow through ``readme-canonical-mention`` and the table /
         # preset blocks below.
@@ -282,7 +282,7 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
         # missed. Closes the headline-counts drift class.
         "readme-headline-counts": (
             f"<sub>{c.command_names} commands · {c.mcp_full} MCP tools "
-            f"({c.mcp_core} in the default `core` preset) · 28 languages</sub>"
+            f"({c.mcp_default_preset} in the default `core` preset) · 28 languages</sub>"
         ),
         # Line 325: "the canonical surface is N commands (X canonical + Y aliases) organised into Z categories"
         "readme-canonical-mention": (
@@ -338,8 +338,8 @@ def _claude_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 —
             f"It pre-indexes symbols, call graphs, dependencies, architecture, "
             f"and git history into\n"
             f"a local SQLite DB. **{c.command_names} commands · {c.mcp_full} "
-            f"MCP tools ({c.mcp_core} in the default `core` preset) · 28 "
-            f"languages · 100% local · zero API keys.**"
+            f"MCP tools ({c.mcp_default_preset} in the default `core` preset) · 28 "
+            f"languages · local analysis · zero API keys.**"
         ),
         # W138: the authoritative-counts line now names the AST-derived,
         # env-independent totals (``roam.surface_counts``) — distinct from
@@ -352,7 +352,7 @@ def _claude_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 —
             f"canonical_count: {c.canonical_commands} · "
             f"category_count: {c.category_count} · "
             f"mcp tools registered: {c.mcp_full} · "
-            f"mcp tools in core preset: {c.mcp_core}`. "
+            f"mcp tools in core preset: {c.mcp_default_preset}`. "
             f"The `roam surface --json` envelope additionally exposes "
             f"`mcp_tool_count_by_preset` for per-preset counts."
         ),
@@ -361,12 +361,12 @@ def _claude_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 —
 
 def _llms_install_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 — root accepted for signature symmetry with _readme_blocks
     return {
-        # Line 4: "N commands, M MCP tools, 28 languages, 100% local, zero API keys."
+        # Line 4: "N commands, M MCP tools, 28 languages, local analysis, zero API keys."
         "llms-install-headline": (
-            f"{c.command_names} commands, {c.mcp_full} MCP tools, 28 languages, 100% local, zero API keys."
+            f"{c.command_names} commands, {c.mcp_full} MCP tools, 28 languages, local analysis, zero API keys."
         ),
-        # Line 81: "Run roam --help for all N commands (+ alias pairs)."
-        "llms-install-footer": (f"Run `roam --help` for all {c.command_names} commands (+ alias pairs)."),
+        # Footer: "Run roam --help-all for all N commands (+ alias pairs)."
+        "llms-install-footer": (f"Run `roam --help-all` for all {c.command_names} commands (+ alias pairs)."),
     }
 
 
@@ -393,8 +393,8 @@ def _agents_md_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 
             f"It pre-indexes symbols, call graphs, dependencies, architecture, "
             f"and git history into\n"
             f"a local SQLite DB. **{c.command_names} commands · {c.mcp_full} "
-            f"MCP tools ({c.mcp_core} in the default `core` preset) · 28 "
-            f"languages · 100% local · zero API keys.**"
+            f"MCP tools ({c.mcp_default_preset} in the default `core` preset) · 28 "
+            f"languages · local analysis · zero API keys.**"
         ),
         # Authoritative-counts line matches CLAUDE.md's claude-authoritative
         # contract: AST-derived, env-independent totals (`roam.surface_counts`)
@@ -407,7 +407,7 @@ def _agents_md_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 
             f"canonical_count: {c.canonical_commands} · "
             f"category_count: {c.category_count} · "
             f"mcp tools registered: {c.mcp_full} · "
-            f"mcp tools in core preset: {c.mcp_core}`. "
+            f"mcp tools in core preset: {c.mcp_default_preset}`. "
             f"The `roam surface --json` envelope additionally exposes "
             f"`mcp_tool_count_by_preset` for per-preset counts."
         ),

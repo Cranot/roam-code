@@ -75,6 +75,10 @@ class TestMcpSetup:
 
         result = cli_runner.invoke(cli, ["mcp-setup", "codex-cli"])
         assert result.exit_code == 0
+        assert "codex mcp add roam-code -- roam mcp" in result.output
+        assert "Configuration TOML" in result.output
+        assert "[mcp_servers.roam-code]" in result.output
+        assert "config.json" not in result.output
 
     def test_windsurf_config(self, cli_runner):
         from roam.cli import cli

@@ -13,36 +13,66 @@ existed in name but not in wiring. W844 closes the loop by extending
      ``_EXPECTED_CARD_SHA256`` pin in place — closes the W563 gap.
 
 These tests pin both behaviours so a future refactor cannot silently
-re-introduce the manual-bump treadmill.
+re-introduce the manual-bump treadmill. Every mutation is confined to a
+``tmp_path`` shadow passed through the script's ``--root`` option; the real
+release files remain read-only under pytest-xdist.
 """
 
 from __future__ import annotations
 
 import hashlib
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-# xdist: these tests read or mutate the REAL repo card JSONs + the
-# _EXPECTED_CARD_SHA256 pin (no --target override exists), so they must
-# serialize on one worker. Surfaced on the first parallel CI run
-# (2026-06-11): two w844 tests raced across workers and flagged a real
-# --apply as non-idempotent.
-pytestmark = pytest.mark.xdist_group("card_pin_mutation")
-
 from tests._helpers.repo_root import repo_root
 
 ROOT = repo_root()
 SCRIPT = ROOT / "dev" / "build_readme_counts.py"
-BUNDLED_CARD = ROOT / "src" / "roam" / "mcp-server-card.json"
-PUBLIC_CARD = ROOT / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card.json"
-SEP_1649 = ROOT / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp" / "server-card.json"
-SEP_2127 = ROOT / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card"
-PIN_FILE = ROOT / "tests" / "test_mcp_server_card_hash.py"
 
-ALL_CARDS = (BUNDLED_CARD, PUBLIC_CARD, SEP_1649, SEP_2127)
+_SHADOW_RELATIVE_PATHS = (
+    "pyproject.toml",
+    "src/roam/cli.py",
+    "src/roam/mcp_server.py",
+    "README.md",
+    "CLAUDE.md",
+    "llms-install.md",
+    "AGENTS.md",
+    "src/roam/mcp-server-card.json",
+    "templates/distribution/landing-page/.well-known/mcp-server-card.json",
+    "templates/distribution/landing-page/.well-known/mcp/server-card.json",
+    "templates/distribution/landing-page/.well-known/mcp-server-card",
+    "tests/test_mcp_server_card_hash.py",
+)
+
+
+def _card_paths(root: Path) -> tuple[Path, Path, Path, Path, Path]:
+    well_known = root / "templates" / "distribution" / "landing-page" / ".well-known"
+    return (
+        root / "src" / "roam" / "mcp-server-card.json",
+        well_known / "mcp-server-card.json",
+        well_known / "mcp" / "server-card.json",
+        well_known / "mcp-server-card",
+        root / "tests" / "test_mcp_server_card_hash.py",
+    )
+
+
+@pytest.fixture
+def shadow_root(tmp_path: Path) -> Path:
+    """Copy every count-script input/output into an isolated root."""
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    for relative in _SHADOW_RELATIVE_PATHS:
+        source = ROOT / relative
+        if not source.exists():
+            continue
+        destination = shadow / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    return shadow
 
 
 def _lf_sha256(path: Path) -> str:
@@ -50,8 +80,8 @@ def _lf_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
-def _read_pin() -> str:
-    text = PIN_FILE.read_text(encoding="utf-8")
+def _read_pin(pin_file: Path) -> str:
+    text = pin_file.read_text(encoding="utf-8")
     # Grab the digest between quotes on the _EXPECTED_CARD_SHA256 line.
     for line in text.splitlines():
         stripped = line.strip()
@@ -61,27 +91,9 @@ def _read_pin() -> str:
     raise AssertionError("_EXPECTED_CARD_SHA256 not found in pin file")
 
 
-@pytest.fixture
-def card_backups(tmp_path: Path) -> dict[Path, bytes]:
-    """Snapshot every card + the pin file; restore on teardown.
-
-    The script writes in place against the repo working tree (it has no
-    ``--target`` override), so the test mutates the real files. Backups
-    let the assertions run on a real ``--apply`` and still leave the tree
-    in its pre-test state for later tests in the session.
-    """
-    snapshot: dict[Path, bytes] = {}
-    for path in (*ALL_CARDS, PIN_FILE):
-        snapshot[path] = path.read_bytes()
-    yield snapshot
-    # Restore everything to its pre-test state.
-    for path, content in snapshot.items():
-        path.write_bytes(content)
-
-
-def _run_apply(*extra: str) -> subprocess.CompletedProcess[str]:
+def _run_apply(shadow: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--apply", *extra],
+        [sys.executable, str(SCRIPT), "--apply", *extra, "--root", str(shadow)],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -89,15 +101,16 @@ def _run_apply(*extra: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_w844_card_edit_triggers_pin_rotation(card_backups: dict[Path, bytes]) -> None:
+def test_w844_card_edit_triggers_pin_rotation(shadow_root: Path) -> None:
     """Editing the canonical card + running --apply rewrites the SHA-256 pin.
 
     Simulates the W1307 / W1308 / W794 manual-bump scenario: a wave changes
     a card-content field, then --apply recomputes the digest + rewrites the
     pin without human intervention.
     """
-    original_pin = _read_pin()
-    original_bytes = BUNDLED_CARD.read_bytes()
+    bundled_card, public_card, _, _, pin_file = _card_paths(shadow_root)
+    original_pin = _read_pin(pin_file)
+    original_bytes = bundled_card.read_bytes()
 
     # Inject a benign change into a non-count-bearing field. ``card_url`` is
     # a string near the top of the card and isn't touched by
@@ -108,46 +121,47 @@ def test_w844_card_edit_triggers_pin_rotation(card_backups: dict[Path, bytes]) -
         1,
     )
     assert mutated != original_bytes, "test setup: card edit produced no byte change"
-    BUNDLED_CARD.write_bytes(mutated)
+    bundled_card.write_bytes(mutated)
     # Keep the well-known canonical in lock-step so the W792 invariant
     # holds at the point --apply reads from PUBLIC_CARD (the canonical
     # source for the well-known mirrors).
-    PUBLIC_CARD.write_bytes(mutated)
+    public_card.write_bytes(mutated)
 
-    expected_digest = _lf_sha256(PUBLIC_CARD)
+    expected_digest = _lf_sha256(public_card)
     assert expected_digest != original_pin, "test setup: mutated card hashes to the original pin"
 
-    result = _run_apply()
+    result = _run_apply(shadow_root)
     assert result.returncode == 0, f"--apply failed: {result.stderr}"
 
-    new_pin = _read_pin()
+    new_pin = _read_pin(pin_file)
     # The pin must now match the digest of the post-_apply canonical card.
     # _apply_mcp_card may further mutate count-bearing fields, so recompute.
-    post_apply_digest = _lf_sha256(PUBLIC_CARD)
+    post_apply_digest = _lf_sha256(public_card)
     assert new_pin == post_apply_digest, (
         f"pin not rotated to match post-apply card bytes\n  pin:        {new_pin}\n  card hash:  {post_apply_digest}"
     )
 
 
-def test_w844_no_rotate_card_hash_opt_out(card_backups: dict[Path, bytes]) -> None:
+def test_w844_no_rotate_card_hash_opt_out(shadow_root: Path) -> None:
     """``--no-rotate-card-hash`` preserves the pin even when the card changes."""
-    original_pin = _read_pin()
+    bundled_card, public_card, _, _, pin_file = _card_paths(shadow_root)
+    original_pin = _read_pin(pin_file)
 
-    mutated = BUNDLED_CARD.read_bytes().replace(
+    mutated = bundled_card.read_bytes().replace(
         b'"card_url"',
         b'"card_url"  ',
         1,
     )
-    BUNDLED_CARD.write_bytes(mutated)
-    PUBLIC_CARD.write_bytes(mutated)
+    bundled_card.write_bytes(mutated)
+    public_card.write_bytes(mutated)
 
-    result = _run_apply("--no-rotate-card-hash")
+    result = _run_apply(shadow_root, "--no-rotate-card-hash")
     assert result.returncode == 0, f"--apply failed: {result.stderr}"
 
-    assert _read_pin() == original_pin, "--no-rotate-card-hash should leave _EXPECTED_CARD_SHA256 untouched"
+    assert _read_pin(pin_file) == original_pin, "--no-rotate-card-hash should leave _EXPECTED_CARD_SHA256 untouched"
 
 
-def test_w844_well_known_mirrors_synced(card_backups: dict[Path, bytes]) -> None:
+def test_w844_well_known_mirrors_synced(shadow_root: Path) -> None:
     """``--apply`` syncs SEP-1649 + SEP-2127 mirrors to the canonical bytes.
 
     Closes the W1308 manual-sync gap: prior --apply runs only updated the
@@ -155,19 +169,20 @@ def test_w844_well_known_mirrors_synced(card_backups: dict[Path, bytes]) -> None
     W792 byte-identity guard to catch later. The auto-rotate substrate now
     keeps all 3 mirrors in lock-step.
     """
+    _, public_card, sep_1649, sep_2127, _ = _card_paths(shadow_root)
     # Corrupt the two non-canonical mirrors so the script has work to do.
-    SEP_1649.write_bytes(b'{"intentionally": "stale"}\n')
-    SEP_2127.write_bytes(b'{"intentionally": "stale"}\n')
+    sep_1649.write_bytes(b'{"intentionally": "stale"}\n')
+    sep_2127.write_bytes(b'{"intentionally": "stale"}\n')
 
-    result = _run_apply()
+    result = _run_apply(shadow_root)
     assert result.returncode == 0, f"--apply failed: {result.stderr}"
 
-    canonical = PUBLIC_CARD.read_bytes()
-    assert SEP_1649.read_bytes() == canonical, "SEP-1649 mirror not re-synced"
-    assert SEP_2127.read_bytes() == canonical, "SEP-2127 mirror not re-synced"
+    canonical = public_card.read_bytes()
+    assert sep_1649.read_bytes() == canonical, "SEP-1649 mirror not re-synced"
+    assert sep_2127.read_bytes() == canonical, "SEP-2127 mirror not re-synced"
 
 
-def test_w844_apply_is_idempotent_with_rotation(card_backups: dict[Path, bytes]) -> None:
+def test_w844_apply_is_idempotent_with_rotation(shadow_root: Path) -> None:
     """Two consecutive ``--apply`` runs produce no further changes.
 
     Idempotency proof for the new substrate: rotation must converge in one
@@ -176,12 +191,13 @@ def test_w844_apply_is_idempotent_with_rotation(card_backups: dict[Path, bytes])
     is not in MARKDOWN_TARGETS, and the digest is stable once written.)
     """
     # First pass — may or may not change anything (steady-state usually no-op).
-    _run_apply()
+    paths = _card_paths(shadow_root)
+    _run_apply(shadow_root)
     # Snapshot bytes after first pass.
-    after_first = {p: p.read_bytes() for p in (*ALL_CARDS, PIN_FILE)}
+    after_first = {path: path.read_bytes() for path in paths}
     # Second pass — must be a no-op.
-    _run_apply()
+    _run_apply(shadow_root)
     for path, content in after_first.items():
         assert path.read_bytes() == content, (
-            f"non-idempotent: {path.relative_to(ROOT).as_posix()} changed on second --apply"
+            f"non-idempotent: {path.relative_to(shadow_root).as_posix()} changed on second --apply"
         )

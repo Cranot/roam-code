@@ -5,11 +5,11 @@
 <!-- BEGIN auto-count:Codex-headline -->
 roam-code is a local codebase intelligence CLI for developers and AI coding agents.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. **281 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages · 100% local · zero API keys.**
+a local SQLite DB. **281 commands · 244 MCP tools (17 in the default `core` preset) · 28 languages · local analysis · zero API keys.**
 <!-- END auto-count:Codex-headline -->
 
 <!-- BEGIN auto-count:Codex-authoritative -->
-Authoritative counts (AST-derived, env-independent): `command_count: 281 · canonical_count: 274 · category_count: 7 · mcp tools registered: 244 · mcp tools in core preset: 16`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
+Authoritative counts (AST-derived, env-independent): `command_count: 281 · canonical_count: 274 · category_count: 7 · mcp tools registered: 244 · mcp tools in core preset: 17`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
 <!-- END auto-count:Codex-authoritative -->
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
@@ -152,7 +152,7 @@ roam health
 ```
 src/roam/
   cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 281 command names (274 canonical + 7 aliases).
-  mcp_server.py       # FastMCP server (16 tools in core preset; 244 in `full`) + `roam mcp` CLI command
+  mcp_server.py       # FastMCP server (17 tools in core preset; 244 in `full`) + `roam mcp` CLI command
   mcp_extras/         # MCP-native enhancements: sampling, watcher, session, progress, completions
     sampling.py       # Sampling-driven result compression (summarize=True) via Context.sample
     watcher.py        # watchdog observer + notifications/resources/updated (opt-in via ROAM_MCP_WATCH)
@@ -231,7 +231,7 @@ src/roam/
     gate_presets.py    # Framework-specific gate rules + .roam-gates.yml loader
     graph_helpers.py   # Shared graph utilities (adjacency builders, BFS helpers)
     context_helpers.py # Data-gathering helpers extracted from cmd_context.py
-    cmd_*.py           # One module per CLI command family (232 modules backing 241 command names)
+    cmd_*.py           # 274 command modules: 272 back the 281 default names; 2 are feature-gated
   output/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
@@ -369,10 +369,12 @@ chain verifies (`roam runs verify`) AND the bundle validates with `--strict`.
 Every other piece (laws, memory, world-model, agents-md, brief, next, intent-check,
 replay, agent-score) feeds one of those four verbs.
 
-### MCP boundary security (runtime wave, sealed 2026-05-18)
+### MCP boundary security (base wave sealed 2026-05-18; later extensions shipped)
 
 Roam ships structured evidence emission as the security stance at the MCP
-boundary. As of 2026-05-18 the P0/P1/P2 wave is sealed. Full integrator
+boundary. The 2026-05-18 base wave is sealed; prompt-injection scanning
+followed on 2026-05-21 and its read-only visibility was hardened for 13.10.
+Full integrator
 spec: `dev/MCP-SECURITY-POSTURE.md` (companion doc for Interlock / Lasso /
 Portkey / MintMCP gateway authors). Canonical dataclass:
 `src/roam/evidence/mcp_receipt.py`. JSON Schema emitter:
@@ -404,6 +406,11 @@ Agent-developer landing page:
   flips the P0.2 mode gate into observe-only — denials are emitted as
   receipts but the call proceeds. Gateways can stage policy changes
   without raising.
+- **Prompt-injection marker scanning (MCP-P1.2, shipped 2026-05-21;
+  read-only visibility hardened in 13.10).** Structural marker scans cover
+  mapping keys and values after secret redaction. Marker bytes remain visible,
+  while trusted result metadata and a conditional decision receipt expose the
+  finding without letting producer output spoof the boundary-owned signal.
 - **Per-tool side-effect declarations (MCP-P2.1, shipped).** Every
   `@_tool` wrapper carries declared `read_only` / `destructive` /
   `idempotent` flags in `_TOOL_METADATA`; receipts surface them as
@@ -417,8 +424,9 @@ Agent-developer landing page:
 **Closed-enum vocabulary** (membership validated at receipt construction;
 unknown literals raise `ValueError`):
 
-- `policy_decision` (9 values): `pass`, `fail`, `allow`, `deny`,
-  `escalate`, `redact`, `not_evaluated`, `unknown`, `would_deny_dry_run`.
+- Canonical `POLICY_DECISIONS` has 9 values, while MCP receipts accept the
+  6-value authority subset: `allow`, `deny`, `escalate`, `redact`,
+  `not_evaluated`, `would_deny_dry_run`.
 - `redactions` reasons (10 values, canonical W226 `REDACTION_REASONS`):
   `secret`, `pii`, `sensitive_content`, `size_limit`, `policy`,
   `user_opt_in_required`, `machine_local_path`, `schema_strict`,
@@ -633,7 +641,7 @@ distinct object).
 
 - click >= 8.0 (CLI framework)
 - tree-sitter >= 0.23 (AST parsing)
-- tree-sitter-language-pack >= 0.6 (165+ grammars)
+- tree-sitter-language-pack >= 1.13.3, < 1.14 (cross-process-safe parser cache)
 - networkx >= 3.0 (graph algorithms)
 - Optional: fastmcp >= 2.0 (MCP server — `pip install "roam-code[mcp]"`)
 - Dev: pytest >= 7.0, pytest-xdist >= 3.0, ruff >= 0.4

@@ -23,8 +23,8 @@
 
 This packet covers:
 
-- **Roam Code CLI** (live; Apache 2.0; 100% local — `pip install
-  roam-code`; 281 commands / 244 MCP tools, 16 in the default `core`
+- **Roam Code CLI** (live; Apache 2.0; local source analysis — `pip install
+  roam-code`; 281 commands / 244 MCP tools, 17 in the default `core`
   preset / 28 languages; evidence: `roam surface --json` generated on
   2026-07-19).
 - **PR Replay** (live; one-shot structural-review engagement priced
@@ -62,11 +62,15 @@ governs the relationship between the three documents.
 ## 1. One-paragraph summary for legal
 
 **Roam Code CLI (live).** Roam Code's flagship product is the
-open-source `roam-code` CLI: a **100% local Apache 2.0 tool** that
-requires no API key, no vendor cloud endpoint, and no inbound network
-egress to Provider or any third party for analysis. Customer source
-code and Personal Data stay on Customer's machine; Provider has no
-analysis-time data flow. This local-only stance is contractually
+open-source `roam-code` CLI: an **Apache 2.0 local-analysis tool** that
+requires no API key or vendor cloud endpoint and performs ordinary analysis
+without automatically sending repository content to Provider or any third
+party. In the default local-analysis path, Customer source code and Personal
+Data stay on Customer's machine and Provider has no analysis-time data flow.
+Explicit network features have separately documented payload boundaries;
+in particular, opt-in MCP model summarization can send selected report snippets
+to the model provider configured by the MCP host and must remain disabled when
+strict local-only processing is required. This default-local stance is contractually
 committed in
 [DPA §6 (Security measures)](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#6-security-measures).
 
@@ -120,8 +124,9 @@ developers and any individuals named in source comments or commits).
         │
         ▼
 [2] CLI parses the working tree and writes a local SQLite database
-    under .roam/ (in-repo). No network calls. No telemetry.
-    No phone-home. No inbound network listener.
+    under .roam/ (in-repo). No automatic repository-content upload,
+    telemetry, update check, or listener. A cold parser cache may retrieve
+    one checksum-verified public parser bundle and retain it.
         │
         ▼
 [3] CLI writes output to stdout (text / JSON / SARIF) on the
@@ -130,12 +135,25 @@ developers and any individuals named in source comments or commits).
 
 Per
 [DPA §6](https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#6-security-measures):
-**100% local, no API key, no vendor cloud endpoint** — no
-analysis-time data flow to Provider for the CLI surface. Same stance is
+**Local source analysis, no API key, no automatic repository-content upload,
+no required vendor cloud endpoint** — no analysis-time data flow to Provider
+for the ordinary CLI surface.
+The parser dependency may retrieve a checksum-verified public binary bundle
+when its cache is cold; the request carries no Customer content. Same stance is
 documented publicly at
 [`roam-code.com/security#supply-chain`](https://roam-code.com/security#supply-chain) and
 [`roam-code.com/trust#artifacts`](https://roam-code.com/trust#artifacts)
 (data-flow diagram row).
+
+The CLI also exposes deliberately selected network features: PyPI version
+lookup, GitHub PR/review reads and Check Run writes, external URL probes,
+metrics push, keyless Sigstore signing, and optional HTTP listeners. They are
+not part of ordinary analysis and are off unless the operator selects the
+corresponding command/flag, apart from a missing parser bundle. The canonical
+trigger/destination/payload inventory is
+[`docs/network-boundary.md`](https://github.com/Cranot/roam-code/blob/main/docs/network-boundary.md).
+PR Replay operators use only the network paths authorised by the signed SOW
+and DPA.
 
 ### 2.2 PR Replay engagement (live)
 
@@ -255,7 +273,7 @@ with hosted Roam Review rows flagged as planned.
 |---|---|---|---|
 | Stripe, Inc. | Payment processing, receipts, refunds, and billing records. | Billing contact and transaction metadata only; no source code. | USA; Stripe transfer terms / SCCs where applicable. |
 | GitHub, Inc. | Repository access when Controller chooses GitHub collaborator, deploy-key, GitHub App, or webhook access. | Repository content, git metadata, PR metadata, and user metadata needed for the agreed service. | USA / global; GitHub transfer terms / SCCs where applicable. |
-| `[TBD: HOSTING_PROVIDER_IF_ANY]` (planned Roam Review) | Hosted Roam Review or Cloud infrastructure, if enabled. **Not applicable to PR Replay (local-only) or the CLI (local-only).** | `[TBD: DATA_SCOPE]` | `[TBD: REGION_AND_TRANSFER_BASIS]` |
+| `[TBD: HOSTING_PROVIDER_IF_ANY]` (planned Roam Review) | Hosted Roam Review or Cloud infrastructure, if enabled. **Not applicable to PR Replay (local-only) or the CLI's default local-analysis path. Explicit CLI network features use their separately documented destinations.** | `[TBD: DATA_SCOPE]` | `[TBD: REGION_AND_TRANSFER_BASIS]` |
 | `[TBD: EMAIL_OR_STORAGE_PROVIDER_IF_ANY]` | Delivery of reports, support, or encrypted artifact storage, if used. For PR Replay v1 delivery is via direct email from Provider's mailbox. | Contact details and report artifacts. | `[TBD: REGION_AND_TRANSFER_BASIS]` |
 
 The CLI itself has **no runtime sub-processors** — it executes
@@ -559,12 +577,13 @@ commitments.
 
 ## 11. Attestation and evidence substrate
 
-Where this packet is bundled with `roam audit-evidence-pack` output
-for a specific repository, the bundle includes a Cosign / Sigstore
-signature so the receiving security team can verify the JSON
-metadata, the audit-trail file, and the conformance score have not
-been tampered with in transit. Verification command and key are
-documented at
+Where this packet is bundled with a signed
+`roam pr-bundle emit --slsa-l3 --sign --key PATH`
+packet plus `roam audit-trail-export` and
+`roam audit-trail-conformance-check` output for a specific repository,
+the receiving security team can verify the signed JSON evidence and
+independently inspect the audit trail and conformance score. Verification
+commands and key handling are documented at
 [`roam-code.com/security#supply-chain`](https://roam-code.com/security#supply-chain).
 The evidence artefacts produced by `roam-code` **map to** and
 **support evidence for** the framework controls referenced in §7;

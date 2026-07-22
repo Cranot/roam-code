@@ -21,17 +21,15 @@ When updating the card:
 
 from __future__ import annotations
 
-import pytest
-
-# xdist: these tests read or mutate the REAL repo card JSONs + the
-# _EXPECTED_CARD_SHA256 pin (no --target override exists), so they must
-# serialize on one worker. Surfaced on the first parallel CI run
-# (2026-06-11): two w844 tests raced across workers and flagged a real
-# --apply as non-idempotent.
-pytestmark = pytest.mark.xdist_group("card_pin_mutation")
-
 import hashlib
 from pathlib import Path
+
+import pytest
+
+# The hash checks are read-only. W844 write-path tests use per-test shadow
+# roots, so loadfile-based xdist scheduling cannot expose intermediate card
+# bytes to this module. Keep the group for compatibility with loadgroup users.
+pytestmark = pytest.mark.xdist_group("card_pin_mutation")
 
 from tests._helpers.repo_root import repo_root
 
@@ -48,7 +46,7 @@ from tests._helpers.repo_root import repo_root
 # og.png pointing at deployed assets on roam-code.com). All 3
 # .well-known card path variants stay byte-identical per the W792
 # invariant.
-_EXPECTED_CARD_SHA256 = "1e6d8539102f34008f0ec5d66546d6f09e7fe46f2b148a4b8aa94b93515e8ff5"
+_EXPECTED_CARD_SHA256 = "4b6073741be051e4d56805fe8e93a8969108f2c068b64d81ceac7b786a4f3db5"
 
 
 def _card_path() -> Path:

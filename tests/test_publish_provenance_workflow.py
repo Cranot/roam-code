@@ -301,7 +301,7 @@ def test_python_release_toolchain_is_exactly_versioned_and_hash_locked() -> None
     } <= locked_names
     assert headers.count(("pypi-attestations", "0.0.29")) == 1
     assert "# pypi-attestations==0.0.29" in lock
-    assert "# Resolution cutoff: 2026-07-17T00:00:00Z" in lock
+    assert "# Resolution cutoff: 2026-07-22T00:00:00Z" in lock
     assert "x86_64-manylinux_2_34" in lock
     blocks = re.split(r"(?m)(?=^[a-z0-9][a-z0-9._-]*==)", lock)
     package_blocks = [block for block in blocks if re.match(r"^[a-z0-9][a-z0-9._-]*==", block)]

@@ -470,16 +470,32 @@ def mcp_preset_counts() -> dict[str, int]:
     presets_dict = _dict_assignment_for_count_contract(module, "_PRESETS", "mcp_server.py")
 
     # Build the static name environment the preset values reference.
-    total = len(set(_decorated_tool_names_from_loaded_mcp_ast(module)))
+    decorated_tools = set(_decorated_tool_names_from_loaded_mcp_ast(module))
+    total = len(decorated_tools)
+    always_registered = {"roam_expand_toolset"}
+    if not always_registered.issubset(decorated_tools):
+        raise ValueError("always-registered MCP meta-tool is not declared with @_tool")
     env: dict[str, set[str]] = {
         "_CORE_TOOLS": set(core_tools),
         "_WORKFLOW_TOOLS": set(workflow_tools),
     }
-    return _preset_counts_with_full_sentinel(presets_dict, env, total)
+    return _preset_counts_with_full_sentinel(
+        presets_dict,
+        env,
+        total,
+        always_registered=always_registered,
+    )
 
 
-def _preset_counts_with_full_sentinel(presets_dict: ast.Dict, env: dict[str, set[str]], total: int) -> dict[str, int]:
+def _preset_counts_with_full_sentinel(
+    presets_dict: ast.Dict,
+    env: dict[str, set[str]],
+    total: int,
+    *,
+    always_registered: set[str] | None = None,
+) -> dict[str, int]:
     """Resolve preset sizes while conserving the runtime ``full`` sentinel."""
+    always_registered = set(always_registered or ())
     counts: dict[str, int] = {}
     for key_node, value_node in zip(presets_dict.keys, presets_dict.values):
         if not (isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)):
@@ -489,7 +505,7 @@ def _preset_counts_with_full_sentinel(presets_dict: ast.Dict, env: dict[str, set
         # `full` is the empty-set "no filter / all tools" sentinel — match
         # the runtime resolution in mcp_server / cmd_surface so consumers
         # see the actual total, not 0.
-        counts[name] = len(members) if members else total
+        counts[name] = len(members | always_registered) if members else total
     return counts
 
 

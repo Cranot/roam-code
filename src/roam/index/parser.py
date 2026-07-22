@@ -9,11 +9,10 @@ import re
 import struct
 from pathlib import Path
 
-log = logging.getLogger(__name__)
-
-from tree_sitter_language_pack import get_parser
-
 from roam.observability import log_swallowed
+from roam.parser_pack import LanguageNotFoundError, get_parser, has_language
+
+log = logging.getLogger(__name__)
 
 # Map file extensions to tree-sitter language names.
 # This is the single canonical source of truth for extension → language mapping.
@@ -310,9 +309,13 @@ def parse_file(path: Path, language: str | None = None):
     plugin_alias = _plugin_grammar_aliases().get(language)
     grammar = plugin_alias or GRAMMAR_ALIASES.get(language, language)
 
+    if not has_language(grammar):
+        parse_errors["no_grammar"] += 1
+        return None, None, None  # Grammar not available, expected skip
+
     try:
         parser = get_parser(grammar)
-    except LookupError:
+    except (LanguageNotFoundError, LookupError):
         parse_errors["no_grammar"] += 1
         return None, None, None  # Grammar not available, expected skip
 

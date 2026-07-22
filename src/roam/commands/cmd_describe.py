@@ -901,7 +901,7 @@ Before modifying any code:
 Additional commands: `roam health` (0-100 score), `roam impact <name>` (what breaks),
 `roam pr-risk` (PR risk score), `roam file <path>` (file skeleton).
 
-Run `roam --help` for all commands. Use `roam --json <cmd>` for structured output.
+Run `roam --help-all` for all commands. Use `roam --json <cmd>` for structured output.
 """
 
 # Agent config file detection order — first existing file wins.

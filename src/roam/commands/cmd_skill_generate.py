@@ -159,8 +159,8 @@ def _emit_claude_skill(caps: list) -> str:
             "roam init                  # indexes the codebase, creates .roam/index.db",
             "```",
             "",
-            "After `git pull` or major changes, run `roam reindex` (incremental, near-instant). "
-            "After large refactors: `roam reindex --force`.",
+            "After `git pull` or major changes, run `roam index` (incremental, near-instant). "
+            "After large refactors: `roam index --force`.",
             "",
             "## When to use which command",
             "",

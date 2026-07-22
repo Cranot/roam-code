@@ -273,10 +273,10 @@ def agent_plan(ctx, n_agents, output_format):
 
     \b
     Examples:
-      roam agent-plan --n-agents 3
-      roam agent-plan --n-agents 4 --format json
-      roam agent-plan --n-agents 5 --format claude-teams
-      roam --json agent-plan --n-agents 6
+      roam agent-plan --agents 3
+      roam agent-plan --agents 4 --format json
+      roam agent-plan --agents 5 --format claude-teams
+      roam --json agent-plan --agents 6
 
     See also ``agent-context`` (per-worker focused slice), ``partition``
     (analytical manifest), and ``orchestrate`` (interface-contract

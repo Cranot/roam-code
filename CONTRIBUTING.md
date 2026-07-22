@@ -492,9 +492,29 @@ wrangler pages deploy templates/distribution/landing-page \
   --project-name roam-code --branch main --commit-dirty=true
 ```
 
-PyPI publishes from a tag (`.github/workflows/publish.yml`). After a
-version-bump commit lands on main, tag it with the new `pyproject.toml`
-version and push the tag: `git tag vX.Y && git push origin vX.Y`.
+PyPI publishes from a tag (`.github/workflows/publish.yml`). Run the exact
+release gate before pushing the version-bump commit:
+
+```bash
+python scripts/prepush_check.py --release
+release_sha="$(git rev-parse HEAD)"
+git push origin main
+```
+
+Wait for the commit CI run for `release_sha` to pass. Then prove local `HEAD`
+and `origin/main` still name that exact reviewed commit, derive the version from
+its committed `pyproject.toml`, and attach the annotated tag to the captured SHA:
+
+```bash
+git fetch origin main
+test "$(git rev-parse HEAD)" = "$release_sha"
+test "$(git rev-parse origin/main)" = "$release_sha"
+version="$(python -c 'import sys; toml = __import__("tomllib" if sys.version_info >= (3, 11) else "tomli"); print(toml.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+git tag -a "v${version}" "$release_sha" -m "roam-code ${version}"
+git push origin "v${version}"
+```
+
+Do not create the tag from a dirty tree or before the commit CI run is green.
 
 ## PR Guidelines
 
@@ -525,7 +545,7 @@ roam-code is organized into these key areas:
 | `src/roam/graph/` | NetworkX graph algorithms (PageRank, SCC, clustering, layers) |
 | `src/roam/bridges/` | Cross-language symbol resolution |
 | `src/roam/output/` | Formatting, JSON envelopes, SARIF output |
-| `src/roam/mcp_server.py` | MCP server with 244 tools (16 in the default `core` preset) |
+| `src/roam/mcp_server.py` | MCP server with 244 tools (17 in the default `core` preset) |
 | `tests/` | Test suite |
 
 For full architectural details, see the [Architecture Guide](https://roam-code.com/docs/architecture).

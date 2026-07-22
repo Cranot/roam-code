@@ -40,12 +40,37 @@ set -e
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-PY="${PYTHON:-python}"
-if ! command -v "$PY" >/dev/null 2>&1; then
+# Git exports repository-local control variables to hooks. They are valid
+# while this hook operates on REPO_ROOT, but the FAST gate runs pytest suites
+# that create and mutate their own temporary repositories. In a linked
+# worktree, inheriting GIT_INDEX_FILE makes a fixture's `git add` replace the
+# real worktree index. Resolve the root first, then clear every variable Git
+# itself classifies as repository-local and anchor subsequent Git commands by
+# cwd. Author/committer identity and other non-local Git settings survive.
+GIT_LOCAL_ENV_VARS="$(git rev-parse --local-env-vars 2>/dev/null || true)"
+for var in $GIT_LOCAL_ENV_VARS; do
+    unset "$var"
+done
+unset GIT_LOCAL_ENV_VARS
+cd "$REPO_ROOT"
+
+# Capture Git's authoritative ref-update stream once so both history gates
+# inspect the exact refs/OIDs being pushed (including first pushes, tags,
+# explicit refspecs, non-HEAD refs, deletions, and multi-ref pushes).
+UPDATES_FILE="$(mktemp)"
+cleanup_updates() { rm -f "$UPDATES_FILE"; }
+trap cleanup_updates EXIT HUP INT TERM
+chmod 600 "$UPDATES_FILE"
+cat >"$UPDATES_FILE"
+
+PY_BIN="${PYTHON:-python}"
+PY_ARG=""
+if ! command -v "$PY_BIN" >/dev/null 2>&1; then
     if command -v py >/dev/null 2>&1; then
-        PY="py -3"
+        PY_BIN=py
+        PY_ARG=-3
     elif command -v python3 >/dev/null 2>&1; then
-        PY=python3
+        PY_BIN=python3
     else
         echo "ERROR: pre-push hook (.githooks/pre-push)" >&2
         echo "  No 'python', 'py -3', or 'python3' on PATH." >&2
@@ -54,8 +79,26 @@ if ! command -v "$PY" >/dev/null 2>&1; then
     fi
 fi
 
+run_python() {
+    if [ -n "$PY_ARG" ]; then
+        "$PY_BIN" "$PY_ARG" "$@"
+    else
+        "$PY_BIN" "$@"
+    fi
+}
+
+# A command merely being executable does not make it Python. Fail closed on
+# accidental or hostile overrides such as PYTHON=echo before any gate runs.
+PY_SENTINEL="$(run_python -c 'import sys; sys.stdout.write("roam-prepush-python-ok")' 2>/dev/null || true)"
+if [ "$PY_SENTINEL" != "roam-prepush-python-ok" ]; then
+    echo "ERROR: pre-push hook (.githooks/pre-push)" >&2
+    echo "  PYTHON does not resolve to a working Python interpreter." >&2
+    exit 1
+fi
+unset PY_SENTINEL
+
 # --- A. Anti-leak gate (WHOLE tracked tree) ---------------------------------
-if ! $PY "$REPO_ROOT/scripts/scan_internal_language.py" --all; then
+if ! run_python "$REPO_ROOT/scripts/scan_internal_language.py" --all; then
     echo "" >&2
     echo "BLOCKED: internal-language leak in tracked files -- see above." >&2
     echo "  Fix the offending line(s), or (if intentional) add the file to" >&2
@@ -64,28 +107,21 @@ if ! $PY "$REPO_ROOT/scripts/scan_internal_language.py" --all; then
 fi
 
 # --- A1. Secret scan over the commits being pushed --------------------------
-# Scan the pushed history, not just the working tree. Fail-open when the
-# branch has no upstream yet; there is no push range to inspect in that case.
-if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-    if ! $PY "$REPO_ROOT/scripts/secret_scan.py" --rev-range '@{upstream}..HEAD'; then
-        echo "" >&2
-        echo "BLOCKED: secret(s) detected in commits being pushed -- see above." >&2
-        echo "  Remove or rotate the credential before pushing." >&2
-        exit 1
-    fi
+if ! run_python "$REPO_ROOT/scripts/secret_scan.py" --pre-push-updates "$UPDATES_FILE" --remote-url "$2"; then
+    echo "" >&2
+    echo "BLOCKED: secret scan failed or detected secret(s) -- see above." >&2
+    echo "  Remove or rotate credentials and resolve every scanner error before pushing." >&2
+    exit 1
 fi
 
-# --- A2. Anti-leak gate over COMMIT MESSAGES being pushed -------------------
-# A leaky message publishes with the code; rewriting pushed history is far
-# costlier than rewording before push. Scans @{upstream}..HEAD (fail-open
-# when no upstream is configured yet).
-if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-    if ! $PY "$REPO_ROOT/scripts/scan_internal_language.py" --commits '@{upstream}..HEAD'; then
-        echo "" >&2
-        echo "BLOCKED: internal-language leak in a commit MESSAGE -- see above." >&2
-        echo "  Reword with: git rebase -i (reword) before pushing." >&2
-        exit 1
-    fi
+# --- A2. Internal-language gate over pushed blobs + commit messages ----------
+# Scan exact pushed history, not the mutable working tree alone. A leak in a
+# blob or message publishes with the ref; rewriting later cannot unpublish it.
+if ! run_python "$REPO_ROOT/scripts/scan_internal_language.py" --pre-push-updates "$UPDATES_FILE" --remote-url "$2"; then
+    echo "" >&2
+    echo "BLOCKED: pushed-history leak scan failed or found a leak -- see above." >&2
+    echo "  Clean or reword the commit and resolve every scanner error before pushing." >&2
+    exit 1
 fi
 
 # --- B. Structural-gate bundle (FAST tier) ----------------------------------
@@ -95,4 +131,9 @@ fi
 # (FULL + doc-consistency + linkcheck + commit-msg leak scan). Green there
 # means CI will be green (the 13.8.0 tag took 8 CI rounds for skipping it):
 #   python scripts/prepush_check.py --release
-exec $PY "$REPO_ROOT/scripts/prepush_check.py" --fast
+cleanup_updates
+trap - EXIT HUP INT TERM
+if [ -n "$PY_ARG" ]; then
+    exec "$PY_BIN" "$PY_ARG" "$REPO_ROOT/scripts/prepush_check.py" --fast
+fi
+exec "$PY_BIN" "$REPO_ROOT/scripts/prepush_check.py" --fast

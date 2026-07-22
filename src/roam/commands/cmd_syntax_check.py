@@ -137,10 +137,12 @@ def _parse_file_for_syntax(file_path: str) -> dict | None:
     grammar = GRAMMAR_ALIASES.get(language, language)
 
     try:
-        from tree_sitter_language_pack import get_parser
+        from roam.parser_pack import LanguageNotFoundError, get_parser, has_language
 
+        if not has_language(grammar):
+            return None
         parser = get_parser(grammar)
-    except LookupError:
+    except (LanguageNotFoundError, LookupError):
         return None
 
     tree = parser.parse(source)

@@ -79,10 +79,11 @@
       Scope: MCP host setup (5 platforms), CI integration (5 platforms via <code>roam ci-setup</code>), gateway integration via the <code>McpDecisionReceipt</code> schema and HMAC-chained run ledger, and the OSCAL v1.2 control-mapping projection. Non-goal: hosted Roam deployment; private-deployment pilots are scoped separately by SOW.
     </div>
     <p>
-      Surface scale on v13.10.0: 281 commands, 244 MCP tools (16 in the
+      Surface scale on v13.10.0: 281 commands, 244 MCP tools (17 in the
       default <code>core</code> preset, opt into <code>full</code> via
-      <code>ROAM_MCP_PRESET</code>), 28 indexed languages. All local;
-      no API keys.
+      <code>ROAM_MCP_PRESET</code>), 28 indexed languages. Ordinary analysis is
+      local and needs no API key; explicit network features, including opt-in
+      MCP model summarization, use the documented network boundary.
     </p>
 
     <section>
@@ -111,10 +112,10 @@
           <tr><th>Platform</th><th>Fast setup command</th><th>Config fallback</th></tr>
         </thead>
         <tbody>
-          <tr><td>Claude Code</td><td><code>roam mcp-setup claude-code</code></td><td><code>.mcp.json</code> in project root</td></tr>
-          <tr><td>Cursor</td><td><code>roam mcp-setup cursor</code></td><td><code>.cursor/mcp.json</code></td></tr>
-          <tr><td>Gemini CLI</td><td><code>roam mcp-setup gemini-cli</code></td><td><code>~/.gemini/settings.json</code></td></tr>
-          <tr><td>Codex CLI</td><td><code>roam mcp-setup codex-cli</code></td><td><code>~/.codex/config.json</code> or CLI flag</td></tr>
+          <tr><td>Claude Code</td><td><code>roam mcp-setup claude-code --write</code></td><td><code>.mcp.json</code> in project root</td></tr>
+          <tr><td>Cursor</td><td><code>roam mcp-setup cursor --write</code></td><td><code>.cursor/mcp.json</code></td></tr>
+          <tr><td>Gemini CLI</td><td><code>roam mcp-setup gemini-cli --write</code></td><td><code>~/.gemini/settings.json</code></td></tr>
+          <tr><td>Codex CLI</td><td><code>roam mcp-setup codex-cli --write</code></td><td><code>~/.codex/config.toml</code> or <code>codex mcp add</code></td></tr>
           <tr><td>Amp (Sourcegraph)</td><td>Manual stdio entry</td><td>Amp MCP settings with command <code>roam mcp</code></td></tr>
         </tbody>
       </table>
@@ -123,8 +124,8 @@
     <section>
       <h2 id="claude-code">Claude Code</h2>
       <h3>1. Register Roam as an MCP server</h3>
-<pre><code>roam mcp-setup claude-code
-claude mcp add roam-code -- roam mcp</code></pre>
+<pre><code>roam mcp-setup claude-code --write
+# Alternatively: claude mcp add roam-code -- roam mcp</code></pre>
       <h3>2. Verify tool visibility</h3>
 <pre><code>roam mcp --list-tools
 ROAM_MCP_PRESET=core roam mcp</code></pre>
@@ -164,10 +165,10 @@ roam test-gaps --changed</code></pre>
     <section>
       <h2 id="codex-cli">Codex CLI</h2>
       <h3>1. Configure via command or config file</h3>
-<pre><code>roam mcp-setup codex-cli
-codex --mcp roam-code="roam mcp"</code></pre>
+<pre><code>codex mcp add roam-code -- roam mcp
+codex mcp list</code></pre>
       <h3>2. Persist config (optional)</h3>
-      <p>Add emitted JSON to <code>~/.codex/config.json</code> for repeat sessions.</p>
+      <p>Alternatively, run <code>roam mcp-setup codex-cli --write</code> to safely merge the emitted TOML into <code>~/.codex/config.toml</code>.</p>
       <h3>3. Refactor-safe loop</h3>
 <pre><code>roam init
 roam suggest-refactoring --limit 10

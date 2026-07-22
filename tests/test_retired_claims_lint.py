@@ -7,7 +7,8 @@ still carried the RETIRED claims — "10/10 fixed in both arms at −13%
 cost" (no parity caveat), "91% of envelopes ship pre-executed answers"
 (the corrected figure is 57% pre-executed + ~33% structured facts), a
 ``pip install compile-code`` one-liner for a package that is not on PyPI,
-and the CHANGELOG's unannotated "same shape on Opus (−86% turns)".
+an account-dashboard hostname with no DNS record, and the CHANGELOG's
+unannotated "same shape on Opus (−86% turns)".
 
 Follows the pattern of ``test_w462_landing_page_tool_count_drift.py``:
 scan the public text surfaces (landing-page tree + README.md +
@@ -54,8 +55,13 @@ _RETIRED_CLAIMS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
         ("corrected",),
     ),
     (
-        "pip-install-compile-code one-liner (not on PyPI; install is git-based)",
-        re.compile(r"pip\s+install\s+compile-code\s*(?:&&|&amp;&amp;)", re.IGNORECASE),
+        "pip-install-compile-code claim (package not yet on PyPI)",
+        re.compile(r"pip\s+install\s+compile-code", re.IGNORECASE),
+        (),
+    ),
+    (
+        "unavailable account-dashboard hostname",
+        re.compile(r"app\.roam-code\.com", re.IGNORECASE),
         (),
     ),
 )
@@ -134,10 +140,11 @@ def test_retired_claims_lint_actually_catches_reappearance():
         "ship pre-executed answers.</p>\n"
         "<p>10/10 fixed in both arms at -13% cost.</p>\n"
         "<p>same shape on Opus (−86% turns).</p>\n"
-        "<p><code>pip install compile-code &amp;&amp; compile claude</code></p>\n"
+        "<p><code>pip install compile-code</code>, then run compile claude.</p>\n"
+        '<a href="https://app.roam-code.com">Account dashboard</a>\n'
     )
     hits = _find_violations(dirty)
-    assert len(hits) == 4, f"expected all 4 retired-claim rules to fire, got: {hits}"
+    assert len(hits) == 5, f"expected all 5 retired-claim rules to fire, got: {hits}"
 
     annotated = (
         "10/10 fixed in both arms (n=10 - no parity claim).\n"

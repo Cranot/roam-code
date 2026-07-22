@@ -5,8 +5,8 @@ Three checks bundled here so a single CI step (or a local invocation
 after a release) can verify the full surface:
 
 1. **PyPI freshness** — the latest published version on pypi.org matches
-   ``pyproject.toml`` (or is at most one ahead, allowing for the brief
-   window between bumping pyproject and publishing the tag).
+   ``pyproject.toml`` (or the repository is exactly one patch or minor
+   release ahead, allowing for the brief pre-publish window).
 2. **Install smoke** — ``pip install roam-code==<version>`` into an
    ephemeral venv works and ``roam --version`` reports the expected
    string.
@@ -61,8 +61,17 @@ def _pypi_latest() -> str | None:
     return data.get("info", {}).get("version")
 
 
+def _final_release_tuple(version: str) -> tuple[int, int, int] | None:
+    """Normalize final ``major.minor[.patch]`` versions without extra deps."""
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", version)
+    if match is None:
+        return None
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch or 0)
+
+
 def check_pypi_freshness() -> bool:
-    """The PyPI latest version is no more than one minor behind pyproject.
+    """PyPI matches pyproject or is exactly one patch/minor release behind.
 
     Allows pyproject to be one ahead (the brief window between bumping
     + tagging vs the publish workflow finishing). Anything further is a
@@ -73,17 +82,24 @@ def check_pypi_freshness() -> bool:
     if pypi_v is None:
         print("FAIL: PyPI unreachable; cannot verify freshness", file=sys.stderr)
         return False
-    if repo_v == pypi_v:
-        print(f"OK: pyproject and PyPI both at {repo_v}")
+    repo_parts = _final_release_tuple(repo_v)
+    pypi_parts = _final_release_tuple(pypi_v)
+    if repo_parts is None or pypi_parts is None:
+        print(
+            f"FAIL: cannot compare non-final versions pyproject={repo_v}, PyPI={pypi_v}",
+            file=sys.stderr,
+        )
+        return False
+    if repo_parts == pypi_parts:
+        print(f"OK: pyproject={repo_v} and PyPI={pypi_v} normalize to the same final release")
         return True
-
-    repo_parts = [int(x) for x in repo_v.split(".") if x.isdigit()]
-    pypi_parts = [int(x) for x in pypi_v.split(".") if x.isdigit()]
-    if repo_parts > pypi_parts:
+    same_line_next_patch = repo_parts[:2] == pypi_parts[:2] and repo_parts[2] == pypi_parts[2] + 1
+    next_minor = repo_parts[0] == pypi_parts[0] and repo_parts[1] == pypi_parts[1] + 1 and repo_parts[2] == 0
+    if same_line_next_patch or next_minor:
         print(f"OK: pyproject={repo_v} ahead of PyPI={pypi_v} (pre-publish window)")
         return True
     print(
-        f"FAIL: pyproject={repo_v} BEHIND PyPI={pypi_v} — repo is stale relative to released package",
+        f"FAIL: pyproject={repo_v} and PyPI={pypi_v} differ by more than one publish step",
         file=sys.stderr,
     )
     return False

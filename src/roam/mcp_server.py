@@ -134,8 +134,8 @@ except Exception as exc:  # noqa: BLE001 — optional-feature import; degrades g
 
 # ---------------------------------------------------------------------------
 # Tool presets — named sets of tools exposed to agents.
-# Default: "core" (15 tools + `roam_expand_toolset` meta-tool = 16 total).
-# The dogfood-firing surface: 7 flagship tools targeted for selection
+# Default: "core" (16 tools + `roam_expand_toolset` meta-tool = 17 total).
+# The dogfood-firing surface: 8 flagship tools targeted for selection
 # lift + 8 tools observed firing in the 2026-05-24 audit. Shrunk from
 # 57 in the dogfood wave (per Intervention A of the
 # dogfood-next-interventions design memo). Tools that left core are
@@ -2365,6 +2365,12 @@ def _prepare_tool_body(
     if effective_description:
         _TOOL_METADATA[name]["description"] = effective_description
 
+    # Convert tool-body exceptions while they are still inside the receipt /
+    # egress boundary. The raw envelope then follows the same redaction,
+    # prompt-injection scan, output-hash, and receipt path as an ordinary tool
+    # result. Keep a second, secure outer backstop for failures raised by the
+    # receipt or cold-start infrastructure itself.
+    fn = _wrap_with_exception_envelope(name, fn, secure_egress=False)
     fn = _wrap_with_receipt(name, fn)
     fn = _wrap_with_cold_start_guard(name, fn)
     fn = _wrap_with_exception_envelope(name, fn)
@@ -3675,10 +3681,13 @@ def _wrap_with_handle_off(name: str, fn):
 # ``.roam/mcp_receipts/_no_run/<tool_call>.json`` when no run is open).
 #
 # Sensitive = at least one of: ``destructive=True``, ``read_only=False``,
-# ``idempotent=False``, ``task_mode="required"``. Read-only / idempotent
+# ``idempotent=False``, ``task_mode="required"``. Clean read-only / idempotent
 # tools (search/symbol/describe/...) skip RECEIPT emission because they are
-# high-volume. They do NOT skip mode enforcement or egress redaction: those
-# controls apply to every tool result crossing the MCP boundary.
+# high-volume. A read-only result that contains a prompt-injection marker is
+# the narrow exception: it emits a conditional receipt so the client-visible
+# security signal also has a durable audit artifact. Read-only tools do NOT
+# skip mode enforcement or egress redaction: those controls apply to every
+# tool result crossing the MCP boundary.
 #
 # Best-effort discipline: a receipt write that fails must NEVER break the
 # underlying tool call. The audit trail is opportunistic.
@@ -4305,8 +4314,11 @@ def _receipt_serialize_args(
         if k == "ctx":
             continue
         try:
-            json.dumps(v)
-            safe_args[k] = v
+            # Round-trip now rather than retaining references to caller-owned
+            # containers. A tool may mutate a nested dict/list while it runs;
+            # the receipt must hash the arguments that reached the policy
+            # boundary, not their post-execution state.
+            safe_args[k] = json.loads(json.dumps(v, sort_keys=True, separators=(",", ":")))
         except (TypeError, ValueError):
             safe_args[k] = repr(v)
     return safe_args
@@ -4617,7 +4629,9 @@ def _write_mcp_receipt(
     if not isinstance(repo_root, Path) or not isinstance(root_identity, tuple):
         raise RuntimeError("MCP receipt has no pre-execution root binding")
     _mcp_directory_identity(repo_root, label="MCP invocation root", expected=root_identity)
-    safe_args = _receipt_serialize_args(args)
+    safe_args = state.get("_bound_safe_args")
+    if not isinstance(safe_args, dict):
+        raise RuntimeError("MCP receipt has no pre-execution argument snapshot")
     tool_call_id = f"{tool_name}_{_uuid.uuid4().hex[:12]}"
     input_hash = hash_input_args(safe_args)
     # Consume only the pre-execution run snapshot. CWD/ROAM_RUN_ID may have
@@ -4647,9 +4661,9 @@ def _write_mcp_receipt(
     decision = state.get("policy_decision") or "not_evaluated"
     receipt = McpDecisionReceipt(
         tool_call=tool_call_id,
-        client_id=os.environ.get("ROAM_MCP_CLIENT_ID", "<unknown>"),
+        client_id=state.get("_bound_client_id", "<unknown>"),
         tool_name=tool_name,
-        actor_ref_id=os.environ.get("ROAM_AGENT_ID"),
+        actor_ref_id=state.get("_bound_actor_ref_id"),
         declared_side_effects=_declared_side_effects_for(meta),
         required_mode=required_mode,
         input_hash=input_hash,
@@ -4739,20 +4753,21 @@ def _mcp_receipt_for(
     args: "Mapping[str, object]",  # noqa: F821 — string annotation; `from __future__ import annotations` keeps it lazy
     effective_meta: Mapping[str, object] | None = None,
 ):
-    """Emit an ``McpDecisionReceipt`` for a sensitive tool call.
+    """Emit an ``McpDecisionReceipt`` for an auditable tool call.
 
     Yields a mutable dict the caller can populate with output info
     (``output_ref`` OR ``output_hash``, ``policy_decision``). On exit, writes
     the receipt to disk best-effort: errors are swallowed so an audit-trail
     failure never breaks the tool call itself.
 
-    For read-only tools the helper yields an empty dict and writes nothing -
-    receipts are reserved for the WRITE audit trail.
+    Every call binds root/run attribution before policy evaluation and tool
+    execution, so a tool cannot redirect a later conditional receipt by
+    changing process-global CWD or environment state. Sensitive tools always
+    emit. Ordinary read-only tools retain the no-write fast path unless the
+    egress scan finds a prompt-injection marker.
     """
     meta = dict(effective_meta) if effective_meta is not None else _TOOL_METADATA.get(tool_name, {})
-    if not _is_sensitive(meta):
-        yield {}
-        return
+    sensitive = _is_sensitive(meta)
 
     receipt_state: dict = {
         # MCP-P0.2: default "not_evaluated" so an unguarded surface honestly
@@ -4779,33 +4794,40 @@ def _mcp_receipt_for(
         # the exact classification used by the gate so the receipt never
         # over- or under-states what this call could do.
         "effective_metadata": dict(meta),
+        # Process environment and nested input containers are mutable. Bind
+        # their receipt-facing values before policy evaluation and execution.
+        "_bound_client_id": os.environ.get("ROAM_MCP_CLIENT_ID", "<unknown>"),
+        "_bound_actor_ref_id": os.environ.get("ROAM_AGENT_ID"),
+        "_bound_safe_args": _receipt_serialize_args(args),
     }
     _bind_mcp_evidence_context(args, receipt_state)
     try:
         yield receipt_state
     finally:
-        try:
-            _write_mcp_receipt(tool_name, args, receipt_state)
-        except Exception as exc:  # noqa: BLE001 — receipts must never break the tool call
-            # Best-effort: receipts must NEVER break the tool call. Surface
-            # under ROAM_VERBOSE and stamp a secret-free client-visible state
-            # so the WRITE audit-trail hole is explicit.
-            log_swallowed("mcp_server:write_mcp_receipt", exc)
-            result = receipt_state.get("result")
-            if isinstance(result, dict):
-                result_meta = result.get("_meta")
-                if result_meta is None:
-                    result_meta = {}
-                    result["_meta"] = result_meta
-                if isinstance(result_meta, dict):
-                    # The client-visible disclosure carries only the exception
-                    # class—never a path or exception message that could echo
-                    # sensitive input. No receipt exists, so this mutation
-                    # cannot desynchronise a persisted output hash.
-                    result_meta["mcp_receipt"] = {
-                        "state": "write_failed",
-                        "error_type": type(exc).__name__,
-                    }
+        emit_conditional_readonly_receipt = bool(receipt_state.get("injection_markers"))
+        if sensitive or emit_conditional_readonly_receipt:
+            try:
+                _write_mcp_receipt(tool_name, args, receipt_state)
+            except Exception as exc:  # noqa: BLE001 — receipts must never break the tool call
+                # Best-effort: receipts must NEVER break the tool call. Surface
+                # under ROAM_VERBOSE and stamp a secret-free client-visible
+                # state so the audit-trail hole is explicit.
+                log_swallowed("mcp_server:write_mcp_receipt", exc)
+                result = receipt_state.get("result")
+                if isinstance(result, dict):
+                    result_meta = result.get("_meta")
+                    if result_meta is None:
+                        result_meta = {}
+                        result["_meta"] = result_meta
+                    if isinstance(result_meta, dict):
+                        # The disclosure carries only the exception class—
+                        # never a path or exception message that could echo
+                        # sensitive input. No receipt exists, so this mutation
+                        # cannot desynchronise a persisted output hash.
+                        result_meta["mcp_receipt"] = {
+                            "state": "write_failed",
+                            "error_type": type(exc).__name__,
+                        }
 
 
 def _should_skip_cold_start_guard(name: str) -> bool:
@@ -4892,7 +4914,13 @@ def _exception_envelope(name: str, exc: Exception) -> dict:
     )
 
 
-def _build_async_exception_wrapper(name: str, fn):
+def _secure_standalone_exception_envelope(name: str, exc: Exception) -> dict:
+    """Apply the MCP egress boundary when no receipt context can own the result."""
+    state = {"effective_metadata": dict(_TOOL_METADATA.get(name, {}))}
+    return _secure_mcp_tool_result(name, state, _exception_envelope(name, exc))
+
+
+def _build_async_exception_wrapper(name: str, fn, *, secure_egress: bool):
     """Wrap an async ``fn`` so any escaped ``Exception`` becomes the canonical envelope."""
     import functools as _functools
 
@@ -4901,12 +4929,14 @@ def _build_async_exception_wrapper(name: str, fn):
         try:
             return await fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 — deliberate backstop
+            if secure_egress:
+                return _secure_standalone_exception_envelope(name, exc)
             return _exception_envelope(name, exc)
 
     return _async_exception_wrapped
 
 
-def _build_sync_exception_wrapper(name: str, fn):
+def _build_sync_exception_wrapper(name: str, fn, *, secure_egress: bool):
     """Wrap a sync ``fn`` so any escaped ``Exception`` becomes the canonical envelope."""
     import functools as _functools
 
@@ -4915,12 +4945,14 @@ def _build_sync_exception_wrapper(name: str, fn):
         try:
             return fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 — deliberate backstop
+            if secure_egress:
+                return _secure_standalone_exception_envelope(name, exc)
             return _exception_envelope(name, exc)
 
     return _sync_exception_wrapped
 
 
-def _wrap_with_exception_envelope(name: str, fn):
+def _wrap_with_exception_envelope(name: str, fn, *, secure_egress: bool = True):
     """Backstop: convert an uncaught tool-body exception into a structured envelope.
 
     Pattern-1 conformance (CLAUDE.md "canonical failure envelope"): no
@@ -4932,7 +4964,11 @@ def _wrap_with_exception_envelope(name: str, fn):
 
     This is a BACKSTOP, not a replacement — every existing per-tool /
     per-helper ``except`` block runs first and only an exception that
-    escapes ALL of them reaches here. The result is a
+    escapes ALL of them reaches here. By default the result passes through
+    the standalone MCP egress boundary before returning. The decorator stack
+    uses ``secure_egress=False`` only for its inner tool-body catcher, because
+    the enclosing receipt wrapper owns the canonical redaction and output hash
+    for that envelope. The result is a
     ``_structured_error`` envelope with ``error_code="UNKNOWN"`` (which
     maps to ``status="hard_failure"``), so the agent gets ``isError`` +
     ``status`` + a copy-pasteable ``command`` instead of a dropped call.
@@ -4944,8 +4980,8 @@ def _wrap_with_exception_envelope(name: str, fn):
     import inspect as _inspect
 
     if _inspect.iscoroutinefunction(fn):
-        return _build_async_exception_wrapper(name, fn)
-    return _build_sync_exception_wrapper(name, fn)
+        return _build_async_exception_wrapper(name, fn, secure_egress=secure_egress)
+    return _build_sync_exception_wrapper(name, fn, secure_egress=secure_egress)
 
 
 # ---------------------------------------------------------------------------
@@ -5601,6 +5637,44 @@ def _stamp_egress_redactions(state, secret_hits, injection_hits):
         state["redactions"] = tuple(reasons)
 
 
+def _stamp_injection_security(result: dict, injection_hits: Mapping[str, int]) -> None:
+    """Expose a trusted prompt-injection signal on a structured MCP result.
+
+    ``_meta.security.prompt_injection`` is boundary-owned: producer content at
+    that exact key is replaced so a tool result cannot spoof the scan outcome.
+    Other producer metadata remains intact. Marker identifiers and counts are
+    safe structural lineage; raw matched text is never copied into metadata.
+    """
+    result_meta = result.get("_meta")
+    if not isinstance(result_meta, dict):
+        result_meta = {} if result_meta is None else {"producer_meta": result_meta}
+        result["_meta"] = result_meta
+
+    security_meta = result_meta.get("security")
+    if not isinstance(security_meta, dict):
+        security_meta = {}
+        result_meta["security"] = security_meta
+    security_meta["prompt_injection"] = {
+        "state": "detected",
+        "markers": dict(sorted(injection_hits.items())),
+        "output_action": "preserved",
+        "audit_artifact": "mcp_decision_receipt",
+    }
+
+
+def _clear_injection_security(result: dict) -> None:
+    """Remove producer content from the boundary-owned injection metadata key."""
+    result_meta = result.get("_meta")
+    if not isinstance(result_meta, dict):
+        return
+    security_meta = result_meta.get("security")
+    if not isinstance(security_meta, dict):
+        return
+    security_meta.pop("prompt_injection", None)
+    if not security_meta:
+        result_meta.pop("security", None)
+
+
 def _build_egress_redaction_failure_envelope(tool_name: str) -> dict:
     """Return a constant, secret-free failure when egress scrubbing fails.
 
@@ -5639,10 +5713,17 @@ def _secure_mcp_tool_result(name: str, state: dict, result):
         state["redactions"] = ("policy",)
         return envelope
 
+    structured_result = isinstance(redacted, dict)
+    if structured_result:
+        _clear_injection_security(redacted)
+
     # MCP-P1.2 — scan the (secret-redacted) bytes for prompt-injection
-    # markers. Non-mutating: the marker scan annotates conditional receipts;
-    # the client-visible output stays byte-identical to ``redacted``.
+    # markers. Marker bytes remain intact. Every structured result receives
+    # boundary-owned client metadata; ordinary read-only calls additionally
+    # emit a conditional audit receipt.
     injection_hits = _scan_result_for_injection_markers(redacted)
+    if injection_hits and structured_result:
+        _stamp_injection_security(redacted, injection_hits)
     state["result"] = redacted
     _stamp_egress_redactions(state, hits, injection_hits)
     return redacted
@@ -6334,7 +6415,13 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
     EXIT_GATE_FAILURE = _EXIT_GATE_FAILURE
     _success_codes = _SUCCESS_EXIT_CODES
 
-    cmd = ["roam", "--json"] + args
+    # Invoke the package through the interpreter that loaded this MCP
+    # server.  A locked/dev environment can import ``roam`` without
+    # installing the console-script shim on PATH; using a bare ``roam``
+    # executable therefore made every non-local-root tool fail in CI and
+    # in embedded MCP hosts. ``python -m roam`` is the same installed
+    # package and remains valid for wheel installs.
+    cmd = [sys.executable, "-m", "roam", "--json"] + args
     try:
         result = subprocess.run(
             cmd,
@@ -7451,6 +7538,14 @@ def batch_get(symbols: list, root: str = ".") -> dict:
 # ===================================================================
 
 
+def _preset_tool_names(preset: str) -> list[str]:
+    """Return the actual exposed names for one preset, including the meta-tool."""
+    configured = _PRESETS[preset]
+    tools = set(_TOOL_METADATA) if not configured else set(configured)
+    tools.add(_META_TOOL)
+    return sorted(tools)
+
+
 @_tool(
     name="roam_expand_toolset",
     description="List available tool presets or show contents of a preset. "
@@ -7467,7 +7562,7 @@ def expand_toolset(preset: str = "") -> dict:
     Returns: preset contents, active preset name, and restart instructions.
     """
     if preset and preset in _PRESETS:
-        tools = sorted(_PRESETS[preset]) if _PRESETS[preset] else sorted(_REGISTERED_TOOLS)
+        tools = _preset_tool_names(preset)
         return {
             "active_preset": _ACTIVE_PRESET,
             "requested_preset": preset,
@@ -7479,9 +7574,8 @@ def expand_toolset(preset: str = "") -> dict:
         }
     # List all presets
     presets_info = {}
-    for name, tool_set in _PRESETS.items():
-        count = len(tool_set) if tool_set else "all"
-        presets_info[name] = {"tool_count": count}
+    for name in _PRESETS:
+        presets_info[name] = {"tool_count": len(_preset_tool_names(name))}
     return {
         "active_preset": _ACTIVE_PRESET,
         "active_tool_count": len(_REGISTERED_TOOLS),

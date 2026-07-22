@@ -34,14 +34,14 @@ report Roam renders for the reviewer.
 
 ## The five commands that produced this report
 
-This report is the artifact of a credential-free, zero-egress arc
+This report is the artifact of a credential-free, no-repository-egress arc
 that runs entirely on the developer's laptop or CI runner. No
 account, no API key, no source upload. Read the
 [5-Minute Demo](https://roam-code.com/docs/canonical-demo) for the
 full walkthrough; the abridged arc is:
 
 ```bash
-# 1. Install + index (offline, ~30s on a 25k-symbol repo)
+# 1. Install + index (local; prewarm parser cache before air-gap use)
 pip install "roam-code[mcp]" && roam init
 
 # 2. Gate the change before the agent edits — blast radius from the graph

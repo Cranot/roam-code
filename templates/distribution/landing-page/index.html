@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Roam — Check AI-written changes before they merge</title>
-  <meta name="description" content="Local codebase intelligence for AI coding agents: code-graph facts before edits, structural gates before merge, tamper-evident evidence. Credential-free, zero egress.">
+  <meta name="description" content="Local codebase intelligence for AI coding agents: code-graph facts before edits, structural gates before merge, tamper-evident evidence. Credential-free, no automatic telemetry.">
 
   <meta property="og:title" content="Roam — Check AI-written changes before they merge">
   <meta property="og:description" content="Roam gives AI coding agents local code-graph facts before edits, structural gates before merge, and scoped evidence after every run. Maps before agents edit. Gates before they merge. Evidence after every run.">
@@ -64,7 +64,7 @@
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "sameAs": ["https://github.com/Cranot/roam-code", "https://pypi.org/project/roam-code/"],
-    "featureList": "Zero API keys; 100% local by default (opt-in metrics-push is the only outbound surface); tamper-evident evidence packets (HMAC-chained run ledger); local code-graph engine; MCP server for coding agents (16 core / 243 full preset tools); 28 languages; clones-not-edited detector; blast-radius analysis; algorithmic-risk detection; refactor simulation; in-toto v1 attestations; SARIF 2.1.0 export"
+    "featureList": "Zero API keys; local source analysis with no automatic repository upload or telemetry; explicit network-boundary inventory; checksum-verified retained parser cache; tamper-evident evidence packets (HMAC-chained run ledger); local code-graph engine; MCP server for coding agents (17 core / 244 full preset tools); 28 languages; clones-not-edited detector; blast-radius analysis; algorithmic-risk detection; refactor simulation; in-toto v1 attestations; SARIF 2.1.0 export"
   }
   </script>
 
@@ -75,7 +75,7 @@
     "mainEntity": [
       {"@type": "Question", "name": "How is Roam different from CodeRabbit, Greptile, or Qodo?", "acceptedAnswer": {"@type": "Answer", "text": "They review what the code does — semantics. Roam reviews what the code touches — structure: callers, layers, dependency cycles, copy-paste duplicates. Different layer, different findings; most teams keep their reviewer and add Roam alongside it."}},
       {"@type": "Question", "name": "Will the CLI stay free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Forever. Apache 2.0 — for individuals, teams, and companies of any size. The local engine is the point; we never charge for it."}},
-      {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "No. The CLI runs entirely locally and only writes a SQLite file in your repo's .roam/ directory — no diff, no source, no identifiers are uploaded anywhere. That's the point: it works with the cloud agents your security team would otherwise have to block."}},
+      {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Ordinary analysis is local with no automatic repository upload. Explicit network features can exchange documented payloads; opt-in MCP model summarization can include source snippets from the selected report. Every trigger and payload class is documented on the security page."}},
       {"@type": "Question", "name": "Why no analytics or trackers on this site?", "acceptedAnswer": {"@type": "Answer", "text": "Two reasons: every third-party script is attack surface, and we sell to teams that read Privacy policies — zero cookies, zero trackers is a stronger signal than any logo wall."}},
       {"@type": "Question", "name": "Does Roam fit into my CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. roam --sarif health exports SARIF 2.1.0 (GitHub Code Scanning, GitLab, most CI read it natively); GitHub Actions templates ship with the package; roam critique exits 5 on any high-severity finding so a CI step can gate on it."}},
       {"@type": "Question", "name": "How long does it take to index a repo?", "acceptedAnswer": {"@type": "Answer", "text": "A 100k-line monorepo indexes in roughly 20–40 seconds on a laptop; incremental rebuilds after a PR's worth of changes are sub-second. Your agents and CI read the same .roam/ artefact."}},
@@ -150,14 +150,14 @@
         <strong>Passing tests is not enough evidence that an AI-written PR is safe to merge.</strong>
         Roam gives your agent local code-graph facts before it edits, gates risky
         diffs before merge, and emits scoped evidence after the run — credential-free,
-        zero network egress by default, your code never leaves your machine.
+        with no automatic repository upload or telemetry and a documented network boundary.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
         <a class="btn-secondary" href="#audit">Replay your last 5 PRs</a>
       </div>
       <p class="hero-trust-strip">
-        Free CLI · Apache 2.0 · 28 languages · 16 core agent tools · 244 total MCP tools · 495 GitHub stars
+        Free CLI · Apache 2.0 · 28 languages · 17 core agent tools · 244 total MCP tools · 500 GitHub stars
       </p>
     </div>
   </header>
@@ -221,9 +221,9 @@
       </p>
       <p>
         Prefer a dedicated CLI? The same loop ships as
-        <a href="https://github.com/Cranot/compile-code">compile-code</a> —
-        starting with v0.2.0, install it from PyPI with
-        <code>pip install compile-code</code>, then run <code>compile claude</code>.
+        <a href="https://github.com/Cranot/compile-code">compile-code</a>.
+        Its v0.2.0 release is being prepared; use the repository as the
+        authoritative source for current installation and release status.
       </p>
     </div>
   </section>
@@ -236,7 +236,7 @@
       <h2>How agents use Roam</h2>
       <p class="lede">
         Three steps: install once, hand the MCP server to your editor,
-        and your coding agent gains 16 core structured questions to ask
+        and your coding agent gains 17 core tools for structured questions
         about the codebase. The free CLI gives you the same engine to
         run the same checks from your terminal or CI.
       </p>
@@ -394,7 +394,7 @@
           <p>
             AI-written code touches more places than the reviewer sees. Roam weights blast-radius by production traffic to surface the hot paths:
           </p>
-<pre class="terminal" aria-label="Sample Roam runtime-hot output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique --runtime</span>
+<pre class="terminal" aria-label="Sample Roam runtime-hot output"><span class="t-prompt">$</span> <span class="t-cmd">roam hotspots --runtime</span>
 <span class="t-line">VERDICT: REVIEW  (runtime-hot path)</span>
 <span class="t-line">  serialize_user  api/v2/users.py:34</span>
 <span class="t-line">  trace ingest: 3.2M calls/day (top 0.1%)</span>
@@ -475,7 +475,8 @@
         <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
       </p>
       <p class="replay-fineprint">
-        No email, no upload — your code never leaves your machine. Want a full
+        This local replay sends no email and performs no repository upload.
+        Opt-in network features have separate documented boundaries. Want a full
         written audit, or these gates running as a CI bot for your team?
         <a href="/audit">See team options &rarr;</a>
       </p>
@@ -502,13 +503,13 @@
       </p>
       <div class="numbers-grid">
         <div class="num-cell"><strong>zero</strong><span>API keys required</span></div>
-        <div class="num-cell"><strong>zero</strong><span>network egress at analysis time</span></div>
+        <div class="num-cell"><strong>zero</strong><span>automatic telemetry or repository upload</span></div>
         <div class="num-cell"><strong>tamper-evident</strong><span>HMAC-chained evidence packets</span></div>
         <div class="num-cell"><strong>28</strong><span>language families</span></div>
-        <div class="num-cell"><strong>495</strong><span>GitHub stars</span></div>
-        <div class="num-cell"><strong>243</strong><span>MCP tools for your agent</span></div>
+        <div class="num-cell"><strong>500</strong><span>GitHub stars</span></div>
+        <div class="num-cell"><strong>244</strong><span>MCP tools for your agent</span></div>
       </div>
-      <p class="numbers-date">snapshot as of <time datetime="2026-07-10">2026-07-10</time></p>
+      <p class="numbers-date">snapshot as of <time datetime="2026-07-20">2026-07-20</time></p>
 
       <p class="install-cmd" id="install">
         <code>pip install roam-code &amp;&amp; roam init</code>
@@ -521,7 +522,7 @@
           <li><code>roam init</code> — build the local graph (a typical 100k-LOC repo finishes in seconds)</li>
           <li><code>roam understand</code> — guided architectural tour</li>
           <li><code>git diff | roam critique</code> — structural review of your current changes</li>
-          <li><code>roam mcp</code> — start the MCP server so your agent can call the 16-tool core preset</li>
+          <li><code>roam mcp</code> — start the MCP server so your agent can call the 17-tool core preset</li>
         </ol>
         <p class="how-it-works-foot">
           More detail in the <a href="/docs/getting-started">getting-started guide</a>
@@ -574,8 +575,8 @@
         <span>Free forever. <a href="https://github.com/Cranot/roam-code">GitHub</a> · <a href="https://pypi.org/project/roam-code/">PyPI</a></span>
       </div>
       <div class="trust-cell">
-        <strong>Evidence that never leaves your machine</strong>
-        <span>Local SQLite, no telemetry, local by default (opt-in <code>metrics-push</code> is the only outbound surface) — and evidence packets that hash-verify offline. Your code stays on your machine; your audit trail lives in your repo. See the <a href="/security#supply-chain">security page</a> for our supply-chain posture and a comparison with hosted reviewers.</span>
+        <strong>Evidence you control locally</strong>
+        <span>Local SQLite, no automatic telemetry, and evidence packets that hash-verify offline. Ordinary analysis stays on your machine; a cold parser cache retrieves one checksum-verified platform bundle and retains it for offline reuse. Explicit network features are documented by trigger, destination, and payload on the <a href="/security#network-boundary">security page</a>.</span>
       </div>
       <div class="trust-cell">
         <strong>28 languages, 6 cross-language bridges</strong>
@@ -617,10 +618,10 @@
       <details>
         <summary>Does any of my source code leave my machine?</summary>
         <p>
-          No. The CLI runs entirely locally and only writes a SQLite file in your
-          repo's <code>.roam/</code> directory — no diff, no source, no identifiers
-          are uploaded anywhere. That's the point: it works with the cloud agents
-          your security team would otherwise have to block.
+          Ordinary analysis is local with no automatic repository upload. Explicit
+          network features can exchange documented payloads; opt-in MCP model
+          summarization can include source snippets from the selected report. See the
+          <a href="/security#network-boundary">complete trigger and payload inventory</a>.
         </p>
       </details>
       <details>

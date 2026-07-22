@@ -155,6 +155,9 @@ def test_mcp_preset_counts_works_via_package_file():
     assert len(presets) > 0
     # ``full`` is the canonical "no filter" sentinel — must always be present.
     assert "full" in presets
+    counts = mcp_surface_counts()
+    assert presets["core"] == counts["core_tools"] + 1
+    assert presets["full"] == counts["registered_tools"]
 
 
 def test_repo_root_is_dev_tree_only_helper():

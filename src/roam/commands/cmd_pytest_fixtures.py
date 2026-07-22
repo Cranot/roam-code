@@ -269,7 +269,7 @@ def pytest_fixtures(ctx, symbol: str | None, max_depth: int, unused: bool, rever
             if not summary["total_fixtures"]:
                 click.echo()
                 click.echo("  No pytest fixtures indexed.")
-                click.echo("  If this project uses pytest, run: roam reindex")
+                click.echo("  If this project uses pytest, run: roam index")
                 return
             if summary["top_fixtures"]:
                 click.echo()

@@ -455,10 +455,12 @@ class TestCoreFunctions:
 
         from roam.commands.cmd_syntax_check import _parse_file_for_syntax
 
-        def missing_grammar(_grammar):
-            raise LookupError("missing grammar")
+        monkeypatch.setattr(tree_sitter_language_pack, "has_language", lambda _grammar: False)
 
-        monkeypatch.setattr(tree_sitter_language_pack, "get_parser", missing_grammar)
+        def unexpected_parser_acquisition(_grammar):
+            raise AssertionError("unsupported grammars must not reach get_parser")
+
+        monkeypatch.setattr(tree_sitter_language_pack, "get_parser", unexpected_parser_acquisition)
 
         fp = tmp_path / "source.py"
         fp.write_text("def hello():\n    pass\n", encoding="utf-8")
@@ -472,6 +474,8 @@ class TestCoreFunctions:
 
         from roam.commands.cmd_syntax_check import _parse_file_for_syntax
 
+        monkeypatch.setattr(tree_sitter_language_pack, "has_language", lambda _grammar: True)
+
         def broken_parser_factory(_grammar):
             raise RuntimeError("parser factory crashed")
 
@@ -482,12 +486,33 @@ class TestCoreFunctions:
         with pytest.raises(RuntimeError, match="parser factory crashed"):
             _parse_file_for_syntax(str(fp))
 
+    def test_parse_file_for_syntax_download_failure_propagates(self, monkeypatch, tmp_path):
+        """_parse_file_for_syntax keeps parser acquisition failures loud."""
+        import pytest
+        import tree_sitter_language_pack
+
+        from roam.commands.cmd_syntax_check import _parse_file_for_syntax
+
+        monkeypatch.setattr(tree_sitter_language_pack, "has_language", lambda _grammar: True)
+
+        def failed_download(_grammar):
+            raise tree_sitter_language_pack.DownloadError("parser download unavailable")
+
+        monkeypatch.setattr(tree_sitter_language_pack, "get_parser", failed_download)
+
+        fp = tmp_path / "source.py"
+        fp.write_text("def hello():\n    pass\n", encoding="utf-8")
+        with pytest.raises(tree_sitter_language_pack.DownloadError, match="download unavailable"):
+            _parse_file_for_syntax(str(fp))
+
     def test_parse_file_for_syntax_parser_parse_failure_propagates(self, monkeypatch, tmp_path):
         """_parse_file_for_syntax does not hide unexpected parser.parse failures."""
         import pytest
         import tree_sitter_language_pack
 
         from roam.commands.cmd_syntax_check import _parse_file_for_syntax
+
+        monkeypatch.setattr(tree_sitter_language_pack, "has_language", lambda _grammar: True)
 
         class BrokenParser:
             def parse(self, _source):

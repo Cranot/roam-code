@@ -112,11 +112,15 @@ protection obligations.
 
 For PR Replay, Processor will apply at least the following measures:
 
-- **Local-only analysis.** `roam-code` is a 100% local CLI; it requires
-  no API key, no vendor cloud endpoint, and no inbound network egress
-  to Processor or any third party for analysis. Personal Data and source
-  code stay on Processor's local working machine for the duration of the
-  engagement and never transit a Processor-operated cloud service.
+- **Local-only analysis.** During a PR Replay engagement, `roam-code` requires
+  no API key or vendor cloud endpoint and sends no repository content to
+  Processor or any third party for analysis. The operator does not enable the
+  CLI's optional network features except Customer-approved GitHub repository
+  access and the parser bootstrap described here. A cold parser cache may
+  retrieve a checksum-verified public parser binary bundle; that request
+  carries no Personal Data or source code.
+  Personal Data and source code stay on Processor's local working machine for
+  the duration of the engagement and never transit a Processor-operated cloud service.
   Sub-processor scope (Stripe, GitHub) is limited to the purposes listed
   in **Section 5** and does not include analysis data.
 - Temporary working copy stored only on encrypted storage controlled by

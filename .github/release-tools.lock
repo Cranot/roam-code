@@ -2,8 +2,8 @@
 # Generated with uv for x86_64-manylinux_2_34 from these roots:
 # build, click>=8.0, cyclonedx-bom, networkx>=3.0, pip,
 # pypi-attestations==0.0.29, setuptools==83.0.0, tree-sitter>=0.23,
-# tree-sitter-language-pack==1.6.2, twine, wheel==0.47.0.
-# Resolution cutoff: 2026-07-17T00:00:00Z. Install with --require-hashes
+# tree-sitter-language-pack==1.13.3, twine, wheel==0.47.0.
+# Resolution cutoff: 2026-07-22T00:00:00Z. Install with --require-hashes
 # and --only-binary=:all:; the workflow also disables build isolation/indexes.
 
 annotated-types==0.7.0 \
@@ -903,11 +903,14 @@ tree-sitter==0.26.0 \
     --hash=sha256:f9997ba61368c48ed54e715676afadf703947a1542464e39d047764fb3624b01 \
     --hash=sha256:ff527388df14cb5009f9274faf78cc69a7393ae6acf3b04784b8acca249519c5 \
     --hash=sha256:ff80d4833d330a73184a3ac5132abe93c575d2dea31975c6f15c0d21fef238aa
-tree-sitter-language-pack==1.6.2 \
-    --hash=sha256:08351222b43c3a73665571eaa440366add2093a2492bb35f032fb7a31945e720 \
-    --hash=sha256:2305df7835c1cb3d34b71450b79d135878bc25ea5d02d9984cee864607a4ad60 \
-    --hash=sha256:8ce814ede4e295f3419ba179b523889c52cc3a998ac085356a470e776596c026 \
-    --hash=sha256:f5998cfee5735a8e7e691f577062ff7eb3a7ea405ae5654c9cecaa4a1e6c81b0
+tree-sitter-language-pack==1.13.3 \
+    --hash=sha256:3096595f83c3ad1c8cdace1db737e074f4ef3c798534deb2fe758acda0d7e211 \
+    --hash=sha256:49eb4d6f532556076a885b36aab51919ae6ab396401144e4f73e4a0c9ead0219 \
+    --hash=sha256:8435aabc1e5537e97e0a5893b6bf8d501ee7e55f93ee813e98711c5787fdbf78 \
+    --hash=sha256:9229a14185583a0acfd9946154d491908078cc7a54150bf03268aed5a67cf3c3 \
+    --hash=sha256:c67c322370c30fa802e01532933709d0c29de8337d911eb693692a996993e55d \
+    --hash=sha256:e0e0287bf5a2f3d8a382136b1565206988417ece502b796f4b6f7fefb832963c \
+    --hash=sha256:ebcd8fa9435ff956bd82eeea21f492fb2ccfefd9be909fe5cdebabb892c4b034
 tuf==7.0.0 \
     --hash=sha256:572bdbdc9ff4a82278a0d4773e6100863b9b33023f27575e84ca65b486dd0d79 \
     --hash=sha256:9d2e6723538e0d5a3e482b6de805fcfe64481448d5853039ba6b06ba541efd7f

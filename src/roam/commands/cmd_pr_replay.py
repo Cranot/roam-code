@@ -2050,6 +2050,7 @@ def _collect_change_evidence(
     from roam.evidence import (
         EVIDENCE_SCHEMA_VERSION,
         ChangeEvidence,  # noqa: F401 — re-exported for downstream tests
+        EvidenceArtifact,
         EvidenceSubject,
         collect_change_evidence,
     )
@@ -2258,6 +2259,43 @@ def _collect_change_evidence(
         detector_aliased_findings.append(finding)
     if detector_aliases_changed:
         packet = dataclasses.replace(packet, findings=tuple(detector_aliased_findings))
+
+    # A PR Replay invocation always produces a report-generation context,
+    # even when the optional test-impact, run-ledger, and CGA producers are
+    # unavailable in a clean checkout. Preserve that real producer signal as
+    # a small manifest artifact. It deliberately does NOT claim that tests
+    # ran: ``manifest`` is generic context, so evidence_completeness scores
+    # Q7 as ``partial`` unless a real tests_run row or verification-shaped
+    # artifact is also present. This keeps "producer ran, no verification
+    # proof" distinct from "verification was never considered" without
+    # manufacturing test evidence.
+    report_manifest = _json.dumps(
+        {
+            "producer": "pr-replay",
+            "git_range": commit_range,
+            "generated_at": generated_at,
+            "commit_count": len(commits),
+            "detector_count": len(by_detector),
+            "verdict": summary.get("verdict") or "no verdict",
+            "total_high": int(summary.get("total_high", 0) or 0),
+            "total_medium": int(summary.get("total_medium", 0) or 0),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    report_manifest_id = _hashlib.sha256(report_manifest.encode("utf-8")).hexdigest()[:16]
+    packet = dataclasses.replace(
+        packet,
+        artifacts=tuple(packet.artifacts)
+        + (
+            EvidenceArtifact(
+                artifact_id=f"manifest:pr-replay:{report_manifest_id}",
+                kind="manifest",
+                content_inline=report_manifest,
+                extra={"producer": "pr-replay", "assurance_role": "report_context"},
+            ),
+        ),
+    )
 
     # Stable per-(range, generation moment) evidence_id — overrides the
     # collector-derived one so the value stays human-readable for tickets.

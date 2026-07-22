@@ -10,6 +10,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -115,36 +116,45 @@ class TestFullIndexing:
         out, rc = index_in_process(index_project)
         assert rc == 0, f"roam index exited {rc}:\n{out}"
 
-    def test_stale_lock_can_be_reused_when_delete_denied(self, tmp_path, monkeypatch):
-        """Windows/cloud-sync folders may allow overwrites but deny deletes."""
+    def test_stale_lock_is_reused_without_path_deletion(self, tmp_path, monkeypatch):
+        """Recovery overwrites a kernel-locked descriptor and never unlinks it."""
         from roam.index import indexer as indexer_mod
 
         lock_path = tmp_path / ".roam" / "index.lock"
         lock_path.parent.mkdir()
         lock_path.write_text("999999")
 
-        original_unlink = Path.unlink
-
-        def deny_lock_unlink(path, *args, **kwargs):
-            if Path(path) == lock_path:
-                raise PermissionError("delete denied")
-            return original_unlink(path, *args, **kwargs)
-
         monkeypatch.setattr(indexer_mod, "_pid_is_running", lambda _pid: False)
-        monkeypatch.setattr(Path, "unlink", deny_lock_unlink)
+        claim = indexer_mod._claim_index_lock(lock_path)
+        assert claim is not None
+        os.lseek(claim.descriptor, 0, os.SEEK_SET)
+        payload = json.loads(os.read(claim.descriptor, 4096).decode("utf-8"))
+        assert payload["owner"]["pid"] == os.getpid()
+        indexer_mod._release_index_lock(claim)
 
-        assert indexer_mod._claim_index_lock(lock_path) is True
-        assert lock_path.read_text() == str(os.getpid())
-
-    def test_pid_probe_handles_windows_stale_pid_systemerror(self, monkeypatch):
+    def test_pid_probe_handles_posix_probe_systemerror(self, monkeypatch):
         from roam.index import indexer as indexer_mod
 
         def raise_systemerror(_pid, _signal):
             raise SystemError("<class 'OSError'> returned a result with an exception set")
 
         monkeypatch.setattr(indexer_mod.os, "kill", raise_systemerror)
+        if os.name == "nt":
+            monkeypatch.setattr(indexer_mod, "_windows_pid_is_running", lambda _pid: False)
 
         assert indexer_mod._pid_is_running(999999) is False
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows native liveness contract")
+    def test_windows_pid_probe_is_side_effect_free(self, monkeypatch):
+        from roam.index import indexer as indexer_mod
+
+        monkeypatch.setattr(
+            indexer_mod.os,
+            "kill",
+            lambda *_args: pytest.fail("Windows liveness must not call os.kill"),
+        )
+
+        assert indexer_mod._pid_is_running(os.getpid()) is True
 
     def test_semantic_activation_advice_when_vectors_empty(self, tmp_path):
         import sqlite3

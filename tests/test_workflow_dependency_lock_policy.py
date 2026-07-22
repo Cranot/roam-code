@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 from scripts.verify_uv_runtime import EXPECTED_UV_VERSION
 from tests._helpers.repo_root import repo_root
 
@@ -179,3 +181,15 @@ def test_downstream_example_pins_the_portable_action_and_package_pair() -> None:
     assert "cannot consume this repository's" in example
     assert "uv.lock" in example
     assert "pip install" not in "\n".join(_executable_lines(example))
+
+
+def test_pr_self_analysis_explicitly_installs_the_local_action_source() -> None:
+    workflow_text = _text("roam-ci.yml")
+    workflow = yaml.safe_load(workflow_text)
+    local_action_steps = [
+        step for job in workflow["jobs"].values() for step in job.get("steps", []) if step.get("uses") == "./"
+    ]
+
+    assert len(local_action_steps) == 1
+    assert local_action_steps[0].get("with", {}).get("version") == "source"
+    assert "no PyPI fallback" in workflow_text

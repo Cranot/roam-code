@@ -12,8 +12,9 @@ any rounding function detected.
 It is deliberately language-general: any tree-sitter grammar in roam's roster
 that uses the C-family / Python node kinds below is covered (PHP, JS, TS, Go,
 Java, C, C#, Ruby, Rust, Python, ...). Pure and side-effect-free apart from an
-optional file read; a missing grammar or a parse error yields ``[]`` (fail-open,
-never raises), matching the rest of the analysis layer.
+optional file read; an unsupported grammar or a source parse error yields
+``[]``. Grammar download, cache, and runtime failures remain loud so callers do
+not mistake unavailable analysis infrastructure for an empty calculation set.
 
 Consumers: ``roam calc-inventory`` (surface + divergence detection) and, later,
 the ``calc_equivalence`` verify oracle and the compile-envelope calc fact.
@@ -250,19 +251,25 @@ def extract_calcs(language: str, source: bytes, extra_round_funcs: frozenset[str
     ``language`` is a roam grammar name (php, javascript, typescript, python,
     ...). ``extra_round_funcs`` widens the recognized rounding wrappers for this
     call only (e.g. a project's ``r`` / ``round2`` / ``money`` helper). Returns
-    ``[]`` on missing grammar or parse failure — never raises.
+    ``[]`` on an unsupported grammar or source parse failure. Language-pack
+    download, cache, and runtime failures propagate so unavailable analysis is
+    never reported as an empty result.
     """
     round_funcs = _ROUND_FUNCS | extra_round_funcs
     try:
-        from tree_sitter_language_pack import get_parser
+        from roam.parser_pack import LanguageNotFoundError, get_parser, has_language
     except ImportError:
         return []
     from roam.index.parser import GRAMMAR_ALIASES
 
+    grammar = GRAMMAR_ALIASES.get(language, language)
+    if not has_language(grammar):
+        return []
+
     try:
-        parser = get_parser(GRAMMAR_ALIASES.get(language, language))
+        parser = get_parser(grammar)
         tree = parser.parse(source)
-    except (LookupError, TypeError, ValueError):
+    except (LanguageNotFoundError, LookupError, TypeError, ValueError):
         return []
 
     out: list[Calc] = []

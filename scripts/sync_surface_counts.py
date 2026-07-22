@@ -354,9 +354,9 @@ def build_replacements(counts: dict, languages: int) -> None:
                 (re.compile(r"All (\d+) commands"), f"All {cmds} commands"),
                 (
                     re.compile(
-                        r"default: \d+ core tools(?: plus the <code>roam_expand_toolset</code> meta-tool)?; \d+ in <code>full</code>"
+                        r"default: \d+ (?:core tools(?: plus the <code>roam_expand_toolset</code> meta-tool)?|tools including the <code>roam_expand_toolset</code> meta-tool); \d+ in <code>full</code>"
                     ),
-                    f"default: {core} core tools plus the <code>roam_expand_toolset</code> meta-tool; {mcp} in <code>full</code>",
+                    f"default: {core} tools including the <code>roam_expand_toolset</code> meta-tool; {mcp} in <code>full</code>",
                 ),
             ],
         )

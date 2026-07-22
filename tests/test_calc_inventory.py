@@ -20,10 +20,12 @@ def _grammars_available() -> bool:
     """True when the tree-sitter grammars this suite needs can be loaded.
 
     The language pack fetches grammars from GitHub releases on first use; a
-    transient outage (HTTP 5xx) or offline CI would make every extraction return
-    ``[]`` (the extractor fails open). Skip rather than hard-fail on infra — the
-    extractor's own fail-open behaviour is covered by
-    ``test_extract_missing_grammar_returns_empty``.
+    transient outage (HTTP 5xx) or offline CI would prevent this grammar-backed
+    suite from reaching its assertions. Skip rather than misreport an
+    infrastructure outage as a product regression. The extractor's unsupported
+    grammar behavior is covered by
+    ``test_extract_missing_grammar_returns_empty``; acquisition failures remain
+    loud by contract.
     """
     try:
         from tree_sitter_language_pack import get_parser

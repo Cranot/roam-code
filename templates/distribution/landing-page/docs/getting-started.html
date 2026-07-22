@@ -76,7 +76,7 @@
       Ten minutes from <code>pip install</code> to a verdict on whether your next edit is safe.
     </p>
     <div class="callout">
-      Roam is the local codebase intelligence layer that lets AI coding agents earn the right to change code — and prove they did. Credential-free, zero network egress by default (opt-in <code>metrics-push</code> is the only outbound surface), tamper-evident <code>ChangeEvidence</code> packets. Cursor and Cody log the session; Roam gates the change and emits proof.
+      Roam is the local codebase intelligence layer that lets AI coding agents earn the right to change code — and prove they did. Credential-free, no automatic source-code or telemetry upload, tamper-evident <code>ChangeEvidence</code> packets. A cold parser cache retrieves one checksum-verified grammar bundle and retains it locally; prewarm it before air-gap use. Explicit network features are documented on the <a href="/security#network-boundary">security page</a>. Cursor and Cody log the session; Roam gates the change and emits proof.
     </div>
 
     <section id="why-roam">
@@ -90,7 +90,7 @@
       </p>
       <ul>
         <li><strong>Credential-free.</strong> No account, no API key, no cloud login. <code>pip install</code> and run.</li>
-        <li><strong>Zero network egress.</strong> Your source code never leaves the machine. Air-gapped repos work the same as cloud repos.</li>
+        <li><strong>Local analysis by default.</strong> Source parsing and analysis stay on the machine with no automatic telemetry or upload. Run <code>roam index --force</code> once while connected to prewarm parser binaries before air-gap use; avoid the explicit network triggers listed on the <a href="/security#network-boundary">security page</a>.</li>
         <li><strong>Tamper-evident <code>ChangeEvidence</code> packets.</strong> Every AI-assisted change compiles into one portable evidence packet (HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle) that answers <a href="/docs/architecture#eight-evidence-questions">the eight evidence questions</a>.</li>
       </ul>
       <p>
@@ -114,7 +114,7 @@
           <h3>Step 2: Index the repo</h3>
 <pre><code>cd /path/to/your/repo
 roam init</code></pre>
-          <p>One-time, ~30 seconds on most repos. Creates <code>.roam/index.db</code>, fitness rules, and a CI workflow.</p>
+          <p>One-time, ~30 seconds on most repos. Creates <code>.roam/index.db</code> and fitness rules. Add <code>--with-ci=github</code> or run <code>roam ci-setup --platform github --write</code> to generate CI explicitly.</p>
         </article>
 
         <article class="step">
@@ -175,8 +175,8 @@ roam rules --rules-dir rules/community
 roam health --gate</code></pre>
 
       <h3 id="mcp-integration">5. Integrate with your agent</h3>
-<pre><code>roam mcp-setup claude-code      # writes ./.mcp.json (or --write to merge)
-roam mcp --list-tools           # 244 tools registered; 16 in the default `core` preset
+<pre><code>roam mcp-setup claude-code --write   # writes or safely merges ./.mcp.json
+roam mcp --list-tools           # 244 tools registered; 17 in the default `core` preset
 ROAM_MCP_PRESET=core roam mcp   # start the server (stdio transport)</code></pre>
       <p>
         Supported clients: <code>claude-code</code>, <code>cursor</code>, <code>windsurf</code>,

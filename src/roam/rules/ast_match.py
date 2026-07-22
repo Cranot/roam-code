@@ -16,9 +16,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from tree_sitter_language_pack import get_parser
-
 from roam.index.parser import GRAMMAR_ALIASES
+from roam.parser_pack import get_parser
 
 _METAVAR_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 _WHITESPACE_RE = re.compile(r"\s+")

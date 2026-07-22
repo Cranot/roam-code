@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>The 5-Minute Demo — Roam Docs · Credential-free, zero-egress</title>
-  <meta name="description" content="Five commands, five minutes — install Roam, gate a change with preflight, critique a diff, emit a tamper-evident ChangeEvidence packet. Local-only.">
+  <title>The 5-Minute Demo — Roam Docs · Credential-free, local analysis</title>
+  <meta name="description" content="Five commands, five minutes — install Roam, gate a change with preflight, critique a diff, emit a tamper-evident ChangeEvidence packet with local analysis.">
   <link rel="canonical" href="https://roam-code.com/docs/canonical-demo">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -17,7 +17,7 @@
   <link rel="stylesheet" href="/landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="The 5-Minute Demo — Roam">
-  <meta property="og:description" content="Install, gate a change, emit signed evidence — in five commands. Credential-free, zero-egress, local-only.">
+  <meta property="og:description" content="Install, gate a change, emit signed evidence — in five commands. Credential-free local analysis with no automatic repository upload.">
   <meta property="og:url" content="https://roam-code.com/docs/canonical-demo">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -73,7 +73,7 @@
     <p class="eyebrow">The Canonical Demo</p>
     <h1>Five commands, five minutes, one proof packet</h1>
     <p class="subtitle">
-      This is the single screen-recording arc. No accounts. No API keys. No network egress.
+      This is the single screen-recording arc. No accounts. No API keys. No automatic repository upload.
       At the end you have a tamper-evident <code>ChangeEvidence</code> packet on disk that
       answers <em>who acted, what authority existed, what was read, what changed, what could break,
       what policy applied, what verified it, who accepted risk</em>.
@@ -81,9 +81,10 @@
 
     <div class="callout">
       Every command on this page runs against the developer's own machine. There is no
-      cloud step. The same recording works on an air-gapped repo, a corporate laptop with
-      no LLM token, or a CI runner with egress disabled. If a step prints output that
-      reaches a server, it's a bug — please file it.
+      cloud analysis step. Source, indexes, findings, and evidence stay local. A cold
+      grammar cache may retrieve one checksum-verified parser bundle; run
+      <code>roam index --force</code> while connected before replaying this demo with
+      egress disabled.
     </div>
 
     <div class="callout">
@@ -96,19 +97,19 @@
     </div>
 
     <section>
-      <h2>Step 1 &mdash; Install and index. Zero accounts, runs offline.</h2>
+      <h2>Step 1 &mdash; Install and index. Zero accounts, local analysis.</h2>
 <pre><code>pip install "roam-code[mcp]"
 cd /path/to/your/repo
 roam init</code></pre>
       <p><strong>Expected output excerpt:</strong></p>
 <pre><code>VERDICT: indexed 25,954 symbols across 28 languages in 31.4s
-.roam/index.db ready  |  fitness rules installed  |  CI workflow scaffolded</code></pre>
+.roam/index.db ready  |  fitness rules installed  |  CI unchanged by default</code></pre>
       <p>
-        <strong>What this proves about the moat.</strong> <em>Credential-free + zero-egress.</em>
+        <strong>What this proves about the moat.</strong> <em>Credential-free + no repository egress.</em>
         You did not create an account, paste an API key, or accept a vendor's terms of service.
         Indexing parses your source tree with tree-sitter into a local SQLite database under
-        <code>.roam/</code>. Nothing left the machine. The same step works behind a corporate
-        firewall, on an air-gapped laptop, or inside a SCIF.
+        <code>.roam/</code>. No repository content leaves the machine. For a fully air-gapped
+        laptop or SCIF, prewarm the retained parser bundle before disabling egress.
       </p>
     </section>
 
@@ -126,7 +127,7 @@ $ roam health   # human-readable verdict
 VERDICT: Fair codebase (70/100) &mdash; 47 critical, 9 warnings, focus: god_components
 Health Score: 70/100  |  Tangle: 0.1% (13/25954 symbols in cycles)</code></pre>
       <p>
-        <strong>What this proves about the moat.</strong> <em>CI-ready + zero-egress.</em>
+        <strong>What this proves about the moat.</strong> <em>CI-ready local analysis + no automatic repository upload.</em>
         The same composite score (complexity, cycles, Codebase Dark Matter, dead code, layer drift)
         that drives a buyer's PR-replay artifact also ships as SARIF 2.1.0 &mdash; the format GitHub
         Code Scanning, GitLab, and Defender for DevOps consume natively. No SaaS dashboard fee,

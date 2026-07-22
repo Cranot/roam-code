@@ -251,11 +251,11 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
 # Files where these patterns are intentional product behaviour or test
 # fixtures FOR the patterns themselves — not real leaks.
 #
-# CHANGELOG.md is INTENTIONALLY NOT WHITELISTED: it is served publicly
-# at roam-code.com/changelog and via raw GitHub. A "we removed these
-# phrases" entry that names the phrases verbatim is itself the leak.
-# Cleanup acknowledgements should describe scrubs in neutral terms —
-# refer to "the pattern catalogue" rather than enumerating phrases.
+# Customer-facing changelogs are intentionally whitelisted because they
+# preserve already-published historical context. New release notes should
+# still describe cleanup in neutral terms rather than enumerate private
+# pattern values; review and the pushed-history gate cover every non-whitelisted
+# public file regardless of extension or directory.
 WHITELIST_FILES = {
     # The CI test file owns the pattern catalogue.
     "tests/test_no_internal_language.py",

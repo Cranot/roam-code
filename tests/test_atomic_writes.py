@@ -48,6 +48,19 @@ def test_atomic_write_text_happy_path(tmp_path):
     assert target.read_text(encoding="utf-8") == "hello world"
 
 
+def test_atomic_write_text_forwards_durable_barrier(tmp_path, monkeypatch):
+    calls: list[tuple[Path, bytes, bool]] = []
+
+    def observe(path, content, *, durable=False):
+        calls.append((Path(path), content, durable))
+
+    monkeypatch.setattr(atomic_io, "atomic_write_bytes", observe)
+
+    atomic_io.atomic_write_text(tmp_path / "state", "complete\n", durable=True)
+
+    assert calls == [(tmp_path / "state", b"complete\n", True)]
+
+
 def test_atomic_write_json_happy_path(tmp_path):
     """JSON round-trip with default formatting."""
     target = tmp_path / "data.json"
@@ -235,7 +248,10 @@ def test_conditional_install_file_rejects_same_size_rewrite_with_restored_mtime(
     source.write_bytes(b"EVIL")
     os.utime(source, ns=(before.st_atime_ns, generation.mtime_ns))
 
-    with pytest.raises(FileExistsError, match="tempfile content changed"):
+    # POSIX ctime exposes the rewrite during the source-snapshot check;
+    # Windows can reach the later descriptor/SHA proof after mtime is restored.
+    # Both stages must reject the producer generation before publication.
+    with pytest.raises(FileExistsError, match=r"(?:source|tempfile content) changed"):
         conditional_install_file(source, destination, source_generation=generation)
 
     assert destination.read_bytes() == b"prior-generation"
@@ -462,7 +478,11 @@ def test_atomic_write_bytes_rejects_same_size_temp_rewrite_with_restored_mtime(
         captured_temp.write_bytes(b"EVIL")
         os.utime(captured_temp, ns=(before.st_atime_ns, before.st_mtime_ns))
 
-    with pytest.raises(FileExistsError, match="tempfile content changed"):
+    # Windows reaches the content-hash guard while POSIX can reject the same
+    # rewrite earlier from the stronger inode-generation snapshot.  Both are
+    # valid tamper detections; keep the assertion about the security outcome,
+    # not the platform-specific guard that fires first.
+    with pytest.raises(FileExistsError, match=r"tempfile (?:content )?changed"):
         atomic_write_bytes(
             target,
             b"GOOD",

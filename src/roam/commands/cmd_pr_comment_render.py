@@ -368,7 +368,7 @@ def _section_footer() -> list[str]:
     return [
         "---",
         f"<sub>Powered by [roam-code]({_GITHUB_LINK}) — Apache 2.0, "
-        f"100% local. Customize thresholds in `.roam/rules.yml`. "
+        f"Local source analysis. Customize thresholds in `.roam/rules.yml`. "
         f"[Docs]({_DOCS_LINK}).</sub>",
     ]
 

@@ -79,8 +79,9 @@
         keep it, and what rights you have. It applies to <strong>roam-code.com</strong>
         and paid or early-access Roam services when enabled (PR Replay,
         planned Roam Review and Cloud, and private-deployment pilots). It
-        does not apply to the open-source CLI when run locally — that runs
-        entirely on your machine and sends nothing to us.
+        does not apply to ordinary local analysis in the open-source CLI. The
+        CLI runs on your machine and sends nothing to us unless you explicitly
+        invoke a network feature such as <code>metrics-push</code>.
       </p>
 
       <h2>1. Who we are</h2>
@@ -97,11 +98,21 @@
       <h2>2. What runs locally vs. what touches our servers</h2>
       <p>
         The <strong>open-source CLI</strong> (<code>roam-code</code> on PyPI)
-        is <strong>100% local, no API key, no vendor cloud endpoint</strong>.
+        performs <strong>local source analysis with no API key and no automatic
+        repository-content upload</strong>.
         It writes a SQLite file inside your repo's <code>.roam/</code>
-        directory. <strong>It does not phone home, send telemetry, or
-        transmit any source code.</strong> No data crosses the network. The
-        same local-only stance is contractually committed in
+        directory. <strong>It does not automatically phone home, send telemetry,
+        run an update check, or transmit source code.</strong> On first parser use, a cold cache may
+        retrieve one checksum-verified platform bundle from the parser
+        dependency's GitHub release; that request contains no repository
+        content and the bundle is retained for offline reuse. Explicit
+        network-capable commands can contact PyPI, GitHub, operator-selected
+        URLs, Roam Cloud, or Sigstore; opt-in MCP model summarization can send
+        selected report snippets to the configured model provider. The authoritative list, including what
+        each path sends, is
+        <a href="https://github.com/Cranot/roam-code/blob/main/docs/network-boundary.md"><code>docs/network-boundary.md</code></a>.
+        The
+        same default-local, no-automatic-upload stance is contractually committed in
         <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#6-security-measures">DPA §6</a>.
       </p>
       <p>The paid services collect different things, listed below.</p>

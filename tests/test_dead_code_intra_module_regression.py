@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -61,19 +62,14 @@ def test_dead_code_does_not_flag_intra_module_used_symbol(symbol, defining_file,
     counted as edges and the symbol is correctly omitted from safe.
     """
     result = subprocess.run(
-        ["roam", "dead", "--json"],
+        [sys.executable, "-m", "roam", "dead", "--json"],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
         timeout=120,
     )
-    if result.returncode != 0:
-        pytest.skip(f"roam dead-code subprocess failed: {result.stderr[:200]}")
-
-    try:
-        envelope = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        pytest.skip("roam dead-code did not emit JSON")
+    assert result.returncode == 0, f"roam dead subprocess failed with exit {result.returncode}: {result.stderr[:500]}"
+    envelope = json.loads(result.stdout)
 
     # Find the symbol in the safe-to-delete bucket.
     safe_findings = envelope.get("safe") or envelope.get("data", {}).get("safe") or []

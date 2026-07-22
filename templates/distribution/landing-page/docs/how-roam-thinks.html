@@ -83,7 +83,7 @@
         command, not the other way around.
       </p>
       <p class="hero-trust-strip">
-        Nine moments in an engineering workflow · zero API keys · zero network egress by default (opt-in metrics-push is the only outbound surface) · tamper-evident evidence
+        Nine moments in an engineering workflow · zero API keys · no automatic source-code or telemetry upload · checksum-verified parser cache · tamper-evident evidence
       </p>
     </div>
   </header>
@@ -298,9 +298,9 @@
           <code>roam orchestrate</code> ·
           <code>roam agent-plan</code>.
         </p>
-<pre class="terminal" aria-label="Multi-agent partitioning"><span class="t-prompt">$</span> <span class="t-cmd">roam partition --n-agents 3</span>
+<pre class="terminal" aria-label="Multi-agent partitioning"><span class="t-prompt">$</span> <span class="t-cmd">roam partition --agents 3</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam orchestrate --agents 3</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam agent-plan --n-agents 3 --format claude-teams</span></pre>
+<span class="t-prompt">$</span> <span class="t-cmd">roam agent-plan --agents 3 --format claude-teams</span></pre>
       </div>
     </section>
 

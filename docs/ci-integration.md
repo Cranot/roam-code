@@ -49,11 +49,11 @@ For non-GitHub platforms, roam ships ready-made templates -- run once at the
 repo root:
 
 ```bash
-roam ci-setup --platform github     # writes .github/workflows/roam.yml
-roam ci-setup --platform gitlab     # writes .gitlab-ci.yml
-roam ci-setup --platform jenkins    # writes Jenkinsfile
-roam ci-setup --platform azure      # writes azure-pipelines.yml
-roam ci-setup --platform bitbucket  # writes bitbucket-pipelines.yml
+roam ci-setup --platform github --write     # writes .github/workflows/roam.yml
+roam ci-setup --platform gitlab --write     # writes .gitlab-ci.yml
+roam ci-setup --platform jenkins --write    # writes Jenkinsfile
+roam ci-setup --platform azure --write      # writes azure-pipelines.yml
+roam ci-setup --platform bitbucket --write  # writes bitbucket-pipelines.yml
 ```
 
 Each template runs `roam init`, generates SARIF, applies a health-score gate,
@@ -111,7 +111,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `13.10.0` | Exact roam-code version to install from PyPI. Accepts a closed PEP 440-style release grammar; URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
+| `version` | `13.10.0` | Exact roam-code version to install from PyPI. The explicit `source` mode installs from the selected action checkout; `latest` requires `allow-latest: true`. URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
 | `allow-latest` | `false` | Explicit opt-in required when `version: latest` is requested. This keeps the mutable package path visible in review. |
 | `commands` | `health` | Space-separated roam commands to run. Each command produces JSON output that feeds into the PR comment and quality gate. |
 | `changed-only` | `false` | Incremental CI mode. Adapts supported commands to changed files and transitive dependents (when detectable). |
@@ -135,6 +135,11 @@ ranges, because a copied downstream action cannot consume this repository's
 check out roam-code and materialize `uv.lock`, as Roam's own source workflows
 do. `version: latest` trades that release-level reproducibility for automatic
 first-party upgrades and therefore requires `allow-latest: 'true'`.
+`version: source` is intended for prerelease validation of a selected action
+checkout. It installs only from the action's validated `github.action_path`,
+requires matching non-editable PEP 610 provenance, and has no PyPI fallback.
+It binds first-party Roam code to that checkout, while transitive dependencies
+still follow declared package ranges rather than this repository's `uv.lock`.
 
 ## Outputs
 
@@ -347,7 +352,7 @@ Any roam command can be passed via the `commands` input. Common choices:
 | `breaking` | Detect breaking API changes |
 | `conventions` | Naming convention violations |
 
-Run `roam --help` for all 281 commands.
+Run `roam --help-all` for all 281 commands.
 
 ## Exit Codes
 
@@ -434,6 +439,12 @@ permissions:
 The first run indexes the entire codebase. Subsequent runs with `cache: 'true'`
 will restore the cached index and only re-index changed files. Typical
 improvement: 30-60s down to under 10s.
+
+A completely cold runner may also retrieve one checksum-verified parser bundle.
+`tree-sitter-language-pack` serializes concurrent first use, publishes cache
+files atomically, and retains the bundle so later grammar loads are local. Cache
+the grammar-pack directory between runs, or run `roam index --force` while
+egress is available before enforcing an air-gap policy.
 
 ### Gate expression not matching
 

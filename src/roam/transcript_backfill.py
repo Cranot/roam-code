@@ -709,14 +709,19 @@ def _load_or_create_key(root: Path, *, create: bool = True) -> bytes:
     state = _private_state_directory(root, create=create)
     if not create and not state.exists():
         return os.urandom(32)
-    with pinned_owner_only_directory(state):
-        path = state / SALT_NAME
-        key = _read_private_key(path, transient_retries=20)
-        if key is not None:
-            return key
-        if not create:
-            return os.urandom(32)
-        return _create_private_key(path)
+    try:
+        with pinned_owner_only_directory(state):
+            path = state / SALT_NAME
+            key = _read_private_key(path, transient_retries=20)
+            if key is not None:
+                return key
+            if not create:
+                return os.urandom(32)
+            return _create_private_key(path)
+    except TranscriptBackfillSafetyError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise TranscriptBackfillSafetyError(f"cannot safely access savings backfill key state: {state}: {exc}") from exc
 
 
 def _keyed_hex(key: bytes, purpose: str, value: str, length: int = 24) -> str:
@@ -2349,22 +2354,34 @@ def backfill_transcripts(
                 allow_missing=True,
             )
 
-        with pinned_owner_only_directory(state_dir):
-            atomic_write_bytes(
-                output,
-                payload,
-                prepare_temp_fd=prepare_private_temp,
-                before_replace=validate_destination,
-                durable=True,
-                create_parents=False,
-                secure_parent=True,
-            )
-            _private_file_state(
-                output,
-                label="derived transcript snapshot",
-                max_bytes=MAX_SNAPSHOT_BYTES,
-                allow_missing=False,
-            )
+        try:
+            with pinned_owner_only_directory(state_dir):
+                # Validate before entering the atomic writer so a pre-existing
+                # linked destination is reported through this module's public
+                # safety contract. Keep the callback as the race-closing check
+                # immediately before replacement.
+                validate_destination()
+                atomic_write_bytes(
+                    output,
+                    payload,
+                    prepare_temp_fd=prepare_private_temp,
+                    before_replace=validate_destination,
+                    durable=True,
+                    create_parents=False,
+                    secure_parent=True,
+                )
+                _private_file_state(
+                    output,
+                    label="derived transcript snapshot",
+                    max_bytes=MAX_SNAPSHOT_BYTES,
+                    allow_missing=False,
+                )
+        except TranscriptBackfillSafetyError:
+            raise
+        except (OSError, RuntimeError) as exc:
+            raise TranscriptBackfillSafetyError(
+                f"cannot safely write derived transcript snapshot: {output}: {exc}"
+            ) from exc
     return {
         "state": "dry_run" if dry_run else "written",
         "output": str(output),

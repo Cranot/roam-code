@@ -523,7 +523,7 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
     Azure Pipelines, Jenkins, and Bitbucket.  Auto-detects the CI platform
     from marker files or use --platform to specify one.
 
-    Unlike ``mcp-setup`` (which generates MCP server JSON configs), this
+    Unlike ``mcp-setup`` (which generates MCP server JSON or TOML configs), this
     command generates full CI pipeline files that run ``roam health``,
     ``roam check-rules``, and ``roam pr-risk`` on every pull request.
 
@@ -548,7 +548,7 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
       roam-sarif-with-codeql.yml    roam SARIF + CodeQL side-by-side (W391)
     Source: src/roam/templates/ci/ (reachable via importlib.resources).
 
-    See also ``mcp-setup`` (MCP server JSON for AI clients),
+    See also ``mcp-setup`` (MCP server config for AI clients),
     ``hooks`` (git hook installer), and ``pr-risk`` (gate command CI
     pipelines call on every PR).
     """
