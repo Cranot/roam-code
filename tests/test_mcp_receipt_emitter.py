@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import stat
 import subprocess
 import uuid
 from pathlib import Path
@@ -242,6 +243,42 @@ def test_receipt_carries_input_hash(isolated_repo, monkeypatch) -> None:
     assert receipts[0]["input_hash"] == expected_hash
 
 
+def test_receipt_binds_nested_args_and_actor_identity_before_execution(isolated_repo, monkeypatch) -> None:
+    """Tool-side mutation cannot rewrite the audited caller or input."""
+    import roam.mcp_server as m
+
+    name = "stub_mutates_receipt_inputs"
+    monkeypatch.setitem(
+        m._TOOL_METADATA,
+        name,
+        {
+            "name": name,
+            "read_only": False,
+            "destructive": True,
+            "idempotent": False,
+            "task_mode": "required",
+        },
+    )
+    monkeypatch.setenv("ROAM_MCP_CLIENT_ID", "client-before")
+    monkeypatch.setenv("ROAM_AGENT_ID", "actor-before")
+
+    def _inner(**kwargs):
+        kwargs["payload"]["state"] = "after"
+        os.environ["ROAM_MCP_CLIENT_ID"] = "client-after"
+        os.environ["ROAM_AGENT_ID"] = "actor-after"
+        return {"command": name, "summary": {"verdict": "ok"}}
+
+    payload = {"state": "before", "nested": [1, {"bound": True}]}
+    expected_hash = hash_input_args({"payload": payload})
+    m._wrap_with_receipt(name, _inner)(payload=payload)
+
+    receipts = _read_receipts(isolated_repo / ".roam" / "mcp_receipts")
+    assert len(receipts) == 1
+    assert receipts[0]["input_hash"] == expected_hash
+    assert receipts[0]["client_id"] == "client-before"
+    assert receipts[0]["actor_ref_id"] == "actor-before"
+
+
 def test_receipt_with_active_run_links_run_event_id(isolated_repo, monkeypatch) -> None:
     """When ROAM_RUN_ID is set, the receipt's run_event_id matches it AND
     the file lives under the run-id bucket directory.
@@ -308,7 +345,7 @@ def test_ledger_link_rejects_traversal_run_id_before_log_event(
 
 
 def test_receipt_target_rejects_symlinked_bucket_escape(isolated_repo) -> None:
-    """Resolved containment rejects a canonical bucket redirected outside."""
+    """Component validation rejects a bucket redirect before containment."""
     import roam.mcp_server as m
 
     valid_run_id = "run_20260514_deadbeef"
@@ -322,7 +359,7 @@ def test_receipt_target_rejects_symlinked_bucket_escape(isolated_repo) -> None:
     except OSError as exc:
         pytest.skip(f"directory symlinks unavailable: {exc}")
 
-    with pytest.raises(ValueError, match="receipt bucket escaped"):
+    with pytest.raises(ValueError, match="receipt bucket contains a filesystem redirect"):
         m._mcp_receipt_target(valid_run_id, "stub_call")
 
 
@@ -458,7 +495,7 @@ def test_existing_receipt_hardlink_is_never_replaced(isolated_repo, monkeypatch)
 
 
 def test_receipt_parent_swap_before_temp_write_is_rejected(isolated_repo, monkeypatch) -> None:
-    """A mkdir-to-temp TOCTOU swap emits no bytes into the replacement tree."""
+    """A mkdir-to-temp TOCTOU swap emits no receipt bytes into either tree."""
     import roam.atomic_io as atomic_io
 
     real_atomic_write = atomic_io.atomic_write_bytes
@@ -478,14 +515,31 @@ def test_receipt_parent_swap_before_temp_write_is_rejected(isolated_repo, monkey
 
     assert result["summary"]["verdict"] == "ok"
     replacement = isolated_repo / ".roam" / "mcp_receipts" / "_no_run"
-    assert list(replacement.iterdir()) == []
+    replacement_entries = list(replacement.iterdir())
+    if os.name == "nt":
+        # Windows can delete the exact tempfile through its identity-bound
+        # handle, so no recovery artifact remains.
+        assert replacement_entries == []
+    else:
+        # POSIX has no conditional unlink-by-inode. Preserve one private,
+        # zero-byte recovery artifact rather than risk deleting an attacker's
+        # replacement between an identity check and unlink(2).
+        assert len(replacement_entries) == 1
+        recovery = replacement_entries[0]
+        recovery_stat = recovery.stat(follow_symlinks=False)
+        assert recovery.name.startswith(".stub_receipt_parent_race_")
+        assert recovery.name.endswith(".tmp")
+        assert stat.S_ISREG(recovery_stat.st_mode)
+        assert recovery_stat.st_size == 0
+        assert recovery_stat.st_nlink == 1
+        assert recovery_stat.st_mode & 0o777 == 0o600
     assert len(parked) == 1
     assert list(parked[0].iterdir()) == []
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX directory-handle cleanup is platform-specific")
+@pytest.mark.skipif(os.name == "nt", reason="POSIX zero-byte recovery artifact contract")
 def test_receipt_parent_swap_after_temp_creation_leaves_no_detached_bytes(isolated_repo, monkeypatch) -> None:
-    """A detached parent is cleaned through its pinned directory handle."""
+    """A detached parent retains no receipt bytes after race rejection."""
     import roam.atomic_io as atomic_io
 
     real_atomic_write = atomic_io.atomic_write_bytes
@@ -513,7 +567,16 @@ def test_receipt_parent_swap_after_temp_creation_leaves_no_detached_bytes(isolat
     replacement = isolated_repo / ".roam" / "mcp_receipts" / "_no_run"
     assert list(replacement.iterdir()) == []
     assert len(parked) == 1
-    assert list(parked[0].iterdir()) == []
+    recovery_entries = list(parked[0].iterdir())
+    assert len(recovery_entries) == 1
+    recovery = recovery_entries[0]
+    recovery_stat = recovery.stat(follow_symlinks=False)
+    assert recovery.name.startswith(".stub_receipt_post_temp_race_")
+    assert recovery.name.endswith(".tmp")
+    assert stat.S_ISREG(recovery_stat.st_mode)
+    assert recovery_stat.st_size == 0
+    assert recovery_stat.st_nlink == 1
+    assert recovery_stat.st_mode & 0o777 == 0o600
 
 
 def test_receipt_falls_back_to_no_run_dir_when_no_active_run(isolated_repo, monkeypatch) -> None:

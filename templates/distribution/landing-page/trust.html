@@ -87,7 +87,7 @@
         <a class="btn-secondary" href="#today">Where we are today</a>
       </div>
       <p class="hero-trust-strip">
-        Built in Athens · Made in the EU · Apache 2.0 CLI · 100% local by default (opt-in metrics-push is the only outbound surface) · No API key · No vendor cloud endpoint · Evidence hash-verifies offline · No analytics · No cookies
+        Built in Athens · Made in the EU · Apache 2.0 CLI · Local source analysis · No API key · No automatic source-code or telemetry upload · Evidence hash-verifies offline · No analytics · No cookies
       </p>
     </div>
   </header>
@@ -218,15 +218,22 @@
           The CLI's data flow is short enough to inline: your source
           code is read from the local working tree, parsed and indexed
           into a local SQLite database under <code>.roam/</code>, and
-          analyzed by local processes. <strong>100% local by default, no API key,
-          no vendor cloud endpoint</strong> — no telemetry, no analytics,
-          no model-training upload, and no inbound network listener. The
-          one outbound carve-out is the opt-in <code>metrics-push</code>
-          command, which emits Prometheus-format metrics to a
-          user-configured pushgateway URL when (and only when) you
-          explicitly invoke it; it is off by default and never auto-runs.
+          analyzed by local processes. <strong>No API key, no automatic
+          source-code upload or telemetry, and no required vendor cloud
+          endpoint</strong> — no analytics,
+          no automatic model-training upload, and no listener during ordinary
+          analysis. On first
+          parser use, a cold cache retrieves one checksum-verified platform
+          bundle from the parser dependency's GitHub release and retains it
+          locally; prewarm it before disabling egress. Explicit features can
+          query PyPI/GitHub, probe operator-selected URLs, post metrics or a
+          GitHub check, use keyless Sigstore, summarize selected MCP report
+          snippets with the configured model provider, or open an HTTP listener. They are
+          off unless selected (apart from a missing parser bundle) and are
+          inventoried with payload classes in
+          <a href="https://github.com/Cranot/roam-code/blob/main/docs/network-boundary.md"><code>docs/network-boundary.md</code></a>.
           The
-          same local-only stance is contractually committed in
+          same default-local, no-automatic-upload stance is contractually committed in
           <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#6-security-measures">DPA §6</a>.
           Roam Review and Roam Cloud data flows are documented inside the
           <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/security-procurement-packet.md">procurement packet</a>.

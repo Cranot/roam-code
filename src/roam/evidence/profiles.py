@@ -28,10 +28,10 @@ codify the four common audiences for a packet.
 
 NOTE on the redactions string format: the dataclass-level validator on
 ``ChangeEvidence.redactions`` only accepts entries from the closed
-:data:`REDACTION_REASONS` enumeration (nine entries: ``secret``,
+:data:`REDACTION_REASONS` enumeration (ten entries: ``secret``,
 ``pii``, ``sensitive_content``, ``size_limit``, ``policy``,
 ``user_opt_in_required``, ``machine_local_path``, ``schema_strict``,
-``producer_not_available``). The profile-tagged strings this module
+``producer_not_available``, ``prompt_injection_marker``). The profile-tagged strings this module
 appends (e.g. ``"profile:public:human_actor"``) are NOT members of that
 closed enumeration; they are a richer masking trail required by the
 W226 directive. We attach them via ``object.__setattr__`` to bypass the

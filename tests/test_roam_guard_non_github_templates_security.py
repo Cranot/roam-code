@@ -121,13 +121,13 @@ def test_templates_install_only_exact_roam_release_in_an_isolated_venv() -> None
 
 def test_required_guard_evidence_fails_closed_and_preserves_verdict_status() -> None:
     for path, payload, shell in _templates():
-        init_at = shell.index(".roam-guard-venv/bin/roam init --quiet")
+        index_at = shell.index(".roam-guard-venv/bin/roam index --quiet")
         guard_at = shell.index(".roam-guard-venv/bin/roam guard-pr --ci")
         evidence_at = shell.index("if [ ! -s roam-guard-artifacts/guard.md ]; then")
         sarif_at = shell.index(".roam-guard-venv/bin/roam proof-bundle")
         exit_at = shell.rindex('exit "$guard_status"')
 
-        assert init_at < guard_at < evidence_at < sarif_at < exit_at, path
+        assert index_at < guard_at < evidence_at < sarif_at < exit_at, path
         assert "guard_status=$?" in shell
         assert "ERROR: Roam Guard did not produce required non-empty guard.md evidence" in shell
         assert "text.startswith('## ') and 'Roam Guard verdict:' in text" in shell

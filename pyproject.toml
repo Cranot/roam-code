@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roam-code"
 version = "13.10.0"
-description = "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. 100% local, zero API keys, zero network egress."
+description = "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no source-code egress."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -36,11 +36,11 @@ classifiers = [
 dependencies = [
     "click>=8.0",
     "tree-sitter>=0.23",
-    # Pinned upper bound: 1.6.3's cp312 wheel ships a manylinux_2_34
-    # tarball that fails to register the ``tree_sitter_language_pack``
-    # module post-install (CI run 25217131296). 1.6.2 (cp310-abi3) works
-    # cleanly across 3.10-3.13 (project floor since W44).
-    "tree-sitter-language-pack>=0.6,<1.6.3",
+    # 1.13.3 retains a checksum-addressed platform bundle and makes cold
+    # cache population atomic and cross-process safe. The 1.13 minor range
+    # is intentional: earlier releases race under pytest-xdist; later minor
+    # versions must re-pass Roam's 28-language grammar-drift matrix.
+    "tree-sitter-language-pack>=1.13.3,<1.14",
     "networkx>=3.0",
     # tomllib is stdlib on 3.11+. On 3.10 (our floor) we need the tomli
     # backport so commands that parse pyproject.toml (orphan-imports

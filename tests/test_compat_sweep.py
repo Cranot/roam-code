@@ -9,7 +9,7 @@ brushed up against three classes of test-compat debt:
    ``roam.surface_counts``. This file asserts they agree so future sprints
    can't accidentally let them drift. (W844-drive-by-2: the headline-IS-
    the-count framing was dropped in v13.2; the README hero now leads with
-   credential-free + zero-egress + tamper-evident positioning, with counts
+   credential-free + no repository egress + tamper-evident positioning, with counts
    relegated to a sub-line. The assertions below still pin the sub-line.)
 
 2. **Click 8.3 stdout/stderr split.** ``parse_json_output`` in conftest now

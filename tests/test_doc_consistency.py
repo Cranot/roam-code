@@ -470,6 +470,106 @@ class TestInternalDocLinks:
 
 
 # ---------------------------------------------------------------------------
+# Public command examples and release-procedure drift guards
+# ---------------------------------------------------------------------------
+
+_PUBLIC_COMMAND_DOCS = (
+    "README.md",
+    "docs/ci-integration.md",
+    "docs/network-boundary.md",
+    "llms-install.md",
+    "src/roam/commands/cmd_pytest_fixtures.py",
+    "src/roam/commands/cmd_skill_generate.py",
+    "templates/demos/insufficient-pr-replay.md",
+    "templates/distribution/landing-page/index.html",
+    "templates/distribution/landing-page/llms.txt",
+    "templates/distribution/landing-page/press.html",
+    "templates/distribution/landing-page/setup.html",
+    "templates/distribution/landing-page/docs/architecture.html",
+    "templates/distribution/landing-page/docs/canonical-demo.html",
+    "templates/distribution/landing-page/docs/command-reference.html",
+    "templates/distribution/landing-page/docs/getting-started.html",
+    "templates/distribution/landing-page/docs/how-roam-thinks.html",
+    "templates/distribution/landing-page/docs/integration-tutorials.html",
+    "templates/distribution/landing-page/docs/mcp-usage.html",
+    "templates/distribution/landing-page/docs/troubleshooting.html",
+    "templates/legal/security-procurement-packet.md",
+)
+
+_STALE_PUBLIC_INVOCATIONS = (
+    "roam init --quiet",
+    "roam reindex",
+    "roam runtime",
+    "roam audit-evidence-pack",
+    "--n-agents",
+    "roam critique --runtime",
+    "roam-code[watch]",
+    "roam ci-setup github",
+)
+
+
+def test_public_command_examples_exclude_known_stale_invocations():
+    """Retired commands/options must not return to user-facing quick paths."""
+    stale: list[str] = []
+    for rel in _PUBLIC_COMMAND_DOCS:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for invocation in _STALE_PUBLIC_INVOCATIONS:
+            if invocation in text:
+                stale.append(f"{rel}: {invocation}")
+    assert not stale, "stale public command examples:\n  " + "\n  ".join(stale)
+
+
+def test_ci_templates_build_the_index_with_a_valid_quiet_command():
+    """All four shipped CI examples must use the executable index command."""
+    for provider in ("bitbucket-pipelines", "circleci", "github-actions", "gitlab-ci"):
+        path = ROOT / "templates" / "examples" / f"roam-guard-pr.{provider}.yml"
+        text = path.read_text(encoding="utf-8")
+        assert "roam index --quiet" in text, f"{path.relative_to(ROOT)} must build the index quietly"
+        assert "roam init --quiet" not in text, f"{path.relative_to(ROOT)} uses an invalid init option"
+
+
+def test_docs_that_claim_ci_file_generation_include_write_flag():
+    expected = {
+        "README.md": "roam ci-setup --platform github --write",
+        "llms-install.md": "roam ci-setup --platform github --write",
+        "docs/ci-integration.md": "roam ci-setup --platform github --write",
+        "templates/distribution/landing-page/docs/getting-started.html": ("roam ci-setup --platform github --write"),
+        "templates/distribution/landing-page/docs/architecture.html": (
+            "roam ci-setup --platform github --with-slsa-l3 --write"
+        ),
+    }
+    for rel, invocation in expected.items():
+        assert invocation in (ROOT / rel).read_text(encoding="utf-8"), f"{rel} omits the file-writing invocation"
+
+
+def test_replay_remediation_populates_the_bundle_before_emit():
+    text = (ROOT / "templates/demos/insufficient-pr-replay.md").read_text(encoding="utf-8")
+    init = text.index('roam pr-bundle init --intent "Describe the intended change"')
+    test_run = text.index("roam pr-bundle add test-run pytest --passed")
+    approval = text.index("roam pr-bundle add-approval")
+    emit = text.index("roam pr-bundle emit")
+    assert init < test_run < approval < emit
+    assert "roam runs log --action test" not in text
+
+
+def test_procurement_packet_names_a_real_signing_path():
+    text = (ROOT / "templates/legal/security-procurement-packet.md").read_text(encoding="utf-8")
+    assert "roam pr-bundle emit --slsa-l3 --sign --key PATH" in text
+    assert "signed `roam pr-bundle emit --sign`" not in text
+
+
+def test_contributing_release_flow_uses_exact_version_and_release_gate():
+    """Release docs must gate first and derive the three-part tag from metadata."""
+    text = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "python scripts/prepush_check.py --release" in text
+    assert 'git tag -a "v${version}" "$release_sha"' in text
+    assert 'git push origin "v${version}"' in text
+    assert '"tomllib" if sys.version_info >= (3, 11) else "tomli"' in text
+    assert 'test "$(git rev-parse origin/main)" = "$release_sha"' in text
+    assert "git tag vX.Y" not in text
+
+
+# ---------------------------------------------------------------------------
 # W200/W??? positioning regression guards
 # ---------------------------------------------------------------------------
 
@@ -907,3 +1007,51 @@ def test_all_landing_html_current_version_not_behind_pyproject():
         "landing-page HTML declares a current version BEHIND pyproject "
         "(run the version-bump sync scripts):\n  " + "\n  ".join(behind)
     )
+
+
+def test_release_docs_track_current_mcp_security_and_setup_contracts():
+    """Pin the public claims most likely to drift from the MCP runtime."""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    setup = (ROOT / "src" / "roam" / "commands" / "cmd_mcp_setup.py").read_text(encoding="utf-8")
+    init = (ROOT / "src" / "roam" / "commands" / "cmd_init.py").read_text(encoding="utf-8")
+    describe = (ROOT / "src" / "roam" / "commands" / "cmd_describe.py").read_text(encoding="utf-8")
+    install = (ROOT / "llms-install.md").read_text(encoding="utf-8")
+    profiles = (ROOT / "src" / "roam" / "evidence" / "profiles.py").read_text(encoding="utf-8")
+    posture = (ROOT / "dev" / "MCP-SECURITY-POSTURE.md").read_text(encoding="utf-8")
+    mcp_usage = (_LANDING_PAGE / "docs" / "mcp-usage.html").read_text(encoding="utf-8")
+    landing = (_LANDING_PAGE / "index.html").read_text(encoding="utf-8")
+    security = (_LANDING_PAGE / "security.html").read_text(encoding="utf-8")
+    privacy = (_LANDING_PAGE / "privacy.html").read_text(encoding="utf-8")
+    trust = (_LANDING_PAGE / "trust.html").read_text(encoding="utf-8")
+    integration = (_LANDING_PAGE / "docs" / "integration-tutorials.html").read_text(encoding="utf-8")
+    command_reference = (_LANDING_PAGE / "docs" / "command-reference.html").read_text(encoding="utf-8")
+    card = (ROOT / "src" / "roam" / "mcp-server-card.json").read_text(encoding="utf-8")
+    network_boundary = (ROOT / "docs" / "network-boundary.md").read_text(encoding="utf-8")
+    procurement = (ROOT / "templates" / "legal" / "security-procurement-packet.md").read_text(encoding="utf-8")
+
+    assert "244 (17 in default core preset)" in readme
+    assert "14-tool AI-governance subset" in mcp_usage
+    assert "exposes 14 tools focused on AI-governance" in setup
+    assert "roam ci-setup gitlab" not in init
+    assert "roam ci-setup --platform gitlab" in init
+    assert "Run `roam --help-all` for all commands" in describe
+    assert "prompt_injection_marker" in install
+    assert "ten entries" in profiles and "prompt_injection_marker" in profiles
+    assert "MCP-P1.2   | **shipped** (2026-05-18" not in posture
+    assert "MCP-P1.2   | **shipped** (2026-05-21" in posture
+    assert "no repository-content egress" not in card
+    assert "optional MCP summarization" in card
+    assert "built-in network paths do not upload source-code bodies" not in landing
+    assert "opt-in MCP model summarization can include source snippets" in landing
+    assert "MCP summarization with <code>ROAM_AI_ENABLED=1</code>" in security
+    assert "opt-in MCP model summarization" in privacy
+    assert "summarize selected MCP report" in trust
+    assert "Ordinary analysis is\n      local" in integration
+    assert "opt-in MCP model summarization" in procurement
+    assert "your code never leaves your machine" not in landing
+    assert "active valid run" in install
+    assert "require a server restart" in mcp_usage
+    assert 'roam_expand_toolset(preset="full")</code> exposes all' not in mcp_usage
+    assert "Every command is local" not in command_reference
+    assert "ROAM_TREE_SITTER_CACHE_DIR" in network_boundary
+    assert "ROAM_TREE_SITTER_CACHE_SEALED=1" in network_boundary

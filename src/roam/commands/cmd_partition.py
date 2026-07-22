@@ -771,10 +771,10 @@ def partition(ctx, n_agents, output_format):
 
     \b
     Examples:
-      roam partition --n-agents 4
-      roam partition --n-agents 6 --format json
-      roam partition --n-agents 3 --format claude-teams
-      roam --json partition --n-agents 5
+      roam partition --agents 4
+      roam partition --agents 6 --format json
+      roam partition --agents 3 --format claude-teams
+      roam --json partition --agents 5
 
     See also ``orchestrate`` (operational dispatch with interface
     contracts), ``agent-plan`` (dependency-ordered phases), and

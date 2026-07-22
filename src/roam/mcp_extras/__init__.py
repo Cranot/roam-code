@@ -4,7 +4,7 @@ Each submodule unlocks a primitive the CLI cannot have:
 
 * ``sampling`` -- in-tool LLM calls back to the *client's* model so
   large outputs (health, repo map, briefings) can be summarised for
-  the agent's current task. Preserves "100% local, zero API keys".
+  the agent's current task. Preserves local analysis with zero API keys.
 * ``watcher`` -- watchdog observer that pushes
   ``notifications/resources/updated`` to the client when files change,
   so the agent's view of ``roam://health`` etc. stays fresh without

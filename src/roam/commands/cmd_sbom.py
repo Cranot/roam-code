@@ -320,7 +320,7 @@ def _generate_cyclonedx(
 
         # Add ecosystem as external reference
         # W1075: stamp the original version_spec so SBOM consumers can
-        # recover the full constraint (e.g. ">=0.6,<1.6.3"). Without this,
+        # recover the full constraint (e.g. ">=1.13.3,<1.14"). Without this,
         # _version_from_spec strips comparison operators and emits only the
         # first numeric token, silently dropping upper bounds that exclude
         # known-broken releases — a supply-chain correctness gap.
@@ -441,7 +441,7 @@ def _generate_spdx(
         }
 
         # W1075: stamp the full version_spec on the SPDX comment so
-        # downstream tooling can recover constraints like ">=0.6,<1.6.3"
+        # downstream tooling can recover constraints like ">=1.13.3,<1.14"
         # that versionInfo (lower bound only) silently drops.
         comment_parts: list[str] = []
         if dep.version_spec and dep.version_spec != version:

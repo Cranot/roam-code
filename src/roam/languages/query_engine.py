@@ -192,7 +192,7 @@ class QueryEngine:
     def _get_language(self) -> Any:
         """Get the tree-sitter Language object."""
         if self._language_obj is None:
-            from tree_sitter_language_pack import get_language
+            from roam.parser_pack import get_language
 
             grammar = self.config.grammar_alias or self.config.language
             self._language_obj = get_language(grammar)

@@ -301,7 +301,7 @@ def _scan_ts_file(
             # roam (see pyproject.toml), but we still guard the import
             # so that a missing grammar (e.g. older language-pack) falls
             # back to the regex sweep instead of crashing the command.
-            from tree_sitter_language_pack import get_parser
+            from roam.parser_pack import LanguageNotFoundError, get_parser, has_language
         except ImportError:
             tree = None
         else:
@@ -309,10 +309,12 @@ def _scan_ts_file(
 
             try:
                 grammar = GRAMMAR_ALIASES.get(language, language)
-                parser = get_parser(grammar)
-                tree = parser.parse(src_bytes)
-            except (LookupError, TypeError):
+                if has_language(grammar):
+                    parser = get_parser(grammar)
+                    tree = parser.parse(src_bytes)
+            except (LanguageNotFoundError, LookupError, TypeError):
                 # Fall through to the regex sweep — documented fallback.
+                # Download, cache, and integrity failures remain loud.
                 tree = None
 
         if tree is not None:

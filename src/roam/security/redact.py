@@ -169,15 +169,22 @@ def redact_secrets_in_string_with_counts(value: str) -> tuple[str, dict[str, int
 def redact_secrets_in_value(value: Any) -> tuple[Any, dict[str, int]]:
     """Recursively scrub secret patterns inside any JSON-ish value.
 
-    Walks dicts, lists, and tuples; redacts string leaves; rides
+    Walks dicts, lists, and tuples; redacts string keys and leaves; rides
     non-string scalars (int / float / bool / None) through untouched.
     Returns ``(redacted_value, aggregate_counts)`` where
-    ``aggregate_counts`` sums every pattern hit across the walk.
+    ``aggregate_counts`` sums every key and value pattern hit across the
+    walk.
 
     The returned container has the same structural shape as the input
     (dict stays dict, list stays list, tuple stays tuple) so callers can
     pass the redacted value through unchanged downstream paths (e.g.,
     JSON canonicalisation for hashing).
+
+    Redacting two distinct keys can make them equal. Such a mapping is
+    withheld by raising a constant-message :class:`ValueError` rather
+    than silently overwriting a value or disambiguating keys in a way
+    that exposes secret material. The MCP egress boundary converts this
+    exception into its fail-closed error envelope.
     """
     if isinstance(value, str):
         redacted_str, hits = redact_secrets_in_string_with_counts(value)
@@ -186,8 +193,15 @@ def redact_secrets_in_value(value: Any) -> tuple[Any, dict[str, int]]:
         out_dict: dict = {}
         agg: dict[str, int] = {}
         for k, v in value.items():
+            new_k = k
+            if isinstance(k, str):
+                new_k, key_hits = redact_secrets_in_string_with_counts(k)
+                for pid, n in key_hits.items():
+                    agg[pid] = agg.get(pid, 0) + n
+            if new_k in out_dict:
+                raise ValueError("secret redaction produced a duplicate mapping key")
             new_v, sub_hits = redact_secrets_in_value(v)
-            out_dict[k] = new_v
+            out_dict[new_k] = new_v
             for pid, n in sub_hits.items():
                 agg[pid] = agg.get(pid, 0) + n
         return out_dict, agg
@@ -337,10 +351,10 @@ def scan_prompt_injection_markers(value: str) -> dict[str, int]:
 def scan_prompt_injection_in_value(value: Any) -> dict[str, int]:
     """Recursively scan any JSON-ish value for prompt-injection markers.
 
-    Walks dicts, lists, and tuples; scans string leaves; rides non-string
-    scalars (int / float / bool / None) through untouched. Returns an
-    aggregate ``{marker_id: hit_count}`` dict summing every marker hit
-    across the walk.
+    Walks dicts, lists, and tuples; scans string keys and leaves; rides
+    non-string scalars (int / float / bool / None) through untouched.
+    Returns an aggregate ``{marker_id: hit_count}`` dict summing every
+    key and value marker hit across the walk.
 
     Like :func:`scan_prompt_injection_markers`, this is non-mutating: it
     inspects the value and reports, it never rewrites it.
@@ -349,7 +363,10 @@ def scan_prompt_injection_in_value(value: Any) -> dict[str, int]:
         return scan_prompt_injection_markers(value)
     agg: dict[str, int] = {}
     if isinstance(value, dict):
-        for v in value.values():
+        for k, v in value.items():
+            if isinstance(k, str):
+                for mid, n in scan_prompt_injection_markers(k).items():
+                    agg[mid] = agg.get(mid, 0) + n
             for mid, n in scan_prompt_injection_in_value(v).items():
                 agg[mid] = agg.get(mid, 0) + n
         return agg

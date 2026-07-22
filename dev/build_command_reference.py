@@ -34,7 +34,10 @@ def _build_appendix() -> str:
     seen: set[str] = set()
     lines.append('<section class="section">')
     lines.append('  <h2 id="complete-reference">Complete Reference</h2>')
-    lines.append("  <p>Auto-generated from <code>roam --help</code>. Every canonical command + alias.</p>")
+    lines.append(
+        "  <p>Auto-generated from the CLI command registry. Every canonical command + alias; "
+        "inspect the same surface with <code>roam --help-all</code>.</p>"
+    )
 
     for category, names in _CATEGORIES.items():
         # Filter to canonical commands only; aliases share the help text.

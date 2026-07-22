@@ -37,7 +37,7 @@ pipelines:
               mkdir -- roam-guard-artifacts
 
               # Indexing and guard.md are required. Any failure remains fatal.
-              .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam init --quiet
+              .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam index --quiet
               set +e
               .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam guard-pr --ci \
                 --output roam-guard-artifacts/guard.md

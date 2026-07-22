@@ -57,7 +57,7 @@ The agent touched three symbols:
 
 The agent declared the active Roam mode (`safe_edit`) at the start
 of the run via `roam mode safe_edit`. A run id was opened with
-`roam runs start --agent-id agent:example-trusted-agent`. Every gated
+`roam runs start --agent agent:example-trusted-agent`. Every gated
 tool call (`roam preflight`, `roam impact`, `roam diff`,
 `roam critique`) was logged to the run's HMAC-chained event ledger,
 so the agent identity carries the `local_env` trust tier (the

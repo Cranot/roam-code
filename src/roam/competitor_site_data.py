@@ -258,7 +258,7 @@ SCORING_RUBRIC = [
             {"id": "sarif_output", "label": "SARIF output", "type": "binary", "max": 2},
             {
                 "id": "local_zero_api",
-                "label": "100% local / zero API keys",
+                "label": "Local source analysis / zero API keys",
                 "type": "binary",
                 "max": 2,
             },

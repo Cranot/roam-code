@@ -49,11 +49,12 @@ sibling's 5-command arc — running it on the same repo would have
 populated the six missing slots:
 
 ```bash
-# 1. Install + index (offline, ~30s on a 25k-symbol repo)
+# 1. Install + index (local; prewarm parser cache before air-gap use)
 pip install "roam-code[mcp]" && roam init
 
-# 2. Open a signed run-ledger entry — populates actor + authority
-roam runs start --agent-id agent:your-agent
+# 2. Open a signed run-ledger entry and proof bundle — actor + authority
+roam runs start --agent agent:your-agent
+roam pr-bundle init --intent "Describe the intended change"
 
 # 3. Gate the change before edit — populates context + risk
 roam preflight <symbol> && roam impact <symbol>
@@ -61,8 +62,10 @@ roam preflight <symbol> && roam impact <symbol>
 # 4. Critique the diff as a graph mutation — populates findings + policy
 git diff | roam critique
 
-# 5. Emit the bundle + replay — populates approvals + verify
-roam pr-bundle emit --approval
+# 5. Record tests and approval, then emit + replay
+roam pr-bundle add test-run pytest --passed
+roam pr-bundle add-approval --approver reviewer@example.com --scope pr:42
+roam pr-bundle emit
 roam pr-replay --range main:9f8e7d6..a1b2c3d --evidence-bundle .roam/reports/pr-X
 ```
 
@@ -138,10 +141,10 @@ _No recurring detector hits in this replay window — no Review configuration to
 
 ## Evidence limitations
 
-- **Missing actor identity**: no `actor_refs`, `agent_id`, or `human_actor` populated on the evidence packet. The change cannot be attributed to a specific human or agent. Recommendation: pass `--agent-id` when running `roam pr-replay` or feed identity via `roam runs start --agent-id`.
-- **Missing test evidence**: `tests_required` and `tests_run` are both empty. The packet does not assert which tests should have run for this change. Recommendation: connect test results to the run ledger via `roam runs end --with-tests`.
+- **Missing actor identity**: no `actor_refs`, `agent_id`, or `human_actor` populated on the evidence packet. The change cannot be attributed to a specific human or agent. Recommendation: pass `--agent-id` when running `roam pr-replay` or feed identity via `roam runs start --agent`.
+- **Missing test evidence**: `tests_required` and `tests_run` are both empty. The packet does not assert which tests should have run for this change. Recommendation: initialize the bundle, record the test with `roam pr-bundle add test-run pytest --passed`, then emit the bundle.
 - **No external artifacts**: the packet does not reference any external artifacts (SARIF reports, CGA attestations, ledger snapshots). The verdict rests on the inline findings table alone. Recommendation: attach proofs via `roam pr-bundle emit` before replay.
-- **Acceptance evidence not collected**: this report includes the `producer_not_available` redaction marker — `roam pr-replay` has no approvals / accepted-risks harvester wired in today, so Q8 ("Who accepted residual risk?") cannot be answered from automated sources. The replay window's banner counts Q8 as *partial* (limitation declared) rather than *missing* (silently absent). Recommendation: capture human signoff via `roam pr-bundle emit --approval` or wire a CI step that posts PR-review events into the run ledger before re-running replay.
+- **Acceptance evidence not collected**: this report includes the `producer_not_available` redaction marker — `roam pr-replay` has no approvals / accepted-risks harvester wired in today, so Q8 ("Who accepted residual risk?") cannot be answered from automated sources. The replay window's banner counts Q8 as *partial* (limitation declared) rather than *missing* (silently absent). Recommendation: capture human signoff via `roam pr-bundle add-approval --approver reviewer@example.com --scope pr:42`, emit the bundle, or wire a CI step that posts PR-review events into the run ledger before re-running replay.
 - **Non-certification**: this report **supports evidence for** governance review and **maps to** change-management controls. It is not certification of compliance with any framework (SOC 2 / ISO 42001 / EU AI Act / etc.). Mapping to specific framework controls and the conformity assessment remain with the customer.
 
 ---
@@ -186,7 +189,7 @@ For a buyer evaluating Roam: if the reports you currently get from
 your CI tooling look more like `insufficient-pr-replay.md` than
 `canonical-pr-replay.md`, the banner names the gap. The path to
 STRONG-tier coverage is the same one the canonical demo walks
-through: wire `roam runs start` with `--agent-id`, declare a mode,
+through: wire `roam runs start` with `--agent`, declare a mode,
 attach a `pr-bundle`, run preflight + impact + critique, and emit a
 human approval before merge.
 

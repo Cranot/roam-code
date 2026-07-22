@@ -66,10 +66,12 @@ def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:
 
     grammar = GRAMMAR_ALIASES.get(language, language)
     try:
-        from tree_sitter_language_pack import get_parser
+        from roam.parser_pack import LanguageNotFoundError, get_parser, has_language
 
+        if not has_language(grammar):
+            return []
         parser = get_parser(grammar)
-    except LookupError:
+    except (LanguageNotFoundError, LookupError):
         return []
 
     try:

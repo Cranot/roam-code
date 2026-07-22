@@ -209,7 +209,7 @@ Four actions, ordered by leverage:
   and pre-training data are outside Roam's measurement surface.
 - **Production runtime behaviour.** The ledger captures pre-merge
   evidence. Post-deploy telemetry requires separate evidence
-  (`roam runtime` ingests OpenTelemetry traces but those are not
+  (`roam ingest-trace` ingests OpenTelemetry traces but those are not
   collected by this engagement).
 - **Dataset provenance** for training or fine-tuning. Out of scope.
 - **Formal certification** against SOC 2, ISO/IEC 42001, EU AI Act,

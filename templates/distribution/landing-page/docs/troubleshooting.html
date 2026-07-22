@@ -166,8 +166,12 @@
 <span class="t-prompt">#</span> <span class="t-cmd">Semantic search (onnxruntime)</span>
 <span class="t-prompt">$</span> <span class="t-cmd">pip install "roam-code[semantic]"</span>
 
-<span class="t-prompt">#</span> <span class="t-cmd">File watcher (watchdog)</span>
-<span class="t-prompt">$</span> <span class="t-cmd">pip install "roam-code[watch]"</span></pre>
+<span class="t-prompt">#</span> <span class="t-cmd">CLI file watcher (built-in polling)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam watch</span>  <span class="t-comment"># no extra dependency required</span>
+
+<span class="t-prompt">#</span> <span class="t-cmd">MCP reactive watcher (optional watchdog dependency)</span>
+<span class="t-prompt">$</span> <span class="t-cmd">pip install watchdog</span>
+<span class="t-prompt">$</span> <span class="t-cmd">ROAM_MCP_WATCH=1 roam mcp</span></pre>
       </div>
     </section>
 
@@ -178,20 +182,30 @@
           <strong>Symptom.</strong> A file you know exists is missing
           from <code>roam search</code> results, or
           <code>roam file &lt;path&gt;</code> returns an empty skeleton.
-          Usually a tree-sitter grammar load failure: the
-          <code>tree-sitter-language-pack</code> version installed in
-          your environment is older than what Roam expects, or the file
-          extension isn't mapped to a grammar.
+          Usually a tree-sitter grammar load failure. On a fresh environment,
+          first use may need <code>tree-sitter-language-pack</code> to populate
+          its user cache. Roam pins a release that coordinates concurrent
+          first-use loads and publishes cache files atomically. A persistent
+          failure usually means acquisition is unavailable, the cache is not
+          writable, or the install is incompatible. An unsupported extension is
+          different: Roam skips that unavailable grammar (or uses a documented
+          regex fallback) without attempting a download.
         </p>
         <p>
           <strong>Diagnose.</strong>
-          <code>roam doctor</code> lists language coverage, grammar
-          load status, and the supported extension map.
+          <code>roam doctor</code> reports the installed parser packages and
+          parser-version drift recorded by the last index. Run
+          <code>roam index --force</code> for an end-to-end grammar check.
         </p>
         <p>
-          <strong>Fix.</strong> Reinstall with the latest grammar pack.
+          <strong>Fix a supported grammar.</strong> Reinstall the exact Roam
+          release so its tested grammar-pack range remains authoritative, confirm
+          that the first-use download can reach its documented public destination
+          and that the user cache is writable, then rebuild the index. Reinstalling
+          cannot add an unsupported grammar; for that case, use a supported file
+          type or add a language extractor before rebuilding.
         </p>
-<pre class="terminal" aria-label="Refresh tree-sitter grammars"><span class="t-prompt">$</span> <span class="t-cmd">pip install --upgrade tree-sitter-language-pack</span>
+<pre class="terminal" aria-label="Refresh tree-sitter grammars"><span class="t-prompt">$</span> <span class="t-cmd">pip install --force-reinstall "roam-code==13.10.0"</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam doctor</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam index --force</span></pre>
       </div>

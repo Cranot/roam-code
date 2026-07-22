@@ -176,6 +176,76 @@ def index_status() -> dict | None:
 _MAX_FTS_SUGGESTIONS = 5
 
 
+def _existing_index_recovery_state() -> str | None:
+    """Return ``active`` or ``incomplete`` for an unsafe existing index.
+
+    Older Roam versions did not publish ``index.state``. Preserve those
+    completed indexes as valid by default, while treating a stale numeric
+    ``index.lock`` as evidence that an old indexer died mid-run. New indexers
+    publish a generation-bound owner before mutating SQLite and publish
+    completion only after the database crosses its durability barrier.
+    """
+    try:
+        root = find_project_root()
+    except Exception as exc:  # noqa: BLE001 — project discovery is best-effort
+        from roam.observability import log_swallowed
+
+        log_swallowed("resolve:index_recovery_state:find_project_root", exc)
+        return None
+
+    roam_dir = root / ".roam"
+    lock_path = roam_dir / "index.lock"
+    state_path = roam_dir / "index.state"
+
+    from roam.index.indexer import (
+        _decode_index_lock,
+        _decode_index_state,
+        _IndexOwner,
+        _owner_liveness,
+        _pid_is_running,
+        _read_control_text,
+    )
+
+    try:
+        state_raw = _read_control_text(state_path)
+    except (OSError, UnicodeError):
+        return "incomplete"
+    state_kind, state_owner = _decode_index_state(state_raw)
+
+    # Completion is authoritative over a leftover lock record. A new writer
+    # must durably replace this marker before its first database mutation, so
+    # a stale PID (including a reused live PID) cannot block a completed DB.
+    if state_kind == "complete":
+        return None
+    if state_kind == "in_progress" and isinstance(state_owner, _IndexOwner):
+        liveness = _owner_liveness(state_owner)
+        return "incomplete" if liveness is False else "active"
+    if state_kind == "legacy_in_progress" and isinstance(state_owner, int):
+        return "active" if _pid_is_running(state_owner) else "incomplete"
+    if state_kind == "unknown":
+        return "incomplete"
+
+    try:
+        lock_raw = _read_control_text(lock_path)
+    except (OSError, UnicodeError):
+        # An unreadable lock cannot prove that mutation has stopped.
+        return "active"
+    lock_kind, lock_owner = _decode_index_lock(lock_raw)
+    if lock_kind == "owned" and isinstance(lock_owner, _IndexOwner):
+        liveness = _owner_liveness(lock_owner)
+        return "incomplete" if liveness is False else "active"
+    if lock_kind == "legacy" and isinstance(lock_owner, int):
+        return "active" if _pid_is_running(lock_owner) else "incomplete"
+    if lock_kind == "unknown":
+        return "incomplete"
+
+    # Backward-compatible crash recovery for pre-marker versions: a dead
+    # numeric lock alongside an existing DB is the durable evidence that the
+    # writer did not reach its normal cleanup path. ``released`` is the
+    # documented successful fallback when lock deletion is unavailable.
+    return None
+
+
 def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False) -> None:
     """Build the index if it doesn't exist yet.
 
@@ -187,17 +257,34 @@ def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False
             user just asked to create the index, so recommending they run the
             command they're already running is confusing first-time UX (W1291).
     """
-    if not db_exists():
+    index_exists = db_exists()
+    recovery_state = _existing_index_recovery_state() if index_exists else None
+    if recovery_state == "active":
+        raise click.ClickException(
+            "The roam index is currently being built by another process. Retry after that index run completes."
+        )
+    if not index_exists or recovery_state == "incomplete":
         if not quiet and not suppress_cold_start_advisory:
-            click.echo(
-                "No roam index found. Run `roam init` to create one.\n"
-                "  Tip: If you already ran `roam init`, your current directory may be\n"
-                "       outside the project root. cd into the project root and retry.\n"
-                "  If this looks unexpected, run `roam doctor` to diagnose your install."
-            )
+            if recovery_state == "incomplete":
+                click.echo("Incomplete roam index detected after an interrupted build. Rebuilding it before analysis.")
+            else:
+                click.echo(
+                    "No roam index found. Run `roam init` to create one.\n"
+                    "  Tip: If you already ran `roam init`, your current directory may be\n"
+                    "       outside the project root. cd into the project root and retry.\n"
+                    "  If this looks unexpected, run `roam doctor` to diagnose your install."
+                )
         from roam.index.indexer import Indexer
 
-        Indexer().run(quiet=quiet)
+        indexer = Indexer()
+        if recovery_state == "incomplete":
+            completed = indexer.run(force=True, quiet=quiet)
+        else:
+            completed = indexer.run(quiet=quiet)
+        if completed is False:
+            raise click.ClickException(
+                "The roam index could not be claimed for a complete build. Retry after the active indexer exits."
+            )
 
 
 def require_index() -> None:

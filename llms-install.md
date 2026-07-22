@@ -2,9 +2,12 @@
 
 roam-code is the local CLI that runs pre-change gates before every agent edit
 and compiles tamper-evident, content-hashed evidence packets after every change.
-100% local, no API keys, no telemetry.
+Local analysis, no API keys, and no automatic source-code or telemetry upload.
+A cold parser cache retrieves one checksum-verified grammar bundle; prewarm it
+before air-gap use. Explicit network features are inventoried in
+`docs/network-boundary.md`.
 <!-- BEGIN auto-count:llms-install-headline -->
-281 commands, 244 MCP tools, 28 languages, 100% local, zero API keys.
+281 commands, 244 MCP tools, 28 languages, local analysis, zero API keys.
 <!-- END auto-count:llms-install-headline -->
 
 ## Cross-references
@@ -29,13 +32,15 @@ Requirements: Python 3.10+. No native deps. Linux / macOS / Windows.
 
 ```bash
 cd /path/to/your/project
-roam init             # index + fitness rules + CI workflow (creates .roam/)
+roam init             # index + fitness rules (creates .roam/; CI is opt-in)
 roam health           # 0-100 sanity check
 roam understand       # one-screen tour of the codebase
 ```
 
 `roam init` creates `.roam/index.db` (the codebase graph), `.roam/fitness.yaml`
-(architectural rules), and `.github/workflows/roam.yml` (CI workflow).
+(architectural rules). Add `--with-ci=github` to create
+`.github/workflows/roam.yml`, or run
+`roam ci-setup --platform github --write` later.
 
 ## MCP server setup
 
@@ -150,18 +155,21 @@ not *certify* or *make compliant*.
 
 Every sensitive MCP tool call passes through a wrapper layer that enforces
 the active mode, scrubs secrets from the response payload before it reaches
-the host LLM context, and emits a signed `McpDecisionReceipt` linked into
-the run ledger.
+the host LLM context, and emits a local `McpDecisionReceipt`. When a valid run
+is active, the receipt is HMAC-anchored into that run's signed ledger; calls
+without an active valid run remain explicitly unlinked.
 
 - **Egress redaction.** Secret patterns are scrubbed at the wrapper layer
   before responses return to the host. Lineage is stamped on the receipt
   (`redactions[]` carries reasons from a closed enum: `secret`, `pii`,
   `sensitive_content`, `size_limit`, `policy`, `user_opt_in_required`,
-  `machine_local_path`, `schema_strict`, `producer_not_available`).
+  `machine_local_path`, `schema_strict`, `producer_not_available`,
+  `prompt_injection_marker`).
 - **Policy enforcement.** The 4 modes are enforced at the MCP boundary.
   Each receipt records a `policy_decision` from the closed enum `allow` /
   `deny` / `escalate` / `redact` / `not_evaluated` / `would_deny_dry_run`.
-- **Receipt integrity.** Receipts are HMAC-linked to ledger events.
+- **Receipt integrity.** Receipts under an active valid run are HMAC-linked to
+  ledger events; other receipts report the unlinked state explicitly.
   `verify_chain_with_receipts()` returns a `receipt_integrity` value from
   the closed enum `ok` / `missing` / `tampered` / `not_linked`.
 
@@ -262,5 +270,5 @@ and `roam surface --json` for the machine-readable inventory.
   <https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163>
 
 <!-- BEGIN auto-count:llms-install-footer -->
-Run `roam --help` for all 281 commands (+ alias pairs).
+Run `roam --help-all` for all 281 commands (+ alias pairs).
 <!-- END auto-count:llms-install-footer -->

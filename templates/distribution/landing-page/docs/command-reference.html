@@ -72,7 +72,7 @@
     <p class="eyebrow">Reference</p>
     <h1>Command Reference</h1>
     <p class="subtitle">
-      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Every command is local, credential-free, and emits a structured envelope an agent can read. Run <code>roam --help</code> for the full surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
+      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Ordinary analysis is local and credential-free; explicitly enabled network features are inventoried on the <a href="/security#network-boundary">security page</a>. Commands emit structured envelopes agents can read. Run <code>roam --help-all</code> for the full surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
     </p>
     <div class="callout">
       Every command supports <code>--json</code> for machine output and (where applicable) <code>--sarif</code> for CI Code Scanning. Verdicts use <code>VERDICT:</code> first-line convention.
@@ -204,7 +204,7 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
-          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 16 core tools plus the <code>roam_expand_toolset</code> meta-tool; 244 in <code>full</code>)</td></tr>
+          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 17 tools including the <code>roam_expand_toolset</code> meta-tool; 244 in <code>full</code>)</td></tr>
           <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Windsurf, VS Code, Gemini CLI, Codex CLI</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with conflict-aware partitions</td></tr>
@@ -314,7 +314,7 @@
     <section>
       <h2>Where to find more</h2>
       <ul>
-        <li><strong>Every command</strong>: run <code>roam --help</code> in a terminal. The surface is large; pick by question, not by reading top-to-bottom — see <a href="/docs/how-roam-thinks">How Roam thinks</a> for the nine-moment decision tree.</li>
+        <li><strong>Every command</strong>: run <code>roam --help-all</code> in a terminal. The surface is large; pick by question, not by reading top-to-bottom — see <a href="/docs/how-roam-thinks">How Roam thinks</a> for the nine-moment decision tree.</li>
         <li><strong>Per-command flags</strong>: <code>roam &lt;cmd&gt; --help</code>.</li>
         <li><strong>Recipes</strong>: <code>roam ask --list</code> shows every dispatchable recipe; <code>roam ask "&lt;intent&gt;"</code> runs the closest match.</li>
         <li><strong>Source</strong>: each command lives in <code>src/roam/commands/cmd_*.py</code>. Apache 2.0.</li>
@@ -337,7 +337,7 @@
 <!-- BEGIN auto-reference -->
 <section class="section">
   <h2 id="complete-reference">Complete Reference</h2>
-  <p>Auto-generated from <code>roam --help</code>. Every canonical command + alias.</p>
+  <p>Auto-generated from the CLI command registry. Every canonical command + alias; inspect the same surface with <code>roam --help-all</code>.</p>
   <h3>Getting Started</h3>
   <div class="table-wrap"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
@@ -456,7 +456,10 @@
       <tr><td><code>roam plan</code></td><td>Generate a structured execution plan for modifying code.</td></tr>
       <tr><td><code>roam compile</code></td><td>Compile TASK (freeform string) into an agent-consumable e...</td></tr>
       <tr><td><code>roam compile-stats</code></td><td>Show distribution stats over the compile telemetry log.</td></tr>
+      <tr><td><code>roam savings</code></td><td>Materialize the local episode ledger and report admissibl...</td></tr>
+      <tr><td><code>roam savings-backfill</code></td><td>Write a value-redacted historical episode snapshot for re...</td></tr>
       <tr><td><code>roam compile-cache</code></td><td>Manage the persistent envelope cache.</td></tr>
+      <tr><td><code>roam compile-daemon</code></td><td>S2-lite warm compile server (per-repo, manual lifecycle, ...</td></tr>
       <tr><td><code>roam envelope-diff</code></td><td>Compare two compile envelopes A and B. Reports probe-fami...</td></tr>
       <tr><td><code>roam dispatch-trace</code></td><td>Emit the classifier + dispatch decision tree for PROMPT.</td></tr>
       <tr><td><code>roam syntax-check</code></td><td>Check files for syntax errors using tree-sitter AST parsing.</td></tr>
@@ -465,7 +468,7 @@
       <tr><td><code>roam memory</code></td><td>Repo-local agent memory.</td></tr>
       <tr><td><code>roam runs</code></td><td>Per-agent-run event ledger.</td></tr>
       <tr><td><code>roam laws</code></td><td>Self-installing constitution.</td></tr>
-      <tr><td><code>roam constitution</code></td><td>Inspect, check, preview-upgrade, and apply the repo-local agent policy. Generated mode snapshots track new defaults only while their provenance digest remains unchanged.</td></tr>
+      <tr><td><code>roam constitution</code></td><td>Repo-local agent constitution -- capstone for agent-OS su...</td></tr>
       <tr><td><code>roam agents-md</code></td><td>Generate an ``AGENTS.md`` describing this codebase to AI ...</td></tr>
       <tr><td><code>roam next</code></td><td>Suggest the next roam command based on current repo state.</td></tr>
       <tr><td><code>roam brief</code></td><td>One-page agent briefing covering mode / next / highlights...</td></tr>
@@ -482,6 +485,9 @@
       <tr><td><code>roam health</code></td><td>Show code health: cycles, god components, bottlenecks.</td></tr>
       <tr><td><code>roam smells</code></td><td>Detect code smells: brain methods, god classes, deep nest...</td></tr>
       <tr><td><code>roam magic-numbers</code></td><td>Scan source for hardcoded numeric constants that should b...</td></tr>
+      <tr><td><code>roam calc-inventory</code></td><td>Enumerate computed-numeric fields + their formulas from t...</td></tr>
+      <tr><td><code>roam calc-probe</code></td><td>Empirically compare rounding implementations on tie-bound...</td></tr>
+      <tr><td><code>roam calc-golden</code></td><td>Golden-master calculation oracle: extract / audit / check.</td></tr>
       <tr><td><code>roam compiler-health</code></td><td>One envelope per compiler health snapshot.</td></tr>
       <tr><td><code>roam compiler-corpus</code></td><td>Compile every prompt in a corpus file and aggregate the p...</td></tr>
       <tr><td><code>roam vibe-check</code></td><td>Detect AI code anti-patterns and compute AI rot score.</td></tr>
@@ -516,6 +522,7 @@
       <tr><td><code>roam eval-retrieve</code></td><td>Run the retrieval eval harness over a labeled task set.</td></tr>
       <tr><td><code>roam boundary</code></td><td>Surface public-by-accident exports + changed-range layer ...</td></tr>
       <tr><td><code>roam vue-emits</code></td><td>Find Vue child emits without matching handlers in resolve...</td></tr>
+      <tr><td><code>roam rules-suggest</code></td><td>Suggest ``.roam/rules.yml`` rules and CI gates from recur...</td></tr>
     </tbody></table></div>
   <h3>Architecture</h3>
   <div class="table-wrap"><table>
@@ -559,7 +566,7 @@
       <tr><td><code>roam search-semantic</code></td><td>Find symbols by natural language query (hybrid BM25 + vec...</td></tr>
       <tr><td><code>roam batch-search</code></td><td>Search up to 10 symbol-name patterns in a single command.</td></tr>
       <tr><td><code>roam complete</code></td><td>Return left-anchored prefix completions for the given par...</td></tr>
-      <tr><td><code>roam grep</code></td><td>Return content matches with reachability and bounded <code>-C</code> / <code>--whole-symbol</code> evidence packets.</td></tr>
+      <tr><td><code>roam grep</code></td><td>Context-enriched grep with reachability, clone, and bridg...</td></tr>
       <tr><td><code>roam refs-text</code></td><td>Audit literal strings across the project: per-surface ref...</td></tr>
       <tr><td><code>roam history-grep</code></td><td>Through-history search using git pickaxe (-S / -G).</td></tr>
       <tr><td><code>roam file</code></td><td>Show file skeleton: all definitions with signatures.</td></tr>
@@ -588,6 +595,7 @@
       <tr><td><code>roam bus-factor</code></td><td>Detect knowledge loss risk per module (bus factor analysis).</td></tr>
       <tr><td><code>roam simulate-departure</code></td><td>Simulate what happens when a developer leaves the team.</td></tr>
       <tr><td><code>roam suggest-reviewers</code></td><td>Suggest optimal code reviewers for changed files.</td></tr>
+      <tr><td><code>roam blame-reviewers</code></td><td>Suggest reviewers for a diff by git-blame line ownership.</td></tr>
       <tr><td><code>roam dev-profile</code></td><td>Analyze developer commit patterns and behavioral metrics.</td></tr>
       <tr><td><code>roam owner</code></td><td>Show code ownership: who owns a file or directory.</td></tr>
       <tr><td><code>roam codeowners</code></td><td>Analyze CODEOWNERS coverage and ownership distribution.</td></tr>

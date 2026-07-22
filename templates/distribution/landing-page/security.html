@@ -155,11 +155,20 @@
       <h3>The CLI runs locally</h3>
       <p>
         The <code>roam-code</code> CLI is
-        <strong>100% local, no API key, no vendor cloud endpoint</strong>.
+        <strong>local source analysis with no API key and no automatic
+        repository-content upload</strong>.
         It writes a SQLite file in your repo's <code>.roam/</code>
-        directory. No network calls. No telemetry. No phone-home. No
-        model-training upload. No inbound network listener. This same
-        local-only stance is contractually committed in
+        directory. No automatic telemetry, update check, model-training upload,
+        or listener. A cold parser cache may retrieve one
+        checksum-verified platform bundle from the dependency's GitHub release;
+        the bundle is retained for offline reuse. Explicit commands and flags
+        can contact PyPI, GitHub, user-selected URLs, Roam Cloud, or Sigstore,
+        opt-in MCP model summarization can send selected report snippets to the
+        configured model provider, and optional MCP/webhook modes can open a
+        listener. The complete
+        trigger, destination, payload, and default inventory is in
+        <a href="https://github.com/Cranot/roam-code/blob/main/docs/network-boundary.md"><code>docs/network-boundary.md</code></a>.
+        This same default-local, no-automatic-upload stance is contractually committed in
         <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md#6-security-measures">DPA §6
         (Security measures)</a>.
         The engine is
@@ -167,6 +176,25 @@
         audit the source on
         <a href="https://github.com/Cranot/roam-code">GitHub</a> and
         rebuild every release from the tagged commit.
+      </p>
+
+      <h3 id="network-boundary">Explicit network boundary</h3>
+      <table>
+        <thead><tr><th>Trigger</th><th>Boundary</th><th>Default</th></tr></thead>
+        <tbody>
+          <tr><td>Cold parser cache</td><td>Downloads one checksum-verified platform bundle; no repository content</td><td>Only when a requested grammar is absent</td></tr>
+          <tr><td><code>version --check</code>, GitHub PR/review fetch flags, <code>stale-refs --check-external</code></td><td>Read requests to PyPI, GitHub, or operator-selected URLs</td><td>Off unless selected</td></tr>
+          <tr><td><code>metrics-push</code>, <code>guard-pr --post-check</code></td><td>Send the documented metrics payload or GitHub check-run payload</td><td>Explicit command/flag</td></tr>
+          <tr><td>Cosign <code>--keyless</code></td><td>OIDC/Fulcio/Rekor exchange of identity and signing evidence; not source bodies</td><td>Off unless selected</td></tr>
+          <tr><td>MCP summarization with <code>ROAM_AI_ENABLED=1</code></td><td>Send up to 60,000 characters of the selected structured report to the client-selected model; fields can include source snippets</td><td>Off unless explicitly enabled; pass <code>summarize=false</code> per call</td></tr>
+          <tr><td>HTTP MCP or webhook mode</td><td>Opens an operator-configured listener; loopback by default</td><td>Ordinary CLI analysis opens none</td></tr>
+        </tbody>
+      </table>
+      <p>
+        For air-gapped use, install from an approved wheelhouse, prewarm the
+        parser cache on each target platform, use fixture/file inputs and
+        offline-key signing, and enforce egress at the host boundary for any
+        project test/build commands launched by verification hooks.
       </p>
 
       <h3 id="supply-chain">Supply-chain integrity</h3>
@@ -214,11 +242,10 @@
         <code>roam runs verify</code> to confirm the ledger chain and
         <code>roam cga verify STATEMENT.json</code> to confirm the
         in-toto predicate before consuming the artefact in CI.
-        Optional cosign signing of bundles is
-        <em>[TBD: cosign keyless signing of CGA bundles — currently
-        wired for PyPI release SBOMs (see Supply-chain integrity
-        above); same-pipeline extension to per-run bundles is
-        roadmapped]</em>.
+        Per-run CGA, index, VSA, and PR-bundle statements support optional
+        Cosign signing today. Local-key signing is the offline path;
+        <code>--keyless</code> explicitly contacts OIDC, Fulcio, and Rekor
+        services and publishes signing evidence.
       </p>
 
       <h3>Hosted services posture</h3>

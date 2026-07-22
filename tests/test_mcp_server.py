@@ -480,7 +480,21 @@ class TestExpandToolset:
         # dogfood-next-interventions design memo; empirical-winners
         # 7 flagships + 9 verified-firing tools, after adding
         # roam_batch_search, roam_coupling, roam_deps in 2026-05-26).
-        assert result["tool_count"] == 16
+        assert result["tool_count"] == 17
+        assert "roam_expand_toolset" in result["tools"]
+
+    def test_every_reported_preset_matches_authoritative_surface_counts(self):
+        from roam.mcp_server import expand_toolset
+        from roam.surface_counts import mcp_preset_counts
+
+        expected = mcp_preset_counts()
+        listed = expand_toolset()["presets"]
+        assert {name: row["tool_count"] for name, row in listed.items()} == expected
+        for name, count in expected.items():
+            detail = expand_toolset(preset=name)
+            assert detail["tool_count"] == count
+            assert len(detail["tools"]) == count
+            assert "roam_expand_toolset" in detail["tools"]
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset

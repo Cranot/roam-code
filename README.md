@@ -10,10 +10,10 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-<sub>Credential-free · 100% local by default (opt-in `metrics-push` is the only outbound surface) · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs entirely on your machine</sub>
+<sub>Credential-free · local analysis with no automatic source-code or telemetry upload · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>281 commands · 244 MCP tools (16 in the default `core` preset) · 28 languages</sub>
+<sub>281 commands · 244 MCP tools (17 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
@@ -42,7 +42,7 @@
 [METR](https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/) and [FrontierCode](https://cognition.ai/blog/frontier-code) both point at the same gap: passing tests is not the same as mergeable code. Roam is an **agent-first CLI surface** that gives the agent local graph facts before it edits, gates risky changes, and emits scoped evidence after the run. In the agent/review tools surveyed as of 2026-06-12, the differentiator is this combination:
 
 - **Credential-free.** No account, no API key, no cloud login. `pip install` and run.
-- **100% local by default.** Source code never leaves the machine; air-gapped repos work like cloud repos. The single outbound surface (`roam metrics-push`) is opt-in, summary-only, and prints its exact payload under `--dry-run`.
+- **Local analysis with an explicit network boundary.** Source parsing, indexes, findings, and evidence generation stay on the machine; Roam sends no automatic telemetry or update checks. A cold `tree-sitter-language-pack` grammar cache downloads one checksum-verified platform bundle and retains it locally. Additional network-capable commands and flags are opt-in and inventoried in [`docs/network-boundary.md`](docs/network-boundary.md), including their destinations and payload classes.
 - **Tamper-evident `ChangeEvidence` packets.** A Roam-guided change can compile into one portable packet — HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle — answering eight questions: *who acted, what authority existed, what context was read, what changed, what could break, what policy applied, what verified it, who accepted risk*. PR Replay maps those eight questions today: structural change/risk/policy axes are in scope, context and verification are partial, and missing identity/authority/approval evidence is disclosed instead of invented. Cursor logs the run; Roam records and verifies the evidence its producers captured.
 - **MCP runtime security at the wrapper boundary.** Every MCP response is scrubbed for secrets on egress, gated against the active mode (`read_only` / `safe_edit` / `migration` / `autonomous_pr`) with a closed-enum `policy_decision`, and each decision receipt is HMAC-linked into the signed run ledger. Inside-server controls; the gateway layer (Interlock / Lasso / Portkey) composes on top — see [`dev/MCP-SECURITY-POSTURE.md`](dev/MCP-SECURITY-POSTURE.md).
 
@@ -270,9 +270,9 @@ Private per-task tables and raw cells are retained for audit; the public summary
 
 Headless for scripts and CI: `roam compile "<task>" --artifact auto`.
 Prefer a dedicated product CLI? The same loop ships as
-[**compile-code**](https://github.com/Cranot/compile-code) —
-starting with v0.2.0, install it from PyPI with `pip install compile-code`,
-then run `compile claude`.
+[**compile-code**](https://github.com/Cranot/compile-code). Its v0.2.0
+release is being prepared; use the repository as the authoritative source
+for current installation and release status.
 
 ### The verify half of the loop — what runs after every edit
 
@@ -341,7 +341,7 @@ refactors, never lose entries).
 
 ## What's New
 
-**v13.10 (2026-07-19) — repeated work becomes measurable procedures, and post-edit verification becomes proof-complete.** Privacy-preserving transcript/shell-template mining can nominate repeated-work interventions without exposing raw prompts or claiming causal savings; `roam savings` promotes only prospectively joined, integrity-checked outcomes. The Claude adapter now binds every edited turn to a strict Verify receipt and blocks unavailable, malformed, incomplete, or failing evidence. Roam owns the canonical hooks end to end—Compile Code no longer rewrites installed source. Full notes: [CHANGELOG.md](CHANGELOG.md).
+**v13.10 (2026-07-23) — repeated work becomes measurable procedures, and post-edit verification becomes proof-complete.** Privacy-preserving transcript/shell-template mining can nominate repeated-work interventions without exposing raw prompts or claiming causal savings; `roam savings` promotes only prospectively joined, integrity-checked outcomes. The Claude adapter now binds every edited turn to a strict Verify receipt and blocks unavailable, malformed, incomplete, or failing evidence. Interrupted indexes carry a generation-bound, durably synced lifecycle marker and force a full non-light rebuild before analysis regardless of the direct caller; completion is published only after SQLite checkpoint/fsync, so a crash cannot turn partial graph state into plausible empty answers. Roam owns the canonical hooks end to end—Compile Code no longer rewrites installed source. Full notes: [CHANGELOG.md](CHANGELOG.md).
 
 <details>
 <summary><strong>Earlier release notes — v13.6 → v13.0</strong></summary>
@@ -432,7 +432,7 @@ Roam's surfaces differ in how rigorously they've been validated — know which i
 | `roam preflight <symbol>` | Pre-change safety gate: blast radius + tests + complexity + coupling + fitness |
 | `roam critique` | Verify a patch against the graph: clones-not-edited + blast radius + intent vs semantic-diff. Pipe `git diff` in; exit 5 on high severity |
 
-The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 36 commands).
+The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 37 commands).
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
@@ -839,7 +839,7 @@ Pick the path that matches your role:
 
 - **5-min demo (CTO/CISO/dev-tools-lead):** [The Canonical Demo](https://roam-code.com/docs/canonical-demo) — install → health → preflight → critique → signed `ChangeEvidence` packet, five commands, no laptop egress.
 - **Developer tutorial (15 min):** [Getting Started](https://roam-code.com/docs/getting-started) — install, index, query, ship.
-- **Agent integration:** `roam mcp-setup claude-code` (or `cursor`, `continue`) — then [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the cold-start envelope and canonical agent loop.
+- **Agent integration:** `roam mcp-setup claude-code --write` (or `cursor`, `windsurf`, `vscode`, `gemini-cli`, `codex-cli`) — then [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the cold-start envelope and canonical agent loop.
 - **Full surface:** [Command Reference](https://roam-code.com/docs/command-reference) — every command, flag, and JSON envelope.
 - **Architecture:** [How it fits together](https://roam-code.com/docs/architecture) — graph, findings registry, run ledger, evidence compiler.
 
@@ -869,9 +869,13 @@ jobs:
           comment: 'true'
 ```
 
-`roam init` auto-generates this workflow. The Action accepts `commands`, `gate` (quality-gate expression, exit 5 on failure), `sarif` (upload to GitHub Code Scanning), `comment` (sticky PR comment), `cache`, and `changed-only` (incremental mode).
+Generate this workflow explicitly with `roam init --with-ci=github` or
+`roam ci-setup --platform github --write`; plain `roam init` does not modify CI configuration.
+The Action accepts `commands`, `gate` (quality-gate expression, exit 5 on
+failure), `sarif` (upload to GitHub Code Scanning), `comment` (sticky PR
+comment), `cache`, and `changed-only` (incremental mode).
 
-**SARIF output.** 36 commands honour the global `--sarif` flag (health, complexity, dead, smells, clones, vulns, taint, secrets, n1, …). Minimal upload:
+**SARIF output.** 37 commands honour the global `--sarif` flag (health, complexity, dead, smells, clones, vulns, taint, secrets, n1, …). Minimal upload:
 
 ```yaml
 - run: roam --sarif health > roam-health.sarif
@@ -947,7 +951,7 @@ file_patterns:
 
 ## Paid layers (free CLI stays Apache 2.0)
 
-The CLI is Apache 2.0, fully local, zero-API-key, and never expires. Three optional paid layers build on the same engine:
+The CLI is Apache 2.0, uses a local zero-API-key analysis engine, and never expires. Three optional paid layers build on the same engine:
 
 - **Roam Review** — hosted PR bot for AI-generated changes, built on `roam pr-analyze`. CodeRabbit/Greptile review PR *semantics*; Roam Review reads the *graph* (who calls the changed symbol, which layer it sits in) and emits a portable `ChangeEvidence` packet. The CLI engine is a working CI gate today: `git diff main..HEAD | roam pr-analyze --gate` (exit 5 on `BLOCK`).
 - **Roam Cloud** — opt-in metrics history with no source upload. `roam metrics-push` sends a summary-only payload (numerical metrics, paths or SHA-256 hashes, identifier names) — never source-code bodies. Inspect the exact payload with `--dry-run`.
@@ -1046,9 +1050,9 @@ roam-code combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), 
 | Git churn / co-change | Yes | No | No | No |
 | Architecture simulation | Yes | No | No | No |
 | Multi-agent partitioning | Yes | No | No | No |
-| MCP tools for agents | 244 (16 in default core preset) | Client only | Client only | 34 (SonarQube) |
+| MCP tools for agents | 244 (17 in default core preset) | Client only | Client only | 34 (SonarQube) |
 | Languages | 28 | 70+ | 50+ | 12-42 |
-| 100% local, zero API keys | Yes | No | No | Partial |
+| Local source analysis, zero API keys | Yes | No | No | Partial |
 | Open source | Apache 2.0 | No | Partial | Partial |
 | Interprocedural taint depth | shallow (OpenVEX-shaped) | n/a | n/a | **deep (CodeQL)** |
 | Built-in rule packs | 10 taint packs, 10 governance rules | n/a | n/a | **2,000+ (Semgrep community)** |
@@ -1078,10 +1082,10 @@ The comparison is against the paid tiers a 20-dev team usually buys, not free Co
 ## FAQ
 
 **Does Roam send any data externally?**
-No by default — zero telemetry, zero analytics, zero update checks. The single outbound surface is `roam metrics-push`: opt-in, summary metrics only, prints its exact payload locally under `--dry-run`. Source-code bodies never leave the machine.
+Not during ordinary local analysis. Roam does not automatically upload source code, indexes, findings, telemetry, or analytics, and it performs no automatic update check. A cold grammar cache retrieves one checksum-verified parser bundle and retains it locally. Explicit features can contact PyPI, GitHub, user-selected URLs, Roam Cloud, or Sigstore services; [`docs/network-boundary.md`](docs/network-boundary.md) lists every built-in trigger, destination, and payload class. Inspect `roam metrics-push` with `--dry-run` before sending its allow-listed payload.
 
 **Can Roam run in air-gapped environments?**
-Yes. Once installed, no internet access is required.
+Yes, after installation and parser prewarming. Run `roam index --force` once while connected on each target platform; the retained bundle lets later grammar loads complete without network access. Avoid the explicit network triggers in the [network-boundary inventory](docs/network-boundary.md), use fixture/file inputs and offline-key signing, and enforce egress policy around project commands launched by `roam verify` or hooks.
 
 **Does Roam modify my source code?**
 Read-only by default. Creates `.roam/` with an index database. `roam mutate` (move/rename/extract) defaults to `--dry-run`; pass `--apply` explicitly to write changes.
@@ -1096,7 +1100,7 @@ Yes — they coexist in the same CI pipeline. SARIF output uploads to GitHub Cod
 No. Roam **maps to** controls and produces supporting evidence — the signed `ChangeEvidence` packet, HMAC-chained run ledger, and audit-trail records answer the eight evidence questions a reviewer asks after an AI-assisted change. Roam does not certify; your auditor still owns that step.
 
 **What's the difference between the free CLI and Roam Review / Cloud / PR Replay?**
-The CLI is Apache 2.0, fully local, and never expires. Roam Review is a hosted PR bot, Roam Cloud is opt-in metrics history with no source upload, PR Replay is a one-shot paid audit. All three are layers on top of the same engine.
+The CLI is Apache 2.0, runs its analysis engine locally, and never expires. Roam Review is a hosted PR bot, Roam Cloud is opt-in metrics history with no source-body upload, PR Replay is a one-shot paid audit. All three are layers on top of the same engine.
 
 ## Limitations
 

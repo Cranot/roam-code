@@ -210,13 +210,15 @@ def test_clean_tool_output_emits_no_injection_marker(isolated_repo, monkeypatch)
     assert "injection_markers" not in (r.get("extra") or {})
 
 
-def test_output_bytes_unchanged_marker_is_signal_not_secret(isolated_repo, monkeypatch) -> None:
-    """(c) The scan does NOT redact/alter the output — the marker text
-    rides through to the client verbatim.
+def test_output_payload_unchanged_marker_is_signal_not_secret(isolated_repo, monkeypatch) -> None:
+    """(c) The scan does not redact the payload — the marker text rides
+    through to the client verbatim while boundary-owned metadata is attached.
 
     A prompt-injection marker is a *signal* for the downstream gateway /
     host to act on, not a credential to mask. Masking it would destroy the
-    evidence the receipt is supposed to preserve.
+    evidence the receipt is supposed to preserve. The wrapper may add its
+    reserved ``_meta.security.prompt_injection`` signal, but it must preserve
+    producer payload fields and unrelated metadata.
     """
     raw_output = {
         "command": "stub_intact",
@@ -226,8 +228,16 @@ def test_output_bytes_unchanged_marker_is_signal_not_secret(isolated_repo, monke
     wrapped = _register_sensitive_returning(monkeypatch, "stub_intact", raw_output)
     result = wrapped()
 
-    # The marker text must survive verbatim — byte-for-byte identical.
-    assert result == raw_output, "egress marker scan must NOT mutate the output bytes"
+    # Producer payload and unrelated metadata survive unchanged. The only
+    # addition is the trusted boundary-owned prompt-injection signal.
+    assert result["command"] == raw_output["command"]
+    assert result["summary"] == raw_output["summary"]
+    assert result["_meta"]["cli_exit_code"] == raw_output["_meta"]["cli_exit_code"]
+    signal = result["_meta"]["security"]["prompt_injection"]
+    assert signal["state"] == "detected"
+    assert signal["output_action"] == "preserved"
+    assert signal["audit_artifact"] == "mcp_decision_receipt"
+    assert signal["markers"]["ignore_previous_instructions"] == 1
     flat = json.dumps(result)
     assert _INJECTION_MARKER in flat, "marker text must ride through to the client intact"
     assert "[REDACTED]" not in flat, "a prompt-injection marker must NOT be masked like a secret"
@@ -239,7 +249,7 @@ def test_secret_and_injection_marker_coexist_on_one_receipt(isolated_repo, monke
     """When output carries BOTH a secret and an injection marker, the
     receipt records both closed-enum reasons; the secret is masked but the
     marker text stays intact."""
-    secret = "sk-test-1234567890abcdef1234567890"
+    secret = "sk-test-1234567890abcdef1234567890"  # secretsallow
     raw_output = {
         "command": "stub_both",
         "summary": {"verdict": f"token {secret} :: {_INJECTION_MARKER}"},

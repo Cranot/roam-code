@@ -146,6 +146,17 @@ FULL_PYTEST_GUARDS: tuple[str, ...] = (
 )
 
 _MAX_PYTEST_WORKERS = 4
+_NATIVE_THREAD_ENV = (
+    "BLIS_NUM_THREADS",
+    "GOTO_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "OMP_THREAD_LIMIT",
+    "OPENBLAS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
+_NATIVE_THREADS_PER_WORKER = "1"
 _GIB = 1024**3
 _MIN_RELEASE_TEMP_FREE_GIB = 4
 _MIN_RELEASE_TEMP_FREE_GIB_PER_WORKER = 2
@@ -191,6 +202,47 @@ class GateRunner:
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
+        # Git invokes hooks with repository-local control variables such as
+        # GIT_INDEX_FILE. Pytest gates create foreign repositories and run
+        # `git add` inside them; forwarding an outer linked-worktree index
+        # redirects those writes into the real repository. Ask Git for its
+        # authoritative local-variable vocabulary and remove it at the
+        # subprocess boundary. Keep this defense even though the shell hook
+        # sanitizes too: prepush_check.py is also invoked directly.
+        local_vars = {
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_CONFIG",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_DIR",
+            "GIT_GRAFT_FILE",
+            "GIT_IMPLICIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_REPLACE_REF_BASE",
+            "GIT_SHALLOW_FILE",
+            "GIT_WORK_TREE",
+        }
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(self.root), "rev-parse", "--local-env-vars"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                local_vars.update(name.strip() for name in proc.stdout.splitlines() if name.strip())
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        for name in local_vars:
+            env.pop(name, None)
+        # Keep --workers as the total concurrency budget. NumPy/SciPy may load
+        # a native math runtime in each xdist worker; inherited host-sized
+        # defaults otherwise multiply a bounded worker pool into dozens of
+        # threads. Override poisoned outer values as well as absent defaults.
+        for name in _NATIVE_THREAD_ENV:
+            env[name] = _NATIVE_THREADS_PER_WORKER
         src = str(self.root / "src")
         current = env.get("PYTHONPATH")
         env["PYTHONPATH"] = src if not current else f"{src}{os.pathsep}{current}"
@@ -367,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[prepush] repo root: {root}")
     print(f"[prepush] tier: {'RELEASE' if release else 'FULL' if full else 'FAST'}")
     print(f"[prepush] pytest workers: {args.workers} (loadfile distribution)")
+    print(f"[prepush] native math threads per worker: {_NATIVE_THREADS_PER_WORKER}")
 
     runner = GateRunner(root=root, pytest_workers=args.workers)
     if release and not runner.run_release_temp_capacity_gate().passed:

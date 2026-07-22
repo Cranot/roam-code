@@ -63,7 +63,7 @@ jobs:
 
       - name: Index the repo
         shell: bash
-        run: .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam init --quiet
+        run: .roam-guard-venv/bin/python -I .roam-guard-venv/bin/roam index --quiet
 
       - name: Run Roam Guard verdict
         id: guard

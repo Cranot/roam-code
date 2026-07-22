@@ -67,7 +67,7 @@ _DEDICATED_EXTRACTORS = frozenset(
 )
 
 # 28 language identifiers that roam can extract symbols from. Closed enumeration,
-# pinned to the installed tree-sitter-language-pack (>=0.6, see pyproject.toml).
+# pinned to the tested tree-sitter-language-pack range (>=1.13.3,<1.14).
 # Composition: 19 native tree-sitter grammars (python..svelte), 4 aliased SF
 # variants (apex/sfxml/aura/visualforce → java/html), 3 regex-only languages
 # (foxpro/yaml/hcl mirrored in parser.REGEX_ONLY_LANGUAGES), 2 aliased
@@ -181,7 +181,7 @@ def get_ts_language(language: str):
     plugin_alias = _plugin_language_grammar_aliases().get(language)
     grammar = plugin_alias or GRAMMAR_ALIASES.get(language, language)
 
-    from tree_sitter_language_pack import get_language
+    from roam.parser_pack import get_language
 
     return get_language(grammar)
 

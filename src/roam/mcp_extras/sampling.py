@@ -9,7 +9,7 @@ the agent's current task, and return a 1-3 KB briefing instead.
 Why this is the right place
 ---------------------------
 
-* roam's positioning is "100% local, zero API keys". Sampling
+* roam's positioning is local analysis with zero API keys. Sampling
   preserves that because the LLM doing the compression is the
   agent's own model -- no extra credentials.
 * Clients without sampling support fall through silently.

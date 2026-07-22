@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -170,19 +172,104 @@ def test_safe_defaults_are_exact_and_mutable_latest_is_explicit() -> None:
     installer = _step(name="Install roam-code")
     assert installer["env"]["ROAM_VERSION"] == "${{ steps.validate-inputs.outputs.version }}"
     assert installer["env"]["ALLOW_LATEST"] == "${{ steps.validate-inputs.outputs.allow-latest }}"
+    assert installer["env"]["ROAM_ACTION_PATH"] == "${{ steps.validate-inputs.outputs.action-path }}"
     for required in (
         '"roam-code==${ROAM_VERSION}"',
         "Mutable latest install was not explicitly authorized",
+        '"${ROAM_ACTION_PATH}"',
+        'distribution.read_text("direct_url.json")',
+        'Path(os.environ["ROAM_ACTION_PATH"]).resolve(strict=True)',
+        'dir_info.get("editable")',
         "INSTALLED_VERSION=",
         "python -m pip check",
     ):
         assert required in installer["run"]
+    assert (
+        'pip install --quiet --disable-pip-version-check --no-cache-dir --force-reinstall "${ROAM_ACTION_PATH}"'
+        in installer["run"]
+    )
+    assert "||" not in installer["run"]
 
     docs = CI_DOC.read_text(encoding="utf-8")
     assert "| `version` | `13.10.0` |" in docs
     assert "| `allow-latest` | `false` |" in docs
     assert "transitive dependencies still follow" in docs
     assert "`uv.lock`" in docs
+
+
+def test_source_installer_quotes_path_and_fails_closed_on_provenance(tmp_path: Path) -> None:
+    installer = _step(name="Install roam-code")["run"]
+    source = tmp_path / "action source with spaces"
+    mismatch = tmp_path / "different source"
+    stub_dir = tmp_path / "python stubs"
+    source.mkdir()
+    mismatch.mkdir()
+    stub_dir.mkdir()
+    (source / "pyproject.toml").write_text("[project]\nname='roam-code'\nversion='13.10.0'\n", encoding="utf-8")
+    (stub_dir / "sitecustomize.py").write_text(
+        """
+import importlib.metadata
+import os
+
+class _Distribution:
+    metadata = {"Name": "roam-code"}
+
+    def read_text(self, name):
+        assert name == "direct_url.json"
+        value = os.environ["FAKE_DIRECT_URL"]
+        return None if value == "__missing__" else value
+
+importlib.metadata.distribution = lambda name: _Distribution()
+""".lstrip(),
+        encoding="utf-8",
+    )
+    install_log = tmp_path / "install-argument.txt"
+    fake_python = r"""
+python() {
+  if [[ "$#" -ge 3 && "$1" == "-m" && "$2" == "pip" && "$3" == "install" ]]; then
+    printf '%s' "${!#}" > "${INSTALL_LOG}"
+    return 0
+  fi
+  if [[ "$#" -eq 3 && "$1" == "-m" && "$2" == "pip" && "$3" == "check" ]]; then
+    return 0
+  fi
+  command "${REAL_PYTHON}" "$@"
+}
+"""
+
+    def invoke(direct_url: str) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy() | {
+            "ROAM_VERSION": "source",
+            "ALLOW_LATEST": "false",
+            "ROAM_ACTION_PATH": source.as_posix(),
+            "REAL_PYTHON": Path(sys.executable).as_posix(),
+            "INSTALL_LOG": install_log.as_posix(),
+            "PYTHONPATH": stub_dir.as_posix(),
+            "FAKE_DIRECT_URL": direct_url,
+        }
+        return subprocess.run(
+            [_bash_executable(), "-c", f"{fake_python}\n{installer}"],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    valid = invoke(json.dumps({"url": source.resolve().as_uri(), "dir_info": {}}))
+    assert valid.returncode == 0, (valid.stdout, valid.stderr)
+    assert install_log.read_text(encoding="utf-8") == source.as_posix()
+
+    invalid_cases = (
+        ("__missing__", "no PEP 610 direct_url.json"),
+        ("{", "JSONDecodeError"),
+        (json.dumps({"url": mismatch.resolve().as_uri(), "dir_info": {}}), "provenance mismatch"),
+        (json.dumps({"url": source.resolve().as_uri(), "dir_info": {"editable": True}}), "editable mode"),
+    )
+    for direct_url, expected_error in invalid_cases:
+        failed = invoke(direct_url)
+        assert failed.returncode != 0, (direct_url, failed.stdout, failed.stderr)
+        assert expected_error in failed.stderr, failed.stderr
 
 
 def test_ci_guide_examples_avoid_mutable_dependency_and_runner_defaults() -> None:
@@ -246,7 +333,7 @@ def test_github_script_reads_action_path_from_process_env() -> None:
     assert "${{" not in script
 
 
-def test_validator_accepts_safe_exact_and_explicit_latest_modes(tmp_path: Path) -> None:
+def test_validator_accepts_safe_exact_explicit_latest_and_source_modes(tmp_path: Path) -> None:
     exact = _run_validator(tmp_path)
     assert exact.returncode == 0, exact.stderr
     output = (tmp_path / "github-output.txt").read_text(encoding="utf-8")
@@ -260,6 +347,14 @@ def test_validator_accepts_safe_exact_and_explicit_latest_modes(tmp_path: Path) 
     latest_output = (latest_dir / "github-output.txt").read_text(encoding="utf-8")
     assert "version=latest\n" in latest_output
     assert "allow-latest=true\n" in latest_output
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = _run_validator(source_dir, INPUT_VERSION="source", INPUT_ALLOW_LATEST="false")
+    assert source.returncode == 0, source.stderr
+    source_output = (source_dir / "github-output.txt").read_text(encoding="utf-8")
+    assert "version=source\n" in source_output
+    assert "allow-latest=false\n" in source_output
 
 
 @pytest.mark.parametrize(
@@ -286,6 +381,9 @@ def test_validator_accepts_closed_pep440_style_release_forms(tmp_path: Path, ver
     ("overrides", "message"),
     [
         ({"INPUT_VERSION": "latest"}, "latest requires allow-latest=true"),
+        ({"INPUT_VERSION": "source", "INPUT_ALLOW_LATEST": "true"}, "source requires allow-latest=false"),
+        ({"INPUT_VERSION": "Source"}, "closed PEP 440-style"),
+        ({"INPUT_VERSION": "source "}, "closed PEP 440-style"),
         ({"INPUT_VERSION": "--index-url=https://evil.invalid"}, "closed PEP 440-style"),
         ({"INPUT_VERSION": "https://evil.invalid/pkg.whl"}, "closed PEP 440-style"),
         ({"INPUT_VERSION": "git+https://evil.invalid/repo.git"}, "closed PEP 440-style"),

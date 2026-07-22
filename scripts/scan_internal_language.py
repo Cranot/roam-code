@@ -15,6 +15,9 @@ Modes (exactly one required):
   --all      Scan every git-tracked file as it sits on disk. This is what the
              pre-push hook runs: a full-tree backstop in case a leak slipped
              past commit-time (e.g. ``git commit --no-verify``).
+  --pre-push-updates FILE
+             Scan committed blobs and messages introduced by the authoritative
+             ref-update records Git supplied to the pre-push hook.
 
 Exit codes:
   0  clean — no forbidden-pattern hits.
@@ -27,6 +30,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 def _load_patterns_module():
@@ -51,20 +55,69 @@ def _load_patterns_module():
 _patterns = _load_patterns_module()
 scan_text = _patterns.scan_text
 should_scan = _patterns.should_scan
+_HISTORY_WHITELIST_FILES = frozenset(_patterns.WHITELIST_FILES)
+
+
+def _load_prepush_refs_module():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    module_path = os.path.join(script_dir, "prepush_refs.py")
+    spec = importlib.util.spec_from_file_location("internal_language_prepush_refs", module_path)
+    if spec is None or spec.loader is None:
+        sys.stderr.write(f"ERROR: could not load pre-push parser from {module_path}\n")
+        sys.exit(1)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_prepush_refs = _load_prepush_refs_module()
+
+
+def _git_bytes(repo_root: str | None, args: list[str], *, operation: str) -> bytes:
+    proc = subprocess.run(
+        ["git", "--no-replace-objects", *args],
+        capture_output=True,
+        cwd=repo_root,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", errors="replace").strip()
+        sys.stderr.write(f"ERROR: {operation} failed (git exit {proc.returncode}): {detail}\n")
+        raise SystemExit(1)
+    return proc.stdout
+
+
+def _decode_git_text(data: bytes, *, operation: str, encoding: str, errors: str = "strict") -> str:
+    try:
+        return data.decode(encoding, errors=errors)
+    except UnicodeDecodeError as exc:
+        sys.stderr.write(f"ERROR: {operation} produced invalid {encoding} output.\n")
+        raise SystemExit(1) from exc
+
+
+def _decode_content_bytes(data: bytes, *, operation: str) -> str:
+    """Decode text bodies, recognizing BOM-marked UTF-16/32 content."""
+    if data.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+        return _decode_git_text(data, operation=operation, encoding="utf-32", errors="replace")
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return _decode_git_text(data, operation=operation, encoding="utf-16", errors="replace")
+    if data.startswith(b"\xef\xbb\xbf"):
+        return _decode_git_text(data, operation=operation, encoding="utf-8-sig", errors="replace")
+    return _decode_git_text(data, operation=operation, encoding="utf-8", errors="replace")
 
 
 def _repo_root() -> str:
     """Resolve the canonical repo root via git (works from any subdirectory)."""
-    proc = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0 or not proc.stdout.strip():
+    root = _decode_git_text(
+        _git_bytes(None, ["rev-parse", "--show-toplevel"], operation="resolve repository root"),
+        operation="resolve repository root",
+        encoding="utf-8",
+    ).strip()
+    if not root:
         sys.stderr.write("ERROR: not inside a git repository (git rev-parse failed).\n")
-        sys.exit(1)
-    return proc.stdout.strip()
+        raise SystemExit(1)
+    return root
 
 
 def _staged_paths(repo_root: str) -> list[str]:
@@ -74,68 +127,43 @@ def _staged_paths(repo_root: str) -> list[str]:
     Excludes deletions (``--diff-filter=d`` drops them) — there's nothing to
     scan in a file being removed.
     """
-    proc = subprocess.run(
-        ["git", "diff", "--cached", "--name-only", "-z", "--diff-filter=d"],
-        capture_output=True,
-        text=True,
-        cwd=repo_root,
-        check=False,
+    raw = _git_bytes(
+        repo_root,
+        ["diff", "--cached", "--name-only", "-z", "--diff-filter=d"],
+        operation="list staged paths",
     )
-    if proc.returncode != 0:
-        sys.stderr.write("ERROR: `git diff --cached` failed.\n")
-        sys.stderr.write(proc.stderr)
-        sys.exit(1)
-    return [p for p in proc.stdout.split("\0") if p]
+    text = _decode_git_text(raw, operation="list staged paths", encoding="utf-8")
+    return [p for p in text.split("\0") if p]
 
 
 def _tracked_paths(repo_root: str) -> list[str]:
     """Posix relative paths of every git-tracked file (NUL-delimited)."""
-    proc = subprocess.run(
-        ["git", "ls-files", "-z"],
-        capture_output=True,
-        text=True,
-        cwd=repo_root,
-        check=False,
-    )
-    if proc.returncode != 0:
-        sys.stderr.write("ERROR: `git ls-files` failed.\n")
-        sys.stderr.write(proc.stderr)
-        sys.exit(1)
-    return [p for p in proc.stdout.split("\0") if p]
+    raw = _git_bytes(repo_root, ["ls-files", "-z"], operation="list tracked paths")
+    text = _decode_git_text(raw, operation="list tracked paths", encoding="utf-8")
+    return [p for p in text.split("\0") if p]
 
 
-def _read_staged_blob(repo_root: str, rel_path: str) -> str | None:
+def _read_staged_blob(repo_root: str, rel_path: str) -> str:
     """Return the STAGED content of ``rel_path`` (``git show :<path>``).
 
-    Returns None when the blob can't be read as UTF-8 text (binary file) or
-    the git call fails (e.g. a path that exists in the index but is
-    unreadable) — the caller skips it, matching the CI gate's UnicodeDecode
-    skip behaviour.
+    Invalid UTF-8 bytes are replaced so they cannot hide later ASCII leaks.
+    Git failures block the scan.
     """
-    proc = subprocess.run(
-        ["git", "show", f":{rel_path}"],
-        capture_output=True,
-        cwd=repo_root,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    try:
-        return proc.stdout.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    raw = _git_bytes(repo_root, ["show", f":{rel_path}"], operation=f"read staged blob {rel_path}")
+    return _decode_git_text(raw, operation=f"read staged blob {rel_path}", encoding="utf-8", errors="replace")
 
 
 def _read_disk_file(repo_root: str, rel_path: str) -> str | None:
-    """Return the on-disk content of ``rel_path`` as UTF-8, or None to skip."""
+    """Return on-disk content; missing tracked paths skip, read errors block."""
     abs_path = os.path.join(repo_root, rel_path)
     if not os.path.isfile(abs_path):
         return None
     try:
-        with open(abs_path, encoding="utf-8") as fh:
-            return fh.read()
-    except (UnicodeDecodeError, OSError):
-        return None
+        with open(abs_path, "rb") as fh:
+            return fh.read().decode("utf-8", errors="replace")
+    except OSError as exc:
+        sys.stderr.write(f"ERROR: could not read tracked file {rel_path}: {exc}\n")
+        raise SystemExit(1) from exc
 
 
 def _collect_hits(repo_root: str, *, staged: bool) -> list[tuple[str, str, int, str]]:
@@ -182,48 +210,153 @@ def _print_hits(findings: list[tuple[str, str, int, str]], *, mode: str) -> None
     sys.stderr.write("  - tighten the offending regex to exclude the legitimate case.\n")
 
 
-def _collect_commit_message_hits(repo_root: str, rev_range: str) -> list[tuple[str, str, int, str]]:
-    """Scan COMMIT MESSAGES in *rev_range* (e.g. ``origin/main..HEAD``).
+def _resolve_commits(repo_root: str, revision_args: str | tuple[str, ...]) -> list[str]:
+    args = (revision_args,) if isinstance(revision_args, str) else revision_args
+    label = " ".join(args)
+    raw = _git_bytes(repo_root, ["rev-list", "--reverse", *args], operation=f"resolve revisions {label}")
+    text = _decode_git_text(raw, operation=f"resolve revisions {label}", encoding="ascii")
+    return [line.strip() for line in text.splitlines() if line.strip()]
 
-    Commit messages are published with the code — a leaky message reaches the
-    public repo even when every file is clean (and rewriting pushed history
-    is far costlier than rewording a file). Returns the same finding tuples
-    as :func:`_collect_hits`, with ``<short-sha> (commit message)`` standing
-    in for the file path.
-    """
-    proc = subprocess.run(
-        ["git", "log", "--format=%h%x00%B%x01", rev_range],
-        capture_output=True,
-        text=True,
-        cwd=repo_root,
-        check=False,
-    )
-    if proc.returncode != 0:
-        # Range doesn't resolve (no upstream yet, shallow clone) — nothing to
-        # scan is the correct fail-open behaviour for a hook context.
-        return []
+
+def _collect_commit_message_hits_for_commits(repo_root: str, commits: list[str]) -> list[tuple[str, str, int, str]]:
     findings: list[tuple[str, str, int, str]] = []
-    for chunk in proc.stdout.split("\x01"):
-        chunk = chunk.strip("\n")
-        if not chunk:
-            continue
-        sha, _, body = chunk.partition("\x00")
-        for name, line_no, text_snippet in scan_text(f"{sha.strip()} (commit message)", body):
-            findings.append((f"{sha.strip()} (commit message)", name, line_no, text_snippet))
+    for commit in commits:
+        try:
+            raw = _prepush_refs.read_commit_object(Path(repo_root), commit)
+        except _prepush_refs.PrePushGitError as exc:
+            sys.stderr.write(f"ERROR: cannot inspect commit object: {exc}\n")
+            raise SystemExit(1) from exc
+        body = _decode_git_text(
+            raw,
+            operation=f"decode commit object {commit}",
+            encoding="utf-8",
+            errors="replace",
+        )
+        label = f"{commit[:7]} (commit object)"
+        for name, line_no, text_snippet in scan_text(label, body):
+            findings.append((label, name, line_no, text_snippet))
     return findings
 
 
-_USAGE = "Usage: python scripts/scan_internal_language.py (--staged | --all | --commits <range>)\n"
+def _collect_commit_blob_hits(repo_root: str, commits: list[str]) -> list[tuple[str, str, int, str]]:
+    findings: list[tuple[str, str, int, str]] = []
+    for commit in commits:
+        paths_raw = _git_bytes(
+            repo_root,
+            [
+                "diff-tree",
+                "--root",
+                "-r",
+                "-m",
+                "--no-commit-id",
+                "--name-only",
+                "-z",
+                "--diff-filter=d",
+                commit,
+            ],
+            operation=f"list changed paths for {commit}",
+        )
+        paths_text = _decode_git_text(
+            paths_raw,
+            operation=f"list changed paths for {commit}",
+            encoding="utf-8",
+        )
+        for rel_path in dict.fromkeys(path for path in paths_text.split("\0") if path):
+            label = f"{commit[:7]}:{rel_path} (published path name)"
+            for name, line_no, text_snippet in scan_text(rel_path, rel_path):
+                findings.append((label, name, line_no, text_snippet))
+            if rel_path in _HISTORY_WHITELIST_FILES:
+                continue
+            body = _decode_content_bytes(
+                _git_bytes(repo_root, ["show", f"{commit}:{rel_path}"], operation=f"read blob {commit}:{rel_path}"),
+                operation=f"read blob {commit}:{rel_path}",
+            )
+            label = f"{commit[:7]}:{rel_path}"
+            for name, line_no, text_snippet in scan_text(rel_path, body):
+                findings.append((label, name, line_no, text_snippet))
+    return findings
 
 
-def _parse_mode(argv: list[str]) -> tuple[bool, str | None] | None:
+def _deduplicate_findings(findings: list[tuple[str, str, int, str]]) -> list[tuple[str, str, int, str]]:
+    return list(dict.fromkeys(findings))
+
+
+def _collect_commit_message_hits(repo_root: str, rev_range: str) -> list[tuple[str, str, int, str]]:
+    """Scan commit messages in *rev_range* and fail closed on Git errors."""
+    return _collect_commit_message_hits_for_commits(repo_root, _resolve_commits(repo_root, rev_range))
+
+
+def _collect_pre_push_history_hits(
+    repo_root: str,
+    updates_path: str,
+    *,
+    remote_url: str | None = None,
+) -> list[tuple[str, str, int, str]]:
+    try:
+        updates = _prepush_refs.load_pre_push_updates(Path(updates_path).resolve())
+    except _prepush_refs.PrePushUpdateError as exc:
+        sys.stderr.write(f"ERROR: invalid pre-push updates: {exc}\n")
+        raise SystemExit(1) from exc
+
+    direct_findings: list[tuple[str, str, int, str]] = []
+    try:
+        direct_texts = _prepush_refs.collect_direct_published_texts(Path(repo_root), updates)
+    except _prepush_refs.PrePushGitError as exc:
+        sys.stderr.write(f"ERROR: cannot inspect pushed objects: {exc}\n")
+        raise SystemExit(1) from exc
+    for published in direct_texts:
+        if published.kind == "blob" and published.path in _HISTORY_WHITELIST_FILES:
+            continue
+        body = _decode_content_bytes(
+            published.data,
+            operation=f"decode pushed {published.kind} {published.oid}",
+        )
+        label = published.path
+        for name, line_no, text_snippet in scan_text(label, body):
+            direct_findings.append((label, name, line_no, text_snippet))
+
+    published_commits: tuple[str, ...] = ()
+    if remote_url is not None and any(update.is_new_remote_ref and not update.is_deletion for update in updates):
+        try:
+            published_commits = _prepush_refs.authoritative_remote_commits(Path(repo_root), remote_url)
+        except (_prepush_refs.PrePushUpdateError, _prepush_refs.PrePushGitError) as exc:
+            sys.stderr.write(f"ERROR: cannot verify destination history: {exc}\n")
+            raise SystemExit(1) from exc
+
+    commits: list[str] = []
+    seen_commits: set[str] = set()
+    revision_groups = _prepush_refs.unique_revision_args(updates, published_commits=published_commits)
+    for revision_args in revision_groups:
+        for commit in _resolve_commits(repo_root, revision_args):
+            if commit in seen_commits:
+                continue
+            seen_commits.add(commit)
+            commits.append(commit)
+    return _deduplicate_findings(
+        direct_findings
+        + _collect_commit_blob_hits(repo_root, commits)
+        + _collect_commit_message_hits_for_commits(repo_root, commits)
+    )
+
+
+_USAGE = (
+    "Usage: python scripts/scan_internal_language.py "
+    "(--staged | --all | --commits <range> | "
+    "--pre-push-updates <file> [--remote-url <url>])\n"
+)
+
+
+def _parse_mode(argv: list[str]) -> tuple[bool, str | None, str | None, str | None] | None:
     """Resolve CLI args to exactly one scan mode.
 
-    Returns ``(staged, commits_range)`` — ``commits_range`` set means
-    commit-message mode; otherwise ``staged`` picks staged vs all-tracked.
+    Returns ``(staged, commits_range, updates_path, remote_url)``. A non-None
+    range or update path selects history mode; otherwise ``staged`` picks
+    staged vs all-tracked.
     Returns None (after printing the error) on bad arguments.
     """
     commits_range: str | None = None
+    updates_path: str | None = None
+    remote_url: str | None = None
     flags: list[str] = []
     it = iter(argv)
     for a in it:
@@ -231,6 +364,16 @@ def _parse_mode(argv: list[str]) -> tuple[bool, str | None] | None:
             commits_range = next(it, None)
             if not commits_range:
                 sys.stderr.write("ERROR: --commits requires a rev range (e.g. origin/main..HEAD).\n")
+                return None
+        elif a == "--pre-push-updates":
+            updates_path = next(it, None)
+            if not updates_path:
+                sys.stderr.write("ERROR: --pre-push-updates requires a captured update file.\n")
+                return None
+        elif a == "--remote-url":
+            remote_url = next(it, None)
+            if not remote_url:
+                sys.stderr.write("ERROR: --remote-url requires a Git destination URL.\n")
                 return None
         else:
             flags.append(a)
@@ -241,21 +384,29 @@ def _parse_mode(argv: list[str]) -> tuple[bool, str | None] | None:
         sys.stderr.write(f"ERROR: unknown argument(s): {' '.join(unknown)}\n")
         sys.stderr.write(_USAGE)
         return None
-    if sum((staged, scan_all, commits_range is not None)) != 1:
-        sys.stderr.write("ERROR: pass exactly one of --staged, --all, or --commits <range>.\n")
+    if sum((staged, scan_all, commits_range is not None, updates_path is not None)) != 1:
+        sys.stderr.write(
+            "ERROR: pass exactly one of --staged, --all, --commits <range>, or --pre-push-updates <file>.\n"
+        )
         sys.stderr.write(_USAGE)
         return None
-    return staged, commits_range
+    if remote_url is not None and updates_path is None:
+        sys.stderr.write("ERROR: --remote-url requires --pre-push-updates.\n")
+        return None
+    return staged, commits_range, updates_path, remote_url
 
 
 def main(argv: list[str]) -> int:
     mode_args = _parse_mode(argv)
     if mode_args is None:
         return 1
-    staged, commits_range = mode_args
+    staged, commits_range, updates_path, remote_url = mode_args
 
     repo_root = _repo_root()
-    if commits_range is not None:
+    if updates_path is not None:
+        findings = _collect_pre_push_history_hits(repo_root, updates_path, remote_url=remote_url)
+        mode = "pushed blobs and commit messages from pre-push updates"
+    elif commits_range is not None:
         findings = _collect_commit_message_hits(repo_root, commits_range)
         mode = f"commit-messages {commits_range}"
     else:

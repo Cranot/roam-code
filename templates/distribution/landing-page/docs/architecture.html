@@ -620,7 +620,7 @@ roam findings count                      # per-detector totals</code></pre>
 
       <h3>CI auto-trigger</h3>
       <p>
-        <code>roam ci-setup --with-slsa-l3</code> scaffolds a GitHub Actions workflow at
+        <code>roam ci-setup --platform github --with-slsa-l3 --write</code> scaffolds a GitHub Actions workflow at
         <code>.github/workflows/roam-slsa-src-l3.yml</code> that auto-triggers
         <code>roam pr-bundle emit --slsa-l3 --sign --keyless</code> on every PR. The keyless
         cosign path uses Fulcio short-lived certificates plus Rekor transparency-log entries;

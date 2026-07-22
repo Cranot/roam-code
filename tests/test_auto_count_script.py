@@ -175,7 +175,7 @@ def test_script_exits_nonzero_on_drift(tmp_path):
     # ``f"... {command_names} commands and {mcp_full} MCP tools ..."`` and was
     # dropped from the script in v13.2 (see the v13.2 comment on
     # ``_readme_blocks`` in ``dev/build_readme_counts.py``). The README hero
-    # now leads with the positioning core (credential-free + zero-egress +
+    # now leads with the positioning core (credential-free + no repository egress +
     # tamper-evident evidence) — the old "N commands and M MCP tools" literal
     # is no longer present anywhere in README.md, so the prior precondition
     # assertion failed on clean main.

@@ -9,14 +9,15 @@ specification and integration contract, not marketing copy.
 `#security-stance` section in `templates/distribution/landing-page/docs/mcp-usage.html`.
 This is the schema-stable, integration-grade version.
 
-**Last updated.** 2026-05-19.
+**Last updated.** 2026-07-22.
 
 ---
 
-## 2026-05-18 wave summary
+## 2026-05-18 base wave and later extensions
 
-Same-day closure of the P0 + P1 + P2 frontier the day-of memos had flagged
-as in-flight. Six items shipped; one public reply posted.
+The 2026-05-18 base controls closed the day-of frontier. P1.2 followed on
+2026-05-21; its read-only visibility and provenance path were hardened for
+13.10. One public reply documents the combined boundary.
 
 - **MCP-P0.1** SHIPPED — egress secret redaction (closed-enum
   `redactions=("secret",)` + per-pattern detail).
@@ -26,7 +27,10 @@ as in-flight. Six items shipped; one public reply posted.
   `verify_chain_with_receipts` adds the `receipt_integrity` closed enum.
 - **MCP-P1.1** SHIPPED — shadow-mode env flag (`ROAM_MODE_DRY_RUN`)
   emitting `policy_decision=would_deny_dry_run` for observe-only rollout.
-- **MCP-P2.1** SHIPPED — this document.
+- **MCP-P1.2** SHIPPED (2026-05-21; read-only visibility hardened in 13.10) — structural prompt-injection marker scanning at
+  the egress boundary with explicit redaction lineage.
+- **MCP-P2.1** SHIPPED — complete per-tool side-effect declarations in
+  `_TOOL_METADATA` and receipts.
 - **MCP-P2.2** SHIPPED — portable JSON Schema (Draft 2020-12) export
   via `scripts/export_mcp_receipt_schema.py`.
 - **Discussion #37** — public reply posted at
@@ -81,7 +85,7 @@ lives.
 | 2. Per-role permissions       |      |      | **owns** (4-mode policy)  | cross-server coordination |
 | 3. Audit logs                 |      |      | **owns** (HMAC-anchored receipts + run ledger) | aggregation + retention   |
 | 4. Shadow / dry-run           |      |      | structural (`ROAM_MODE_DRY_RUN`, MCP-P1.1 shipped 2026-05-18) | **owns** (cross-server) |
-| 5. Response content scanning  |      |      | structural (regex secret) | **owns** (semantic)       |
+| 5. Response content scanning  |      |      | structural (secret + injection-marker patterns) | **owns** (semantic)       |
 
 Reading guide:
 
@@ -122,11 +126,16 @@ Reading guide:
 - **Response content scanning.** roam ships structural regex-based secret
   redaction on egress (MCP-P0.1, shipped 2026-05-18) via
   `redact_secrets_in_string` + `redact_secrets_in_value` at
-  `_wrap_with_receipt`, surfacing through the closed-enum
-  `redactions=("secret",)` on every affected receipt. Semantic
-  content-scanning (PII inference, prompt-injection marker detection,
-  model-aware policy) is a gateway concern. MCP-P1.2 will add a coarse
-  prompt-injection marker scan at the server boundary.
+  `_wrap_with_receipt`. It also scans the redacted result for conservative
+  prompt-injection markers (MCP-P1.2). Secret matches are masked and emit
+  `secret`; marker matches remain visible as evidence and emit
+  `prompt_injection_marker`, with per-pattern counts in receipt metadata.
+  Both scans cover mapping keys and values. A marker hit on an otherwise
+  receipt-free read-only tool also stamps trusted
+  `_meta.security.prompt_injection` metadata and emits a conditional decision
+  receipt; clean read-only calls retain their no-receipt fast path.
+  Semantic content scanning (PII inference and model-aware policy) remains a
+  gateway concern.
 
 ---
 
@@ -150,10 +159,10 @@ Fields:
 | `client_id`              | `str`                 | MCP client process id from `ROAM_MCP_CLIENT_ID` env var.                    |
 | `tool_name`              | `str`                 | Canonical tool name (e.g. `roam_preflight`).                                |
 | `actor_ref_id`           | `str \| None`         | Agent id from `ROAM_AGENT_ID`; ties to W182 `ActorRef.actor_id`.            |
-| `declared_side_effects`  | `tuple[str, ...]`     | E.g. `("read_only",)`, `("write_filesystem",)`. From `_TOOL_METADATA`.      |
+| `declared_side_effects`  | `tuple[str, ...]`     | Zero or one of `write` / `destructive`, plus optional `non_idempotent`. From `_TOOL_METADATA`. |
 | `required_mode`          | `str \| None`         | `read_only` / `safe_edit` / `migration` / `autonomous_pr`.                  |
 | `input_hash`             | `str \| None`         | sha256 of canonical-JSON input args. Never the args themselves.             |
-| `policy_decision`        | `str`                 | Closed enum from 9-member `POLICY_DECISIONS` (`src/roam/evidence/_vocabulary.py:582`, verified 2026-05-22): `pass` / `fail` / `allow` / `deny` / `escalate` / `redact` / `not_evaluated` / `unknown` / `would_deny_dry_run`. |
+| `policy_decision`        | `str`                 | Receipt-valid 6-member authority subset of canonical `POLICY_DECISIONS`: `allow` / `deny` / `escalate` / `redact` / `not_evaluated` / `would_deny_dry_run`. |
 | `output_ref`             | `str \| None`         | Artifact id when output is large. Mutually exclusive with `output_hash`.    |
 | `output_hash`            | `str \| None`         | sha256 of inline output when small. Mutually exclusive with `output_ref`.   |
 | `run_event_id`           | `str \| None`         | Link to `.roam/runs/<id>/events.jsonl` row.                                 |
@@ -173,14 +182,15 @@ user_opt_in_required
 machine_local_path
 schema_strict
 producer_not_available
+prompt_injection_marker
 ```
 
 Membership is validated at receipt construction; unknown reasons raise
-`ValueError`. Today (2026-05-18) the only reason emitted by the MCP
-egress path is `secret` — the structural regex scan in
-`src/roam/security/redact.py` covers GitHub PAT (classic + fine-grained),
+`ValueError`. The MCP egress path emits `secret` and
+`prompt_injection_marker`. The structural scans in
+`src/roam/security/redact.py` cover GitHub PAT (classic + fine-grained),
 OpenAI/Anthropic `sk-` keys, AWS AKIA, Bearer tokens, PEM private-key
-markers, and JWT. Other reasons are reserved for producer paths
+markers, JWT, and explicit prompt-control smuggling markers. Other reasons are reserved for producer paths
 that already populate them (`pii`, `machine_local_path`, etc. — see
 `evidence/collector.py`).
 
@@ -271,7 +281,7 @@ the mode gate was enforced only on the CLI path via `_enforce_mode_gate`
 at `cli.py`, and MCP wrappers bypassed it via `_run_roam_inprocess`.
 MCP-P0.2 wires `_evaluate_mcp_mode_policy` + `_build_mode_blocked_envelope`
 into `mcp_server.py`, so the receipt's `policy_decision` is now a
-closed-enum decision from `{allow, deny, not_evaluated}` reflecting an
+closed-enum decision from `{allow, deny, not_evaluated, would_deny_dry_run}` reflecting an
 actual mode-gate check at the MCP boundary. Gateways can read
 `policy_decision` today as proof of an enforcement decision; the legacy
 hard-coded `"allow"` no longer applies on the MCP path.
@@ -282,12 +292,6 @@ hard-coded `"allow"` no longer applies on the MCP path.
 
 Honest list. If you need any of these, the gateway is the right place.
 
-- **No prompt-injection marker scanning today.** Queued as MCP-P1.2. The
-  egress redaction layer only scans for structural secret patterns, not
-  for `|im_end|` smuggling, `ignore previous instructions` payloads,
-  `system:` prefix smuggling, BOM smuggling, or base64-encoded common
-  payloads. A gateway with a model-aware content scanner stays
-  authoritative on this axis.
 - **No cross-server shadow-mode coordination.** The in-server flag
   (`ROAM_MODE_DRY_RUN`) shipped 2026-05-18 as MCP-P1.1 and lets one
   roam server preview enforcement locally. Coordinating shadow rollout
@@ -298,8 +302,8 @@ Honest list. If you need any of these, the gateway is the right place.
   receipts on roam to their receipts on a different MCP server — is a
   gateway concern. roam does not emit a fleet-correlation id.
 - **No model-aware semantic content scanning.** The egress redaction layer
-  is purely structural (regex secret patterns from
-  `src/roam/security/redact.py`). It cannot detect "this output contains a
+  uses structural secret and prompt-injection marker patterns from
+  `src/roam/security/redact.py`. It cannot detect "this output contains a
   PII inference the model derived from public data" or "this output
   encodes the system prompt." Those are gateway concerns.
 - **No external token issuance, revocation, or rotation.** roam consumes
@@ -434,13 +438,13 @@ needs to plan around.
 | Item       | Status                          | Gateway impact                                                                                                  |
 | ---------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | MCP-P1.1   | **shipped** (2026-05-18)        | Shadow-mode env flag (`ROAM_MODE_DRY_RUN`) + finding emission via `src/roam/mcp_server.py` policy gate. Gateways can run roam in observe-only without disabling enforcement; receipts carry `policy_decision=would_deny_dry_run`. |
-| MCP-P1.2   | queued                          | Prompt-injection marker scan on egress. Tags `redactions` with `prompt_injection_marker` (new enum member).     |
+| MCP-P1.2   | **shipped** (2026-05-21; read-only visibility hardened for 13.10) | Structural prompt-injection marker scan on egress; marker-hit results carry trusted client metadata and receipts tag `redactions` with `prompt_injection_marker`. |
 
 ### P2 — public surface
 
 | Item       | Status                          | Gateway impact                                                                                              |
 | ---------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| MCP-P2.1   | **this document** (shipped)     | Public integration contract.                                                                                |
+| MCP-P2.1   | **shipped** (2026-05-18)        | Per-tool read-only/destructive/idempotency declarations are registered in `_TOOL_METADATA` and emitted in receipts. |
 | MCP-P2.2   | **shipped** (2026-05-18) — schema export | Standalone `McpDecisionReceipt` JSON Schema export landed via `scripts/export_mcp_receipt_schema.py` → `roam.evidence.mcp_receipt_schema.mcp_receipt_json_schema()` (Draft 2020-12, `$id` versioned `.../mcp-receipt/v1.json`). `mcp-server-card` `_meta` advertisement still queued as a follow-on. |
 
 ---

@@ -287,7 +287,7 @@ def parse_source_with_grammar(source: bytes, language: str):
     grammar = GRAMMAR_ALIASES.get(language, language)
 
     try:
-        from tree_sitter_language_pack import get_parser
+        from roam.parser_pack import get_parser
 
         parser = get_parser(grammar)
     except Exception as _exc:  # noqa: BLE001 — defensive

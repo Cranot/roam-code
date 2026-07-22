@@ -101,9 +101,9 @@
       </p>
 <pre><code>pip install "roam-code[mcp]"   # Python 3.10+; pulls fastmcp + tree-sitter
 cd /path/to/repo
-roam init                       # creates .roam/index.db + fitness rules + CI workflow
+roam init                       # creates .roam/index.db + fitness rules; CI is opt-in
 roam health                     # verify the index is healthy (0-100 score)
-roam mcp-setup                  # write the per-client MCP config snippet</code></pre>
+roam mcp-setup claude-code --write  # write/merge one supported client config</code></pre>
       <p>
         Why this is a manual step: indexing can take long enough to
         exceed an MCP call timeout, and forcing an automatic build on
@@ -249,7 +249,7 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
           <tr>
             <td><code>roam_orchestrate</code> / <code>roam_partition</code></td>
             <td>Multi-agent partitioning emits one entry per cluster; thousands of entries on large repos.</td>
-            <td>Bound output with <code>--agents N</code> (orchestrate) or <code>--n-agents N</code> (partition), or call <code>roam_fleet_plan</code> which emits a compact <code>.roam-fleet.json</code> instead.</td>
+            <td>Bound output with <code>--agents N</code> for orchestrate or partition, or call <code>roam_fleet_plan</code> which emits a compact <code>.roam-fleet.json</code> instead.</td>
           </tr>
           <tr>
             <td><code>roam_fingerprint</code></td>
@@ -312,17 +312,18 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
 
       <h3>Tool not found</h3>
       <p>
-        The default preset is <code>core</code> (16 tools plus the
-        <code>roam_expand_toolset</code> meta-tool). Tools outside
-        that preset are loaded on demand:
-        <code>roam_expand_toolset(preset="full")</code> exposes all
-        244 tools. You can also set <code>ROAM_MCP_PRESET=full</code> in the
-        server env to start with the full set.
+        The default preset is <code>core</code> (17 exposed tools, including
+        the <code>roam_expand_toolset</code> meta-tool). Tools outside
+        that preset require a server restart. Use
+        <code>roam_expand_toolset(preset="full")</code> to inspect the full
+        preset and receive the exact restart instruction, then set
+        <code>ROAM_MCP_PRESET=full</code> in the server environment and restart
+        it to expose all 244 tools.
       </p>
 
       <h3>Server returns stale data after a <code>git pull</code></h3>
       <p>
-        Run <code>roam reindex</code> (or set
+        Run <code>roam index</code> (or set
         <code>ROAM_MCP_WATCH=1</code> in the server env to enable
         reactive incremental reindexing on file changes). The watcher
         emits <code>notifications/resources/updated</code> so
@@ -385,7 +386,7 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
         comes from one command:
       </p>
 <pre><code>roam mcp-setup claude-code     # or: cursor, codex-cli, gemini-cli, vscode, windsurf
-roam mcp-setup cursor --preset compliance     # 13-tool AI-governance subset
+roam mcp-setup cursor --preset compliance     # 14-tool AI-governance subset
 roam mcp-setup vscode --write                 # write the file in place
 roam --json mcp-setup vscode                  # structured envelope for scripting</code></pre>
       <p>
@@ -439,7 +440,7 @@ roam --json mcp-setup vscode                  # structured envelope for scriptin
       </ul>
       <p class="footer-meta">
         Documented against <code>roam-code</code> &mdash; 244 MCP tools
-        total, 16 in the default <code>core</code> preset. Re-counts are
+        total, 17 in the default <code>core</code> preset. Re-counts are
         AST-derived and pinned by
         <a href="https://github.com/Cranot/roam-code/blob/main/dev/build_readme_counts.py">build_readme_counts.py</a>.
       </p>

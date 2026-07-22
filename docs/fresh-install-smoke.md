@@ -8,9 +8,10 @@ Roam's word for it:
 
 1. **Zero accounts, zero API keys, zero cloud logins.** Install is one
    `pip install`; nothing else is configured before commands run.
-2. **Zero network egress after `pip install`.** Indexing, health, preflight,
-   and impact all read and write a local SQLite DB under `.roam/`. No HTTP
-   client is exercised in the four demo commands.
+2. **No repository-content egress.** Indexing, health, preflight, and impact
+   read and write a local SQLite DB under `.roam/`; no source, index, finding,
+   or evidence content is transmitted. A cold parser cache may retrieve one
+   checksum-verified grammar bundle before analysis begins.
 3. **The "first three commands" actually do what they claim.** A new repo
    reaches a working `preflight` verdict in under a minute on a synthetic
    project, with real blast-radius, tests-affected, complexity, and fitness
@@ -26,7 +27,7 @@ load-bearing excerpts are reproduced below.
 
 ```text
 OS: Windows 11 Pro (build 26200) | Python: 3.14 | Shell: PowerShell 7
-Network: only pypi.org reached during step 1; no other egress
+Network: parser cache was already warm; only pypi.org reached during step 1
 Date: 2026-05-18
 ```
 
@@ -254,13 +255,13 @@ registry, or user config is modified.
 ## What this proves
 
 The four commands above ran on a freshly created venv against a project the
-indexer had never seen, with no account, no API key, no remote call after
-`pip install`, and no human-in-the-loop intervention. Each verdict is
+indexer had never seen, with no account, no API key, a prewarmed parser cache,
+and no human-in-the-loop intervention. Each verdict is
 backed by data Roam can point to inside `.roam/index.db` — a SQLite file
 the operator owns. That is the moat the README claims: **local codebase
 intelligence that produces verifiable evidence without leaving the machine.**
-If a CTO or CISO wants to verify the air-gap claim, this transcript is the
-minimum-effort reproduction. The same loop scales to larger repositories;
+If a CTO or CISO wants to verify the air-gap path, prewarm with
+`roam index --force`, disable egress, and replay this transcript. The same loop scales to larger repositories;
 the `preflight` / `impact` envelope shape is identical.
 
 ---

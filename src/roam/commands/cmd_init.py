@@ -308,7 +308,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
         if not json_mode:
             click.echo(
                 "Note: --with-ci=gitlab is not yet implemented in `init`. "
-                "Run `roam ci-setup gitlab` for the full GitLab CI generator."
+                "Run `roam ci-setup --platform gitlab` for the full GitLab CI generator."
             )
 
     # 5. Quick health summary
