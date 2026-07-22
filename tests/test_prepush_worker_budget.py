@@ -117,6 +117,30 @@ def test_gate_subprocess_env_drops_outer_repository_control_vars(
     assert env["GIT_AUTHOR_NAME"] == "fixture-author"
 
 
+def test_gate_subprocess_env_enforces_one_native_thread_per_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Native math runtimes cannot multiply the bounded xdist budget."""
+
+    gate = _load_gate_module()
+    for name in gate._NATIVE_THREAD_ENV:
+        monkeypatch.setenv(name, "64")
+
+    env = gate.GateRunner(root=repo_root())._env()
+
+    assert gate._NATIVE_THREAD_ENV == (
+        "BLIS_NUM_THREADS",
+        "GOTO_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "OMP_THREAD_LIMIT",
+        "OPENBLAS_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    )
+    assert all(env[name] == "1" for name in gate._NATIVE_THREAD_ENV)
+
+
 def test_sanitized_gate_env_keeps_foreign_git_add_out_of_outer_index(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
