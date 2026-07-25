@@ -2,6 +2,8 @@
 
 # roam-code
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2FCranot%2Froam-code.svg)](https://mcptoplist.com/server/glama%2FCranot%2Froam-code)
+
 **The local codebase intelligence layer that lets AI coding agents earn the right to change code — with evidence for what was checked.**
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
