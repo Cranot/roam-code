@@ -3592,11 +3592,15 @@ def _record_engagement(
     # Local import avoids a module-load cycle: service-report reuses the PDF
     # and replay helpers above, while both commands must converge on exactly
     # one cross-process lock/read/retention/publication implementation.
-    from roam.commands.cmd_service_report import _persist_engagement_record
+    from roam.commands.cmd_service_report import (
+        ENGAGEMENT_LEDGER_SCHEMA_VERSION,
+        _engagement_source,
+        _persist_engagement_record,
+    )
 
     return _persist_engagement_record(
         {
-            "ledger_schema": 1,
+            "ledger_schema": ENGAGEMENT_LEDGER_SCHEMA_VERSION,
             "kind": "pr-replay",
             "tier": tier,
             "client": client,
@@ -3606,6 +3610,7 @@ def _record_engagement(
             "top_detector": top_detector,
             "output_path": output_path,
             "generated_at": generated_at,
+            "source": _engagement_source(),
         }
     )
 
@@ -4201,8 +4206,8 @@ def _emit_pr_replay_json_output(
         "On paid tiers (team / deep), append a one-line JSONL record to "
         "``.roam/engagements.jsonl`` so the operator has a single-file "
         "ledger of every paid engagement (tier, client, commit count, "
-        "findings, output path, timestamp). Skipped on sample tier and "
-        "when --output is unset (no artefact = no engagement)."
+        "findings, output path, timestamp, source). Skipped on sample tier "
+        "and when --output is unset (no artefact = no engagement)."
     ),
 )
 @click.option(

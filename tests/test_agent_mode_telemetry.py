@@ -9,12 +9,14 @@ from click.testing import CliRunner
 
 from roam.commands.cmd_compile_stats import compile_stats
 from roam.plan.agent_mode import (
+    AGENT_MODE_COVERAGE_EPOCH,
     ENV_VAR,
     MODE_BENCH,
     MODE_HOOK,
     NON_PRODUCTION_MODES,
     agent_mode,
     is_non_production,
+    unknown_cohort,
 )
 from roam.security.owner_only import ensure_owner_only_path
 
@@ -121,3 +123,74 @@ def test_by_mode_shows_full_split_regardless(tmp_path):
     env = json.loads(result.output)
     assert set(env["summary"]["by_mode"]) == {"hook", MODE_BENCH}
     assert env["summary"]["by_mode"][MODE_BENCH]["n"] == 8
+
+
+# ---------------------------------------------------------------------------
+# unknown_cohort: refutes the "unknown means the field did not exist" theory
+# and verifies a consumer cannot silently blend the two cohorts it mixes.
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_cohort_returns_none_for_stamped_modes():
+    assert unknown_cohort({"agent_mode": MODE_HOOK}) is None
+    assert unknown_cohort({"agent_mode": MODE_BENCH}) is None
+
+
+def test_unknown_cohort_pre_coverage():
+    row = {"agent_mode": "unknown", "ts": "2026-07-08T03:00:00Z"}  # before the epoch
+    assert unknown_cohort(row) == "unknown_pre_coverage"
+
+
+def test_unknown_cohort_post_coverage():
+    row = {"agent_mode": "unknown", "ts": "2026-07-20T00:00:00Z"}  # after the epoch
+    assert unknown_cohort(row) == "unknown_post_coverage"
+
+
+def test_unknown_cohort_boundary_is_inclusive_post():
+    row = {"agent_mode": "unknown", "ts": AGENT_MODE_COVERAGE_EPOCH}
+    assert unknown_cohort(row) == "unknown_post_coverage"
+
+
+def test_unknown_cohort_missing_ts_defaults_to_pre_coverage():
+    """A row with no parseable ts must not default into the current
+    (post-coverage) cohort -- absence of provenance is treated as the wider,
+    more conservative bucket, not silently folded into "now"."""
+    assert unknown_cohort({"agent_mode": "unknown"}) == "unknown_pre_coverage"
+    assert unknown_cohort({"agent_mode": "unknown", "ts": None}) == "unknown_pre_coverage"
+    assert unknown_cohort({"agent_mode": None}) == "unknown_pre_coverage"
+    assert unknown_cohort({}) == "unknown_pre_coverage"
+
+
+def test_compile_stats_split_unknown_cohort_does_not_blend(tmp_path):
+    """A consumer partitioning by the coverage marker must see two distinct
+    sub-cohorts, never one merged 'unknown' number."""
+    rows = [
+        {**_row("unknown", "l1_probe"), "ts": "2026-07-08T00:00:00Z"},  # pre
+        {**_row("unknown", "full"), "ts": "2026-07-08T01:00:00Z"},  # pre
+        {**_row("unknown", "l1_probe"), "ts": "2026-07-20T00:00:00Z"},  # post
+        _row(MODE_HOOK, "l1_probe"),
+    ]
+    _write_telemetry(tmp_path, rows)
+    runner = CliRunner()
+    result = runner.invoke(
+        compile_stats, ["--root", str(tmp_path), "--split-unknown-cohort"], obj={"json": True}
+    )
+    assert result.exit_code == 0, result.output
+    env = json.loads(result.output)
+    split = env["summary"]["unknown_cohort_split"]
+    # exactly the two coverage sub-cohorts -- never a bare "unknown" key that
+    # would silently blend them back together.
+    assert set(split) == {"unknown_pre_coverage", "unknown_post_coverage"}
+    assert split["unknown_pre_coverage"]["n"] == 2
+    assert split["unknown_post_coverage"]["n"] == 1
+    # the hook row (stamped, non-unknown) must not leak into either cohort
+    assert sum(v["n"] for v in split.values()) == 3
+
+
+def test_compile_stats_split_unknown_cohort_off_by_default(tmp_path):
+    rows = [{**_row("unknown", "l1_probe"), "ts": "2026-07-08T00:00:00Z"}]
+    _write_telemetry(tmp_path, rows)
+    runner = CliRunner()
+    result = runner.invoke(compile_stats, ["--root", str(tmp_path)], obj={"json": True})
+    env = json.loads(result.output)
+    assert "unknown_cohort_split" not in env["summary"]

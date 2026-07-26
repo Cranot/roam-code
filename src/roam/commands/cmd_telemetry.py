@@ -22,7 +22,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
-from roam.telemetry import _enabled, fetch_recent, fetch_top_slow
+from roam.telemetry import EXIT_CODE_SCHEMA_VERSION, _enabled, exit_code_is_reliable, fetch_recent, fetch_top_slow
 
 
 def _fmt_ts(ts: float) -> str:
@@ -61,12 +61,22 @@ def telemetry(ctx, top_n, recent_n) -> None:
         if not enabled
         else f"{len(slow)} slow / {len(recent)} recent calls in ring buffer"
     )
+    # A row predating the exit_code fix (schema_version < EXIT_CODE_SCHEMA_
+    # VERSION, or absent) recorded exit_code=0 unconditionally — disclose so
+    # nobody reads a shown "0" as a real success. Rows shown in both tables
+    # count twice here, same as the slow/recent counts in the verdict above.
+    unreliable_shown = sum(1 for r in slow if not exit_code_is_reliable(r)) + sum(
+        1 for r in recent if not exit_code_is_reliable(r)
+    )
+    summary: dict = {"verdict": verdict, "enabled": enabled}
+    if unreliable_shown:
+        summary["exit_code_unreliable_rows"] = unreliable_shown
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "telemetry",
-                    summary={"verdict": verdict, "enabled": enabled},
+                    summary=summary,
                     slow=slow,
                     recent=recent,
                 )
@@ -93,3 +103,10 @@ def telemetry(ctx, top_n, recent_n) -> None:
         click.echo(f"{'-' * 20}  {'-' * 13}  {'-' * 4}  {'-' * 30}")
         for r in recent:
             click.echo(f"{_fmt_ts(r['ts']):<20}  {r['duration_ms']:>13}  {r['exit_code']:>4}  {r['command']}")
+    if unreliable_shown:
+        click.echo()
+        click.echo(
+            f"({unreliable_shown} shown row(s) predate exit-code derivation "
+            f"(schema_version<{EXIT_CODE_SCHEMA_VERSION}); their exit_code is an "
+            "always-0 constant, not a real outcome.)"
+        )

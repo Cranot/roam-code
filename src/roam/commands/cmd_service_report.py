@@ -57,6 +57,7 @@ from __future__ import annotations
 import json as _json
 import math as _math
 import os as _os
+import re as _re
 import secrets as _secrets
 import signal as _signal
 import stat as _stat
@@ -2201,6 +2202,55 @@ _ENGAGEMENT_FAILURE_STATES = frozenset(
         "io_failure",
     }
 )
+
+# ---------------------------------------------------------------------------
+# Ledger provenance (measurement-integrity follow-up to ruler-1 / W-telemetry
+# mining survey). VERIFIED against the live engagements.jsonl: 372 of 383 rows
+# point at pytest temp-dir output paths, i.e. the ledger is dominated by our
+# own test runs rather than real usage, and (until schema 2) carries no field
+# that says so — a consumer summing "engagements" would silently be counting
+# test noise as customer activity.
+#
+# schema 2 adds an explicit `source`, stamped at write time from whether
+# `PYTEST_CURRENT_TEST` (set by pytest for the duration of every test) is
+# present in the environment — an authoritative signal, not a path-string
+# guess. Rows at schema 1 predate the field entirely; `classify_engagement_
+# source` below falls back to the historical output-path heuristic for those,
+# but labels the result as a heuristic rather than folding it into "live".
+ENGAGEMENT_LEDGER_SCHEMA_VERSION = 2
+_ENGAGEMENT_SOURCE_PYTEST = "pytest"
+_ENGAGEMENT_SOURCE_LIVE = "live"
+_ENGAGEMENT_PYTEST_PATH_RE = _re.compile(r"pytest-of-|[\\/]pytest-\d+[\\/]")
+
+
+def _engagement_source() -> str:
+    """Authoritative provenance for the engagement record being written now."""
+    return _ENGAGEMENT_SOURCE_PYTEST if "PYTEST_CURRENT_TEST" in _os.environ else _ENGAGEMENT_SOURCE_LIVE
+
+
+def classify_engagement_source(row: dict) -> str:
+    """Partition one ``engagements.jsonl`` row by where it actually came from.
+
+    Returns one of:
+      - ``"pytest"`` / ``"live"`` — ``ledger_schema >= 2`` rows carry an
+        explicit, authoritative ``source`` field (see ``_engagement_source``).
+      - ``"legacy_pytest_heuristic"`` — pre-schema-2 row whose ``output_path``
+        matches the pytest temp-directory pattern (``pytest-of-...`` /
+        ``pytest-<n>``). A heuristic, not a guarantee — pytest's temp-dir
+        naming is a CPython/pytest-version implementation detail.
+      - ``"legacy_unknown"`` — pre-schema-2 row with no path signal either
+        way. Never defaults to "live": absence of provenance is not evidence
+        of real usage.
+    """
+    source = row.get("source")
+    if source in (_ENGAGEMENT_SOURCE_PYTEST, _ENGAGEMENT_SOURCE_LIVE):
+        return source
+    output_path = row.get("output_path")
+    if isinstance(output_path, str) and _ENGAGEMENT_PYTEST_PATH_RE.search(output_path):
+        return "legacy_pytest_heuristic"
+    return "legacy_unknown"
+
+
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
 
 
@@ -2857,7 +2907,7 @@ def _record_engagement(
 
     return _persist_engagement_record(
         {
-            "ledger_schema": 1,
+            "ledger_schema": ENGAGEMENT_LEDGER_SCHEMA_VERSION,
             "kind": "service-report",
             "report_type": report_type,
             "client": client,
@@ -2865,6 +2915,7 @@ def _record_engagement(
             "headline": headline,
             "output_path": output_path,
             "generated_at": generated_at,
+            "source": _engagement_source(),
         },
         diagnostics=diagnostics,
     )
@@ -2944,8 +2995,9 @@ def _record_engagement(
     help=(
         "When --output is set, append a one-line JSONL record to "
         "``.roam/engagements.jsonl`` (report type, client, subject, headline, "
-        "output path, timestamp) so the operator has a single-file ledger of "
-        "every delivered report."
+        "output path, timestamp, source) so the operator has a single-file "
+        "ledger of every delivered report. ``source`` distinguishes pytest-"
+        "written rows from real invocations; see classify_engagement_source."
     ),
 )
 @click.pass_context

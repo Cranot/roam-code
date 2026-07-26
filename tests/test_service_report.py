@@ -1164,7 +1164,45 @@ def test_engagement_ledger_records_service_report(tmp_path, monkeypatch):
     assert record["kind"] == "service-report"
     assert record["report_type"] == "due-diligence"
     assert record["client"] == "Acme Inc"
-    assert record["ledger_schema"] == 1
+    assert record["ledger_schema"] == 2
+    # Written from inside a pytest test: PYTEST_CURRENT_TEST is set, so the
+    # authoritative source stamp must say so (not the default "live").
+    assert record["source"] == "pytest"
+
+
+def test_engagement_source_reads_live_outside_pytest(monkeypatch):
+    """`_engagement_source` must not hardcode "pytest" -- it reads the
+    actual PYTEST_CURRENT_TEST signal, which a real operator run never sets."""
+    from roam.commands.cmd_service_report import _engagement_source
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    assert _engagement_source() == "live"
+
+
+def test_classify_engagement_source_authoritative_field_wins():
+    from roam.commands.cmd_service_report import classify_engagement_source
+
+    assert classify_engagement_source({"source": "pytest", "output_path": "report.md"}) == "pytest"
+    assert classify_engagement_source({"source": "live", "output_path": "x"}) == "live"
+
+
+def test_classify_engagement_source_legacy_rows_never_default_to_live():
+    """A schema-1 row (no `source` field at all) must classify as a distinct
+    legacy cohort -- never silently fold into "live" just because that is
+    the current/default-looking bucket."""
+    from roam.commands.cmd_service_report import classify_engagement_source
+
+    pytest_like = classify_engagement_source(
+        {"output_path": r"C:\Users\u\AppData\Local\Temp\pytest-of-u\pytest-812\test_x0\report.md"}
+    )
+    assert pytest_like == "legacy_pytest_heuristic"
+
+    unrelated = classify_engagement_source({"output_path": "due-diligence.md"})
+    assert unrelated == "legacy_unknown"
+    assert unrelated not in ("live", "pytest")
+
+    no_path_at_all = classify_engagement_source({})
+    assert no_path_at_all == "legacy_unknown"
 
 
 def test_engagement_ledger_appends_not_overwrites(tmp_path, monkeypatch):

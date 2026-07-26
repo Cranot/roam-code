@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Telemetry fields whose meaning depends on how a run ended now carry explicit provenance instead of an implicit default.** Three surfaces where a mixed or historically-overloaded bucket could be silently averaged as if it were one clean cohort: (1) the compile-telemetry `agent_mode=unknown` bucket — verified to never mean "the field didn't exist" (it predates every retained row), but it does mix a wider pre-call-site-coverage cohort with a narrower post-coverage one; a documented epoch marker and opt-in split now separate them instead of blending an "unknown" statistic across two different real compositions. (2) the engagement ledger, historically dominated by our own test runs with no field distinguishing them from real usage — new rows now carry an authoritative, non-heuristic source stamp, and legacy rows classify into their own disclosed-heuristic cohort rather than defaulting into "real". (3) the local CLI telemetry ring buffer's `exit_code`, which a pre-fix build recorded as a hardcoded constant — rows now carry a schema marker so a consumer computing a success/failure rate cannot mistake an always-0 legacy row for a real outcome. In all three cases a row lacking the new marker is classified as pre-marker, never defaulted into the current cohort.
+
 ## [13.10.0] — 2026-07-26
 
 ### Added
