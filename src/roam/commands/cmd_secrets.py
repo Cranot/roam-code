@@ -27,6 +27,49 @@ from roam.output.formatter import format_table, json_envelope, to_json
 # ---------------------------------------------------------------------------
 
 _SECRET_PATTERN_DEFS: list[dict] = [
+    # --- AI provider keys ---
+    # roam's users ARE AI-agent developers, so these are the credentials most
+    # likely to appear in their repos, .env files, notebooks and pasted logs --
+    # and until 2026-07-27 the catalogue had none of them. A scanner that detects
+    # AWS and GitHub but not the provider key sitting in the user's own toolchain
+    # gives false assurance exactly where its audience is most exposed.
+    #
+    # Found by scanning a real transcript corpus with this scanner: it passed a
+    # live `sk-ant-oat01-` OAuth token (1-year validity) as clean.
+    {
+        "name": "Anthropic OAuth Token",
+        "pattern": r"sk-ant-oat[0-9]{2}-[A-Za-z0-9_\-]{40,}",
+        "severity": "high",
+    },
+    {
+        "name": "Anthropic API Key",
+        "pattern": r"sk-ant-(?:api)?[0-9]{2}-[A-Za-z0-9_\-]{40,}",
+        "severity": "high",
+    },
+    {
+        "name": "OpenAI Project Key",
+        "pattern": r"sk-proj-[A-Za-z0-9_\-]{20,}",
+        "severity": "high",
+    },
+    {
+        "name": "OpenAI API Key",
+        # Anchored on the historical 48-char form; the generic `sk-` prefix alone
+        # is too weak and would collide with Stripe's sk_live_ and DeepSeek hex.
+        "pattern": r"sk-[A-Za-z0-9]{48}",
+        "severity": "high",
+    },
+    {"name": "xAI API Key", "pattern": r"xai-[A-Za-z0-9]{20,}", "severity": "high"},
+    {"name": "Groq API Key", "pattern": r"gsk_[A-Za-z0-9]{20,}", "severity": "high"},
+    {
+        "name": "HuggingFace Token",
+        "pattern": r"hf_[A-Za-z0-9]{34,}",
+        "severity": "high",
+    },
+    {
+        "name": "Replicate API Token",
+        "pattern": r"r8_[A-Za-z0-9]{37,}",
+        "severity": "high",
+    },
     # --- API Keys ---
     {"name": "AWS Access Key", "pattern": r"AKIA[0-9A-Z]{16}", "severity": "high"},
     {
@@ -247,6 +290,20 @@ from roam.index.file_roles import DOC_EXTENSIONS as _DOC_EXTENSIONS  # noqa: E40
 # ---------------------------------------------------------------------------
 
 _REMEDIATION: dict[str, str] = {
+    # AI provider keys. Rotation advice is explicit because these leak through a
+    # different channel than most credentials -- pasted logs, notebooks and agent
+    # transcripts -- where the holder often does not realise a copy persists.
+    "Anthropic OAuth Token": (
+        "Revoke at console.anthropic.com and re-issue; use os.environ['ANTHROPIC_API_KEY']. "
+        "Long-lived OAuth tokens also persist in agent transcripts -- rotate, do not just delete."
+    ),
+    "Anthropic API Key": "Use os.environ['ANTHROPIC_API_KEY']; rotate the exposed key at console.anthropic.com",
+    "OpenAI Project Key": "Use os.environ['OPENAI_API_KEY']; revoke the exposed key in the OpenAI dashboard",
+    "OpenAI API Key": "Use os.environ['OPENAI_API_KEY']; revoke the exposed key in the OpenAI dashboard",
+    "xAI API Key": "Use os.environ['XAI_API_KEY']; revoke the exposed key in the xAI console",
+    "Groq API Key": "Use os.environ['GROQ_API_KEY']; revoke the exposed key in the Groq console",
+    "HuggingFace Token": "Use os.environ['HF_TOKEN']; revoke at huggingface.co/settings/tokens",
+    "Replicate API Token": "Use os.environ['REPLICATE_API_TOKEN']; revoke at replicate.com/account",
     "AWS Access Key": "Use os.environ['AWS_ACCESS_KEY_ID'] or AWS Secrets Manager",
     "AWS Secret Key": "Use os.environ['AWS_SECRET_ACCESS_KEY'] or AWS Secrets Manager",
     "GitHub Token": "Use os.environ['GITHUB_TOKEN'] or GitHub Actions secrets",
