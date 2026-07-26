@@ -162,18 +162,6 @@ def test_v2_full_pipeline(real_project, cli_runner):
     assert "pr_analyze" in dog_env["summary"]["sections_run"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "PRODUCT DEFECT, not a test bug: the shipped py-no-eval rule "
-        "(templates/rules/python/.roam-rules.yml, severity: BLOCK) does not fire on "
-        "an eval() added by a diff -- rule_violations comes back empty. This test was "
-        "SILENTLY SKIPPING because pack_src was resolved relative to the process CWD "
-        "while the real_project fixture chdirs into a temp project, so pack_src.exists() "
-        "was always False and the guard skipped it. strict=True so this flips to a "
-        "failure the moment the rule is fixed."
-    ),
-)
 def test_v2_pipeline_with_rules_pack(real_project, cli_runner):
     """End-to-end with a Python rules pack from templates/rules/python."""
     pack_src = Path(__file__).resolve().parents[1] / "templates/rules/python/.roam-rules.yml"
