@@ -552,6 +552,15 @@ def _top_cache_misses(
     "agent_mode field count as 'unknown'.",
 )
 @click.option(
+    "--split-unknown-cohort",
+    is_flag=True,
+    default=False,
+    help="Split the 'unknown' agent_mode bucket by whether each row predates "
+    "the agent-mode call-site coverage boundary (roam.plan.agent_mode."
+    "AGENT_MODE_COVERAGE_EPOCH). 'unknown' mixes two differently-composed "
+    "cohorts; this shows both instead of one blended number.",
+)
+@click.option(
     "--schema",
     is_flag=True,
     default=False,
@@ -578,10 +587,11 @@ def compile_stats(
     top_misses: bool,
     include_bench: bool,
     by_mode: bool,
+    split_unknown_cohort: bool,
     schema: bool,
 ) -> None:
     """Show distribution stats over the compile telemetry log."""
-    from roam.plan.agent_mode import is_non_production
+    from roam.plan.agent_mode import is_non_production, unknown_cohort
 
     json_mode = ctx.obj.get("json") if ctx.obj else False
     # `--schema` is static documentation: short-circuit BEFORE reading any
@@ -614,8 +624,10 @@ def compile_stats(
     # PRODUCTION rows only by default — bench/corpus/trace/diff/cache/test rows
     # would skew every reported number. `--by-mode` keeps the full set (its job
     # is to show the split). `unknown` rows stay in: historically they are a
-    # MIXED bucket (all pre-stamp rows), so dropping them would hide real
-    # traffic — disclosed below instead.
+    # MIXED bucket, so dropping them would hide real traffic — disclosed below
+    # instead. See `roam.plan.agent_mode.unknown_cohort` for exactly what is
+    # mixed (NOT "the field did not exist" — verified false, see that module);
+    # `--split-unknown-cohort` below exposes the pre/post-coverage split.
     def non_production(row: dict) -> bool:
         return is_non_production({"agent_mode": _safe_agent_mode(row)})
 
@@ -692,11 +704,12 @@ def compile_stats(
         if unavailable_rows:
             summary["partial_success"] = True
             summary["verdict"] += f"; repeat identity unavailable for {unavailable_rows} telemetry rows"
-    # W5 — by-mode breakdown. Joins on the `agent_mode` field
-    # added to telemetry rows when ROAM_AGENT_MODE env var is set at compile
-    # time (the host platform sets this per call). Pre-W5 rows lack the field,
-    # so they bucket as 'unknown' — useful baseline. This breakdown ALWAYS uses
-    # the full row set (its whole job is to show the production/non-prod split),
+    # W5 — by-mode breakdown. Joins on the `agent_mode` field, stamped on every
+    # row from `os.environ.get("ROAM_AGENT_MODE", "unknown")` — a row buckets
+    # as 'unknown' when that env var was unset at compile time, never because
+    # the field itself was absent (it predates every row in practice; see
+    # `roam.plan.agent_mode` module docs). This breakdown ALWAYS uses the full
+    # row set (its whole job is to show the production/non-prod split),
     # regardless of the --include-bench KPI filter.
     if by_mode and all_rows:
         from collections import defaultdict
@@ -724,6 +737,32 @@ def compile_stats(
                 "cache_hit_pct": d["cache_hits"] * 100 // d["n"] if d["n"] else 0,
             }
             for mode, d in sorted(per_mode.items(), key=lambda kv: -kv[1]["n"])
+        }
+    # Split the 'unknown' agent_mode bucket by call-site coverage boundary
+    # (roam.plan.agent_mode.unknown_cohort). Always uses the full row set for
+    # the same reason --by-mode does: this exists specifically to show a
+    # split that would otherwise be hidden inside one 'unknown' number.
+    if split_unknown_cohort and all_rows:
+        from collections import defaultdict
+
+        per_cohort: dict = defaultdict(lambda: {"n": 0, "l1": 0, "ms_sum": 0.0})
+        for r in all_rows:
+            cohort = unknown_cohort(r)
+            if cohort is None:
+                continue
+            per_cohort[cohort]["n"] += 1
+            if r.get("art_label") == "l1_probe":
+                per_cohort[cohort]["l1"] += 1
+            compile_ms = r.get("compile_ms")
+            if isinstance(compile_ms, (int, float)) and not isinstance(compile_ms, bool):
+                per_cohort[cohort]["ms_sum"] += compile_ms
+        summary["unknown_cohort_split"] = {
+            cohort: {
+                "n": d["n"],
+                "l1_pct": d["l1"] * 100 // d["n"] if d["n"] else 0,
+                "mean_compile_ms": round(d["ms_sum"] / d["n"], 1) if d["n"] else 0,
+            }
+            for cohort, d in sorted(per_cohort.items())
         }
     # W52 — slow-probes p50/p95/p99 per section
     if slow_probes and rows:

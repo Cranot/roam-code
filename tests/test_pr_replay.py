@@ -413,7 +413,10 @@ def test_paid_tier_with_output_appends_to_engagement_ledger(tmp_path, monkeypatc
     assert record["commits_scanned"] == 30
     assert record["commits_with_findings"] == 11
     assert record["top_detector"] == "clones-not-edited"
-    assert record["ledger_schema"] == 1
+    assert record["ledger_schema"] == 2
+    # Written from inside a pytest test: PYTEST_CURRENT_TEST is set, so the
+    # authoritative source stamp must say so (not the default "live").
+    assert record["source"] == "pytest"
 
 
 def test_engagement_ledger_appends_not_overwrites(tmp_path, monkeypatch):
