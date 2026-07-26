@@ -90,6 +90,20 @@ jobs:
           PY
           uv pip check --python .venv/bin/python
 
+      # Build the repo's own index on ONE lane so the dogfood tests that borrow
+      # it actually execute. ~19 tests gate on a ready roam-code index (cycles
+      # dispatch, coupling, bare-filename resolution, CGA attestation); CI never
+      # built one, so they skipped on every run and contributed zero coverage
+      # while the lane reported green. Skipping cleanly was the safety fix after
+      # they raced a half-built index -- running them is the point.
+      #
+      # One lane, not four: the index costs ~2.5 min to build and the tests are
+      # interpreter-independent, so paying for it four times buys nothing. The
+      # other lanes still skip, guarded by tests/_helpers/repo_index.py.
+      - name: Build the repo index (dogfood coverage lane)
+        if: matrix.python-version == '3.12'
+        run: .venv/bin/python -m roam index --quiet
+
       # No ``-x``. Fail-fast on the authoritative lane is information loss: all
       # four Python lanes rediscover the same earliest failure and withhold the
       # rest, so a suite with N broken tests reports 1 and takes N pushes to
