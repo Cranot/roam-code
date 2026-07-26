@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -163,7 +164,7 @@ def synthetic_repo(tmp_path_factory) -> Path:
 
     # Index it. Use the real CLI so we exercise the same code path users hit.
     result = subprocess.run(
-        ["roam", "init"],
+        [sys.executable, "-m", "roam", "init"],
         cwd=root,
         capture_output=True,
         text=True,

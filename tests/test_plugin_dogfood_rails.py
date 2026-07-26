@@ -251,7 +251,7 @@ def _roam_available() -> bool:
     in-process discovery tests above.
     """
     try:
-        result = subprocess.run(["roam", "--version"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run([sys.executable, "-m", "roam", "--version"], capture_output=True, text=True, timeout=10)
         return result.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -261,7 +261,7 @@ def _roam_available() -> bool:
 def test_subprocess_plugins_list_shows_rails():
     """``roam plugins list`` (subprocess) names the rails plugin."""
     result = subprocess.run(
-        ["roam", "plugins", "list"],
+        [sys.executable, "-m", "roam", "plugins", "list"],
         env=_env_with_plugin(),
         capture_output=True,
         text=True,
@@ -276,7 +276,7 @@ def test_subprocess_plugins_list_shows_rails():
 def test_subprocess_plugins_info_describes_rails():
     """``roam plugins info rails`` returns the metadata declared in register()."""
     result = subprocess.run(
-        ["roam", "plugins", "info", "rails"],
+        [sys.executable, "-m", "roam", "plugins", "info", "rails"],
         env=_env_with_plugin(),
         capture_output=True,
         text=True,
@@ -291,7 +291,7 @@ def test_subprocess_plugins_info_describes_rails():
 def test_subprocess_plugins_doctor_exits_clean(tmp_path):
     """``roam plugins doctor`` exits 0 with the dogfood plugin loaded."""
     result = subprocess.run(
-        ["roam", "plugins", "doctor"],
+        [sys.executable, "-m", "roam", "plugins", "doctor"],
         env=_env_with_plugin(),
         capture_output=True,
         text=True,
