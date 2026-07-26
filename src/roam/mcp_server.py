@@ -7378,8 +7378,6 @@ def batch_search(
     from roam.commands.resolve import ensure_index
     from roam.db.connection import StaleDbDirError, open_db
 
-    ensure_index()
-
     queries_list: list[str] = [str(q) for q in (queries or [])][:_MAX_BATCH_QUERIES]
     limit = max(1, min(int(limit_per_query), 50))
     include_paths_flag = bool(include_paths)
@@ -7400,6 +7398,13 @@ def batch_search(
             "results": {},
             "errors": {},
         }
+
+    # Index readiness is only required once we actually touch the DB. An empty
+    # query list is answerable from the arguments alone, so demanding the index
+    # before this early return made a no-op call fail whenever another process
+    # held the index-build lock. Mirrors roam_oracle_batch, which already
+    # validates its input before calling ensure_index().
+    ensure_index()
 
     try:
         conn_ctx = open_db(readonly=True)
@@ -7493,8 +7498,6 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     from roam.commands.resolve import ensure_index
     from roam.db.connection import StaleDbDirError, open_db
 
-    ensure_index()
-
     symbols_list: list[str] = [str(s) for s in (symbols or [])][:_MAX_BATCH_SYMBOLS]
 
     if not symbols_list:
@@ -7502,6 +7505,11 @@ def batch_get(symbols: list, root: str = ".") -> dict:
             _batch_get_summary("no symbols provided", 0, 0),
             errors={},
         )
+
+    # Index readiness is only required once we actually touch the DB — see the
+    # matching note in batch_search. An empty symbol list is answerable from the
+    # arguments alone, so this must stay below the early return.
+    ensure_index()
 
     # W103/W607: open_db() and the per-symbol loop are kept in separate blocks
     # so a connection failure short-circuits with a _fatal payload while

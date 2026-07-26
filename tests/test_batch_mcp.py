@@ -169,10 +169,22 @@ def mock_open_db(tmp_db):
 
 
 def _patch_db(tmp_db):
-    """Return a context manager patching ensure_index and open_db.
+    """Return context managers patching ensure_index and open_db.
 
     open_db is imported inside the batch functions via
     'from roam.db.connection import open_db', so we patch the source module.
+
+    ``ensure_index`` is patched for the same reason, and this used to be only a
+    docstring promise: the helper patched ``db_exists`` -> True, which does not
+    neutralize ``ensure_index`` -- it forces it PAST its ``db_exists()`` check
+    and into ``_existing_index_recovery_state()``, which stats the real
+    checkout's ``.roam/index.state``. When any concurrent process held an
+    in-progress index (routine under pytest-xdist, and the norm on CI), that
+    returned "active" and ``ensure_index`` raised, so whichever test called it
+    inside that window got an error envelope instead of its payload. That race
+    is what turned CI red on all four Python versions. These are in-process
+    contract tests over batch semantics; index readiness is not what they
+    assert, so stub it out and keep them hermetic.
     """
     from contextlib import contextmanager
 
@@ -185,9 +197,17 @@ def _patch_db(tmp_db):
         finally:
             conn.close()
 
+    @contextmanager
+    def _index_ready():
+        with (
+            patch("roam.commands.resolve.db_exists", return_value=True),
+            patch("roam.commands.resolve.ensure_index", return_value=None),
+        ):
+            yield
+
     return (
         patch("roam.db.connection.open_db", side_effect=_open),
-        patch("roam.commands.resolve.db_exists", return_value=True),
+        _index_ready(),
     )
 
 
@@ -887,3 +907,65 @@ class TestBatchConstants:
         from roam.mcp_server import _MAX_BATCH_SYMBOLS
 
         assert _MAX_BATCH_SYMBOLS == 50
+
+
+# ---------------------------------------------------------------------------
+# Index-readiness ordering contract
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyInputDoesNotRequireIndex:
+    """An argument-only no-op must not depend on index readiness.
+
+    ``ensure_index()`` raises when another process holds an in-progress index.
+    Both batch tools used to call it ABOVE their empty-input early return, so a
+    concurrent index build turned a call that touches no database at all into an
+    error envelope. ``roam_oracle_batch`` already had the correct order
+    (validate input, then ensure the index); these tests pin the same order for
+    the batch pair so it cannot regress.
+
+    Deliberately does NOT use ``_patch_db``: the point is that these paths must
+    hold even when ``ensure_index`` is hostile, so it is patched to raise rather
+    than to no-op.
+    """
+
+    @pytest.fixture()
+    def _index_locked(self, monkeypatch):
+        import click
+
+        def _raise(*_args, **_kwargs):
+            raise click.ClickException(
+                "The roam index is currently being built by another process. Retry after that index run completes."
+            )
+
+        monkeypatch.setattr("roam.commands.resolve.ensure_index", _raise)
+
+    def test_batch_search_empty_queries_ignores_locked_index(self, _index_locked):
+        from roam.mcp_server import batch_search
+
+        result = batch_search(queries=[], root=".")
+
+        assert "summary" in result, result
+        assert result["summary"]["queries_executed"] == 0
+        assert result["summary"]["total_matches"] == 0
+        assert result["results"] == {}
+
+    def test_batch_get_empty_symbols_ignores_locked_index(self, _index_locked):
+        from roam.mcp_server import batch_get
+
+        result = batch_get(symbols=[], root=".")
+
+        assert "summary" in result, result
+        assert result["summary"]["symbols_requested"] == 0
+        assert result["summary"]["symbols_resolved"] == 0
+        assert result["results"] == {}
+
+    def test_non_empty_queries_still_require_index(self, _index_locked):
+        """The guard must stay in force for calls that do reach the database."""
+        from roam.mcp_server import batch_search
+
+        result = batch_search(queries=["auth"], root=".")
+
+        # The @_tool wrapper converts the ClickException into an error envelope;
+        # what matters is that the index check was NOT skipped for a real query.
+        assert "summary" not in result or result.get("error"), result
