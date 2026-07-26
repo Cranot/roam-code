@@ -199,27 +199,43 @@ def _compile_path_glob(glob: str) -> re.Pattern[str]:
     a hole at its own base level -- which is where entry points, ``main.go`` and
     top-level modules live.
 
-    Semantics implemented here (what users mean by ``**``):
-      ``**/``  zero or more path segments
+    SCOPE OF THIS FIX -- deliberately minimal.
+
+    Only ``**/`` changes. ``*`` keeps ``fnmatch``'s behaviour of crossing ``/``,
+    because that is what every existing rule was written against. A first
+    attempt gave ``*`` POSIX semantics (``[^/]*``, stopping at ``/``), which is
+    more correct in the abstract and silently NARROWED every shipped rule:
+    ``*.py`` stopped matching ``src/main.py``, and 24 tests failed. Widening a
+    scope hole is the bug being fixed here; narrowing every other rule to fix it
+    would trade one silent scope change for a larger one.
+
+    Whether ``*`` *should* stop at ``/`` is a real question with its own blast
+    radius across 127 shipped rules. It is not this fix.
+
+    Semantics implemented here:
+      ``**/``  zero or more path segments (INCLUDING zero -- the fix)
       ``**``   anything, including ``/``
-      ``*``    anything except ``/``
-      ``?``    one character except ``/``
+      ``*``    anything, including ``/`` (unchanged from ``fnmatch``)
+      ``?``    exactly one character (unchanged from ``fnmatch``)
     """
     out: list[str] = []
     i, n = 0, len(glob)
     while i < n:
         ch = glob[i]
         if glob.startswith("**/", i):
-            out.append("(?:[^/]+/)*")  # zero or more segments
+            # The whole fix: the trailing slash is optional, so a base-level
+            # file matches. `(?:.*/)?` rather than `(?:[^/]+/)*` keeps `*`'s
+            # slash-crossing behaviour consistent across the pattern.
+            out.append("(?:.*/)?")
             i += 3
         elif glob.startswith("**", i):
             out.append(".*")
             i += 2
         elif ch == "*":
-            out.append("[^/]*")
+            out.append(".*")  # fnmatch-compatible: crosses `/`
             i += 1
         elif ch == "?":
-            out.append("[^/]")
+            out.append(".")  # fnmatch-compatible
             i += 1
         else:
             out.append(re.escape(ch))

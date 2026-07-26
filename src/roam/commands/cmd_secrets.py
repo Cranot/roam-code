@@ -274,11 +274,24 @@ _TEST_DIR_SEGMENTS = frozenset(
     }
 )
 
-# File-level patterns (basename matching)
-_TEST_FILE_RE = re.compile(
-    r"^test_.*|.*_test\.[^.]+$",
-    re.IGNORECASE,
-)
+# File-level test-file detection delegates to the canonical anchored
+# classifier (roam.index.file_roles.is_test -> test_conventions.is_test_file)
+# instead of a hand-rolled regex. The previous `_TEST_FILE_RE` (Python-only:
+# `^test_.*` / `.*_test\.[^.]+$`) missed every JS/TS convention (*.test.ts,
+# *.spec.js, ...), Go (*_test.go), Java/Kotlin/C# (*Test.java, ...), Ruby
+# (*_spec.rb), etc. -- so in a JS/TS repo, test fixtures were never
+# recognised as tests and every secret-scan finding in them surfaced as a
+# real (unsuppressed) hit. Measured: 86/86 false positives on a JS/TS
+# fixture corpus before this fix.
+#
+# Called on the BASENAME only (not the full relative path) -- this is
+# load-bearing, not incidental. `is_test` also matches directory-based
+# conventions (`(^|/)tests/`, `(^|/)test/`, `(^|/)testing/`, ...); feeding
+# it the full path would let those directory heuristics reach first-party
+# source that merely lives under a similarly-named path component. The
+# directory case is already handled above by `_TEST_DIR_SEGMENTS`; this
+# basename-only call adds *only* the filename-convention coverage.
+from roam.index.file_roles import is_test as _roles_is_test  # noqa: E402
 
 # _DOC_EXTENSIONS re-exported from roam.index.file_roles (W37.5 consolidation —
 # was 1 of 3 divergent local copies before consolidation; now uses the 5-entry
@@ -458,8 +471,9 @@ def _is_test_or_doc_path(rel_path: str) -> bool:
         if part in _TEST_DIR_SEGMENTS:
             return True
 
-    # Check filename patterns
-    if _TEST_FILE_RE.match(basename):
+    # Check filename patterns (canonical, language-aware classifier;
+    # basename-only -- see comment on the import above)
+    if _roles_is_test(basename):
         return True
 
     # Check doc extensions
