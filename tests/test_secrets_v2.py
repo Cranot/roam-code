@@ -474,6 +474,43 @@ class TestIsTestOrDocPath:
 
         assert _is_test_or_doc_path("src/tests/integration/test_api.py")
 
+    # -- W-followup: _TEST_FILE_RE was Python-convention-only (^test_.* /
+    # .*_test\.[^.]+$) and missed every JS/TS/Go/etc. fixture convention,
+    # so JS/TS test fixtures were never suppressed and every secret found
+    # in them surfaced as a real (unsuppressed) finding. Regression paths
+    # below deliberately have NO test-directory component -- putting them
+    # under tests/ or test/ would let the directory heuristic mask the
+    # very filename-classifier bug these cases exist to catch.
+
+    def test_js_test_suffix_file_no_test_dir(self):
+        from roam.commands.cmd_secrets import _is_test_or_doc_path
+
+        assert _is_test_or_doc_path("foo.test.ts")
+
+    def test_js_spec_suffix_file_no_test_dir(self):
+        from roam.commands.cmd_secrets import _is_test_or_doc_path
+
+        assert _is_test_or_doc_path("foo.spec.js")
+
+    def test_go_test_suffix_file_no_test_dir(self):
+        from roam.commands.cmd_secrets import _is_test_or_doc_path
+
+        assert _is_test_or_doc_path("foo_test.go")
+
+    def test_python_test_prefix_file_no_test_dir(self):
+        from roam.commands.cmd_secrets import _is_test_or_doc_path
+
+        assert _is_test_or_doc_path("test_foo.py")
+
+    def test_first_party_attest_source_not_masked(self):
+        # "attest" contains the substring "test" -- this pins that neither
+        # the basename classifier nor the directory-segment check
+        # misfires on first-party source that merely has "test" as a
+        # substring of a path component (attest/, contest/, ...).
+        from roam.commands.cmd_secrets import _is_test_or_doc_path
+
+        assert not _is_test_or_doc_path("src/roam/attest/cga.py")
+
 
 # ===========================================================================
 # 7. Backward compatibility
