@@ -389,6 +389,95 @@ def _check_git_repo_health() -> dict:
     }
 
 
+def _check_ci_environment_parity() -> dict:
+    """Does this environment resemble the one CI actually tests?
+
+    "It passes locally" is only evidence when local and CI agree. When they
+    diverge silently, a green local run is worse than no run, because it is
+    believed.
+
+    Both divergences checked here were paid for on 2026-07-26. The full suite
+    passed locally, exit 0, on the exact commit whose CI was failing, and four
+    CI round-trips were spent discovering defects one at a time that no local
+    run could reproduce:
+
+    * The interpreter was 3.14 while CI tested 3.10-3.13, so version-specific
+      behaviour was never exercised locally.
+    * ``roam`` on PATH resolved to a stale global install rather than this
+      working tree, so tests shelling out to it exercised a previous release --
+      passing locally while failing on CI, where the console script is only in
+      an unexported ``.venv/bin``.
+
+    The second is the more dangerous: it does not error, it silently tests the
+    wrong code. Neither is visible without deliberately looking, and no standard
+    tool reports either.
+
+    Advisory by nature: running a newer interpreter is often deliberate. The
+    point is that the divergence be KNOWN, not that it be forbidden.
+    """
+    import re
+
+    findings: list[str] = []
+
+    # --- interpreter vs the versions CI declares -------------------------
+    running = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    declared: set[str] = set()
+    workflows = Path(".github") / "workflows"
+    if workflows.is_dir():
+        for wf in sorted(workflows.glob("*.y*ml")):
+            try:
+                text = wf.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            # `python-version: ["3.10", "3.11"]` — matrix list form only; a
+            # single scalar version is usually a lint/docs lane, not the test
+            # matrix, so it would produce false divergence.
+            for block in re.findall(r"python-version:\s*\[([^\]]+)\]", text):
+                declared.update(re.findall(r"[0-9]+\.[0-9]+", block))
+
+    if not declared:
+        return {
+            "name": "CI environment parity",
+            "passed": True,
+            "detail": "no CI python-version matrix found to compare against",
+            "_state": "not_applicable",
+        }
+
+    if running not in declared:
+        findings.append(
+            f"running Python {running} but CI tests {', '.join(sorted(declared))} — "
+            "a green local suite here does not predict CI"
+        )
+
+    # --- does `roam` on PATH belong to THIS interpreter? ------------------
+    on_path = shutil.which("roam")
+    if on_path:
+        # The console script installed for the running interpreter lives beside
+        # it (venv/bin or venv/Scripts). Anything else is a different install.
+        expected_dir = Path(sys.executable).parent
+        try:
+            same = Path(on_path).parent.resolve() == expected_dir.resolve()
+        except OSError:
+            same = False
+        if not same:
+            findings.append(
+                f"`roam` on PATH is {on_path}, not the one for this interpreter "
+                f"({expected_dir}) — tests that shell out to `roam` will exercise that other install"
+            )
+
+    if findings:
+        return {
+            "name": "CI environment parity",
+            "passed": False,
+            "detail": "; ".join(findings),
+        }
+    return {
+        "name": "CI environment parity",
+        "passed": True,
+        "detail": f"Python {running} is in the CI matrix; `roam` resolves to this interpreter",
+    }
+
+
 def _check_networkx() -> dict:
     """networkx importable."""
     try:
@@ -2219,6 +2308,7 @@ def doctor(ctx, strict, persist):
     _run_check("tree_sitter_language_pack", _check_tree_sitter_language_pack)
     _run_check("git", _check_git)
     _run_check("git_repo_health", _check_git_repo_health)
+    _run_check("ci_environment_parity", _check_ci_environment_parity)
     _run_check("networkx", _check_networkx)
     _run_check("optional_extras", _check_optional_extras)
     _run_check("cloud_sync", _check_cloud_sync)
