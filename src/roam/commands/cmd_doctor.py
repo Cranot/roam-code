@@ -478,6 +478,227 @@ def _check_ci_environment_parity() -> dict:
     }
 
 
+def _load_pyproject_toml(path: Path) -> dict | None:
+    """Parse ``pyproject.toml`` via stdlib ``tomllib`` (3.11+) or the ``tomli``
+    backport (3.10 floor).
+
+    Returns ``None`` on any failure -- missing parser, unreadable file,
+    malformed TOML -- so callers treat an unparseable pyproject as
+    "nothing to compare against" (advisory pass) rather than crashing
+    the doctor pipeline over a decoration problem in someone's TOML.
+    """
+    try:
+        import tomllib  # type: ignore[import-not-found]
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found]
+        except ImportError:
+            return None
+    try:
+        with path.open("rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+
+
+def _own_pyproject_project_table(expected_name: str) -> tuple[dict, str] | tuple[None, str]:
+    """Locate + parse ``./pyproject.toml`` IF it declares ``expected_name``.
+
+    Shared gate for the two "declared-vs-installed" checks below. Both
+    only mean anything when the doctor is run from inside the checkout
+    that produced the running install (dev / editable workflow) -- a
+    user running ``roam doctor`` inside an unrelated project has an
+    unrelated ``pyproject.toml`` at ``cwd``, and comparing against that
+    would be noise, not signal.
+
+    Returns ``(project_table, "")`` on a usable match, or
+    ``(None, <not_applicable reason>)`` otherwise.
+    """
+    pyproject = Path.cwd() / "pyproject.toml"
+    if not pyproject.is_file():
+        return None, "no pyproject.toml here to compare against"
+    data = _load_pyproject_toml(pyproject)
+    if data is None:
+        return None, "pyproject.toml present but unparseable here (no tomllib/tomli, or malformed) -- skipped"
+    project = data.get("project", {}) or {}
+    name = project.get("name")
+    if name != expected_name:
+        return None, f"pyproject.toml here declares project {name!r}, not {expected_name!r} -- skipped"
+    return project, ""
+
+
+def _check_dependency_versions() -> dict:
+    """Installed package versions vs the specifiers pyproject.toml declares.
+
+    The source (pyproject.toml) is the ground truth for what a package
+    version is ALLOWED to be; the environment (site-packages) is what it
+    ACTUALLY is. They silently diverge whenever a dependency bound is
+    tightened/loosened without everyone re-running ``pip install -e .`` --
+    pip never re-resolves an already-satisfied-at-install-time package on
+    its own.
+
+    Paid for on 2026-07-26: the venv held
+    ``tree-sitter-language-pack==1.6.2`` against pyproject's declared
+    ``>=1.13.3,<1.14``. The old pack's ``has_language()`` returned False
+    for every grammar, so every file parsed to zero symbols and ~18 tests
+    failed -- but only on some branches, because the venv itself didn't
+    change between them. That asymmetry impersonated a broken merge and
+    cost a three-revision bisect before the actual cause (a stale venv,
+    not a code defect) was found. ``pip install -e .`` alone doesn't
+    catch this either: pip treats an already-installed package as
+    satisfied unless the specifier is violated at RESOLVE time, so a
+    tightened lower bound on an already-installed package is silently
+    ignored.
+
+    Cheap by construction: only the packages pyproject.toml actually
+    declares are looked up (via ``importlib.metadata.version``), never a
+    walk of the whole environment.
+
+    Advisory: a stale dependency degrades roam's own behaviour (as it did
+    here) rather than making the ``doctor`` command itself unable to run,
+    and reinstalling is a known, cheap fix once surfaced.
+    """
+    project, na_reason = _own_pyproject_project_table("roam-code")
+    if project is None:
+        return {
+            "name": "Dependency versions",
+            "passed": True,
+            "detail": na_reason,
+            "_state": "not_applicable",
+        }
+
+    try:
+        import importlib.metadata as _md
+
+        from packaging.requirements import InvalidRequirement, Requirement
+        from packaging.specifiers import InvalidSpecifier
+    except ImportError:
+        return {
+            "name": "Dependency versions",
+            "passed": True,
+            "detail": "`packaging` not importable -- cannot verify declared specifiers, skipped",
+            "_state": "not_applicable",
+        }
+
+    requirement_strings: list[str] = list(project.get("dependencies", []) or [])
+    optional = project.get("optional-dependencies", {}) or {}
+    for group in optional.values():
+        if isinstance(group, list):
+            requirement_strings.extend(group)
+
+    violations: list[str] = []
+    checked = 0
+    for raw in requirement_strings:
+        if not isinstance(raw, str):
+            continue
+        try:
+            req = Requirement(raw)
+        except InvalidRequirement:
+            continue
+        if req.marker is not None:
+            # Environment markers (e.g. ``; python_version < '3.11'``) mean
+            # the requirement legitimately does not apply here -- a missing
+            # or mismatched package under a false marker is not a violation.
+            try:
+                if not req.marker.evaluate():
+                    continue
+            except Exception:  # noqa: BLE001 — malformed marker, not our bug to surface
+                continue
+        if not req.specifier:
+            continue
+        try:
+            installed = _md.version(req.name)
+        except _md.PackageNotFoundError:
+            continue
+        checked += 1
+        try:
+            if not req.specifier.contains(installed, prereleases=True):
+                violations.append(f"{req.name} installed={installed} declared={req.specifier}")
+        except InvalidSpecifier:
+            continue
+
+    if violations:
+        return {
+            "name": "Dependency versions",
+            "passed": False,
+            "detail": (
+                f"{len(violations)} installed package(s) violate the specifier pyproject.toml "
+                "declares: " + "; ".join(violations) + " -- `pip install -e .` to reconcile "
+                "(pip does not re-resolve an already-satisfied package on its own)"
+            ),
+        }
+    return {
+        "name": "Dependency versions",
+        "passed": True,
+        "detail": f"{checked} declared dependenc{'y' if checked == 1 else 'ies'} installed match pyproject.toml",
+    }
+
+
+def _check_installed_version_drift() -> dict:
+    """Installed distribution metadata version vs the version pyproject.toml declares.
+
+    An editable install's ``dist-info/METADATA`` is written once, at
+    install time, from whatever pyproject.toml said THEN. Bump the
+    version in pyproject.toml afterward (a routine release-prep step) and
+    every consumer of installed metadata -- ``importlib.metadata.version``,
+    ``--version``, SBOM/evidence emitters -- keeps reporting the OLD
+    number until the package is reinstalled. Observed on a sibling project
+    (compile-code) 2026-07-26: site-packages held
+    ``compile_code-0.1.0.dist-info`` from an editable install that predated
+    the 0.2.0 bump, so ``--version`` lied while the checked-out code was
+    already correct.
+
+    Advisory: the running code is unaffected (this is metadata-only
+    drift), and the fix is a one-line reinstall once surfaced.
+    """
+    project, na_reason = _own_pyproject_project_table("roam-code")
+    if project is None:
+        return {
+            "name": "Installed version",
+            "passed": True,
+            "detail": na_reason,
+            "_state": "not_applicable",
+        }
+
+    declared_version = project.get("version")
+    if not declared_version:
+        return {
+            "name": "Installed version",
+            "passed": True,
+            "detail": "pyproject.toml here has no static [project.version] to compare against -- skipped",
+            "_state": "not_applicable",
+        }
+
+    import importlib.metadata as _md
+
+    try:
+        installed_version = _md.version("roam-code")
+    except _md.PackageNotFoundError:
+        return {
+            "name": "Installed version",
+            "passed": True,
+            "detail": "roam-code not found in installed distribution metadata -- skipped",
+            "_state": "not_applicable",
+        }
+
+    if installed_version != declared_version:
+        return {
+            "name": "Installed version",
+            "passed": False,
+            "detail": (
+                f"installed distribution metadata reports roam-code {installed_version} but "
+                f"pyproject.toml here declares {declared_version} -- `--version` and anything else "
+                "reading installed metadata will report the wrong number until reinstalled "
+                "(`pip install -e .`)"
+            ),
+        }
+    return {
+        "name": "Installed version",
+        "passed": True,
+        "detail": f"installed distribution metadata matches pyproject.toml ({installed_version})",
+    }
+
+
 def _check_networkx() -> dict:
     """networkx importable."""
     try:
@@ -2184,6 +2405,13 @@ _ADVISORY_CHECK_NAMES = frozenset(
         #    stops roam working. A global install beside a project venv is a
         #    normal setup — blocking would exit 2 for a large share of users
         #    and teach them to ignore doctor. `--strict` still gates it in CI.)
+        "Dependency versions",  # stale venv vs pyproject.toml specifier — roam's own
+        #   behaviour degrades (parses to zero symbols, etc.) but the fix is a
+        #   known one-line reinstall; blocking would exit 2 for every dev venv
+        #   one `pip install -e .` behind a tightened bound.
+        "Installed version",  # editable dist-info predates a pyproject.toml version
+        #   bump — `--version` lies but the running code is unaffected; same
+        #   "reinstall to reconcile" shape as "Installed binary" above.
     }
 )
 
@@ -2315,6 +2543,8 @@ def doctor(ctx, strict, persist):
     _run_check("git", _check_git)
     _run_check("git_repo_health", _check_git_repo_health)
     _run_check("ci_environment_parity", _check_ci_environment_parity)
+    _run_check("dependency_versions", _check_dependency_versions)
+    _run_check("installed_version_drift", _check_installed_version_drift)
     _run_check("networkx", _check_networkx)
     _run_check("optional_extras", _check_optional_extras)
     _run_check("cloud_sync", _check_cloud_sync)
