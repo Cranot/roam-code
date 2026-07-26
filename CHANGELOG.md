@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [13.10.0] — 2026-07-23
+## [13.10.0] — 2026-07-26
 
 ### Added
 - **`roam savings` + `roam savings-backfill` — proof-oriented Procedure Foundry telemetry** — prompt compilation and Claude Stop hooks now share a per-turn `episode_id`, preserving compile identity, terminal outcome, verification state, changed-file count, and privacy-preserving diff identity in an append-only local ledger. `savings` materializes the ledger into SQLite and withholds savings claims until known-answer canaries, telemetry integrity, hook-version coverage, compile joins, terminal coverage, and explicit verification-health coverage pass. `savings-backfill` mines local Claude/Codex transcripts into a replaceable historical discovery snapshot: raw prompts, responses, paths, shell values, and tool arguments are excluded, while keyed intent fingerprints plus sanitized shell templates/sequences/n-grams retain repeated workflow structure. Historical frequency can nominate automation experiments but can never satisfy the prospective evidence gate.
