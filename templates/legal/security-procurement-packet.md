@@ -535,9 +535,10 @@ commitments.
 > `hello@roam-code.com`.
 
 > **Can you run on-prem or in our VPC?**
-> Yes for the **CLI** today — it runs entirely on your machine
-> (Apache 2.0;
-> [`pip install roam-code`](https://pypi.org/project/roam-code/)).
+> Yes for the **CLI** today — it runs locally by default (Apache 2.0;
+> [`pip install roam-code`](https://pypi.org/project/roam-code/)), with
+> network access limited to the explicit, opt-in triggers inventoried in
+> [`docs/network-boundary.md`](https://github.com/Cranot/roam-code/blob/main/docs/network-boundary.md).
 > Not as a packaged GA hosted product today. A regulated
 > private-deployment pilot of Roam Review can be scoped in a signed
 > SOW, with deployment artefacts, support terms, data flow, and
