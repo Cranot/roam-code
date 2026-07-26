@@ -476,6 +476,14 @@ git add -- src/roam/foo.py tests/test_foo.py    # yes
 git add -u                                       # no, not in a shared tree
 ```
 
+One real exception, and it is a trap rather than a licence. With
+`core.fileMode=false` (every Windows checkout), `git commit -- <pathspec>`
+re-diffs HEAD against the working tree per path and **ignores file mode**, so an
+index-only `git update-index --chmod=+x` is silently committed as nothing at
+all. Exec-bit fixes therefore have to be committed without a pathspec. When that
+is unavoidable, inspect `git diff --cached` first and confirm the staged set is
+exactly what you intend before committing.
+
 **Treat "it failed once, passed in isolation" as contamination until proven
 otherwise.** Two runs failed with `The roam index is currently being built by
 another process` purely because a concurrent agent was running `roam index` in
