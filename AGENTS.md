@@ -459,6 +459,32 @@ correction, `surface --json` top-level keys completion, and
 - **Output abbreviations:** `fn` (function), `cls` (class), `meth` (method) — via `abbrev_kind()`
 - **No emojis, no colors, no box-drawing** in output — plain ASCII only for token efficiency
 
+## Working in a tree shared with other agents
+
+When more than one agent works in the same checkout, two failure modes are
+guaranteed rather than likely. Both were hit on 2026-07-27.
+
+**Stage explicit paths. Never `git add -u` or `git add -A`.**
+Those cannot distinguish your edits from another agent's half-written file. A
+blanket stage swept an in-progress `src/roam/plan/agent_mode.py` into a commit
+titled *"style: sort imports in cmd_secrets"* — no content was lost, but the
+history now misdescribes what that commit contains, and `git rebase -i` is not
+available here to repair it.
+
+```sh
+git add -- src/roam/foo.py tests/test_foo.py    # yes
+git add -u                                       # no, not in a shared tree
+```
+
+**Treat "it failed once, passed in isolation" as contamination until proven
+otherwise.** Two runs failed with `The roam index is currently being built by
+another process` purely because a concurrent agent was running `roam index` in
+the same tree. Re-run the named test alone before diagnosing anything; a
+cross-agent collision and a real defect look identical in a log.
+
+For index-touching work, prefer a separate worktree or a distinct `ROAM_DB_DIR`
+per agent over hoping the timing works out.
+
 ## Adding a new CLI command
 
 1. Create `src/roam/commands/cmd_yourcommand.py` following the command template above
