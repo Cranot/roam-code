@@ -181,7 +181,10 @@ class TestDoctorCheckCoverage:
         # Added the git-repo-health check (core.bare on a populated checkout,
         # core.worktree pointing at another tree or an unresolvable foreign
         # path, stale index.lock, unreachable detached HEAD) — total 26.
-        assert data["summary"]["total"] == 26
+        # Added the CI environment-parity advisory (interpreter outside the
+        # declared CI matrix; console script belonging to another install)
+        # — total 27.
+        assert data["summary"]["total"] == 27
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()
