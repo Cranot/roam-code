@@ -451,8 +451,34 @@ def main(argv: list[str] | None = None) -> int:
             [sys.executable, "scripts/linkcheck.py"],
             fix_hint="fix the dead anchor/link named above",
         )
+        # Mirror CI's index pre-build before fanning out across workers.
+        #
+        # CI builds the repo index on one lane (roam-ci.yml "Build the repo index
+        # (dogfood coverage lane)") and then runs pytest SERIALLY. This gate runs
+        # N workers with --dist loadfile and never built the index, so on a cold
+        # checkout the first worker to need it starts a build and every other
+        # worker that touches an index-backed CLI path fails with "The roam index
+        # is currently being built by another process".
+        #
+        # Measured on a cold 12-core box: 224 failures, 147 of them (66%) that
+        # single message. On a warm developer machine it is invisible, which is
+        # why the divergence survived -- the gate only bites where the index is
+        # absent, and that is exactly the state a fresh clone is in.
+        #
+        # Build only when missing: on a normal machine this is a no-op, so the
+        # gate does not gain the ~2.5 min index cost on every push.
+        index_db = Path(".roam") / "index.db"
+        if not index_db.exists():
+            runner._run(
+                "repo index readiness (cold-checkout guard)",
+                [sys.executable, "-m", "roam", "index", "--quiet"],
+                fix_hint="build the index once: python -m roam index",
+            )
+
         runner._run(
-            "FULL test suite (-m 'not slow', what CI runs)",
+            # NOT "what CI runs": CI runs this surface SERIALLY on a pre-built
+            # index. This gate runs it in parallel, which is strictly harsher.
+            "FULL test suite (-m 'not slow'; parallel — harsher than CI's serial run)",
             [
                 sys.executable,
                 "-m",
@@ -466,7 +492,11 @@ def main(argv: list[str] | None = None) -> int:
                 "--dist",
                 "loadfile",
             ],
-            fix_hint="fix the failing tests — CI runs exactly this surface",
+            fix_hint=(
+                "fix the failing tests. NOTE: this runs in parallel while CI runs serially, "
+                "so a failure here may be xdist isolation rather than a product defect — "
+                "re-run the named test with -n 0 to tell the two apart"
+            ),
         )
 
     ok = _print_summary(runner.results)
