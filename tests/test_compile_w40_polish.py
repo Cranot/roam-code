@@ -8,7 +8,6 @@ E1 roam compile-stats command end-to-end
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 
@@ -82,11 +81,13 @@ def test_w40_b1_coupling_backtick_returns_none_without_backticks():
     assert out is None
 
 
-def test_w40_b1_coupling_backtick_resolves_real_symbol(monkeypatch):
-    """When a backticked symbol resolves to a real file, embed coupling."""
-    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    if not os.path.exists(os.path.join(repo, ".roam", "index.db")):
-        pytest.skip("requires .roam/index.db in cwd")
+def test_w40_b1_coupling_backtick_resolves_real_symbol(monkeypatch, repo_index):
+    """When a backticked symbol resolves to a real file, embed coupling.
+
+    Gated on a COMPLETE, populated index (``repo_index``) rather than on the
+    existence of ``.roam/index.db`` -- a half-built index yields empty coupling
+    and the failure reads as a probe defect."""
+    repo = str(repo_index.parent.parent)
     plan = compile_plan("what files are coupled to `compile_plan`")
     env, label = compile_for_artifact(plan, cwd=repo)
     pre = env["plan"].get("prefetched_facts", {})

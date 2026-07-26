@@ -335,21 +335,21 @@ def test_resolve_cli_command_files():
 # ---- cycles dimension (2026-06-11) ----
 
 
-def test_w12_cycles_dimension_has_native_dispatch():
+def test_w12_cycles_dimension_has_native_dispatch(repo_index):
     """ "Biggest cycles" prompts route to top_n_ranking; before 2026-06-11 the
     dispatch table had no cycles entry, so the probe emitted an empty
     `unavailable` envelope and the agent re-derived the answer (the +56%
     w11w13 t4 bench cell). Run the probe against THIS repo (indexed, has
-    real SCCs) and require non-empty ranked items."""
-    import os
+    real SCCs) and require non-empty ranked items.
 
-    import pytest as _pytest
-
+    Gated by the ``repo_index`` fixture, which requires a COMPLETE, populated
+    index rather than merely the presence of ``.roam/index.db``. The weaker
+    check let this test run against a half-built index on CI and report the
+    empty result as a dispatch defect."""
     from roam.plan.compiler import _probe_top_n_ranking_for_task
 
-    if not os.path.exists(os.path.join(os.getcwd(), ".roam", "index.db")):
-        _pytest.skip("requires the roam-code index")
-    out = _probe_top_n_ranking_for_task("What are the biggest cycles in this codebase?", os.getcwd())
+    root = str(repo_index.parent.parent)
+    out = _probe_top_n_ranking_for_task("What are the biggest cycles in this codebase?", root)
     assert out, "probe returned nothing for a cycles ranking prompt"
     ranking = out.get("top_n_ranking") or {}
     assert ranking.get("dimension") == "cycles"

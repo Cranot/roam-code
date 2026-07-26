@@ -19,23 +19,32 @@ import pytest
 pytestmark = pytest.mark.xdist_group("mainrepo_compile")
 
 from roam.plan.compiler import _resolve_bare_filenames
+from tests._helpers.repo_index import repo_index_status
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_HAS_INDEX = os.path.exists(os.path.join(_REPO, ".roam", "index.db"))
+
+# Readiness, not existence. ``.roam/index.db`` appears the moment a build
+# starts but is not queryable until it finishes, so gating on the file let
+# these tests run against a half-built index and report empty resolutions as
+# resolver defects. ``repo_index_status`` additionally requires roam's own
+# lifecycle marker to say "complete" and the database to hold symbols.
+# The xdist_group above serialises this module; this guard covers the case
+# where the index is being built by something outside the test session.
+_INDEX_READY, _INDEX_REASON = repo_index_status(_REPO)
 
 
-@pytest.mark.skipif(not _HAS_INDEX, reason="requires .roam/index.db")
+@pytest.mark.skipif(not _INDEX_READY, reason=f"requires a ready roam-code index -- {_INDEX_REASON}")
 def test_unique_bare_filename_resolves_to_repo_path() -> None:
     assert _resolve_bare_filenames("what's exported from cmd_verify.py", _REPO) == ["src/roam/commands/cmd_verify.py"]
     assert _resolve_bare_filenames("describe indexer.py", _REPO) == ["src/roam/index/indexer.py"]
 
 
-@pytest.mark.skipif(not _HAS_INDEX, reason="requires .roam/index.db")
+@pytest.mark.skipif(not _INDEX_READY, reason=f"requires a ready roam-code index -- {_INDEX_REASON}")
 def test_nonexistent_bare_filename_resolves_empty() -> None:
     assert _resolve_bare_filenames("what is foo_nope_xyz123.py for", _REPO) == []
 
 
-@pytest.mark.skipif(not _HAS_INDEX, reason="requires .roam/index.db")
+@pytest.mark.skipif(not _INDEX_READY, reason=f"requires a ready roam-code index -- {_INDEX_REASON}")
 def test_ambiguous_bare_filename_skipped() -> None:
     # __init__.py exists in many packages → ambiguous → unique-match guard skips it.
     assert _resolve_bare_filenames("describe __init__.py", _REPO) == []
@@ -71,7 +80,7 @@ def test_bare_filename_resolution_drops_forbidden_indexed_path(tmp_path) -> None
     assert _resolve_bare_filenames("describe widget.py", cwd) == ["src/roam/widget.py"]
 
 
-@pytest.mark.skipif(not _HAS_INDEX, reason="requires .roam/index.db")
+@pytest.mark.skipif(not _INDEX_READY, reason=f"requires a ready roam-code index -- {_INDEX_REASON}")
 def test_api_surface_probe_self_resolves_bare_filename() -> None:
     """`_probe_api_surface_for_task` self-resolves a bare filename when handed
     empty named_paths, so "what's exported from cmd_verify.py" yields an
