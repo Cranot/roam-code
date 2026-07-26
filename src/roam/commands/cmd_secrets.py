@@ -291,12 +291,11 @@ _TEST_DIR_SEGMENTS = frozenset(
 # source that merely lives under a similarly-named path component. The
 # directory case is already handled above by `_TEST_DIR_SEGMENTS`; this
 # basename-only call adds *only* the filename-convention coverage.
-from roam.index.file_roles import is_test as _roles_is_test  # noqa: E402
-
 # _DOC_EXTENSIONS re-exported from roam.index.file_roles (W37.5 consolidation —
 # was 1 of 3 divergent local copies before consolidation; now uses the 5-entry
 # canonical union from file_roles.DOC_EXTENSIONS).
 from roam.index.file_roles import DOC_EXTENSIONS as _DOC_EXTENSIONS  # noqa: E402
+from roam.index.file_roles import is_test as _roles_is_test  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Per-finding remediation suggestions
