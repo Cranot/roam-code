@@ -34,9 +34,62 @@ MODE_HOOK = "hook"  # UPS-hook production channel (real traffic, explicitly stam
 
 # Rows to drop from KPI aggregates (L1-rate, latency, top-misses) by default.
 # MODE_HOOK is production and is NOT here. 'unknown' stays in — historically it
-# is a MIXED bucket (all pre-stamp rows), so dropping it would hide real traffic;
-# the stats output discloses that caveat instead.
+# is a MIXED bucket, so dropping it would hide real traffic; the stats output
+# discloses that caveat instead. See ``unknown_cohort`` below for exactly what
+# is mixed and why (it is NOT "the field did not exist yet").
 NON_PRODUCTION_MODES = frozenset({MODE_BENCH, MODE_CORPUS, MODE_TRACE, MODE_ENVELOPE_DIFF, MODE_CACHE_BUILD, MODE_TEST})
+
+# ---------------------------------------------------------------------------
+# 'unknown' cohort provenance (measurement-integrity follow-up to ruler-1).
+#
+# VERIFIED against compile-runs.jsonl and git history (2026-07-27): the
+# `agent_mode` field itself — `os.environ.get(ENV_VAR, "unknown")` written on
+# every compile-runs.jsonl row — has existed since commit ffa51bb1
+# (2026-06-10). This module and its call-site stamping landed a month later,
+# in commit 19e74bd5 (2026-07-16). So `agent_mode == "unknown"` NEVER means
+# "the field did not exist for this row" — every row in the dataset postdates
+# ffa51bb1. It always means exactly one thing: ROAM_AGENT_MODE was unset in
+# the process environment at compile time.
+#
+# What DOES change at 19e74bd5 is composition, not existence: before it, the
+# bench/corpus/trace/envelope-diff/hook call sites had no wrapper setting the
+# env var, so any of THAT traffic which ran in that window also fell into
+# "unknown" — a wider, more mixed bucket. After it, "unknown" narrows to
+# whatever call sites still have no wrapper (plain CLI/MCP usage). A single
+# blended "unknown" L1-rate or latency number spanning this boundary is
+# silently averaging over two differently-composed cohorts.
+#
+# Hour-bucketed to match compile-runs.jsonl's `ts` field
+# (see roam.compile_telemetry.bucket_telemetry_ts).
+AGENT_MODE_COVERAGE_EPOCH = "2026-07-16T13:00:00Z"
+
+
+def unknown_cohort(row: dict) -> str | None:
+    """Classify one telemetry row's ``agent_mode == "unknown"`` sub-cohort.
+
+    Returns ``None`` when the row is not in the unknown bucket at all (it has
+    an explicit, non-default ``agent_mode``). Otherwise returns:
+
+    - ``"unknown_pre_coverage"`` — ``ts`` predates (or is missing/unparseable
+      relative to) :data:`AGENT_MODE_COVERAGE_EPOCH`. The wider, historically
+      mixed bucket: may include un-wrapped bench/corpus/trace/envelope-diff/
+      hook traffic alongside organic usage.
+    - ``"unknown_post_coverage"`` — ``ts`` is at/after the epoch. The
+      narrower bucket: every wrapped call site now stamps away from the
+      default, so this is (to the best of the writer's knowledge) organic
+      CLI/MCP usage with no wrapper.
+
+    A consumer that reports on "unknown" as a single number cannot tell these
+    apart; group by this function instead of trusting one blended average.
+    """
+    mode = row.get("agent_mode")
+    mode = mode if isinstance(mode, str) and mode else "unknown"
+    if mode != "unknown":
+        return None
+    ts = row.get("ts")
+    if isinstance(ts, str) and ts >= AGENT_MODE_COVERAGE_EPOCH:
+        return "unknown_post_coverage"
+    return "unknown_pre_coverage"
 
 
 @contextlib.contextmanager
