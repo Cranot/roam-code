@@ -268,6 +268,17 @@ def test_collect_change_evidence_returns_content_hashed_packet(tmp_path, monkeyp
     """The inline collector stamps a content hash before returning."""
     from roam.commands.cmd_pr_replay import _collect_change_evidence
 
+    # Hermetic CWD. ``_collect_change_evidence`` resolves its optional gatherers
+    # relative to the process CWD — ``.roam/attestations/`` (folded into
+    # ``cga_predicate`` artifacts), ``.roam/mcp_receipts/``, run ledgers. Run from
+    # a developer checkout holding real signed CGA statements, the packet
+    # legitimately picks up verification-shaped evidence and Q7 scores
+    # ``complete``: that is the completeness contract working, not a bug. This
+    # test declared ``tmp_path``/``monkeypatch`` from the start but never wired
+    # them up, so it only ever passed where ``.roam/`` was absent — CI runners and
+    # agent worktrees. Pin the CWD so it observes only what it constructs.
+    monkeypatch.chdir(tmp_path)
+
     packet = _collect_change_evidence(
         commit_range="HEAD~1..HEAD",
         commits=[{"sha": "abc123", "subject": "test", "high": 0, "medium": 1, "date": "2026-05-13"}],

@@ -102,3 +102,22 @@ def test_reports_a_console_script_belonging_to_another_install(tmp_path: Path) -
     else:
         assert result["passed"] is False
         assert "not the one for this interpreter" in result["detail"]
+
+
+def test_check_is_registered_advisory() -> None:
+    """A divergent local environment is a fact to know, not a broken roam.
+
+    Doctor imported the correct roam to run this check at all, so nothing it
+    reports can prevent roam working. A global install coexisting with a project
+    venv is a normal Python setup; blocking on it exits 2 for a large share of
+    users and teaches them to ignore doctor entirely. Same reasoning already
+    applied to ``Installed binary``, which detects the same physical condition.
+
+    Pinned because the severity model is a single membership test — an
+    unregistered check defaults to BLOCKING, which is how 231f1bd5 shipped this
+    one blocking despite its own docstring calling it advisory. ``--strict``
+    remains the way to make it a gate in CI.
+    """
+    from roam.commands.cmd_doctor import _ADVISORY_CHECK_NAMES
+
+    assert "CI environment parity" in _ADVISORY_CHECK_NAMES

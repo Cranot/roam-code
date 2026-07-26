@@ -929,6 +929,24 @@ class TestEmptyInputDoesNotRequireIndex:
     than to no-op.
     """
 
+    @pytest.fixture(autouse=True)
+    def _isolate_index_ordering_contract_from_repo_policy(self, monkeypatch):
+        """Pin ``ensure_index`` ORDERING, not the checkout's mode constitution.
+
+        ``roam_batch_search`` is CLI-backed (``batch-search`` is a registered
+        verb), so the MCP mode gate resolves it through ``check_command_allowed``
+        against the checkout's own ``.roam/constitution.yml`` — an untracked,
+        generated artifact. A constitution generated before ``batch-search`` was
+        classified denies the call and returns a MODE_BLOCKED envelope before the
+        ordering under test ever runs. ``roam_batch_get`` is unaffected only
+        because ``batch-get`` is not a registered verb, so it takes the native
+        read-only path instead — which is why its twin test passes.
+
+        Same isolation ``TestBatchSearch`` already applies for the same reason.
+        Class-scoped, so it cannot leak to other tests.
+        """
+        monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "0")
+
     @pytest.fixture()
     def _index_locked(self, monkeypatch):
         import click

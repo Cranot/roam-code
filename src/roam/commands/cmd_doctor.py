@@ -2178,6 +2178,12 @@ _ADVISORY_CHECK_NAMES = frozenset(
         "Phase timings",  # W408 — per-phase wallclock; diagnostic only
         "CI workflow drift",  # W482 — emitted-workflow vs template drift
         "Corpus content",  # W836 — empty corpus is advisory, not blocking
+        "CI environment parity",  # local-vs-CI divergence — must be KNOWN, not forbidden
+        #   (same physical condition as "Installed binary" above: doctor
+        #    imported the right roam to run the check at all, so nothing here
+        #    stops roam working. A global install beside a project venv is a
+        #    normal setup — blocking would exit 2 for a large share of users
+        #    and teach them to ignore doctor. `--strict` still gates it in CI.)
     }
 )
 
