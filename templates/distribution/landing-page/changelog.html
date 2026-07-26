@@ -76,7 +76,7 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
-<h2>[13.10.0] — 2026-07-23</h2>
+<h2>[13.10.0] — 2026-07-26</h2>
 <h3>Added</h3>
 <ul>
 <li><strong><code>roam savings</code> + <code>roam savings-backfill</code> — proof-oriented Procedure Foundry telemetry</strong> — prompt compilation and Claude Stop hooks now share a per-turn <code>episode_id</code>, preserving compile identity, terminal outcome, verification state, changed-file count, and privacy-preserving diff identity in an append-only local ledger. <code>savings</code> materializes the ledger into SQLite and withholds savings claims until known-answer canaries, telemetry integrity, hook-version coverage, compile joins, terminal coverage, and explicit verification-health coverage pass. <code>savings-backfill</code> mines local Claude/Codex transcripts into a replaceable historical discovery snapshot: raw prompts, responses, paths, shell values, and tool arguments are excluded, while keyed intent fingerprints plus sanitized shell templates/sequences/n-grams retain repeated workflow structure. Historical frequency can nominate automation experiments but can never satisfy the prospective evidence gate.</li>

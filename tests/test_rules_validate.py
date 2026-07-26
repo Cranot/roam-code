@@ -135,7 +135,7 @@ def test_check_duplicate_ids_no_dups():
 
 def test_cli_against_existing_sample_rules(tmp_path):
     """The shipped sample at templates/examples/.roam-rules.yml validates clean."""
-    sample = Path("templates/examples/.roam-rules.yml")
+    sample = Path(__file__).resolve().parents[1] / "templates/examples/.roam-rules.yml"
     if not sample.exists():
         return  # repo layout-dependent; skip if not in roam-code itself
     code, out = _run(["rules-validate", str(sample)])
