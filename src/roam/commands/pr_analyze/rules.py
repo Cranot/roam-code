@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from functools import lru_cache
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -183,6 +184,58 @@ def _prepare_rule(rule: dict) -> tuple[callable, str, str, str, str] | None:
     return matcher, source_glob, forbidden_glob, severity, description
 
 
+@lru_cache(maxsize=512)
+def _compile_path_glob(glob: str) -> re.Pattern[str]:
+    """Translate a path glob to a regex with CORRECT ``**`` semantics.
+
+    ``fnmatch`` does not treat ``**`` specially -- it collapses to ``*``, which
+    still cannot cross ``/``. So ``**/*.go`` compiles to "one segment, then a
+    slash, then *.go" and silently fails to match ``main.go`` at the base level.
+    Same for ``src/**/*.py`` against ``src/main.py``.
+
+    That is a silent SCOPE HOLE, not a cosmetic bug: a rule reads as covering a
+    whole subtree while exempting everything at the top of it. 124 of the 127
+    rules across the seven shipped language packs use ``**``, so every pack had
+    a hole at its own base level -- which is where entry points, ``main.go`` and
+    top-level modules live.
+
+    Semantics implemented here (what users mean by ``**``):
+      ``**/``  zero or more path segments
+      ``**``   anything, including ``/``
+      ``*``    anything except ``/``
+      ``?``    one character except ``/``
+    """
+    out: list[str] = []
+    i, n = 0, len(glob)
+    while i < n:
+        ch = glob[i]
+        if glob.startswith("**/", i):
+            out.append("(?:[^/]+/)*")  # zero or more segments
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif ch == "*":
+            out.append("[^/]*")
+            i += 1
+        elif ch == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(ch))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def path_matches_glob(path: str, glob: str) -> bool:
+    """Match a repo-relative path against a glob, with real ``**`` support.
+
+    Paths are normalised to forward slashes so Windows-style diffs behave the
+    same as POSIX ones.
+    """
+    return bool(_compile_path_glob(glob).match(path.replace("\\", "/")))
+
+
 def _find_hits(
     matcher: callable,
     forbidden_glob: str,
@@ -196,7 +249,7 @@ def _find_hits(
     the search keeps the orchestration function free of file/line iteration.
     """
     for path, added_lines in added_by_file.items():
-        if not fnmatch.fnmatch(path, source_glob):
+        if not path_matches_glob(path, source_glob):
             continue
         for idx, line in enumerate(added_lines):
             target = matcher(line, forbidden_glob)
