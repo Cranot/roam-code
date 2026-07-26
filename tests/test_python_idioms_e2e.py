@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -174,7 +175,9 @@ def fixture_project(tmp_path_factory):
         cwd=root,
         check=True,
     )
-    result = subprocess.run(["roam", "init"], cwd=root, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(
+        [sys.executable, "-m", "roam", "init"], cwd=root, capture_output=True, text=True, timeout=120
+    )
     assert result.returncode == 0, result.stderr
     return root
 

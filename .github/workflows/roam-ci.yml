@@ -90,8 +90,16 @@ jobs:
           PY
           uv pip check --python .venv/bin/python
 
+      # No ``-x``. Fail-fast on the authoritative lane is information loss: all
+      # four Python lanes rediscover the same earliest failure and withhold the
+      # rest, so a suite with N broken tests reports 1 and takes N pushes to
+      # clear. Concretely, main was red 2026-07-23..26 behind a rotating single
+      # symptom -- an empty-input index probe, then a fatal-DB envelope, then a
+      # dogfood index guard, then a bare console-script invocation -- each only
+      # visible once its predecessor was fixed. Report the whole inventory in
+      # one run; exit status is unchanged, so a red suite is still red.
       - name: Run tests
-        run: .venv/bin/python -m pytest tests/ -x -q -m "not slow"
+        run: .venv/bin/python -m pytest tests/ -q -m "not slow"
 
   # -- Exact dependency security gate across every supported Python --------
   # Audit the same lock selections CI executes, including CI-only build and
