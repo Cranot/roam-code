@@ -362,6 +362,28 @@ def assert_json_envelope(data, command=None):
 
 
 @pytest.fixture
+def repo_index():
+    """Skip unless THIS repo's own index is built, complete and populated.
+
+    For the handful of dogfood tests whose assertion only means something on a
+    real codebase (cycles, coupling, bare-filename resolution) and so cannot
+    use ``indexed_project``. Gates on readiness rather than on the existence of
+    ``.roam/index.db`` -- see ``tests/_helpers/repo_index.py`` for why the two
+    differ on CI and how the weaker check kept main red.
+
+    Evaluated per-test rather than at import: an index built partway through a
+    session must not be judged by whether it existed at collection time.
+    """
+    from tests._helpers.repo_index import repo_index_status
+    from tests._helpers.repo_root import repo_root
+
+    ready, reason = repo_index_status()
+    if not ready:
+        pytest.skip(f"requires a ready roam-code index -- {reason}")
+    return repo_root() / ".roam" / "index.db"
+
+
+@pytest.fixture
 def indexed_project(tmp_path, monkeypatch):
     """Indexed Python project: empty git repo + 3-file Python source tree
     + ``roam index`` run. Returns the project directory path.

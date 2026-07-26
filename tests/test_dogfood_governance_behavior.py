@@ -41,6 +41,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._helpers.repo_index import repo_index_status
 from tests._helpers.repo_root import repo_root
 
 REPO = repo_root()
@@ -80,7 +81,13 @@ def _sha256_chain_lines(records: list[dict]) -> list[str]:
     return lines
 
 
-needs_index = pytest.mark.skipif(not INDEX_DB.exists(), reason="repo .roam/index.db not present")
+# Readiness, not existence: ``.roam/index.db`` is created when a build STARTS,
+# so `INDEX_DB.exists()` let these attestation tests run against a half-built
+# index and report empty graphs as governance defects. ``repo_index_status``
+# also requires roam's own lifecycle marker to read "complete" and the database
+# to contain symbols.
+_INDEX_READY, _INDEX_REASON = repo_index_status(INDEX_DB.parent.parent)
+needs_index = pytest.mark.skipif(not _INDEX_READY, reason=f"requires a ready roam-code index -- {_INDEX_REASON}")
 
 
 # ===========================================================================

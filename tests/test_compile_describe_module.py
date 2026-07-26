@@ -64,15 +64,14 @@ class TestDescribeModuleClassification:
 
 
 class TestModuleNameResolution:
-    def test_resolves_unique_stem_in_this_repo(self):
+    def test_resolves_unique_stem_in_this_repo(self, repo_index):
         # Runs inside the roam-code repo — the index knows compiler.py.
-        import os
-
+        # Gated on a COMPLETE, populated index: an index.db that merely exists
+        # resolves nothing and the empty result reads as a resolver bug.
         from roam.plan.compiler import _resolve_module_names
 
-        if not os.path.exists(".roam/index.db"):
-            pytest.skip("no index in cwd")
-        got = _resolve_module_names("explain the compiler architecture", ".")
+        root = str(repo_index.parent.parent)
+        got = _resolve_module_names("explain the compiler architecture", root)
         assert got == ["src/roam/plan/compiler.py"]
 
     def test_unresolvable_name_returns_empty(self):
