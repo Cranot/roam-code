@@ -966,6 +966,11 @@ class TestEmptyInputDoesNotRequireIndex:
 
         result = batch_search(queries=["auth"], root=".")
 
-        # The @_tool wrapper converts the ClickException into an error envelope;
-        # what matters is that the index check was NOT skipped for a real query.
-        assert "summary" not in result or result.get("error"), result
+        # The index check is NOT skipped for a query that would reach the DB.
+        # It runs, it fails, and because it lives inside the same try as
+        # open_db the failure surfaces as the documented batch-search fatal
+        # shape rather than an opaque @_tool envelope.
+        assert result["command"] == "batch-search", result
+        assert result["summary"]["queries_executed"] == 0
+        assert result["results"] == {}
+        assert "_fatal" in result.get("errors", {}), result

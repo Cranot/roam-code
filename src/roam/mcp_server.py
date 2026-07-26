@@ -7404,9 +7404,15 @@ def batch_search(
     # before this early return made a no-op call fail whenever another process
     # held the index-build lock. Mirrors roam_oracle_batch, which already
     # validates its input before calling ensure_index().
-    ensure_index()
-
+    #
+    # ensure_index() sits INSIDE the try because it fails for exactly the same
+    # DB/config boundary reasons open_db does -- ClickException while another
+    # process holds the index, OSError on unreadable control files -- and those
+    # deserve the same structured payload. Left outside, a caller who simulated
+    # an offline DB still got an opaque @_tool error envelope from the index
+    # probe instead of the documented batch-search fatal shape.
     try:
+        ensure_index()
         conn_ctx = open_db(readonly=True)
     except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
         # Expected DB/config boundary failures get a structured MCP payload;
@@ -7509,14 +7515,16 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     # Index readiness is only required once we actually touch the DB — see the
     # matching note in batch_search. An empty symbol list is answerable from the
     # arguments alone, so this must stay below the early return.
-    ensure_index()
-
+    #
     # W103/W607: open_db() and the per-symbol loop are kept in separate blocks
     # so a connection failure short-circuits with a _fatal payload while
     # DB-level lookup errors stay isolated inside _batch_get_one's return
     # value. This also keeps the wrapper shallow, matching batch_search.
     # Programmer-class failures propagate instead of looking like no data.
+    # ensure_index() joins that block for the reason given in batch_search:
+    # it fails on the same boundaries and earns the same structured payload.
     try:
+        ensure_index()
         conn_ctx = open_db(readonly=True)
     except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
         # Expected DB/config boundary failures get a structured MCP payload;
