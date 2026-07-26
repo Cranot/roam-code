@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -1055,3 +1056,66 @@ def test_release_docs_track_current_mcp_security_and_setup_contracts():
     assert "Every command is local" not in command_reference
     assert "ROAM_TREE_SITTER_CACHE_DIR" in network_boundary
     assert "ROAM_TREE_SITTER_CACHE_SEALED=1" in network_boundary
+
+
+# ---------------------------------------------------------------------------
+# Claim-drift guard: a retired public claim must not silently come back
+# ---------------------------------------------------------------------------
+
+# Phrases a public-claims audit found unconditionally false and retired from
+# LIVE marketing/legal copy (2026-07-14: "entirely on your machine" retired
+# from audit.html, pricing.html, security.html, trust.html, and
+# security-procurement-packet.md). The claim is false as an absolute: opt-in
+# MCP tool summarization (``ROAM_AI_ENABLED=1``) can send report snippets to
+# the client-selected model provider, ``roam metrics-push`` sends an explicit
+# allow-listed payload to Roam Cloud, and ``roam --json savings --aggregate``
+# is a versioned envelope whose whole purpose is to cross to the platform.
+# See ``docs/network-boundary.md`` for the full built-in trigger inventory.
+#
+# This exact claim already came back once through a later PR merge after
+# being corrected, so it gets a standing guard rather than relying on review
+# to catch it a second time.
+_RETIRED_LIVE_CLAIMS: tuple[str, ...] = ("entirely on your machine",)
+
+# Surfaces swept for the retired claims: every landing-page HTML file
+# (rglob, so a NEW page can't quietly reintroduce it either) plus every
+# legal template. Walking the whole tree — not just the 5 files the audit
+# found — mirrors ``test_all_landing_html_current_version_not_behind_pyproject``
+# above: the point of a drift guard is to catch the *next* site, not just
+# re-check the ones already fixed.
+def _claim_drift_surfaces() -> list[Path]:
+    return sorted(_LANDING_PAGE.rglob("*.html")) + sorted((ROOT / "templates" / "legal").glob("*.md"))
+
+
+# Dated changelog surfaces are historical records, not live claims — a past
+# entry that quotes old wording correctly stays historical. CHANGELOG.md
+# itself lives at the repo root and is never in ``_claim_drift_surfaces()``,
+# so it is exempt by construction. ``changelog.html`` IS inside the
+# landing-page tree (it is CHANGELOG.md rendered to HTML by
+# ``scripts/build_changelog_html.py``), so it needs an explicit exemption
+# here to avoid firing on the same dated history in its rendered form.
+_CLAIM_DRIFT_HISTORICAL_EXEMPT = {_LANDING_PAGE / "changelog.html"}
+
+
+def test_no_retired_public_claims_in_live_copy():
+    """A retired public claim must not silently reappear in live copy.
+
+    Guards the phrases in ``_RETIRED_LIVE_CLAIMS`` across every landing-page
+    HTML file and legal template, skipping the dated-history exemptions in
+    ``_CLAIM_DRIFT_HISTORICAL_EXEMPT``. A hit here means either a revert
+    reintroduced the old wording, or a new page copy-pasted it from an
+    older one — both are exactly what this guard exists to catch.
+    """
+    hits: list[str] = []
+    for path in _claim_drift_surfaces():
+        if path in _CLAIM_DRIFT_HISTORICAL_EXEMPT:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for claim in _RETIRED_LIVE_CLAIMS:
+            if claim in text:
+                hits.append(f"{path.relative_to(ROOT).as_posix()}: {claim!r}")
+    assert not hits, (
+        "a retired public claim reappeared in live marketing/legal copy "
+        "(corrected once already by the 2026-07-14 public-claims audit; "
+        "see docs/network-boundary.md for what's actually true):\n  " + "\n  ".join(hits)
+    )
