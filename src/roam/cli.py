@@ -2069,6 +2069,32 @@ def _run_mode_gate_safely(ctx: click.Context) -> None:
         _handle_mode_policy_failure(ctx, canonical, f"mode gate internal error: {type(exc).__name__}")
 
 
+def _exit_code_in_flight() -> int:
+    """Best-effort exit code for a command that is tearing down.
+
+    ``call_on_close`` runs while an exception may still be propagating, so
+    ``sys.exc_info()`` is the only signal available about how the command
+    actually ended. Previously this recorded ``exit_code=0`` unconditionally,
+    which made the column incapable of holding any other value — a field that
+    can only ever be 0 is not data, and every failure was filed as a success.
+
+    Conservative in the direction that matters: unknown non-SystemExit
+    exceptions become 1 rather than 0, so a failure is never recorded as
+    success. A clean teardown with nothing in flight is genuinely 0.
+    """
+    exc = sys.exc_info()[1]
+    if exc is None:
+        return 0
+    if isinstance(exc, SystemExit):
+        code = exc.code
+        if code is None:
+            return 0
+        return code if isinstance(code, int) else 1
+    if isinstance(exc, click.ClickException):
+        return exc.exit_code
+    return 1
+
+
 def _install_local_telemetry(ctx: click.Context) -> None:
     import time as _time
 
@@ -2080,7 +2106,7 @@ def _install_local_telemetry(ctx: click.Context) -> None:
         try:
             cmd_name = ctx.invoked_subcommand or "<root>"
             duration_ms = int((_time.perf_counter() - start) * 1000)
-            _telemetry_record(cmd_name, duration_ms, exit_code=0)
+            _telemetry_record(cmd_name, duration_ms, exit_code=_exit_code_in_flight())
         except Exception as exc:  # noqa: BLE001 — telemetry must never break command teardown
             print("[telemetry] close hook failed: %s" % exc, file=sys.stderr)  # noqa: T201
 
