@@ -221,6 +221,174 @@ def _check_git() -> dict:
     }
 
 
+def _check_git_repo_health() -> dict:
+    """Repo-level git misconfiguration that makes git MISREPORT the worktree.
+
+    Distinct from ``_check_git``, which only proves the binary exists. These
+    are settings that leave git working perfectly while answering about the
+    wrong tree -- the worst failure mode available, because every downstream
+    tool (including roam) then indexes, diffs, or reports on something other
+    than the directory the user is standing in.
+
+    All four were observed together on 2026-07-19 when an interrupted
+    integration flow crashed mid-run and left different residue in each of
+    three repositories:
+
+    * ``core.bare=true`` on a checkout that still has its files. ``git status``
+      refuses with "this operation must be run in a work tree", so the tree
+      looks empty/absent rather than misconfigured, and uncommitted work
+      appears to have been lost.
+    * ``core.worktree`` pointing at a DIFFERENT directory -- typically a
+      sibling release worktree. Every status/diff/commit then silently
+      operates on that other tree. This one is the most dangerous: it does not
+      error, it lies. Observed reporting 24 modified files and two untracked
+      files that did not exist on disk.
+    * ``core.worktree`` holding a path this platform cannot resolve (a WSL
+      ``/mnt/...`` path read by Windows git, or vice versa). One bad line in a
+      shared config propagates to every linked worktree at once.
+    * A stale ``index.lock`` from a process killed mid-write, which blocks all
+      future writes until removed by hand.
+
+    Git itself never reports any of these as a problem, and no standard tool
+    checks for them, so they are invisible until something downstream behaves
+    inexplicably. Cheap to detect, so worth checking on every doctor run.
+    """
+    import subprocess
+
+    def _git(*args: str) -> tuple[int, str]:
+        try:
+            proc = subprocess.run(
+                ["git", *args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+        except (subprocess.SubprocessError, OSError) as exc:
+            return 1, str(exc)
+        return proc.returncode, proc.stdout.strip()
+
+    cwd = Path.cwd()
+    dot_git = cwd / ".git"
+    problems: list[str] = []
+
+    rc, _ = _git("rev-parse", "--git-dir")
+    if rc != 0:
+        if not dot_git.exists():
+            return {
+                "name": "git repo health",
+                "passed": True,
+                "detail": "not inside a git repository",
+                "_state": "not_applicable",
+            }
+        # A .git exists but git refuses to operate: that IS the finding. Read
+        # the config directly, since every porcelain command is unusable here.
+        _, raw = _git("config", "--file", str(dot_git / "config"), "--get", "core.worktree")
+        hint = f" (core.worktree={raw!r})" if raw else ""
+        return {
+            "name": "git repo health",
+            "passed": False,
+            "detail": (
+                f"{dot_git} exists but git cannot operate in this directory{hint} -- typically a "
+                "core.worktree path written by another OS (e.g. a WSL /mnt path read by Windows git). "
+                "Every git command here fails until it is unset"
+            ),
+        }
+
+    # --- core.bare on a populated checkout ---------------------------------
+    _, bare = _git("config", "--get", "core.bare")
+    if bare.strip().lower() == "true":
+        visible = [p for p in cwd.iterdir() if p.name != ".git"] if cwd.is_dir() else []
+        if visible:
+            problems.append(
+                f"core.bare=true but {len(visible)} entries exist here -- git will refuse "
+                "worktree operations and the tree will look absent (fix: git config --local core.bare false)"
+            )
+
+    # --- core.worktree pointing elsewhere / nowhere ------------------------
+    _, worktree = _git("config", "--get", "core.worktree")
+    if worktree:
+        wt = Path(worktree)
+        if not wt.exists():
+            problems.append(
+                f"core.worktree={worktree!r} does not exist on this platform -- a path written by "
+                "another OS (e.g. a WSL /mnt path used by Windows git) makes every git command fail here"
+            )
+        elif dot_git.is_dir():
+            # Compare against the directory that OWNS this .git, never against
+            # `rev-parse --show-toplevel`: git derives toplevel FROM
+            # core.worktree, so those two always agree and the check would
+            # silently pass on the exact misconfiguration it exists to catch.
+            # A main repo (.git is a real directory) should have core.worktree
+            # unset, or equal to its own directory. Linked worktrees keep it in
+            # .git/worktrees/<name>/config.worktree and have .git as a FILE, so
+            # they are correctly excluded here.
+            try:
+                same = wt.resolve() == cwd.resolve()
+            except OSError:
+                same = False
+            if not same:
+                problems.append(
+                    f"core.worktree={worktree!r} but this repository lives at {cwd} -- git is reporting on a "
+                    "DIFFERENT tree, so status/diff/commit here silently act on the other one"
+                )
+
+    # --- stale index.lock --------------------------------------------------
+    rc_dir, git_dir = _git("rev-parse", "--git-dir")
+    if rc_dir == 0 and git_dir:
+        lock = Path(git_dir) / "index.lock"
+        if lock.exists():
+            # The lock's presence is the finding; its age is only flavour, so a
+            # failed stat must not suppress the report (W607-BE: no silent
+            # ``except: pass`` — an unreadable lock is still a blocking lock).
+            try:
+                age = f"{max(0, int((time.time() - lock.stat().st_mtime) / 60))} min old"
+            except OSError as exc:
+                from roam.observability import log_swallowed
+
+                log_swallowed("doctor:git_repo_health:index_lock_stat", exc)
+                age = "age unknown"
+            problems.append(
+                f"stale {lock} present ({age}) -- a git process was killed mid-write "
+                "and all future writes will fail until it is removed"
+            )
+
+    # --- detached HEAD holding unreachable commits -------------------------
+    rc_sym, _ = _git("symbolic-ref", "-q", "HEAD")
+    if rc_sym != 0:
+        rc_head, head = _git("rev-parse", "HEAD")
+        if rc_head == 0 and head:
+            rc_c, containing = _git("branch", "-a", "--contains", head)
+            # `git branch --contains` lists the detached HEAD itself as a
+            # pseudo-entry, "* (HEAD detached at abc1234)". Counting that as a
+            # containing branch makes the check pass on exactly the case it
+            # exists to catch, so drop parenthesised pseudo-refs and keep only
+            # real branch names.
+            real_branches = [
+                line.lstrip("* ").strip()
+                for line in containing.splitlines()
+                if line.strip() and not line.lstrip("* ").startswith("(")
+            ]
+            if rc_c == 0 and not real_branches:
+                problems.append(
+                    f"detached HEAD at {head[:8]} is not contained by any branch -- these commits are "
+                    "reachable only from HEAD and will be garbage-collected (fix: git branch <name> HEAD)"
+                )
+
+    if problems:
+        return {
+            "name": "git repo health",
+            "passed": False,
+            "detail": "; ".join(problems),
+        }
+    return {
+        "name": "git repo health",
+        "passed": True,
+        "detail": "worktree config consistent, no stale lock, no unreachable HEAD",
+    }
+
+
 def _check_networkx() -> dict:
     """networkx importable."""
     try:
@@ -2050,6 +2218,7 @@ def doctor(ctx, strict, persist):
     _run_check("tree_sitter", _check_tree_sitter)
     _run_check("tree_sitter_language_pack", _check_tree_sitter_language_pack)
     _run_check("git", _check_git)
+    _run_check("git_repo_health", _check_git_repo_health)
     _run_check("networkx", _check_networkx)
     _run_check("optional_extras", _check_optional_extras)
     _run_check("cloud_sync", _check_cloud_sync)
