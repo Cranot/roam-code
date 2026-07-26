@@ -131,6 +131,63 @@ jobs:
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
           printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
 
+      # A tag proves WHAT is being shipped; it proves nothing about whether the
+      # code works. Until now nothing in this workflow consulted CI at all — no
+      # pytest, no ruff, no workflow_run dependency, no check query — so the
+      # only thing between a red commit and PyPI was the pypi environment's
+      # required reviewer remembering to check, with no signal in the approval
+      # UI telling them whether it passed.
+      #
+      # That mattered concretely: main was red 2026-07-23..26, and the release
+      # commit that broke it (44132a70) is the same commit tagged 13.10.0 in
+      # pyproject and CHANGELOG. A tag cut during that window would have reached
+      # the approval prompt looking exactly like a healthy one.
+      #
+      # This makes approval a confirmation rather than the sole control. It runs
+      # inside resolve-ref, so it gates every downstream job including build,
+      # and it fails BEFORE any OIDC token is minted.
+      - name: Require green CI for the resolved commit
+        env:
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Workflow names, as they appear in the Actions UI.
+          REQUIRED_WORKFLOWS: 'CI;Secret Scan'
+        run: |
+          set -euo pipefail
+
+          runs_json=$(gh api --paginate "repos/${REPO}/actions/runs?head_sha=${SHA}&per_page=100" \
+            --jq '[.workflow_runs[] | {name, status, conclusion, created_at, url}]' | jq -s 'add // []')
+
+          failed=0
+          while IFS= read -r wf; do
+            [[ -z "$wf" ]] && continue
+            # Latest run for this workflow against this exact commit.
+            latest=$(jq -c --arg n "$wf" '[.[] | select(.name == $n)] | sort_by(.created_at) | last // empty' <<<"$runs_json")
+            if [[ -z "$latest" || "$latest" == "null" ]]; then
+              echo "::error::No '$wf' run found for ${SHA}. Cannot prove this commit was tested; refusing to publish."
+              failed=1
+              continue
+            fi
+            status=$(jq -r '.status' <<<"$latest")
+            conclusion=$(jq -r '.conclusion // "none"' <<<"$latest")
+            if [[ "$status" != "completed" ]]; then
+              echo "::error::'$wf' for ${SHA} is still '$status'. Re-run this release once it completes."
+              failed=1
+            elif [[ "$conclusion" != "success" ]]; then
+              echo "::error::'$wf' for ${SHA} concluded '$conclusion'. Refusing to publish an untested commit. $(jq -r '.url' <<<"$latest")"
+              failed=1
+            else
+              echo "  ok: $wf concluded success for ${SHA}"
+            fi
+          done < <(tr ';' '\n' <<<"$REQUIRED_WORKFLOWS")
+
+          if [[ "$failed" -ne 0 ]]; then
+            echo "::error::Release blocked: the resolved commit does not have green required checks."
+            exit 1
+          fi
+          echo "All required workflows are green for ${SHA}."
+
   build:
     name: Build reproducible manifest-bound artifacts
     needs: resolve-ref
