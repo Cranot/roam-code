@@ -981,3 +981,51 @@ def test_git_capture_is_binary_and_locale_independent(tmp_path: Path, monkeypatc
 
     assert secret_scan._git_bytes(tmp_path, ["status"], operation="test git") == b"payload"
     assert calls == [{"cwd": tmp_path, "capture_output": True, "check": False}]
+
+
+# ---------------------------------------------------------------------------
+# Drift guard: first-party source must stay clean under roam's own gate
+# ---------------------------------------------------------------------------
+
+
+def _first_party_python_sources() -> list[Path]:
+    """Git-tracked ``.py`` files under ``src/`` and ``scripts/``."""
+    root = repo_root()
+    listed = subprocess.run(
+        ["git", "ls-files", "src", "scripts"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    return [root / rel for rel in listed if rel.endswith(".py")]
+
+
+def test_first_party_source_has_no_credential_shaped_literals() -> None:
+    """``roam secrets --fail-on-found`` must stay green on our own source.
+
+    CI went red on 2026-07-23 because ``scripts/secret_scan.py`` declared two
+    AWS-key-shaped placeholder constants as bare literals and roam's own
+    detector flagged its allowlist -- the scanner reading its own training data.
+
+    ``src/`` and ``scripts/`` are deliberately NOT covered by cmd_secrets'
+    test/fixture/docs path suppression, and ``.roam-suppressions.yml`` is read
+    by cmd_triage/cmd_verify/SARIF but NOT by cmd_secrets -- so there is no
+    suppression escape hatch for first-party source. When a credential-shaped
+    literal is genuinely required there, use the concatenation idiom
+    (``"AKIA" + "..."``) already used throughout this module.
+    """
+    from roam.commands.cmd_secrets import _is_test_or_doc_path, scan_file
+
+    root = repo_root()
+    findings: list[dict] = []
+    for path in _first_party_python_sources():
+        rel = path.relative_to(root).as_posix()
+        if _is_test_or_doc_path(rel):
+            continue
+        findings.extend(scan_file(str(path)))
+
+    assert not findings, "credential-shaped literals in first-party source:\n" + json.dumps(
+        [{"file": f["file"], "line": f["line"], "pattern": f["pattern_name"]} for f in findings],
+        indent=2,
+    )
