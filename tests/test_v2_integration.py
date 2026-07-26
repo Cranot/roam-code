@@ -26,6 +26,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_commit, git_init, index_in_process, invoke_cli, parse_json_output  # noqa: E402
 
+from tests._helpers.repo_root import repo_root
+
 
 @pytest.fixture
 def real_project(tmp_path, monkeypatch):
@@ -164,7 +166,7 @@ def test_v2_full_pipeline(real_project, cli_runner):
 
 def test_v2_pipeline_with_rules_pack(real_project, cli_runner):
     """End-to-end with a Python rules pack from templates/rules/python."""
-    pack_src = Path(__file__).resolve().parents[1] / "templates/rules/python/.roam-rules.yml"
+    pack_src = repo_root() / "templates/rules/python/.roam-rules.yml"
     if not pack_src.exists():
         pytest.skip("templates/rules/python/.roam-rules.yml not present in this checkout")
 

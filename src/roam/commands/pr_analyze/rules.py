@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from functools import lru_cache
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 
 # Shared with cmd_pr_analyze AI-scoring (orphan-imports signal). Single
 # source-of-truth so the matcher and the scorer can't disagree on which

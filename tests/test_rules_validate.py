@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json as _json
-from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -14,6 +13,7 @@ from roam.commands.cmd_rules_validate import (
     _validate_glob,
     _validate_rule,
 )
+from tests._helpers.repo_root import repo_root
 
 
 def _run(args: list[str]) -> tuple[int, str]:
@@ -135,7 +135,7 @@ def test_check_duplicate_ids_no_dups():
 
 def test_cli_against_existing_sample_rules(tmp_path):
     """The shipped sample at templates/examples/.roam-rules.yml validates clean."""
-    sample = Path(__file__).resolve().parents[1] / "templates/examples/.roam-rules.yml"
+    sample = repo_root() / "templates/examples/.roam-rules.yml"
     if not sample.exists():
         return  # repo layout-dependent; skip if not in roam-code itself
     code, out = _run(["rules-validate", str(sample)])

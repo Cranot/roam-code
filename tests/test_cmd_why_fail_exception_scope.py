@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+
+from tests._helpers.repo_root import repo_root
 
 # Resolve from THIS file, not the process CWD. Under xdist a sibling test
 # that chdirs leaks its working directory into this worker, and a relative
 # repo path then raises FileNotFoundError -- a failure that reproduces only
 # in parallel runs and looks like a product defect.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_MODULE = _REPO_ROOT / "src/roam/commands/cmd_why_fail.py"
+_MODULE = repo_root() / "src/roam/commands/cmd_why_fail.py"
 
 
 def _name(node: ast.AST | None) -> str:
