@@ -178,7 +178,10 @@ class TestDoctorCheckCoverage:
         # the emitted-workflow drift advisory ("CI workflow drift") — total 23.
         # W836 added the corpus-content advisory (Pattern 2 sweep) — total 24.
         # T2c added the deployed Claude hook-body drift advisory — total 25.
-        assert data["summary"]["total"] == 25
+        # Added the git-repo-health check (core.bare on a populated checkout,
+        # core.worktree pointing at another tree or an unresolvable foreign
+        # path, stale index.lock, unreachable detached HEAD) — total 26.
+        assert data["summary"]["total"] == 26
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()
