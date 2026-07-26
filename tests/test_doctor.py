@@ -183,8 +183,11 @@ class TestDoctorCheckCoverage:
         # path, stale index.lock, unreachable detached HEAD) — total 26.
         # Added the CI environment-parity advisory (interpreter outside the
         # declared CI matrix; console script belonging to another install)
-        # — total 27.
-        assert data["summary"]["total"] == 27
+        # — total 27. Added two more environment/source drift advisories:
+        # "Dependency versions" (installed package versions vs pyproject.toml
+        # specifiers) and "Installed version" (installed dist metadata
+        # version vs pyproject.toml's declared version) — total 29.
+        assert data["summary"]["total"] == 29
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()
