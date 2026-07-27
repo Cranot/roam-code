@@ -209,8 +209,7 @@ def test_no_hardcoded_schema_version_outside_allowlist() -> None:
         "Import and reference ENVELOPE_SCHEMA_VERSION instead of a literal. "
         "If this genuinely versions a DIFFERENT, independently-owned "
         "contract, add a cited entry to _ALLOWLIST in "
-        "tests/test_w1317_envelope_floor_schema_version_drift.py:\n  "
-        + "\n  ".join(violations)
+        "tests/test_w1317_envelope_floor_schema_version_drift.py:\n  " + "\n  ".join(violations)
     )
 
 
@@ -279,8 +278,7 @@ def test_canonical_constant_still_the_single_definition() -> None:
     formatter_path = SRC_ROOT / "output" / "formatter.py"
     src = formatter_path.read_text(encoding="utf-8")
     assert f'ENVELOPE_SCHEMA_VERSION = "{ENVELOPE_SCHEMA_VERSION}"' in src, (
-        "ENVELOPE_SCHEMA_VERSION's definition site has moved or changed "
-        "shape -- update this anchor alongside it."
+        "ENVELOPE_SCHEMA_VERSION's definition site has moved or changed shape -- update this anchor alongside it."
     )
 
 
@@ -379,7 +377,6 @@ def _build_minimal_auth_gaps_project(tmp_path: Path) -> Path:
 
 
 def _invoke_auth_gaps(cli_runner, project_root, *args):
-    import os
 
     from roam.commands.cmd_auth_gaps import auth_gaps_cmd
 

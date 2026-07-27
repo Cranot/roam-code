@@ -437,9 +437,7 @@ def _last_event_signature(events_path: Path) -> Optional[str]:
     return sig if isinstance(sig, str) else None
 
 
-def _derive_status_from_recorded_checks(
-    repo_root: Path, run_id: str
-) -> tuple[Optional[str], list[str], int]:
+def _derive_status_from_recorded_checks(repo_root: Path, run_id: str) -> tuple[Optional[str], list[str], int]:
     """Derive a run's status from its own recorded check outcomes.
 
     W-SEC (security-model hole close): ``end_run`` used to accept
@@ -535,9 +533,7 @@ def end_run(
     if meta is None:
         raise FileNotFoundError(f"run {run_id} does not exist")
 
-    derived_status, failing_checks, _checks_recorded = _derive_status_from_recorded_checks(
-        repo_root, run_id
-    )
+    derived_status, failing_checks, _checks_recorded = _derive_status_from_recorded_checks(repo_root, run_id)
 
     if derived_status == "failed" and status not in ("failed", "abandoned"):
         raise ValueError(
