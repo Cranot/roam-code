@@ -565,6 +565,8 @@ See [Using Roam via MCP](https://roam-code.com/docs/mcp-usage) for the first-run
 Core preset tools: `roam_alerts`, `roam_ask`, `roam_batch_search`, `roam_coupling`, `roam_dead_code`, `roam_deps`, `roam_diagnose_issue`, `roam_fetch_handle`, `roam_file_info`, `roam_grep`, `roam_metrics`, `roam_prepare_change`, `roam_search_symbol`, `roam_taint`, `roam_understand`, `roam_uses`.
 <!-- END auto-count:readme-mcp-core-preset-tools -->
 
+`roam_ask` (and `roam ask` on the CLI) is a natural-language codebase question dispatcher — 'is it safe to delete X?', 'where does login validate?', 'who owns module Y?' — that routes intent to one recipe in the graph-aware 31-recipe registry, replacing a Grep+Read round trip with one call.
+
 <!-- BEGIN auto-count:readme-mcp-tool-list-link -->
 The full 244-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md).
 <!-- END auto-count:readme-mcp-tool-list-link -->
