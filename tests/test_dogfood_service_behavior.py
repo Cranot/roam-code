@@ -265,40 +265,93 @@ def test_pr_analyze_commit_range_flags_real_risk() -> None:
     assert verdict.startswith(("REVIEW", "BLOCK")), f"unexpected verdict: {verdict!r}"
 
 
-@pytest.mark.xfail(
-    # Non-strict: H3 is agent-confirmed but INTERMITTENT in this harness — it
-    # XPASSED once (pr-analyze agreed with critique), so the reproduction is
-    # repo/index-state dependent and a strict marker would flip-flop CI. The
-    # real fix + a deterministic repro are tracked in task #287.
-    strict=False,
-    reason=(
-        "DEFECT (pr-analyze): the acquired --input/stdin/--diff-from-pr/--staged "
-        "diff is NEVER forwarded to pr-prep. cmd_pr_analyze.py:2187 calls "
-        "_capture_pr_prep(commit_range, high_callers) — only the commit_range — "
-        "so blast_radius and critique-high are computed against the (clean) "
-        "working tree and floor to 0. The same open_db diff is HIGH via "
-        "`critique` and CRITICAL via `preflight`, yet pr-analyze --input returns "
-        "SAFE / blast 0 / exit 0 even with --gate. Every diff-piping automation "
-        "path (incl. the headline `git diff | roam pr-analyze` and the "
-        "Roam Agent Review --diff-from-pr path) is a silent false-negative gate. "
-        "Fix: forward the acquired diff to pr-prep instead of only commit_range."
-    ),
-)
-def test_pr_analyze_input_diff_agrees_with_critique() -> None:
-    """pr-analyze --input on a high-blast diff must NOT verdict SAFE.
+def _require_clean_worktree() -> None:
+    """Skip (loudly) unless the repo's working tree is clean.
 
-    Control: `critique` on the same diff is high-severity (asserted first).
+    H3's own reproduction is working-tree-state dependent: pr-analyze's
+    (pre-fix) internal pr-prep call recomputed its diff from the ambient
+    git state, so any unrelated dirty file could make the verdict flip to
+    non-SAFE for the WRONG reason (borrowed risk from something the test
+    never asked about) just as easily as a clean tree could make it floor
+    to SAFE and mask the defect entirely. Neither is a trustworthy signal,
+    so this precondition removes tree state from the equation rather than
+    let it leak into the verdict silently. An explicit, named skip beats a
+    silent pass: a developer (or another agent) with uncommitted work in
+    this repo will see exactly why the test didn't run.
     """
+    proc = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    dirty = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+    if dirty:
+        pytest.skip(
+            "requires a clean working tree for a deterministic repro (pr-prep's own "
+            "git-based recompute would otherwise mix in unrelated dirty files and "
+            "the verdict would no longer isolate the defect under test) -- dirty: "
+            + ", ".join(dirty[:8])
+        )
+
+
+def test_pr_analyze_input_diff_agrees_with_critique() -> None:
+    """pr-analyze --input on a high-blast diff must NOT verdict SAFE, and it
+    must be non-SAFE for the RIGHT reason.
+
+    H3 (fixed): cmd_pr_analyze._capture_pr_prep used to forward only
+    commit_range to pr-prep; the diff acquired via --input/stdin/
+    --diff-from-pr never reached it. With commit_range=None, pr-prep
+    silently recomputed its OWN diff from the working tree instead of the
+    diff pr-analyze was actually handed, flooring pr_risk_score /
+    high_severity_findings to whatever the (possibly clean, possibly
+    irrelevantly dirty) tree contained.
+
+    ``verdict != SAFE`` alone is not a trustworthy assertion here — on a
+    clean tree it fails for the defect's own reason (blast floors to 0), and
+    on a dirty tree it can pass by ACCIDENT (any unrelated modified file
+    trips it). The precondition above removes tree-state as a variable; the
+    ``high_severity_critique`` assertion below is the structural proof: it
+    only holds if the diff pr-analyze acquired via --input actually reached
+    pr-prep's internal critique step, because it must equal the count an
+    independent standalone `critique --input` run reports on the exact same
+    fixture.
+    """
+    _require_clean_worktree()
+
     code, crit = _critique_json(OPEN_DB_DIFF)
     assert code == 5 and crit["summary"].get("risk_level_canonical") == "high", (
         "control precondition failed — critique should flag this diff HIGH"
     )
+    control_high = crit["summary"].get("high_severity")
+    assert control_high, f"control critique reported no high-severity findings: {crit['summary']!r}"
+
     proc = _roam("--json", "pr-analyze", "--input", str(OPEN_DB_DIFF))
     data = json.loads(proc.stdout)
-    verdict = str(data["summary"].get("verdict", ""))
+    summary = data["summary"]
+    verdict = str(summary.get("verdict", ""))
     assert not verdict.startswith("SAFE"), (
         f"pr-analyze --input verdict {verdict!r} contradicts critique HIGH on the "
         "same diff — the input diff was not analyzed for blast radius"
+    )
+
+    # The RIGHT reason: pr-analyze's own high_severity_critique count (read
+    # from the pr-prep envelope it captured) must match the standalone
+    # critique run on the SAME fixture — proof the acquired diff reached
+    # pr-prep's internal critique step rather than a working-tree recompute.
+    assert summary.get("high_severity_critique") == control_high, (
+        f"pr-analyze captured high_severity_critique={summary.get('high_severity_critique')!r}, "
+        f"expected {control_high!r} (same count as standalone `critique --input` on the "
+        "identical fixture) — the acquired diff did not reach pr-prep"
+    )
+
+    # And the nested pr_prep diff section must name the fixture's actual
+    # changed file, not whatever else happens to be touched elsewhere.
+    diff_section = (data.get("pr_prep") or {}).get("diff") or {}
+    blast_files = diff_section.get("blast_radius") or []
+    assert "src/roam/db/connection.py" in blast_files, (
+        f"pr_prep.diff.blast_radius should name the fixture's changed file; got {blast_files!r}"
     )
 
 

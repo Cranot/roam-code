@@ -42,9 +42,11 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -237,31 +239,90 @@ def _capture_suggest_reviewers(file_paths: list[str], top: int) -> dict:
         }
 
 
-def _capture_pr_prep(commit_range: str | None, high_callers: int) -> dict:
+_EXTERNAL_DIFF_SOURCES = frozenset({"diff_from_pr", "input_file", "stdin"})
+
+
+def _diff_source_is_external(source_out: list[str]) -> bool:
+    """True when ``_acquire_diff`` (via *source_out*) pulled the diff from a
+    source pr-prep's OWN git plumbing cannot reproduce (H3 fix).
+
+    ``diff_from_pr`` / ``input_file`` / ``stdin`` may describe a change that
+    doesn't correspond to any resolvable ref in THIS working tree at all
+    (a PR fetched from another ref, a patch piped in from elsewhere, or a
+    diff for a commit other than HEAD). ``staged`` / ``commit_range`` /
+    ``unstaged`` are all git-resolvable in this tree, so pr-prep's own
+    git-native recompute reproduces them byte-for-byte and does not need to
+    go through the external-diff (temp-file ``--input``) path.
+
+    Reads the source ``_acquire_diff`` itself recorded rather than
+    re-deriving it heuristically (e.g. via ``sys.stdin.isatty()``), which is
+    an unreliable proxy under CliRunner/pytest — stdin is a non-tty stream
+    there regardless of whether anything was actually piped in, so a
+    heuristic re-check would misclassify the plain no-flags default
+    invocation (real git working-tree diff) as "external" and wrongly
+    disable the real pr-risk score for it.
+    """
+    return bool(source_out) and source_out[0] in _EXTERNAL_DIFF_SOURCES
+
+
+def _capture_pr_prep(
+    commit_range: str | None,
+    high_callers: int,
+    *,
+    staged: bool = False,
+    diff_text: str | None = None,
+    diff_is_external: bool = False,
+) -> dict:
     """Run ``pr-prep`` in-process and return its parsed JSON envelope.
 
     Mirrors :func:`roam.commands.cmd_pr_prep._capture_json_subcommand` —
     the same CliRunner-based pattern used by ``cmd_audit`` and ``cmd_pr_prep``
     themselves. Failures are inlined into the returned dict so callers
     can degrade gracefully.
+
+    H3 fix: pr-prep recomputes its own diff from git (commit_range / staged /
+    unstaged) — it has no way to see a diff acquired out-of-band (``--input``
+    file, piped stdin, or ``--diff-from-pr``). Forwarding only ``commit_range``
+    meant every one of those acquisition paths silently fell back to
+    analyzing the (possibly clean, possibly irrelevantly-dirty) working tree
+    instead of the diff pr-analyze itself was scoring — floors ``pr_risk_score``
+    /``high_severity_findings`` to whatever the tree happens to contain.
+    When *diff_is_external* is set, the already-acquired *diff_text* is
+    persisted to a temp file and threaded through via ``pr-prep --input`` so
+    pr-prep's critique step scores the SAME change.
     """
     from roam.cli import cli
 
     runner = CliRunner()
     args = ["--json", "pr-prep"]
-    if commit_range:
-        args.append(commit_range)
-    args.extend(["--high-callers", str(high_callers)])
-
-    result = runner.invoke(cli, args)
+    tmp_path: str | None = None
     try:
-        return _json.loads(result.output)
-    except Exception as exc:  # noqa: BLE001 — defensive: pr-prep failure shouldn't crash pr-analyze
-        return {
-            "error": f"pr-prep failed to produce JSON: {exc}",
-            "exit_code": result.exit_code,
-            "summary": {"verdict": "pr-prep error"},
-        }
+        if diff_is_external and (diff_text or "").strip():
+            fd, tmp_path = tempfile.mkstemp(suffix=".diff", prefix="roam-pr-prep-")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(diff_text)
+            args.extend(["--input", tmp_path])
+        elif staged:
+            args.append("--staged")
+        elif commit_range:
+            args.append(commit_range)
+        args.extend(["--high-callers", str(high_callers)])
+
+        result = runner.invoke(cli, args)
+        try:
+            return _json.loads(result.output)
+        except Exception as exc:  # noqa: BLE001 — defensive: pr-prep failure shouldn't crash pr-analyze
+            return {
+                "error": f"pr-prep failed to produce JSON: {exc}",
+                "exit_code": result.exit_code,
+                "summary": {"verdict": "pr-prep error"},
+            }
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 _GITHUB_PR_URL_RE = re.compile(r"https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<num>\d+)")
@@ -304,6 +365,7 @@ def _acquire_diff(
     commit_range: str | None,
     staged: bool,
     diff_from_pr: str | None = None,
+    source_out: list[str] | None = None,
 ) -> str:
     """Return the diff text from the highest-priority available source.
 
@@ -311,20 +373,39 @@ def _acquire_diff(
     a tty) > ``--staged`` git diff > ``COMMIT_RANGE`` git diff > unstaged
     ``git diff``. Returns empty string on any acquisition failure; downstream
     signals handle that as the trivial-diff case.
+
+    *source_out*, when given a list, gets the resolved source name appended
+    (``"diff_from_pr"`` / ``"input_file"`` / ``"stdin"`` / ``"staged"`` /
+    ``"commit_range"`` / ``"unstaged"``). Optional and back-compat-safe (no
+    existing caller passes it) — added so H3's fix (threading the acquired
+    diff into pr-prep) can tell "acquired from a source pr-prep's own git
+    plumbing can reproduce" apart from "acquired out-of-band" WITHOUT
+    re-deriving the answer from ``sys.stdin.isatty()`` a second time, which
+    is an unreliable proxy under CliRunner/pytest (stdin is a non-tty stream
+    there regardless of whether anything was actually piped in).
     """
+
+    def _mark(source: str) -> None:
+        if source_out is not None:
+            source_out.append(source)
+
     if diff_from_pr:
+        _mark("diff_from_pr")
         return _fetch_diff_from_pr_url(diff_from_pr)
     if input_file:
         try:
-            return Path(input_file).read_text(encoding="utf-8")
+            text = Path(input_file).read_text(encoding="utf-8")
         except OSError:
             return ""
+        _mark("input_file")
+        return text
 
     # stdin if we're being piped to (not a tty)
     if not sys.stdin.isatty():
         try:
             data = sys.stdin.read()
             if data:
+                _mark("stdin")
                 return data
         except Exception as _exc:  # noqa: BLE001 — defensive
             # A stdin read failure silently yields an empty diff — surface
@@ -338,6 +419,7 @@ def _acquire_diff(
         git_args.append("--cached")
     elif commit_range:
         git_args.append(commit_range)
+    _mark("staged" if staged else ("commit_range" if commit_range else "unstaged"))
 
     try:
         proc = subprocess.run(
@@ -1215,6 +1297,35 @@ def _build_rationale(
     }
 
 
+def _critique_partial_is_benign(step_summary: dict) -> bool:
+    """True when critique's ``partial_success`` means "nothing applicable
+    to check" rather than a real degradation.
+
+    Critique's own W832 disclosure distinguishes "0 concerns because
+    clean" from "0 concerns because nothing ran" — e.g. a diff that's
+    entirely new files (H3: an externally-supplied diff for content the
+    local index has never seen) has zero ``changed_symbols``, so all
+    three checks legitimately report ``skipped:no_changed_symbols`` and
+    critique sets ``partial_success: True`` / ``state: "partial_critique"``
+    purely as that disclosure — not because anything broke. Silently
+    demoting an explicit ``[intentional]``/SAFE verdict to REVIEW on that
+    basis alone would be its own false-positive gate (regression guarded
+    by ``test_cli_pr_analyze_intentional_marker_skips_gate``).
+
+    Returns False (i.e. treat as a real failure) when ANY check actually
+    errored (``check_status`` has an ``"errored:..."`` entry) or when the
+    substrate-CALL ``warnings_out`` channel is non-empty (a real raise
+    happened somewhere in critique's own pipeline) — both are genuine
+    degradations, not "nothing to check".
+    """
+    if step_summary.get("warnings_out"):
+        return False
+    check_status = step_summary.get("check_status") or {}
+    if not check_status:
+        return False
+    return not any(str(v).startswith("errored:") for v in check_status.values())
+
+
 def _inspect_prep_subcommand_failures(prep_payload: dict) -> tuple[list[str], str | None, str]:
     """Look inside the pr-prep envelope for failed/no-changes subcommands.
 
@@ -1267,6 +1378,8 @@ def _inspect_prep_subcommand_failures(prep_payload: dict) -> tuple[list[str], st
             continue
         # Index-stale / partial_success signal.
         if step_summary.get("state") == "index_stale" or step_summary.get("partial_success"):
+            if step_name == "critique" and _critique_partial_is_benign(step_summary):
+                continue
             failed.append(step_name)
             if step_name == "diff":
                 diff_failed = True
@@ -2155,6 +2268,7 @@ def pr_analyze_command(
         )
         return
 
+    _diff_source: list[str] = []
     diff_text = (
         _run_check(
             "acquire_diff",
@@ -2163,6 +2277,7 @@ def pr_analyze_command(
             commit_range,
             staged,
             diff_from_pr=diff_from_pr,
+            source_out=_diff_source,
             default="",
         )
         or ""
@@ -2189,6 +2304,9 @@ def pr_analyze_command(
         _capture_pr_prep,
         commit_range,
         high_callers,
+        staged=staged,
+        diff_text=diff_text,
+        diff_is_external=_diff_source_is_external(_diff_source),
         default={"summary": {}, "error": "capture_pr_prep_w607aa_default"},
     ) or {"summary": {}}
     ai = _run_check(

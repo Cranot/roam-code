@@ -18,6 +18,7 @@ composer audit + W1224-audit memo.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import click
 from click.testing import CliRunner
@@ -54,9 +55,11 @@ def _capture_json_subcommand(args: list[str]) -> dict:
         }
 
 
-def _git_diff_text(commit_range: str | None) -> str:
+def _git_diff_text(commit_range: str | None, staged: bool = False) -> str:
     args = ["git", "diff"]
-    if commit_range:
+    if staged:
+        args.append("--cached")
+    elif commit_range:
         args.append(commit_range)
     try:
         proc = subprocess.run(
@@ -75,6 +78,35 @@ def _git_diff_text(commit_range: str | None) -> str:
     return proc.stdout
 
 
+def _summarize_external_diff(diff_text: str) -> dict:
+    """Build a minimal, honest diff summary from raw diff text.
+
+    Used only when the diff was supplied via ``--input`` (H3 fix): the
+    ``diff``/``pr-risk`` subcommands are both git-native (they recompute
+    their own diff from commit_range/staged/unstaged git state), so they
+    cannot faithfully analyse a diff that arrived out-of-band and may not
+    correspond to any resolvable git range in THIS working tree. Rather
+    than invoke them anyway (which would silently substitute an unrelated
+    diff — the exact H3 defect), this counts changed files directly from
+    the diff text and leaves index-derived fields absent so consumers
+    can tell "not computed" apart from a real zero.
+    """
+    from roam.commands.cmd_pr_analyze import _parse_diff_into_buckets
+
+    _added, _removed, file_paths = _parse_diff_into_buckets(diff_text)
+    files = sorted(set(file_paths))
+    return {
+        "summary": {
+            "verdict": f"external diff: {len(files)} file(s) (not resolved against the symbol index)",
+            "changed_files": len(files),
+            "affected_symbols": None,
+            "affected_files": None,
+        },
+        "blast_radius": files,
+        "note": "diff supplied via --input; changed_files is a raw file count, not index-resolved",
+    }
+
+
 @roam_capability(
     name="pr-prep",
     category="workflow",
@@ -91,6 +123,20 @@ def _git_diff_text(commit_range: str | None) -> str:
 )
 @click.command("pr-prep")
 @click.argument("commit_range", required=False, default=None)
+@click.option("--staged", is_flag=True, help="Analyze staged changes instead of unstaged.")
+@click.option(
+    "--input",
+    "input_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "Read the diff from a file instead of recomputing it from git. Use this "
+        "when the diff was acquired out-of-band (e.g. forwarded from "
+        "`pr-analyze --input`/stdin/`--diff-from-pr`) so pr-prep's critique step "
+        "scores the SAME change instead of silently falling back to whatever is "
+        "in the working tree (H3)."
+    ),
+)
 @click.option(
     "--high-callers",
     type=int,
@@ -99,7 +145,7 @@ def _git_diff_text(commit_range: str | None) -> str:
     help="Direct-caller threshold passed to `critique`.",
 )
 @click.pass_context
-def pr_prep(ctx, commit_range, high_callers) -> None:
+def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
     """One-shot pre-PR fitness check: diff + critique + pr-risk.
 
     \b
@@ -107,6 +153,8 @@ def pr_prep(ctx, commit_range, high_callers) -> None:
       roam pr-prep                  # uncommitted changes
       roam pr-prep main..HEAD       # whole branch
       roam pr-prep HEAD~3           # last 3 commits
+      roam pr-prep --staged         # staged changes only
+      roam pr-prep --input pr.diff  # diff acquired out-of-band
 
     Output bundles three sections:
       - diff blast radius (changed files / affected symbols / blast files)
@@ -219,25 +267,65 @@ def pr_prep(ctx, commit_range, high_callers) -> None:
             _w607cc_warnings_out.append(f"pr_prep_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
-    diff_args = ["diff"]
-    if commit_range:
-        diff_args.append(commit_range)
-    diff_payload = _run_check(
-        "capture_diff",
-        _capture_json_subcommand,
-        diff_args,
-        default={"summary": {}, "error": "capture_diff_w607ac_default"},
-    ) or {"summary": {}}
+    # H3 fix -- an externally-supplied diff (--input) has no git-resolvable
+    # range in THIS working tree: it may be a PR fetched from another ref, or
+    # a patch piped in from elsewhere. `diff`/`pr-risk` are both git-native
+    # (they recompute their OWN diff from commit_range/staged/unstaged git
+    # state) so invoking them normally here would silently substitute an
+    # unrelated diff -- the exact defect this fix closes. When --input is
+    # given, bypass both git-native subcommands: build the diff summary
+    # directly from the supplied text and skip pr-risk with a loud
+    # disclosure instead of a silent (wrong) score.
+    external_diff_text: str | None = None
+    if input_path:
+        try:
+            external_diff_text = Path(input_path).read_text(encoding="utf-8")
+        except OSError as _exc:
+            external_diff_text = ""
+            _w607ac_warnings_out.append(f"pr_prep_read_input_failed:{type(_exc).__name__}:{_exc}")
 
-    diff_text = (
-        _run_check(
-            "git_diff_text",
-            _git_diff_text,
-            commit_range,
-            default="",
-        )
-        or ""
-    )
+    if external_diff_text is not None:
+        diff_payload = _run_check(
+            "summarize_external_diff",
+            _summarize_external_diff,
+            external_diff_text,
+            default={"summary": {}, "error": "summarize_external_diff_w607ac_default"},
+        ) or {"summary": {}}
+        diff_text = external_diff_text
+    else:
+        diff_args = ["diff"]
+        if commit_range:
+            diff_args.append(commit_range)
+        elif staged:
+            diff_args.append("--staged")
+        diff_payload = _run_check(
+            "capture_diff",
+            _capture_json_subcommand,
+            diff_args,
+            default={"summary": {}, "error": "capture_diff_w607ac_default"},
+        ) or {"summary": {}}
+
+        if staged:
+            diff_text = (
+                _run_check(
+                    "git_diff_text",
+                    _git_diff_text,
+                    commit_range,
+                    staged=True,
+                    default="",
+                )
+                or ""
+            )
+        else:
+            diff_text = (
+                _run_check(
+                    "git_diff_text",
+                    _git_diff_text,
+                    commit_range,
+                    default="",
+                )
+                or ""
+            )
     critique_payload: dict
     if not diff_text.strip():
         critique_payload = {"summary": {"verdict": "no diff to critique", "high_severity": 0}}
@@ -282,12 +370,48 @@ def pr_prep(ctx, commit_range, high_callers) -> None:
                     "exit_code": result.exit_code,
                 }
 
-    pr_risk_payload = _run_check(
-        "capture_pr_risk",
-        _capture_json_subcommand,
-        ["pr-risk"],
-        default={"summary": {}, "error": "capture_pr_risk_w607ac_default"},
-    ) or {"summary": {}}
+    if external_diff_text is not None:
+        # H3 fix -- pr-risk is git/DB-native (blast radius via the symbol
+        # graph, hotspot churn, bus factor, author familiarity -- all
+        # resolved against THIS working tree's git history). It has no way
+        # to score a diff that arrived out-of-band and may not correspond to
+        # any commit in this repo. Calling it anyway would silently score
+        # the ambient working tree -- the loud-fallback doctrine (see H1 in
+        # the same defect inventory) says a signal we cannot honestly
+        # compute must be disclosed as missing, not floored to a
+        # misleadingly-clean number.
+        #
+        # Deliberately NOT setting summary["partial_success"]/["state"]
+        # here: cmd_pr_analyze._inspect_prep_subcommand_failures keys its
+        # SAFE/INTENTIONAL -> REVIEW promotion off exactly those two nested
+        # fields, and a trivial/safe diff piped via --input must still be
+        # able to reach SAFE (or INTENTIONAL, which must never be
+        # downgraded — see test_cli_pr_analyze_intentional_marker_skips_gate)
+        # on its own legitimate signals. The "skipped" flag below is a
+        # local, top-level disclosure for pr-prep's OWN aggregation
+        # (direct `pr-prep --input` callers) — it does not reach into
+        # pr-analyze's verdict logic.
+        pr_risk_payload = {
+            "summary": {
+                "risk_score": None,
+                "verdict": (
+                    "pr-risk not computed: externally supplied diff has no "
+                    "git-resolvable range in this working tree"
+                ),
+            },
+            "skipped": True,
+        }
+        _w607ac_warnings_out.append("pr_prep_pr_risk_skipped:external_diff_no_git_range")
+    else:
+        pr_risk_args = ["pr-risk"]
+        if staged:
+            pr_risk_args.append("--staged")
+        pr_risk_payload = _run_check(
+            "capture_pr_risk",
+            _capture_json_subcommand,
+            pr_risk_args,
+            default={"summary": {}, "error": "capture_pr_risk_w607ac_default"},
+        ) or {"summary": {}}
 
     # Pattern-2 guard — name any subcommand that failed (no parseable
     # ``summary`` block) so we never emit "READY" on a silent fallback
@@ -295,14 +419,16 @@ def pr_prep(ctx, commit_range, high_callers) -> None:
     # because the upstream payload was an error envelope. The compound
     # contract per CLAUDE.md §Pattern-2: when ANY subcommand fails,
     # set ``partial_success: true`` + name the failed subcommands in
-    # the verdict.
+    # the verdict. A deliberately-skipped pr-risk (H3: external diff with
+    # no git-resolvable range) is treated the same as a failure — the
+    # analysis IS structurally incomplete either way.
     def _inspect_failed_subcommands(_diff_payload, _critique_payload, _pr_risk_payload):
         failed: list[str] = []
         if not isinstance(_diff_payload.get("summary"), dict):
             failed.append("diff")
         if not isinstance(_critique_payload.get("summary"), dict):
             failed.append("critique")
-        if not isinstance(_pr_risk_payload.get("summary"), dict):
+        if not isinstance(_pr_risk_payload.get("summary"), dict) or _pr_risk_payload.get("skipped"):
             failed.append("pr-risk")
         return failed
 
