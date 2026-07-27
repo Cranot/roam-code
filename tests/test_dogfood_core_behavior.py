@@ -400,18 +400,11 @@ def test_verify_imports_resolves_stdlib_in_python_file(yaml_import_repo):
 
 
 # --------------------------------------------------------------------------- #
-# CONFIRMED DEFECTS (strict xfail -> flips to XPASS/failure when fixed)
+# M5 FIXED (2026-07-28): the stdlib skip now keys off the IMPORT's own
+# apparent language, not the host file's -- see _scan_import_entry's
+# `stdlib_scope` parameter in src/roam/commands/cmd_verify_imports.py. A
+# `python -c "import json"` heredoc embedded in a YAML CI step now resolves.
 # --------------------------------------------------------------------------- #
-@pytest.mark.xfail(
-    reason="DEFECT: verify-imports flags Python stdlib imports embedded in YAML as "
-    "unresolved. _scan_import_entry gates the stdlib skip on is_py (host .py), so "
-    "an `import json` inside a workflow run-block is reported unresolved (33% of the "
-    "roam repo's own verify-imports findings are this FP class). "
-    "Fix: src/roam/commands/cmd_verify_imports.py:_scan_import_entry -- apply the "
-    "_is_stdlib_module skip regardless of host-file language (or stop extracting "
-    "Python imports from non-Python hosts).",
-    strict=True,
-)
 def test_verify_imports_should_not_flag_stdlib_in_yaml(yaml_import_repo):
     d, _ = run_json(yaml_import_repo, "verify-imports", detail=True)
     unresolved_names = {i.get("name") for i in d.get("imports", []) if i.get("status") != "resolved"}
