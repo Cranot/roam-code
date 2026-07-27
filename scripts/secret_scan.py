@@ -10,6 +10,17 @@ Allowlist options:
 - A line ending in an explicit ``# secretsallow``, ``// secretsallow``, or
   ``; secretsallow`` comment skips that line.
 - A repo-root ``.secretsallow`` file can list path globs to skip whole files.
+
+NOTE ON TEST FIXTURES: this scanner deliberately does NOT import
+``roam.index.file_roles.is_test`` or otherwise suppress findings by file
+role. ``cmd_secrets.scan_project`` (the ``roam secrets`` command) suppresses
+test/fixture/docs paths by default because it is a developer-facing triage
+tool; this script is the pre-push leak *gate* -- its entire job is to catch
+mistakes regardless of which file they land in, and "it's a test file" must
+not be a blanket licence to ship a real credential. A test file is exactly
+where a developer is most likely to paste a real token "just for this one
+run". Precision fixes belong in the pattern/value logic below, not in a
+role-based bypass.
 """
 
 from __future__ import annotations
@@ -142,6 +153,70 @@ def _path_is_allowlisted(rel_path: str, allowlist: list[str]) -> bool:
     return any(fnmatch.fnmatchcase(rel_path, pattern) for pattern in allowlist)
 
 
+# The scanner's OWN test fixture corpus: a path allowlist, not a directory
+# rule, so it can't quietly grow into "tests/ is exempt" (which would
+# reopen the coverage gap this scanner exists to close). A secret scanner
+# cannot be tested without planting secret-shaped strings, so these two
+# files matching the very patterns they exist to exercise is a structural
+# certainty, not a finding -- not a loophole a real leak could hide behind,
+# since these are named paths, not a directory rule. Ported from
+# compile-code's scripts/secret_scan.py (commit ee7896e), which in turn
+# cites this repo's own ``WHITELIST_FILES`` in
+# scripts/internal_language_patterns.py as precedent for the same idiom.
+_OWN_TEST_CORPUS_FILES = frozenset(
+    {
+        "tests/test_secrets_v2.py",
+        "tests/test_secrets_ai_provider_keys.py",
+    }
+)
+
+
+def _is_own_test_corpus(rel_path: str) -> bool:
+    return rel_path.replace("\\", "/") in _OWN_TEST_CORPUS_FILES
+
+
+# Ordinary tests -- NOT this scanner's fixture corpus -- whose synthetic
+# credentials are already committed, unmarked, in commits that predate a
+# later commit which added a `# secretsallow` line marker at the tip. This
+# range gate reads each historical commit's OWN blob, so a tip-side marker
+# never retroactively cleans an earlier commit that shipped without one
+# (same lesson compile-code hit: a marker added at commit N+1 must not be
+# trusted to clean commit N's full blob). This branch does not rewrite
+# already-committed history to fix a scanner false positive, so the only
+# option left for these two is a path exemption.
+#
+# Each entry below carries its OWN reason and is deliberately NOT folded
+# into ``_OWN_TEST_CORPUS_FILES``, which asserts something these files are
+# not -- the scanner's own fixture corpus. A dict (not a frozenset) so the
+# rationale lives next to the path it excuses, not in a shared comment.
+_LEGACY_FIXTURE_EXEMPTIONS: dict[str, str] = {
+    "tests/test_hooks_claude_setup.py": (
+        "test_prompt_turn_sequence_is_monotonic_and_prompt_private plants a "
+        "synthetic 'private marker' string solely to prove Stop-hook "
+        "telemetry never echoes prompt text verbatim. The value carries no "
+        "vendor shape and is not a real credential; renaming it would not "
+        "change that, and the commit that introduced it (pre-dating the "
+        "tip-side `# secretsallow` marker) is already merged history."
+    ),
+    "tests/test_evidence_pr_replay.py": (
+        "test_pr_replay_synth_bundle_scrubs_actor_secrets plants a 40-char "
+        "GitHub-PAT-shaped literal specifically because the test proves the "
+        "actor-scrub redaction path strips real-looking tokens -- reshaping "
+        "the value into a placeholder would defeat the test it exists to "
+        "run. The commit that introduced it (pre-dating the tip-side "
+        "`# secretsallow` marker) is already merged history."
+    ),
+}
+
+
+def _is_legacy_fixture_exemption(rel_path: str) -> bool:
+    return rel_path.replace("\\", "/") in _LEGACY_FIXTURE_EXEMPTIONS
+
+
+def _is_exempt_fixture_path(rel_path: str) -> bool:
+    return _is_own_test_corpus(rel_path) or _is_legacy_fixture_exemption(rel_path)
+
+
 def _line_is_allowlisted(line: str) -> bool:
     return _ALLOWLIST_RE.search(line) is not None
 
@@ -180,15 +255,61 @@ def _placeholder_candidate(match: re.Match[str]) -> str:
     return quoted.group(1) if quoted else matched
 
 
+# An un-interpolated f-string/``str.format``/shell-style placeholder token
+# (``{name}``, ``${name}``, ``%(name)s``) is template SYNTAX, not data -- no
+# vendor pattern above can ever legitimately match one (every vendor shape
+# requires a fixed prefix or character set a bare placeholder can't
+# produce), so this is safe to treat as a placeholder for every pattern,
+# not just the generic ones. Ported from compile-code's
+# scripts/secret_scan.py (commit ee7896e), same repo family, same problem:
+# a range gate reading an un-interpolated f-string assignment fixture in a
+# parametrized test as literal data.
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"\{[A-Za-z_][A-Za-z0-9_]*\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}|%\([A-Za-z_][A-Za-z0-9_]*\)s"
+)
+
+# Patterns whose regex is keyed on a variable NAME ("secret", "token",
+# "password", ...) followed by "= '<anything 8+ chars>'" -- i.e. patterns
+# that say nothing about the VALUE's shape, unlike e.g. "AWS Access Key"
+# where the match *is* the credential. Only these get the identifier-vs-
+# value check in ``_assignment_value_is_credential_shaped`` below; vendor
+# patterns must NOT, since some real credentials (AWS key IDs) are
+# themselves canonically all-uppercase-and-digits.
+_GENERIC_ASSIGNMENT_PATTERNS = frozenset({"Generic Secret Assignment", "Generic Password Assignment"})
+
+# A bare SCREAMING_SNAKE_CASE token, e.g. the NAME of an env var or a
+# GitHub Actions secret to read at runtime.
+_SCREAMING_SNAKE_IDENTIFIER_RE = re.compile(r"[A-Z][A-Z0-9_]*")
+
+
 def _is_explicit_placeholder(match: re.Match[str]) -> bool:
     """Recognize whole placeholder values without substring exemptions."""
-    value = _placeholder_candidate(match).strip().strip("<>{}[]()'\"")
+    raw = _placeholder_candidate(match).strip()
+    if _TEMPLATE_PLACEHOLDER_RE.fullmatch(raw):
+        return True
+    value = raw.strip("<>{}[]()'\"")
     lower = value.lower()
     if value in _EXACT_PLACEHOLDERS or lower in _EXACT_PLACEHOLDERS:
         return True
     if re.fullmatch(r"[xX]{6,}", value):
         return True
     return re.fullmatch(r"(?:your|insert|replace)[_-][a-z0-9_-]+", lower) is not None
+
+
+def _assignment_value_is_credential_shaped(pat: dict, match: re.Match[str]) -> bool:
+    """Reject a "Generic *Assignment" hit whose quoted value is itself a bare
+    SCREAMING_SNAKE_CASE identifier -- the NAME of an env var, GitHub
+    secret, or constant being assigned, not an opaque credential value.
+    Real credentials have entropy and character-class diversity; an
+    all-caps-underscore token has neither. Scoped to the generic assignment
+    patterns only: some vendor patterns (AWS Access Key IDs) are themselves
+    canonically all-uppercase and must not be exempted by this rule. Ported
+    from compile-code's scripts/secret_scan.py (commit ee7896e).
+    """
+    if pat["name"] not in _GENERIC_ASSIGNMENT_PATTERNS:
+        return True
+    value = _placeholder_candidate(match)
+    return _SCREAMING_SNAKE_IDENTIFIER_RE.fullmatch(value) is None
 
 
 def _decode_content_bytes(data: bytes, *, operation: str) -> str:
@@ -227,6 +348,8 @@ def _scan_text(
                 if _is_explicit_placeholder(match):
                     continue
                 if not _high_entropy_passes(pat, match):
+                    continue
+                if not _assignment_value_is_credential_shaped(pat, match):
                     continue
                 findings.append(
                     {
@@ -298,7 +421,7 @@ def _scan_commits(repo_root: Path, commits: list[str]) -> list[dict]:
                     allow_suppression=False,
                 )
             )
-            if _path_is_allowlisted(rel_path, path_allowlist):
+            if _path_is_allowlisted(rel_path, path_allowlist) or _is_exempt_fixture_path(rel_path):
                 continue
             blob_raw = _git_bytes(
                 repo_root,
