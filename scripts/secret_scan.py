@@ -167,6 +167,12 @@ _OWN_TEST_CORPUS_FILES = frozenset(
     {
         "tests/test_secrets_v2.py",
         "tests/test_secrets_ai_provider_keys.py",
+        # This scanner's own regression suite. It necessarily contains
+        # entropy-bearing fixtures: the test proving the SCREAMING_SNAKE
+        # discrimination does NOT swallow a real secret only means anything
+        # if its fixture value is a real-looking one. Without this entry the
+        # gate blocks the very commit that hardens it.
+        "tests/test_secret_scan_hook.py",
     }
 )
 
