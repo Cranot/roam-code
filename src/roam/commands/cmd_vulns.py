@@ -810,6 +810,17 @@ def _do_import(
         if vuln_rows is None:
             vuln_rows = []
 
+        # M2: pre-filter count, queried while conn is still open (the
+        # verdict is built after this `with` block closes).
+        pre_filter_total = _run_check_aq(
+            "count_all_vulns",
+            _count_all_vulns,
+            conn,
+            default=None,
+        )
+        if pre_filter_total is None:
+            pre_filter_total = len(vuln_rows)
+
         if persist:
             try:
                 _run_check_aq(
@@ -831,6 +842,7 @@ def _do_import(
         token_budget,
         extra_summary={"imported": len(ingested), "import_file": import_file},
         reachable_only=reachable_only,
+        pre_filter_total=pre_filter_total,
         _run_check_aq=_run_check_aq,
         _w607aq_warnings_out=_w607aq_warnings_out,
         _run_check_ch=_run_check_ch,
@@ -889,6 +901,17 @@ def _do_inventory(
         if vuln_rows is None:
             vuln_rows = []
 
+        # M2: pre-filter count, queried while conn is still open (the
+        # verdict is built after this `with` block closes).
+        pre_filter_total = _run_check_aq(
+            "count_all_vulns",
+            _count_all_vulns,
+            conn,
+            default=None,
+        )
+        if pre_filter_total is None:
+            pre_filter_total = len(vuln_rows)
+
         if persist:
             try:
                 _run_check_aq(
@@ -909,6 +932,7 @@ def _do_inventory(
         sarif_mode,
         token_budget,
         reachable_only=reachable_only,
+        pre_filter_total=pre_filter_total,
         _run_check_aq=_run_check_aq,
         _w607aq_warnings_out=_w607aq_warnings_out,
         _run_check_ch=_run_check_ch,
@@ -1026,6 +1050,27 @@ def _query_vulns(
     return vulns
 
 
+def _count_all_vulns(conn: sqlite3.Connection) -> int:
+    """Row count in ``vulnerabilities`` before any ``--reachable-only`` filter.
+
+    M2 (DOGFOOD-DEFECTS-2026-07-15): ``_query_vulns(reachable_only=True)``
+    returns a list already filtered to ``reachable == 1``. Import-site
+    matches never carry a ``matched_symbol_id`` (by design -- a bare
+    name coincidence must not seed graph reachability, see
+    ``vuln_store._insert_vuln``), so that filter can legitimately drop
+    every row of a real scan. ``len(vulns)`` alone can't then tell "the
+    table is genuinely empty" apart from "N rows exist, 0 reachable via
+    the call graph" -- this queries the true pre-filter count so the
+    verdict can distinguish them instead of reporting the empty-table /
+    re-import message on real (but graph-unreachable) data.
+    """
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM vulnerabilities").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return int(row["n"]) if row is not None else 0
+
+
 def _make_fallback_run_check(bucket: list[str], prefix: str):
     """Build a no-op W607 accumulator for use outside the click closure."""
 
@@ -1044,6 +1089,8 @@ def _compute_predicate_fields(
     by_severity_local: dict,
     reachable_count_local: int,
     just_imported_local: bool,
+    pre_filter_total_local: int = 0,
+    reachable_only_local: bool = False,
 ) -> dict:
     """Assemble the verdict-input predicate fields (state + sev_parts)."""
     sev_parts: list[str] = []
@@ -1051,7 +1098,16 @@ def _compute_predicate_fields(
         count = by_severity_local.get(sev, 0)
         if count > 0:
             sev_parts.append(f"{count} {sev}")
-    if total_local == 0 and not just_imported_local:
+    # M2 (DOGFOOD-DEFECTS-2026-07-15): distinguish "the reachable_only
+    # filter removed every row" from "the table has never been scanned".
+    # Import-site matches never carry matched_symbol_id (by design --
+    # see vuln_store._insert_vuln), so `--reachable-only` used to filter
+    # EVERY row of a real scan to empty; the total==0 branch below then
+    # read that as "no scan available", hiding N real (but non-graph-
+    # reachable) CVEs and telling the user to re-import data that was
+    # already there.
+    filtered_to_empty_local = reachable_only_local and total_local == 0 and pre_filter_total_local > 0
+    if total_local == 0 and not just_imported_local and not filtered_to_empty_local:
         state_local = "no_scan"
         partial_success_local = True
     else:
@@ -1064,6 +1120,9 @@ def _compute_predicate_fields(
         "just_imported": just_imported_local,
         "state": state_local,
         "partial_success": partial_success_local,
+        "pre_filter_total": pre_filter_total_local,
+        "reachable_only": reachable_only_local,
+        "filtered_to_empty": filtered_to_empty_local,
     }
 
 
@@ -1073,6 +1132,14 @@ def _build_verdict_str(fields: dict) -> str:
     sev_parts = fields["sev_parts"]
     reachable_count_local = fields["reachable_count"]
     just_imported_local = fields["just_imported"]
+    pre_filter_total_local = fields.get("pre_filter_total", total_local)
+    filtered_to_empty_local = fields.get("filtered_to_empty", False)
+    if filtered_to_empty_local:
+        return (
+            f"{pre_filter_total_local} vulnerabilities imported, 0 reachable via the "
+            "call graph (no symbol-level reachability evidence for these matches; "
+            "run `roam vulns` without --reachable-only to see all of them)"
+        )
     if total_local == 0 and not just_imported_local:
         return (
             "no vulnerability scan available (vulnerabilities table is empty; "
@@ -1213,6 +1280,7 @@ def _build_json_summary(
     distribution: dict,
     extra_summary: dict | None,
     combined_warnings: list[str],
+    pre_filter_total: int | None = None,
 ) -> dict:
     """Build the canonical JSON summary dict; flip partial_success on any warning."""
     summary: dict = {
@@ -1224,6 +1292,12 @@ def _build_json_summary(
         "reachable_count": reachable_count,
         "findings_confidence_distribution": distribution,
     }
+    # M2 (DOGFOOD-DEFECTS-2026-07-15): surface the pre-`--reachable-only`
+    # row count whenever it differs from `total` -- a JSON consumer that
+    # only reads `summary.total` would otherwise see `0` and be unable
+    # to tell "no data" apart from "N rows exist, 0 reachable".
+    if pre_filter_total is not None and pre_filter_total != total:
+        summary["pre_filter_total"] = pre_filter_total
     if extra_summary:
         summary.update(extra_summary)
     # W607-AQ / W607-CH: merge substrate-CALL markers AND aggregation-
@@ -1265,6 +1339,7 @@ def _render_json_output(
     reachable_count: int,
     extra_summary: dict | None,
     token_budget: int,
+    pre_filter_total: int,
     _run_check_aq,
     _run_check_ch,
     _w607aq_warnings_out: list[str],
@@ -1293,6 +1368,7 @@ def _render_json_output(
         distribution,
         extra_summary,
         _combined_warnings_out,
+        pre_filter_total,
     )
 
     envelope_kwargs: dict = {
@@ -1362,6 +1438,8 @@ def _render_text_output(
     reachable_count: int,
     state: str,
     extra_summary: dict | None,
+    filtered_to_empty: bool = False,
+    pre_filter_total: int = 0,
 ) -> None:
     """Emit the plain-text verdict + severity-sorted table + summary line."""
     click.echo(f"VERDICT: {verdict}")
@@ -1399,6 +1477,13 @@ def _render_text_output(
 
         if extra_summary and extra_summary.get("imported"):
             click.echo(f"  Imported {extra_summary['imported']} from {extra_summary['import_file']}")
+    elif filtered_to_empty:
+        # M2 (DOGFOOD-DEFECTS-2026-07-15): the verdict line above already
+        # says "<pre_filter_total> vulnerabilities imported, 0 reachable"
+        # -- do NOT also tell the user to (re-)import a report, that data
+        # is already in the DB, just not graph-reachable.
+        click.echo(f"  {pre_filter_total} vulnerabilities are in the database; none are reachable via the call graph.")
+        click.echo("  Run `roam vulns` without --reachable-only to see all of them.")
     else:
         if state == "no_scan":
             click.echo("  No vulnerability scan has been imported yet.")
@@ -1415,6 +1500,7 @@ def _output_results(
     extra_summary: dict | None = None,
     *,
     reachable_only: bool = False,
+    pre_filter_total: int | None = None,
     _run_check_aq=None,
     _w607aq_warnings_out=None,
     _run_check_ch=None,
@@ -1454,6 +1540,11 @@ def _output_results(
     # the no-scan state. An import that found zero rows is still a scan.
     just_imported = bool(extra_summary and extra_summary.get("imported") is not None)
 
+    # M2: fall back to `total` (post-filter) when the caller didn't supply
+    # a pre-filter count -- preserves old (indistinguishable) behaviour
+    # for any caller that doesn't thread it through, rather than crashing.
+    pre_filter_total_resolved = pre_filter_total if pre_filter_total is not None else total
+
     # W607-CH -- compute_predicate boundary. Wraps the per-field extraction
     # of metrics so a future ``_severity_breakdown`` schema refactor that
     # returns a non-dict (or a dict missing the canonical CVSS keys)
@@ -1467,6 +1558,8 @@ def _output_results(
         by_severity,
         reachable_count,
         just_imported,
+        pre_filter_total_resolved,
+        reachable_only,
         default={
             "total": total,
             "sev_parts": [],
@@ -1474,6 +1567,9 @@ def _output_results(
             "just_imported": just_imported,
             "state": "scanned",
             "partial_success": False,
+            "pre_filter_total": pre_filter_total_resolved,
+            "reachable_only": reachable_only,
+            "filtered_to_empty": False,
         },
     )
     state = _pred_fields["state"]
@@ -1511,6 +1607,7 @@ def _output_results(
             reachable_count,
             extra_summary,
             token_budget,
+            pre_filter_total_resolved,
             _run_check_aq,
             _run_check_ch,
             _w607aq_warnings_out,
@@ -1518,4 +1615,13 @@ def _output_results(
         )
         return
 
-    _render_text_output(vulns, verdict, total, reachable_count, state, extra_summary)
+    _render_text_output(
+        vulns,
+        verdict,
+        total,
+        reachable_count,
+        state,
+        extra_summary,
+        filtered_to_empty=_pred_fields.get("filtered_to_empty", False),
+        pre_filter_total=pre_filter_total_resolved,
+    )
