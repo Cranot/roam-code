@@ -71,7 +71,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.evidence.completeness_compat import compute_completeness
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -780,7 +780,7 @@ def evidence_diff(ctx, old_path, new_path):
         # JSON-safe.
         _envelope_floor_ck: dict = {
             "command": "evidence-diff",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": "evidence-diff completed (risk_level low)",
                 "partial_success": True,

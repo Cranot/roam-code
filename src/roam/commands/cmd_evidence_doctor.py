@@ -72,7 +72,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.evidence.completeness_compat import classify_completeness
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -1263,7 +1263,7 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         # serialised. Literal "low" / 1 keep the floor JSON-safe.
         _envelope_floor_cf: dict = {
             "command": "evidence-doctor",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": "evidence-doctor completed (risk_level low)",
                 "partial_success": True,

@@ -77,7 +77,7 @@ from roam.commands.pr_analyze.cache import (
     _save_cache,
 )
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -2512,7 +2512,7 @@ def pr_analyze_command(
     # W607-BP serialize_envelope floor pattern.
     _envelope_floor: dict = {
         "command": "pr-analyze",
-        "schema_version": "1.0.0",
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "summary": {
             "verdict": augmented_verdict,
             "partial_success": True,

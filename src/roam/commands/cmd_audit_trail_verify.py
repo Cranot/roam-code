@@ -46,7 +46,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 
 EXIT_GATE_FAILURE = 5
 
@@ -891,7 +891,7 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
         # state vs. a clean SAFE.
         _envelope_floor: dict = {
             "command": "audit-trail-verify",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "state": state,

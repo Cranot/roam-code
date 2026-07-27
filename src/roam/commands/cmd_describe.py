@@ -39,7 +39,7 @@ from roam.commands.conventions_helper import (
 )
 from roam.commands.resolve import detect_entry_points, ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 
 
 def _section_overview(conn):
@@ -1191,7 +1191,7 @@ def describe(ctx, write, force, agent_prompt, out_file):
                 _ap_kwargs["warnings_out"] = list(_ap_combined_wo)
             _ap_envelope_floor: dict = {
                 "command": "describe",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": _ap_verdict,
                     "partial_success": True,
@@ -1415,7 +1415,7 @@ def describe(ctx, write, force, agent_prompt, out_file):
             _desc_kwargs["warnings_out"] = list(_desc_combined_wo)
         _desc_envelope_floor: dict = {
             "command": "describe",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": _desc_verdict,
                 "partial_success": True,

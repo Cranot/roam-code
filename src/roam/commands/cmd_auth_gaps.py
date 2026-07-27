@@ -17,7 +17,7 @@ from roam.db.connection import find_project_root, open_db
 from roam.observability import log_swallowed
 from roam.output._severity import severity_rank
 from roam.output.confidence import confidence_level_rank
-from roam.output.formatter import format_table, json_envelope, loc, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, loc, to_json
 
 # W116 — auth-gaps is the fourth detector migrating onto the central
 # findings registry (after `clones` in W95, `dead` in W99, and
@@ -1450,7 +1450,7 @@ def _emit_auth_gaps_json(
 
     _envelope_floor: dict = {
         "command": "auth-gaps",
-        "schema_version": "1.0.0",
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "summary": {
             "verdict": "auth_gaps completed",
             "partial_success": True,

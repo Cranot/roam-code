@@ -13,7 +13,7 @@ from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.file_role_hints import is_excluded_path
-from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, abbrev_kind, format_table, json_envelope, loc, to_json
 from roam.output.framework_filter import FRAMEWORK_PRIMITIVE_NAMES as _FRAMEWORK_NAMES
 
 # W152: fan is the fifth detector migrating onto the central findings
@@ -535,7 +535,7 @@ def _build_fan_envelope_preserving_warning_contract(
 
     _envelope_floor: dict = {
         "command": "fan",
-        "schema_version": "1.0.0",
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "summary": {
             "verdict": verdict,
             "mode": mode,

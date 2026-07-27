@@ -48,7 +48,7 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output.formatter import json_envelope, loc, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, loc, to_json
 
 # W111 — missing-index is the fourth detector migrating onto the central
 # findings registry (after `clones` (W95), `dead` (W99), and `complexity`
@@ -1768,7 +1768,7 @@ def _emit_missing_index_json(
 
     envelope_floor: dict = {
         "command": "missing-index",
-        "schema_version": "1.0.0",
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "summary": {
             "verdict": wrapped_verdict,
             "partial_success": True,

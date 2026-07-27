@@ -48,7 +48,7 @@ from click.testing import CliRunner
 
 from roam.commands.resolve import ensure_index
 from roam.exit_codes import EXIT_SUCCESS
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 
 
 def _git_log_in_range(commit_range: str, *, limit: int = 100) -> list[dict]:
@@ -721,7 +721,7 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
         # W607-CR serialize_envelope floor pattern.
         _envelope_floor: dict = {
             "command": "postmortem",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,

@@ -28,6 +28,7 @@ from roam.output.confidence import (
     wrap_findings,
 )
 from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
     json_envelope,
     loc,
     to_json,
@@ -891,7 +892,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             # serialize_envelope floor pattern.
             _envelope_floor: dict = {
                 "command": "clones",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict_with_conf,
                     "partial_success": True,

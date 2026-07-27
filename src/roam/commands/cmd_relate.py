@@ -45,7 +45,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found_hint
 from roam.db.connection import open_db
 from roam.db.edge_kinds import CALL_EDGE_KINDS
-from roam.output.formatter import json_envelope, resolution_disclosure, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, resolution_disclosure, to_json
 
 # Conflict-risk edge kinds: callers (W512 canonical union) + the
 # 'uses' / 'uses_trait' phantom-extender kinds documented in
@@ -771,7 +771,7 @@ def relate(ctx, symbols, files, depth):
             # serialize_envelope floor pattern.
             _envelope_floor: dict = {
                 "command": "relate",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict,
                     "partial_success": True,

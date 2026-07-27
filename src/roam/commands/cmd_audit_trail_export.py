@@ -29,7 +29,7 @@ from roam.commands.audit_trail_helpers import (
     INTEGRITY_SUMMARY_SCHEMA,
 )
 from roam.commands.audit_trail_helpers import load_records as _load_records
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 
 _COLUMNS = [
     "timestamp",
@@ -827,7 +827,7 @@ def audit_trail_export_cmd(
         # pattern.
         _envelope_floor: dict = {
             "command": "audit-trail-export",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict_text,
                 "partial_success": True,

@@ -12,7 +12,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 
 # W154 (W93 follow-up): dark-matter is the Nth detector migrating onto the
@@ -804,7 +804,7 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
             # pattern.
             _envelope_floor: dict = {
                 "command": "dark-matter",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict_str,
                     "partial_success": True,

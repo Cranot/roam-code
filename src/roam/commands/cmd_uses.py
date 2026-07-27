@@ -38,6 +38,7 @@ from roam.db.connection import batched_in, find_project_root, open_db
 from roam.languages import JS_FAMILY_LANGUAGES
 from roam.observability import log_swallowed
 from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
     abbrev_kind,
     format_table,
     json_envelope,
@@ -649,7 +650,7 @@ def uses(ctx, name, full):
             # serialize_envelope floor pattern.
             _envelope_floor: dict = {
                 "command": "uses",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": _verdict,
                     "partial_success": True,

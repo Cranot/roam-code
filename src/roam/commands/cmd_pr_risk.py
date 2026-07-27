@@ -32,7 +32,7 @@ from roam.commands.changed_files import (
 from roam.commands.cmd_coupling import _compute_surprise
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
-from roam.output.formatter import WarningsOut, format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, WarningsOut, format_table, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -1840,7 +1840,7 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
             # serialize_envelope floor pattern.
             _envelope_floor: dict = {
                 "command": "pr-risk",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict,
                     "partial_success": True,

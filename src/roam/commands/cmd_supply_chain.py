@@ -16,7 +16,7 @@ _RE_REQUIREMENT = re.compile(r"^([A-Za-z0-9_.\-]+)(\[.*?\])?(.*)?$")
 from roam import __version__
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
 from roam.output.sarif import to_sarif, write_sarif
 
 
@@ -1138,7 +1138,7 @@ def supply_chain(ctx, top):
         # serialize_envelope floor pattern.
         _envelope_floor: dict = {
             "command": "supply-chain",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,

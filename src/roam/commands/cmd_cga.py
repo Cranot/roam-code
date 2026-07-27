@@ -42,7 +42,7 @@ from roam.attest.cga import (
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 from roam.runs.helpers import auto_log
 
 
@@ -618,7 +618,7 @@ def cga_emit(
         # serialize_envelope floor pattern.
         _envelope_floor: dict = {
             "command": "cga-emit",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,
