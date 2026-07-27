@@ -475,10 +475,32 @@ def main(argv: list[str] | None = None) -> int:
                 fix_hint="build the index once: python -m roam index",
             )
 
+        # SERIAL, deliberately — this is the tier that decides a release.
+        #
+        # This ran in parallel until 2026-07-27 and the parallelism produced only
+        # costs, never a finding:
+        #   * three consecutive runs died without a terminal result (76%, 91%,
+        #     and one at 74%), one with `[gw1] node down: Not properly
+        #     terminated` -- a crashed worker aborts the whole gate, and in the
+        #     output a crashed worker is indistinguishable from a red suite;
+        #   * each worker builds its own pytest fixture tree, so a killed run
+        #     strands ~4x the temp. Three of them accumulated 2.2 GB and pushed
+        #     the volume from 10 GiB free to 8.0 GiB, making each retry likelier
+        #     to fail than the last;
+        #   * every failure it surfaced that CI did not was xdist isolation, not
+        #     a product defect.
+        #
+        # CI runs this surface serially on a pre-built index (roam-ci.yml:116).
+        # A release gate should verify WHAT CI VERIFIES. Being harsher than the
+        # thing you are gating for buys false alarms, and a gate that cannot
+        # finish is worse than a slower one -- it invites `--no-verify`, which
+        # discards a gate that has caught three real problems in a single day.
+        #
+        # The parallel form remains available for the FAST/FULL drift-guard
+        # bundles above, where the files are pure in-process scans with no
+        # shared fixtures and the distribution is genuinely race-free.
         runner._run(
-            # NOT "what CI runs": CI runs this surface SERIALLY on a pre-built
-            # index. This gate runs it in parallel, which is strictly harsher.
-            "FULL test suite (-m 'not slow'; parallel — harsher than CI's serial run)",
+            "FULL test suite (-m 'not slow', serial — exactly what CI verifies)",
             [
                 sys.executable,
                 "-m",
@@ -487,16 +509,10 @@ def main(argv: list[str] | None = None) -> int:
                 "-q",
                 "-m",
                 "not slow",
-                "-n",
-                str(args.workers),
-                "--dist",
-                "loadfile",
+                "-p",
+                "no:cacheprovider",
             ],
-            fix_hint=(
-                "fix the failing tests. NOTE: this runs in parallel while CI runs serially, "
-                "so a failure here may be xdist isolation rather than a product defect — "
-                "re-run the named test with -n 0 to tell the two apart"
-            ),
+            fix_hint="fix the failing tests — CI runs exactly this surface, serially",
         )
 
     ok = _print_summary(runner.results)
