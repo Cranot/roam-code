@@ -120,7 +120,7 @@ typecheck = [
     "mypy>=1.10",
 ]
 dev = [
-    "pytest>=7.0",
+    "pytest>=9.1.1",
     "pytest-xdist>=3.0",
     # pytest-asyncio is required by tests/test_taint_classifier.py — those
     # tests use ``@pytest.mark.asyncio`` to verify the MCP-sampling-based
@@ -167,7 +167,7 @@ ci = [
 # the separate group prevents scipy and other optional implementations from
 # making the fallback tests vacuous.
 ci-fallback = [
-    "pytest==9.0.3",
+    "pytest==9.1.1",
     "pytest-asyncio==1.3.0",
     "pytest-xdist==3.8.0",
 ]
