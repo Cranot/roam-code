@@ -42,7 +42,7 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output.formatter import json_envelope, loc, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, loc, to_json
 
 # W110: n1 is the fourth detector migrating onto the central findings
 # registry (after `clones` in W95, `dead` in W99, and `complexity` in
@@ -2371,7 +2371,7 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
             # that may __len__-raise downstream.
             _envelope_floor: dict = {
                 "command": "n1",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict,
                     "partial_success": True,

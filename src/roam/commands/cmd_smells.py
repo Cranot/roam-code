@@ -27,6 +27,7 @@ from roam.output.confidence import (
     wrap_findings,
 )
 from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
     format_table,
     json_envelope,
     strip_list_payloads,
@@ -58,7 +59,18 @@ from roam.output.formatter import (
 # (to_json/open_db scored high scatter); the caller files must now also
 # co-evolve (>=15% pairwise co-change coherence). Graceful-degrades to
 # scatter-only when git_cochange is empty. ~27 -> ~13 rows on roam-code.
-SMELLS_DETECTOR_VERSION: str = "1.7.0"
+# 1.7.0 -> 1.8.0 (G1): detect_feature_envy gains a framework-aware idiom
+# exemption via the already-wired ``autodetect_framework_profile``. The
+# W1280 dominant-foreign-file concentration gate scores a Vue 3 view/
+# composable leaning on its designated stores?/composables? file, or a
+# Laravel controller/model/observer leaning on its injected Models?/
+# Services? collaborator, as the MOST confident envy — that is by-design
+# framework coupling, not a smell. Measured on two real dogfood corpora:
+# vue3-tanstack 119 -> 94 rows (25 exempt), laravel 70 -> 20 rows (50
+# exempt, dominated by Laravel's own "thin controller, fat service"
+# convention — broader than Models alone). Predicate narrowed further ->
+# bump 1.1.0 -> 1.2.0 for feature-envy specifically (see below).
+SMELLS_DETECTOR_VERSION: str = "1.8.0"
 
 # W370c: per-smell-kind version stamps for the 2 detectors landing in this
 # wave. The composite SMELLS_DETECTOR_VERSION bumps 1.0.0 -> 1.1.0 to mark
@@ -91,7 +103,14 @@ COMMENT_DENSITY_DETECTOR_VERSION: str = "1.0.0"
 # to test/orchestrator exclusion + single-dominant-foreign-file concentration
 # (~88% FP measured pre-fix). Predicate changed -> bump 1.0.0 -> 1.1.0,
 # mirroring the dangerous-eval 1.1.0 precedent. Same call-site discipline.
-FEATURE_ENVY_DETECTOR_VERSION: str = "1.1.0"
+# G1: the concentration gate above also scores a framework's own DI-style
+# single-collaborator idiom (composable -> its store, controller -> its
+# service/model) as maximally-confident envy. detect_feature_envy now
+# exempts a candidate when the dominant foreign file matches the detected
+# framework's idiom path convention (autodetect_framework_profile, the
+# same mechanism already wired for the N+1 in-memory-call allowlist).
+# Predicate narrowed -> bump 1.1.0 -> 1.2.0.
+FEATURE_ENVY_DETECTOR_VERSION: str = "1.2.0"
 
 # W1287: shotgun-surgery re-implemented from in_degree>7 (inbound popularity,
 # ~100% FP, the wrong axis) onto a conservative distinct-non-test-caller-FILE
@@ -1227,7 +1246,7 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
             # serialize_envelope floor pattern.
             _envelope_floor: dict = {
                 "command": "smells",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict,
                     "partial_success": True,

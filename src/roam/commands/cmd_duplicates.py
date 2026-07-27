@@ -19,7 +19,7 @@ from roam.db.connection import open_db
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.graph.clone_detect import _UnionFind
 from roam.index.file_roles import is_test as _is_test
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, abbrev_kind, json_envelope, loc, to_json
 
 # W165 — Test / fixture / production bucketing for duplicates findings.
 #
@@ -1579,7 +1579,7 @@ def duplicates(
             # cmd_dark_matter's W607-CZ serialize_envelope floor.
             _envelope_floor: dict = {
                 "command": "duplicates",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict,
                     "partial_success": True,

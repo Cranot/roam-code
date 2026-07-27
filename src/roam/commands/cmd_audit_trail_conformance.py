@@ -39,7 +39,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.audit_trail_helpers import load_records as _load_records
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 from roam.output.metric_definitions import CHAIN_COMPLIANCE_SCORE_DEFINITION
 
 EXIT_GATE_FAILURE = 5
@@ -921,7 +921,7 @@ def audit_trail_conformance_check_cmd(
         # W607-CJ serialize_envelope floor pattern.
         _envelope_floor: dict = {
             "command": "audit-trail-conformance-check",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,

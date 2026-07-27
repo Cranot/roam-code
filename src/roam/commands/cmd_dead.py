@@ -37,6 +37,7 @@ from roam.output.confidence import (
     wrap_findings,
 )
 from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
     abbrev_kind,
     format_table,
     json_envelope,
@@ -2776,7 +2777,7 @@ def dead(
             # not a sentinel that may __len__-raise downstream.
             _envelope_floor: dict = {
                 "command": "dead",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict,
                     "partial_success": True,

@@ -21,7 +21,7 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
 
 # W117 — vulns is the fourth detector migrating onto the central findings
 # registry (after clones in W95, dead in W99, complexity in W102). The
@@ -1245,7 +1245,7 @@ def _build_envelope_floor(verdict: str, combined_warnings: list[str]) -> dict:
     """Synthesize the W607-CH build_envelope floor stub (minimal parseable shape)."""
     return {
         "command": "vulns",
-        "schema_version": "1.0.0",
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "summary": {
             "verdict": verdict,
             "partial_success": True,

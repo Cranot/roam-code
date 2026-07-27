@@ -80,7 +80,25 @@ def _validate_glob(glob_str: str, *, field: str, rule_id: str) -> str | None:
 
     fnmatch is permissive (almost everything is a valid glob), so we
     only reject the obviously broken cases: empty strings, leading whitespace,
-    unbalanced brackets that would crash :func:`fnmatch.fnmatch`.
+    unbalanced brackets that would crash :func:`fnmatch.fnmatch`, and
+    unbalanced braces (see below).
+
+    ``{a,b}`` alternation is real, matched syntax (``roam._glob_match`` and
+    ``roam.commands.pr_analyze.rules`` both expand it — see
+    ``_expand_braces``), NOT a dead pattern this function needs to warn
+    away from. Before that expansion existed, both engines silently
+    treated ``{``/``}``/``,`` as literal characters, so a rule like
+    ``source_glob: "src/**/*.{ts,tsx}"`` validated clean here yet could
+    never match a real path — the validator vouched for a rule that could
+    never fire. Fixing the matching engines to actually honour braces (not
+    this function) is what closes that hole; ``"*.{py,ts}"`` being
+    well-formed is correct now for the right reason, not accidentally
+    harmless because it was dead anyway.
+
+    What IS still this function's job: an unbalanced brace count (a `{`
+    with no matching `}`, or vice versa) is a real authoring mistake —
+    see the balanced-brace check below, mirroring the existing bracket
+    check.
     """
     if not isinstance(glob_str, str):
         return f"rule `{rule_id}` `{field}` must be a string, got {type(glob_str).__name__}"
@@ -93,6 +111,15 @@ def _validate_glob(glob_str: str, *, field: str, rule_id: str) -> str | None:
     close_brackets = glob_str.count("]")
     if open_brackets != close_brackets:
         return f"rule `{rule_id}` `{field}` has unbalanced brackets: {open_brackets} `[` vs {close_brackets} `]`"
+    # An unmatched `{` doesn't crash anything (roam._glob_match._expand_braces
+    # treats it as a literal character rather than raising), but it silently
+    # changes what the glob means: `*.{ts,tsx` reads as "alternation between
+    # ts and tsx" to a human, and is actually matched as the LITERAL 8-char
+    # suffix `.{ts,tsx` — almost certainly not what the author intended.
+    open_braces = glob_str.count("{")
+    close_braces = glob_str.count("}")
+    if open_braces != close_braces:
+        return f"rule `{rule_id}` `{field}` has unbalanced braces: {open_braces} `{{` vs {close_braces} `}}`"
     try:
         fnmatch.fnmatch("smoke/test/path", glob_str)
     except Exception as exc:  # noqa: BLE001 — defensive

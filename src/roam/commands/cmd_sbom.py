@@ -22,7 +22,7 @@ from roam import __version__
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import StaleDbDirError, find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 
 _SBOM_BOUNDARY_EXCEPTIONS = (
     click.ClickException,
@@ -942,7 +942,7 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
         # floor pattern.
         _envelope_floor: dict = {
             "command": "sbom",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,

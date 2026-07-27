@@ -36,7 +36,7 @@ from roam.critique.checks import (
     parse_diff,
 )
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -1231,7 +1231,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     # floor pattern.
     _envelope_floor: dict = {
         "command": "critique",
-        "schema_version": "1.0.0",
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "summary": {
             "verdict": augmented_verdict,
             "partial_success": True,

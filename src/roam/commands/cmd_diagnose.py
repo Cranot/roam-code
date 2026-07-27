@@ -24,6 +24,7 @@ from roam.commands.resolve import ensure_index, find_symbol_with_alternatives, s
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
 from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
     abbrev_kind,
     format_table,
     json_envelope,
@@ -1060,7 +1061,7 @@ def diagnose_cmd(ctx, name, depth, batch_input):
             # attached + the canonical command name.
             _envelope_floor = {
                 "command": "diagnose",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": verdict,
                     "partial_success": True,

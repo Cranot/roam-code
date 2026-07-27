@@ -6882,7 +6882,17 @@ def _compound_envelope(
         )
     else:
         default_verdict = "compound operation completed"
+    # W1317 -- _compound_envelope is the one builder in the codebase that
+    # bypasses json_envelope()/_base_json_envelope() entirely, so it never
+    # picked up a schema/schema_version stamp at all (not stale -- simply
+    # absent). Stamp the same canonical constants the CLI envelope uses so
+    # an agent reading a compound MCP result can rely on schema_version
+    # being present, matching every other envelope surface.
+    from roam.output.formatter import ENVELOPE_SCHEMA_NAME, ENVELOPE_SCHEMA_VERSION
+
     result: dict = {
+        "schema": ENVELOPE_SCHEMA_NAME,
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "command": command,
         "summary": {
             "verdict": default_verdict,
@@ -8972,7 +8982,14 @@ def _finalize_compound_recipe(
     bucket is non-empty.
     """
     if envelope is None:
+        # W1317 -- mirror the schema/schema_version stamp _compound_envelope
+        # now carries on its normal path, so the aggregator-raised floor
+        # doesn't regress to the "missing key entirely" gap this wave closed.
+        from roam.output.formatter import ENVELOPE_SCHEMA_NAME, ENVELOPE_SCHEMA_VERSION
+
         envelope = {
+            "schema": ENVELOPE_SCHEMA_NAME,
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "command": command,
             "summary": {
                 "verdict": "PARTIAL — compound aggregator raised; see warnings_out",

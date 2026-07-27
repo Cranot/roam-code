@@ -18,7 +18,7 @@ from roam.commands.conventions_helper import (
 )
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 # W115 — bus-factor is the fourth detector migrating onto the central
@@ -720,7 +720,7 @@ def _bus_factor_floor_envelope_preserving_warnings(warnings: list[str]) -> dict:
     """Build the parseable envelope floor used when serialization fails."""
     return {
         "command": "bus-factor",
-        "schema_version": "1.0.0",
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "summary": {
             "verdict": "bus_factor completed",
             "partial_success": True,
@@ -1242,7 +1242,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                 # benefits from the W607-EH aggregation layer.
                 _no_data_envelope_floor: dict = {
                     "command": "bus-factor",
-                    "schema_version": "1.0.0",
+                    "schema_version": ENVELOPE_SCHEMA_VERSION,
                     "summary": {
                         "verdict": "bus_factor completed",
                         "partial_success": True,

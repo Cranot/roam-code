@@ -52,7 +52,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, file_not_found_hint
 from roam.db.connection import open_db
 from roam.db.queries import FILE_BY_PATH, FILE_IMPORTED_BY, FILE_IMPORTS
-from roam.output.formatter import format_table, json_envelope, strip_list_payloads, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, strip_list_payloads, to_json
 
 
 def _bounded_list_preview(items: list, cap: int) -> tuple[list, bool]:
@@ -457,7 +457,7 @@ def deps(ctx, path, full, multi):
             # cmd_fan's W607-CY serialize_envelope floor pattern.
             _envelope_floor: dict = {
                 "command": "deps",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": _verdict,
                     "imports": _imports_count,

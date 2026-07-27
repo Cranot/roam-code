@@ -16,7 +16,7 @@ from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output._severity import severity_rank
-from roam.output.formatter import json_envelope, strip_list_payloads, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, strip_list_payloads, to_json
 
 # W120 — hotspots is the fifth detector migrating onto the central
 # findings registry (after clones W95, dead W99, complexity W102,
@@ -1357,7 +1357,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode, persist
         # concrete dict, not a sentinel that may __len__-raise downstream.
         _envelope_floor: dict = {
             "command": "hotspots",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": "hotspots completed",
                 "partial_success": True,

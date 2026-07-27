@@ -33,7 +33,7 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 from roam.security.taint_engine import (
     OPENVEX_JUSTIFICATIONS,
     OPENVEX_STATUSES,
@@ -1110,7 +1110,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         # serialize_envelope floor pattern.
         _envelope_floor: dict = {
             "command": "taint",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,

@@ -15,7 +15,7 @@ from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
 from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -1083,7 +1083,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         # floor pattern.
         _envelope_floor: dict = {
             "command": "diff",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": _diff_verdict,
                 "partial_success": True,

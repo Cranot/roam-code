@@ -59,7 +59,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.confidence import confidence_level_rank
-from roam.output.formatter import json_envelope, loc, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, loc, to_json
 
 # W114 (W93 follow-up): over-fetch is the seventh detector migrating onto
 # the central findings registry (after ``clones`` in W95, ``dead`` in
@@ -1817,7 +1817,7 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         # concrete dict, not a sentinel that may __len__-raise downstream.
         _envelope_floor: dict = {
             "command": "over-fetch",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,

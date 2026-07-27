@@ -20,7 +20,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output._severity import severity_rank
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 
 
 @roam_capability(
@@ -205,7 +205,7 @@ def vuln_reach(ctx, from_entry, cve_id):
                 # still see the marker + canonical command name.
                 _envelope_floor: dict = {
                     "command": "vuln-reach",
-                    "schema_version": "1.0.0",
+                    "schema_version": ENVELOPE_SCHEMA_VERSION,
                     "summary": {
                         "verdict": "vuln-reach completed",
                         "partial_success": True,
@@ -441,7 +441,7 @@ def _output_all(
         # existing ``serialize_envelope`` (which wraps ``to_json`` instead).
         _envelope_floor: dict = {
             "command": "vuln-reach",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,
@@ -625,7 +625,7 @@ def _output_from_entry(
         # W607-CL -- build_envelope boundary on the from-entry path.
         _envelope_floor: dict = {
             "command": "vuln-reach",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,
@@ -723,7 +723,7 @@ def _output_cve(
             # W607-CL -- build_envelope boundary on the CVE-error path.
             _envelope_floor: dict = {
                 "command": "vuln-reach",
-                "schema_version": "1.0.0",
+                "schema_version": ENVELOPE_SCHEMA_VERSION,
                 "summary": {
                     "verdict": "vuln-reach completed",
                     "partial_success": True,
@@ -842,7 +842,7 @@ def _output_cve(
         # W607-CL -- build_envelope boundary on the CVE-result path.
         _envelope_floor: dict = {
             "command": "vuln-reach",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "partial_success": True,
