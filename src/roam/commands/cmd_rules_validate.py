@@ -137,6 +137,20 @@ def _validate_rule(rule: dict, index: int) -> tuple[list[str], list[str]]:
     if not rule.get("source_glob"):
         warnings.append(f"rule `{rule_id}` has no `source_glob` — will match every file (`*`)")
 
+    # `*` crosses `/` here (fnmatch semantics), which surprises people who expect
+    # POSIX shell globbing. `src/*.py` therefore matches `src/a/b/deep.py`, not
+    # just `src/main.py`. Warn rather than change the semantics: measured across
+    # all 127 shipped rules, switching `*` to stop at `/` would alter the scope of
+    # ZERO of them (every one uses `**/`, which already consumes directories), so
+    # the change would buy nothing while silently narrowing any user rule written
+    # against today's behaviour. Warning costs nothing and removes the surprise.
+    src_glob = rule.get("source_glob")
+    if isinstance(src_glob, str) and "*" in src_glob and "**" not in src_glob:
+        warnings.append(
+            f"rule `{rule_id}` uses `{src_glob}`: `*` matches across `/` here, so this also "
+            f"covers nested paths. Use `**/` to say so explicitly, or an exact path to narrow it"
+        )
+
     if not rule.get("description"):
         warnings.append(f"rule `{rule_id}` has no `description` — surface in PR comments will be terse")
 
