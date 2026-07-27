@@ -623,9 +623,7 @@ class TestFeatureEnvyFrameworkIdiom:
         from roam.catalog import smells as smells_mod
 
         conn = _make_db(tmp_path)
-        _populate_feature_envy_at_paths(
-            conn, "app/Http/Controllers/FooController.php", "app/Services/FooService.php"
-        )
+        _populate_feature_envy_at_paths(conn, "app/Http/Controllers/FooController.php", "app/Services/FooService.php")
         monkeypatch.setattr(smells_mod, "autodetect_framework_profile", lambda: "laravel")
         results = smells_mod.detect_feature_envy(conn)
         assert results == [], f"laravel controller->service idiom should be exempt, got {results}"

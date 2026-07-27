@@ -291,8 +291,7 @@ def _require_clean_worktree() -> None:
         pytest.skip(
             "requires a clean working tree for a deterministic repro (pr-prep's own "
             "git-based recompute would otherwise mix in unrelated dirty files and "
-            "the verdict would no longer isolate the defect under test) -- dirty: "
-            + ", ".join(dirty[:8])
+            "the verdict would no longer isolate the defect under test) -- dirty: " + ", ".join(dirty[:8])
         )
 
 

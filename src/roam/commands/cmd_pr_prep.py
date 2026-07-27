@@ -395,8 +395,7 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
             "summary": {
                 "risk_score": None,
                 "verdict": (
-                    "pr-risk not computed: externally supplied diff has no "
-                    "git-resolvable range in this working tree"
+                    "pr-risk not computed: externally supplied diff has no git-resolvable range in this working tree"
                 ),
             },
             "skipped": True,
