@@ -127,7 +127,7 @@ dev = [
     # In production it stays optional — the in-tree _parse_simple_yaml /
     # _emit_simple_yaml fallback covers the documented shapes. Pinned here
     # so the test suite has a consistent reference parser to assert against.
-    "pyyaml>=6.0",
+    "pyyaml>=6.0.3",
     "ruff>=0.4",
     "build>=1.0",
     "twine>=5.0",
