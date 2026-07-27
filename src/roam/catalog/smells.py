@@ -504,6 +504,35 @@ _FEATURE_ENVY_ORCHESTRATOR_RE = re.compile(
 # not envy; one that hammers a single foreign file's members IS envy.
 _FEATURE_ENVY_MIN_DOMINANT_FOREIGN_SHARE = 0.5
 
+# G1: the W1280 concentration gate (above) treats a single dominant foreign
+# file as evidence of TRUE envy. That is the exact graph shape of a
+# framework idiom that is by-design, not a smell: a Vue 3 composable that
+# reads one shared Pinia store / TanStack query client, a Laravel
+# controller that leans on its one Eloquent model, a Django view built
+# around its one models module. Left alone, the concentration gate that
+# was tuned to CUT false positives ends up scoring these idioms as the
+# most-confident envy candidates (the more idiomatic the code, the higher
+# the dominant-share).
+#
+# ``autodetect_framework_profile`` (roam.catalog.detectors) is the single,
+# already-wired detection mechanism for this — reused here rather than
+# re-implemented. When it recognises the project's stack AND the
+# concentration gate's dominant foreign file matches that stack's
+# idiomatic shared-dependency path convention, the candidate is exempt:
+# the concentration is the coupling-by-design signal, not envy.
+#
+# Keyed by the exact profile name ``autodetect_framework_profile`` /
+# ``--framework`` resolve to (see ``_FRAMEWORK_PROFILES`` in detectors.py).
+# Path-based, not content-based, so it works without re-parsing source.
+_FEATURE_ENVY_FRAMEWORK_IDIOM_PATTERNS: dict[str, re.Pattern] = {
+    "vue3-tanstack": re.compile(r"(?:^|/)(?:stores?|composables?)/|(?:^|/)use[A-Z]\w*\.(?:vue|ts|js)$"),
+    "laravel": re.compile(r"(?:^|/)[Mm]odels?/"),
+    "laravel-multitenant": re.compile(r"(?:^|/)[Mm]odels?/"),
+    "django": re.compile(r"(?:^|/)models(?:\.py$|/)"),
+    "rails": re.compile(r"(?:^|/)app/models/"),
+    "nestjs": re.compile(r"(?:^|/)(?:services?|providers?)/|\.service\.ts$"),
+}
+
 
 @detector("feature-envy", confidence=CONFIDENCE_STRUCTURAL)
 def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
