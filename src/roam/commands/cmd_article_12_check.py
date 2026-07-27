@@ -42,6 +42,7 @@ propagation plan + W1148 audit memo.
 
 from __future__ import annotations
 
+import ast
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,7 +51,9 @@ import click
 
 from roam.commands.git_helpers import git_origin_url
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root
 from roam.exit_codes import EXIT_SUCCESS
+from roam.index.file_roles import is_test as _is_test_path
 from roam.output.formatter import json_envelope, to_json
 from roam.output.metric_definitions import ARTICLE_12_READINESS_DEFINITION
 
@@ -153,27 +156,122 @@ def _check_attestation_artifacts(project_root: Path) -> dict:
     }
 
 
+# The previous classifier had four problems: (1) a bare `\bword\b` regex
+# over RAW file text, so generic systems-programming vocabulary
+# ("promote"/"terminate"/"retention" — cache
+# promotion, process termination, log retention) tripped it with zero
+# context, and matches inside comments/docstrings counted the same as real
+# code; (2) `"test" in path` as a substring check, which also matches
+# "latest"/"greatest" and any path a user happens to check out under (e.g.
+# pytest's own tmp dir); (3) `Path.cwd()` instead of the hardened
+# `find_project_root()`; (4) an unordered filesystem walk capped at 200
+# files, so which 200 got sampled varied run to run.
+#
+# The replacement walks the AST and only counts genuine code identifiers
+# (function/class/variable/attribute/parameter names) — comments and
+# docstring prose never reach the vocabulary check. "candidate" was in
+# scope for the old regex too but is deliberately excluded from the noun
+# vocabulary: roam's own repo uses it ~1500x for match/clone/fix
+# candidates, nothing to do with recruiting — exactly the kind of
+# collision this fix exists to remove.
+_HR_NOUN_TOKENS = frozenset(
+    {
+        "employee",
+        "employees",
+        "workforce",
+        "hiring",
+        "hire",
+        "firing",
+        "recruit",
+        "recruiting",
+        "recruitment",
+        "personnel",
+        "headcount",
+        "staff",
+    }
+)
+# Ambiguous verbs/metrics that are equally at home in ordinary systems code
+# (release/cache "promotion", process "termination", star "rating", PR
+# "review", log "retention") — only a risk signal when paired with an
+# employment noun WITHIN THE SAME IDENTIFIER, never standalone.
+_HR_COMPOUND_PAIRS: tuple[tuple[frozenset[str], frozenset[str]], ...] = (
+    (frozenset({"hr"}), frozenset({"decision", "decisions"})),
+    (frozenset({"performance"}), frozenset({"review", "reviews"})),
+    (frozenset({"developer", "employee", "employees", "staff"}), frozenset({"rating", "ratings"})),
+    (
+        frozenset({"employee", "employees", "staff", "workforce"}),
+        frozenset({"promote", "promotion", "demote", "terminate", "retention"}),
+    ),
+)
+
+_IDENTIFIER_TOKEN_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]+|[a-z]+|\d+")
+
+
+def _tokenize_identifier(name: str) -> set[str]:
+    """Split a snake_case/camelCase/PascalCase identifier into lowercase word tokens."""
+    return {t.lower() for t in _IDENTIFIER_TOKEN_RE.findall(name)}
+
+
+def _identifier_is_hr_risk(tokens: set[str]) -> bool:
+    if tokens & _HR_NOUN_TOKENS:
+        return True
+    return any((tokens & left) and (tokens & right) for left, right in _HR_COMPOUND_PAIRS)
+
+
+def _file_has_hr_risk_identifier(source: str) -> bool | None:
+    """True/False once parsed, or ``None`` if *source* isn't valid Python.
+
+    Collects only genuine bound/referenced names — function, class,
+    variable, attribute, and parameter names — via the AST, deliberately
+    NOT string literals (a docstring or comment mentioning these words is
+    documentation, not code touching employment data). Each identifier is
+    checked independently so an unrelated co-occurrence elsewhere in a
+    large file (e.g. a "performance" benchmark and a PR "review" command
+    living in the same module) can't manufacture a compound false match.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    for node in ast.walk(tree):
+        name = None
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            name = node.name
+        elif isinstance(node, ast.Name):
+            name = node.id
+        elif isinstance(node, ast.Attribute):
+            name = node.attr
+        elif isinstance(node, ast.arg):
+            name = node.arg
+        elif isinstance(node, ast.keyword) and node.arg:
+            name = node.arg
+        if name and _identifier_is_hr_risk(_tokenize_identifier(name)):
+            return True
+    return False
+
+
 def _classify_high_risk_likelihood(project_root: Path) -> dict:
     """Item 6 — heuristic: does the codebase look like an AI-tool that influences HR decisions?"""
-    risk_keywords = re.compile(
-        r"\b(?:promotion|retention|hr_decision|performance_review|workforce|hiring|firing|"
-        r"employee_score|developer_rating|promote|demote|terminate)\b",
-        re.IGNORECASE,
-    )
+    # Deterministic sampling: sort candidates by repo-relative path BEFORE
+    # capping at 200, so the same 200 files are scanned on every run
+    # instead of whatever order the filesystem happens to yield. The
+    # canonical `is_test` detector (path-pattern based, not a substring
+    # check) excludes real test directories/files without also excluding
+    # "latest.py" or a checkout under a path containing "test".
+    candidates = sorted(p for p in project_root.rglob("*.py") if not _is_test_path(str(p.relative_to(project_root))))
     hits = 0
     sample = 0
-    for path in project_root.rglob("*.py"):
-        if "test" in str(path).lower():
-            continue
+    for path in candidates[:200]:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        risky = _file_has_hr_risk_identifier(text)
+        if risky is None:
+            continue  # unparseable — not a sample we can classify either way
         sample += 1
-        if risk_keywords.search(text):
+        if risky:
             hits += 1
-        if sample > 200:
-            break
     is_high_risk = hits > 0
     return {
         "item": "High-risk classification likelihood (Annex III)",
@@ -369,7 +467,12 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    project_root = Path.cwd()
+    # M7 fix: find_project_root() walks up for a genuine .git marker (and
+    # handles worktree pointer files) instead of trusting the raw cwd —
+    # running the check from a subdirectory used to silently narrow the
+    # scan. Falls back to the resolved cwd when no repo root is found,
+    # same as the old behaviour, so this is a strict improvement.
+    project_root = find_project_root()
     results = [check(project_root) for check in _CHECKS]
     passed = sum(1 for r in results if r["passed"])
     total = len(results)
