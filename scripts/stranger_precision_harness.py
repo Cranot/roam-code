@@ -334,9 +334,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _self_check(workdir: Path) -> bool:
-    rows, _successful = run_harness(
-        [str(SELF_CHECK_FIXTURE)], ["detect_flask_debug_true"], workdir, max_findings=25
-    )
+    rows, _successful = run_harness([str(SELF_CHECK_FIXTURE)], ["detect_flask_debug_true"], workdir, max_findings=25)
     return any(row.get("detector") == "detect_flask_debug_true" and "id" in row for row in rows)
 
 

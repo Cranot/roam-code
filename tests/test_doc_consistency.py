@@ -1077,6 +1077,7 @@ def test_release_docs_track_current_mcp_security_and_setup_contracts():
 # to catch it a second time.
 _RETIRED_LIVE_CLAIMS: tuple[str, ...] = ("entirely on your machine",)
 
+
 # Surfaces swept for the retired claims: every landing-page HTML file
 # (rglob, so a NEW page can't quietly reintroduce it either) plus every
 # legal template. Walking the whole tree — not just the 5 files the audit

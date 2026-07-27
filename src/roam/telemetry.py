@@ -147,7 +147,9 @@ def fetch_top_slow(limit: int = 10) -> list[dict]:
             "SELECT ts, command, duration_ms, exit_code, schema_version FROM calls ORDER BY duration_ms DESC LIMIT ?",
             (int(limit),),
         ).fetchall()
-        return [{"ts": r[0], "command": r[1], "duration_ms": r[2], "exit_code": r[3], "schema_version": r[4]} for r in rows]
+        return [
+            {"ts": r[0], "command": r[1], "duration_ms": r[2], "exit_code": r[3], "schema_version": r[4]} for r in rows
+        ]
     finally:
         conn.close()
 
@@ -162,7 +164,9 @@ def fetch_recent(limit: int = 20) -> list[dict]:
             "SELECT ts, command, duration_ms, exit_code, schema_version FROM calls ORDER BY ts DESC LIMIT ?",
             (int(limit),),
         ).fetchall()
-        return [{"ts": r[0], "command": r[1], "duration_ms": r[2], "exit_code": r[3], "schema_version": r[4]} for r in rows]
+        return [
+            {"ts": r[0], "command": r[1], "duration_ms": r[2], "exit_code": r[3], "schema_version": r[4]} for r in rows
+        ]
     finally:
         conn.close()
 
