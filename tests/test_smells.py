@@ -321,6 +321,31 @@ def _populate_feature_envy_test_file(conn):
     conn.commit()
 
 
+def _populate_feature_envy_at_paths(conn, source_path, target_path):
+    """G1: the genuine-envy topology (5/6 refs external, 1 dominant foreign
+    file) at caller-supplied paths, so the framework-idiom exemption tests
+    below can place it under a Vue/Laravel-shaped convention without
+    duplicating the whole fixture per framework."""
+    conn.execute("INSERT INTO files (id, path) VALUES (1, ?)", (source_path,))
+    conn.execute("INSERT INTO files (id, path) VALUES (2, ?)", (target_path,))
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+        "VALUES (1, 1, 'do_thing', 'function', 1, 20)"
+    )
+    for i in range(5):
+        conn.execute(
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, 2, ?, 'function', ?, ?)",
+            (10 + i, f"target_fn_{i}", i * 10, i * 10 + 5),
+        )
+        conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, ?, 'call')", (10 + i,))
+    conn.execute(
+        "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
+        "VALUES (20, 1, 'local_helper', 'function', 30, 40)"
+    )
+    conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, 20, 'call')")
+    conn.commit()
+
+
 def _populate_dead_params(conn):
     """Insert a function with many params but low complexity."""
     conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/stubs.py')")
@@ -554,6 +579,72 @@ class TestFeatureEnvy:
         _populate_feature_envy_test_file(conn)
         results = detect_feature_envy(conn)
         assert results == [], f"test-file fn should not fire, got {results}"
+        conn.close()
+
+
+class TestFeatureEnvyFrameworkIdiom:
+    """G1: the W1280 concentration gate also scores a framework's own
+    DI-style single-collaborator idiom (Vue 3 composable/view -> its
+    stores?/composables? file, Laravel controller/model/observer -> its
+    injected Models?/Services? collaborator) as maximally-confident envy.
+    detect_feature_envy now consults ``autodetect_framework_profile`` (the
+    same mechanism already wired for the N+1 in-memory-call allowlist) and
+    exempts a candidate whose dominant foreign file matches the detected
+    framework's idiom path convention. See cmd_smells.py's G1 version-bump
+    comment for the real-corpus measurement (vue3-tanstack 119 -> 94 rows,
+    laravel 70 -> 20 rows) that justified this.
+    """
+
+    def test_vue_composable_leaning_on_store_is_exempt_when_detected(self, tmp_path, monkeypatch):
+        from roam.catalog import smells as smells_mod
+
+        conn = _make_db(tmp_path)
+        _populate_feature_envy_at_paths(conn, "src/composables/useThing.ts", "src/stores/thing.ts")
+        monkeypatch.setattr(smells_mod, "autodetect_framework_profile", lambda: "vue3-tanstack")
+        results = smells_mod.detect_feature_envy(conn)
+        assert results == [], f"vue3-tanstack composable->store idiom should be exempt, got {results}"
+        conn.close()
+
+    def test_same_topology_still_fires_without_a_detected_framework(self, tmp_path, monkeypatch):
+        """No framework autodetected (e.g. a bare repo, or roam-code itself)
+        -> the exemption must NOT apply, even at a stores?/composables?
+        -shaped path. Guards against the exemption silently widening to
+        every repo regardless of stack."""
+        from roam.catalog import smells as smells_mod
+
+        conn = _make_db(tmp_path)
+        _populate_feature_envy_at_paths(conn, "src/composables/useThing.ts", "src/stores/thing.ts")
+        monkeypatch.setattr(smells_mod, "autodetect_framework_profile", lambda: None)
+        results = smells_mod.detect_feature_envy(conn)
+        assert len(results) == 1, f"no detected framework -> exemption must not apply, got {results}"
+        conn.close()
+
+    def test_laravel_controller_leaning_on_service_is_exempt_when_detected(self, tmp_path, monkeypatch):
+        from roam.catalog import smells as smells_mod
+
+        conn = _make_db(tmp_path)
+        _populate_feature_envy_at_paths(
+            conn, "app/Http/Controllers/FooController.php", "app/Services/FooService.php"
+        )
+        monkeypatch.setattr(smells_mod, "autodetect_framework_profile", lambda: "laravel")
+        results = smells_mod.detect_feature_envy(conn)
+        assert results == [], f"laravel controller->service idiom should be exempt, got {results}"
+        conn.close()
+
+    def test_laravel_controller_leaning_on_another_controller_still_fires(self, tmp_path, monkeypatch):
+        """No over-suppression: a dominant foreign file OUTSIDE Models?/
+        Services? (e.g. a peer controller) is still real envy even under a
+        detected Laravel profile — mirrors the vue-emits discipline of
+        proving a genuinely unhandled case still reports."""
+        from roam.catalog import smells as smells_mod
+
+        conn = _make_db(tmp_path)
+        _populate_feature_envy_at_paths(
+            conn, "app/Http/Controllers/FooController.php", "app/Http/Controllers/BarController.php"
+        )
+        monkeypatch.setattr(smells_mod, "autodetect_framework_profile", lambda: "laravel")
+        results = smells_mod.detect_feature_envy(conn)
+        assert len(results) == 1, f"non-idiom dominant file must still fire, got {results}"
         conn.close()
 
 

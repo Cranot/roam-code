@@ -370,6 +370,62 @@ def test_list_framework_profiles_includes_bundled_names():
     profiles = list_framework_profiles()
     assert "vue3-tanstack" in profiles
     assert "laravel-multitenant" in profiles
+    # G1: plain Laravel (no tenancy package) is its own bundled profile now
+    # -- previously composer.json requiring laravel/framework without a
+    # tenancy package autodetected to None, so framework-aware consumers
+    # (e.g. the feature-envy idiom exemption) never saw a signal for the
+    # overwhelming majority of real Laravel apps.
+    assert "laravel" in profiles
+
+
+def test_detect_composer_profile_plain_laravel_returns_generic_profile(tmp_path):
+    """G1: composer.json requiring laravel/framework WITHOUT a tenancy
+    package resolves to the generic ``laravel`` profile, not None."""
+    import json as _json
+
+    from roam.catalog.detectors import _detect_composer_profile
+
+    (tmp_path / "composer.json").write_text(
+        _json.dumps({"require": {"php": "^8.2", "laravel/framework": "^12.0"}}),
+        encoding="utf-8",
+    )
+    assert _detect_composer_profile(str(tmp_path)) == "laravel"
+
+
+def test_detect_composer_profile_tenancy_still_wins_multitenant(tmp_path):
+    """A tenancy package present alongside laravel/framework still resolves
+    to the more specific ``laravel-multitenant`` profile."""
+    import json as _json
+
+    from roam.catalog.detectors import _detect_composer_profile
+
+    (tmp_path / "composer.json").write_text(
+        _json.dumps(
+            {
+                "require": {
+                    "php": "^8.2",
+                    "laravel/framework": "^12.0",
+                    "stancl/tenancy": "^3.0",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _detect_composer_profile(str(tmp_path)) == "laravel-multitenant"
+
+
+def test_detect_composer_profile_non_laravel_composer_returns_none(tmp_path):
+    """A composer.json that does not require laravel/framework stays None
+    -- the generic profile must not fire on every PHP project."""
+    import json as _json
+
+    from roam.catalog.detectors import _detect_composer_profile
+
+    (tmp_path / "composer.json").write_text(
+        _json.dumps({"require": {"php": "^8.2", "symfony/console": "^7.0"}}),
+        encoding="utf-8",
+    )
+    assert _detect_composer_profile(str(tmp_path)) is None
 
 
 def test_set_active_framework_profile_resolves_known_name():
