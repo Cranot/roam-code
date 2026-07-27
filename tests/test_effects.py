@@ -39,8 +39,20 @@ class TestPythonEffects:
         effects = classify_symbol_effects(body, "python")
         assert READS_DB in effects
 
-    def test_writes_db_save(self):
+    def test_bare_save_no_longer_classified_writes_db(self):
+        """M3 fix: `.save(` matches ANY receiver (PIL Image, Django model,
+        matplotlib figure, ...), not just a DB write — dropped from the
+        pattern table. A bare `user.save()` with no other DB evidence is
+        correctly classified as having no detected effects."""
         body = "user.save()"
+        effects = classify_symbol_effects(body, "python")
+        assert WRITES_DB not in effects
+
+    def test_sql_keyword_gated_execute_still_writes_db(self):
+        """A literal SQL write keyword in the `.execute(` argument is still
+        classified WRITES_DB — the fix requires DB-specific evidence, it
+        doesn't remove DB detection for the real thing."""
+        body = 'cur.execute("INSERT INTO t VALUES (?)", (1,))'
         effects = classify_symbol_effects(body, "python")
         assert WRITES_DB in effects
 
@@ -144,6 +156,37 @@ class TestPythonEffects:
         assert NETWORK in effects
         assert WRITES_DB in effects
         assert LOGGING in effects
+
+
+class TestReceiverAgnosticFalsePositives:
+    """`_PYTHON_PATTERNS` used to match `.get(`/`.add(`/`.update(`/
+    `cursor.<anything>` on ANY receiver, so plain dict/set operations and a
+    read-only `cursor.execute("SELECT ...")` were misclassified as DB
+    reads/writes -- inflating reads_db/writes_db direct-hit counts across
+    any indexed repo, roam's own included."""
+
+    def test_dict_get_not_reads_db(self):
+        body = 'value = config.get("key", None)'
+        effects = classify_symbol_effects(body, "python")
+        assert READS_DB not in effects
+
+    def test_set_add_not_writes_db(self):
+        body = "seen.add(item)"
+        effects = classify_symbol_effects(body, "python")
+        assert WRITES_DB not in effects
+
+    def test_dict_update_not_writes_db(self):
+        body = "config.update(overrides)"
+        effects = classify_symbol_effects(body, "python")
+        assert WRITES_DB not in effects
+
+    def test_cursor_select_is_read_not_write(self):
+        """A `cursor.execute("SELECT ...")` is a DB READ; the old blanket
+        `cursor\\.` -> WRITES_DB pattern misclassified it as a write."""
+        body = 'rows = cursor.execute("SELECT * FROM users").fetchall()'
+        effects = classify_symbol_effects(body, "python")
+        assert READS_DB in effects
+        assert WRITES_DB not in effects
 
 
 # ===========================================================================
