@@ -20,6 +20,7 @@
 #        Free-form prose surfaces (landing-page HTML, llms.txt,
 #        server.json, skills/roam/SKILL.md, etc). Defaults to dry-run.
 #   3. python scripts/build_changelog_html.py
+#   4. python dev/build_internal_index.py
 #        changelog.html (the landing-page mirror of CHANGELOG.md) is a
 #        generated, tracked file. It used to be regenerated only at push
 #        time (scripts/prepush_check.py) / in CI -- so a commit that edited
@@ -103,6 +104,26 @@ if ! "$PY" "$REPO_ROOT/scripts/build_changelog_html.py"; then
     echo "  Fix: run" >&2
     echo "    python scripts/build_changelog_html.py --write" >&2
     echo "  then re-stage templates/distribution/landing-page/changelog.html and commit again." >&2
+    exit 1
+fi
+
+# --- 4. internal/INDEX.md catalogue drift ---------------------------------
+# internal/ is gitignored, so NO CI check and no review can ever see this
+# index go stale. On 2026-07-28 it was 50 lines, 16 days old, and named none
+# of the five newest documents in a tree of 2053 files -- while AGENTS.md
+# instructs every agent to "read the newest files there at session start".
+# This gate is the only thing that can catch that, precisely because the
+# content is untracked. Exits 0 when internal/ is absent (public CI, fresh
+# clones), so it costs contributors nothing.
+if ! "$PY" "$REPO_ROOT/dev/build_internal_index.py"; then
+    echo "" >&2
+    echo "ERROR: pre-commit hook (.githooks/pre-commit)" >&2
+    echo "" >&2
+    echo "  internal/INDEX.md no longer lists what is actually in internal/." >&2
+    echo "" >&2
+    echo "  Fix: run" >&2
+    echo "    python dev/build_internal_index.py --write" >&2
+    echo "  (internal/ is gitignored, so there is nothing to re-stage.)" >&2
     exit 1
 fi
 
