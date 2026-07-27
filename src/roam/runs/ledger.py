@@ -50,6 +50,24 @@ VALID_STATUSES = {"in_progress", "completed", "failed", "abandoned"}
 # Run ids look like ``run_YYYYMMDD_<short-hash>``. Hash is 6+ hex chars.
 RUN_ID_RE = re.compile(r"^run_\d{8}_[0-9a-f]{6,}$")
 
+# W-SEC (security-model hole close) — provenance labels for RunMeta.status
+# and its downstream RunLedgerRoot/v1 predicate field of the same name.
+# "asserted" and "derived" are DIFFERENT epistemic objects and must never
+# be indistinguishable to a downstream verifier:
+#
+#   * STATUS_SOURCE_DERIVED  -- the run recorded at least one check outcome
+#     (a gate-command event with a ``partial_success`` flag) and ``status``
+#     was computed FROM that recorded evidence, not chosen freely.
+#   * STATUS_SOURCE_ASSERTED -- ``status`` is a bare claim: either nothing
+#     was recorded to derive from, or the caller chose a status the
+#     recorded evidence does not corroborate (e.g. ``abandoned``, or
+#     ``failed`` on an otherwise-clean run). Never a security problem on
+#     its own -- the problem was ASSERTED being indistinguishable from
+#     DERIVED. See :func:`end_run` for the refusal rule that keeps
+#     "asserted completed" from ever contradicting recorded failures.
+STATUS_SOURCE_DERIVED = "derived"
+STATUS_SOURCE_ASSERTED = "asserted"
+
 __all__ = [
     "EVENTS_FILE",
     "META_FILE",
@@ -57,6 +75,8 @@ __all__ = [
     "RUNS_SUBDIR",
     "RUN_ID_RE",
     "RunMeta",
+    "STATUS_SOURCE_ASSERTED",
+    "STATUS_SOURCE_DERIVED",
     "VALID_STATUSES",
     "end_run",
     "latest_in_progress_run",
@@ -112,6 +132,14 @@ class RunMeta:
     # legacy meta.json files that pre-date this wiring.
     final_signature: Optional[str] = None
     event_count: Optional[int] = None
+    # W-SEC — provenance of the ``status`` claim: ``"derived"`` when
+    # end_run() computed it from recorded check outcomes (events with a
+    # ``partial_success`` flag), ``"asserted"`` when it is a bare claim
+    # (nothing recorded to derive from, or a status the recorded evidence
+    # doesn't corroborate, e.g. ``abandoned``). ``None`` for runs ended
+    # before this field existed -- absence is itself informative ("this
+    # run predates status provenance labelling"), not a silent default.
+    status_source: Optional[str] = None
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -139,6 +167,8 @@ class RunMeta:
             merged.pop("final_signature", None)
         if merged.get("event_count") is None:
             merged.pop("event_count", None)
+        if merged.get("status_source") is None:
+            merged.pop("status_source", None)
         return merged
 
 
@@ -407,6 +437,50 @@ def _last_event_signature(events_path: Path) -> Optional[str]:
     return sig if isinstance(sig, str) else None
 
 
+def _derive_status_from_recorded_checks(
+    repo_root: Path, run_id: str
+) -> tuple[Optional[str], list[str], int]:
+    """Derive a run's status from its own recorded check outcomes.
+
+    W-SEC (security-model hole close): ``end_run`` used to accept
+    ``status`` as a bare, unchecked claim — a TYPE check (member of
+    :data:`VALID_STATUSES`) stood in for a TRUTH check. This function is
+    the truth check. Every event a run accumulates (whether auto-logged
+    by a gate command's envelope via :func:`roam.runs.helpers.auto_log`,
+    or appended manually via ``roam runs log``) carries a
+    ``partial_success`` boolean — the SAME recorded signal
+    ``roam replay``/``roam agent-score`` already reduce over to summarise
+    "did anything in this run report trouble" (see
+    ``cmd_replay.py``'s ``partial_failures`` computation). We reuse that
+    existing, already-load-bearing signal rather than inventing a second,
+    parallel notion of "check failed":
+
+      * Zero events recorded  -> ``(None, [], 0)``. Nothing was recorded
+        to derive a status from; the caller's ``status`` stays a bare
+        assertion (this is the by-design residual gap — see
+        :func:`end_run`).
+      * >=1 event, all clean  -> ``("completed", [], N)``.
+      * >=1 event, >=1 with ``partial_success=true`` -> ``("failed",
+        [<action-or-seq for each failing event>], N)``.
+
+    Never raises. A corrupt/partially-unreadable ``events.jsonl`` degrades
+    toward "nothing recorded" (via :func:`read_run_events`'s own
+    tolerant skip-corrupt-lines behaviour) rather than fabricating a
+    derived claim — the conservative direction.
+    """
+    failing: list[str] = []
+    total = 0
+    for event in read_run_events(repo_root, run_id):
+        total += 1
+        if bool(event.get("partial_success")):
+            failing.append(event.get("action") or f"seq={event.get('seq', '?')}")
+    if total == 0:
+        return None, [], 0
+    if failing:
+        return "failed", failing, total
+    return "completed", [], total
+
+
 def end_run(
     repo_root: Path,
     run_id: str,
@@ -420,6 +494,38 @@ def end_run(
     a run from ``completed`` to ``failed`` if a post-hoc check turns
     things red). The ``started_at`` field is preserved.
 
+    W-SEC — ``status`` is an ASSERTION, not a fact, until corroborated.
+    Before stamping, this function derives a status from the run's OWN
+    recorded check outcomes via :func:`_derive_status_from_recorded_checks`
+    (every logged event carries ``partial_success``; see that function's
+    docstring). Two outcomes:
+
+      * The run recorded at least one check AND at least one of them
+        failed (``partial_success=true``): asserting anything other than
+        ``"failed"``/``"abandoned"`` is a claim the run's own evidence
+        contradicts, so it is REFUSED (``ValueError``) rather than
+        silently honoured. ``"abandoned"`` is always exempt — it is not a
+        claim about whether checks passed.
+      * Otherwise (nothing recorded, or everything recorded was clean):
+        ``status`` is honoured as given.
+
+    The resulting :attr:`RunMeta.status_source` records which case applied
+    — ``"derived"`` when the stamped ``status`` matches what the recorded
+    evidence computed, ``"asserted"`` otherwise (including every
+    ``abandoned`` close, and a ``"failed"`` self-report on an otherwise-
+    clean run). :func:`roam.attest.vsa.build_run_ledger_root_predicate`
+    carries the same label into the signed attestation so a downstream
+    verifier can tell "roam derived this from recorded checks" apart from
+    "the agent merely asserted this" WITHOUT reading roam's source.
+
+    Residual gap (by design, not an oversight): a run that logs zero
+    events between ``start`` and ``end`` has nothing to derive a status
+    from. ``status_source`` will read ``"asserted"`` for such a run, and
+    the signed attestation will say so plainly — but the flag still
+    controls the outcome. Closing that gap fully would mean requiring at
+    least one recorded check before a run can close "completed" at all,
+    which is a policy roam does not impose today.
+
     See reference: ``src/roam/commands/cmd_runs.py:runs_end`` exposes this
     as the programmatic backing API for ``roam runs end``.
     """
@@ -428,8 +534,28 @@ def end_run(
     meta = read_run_meta(repo_root, run_id)
     if meta is None:
         raise FileNotFoundError(f"run {run_id} does not exist")
+
+    derived_status, failing_checks, _checks_recorded = _derive_status_from_recorded_checks(
+        repo_root, run_id
+    )
+
+    if derived_status == "failed" and status not in ("failed", "abandoned"):
+        raise ValueError(
+            f"refusing to end run {run_id} as {status!r}: {len(failing_checks)} recorded "
+            f"check(s) reported partial_success=true ({', '.join(failing_checks)}); the "
+            "run's own recorded evidence contradicts the asserted status. Re-run with "
+            "`--status failed` to record the failure honestly, or `--status abandoned` "
+            "if the run was abandoned rather than completed."
+        )
+
+    if derived_status is not None and status == derived_status:
+        status_source = STATUS_SOURCE_DERIVED
+    else:
+        status_source = STATUS_SOURCE_ASSERTED
+
     meta.ended_at = ended_at or _utc_now_iso()
     meta.status = status
+    meta.status_source = status_source
 
     # R20 phase 4 — stamp the final-signature fingerprint into meta.json
     # so callers can do a cheap integrity-changed-since-close check
@@ -571,6 +697,7 @@ def read_run_meta(
         "mode",
         "final_signature",
         "event_count",
+        "status_source",
     }
     kwargs = {k: raw.get(k) for k in known if k in raw}
     extras = {k: v for k, v in raw.items() if k not in known}
