@@ -308,8 +308,17 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
         # Inline ``Core preset tools: `x`, `y`, ...`` enumeration. Source of
         # truth: ``_CORE_TOOLS`` literal in ``src/roam/mcp_server.py``. W449.
         "readme-mcp-core-preset-tools": _mcp_core_preset_inline(c, root),
-        # Collapsed ``<summary>`` header for the MCP tool table. W449.
-        "readme-mcp-tool-list-summary": (f"<summary><strong>MCP tool list (all {c.mcp_full})</strong></summary>"),
+        # Pointer to the full tool table, which moved OUT of the README to
+        # ``docs/mcp-tools.md``. At 244 rows the table was ~26% of the README
+        # by line count and sat between the pitch and the pricing section, so
+        # a first-time reader scrolled a wall of tool descriptions to reach
+        # anything about buying. The README keeps the default ``core`` preset
+        # inline (what a new user actually turns on) and links out for the
+        # rest. The ``(all N)`` count pin lives with the table — see
+        # ``_mcp_tools_doc_blocks``.
+        "readme-mcp-tool-list-link": (
+            f"The full {c.mcp_full}-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md)."
+        ),
         # Collapsed ``<summary>`` header for the CLI command tables. W685 —
         # symmetric counterpart to the MCP ``(all N)`` pin so a silently
         # deleted CLI row (where deletion + addition cancel out) fails the
@@ -320,9 +329,36 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
             f"<summary><strong>Full command reference — canonical command "
             f"list (all {c.canonical_commands})</strong></summary>"
         ),
+    }
+
+
+def _mcp_tools_doc_blocks(c: Counts, root: Path) -> dict[str, str]:
+    """Blocks for ``docs/mcp-tools.md`` — the full MCP tool reference.
+
+    Home of the 244-row tool table after it was lifted out of the README.
+    The ``(all N)`` header pin travels WITH the table (rather than staying
+    behind in the README) so the count and the rows it counts can never end
+    up in two different files disagreeing with each other;
+    ``test_readme_mcp_tool_list_matches_source`` reads both from here.
+    """
+    return {
+        "mcp-tools-headline": (
+            f"**{c.mcp_full} tools · {c.mcp_default_preset} in the default `core` preset · "
+            f"{len(c.mcp_presets)} selectable presets** "
+            f"({', '.join(f'`{name}`' for name in c.mcp_presets)})."
+        ),
+        "mcp-tools-default-preset": (
+            f"**Default preset:** `core` ({c.mcp_default_preset} tools: "
+            f"{c.mcp_core} core + `roam_expand_toolset` meta-tool)."
+        ),
+        "mcp-tools-core-preset-tools": _mcp_core_preset_inline(c, root),
+        # Kept as an ``## MCP tool list (all N)`` heading rather than the
+        # README's collapsed ``<summary>``: on a dedicated reference page the
+        # table is the point, so it should not start folded.
+        "mcp-tools-list-summary": f"## MCP tool list (all {c.mcp_full})",
         # The Markdown tool table itself. One row per `@_tool` decoration.
         # Source of truth: ``surface_counts.mcp_tool_descriptions()``. W449.
-        "readme-mcp-tool-list-table": _mcp_tool_table(),
+        "mcp-tools-list-table": _mcp_tool_table(),
     }
 
 
@@ -424,6 +460,7 @@ MARKDOWN_TARGETS: tuple[tuple[Path, Callable[[Counts, Path], dict[str, str]]], .
     (ROOT / "CLAUDE.md", _claude_blocks),
     (ROOT / "llms-install.md", _llms_install_blocks),
     (ROOT / "AGENTS.md", _agents_md_blocks),
+    (ROOT / "docs" / "mcp-tools.md", _mcp_tools_doc_blocks),
 )
 
 
@@ -434,6 +471,7 @@ def _markdown_targets(root: Path) -> tuple[tuple[Path, Callable[[Counts, Path], 
         (root / "CLAUDE.md", _claude_blocks),
         (root / "llms-install.md", _llms_install_blocks),
         (root / "AGENTS.md", _agents_md_blocks),
+        (root / "docs" / "mcp-tools.md", _mcp_tools_doc_blocks),
     )
 
 

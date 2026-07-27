@@ -2397,12 +2397,18 @@ mcp = [
     { name = "fastmcp" },
     { name = "mcp" },
 ]
+metrics = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
 sbom = [
     { name = "cyclonedx-python-lib" },
 ]
 semantic = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" } },
-    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "onnxruntime", version = "1.24.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "onnxruntime", version = "1.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "tokenizers" },
@@ -2438,6 +2444,7 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.28.1" },
     { name = "mypy", marker = "extra == 'typecheck'", specifier = ">=1.10" },
     { name = "networkx", specifier = ">=3.0" },
+    { name = "numpy", marker = "extra == 'metrics'", specifier = ">=1.24" },
     { name = "numpy", marker = "extra == 'semantic'", specifier = ">=1.24" },
     { name = "onnxruntime", marker = "extra == 'semantic'", specifier = ">=1.16" },
     { name = "pillow", marker = "extra == 'dev'", specifier = ">=12.3.0" },
@@ -2448,13 +2455,14 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "rustworkx", marker = "extra == 'graph-fast'", specifier = ">=0.14" },
     { name = "scipy", marker = "extra == 'dev'", specifier = ">=1.11" },
+    { name = "scipy", marker = "extra == 'metrics'", specifier = ">=1.11" },
     { name = "tokenizers", marker = "extra == 'semantic'", specifier = ">=0.15" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "tree-sitter", specifier = ">=0.23" },
     { name = "tree-sitter-language-pack", specifier = ">=1.13.3,<1.14" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5.0" },
 ]
-provides-extras = ["mcp", "semantic", "leiden", "graph-fast", "sbom", "learned", "typecheck", "dev"]
+provides-extras = ["mcp", "metrics", "semantic", "leiden", "graph-fast", "sbom", "learned", "typecheck", "dev"]
 
 [package.metadata.requires-dev]
 ci = [
@@ -2647,7 +2655,7 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0f/37/6964b830433e654ec7485e45a00fc9a27cf868d622838f6b6d9c5ec0d532/scipy-1.15.3.tar.gz", hash = "sha256:eae3cf522bc7df64b42cad3925c876e1b0b6c35c1337c93e12c0f366f55b0eaf", size = 59419214, upload-time = "2025-05-08T16:13:05.955Z" }
 wheels = [
@@ -2710,7 +2718,7 @@ resolution-markers = [
     "python_full_version >= '3.11' and python_full_version < '3.14' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" } },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7a/97/5a3609c4f8d58b039179648e62dd220f89864f56f7357f5d4f45c29eb2cc/scipy-1.17.1.tar.gz", hash = "sha256:95d8e012d8cb8816c226aef832200b1d45109ed4464303e997c5b13122b297c0", size = 30573822, upload-time = "2026-02-23T00:26:24.851Z" }
 wheels = [

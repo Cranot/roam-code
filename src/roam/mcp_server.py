@@ -10138,9 +10138,11 @@ def sbom(
 @_tool(
     name="roam_cga_emit",
     description=(
-        "Emit a Code Graph Attestation — in-toto v1 statement with "
-        "predicate type `https://roam-code.com/spec/CodeGraph/v1` (or "
-        "`https://roam-code.com/spec/CodeGraph-AIBOM/v1` with --aibom). "
+        "Emit a Code Graph Attestation — in-toto v1 statement whose "
+        "predicateType is the identifier `https://roam-code.com/spec/CodeGraph/v1` "
+        "(or `https://roam-code.com/spec/CodeGraph-AIBOM/v1` with --aibom). "
+        "Those are in-toto TypeURIs, not fetchable pages; the predicate schema "
+        "is documented at https://roam-code.com/docs/architecture. "
         "Merkle root over symbol fingerprints + "
         "edge-bundle digest. Optional cosign keyless or offline signing."
     ),

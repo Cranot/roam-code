@@ -95,6 +95,27 @@ def test_argless_error_branch_carries_machine_gate_fields(command: str) -> None:
     )
 
 
+@pytest.mark.parametrize("command", _UNCONDITIONAL_COMMANDS)
+def test_argless_text_mode_exits_non_zero(command: str) -> None:
+    """The argless usage path must exit non-zero in TEXT mode too.
+
+    The JSON guard above only exercises ``roam --json <cmd>``. A cold-visitor
+    audit reported ``roam preflight`` (no ``--json``, no argument) printing
+    ``Provide a TARGET symbol/file or use --staged.`` and exiting 0 — a shape
+    that makes the usage error invisible to ``set -e``, to CI, and to any
+    agent that branches on the exit status. It did not reproduce (both the
+    published wheel and HEAD exit 1), but nothing pinned the text-mode
+    contract, so the two modes were free to drift apart. They no longer are.
+    """
+    runner = CliRunner()
+    result = runner.invoke(cli, [command], input="")
+
+    assert result.exit_code != 0, (
+        f"`roam {command}` (argless, text mode) exited 0; expected a non-zero "
+        f"usage/error exit to match the --json path. Output:\n{result.output}"
+    )
+
+
 # CONDITIONAL commands (NOT parametrized above):
 #   - fitness    : emits isError/status only when summary.failed > 0.
 #   - check-rules: emits isError/status only when exit_code != 0 (FAIL, i.e.

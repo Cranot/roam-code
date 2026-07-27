@@ -405,10 +405,15 @@ class TestFile:
         assert "cls" in output_lower or "class" in output_lower
 
     def test_file_no_args_shows_help(self, cli_runner, indexed_project, monkeypatch):
-        """file with no arguments shows help text."""
+        """file with no arguments shows help text AND exits non-zero.
+
+        The exit code used to be 0 while ``roam --json file`` exited 2 on the
+        same input, so whether an argless invocation "succeeded" depended only
+        on the output format. Help text is still the right thing to print.
+        """
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["file"], cwd=indexed_project)
-        assert result.exit_code == 0
+        assert result.exit_code == 2
         assert "Usage" in result.output or "skeleton" in result.output.lower() or result.output.strip() != ""
 
 

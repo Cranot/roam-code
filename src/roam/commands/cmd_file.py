@@ -299,8 +299,12 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                 )
             )
             raise SystemExit(2)
+        # Text mode shows the help (useful) but must NOT report success:
+        # `--json` already exits 2 here, so returning 0 made the same input
+        # succeed or fail depending only on the output format. No skeleton was
+        # produced; the exit status has to say so.
         click.echo(ctx.get_help())
-        return
+        raise SystemExit(2)
 
     with open_db(readonly=True) as conn:
         # Resolve --deps-of imports

@@ -64,8 +64,10 @@ from roam.runs.helpers import auto_log
 def cga():
     """Code Graph Attestation: sign-ready in-toto evidence over the index.
 
-    Emits an in-toto v1 statement (predicate
-    ``roam-code.com/spec/CodeGraph/v1``) covering symbols, edges, taint
+    Emits an in-toto v1 statement (predicateType identifier
+    ``https://roam-code.com/spec/CodeGraph/v1`` — an in-toto TypeURI, not a
+    fetchable page; the predicate schema is documented at
+    https://roam-code.com/docs/architecture) covering symbols, edges, taint
     findings, and AIBOM material. Optionally cosign-signs the
     statement so auditors can verify the artifact later.
 

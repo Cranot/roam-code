@@ -1623,8 +1623,13 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
                 )
             )
             raise SystemExit(2)
+        # Text mode shows the help (useful) but must NOT report success:
+        # `--json` already exits 2 here, so returning 0 made the same input
+        # succeed or fail depending only on the output format. An argless
+        # invocation gathered no context; `set -e`, CI, and any agent
+        # branching on the exit status were all told otherwise.
         click.echo(ctx.get_help())
-        return
+        raise SystemExit(2)
 
     with open_db(readonly=True) as conn:
         # Resolve all symbols

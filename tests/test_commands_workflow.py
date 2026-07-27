@@ -347,10 +347,15 @@ class TestContext:
         assert "create_user" in output
 
     def test_context_no_args(self, indexed_project, cli_runner, monkeypatch):
-        """context with no arguments shows help."""
+        """context with no arguments shows help AND exits non-zero.
+
+        The exit code used to be 0 while ``roam --json context`` exited 2 on
+        the same input, so whether an argless invocation "succeeded" depended
+        only on the output format. Help text is still the right thing to print.
+        """
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["context"])
-        assert result.exit_code == 0
+        assert result.exit_code == 2
         # Shows help or usage info when no symbol provided
         output = result.output
         assert "context" in output.lower() or "Usage" in output or "NAMES" in output
