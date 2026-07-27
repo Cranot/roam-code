@@ -127,8 +127,11 @@ def test_no_internal_language_in_tracked_files() -> None:
             lines.append(f"    ... and {len(hits) - 8} more")
     lines.append("")
     lines.append("Each pattern was deliberately removed during the 2026-05 stealth sweeps.")
-    lines.append("If a hit is intentional, edit tests/test_no_internal_language.py:")
+    lines.append("Fix it: reword or remove the flagged line. If the hit is intentional, edit")
+    lines.append("scripts/internal_language_patterns.py:")
     lines.append("  - add the file to WHITELIST_FILES (with a comment explaining why), or")
-    lines.append("  - tighten the regex to exclude the legitimate case.")
+    lines.append("  - tighten the offending rule to exclude the legitimate case (a plain regex")
+    lines.append("    for a SHAPE pattern; a matching-logic change for a hashed literal term —")
+    lines.append('    see that module\'s "Hashed literal terms" docstring section first).')
 
     pytest.fail("\n".join(lines))
