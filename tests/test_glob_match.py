@@ -9,13 +9,18 @@ Covers the documented semantics of ``matches_glob``:
 - Empty/None pattern returns ``False``; ``None`` path coerces to ``""``.
 - Regex metacharacters are treated literally in the ``**`` branch, so
   ``[...]`` character classes are NOT special there (unlike fnmatch).
+- ``{a,b,c}`` brace alternation (2026-07-27 fix, same defect class as the
+  ``**`` scope hole above, one metacharacter over): expanded as a textual
+  preprocessing step before either branch runs, so it works in BOTH the
+  fnmatch branch and the ``**`` regex branch. See ``_expand_braces`` for
+  the documented edge-case decisions this file also pins.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from roam._glob_match import matches_glob
+from roam._glob_match import _expand_braces, matches_glob
 
 # --- Empty / None handling -------------------------------------------------
 
@@ -200,3 +205,68 @@ def test_match_is_anchored_at_start():
 
 def test_match_is_anchored_at_end():
     assert matches_glob("a/foo.py.bak", "**/foo.py") is False
+
+
+# --- ``{a,b,c}`` brace alternation ------------------------------------------
+#
+# THE DEFECT THIS GUARDS (fixed 2026-07-27, same class as the ``**`` hole
+# above): `{`/`}`/`,` were escaped as literal regex/fnmatch characters, so
+# `*.{ts,tsx}` only ever matched a filename containing the literal text
+# `{ts,tsx}` -- never a real `.ts` or `.tsx` file. 13 rules in the shipped
+# TypeScript starter pack alone used this shape (6 of them BLOCK severity)
+# and were permanently dead.
+
+
+def test_brace_alternation_plain_fnmatch_branch():
+    # No ``**`` -> fnmatch branch, but braces are expanded before fnmatch runs.
+    assert matches_glob("a.ts", "*.{ts,tsx}") is True
+    assert matches_glob("a.tsx", "*.{ts,tsx}") is True
+    assert matches_glob("a.js", "*.{ts,tsx}") is False
+
+
+def test_brace_alternation_doublestar_branch():
+    assert matches_glob("src/app.ts", "src/**/*.{ts,tsx}") is True
+    assert matches_glob("app.ts", "src/**/*.{ts,tsx}") is False  # wrong prefix
+    assert matches_glob("src/a/b/app.tsx", "src/**/*.{ts,tsx}") is True
+    assert matches_glob("src/app.js", "src/**/*.{ts,tsx}") is False
+
+
+def test_brace_nested():
+    # {a,{b,c}} -> a | b | c.
+    assert matches_glob("app.ts", "app.{js,{ts,tsx}}") is True
+    assert matches_glob("app.tsx", "app.{js,{ts,tsx}}") is True
+    assert matches_glob("app.jsx", "app.{js,{ts,tsx}}") is False
+
+
+def test_brace_single_item_collapses_to_literal():
+    # {ts} has exactly one alternative -- equivalent to no braces at all.
+    assert matches_glob("app.ts", "app.{ts}") is True
+    assert matches_glob("app.tsx", "app.{ts}") is False
+
+
+def test_brace_empty_alternative_matches_zero_chars():
+    # {ts,} -> "ts" OR "" (empty branch), e.g. an optional suffix.
+    assert matches_glob("file.bak", "file{.bak,}") is True
+    assert matches_glob("file", "file{.bak,}") is True
+    assert matches_glob("file.txt", "file{.bak,}") is False
+
+
+def test_brace_unmatched_open_is_literal_not_alternation():
+    # No matching `}` anywhere -> treated as an ordinary literal character,
+    # not an error and not an alternation. `*.{ts` only matches a filename
+    # that literally ends in the text `.{ts`.
+    assert matches_glob("app.{ts", "*.{ts") is True
+    assert matches_glob("app.ts", "*.{ts") is False
+    assert _expand_braces("*.{ts") == ("*.{ts",)
+
+
+def test_brace_containing_path_separator():
+    # A brace alternative may itself contain `/` -- not special-cased, just
+    # literal text spliced back into the surrounding pattern.
+    assert matches_glob("src/api/x.ts", "{src/api,src/web}/*.ts") is True
+    assert matches_glob("src/web/x.ts", "{src/api,src/web}/*.ts") is True
+    assert matches_glob("src/db/x.ts", "{src/api,src/web}/*.ts") is False
+
+
+def test_expand_braces_dedupes_and_preserves_order():
+    assert _expand_braces("{a,a,b}") == ("a", "b")

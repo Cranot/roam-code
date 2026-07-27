@@ -25,6 +25,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 
+from roam._glob_match import _expand_braces
+
 # Shared with cmd_pr_analyze AI-scoring (orphan-imports signal). Single
 # source-of-truth so the matcher and the scorer can't disagree on which
 # strings count as import lines.
@@ -68,6 +70,21 @@ def _added_lines_by_file(diff_text: str) -> dict[str, list[str]]:
     return out
 
 
+def _fnmatch_brace(name: str, glob: str) -> bool:
+    """``fnmatch.fnmatch``, but with ``{a,b}`` alternation expanded first.
+
+    Plain ``fnmatch`` treats ``{``/``}``/``,`` as literal characters, so a
+    ``forbidden_target_glob`` like ``crypto/{md5,sha1}`` (shipped in the Go
+    starter pack) or ``java.util.{Vector,Hashtable,Stack,Properties}``
+    (Java/Kotlin) never matched anything real — same dead-brace defect as
+    ``_compile_path_glob`` below, just on the target-name side instead of
+    the path side. ``_expand_braces`` is the single shared implementation
+    (``roam._glob_match``) so both sides agree on nesting / single-item /
+    empty-alternative / unmatched-brace behaviour.
+    """
+    return any(fnmatch.fnmatch(name, alt) for alt in _expand_braces(glob))
+
+
 def _match_import_from(line: str, forbidden_glob: str) -> str | None:
     py = _PYTHON_IMPORT_RE.match(line)
     js = _JS_IMPORT_RE.search(line)
@@ -76,7 +93,7 @@ def _match_import_from(line: str, forbidden_glob: str) -> str | None:
         target = (py.group(1) or py.group(2) or "").strip()
     elif js:
         target = js.group(1).strip()
-    if target and fnmatch.fnmatch(target, forbidden_glob):
+    if target and _fnmatch_brace(target, forbidden_glob):
         return target
     return None
 
@@ -88,7 +105,7 @@ def _match_function_call(line: str, forbidden_glob: str) -> str | None:
         return None
     for m in _FUNCTION_CALL_RE.finditer(line):
         target = m.group(1)
-        if fnmatch.fnmatch(target, forbidden_glob):
+        if _fnmatch_brace(target, forbidden_glob):
             return target
     return None
 
@@ -101,7 +118,7 @@ def _match_class_inherit(line: str, forbidden_glob: str) -> str | None:
         base = raw_base.strip().split("=", 1)[0].strip()  # strip kwargs like metaclass=X
         if not base:
             continue
-        if fnmatch.fnmatch(base, forbidden_glob):
+        if _fnmatch_brace(base, forbidden_glob):
             return base
     return None
 
@@ -111,7 +128,7 @@ def _match_decorator_use(line: str, forbidden_glob: str) -> str | None:
     if not m:
         return None
     name = m.group(1)
-    if fnmatch.fnmatch(name, forbidden_glob):
+    if _fnmatch_brace(name, forbidden_glob):
         return name
     return None
 
@@ -184,9 +201,12 @@ def _prepare_rule(rule: dict) -> tuple[callable, str, str, str, str] | None:
     return matcher, source_glob, forbidden_glob, severity, description
 
 
-@lru_cache(maxsize=512)
-def _compile_path_glob(glob: str) -> re.Pattern[str]:
-    """Translate a path glob to a regex with CORRECT ``**`` semantics.
+def _compile_single_glob_regex(glob: str) -> str:
+    """Translate ONE brace-free path glob into a regex fragment (no anchors).
+
+    Extracted from ``_compile_path_glob`` so brace alternation (see that
+    function) can compile each expansion separately and OR them together.
+    All semantics below are unchanged from before the brace fix.
 
     ``fnmatch`` does not treat ``**`` specially -- it collapses to ``*``, which
     still cannot cross ``/``. So ``**/*.go`` compiles to "one segment, then a
@@ -240,7 +260,37 @@ def _compile_path_glob(glob: str) -> re.Pattern[str]:
         else:
             out.append(re.escape(ch))
             i += 1
-    return re.compile("".join(out) + r"\Z")
+    return "".join(out)
+
+
+@lru_cache(maxsize=512)
+def _compile_path_glob(glob: str) -> re.Pattern[str]:
+    """Translate a path glob to a regex with CORRECT ``**`` and ``{a,b}`` semantics.
+
+    Brace alternation (shipped 2026-07-27, same defect class as the ``**``
+    scope hole documented on ``_compile_single_glob_regex``, one
+    metacharacter over): ``{ts,tsx,js,jsx}``-style groups were previously
+    ``re.escape``'d as literal text in the loop below, so
+    ``src/**/*.{ts,tsx,js,jsx}`` compiled to "a file literally ending in
+    the 17-character string ``.{ts,tsx,js,jsx}``" -- which matches nothing
+    real. 13 rules in the shipped TypeScript starter pack alone (6 of them
+    BLOCK) used that shape and could never fire.
+
+    Fixed by expanding braces BEFORE the per-character loop runs, via the
+    shared ``roam._glob_match._expand_braces`` (same expander used by
+    ``_fnmatch_brace`` for ``forbidden_target_glob``, so both fields agree
+    on nesting / single-item / empty-alternative / unmatched-brace
+    behaviour). Each expansion is compiled by
+    ``_compile_single_glob_regex`` exactly as a brace-free glob always was
+    -- ``*``/``?``/``**`` semantics are untouched -- and the results are
+    OR'd into one regex alternation.
+    """
+    expansions = _expand_braces(glob)
+    if len(expansions) == 1:
+        body = _compile_single_glob_regex(expansions[0])
+    else:
+        body = "(?:" + "|".join(_compile_single_glob_regex(e) for e in expansions) + ")"
+    return re.compile(body + r"\Z")
 
 
 def path_matches_glob(path: str, glob: str) -> bool:
