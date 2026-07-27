@@ -26,6 +26,42 @@ from roam.graph.cycles import (
 )
 from roam.output.formatter import json_envelope, to_json
 
+# A single pathological SCC can carry hundreds of files / thousands of
+# symbols (observed live on roam-code's own graph: a 1531-symbol / 390-file
+# component). ``cycles`` is a JSON envelope's ONLY payload field, so when its
+# serialized size alone exceeds the default token budget, the generic
+# budget_truncate_json drop path deletes the WHOLE field rather than
+# partially trimming it -- an agent asking "what are the biggest cycles"
+# on a large repo got summary.cycle_count > 0 but an empty items list, with
+# no way to tell "no cycles" from "cycles found but discarded" (the same
+# failure shape 92a18361 fixed for the disclosure flag, but that fix did not
+# stop the drop itself). Cap each cycle's member lists here, at the source,
+# so a giant SCC can never by itself blow the field out of the envelope --
+# the truncation is disclosed per-cycle (``symbols_truncated`` /
+# ``files_truncated``) rather than silent, and ``size`` / ``file_count``
+# keep reporting the true, uncapped counts.
+_MAX_MEMBERS_PER_CYCLE_JSON = 40
+
+
+def _capped_for_json(cyc: dict, max_members: int = _MAX_MEMBERS_PER_CYCLE_JSON) -> dict:
+    """Return *cyc* with over-long ``symbols``/``files`` lists capped + disclosed.
+
+    ``size`` / ``file_count`` are left untouched (they already carry the true,
+    uncapped counts) -- only the enumerated member lists are bounded.
+    """
+    symbols = cyc.get("symbols") or []
+    files = cyc.get("files") or []
+    if len(symbols) <= max_members and len(files) <= max_members:
+        return cyc
+    out = dict(cyc)
+    if len(symbols) > max_members:
+        out["symbols"] = symbols[:max_members]
+        out["symbols_truncated"] = True
+    if len(files) > max_members:
+        out["files"] = files[:max_members]
+        out["files_truncated"] = True
+    return out
+
 
 @roam_capability(
     name="cycles",
@@ -109,28 +145,40 @@ def cycles(ctx, min_size, limit, actionable_only):
         )
 
         if json_mode:
+            shown_json = [_capped_for_json(c) for c in shown]
+            members_capped = any(c.get("symbols_truncated") or c.get("files_truncated") for c in shown_json)
+            summary: dict = {
+                "verdict": verdict,
+                "cycle_count": len(formatted),
+                "actionable_count": len(actionable),
+                "cycle_count_definition": (
+                    "strongly-connected components (Tarjan SCC) of the symbol "
+                    "import/call graph with >= min_size members; actionable = "
+                    "spans >=2 distinct non-test files"
+                ),
+                "shadow_artifact_count": shadow_count,
+                "shadow_artifact_definition": (
+                    "cycles whose closing edge is a likely name-resolution "
+                    "mislink into a non-exported destructured binding that "
+                    "shadows a distinct cross-file export; label-only, never "
+                    "excluded from counts"
+                ),
+            }
+            if members_capped:
+                # A pathologically large SCC had its symbols/files list capped
+                # at the source (see _capped_for_json) so it cannot blow the
+                # envelope's only payload field out of the JSON token budget.
+                # size/file_count still report the true, uncapped counts —
+                # this is a disclosed partial view of THOSE cycles' members,
+                # not a dropped result.
+                summary["partial_success"] = True
+                summary["cycle_members_capped"] = _MAX_MEMBERS_PER_CYCLE_JSON
             click.echo(
                 to_json(
                     json_envelope(
                         "cycles",
-                        summary={
-                            "verdict": verdict,
-                            "cycle_count": len(formatted),
-                            "actionable_count": len(actionable),
-                            "cycle_count_definition": (
-                                "strongly-connected components (Tarjan SCC) of the symbol "
-                                "import/call graph with >= min_size members; actionable = "
-                                "spans >=2 distinct non-test files"
-                            ),
-                            "shadow_artifact_count": shadow_count,
-                            "shadow_artifact_definition": (
-                                "cycles whose closing edge is a likely name-resolution "
-                                "mislink into a non-exported destructured binding that "
-                                "shadows a distinct cross-file export; label-only, never "
-                                "excluded from counts"
-                            ),
-                        },
-                        cycles=shown,
+                        summary=summary,
+                        cycles=shown_json,
                         budget=token_budget,
                     )
                 )
