@@ -480,11 +480,31 @@ def _count_omitted(data: dict, result: dict, preserved: set) -> int:
 def _annotate_truncation(
     result: dict, budget: int, full_json: str, total_omitted: int, importance_sorted: bool
 ) -> None:
-    """Stamp truncation metadata onto result[\"summary\"]."""
+    """Stamp truncation metadata onto result[\"summary\"].
+
+    W1327: ``truncated=True`` must imply ``partial_success=True`` -- the
+    same invariant the ``--limit`` cap-disclosure path already documents
+    (``summary.partial_success : bool -- True iff truncated``, see
+    ``tests/test_w1142_followup_b_cap_disclosure.py``). Before this fix,
+    the JSON token-budget path stamped ``truncated`` /
+    ``omitted_low_importance_nodes`` but never touched ``partial_success``,
+    which ``_prepare_envelope_summary`` defaults to ``False``. A caller
+    whose payload was capped -- or, on a small envelope, whose only
+    non-preserved field was dropped ENTIRELY by ``_drop_fields_to_budget``
+    -- got ``partial_success: false`` asserting completeness over a result
+    that had just lost data. ``roam cycles`` on an over-budget repo is the
+    concrete case: the whole ``cycles`` payload key was deleted while
+    ``summary.cycle_count`` still reported the true count and
+    ``partial_success`` said ``false``. The Pattern-2c OR-combine
+    discipline (W1250, see ``resolution_disclosure``) applies here too,
+    but since this path only ever needs to RAISE the flag, a plain
+    assignment is equivalent to OR-combining with an existing True/False.
+    """
     if "summary" not in result or not isinstance(result["summary"], dict):
         return
     s = result["summary"]
     s["truncated"] = True
+    s["partial_success"] = True
     s["budget_tokens"] = budget
     s["full_output_tokens"] = estimate_tokens(full_json)
     if total_omitted > 0:
