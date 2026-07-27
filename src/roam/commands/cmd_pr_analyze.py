@@ -79,6 +79,7 @@ from roam.commands.pr_analyze.cache import (
     _save_cache,
 )
 from roam.commands.resolve import ensure_index
+from roam.observability import log_swallowed
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -321,8 +322,8 @@ def _capture_pr_prep(
         if tmp_path:
             try:
                 os.unlink(tmp_path)
-            except OSError:
-                pass
+            except OSError as exc:
+                log_swallowed("pr_analyze.capture_pr_prep.unlink_tmp", exc)
 
 
 _GITHUB_PR_URL_RE = re.compile(r"https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<num>\d+)")
