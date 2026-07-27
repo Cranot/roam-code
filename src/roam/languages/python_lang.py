@@ -959,6 +959,8 @@ class PythonExtractor(LanguageExtractor):
         name = self.node_text(node, source)
         if not name or name in _BUILTIN_TYPES:
             return
+        if self._is_locally_bound(node, source, name):
+            return
         refs.append(
             self._make_reference(
                 target_name=name,
@@ -967,6 +969,54 @@ class PythonExtractor(LanguageExtractor):
                 source_name=scope_name,
             )
         )
+
+    def _is_locally_bound(self, node, source, name: str) -> bool:
+        """True when ``name`` is a parameter of an enclosing function.
+
+        WHY THIS GUARD EXISTS. Emitting a reference for every bare identifier in
+        argument position was too broad: in ``def handle_request(name): return
+        create_user(name)`` the argument ``name`` is a LOCAL PARAMETER, but it
+        was emitted as a reference and resolved to an unrelated module-level
+        symbol of the same name. That is a false edge, and false edges are worse
+        here than the missing ones this feature was added to fix -- a spurious
+        edge SHORTENS graph distance, so `roam affected` reported a 2-hop
+        dependent as 1-hop. Caught by
+        test_two_hop_dependent_lands_in_transitive_2plus_not_1.
+
+        A locally-bound name shadows any module-level symbol, so by Python's own
+        scoping rules it cannot be a reference to one. Walking up the tree keeps
+        this self-contained rather than threading a scope set through every
+        ``_walk_refs`` call site.
+
+        Deliberately conservative: parameters only. Local assignments also shadow,
+        but a name assigned locally AND passed to a dispatcher is a genuine
+        registry idiom (``handler = probe_disk; safe(handler)``), so skipping
+        those would reopen the blind spot this feature closes.
+        """
+        cur = node.parent
+        while cur is not None:
+            if cur.type in ("function_definition", "lambda"):
+                params = cur.child_by_field_name("parameters")
+                if params is not None:
+                    for p in params.children:
+                        if p.type == "identifier":
+                            if self.node_text(p, source) == name:
+                                return True
+                        elif p.type in (
+                            "default_parameter",
+                            "typed_parameter",
+                            "typed_default_parameter",
+                            "list_splat_pattern",
+                            "dictionary_splat_pattern",
+                        ):
+                            for sub in p.children:
+                                if sub.type == "identifier" and self.node_text(sub, source) == name:
+                                    return True
+                                # typed_parameter nests its name one level deeper
+                                if sub.type == "identifier":
+                                    break
+            cur = cur.parent
+        return False
 
     def _extract_keyword_argument_ref(self, node, source, refs, scope_name):
         """``fn=probe_disk`` in a call: the VALUE is a higher-order
