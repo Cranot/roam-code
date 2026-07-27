@@ -257,10 +257,26 @@ def test_loop_full_chain_with_runs_ledger(tmp_path, cli_runner, monkeypatch):
     assert auto.get("envelopes_scanned", 0) >= 1, f"expected auto-collect to fold >= 1 envelope, got {auto}"
 
     # Step 11: runs end.
+    #
+    # The bundle emitted above is legitimately PARTIAL -- `pr-bundle` reports
+    # ``partial_success = state != "complete"`` (cmd_pr_bundle.py:1820) and this
+    # chain never fills every required section. Closing the run as "completed"
+    # would assert a success the run's OWN RECORDED EVIDENCE contradicts, which
+    # is precisely what the status-provenance contract refuses: a cosign-signed
+    # VSA predicate must not be able to carry an unearned "completed".
+    #
+    # Before that contract existed this asserted exit 0 on the default status,
+    # i.e. it encoded the permissive behaviour. Asserting the REFUSAL is the
+    # point -- it pins the contract instead of routing around it.
     r = _invoke(cli_runner, ["--json", "runs", "end"])
+    assert r.exit_code != 0, f"expected refusal of an unearned 'completed': {r.output}"
+    assert "contradicts the asserted status" in r.output, r.output
+
+    # Closing with the status the evidence supports must succeed.
+    r = _invoke(cli_runner, ["--json", "runs", "end", "--status", "failed"])
     assert r.exit_code == 0, r.output
     eend = _parse_json(r)
-    assert eend["summary"]["state"] in ("completed", "ok"), eend
+    assert eend["summary"]["state"] in ("failed", "completed", "ok"), eend
 
     # runs list should show our run.
     r = _invoke(cli_runner, ["--json", "runs", "list"])
