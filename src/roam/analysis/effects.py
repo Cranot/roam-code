@@ -63,30 +63,30 @@ def _compile(patterns: list[tuple[str, str]]) -> list[tuple[re.Pattern, str]]:
 
 _PYTHON_PATTERNS = _compile(
     [
-        # Database writes
-        (r"\.save\s*\(", WRITES_DB),
-        (r"\.create\s*\(", WRITES_DB),
-        (r"\.delete\s*\(", WRITES_DB),
-        (r"\.update\s*\(", WRITES_DB),
+        # Database writes — M3 fix: the receiver-agnostic verbs that used to
+        # live here (`.save(`, `.create(`, `.delete(`, `.update(`, `.add(`,
+        # `.insert(`, bare `cursor.`, bare `.execute(`) match ANY object with
+        # that method name (dict.update, set.add, list.insert, PIL
+        # Image.save, ...), not just a DB. On roam's own repo they inflated
+        # writes_db to ~2000 direct hits with zero receiver evidence. Only
+        # patterns that are DB-specific by construction (a SQL-keyword
+        # literal, or an ORM/DB-only method name) survive here; see
+        # `side_effects.py` (import/call-edge aware) for the reference
+        # approach this mirrors.
+        (r"\.execute(?:many)?\s*\(\s*['\"](?:INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP|TRUNCATE)\b", WRITES_DB),
+        (r"\.executescript\s*\(", WRITES_DB),
+        (r"\.commit\s*\(", WRITES_DB),
         (r"\.bulk_create\s*\(", WRITES_DB),
         (r"\.bulk_update\s*\(", WRITES_DB),
-        (r"\.execute\s*\(", WRITES_DB),
-        (r"\.executemany\s*\(", WRITES_DB),
-        (r"cursor\.", WRITES_DB),
-        (r"\.commit\s*\(", WRITES_DB),
-        (r"\.add\s*\(", WRITES_DB),
-        (r"session\.flush", WRITES_DB),
-        (r"\.insert\s*\(", WRITES_DB),
-        # Database reads
+        (r"session\.flush\b", WRITES_DB),
+        # Database reads — same rationale: `.filter(`, `.get(`, `.all(`,
+        # `.select(`, `.query(` are common on non-DB receivers (dict, list,
+        # argparse, itertools, ...) and were dropped for the same reason.
         (r"\.objects\.", READS_DB),
-        (r"\.filter\s*\(", READS_DB),
-        (r"\.get\s*\(", READS_DB),
-        (r"\.all\s*\(", READS_DB),
-        (r"\.select\s*\(", READS_DB),
+        (r"\.execute(?:many)?\s*\(\s*['\"](?:SELECT|PRAGMA|WITH)\b", READS_DB),
         (r"\.fetchone\s*\(", READS_DB),
         (r"\.fetchall\s*\(", READS_DB),
         (r"\.fetchmany\s*\(", READS_DB),
-        (r"\.query\s*\(", READS_DB),
         # Network
         (r"requests\.\w+\s*\(", NETWORK),
         (r"httpx\.\w+\s*\(", NETWORK),

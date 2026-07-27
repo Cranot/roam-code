@@ -123,21 +123,19 @@ def test_effects_true_positive_on_real_sqlite_dao(ro_repo):
     assert "reads_db" in effects["read_user"], effects
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CONFIRMED DEFECT (effects): the regex classifier flags dict.get()/set.add()/"
-    "dict.update() on ANY receiver as reads_db/writes_db. app/pure_dict.py has NO "
-    "database at all, yet every function is reported with a DB effect. src/roam/"
-    "analysis/effects.py _PYTHON_PATTERNS: r'\\.get\\s*\\(' -> READS_DB, "
-    "r'\\.add\\s*\\(' / r'\\.update\\s*\\(' -> WRITES_DB. side-effects (a smarter, "
-    "import-aware classifier) correctly calls these 'none' — see the companion test.",
-)
+# M3 FIXED (2026-07-28): `_PYTHON_PATTERNS` no longer matches DB verbs on ANY
+# receiver — `.get(`/`.add(`/`.update(` were dropped (receiver-agnostic;
+# dict.get/set.add/dict.update FPs) and `.execute(`/`.executemany(` now
+# require a literal SQL keyword. app/pure_dict.py's functions are genuinely
+# pure, so they now carry NO effects at all and are absent from the
+# `--path` listing (an INNER JOIN against symbol_effects) — that absence
+# IS the correct outcome, hence `.get(fn, [])` rather than `effects[fn]`.
 def test_effects_false_positive_pure_dict_should_have_no_db_effects(ro_repo):
     env = _run_json(ro_repo, "effects", "--path", "app/pure_dict.py")
     effects = _effect_map(env)
     db_kinds = {"reads_db", "writes_db"}
     for fn in ("lookup_settings", "collect", "merge"):
-        assert not (db_kinds & set(effects[fn])), f"{fn} falsely flagged: {effects[fn]}"
+        assert not (db_kinds & set(effects.get(fn, []))), f"{fn} falsely flagged: {effects.get(fn)}"
 
 
 # ===========================================================================
