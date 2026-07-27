@@ -443,10 +443,22 @@ def _cap_lists_to_budget(result: dict, preserved: set, char_limit: int) -> None:
 
 
 def _drop_fields_to_budget(result: dict, preserved: set, char_limit: int) -> None:
-    """Drop non-preserved keys one-by-one until result fits within char_limit."""
+    """Drop non-preserved keys, largest serialised first, until result fits.
+
+    Insertion order decided this until 2026-07-27, so the key that actually
+    blew the budget was dropped only after every key declared ahead of it.
+    On ``roam attest`` that cost the caller a 1,760-char ``attestation``
+    block before the 173,325-char ``evidence`` blob it was queued behind --
+    two contract blocks lost to free space one payload was already going to
+    free. Sizing the candidates first drops the fewest keys that can fit.
+    """
     if len(_json.dumps(result, default=str, sort_keys=True)) <= char_limit:
         return
-    for k in [k for k in result if k not in preserved]:
+    by_size = sorted(
+        ((len(_json.dumps(result[k], default=str, sort_keys=True)), k) for k in result if k not in preserved),
+        reverse=True,
+    )
+    for _size, k in by_size:
         del result[k]
         if len(_json.dumps(result, default=str, sort_keys=True)) <= char_limit:
             break
@@ -486,7 +498,10 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
 
     Strategy:
     - Always preserve envelope fields: command, summary, schema,
-      schema_version, version, project, _meta.
+      schema_version, version, project, _meta, and the two small
+      contract blocks ``attestation`` and ``agent_contract``.
+    - Remaining fields are dropped largest-serialised-first, so the key
+      that blew the budget goes before smaller ones behind it.
     - For list-valued payload fields, sort by importance (``pagerank``,
       ``importance``, ``score``, or ``rank`` key) descending, then keep
       only the top N items until the result fits.  Lists without a
@@ -521,6 +536,20 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
         "version",
         "project",
         "_meta",
+        # Contract blocks, not payload — both are small and fixed-shape, so
+        # preserving them cannot be what blows a budget:
+        #   * ``attestation`` (~450 tokens) carries the ``stale_if`` freshness
+        #     terms and, under ``roam attest --sign``, the ``content_hash``
+        #     tamper seal. Dropping it turned an over-budget signed attest
+        #     into a packet with no seal and no error.
+        #   * ``agent_contract`` (~200 tokens by construction, see
+        #     ``_AGENT_CONTRACT_MAX_FACTS``) exists to serve exactly the
+        #     context-constrained consumer this budget is for; deleting it
+        #     because the budget is tight is backwards. Already preserved on
+        #     the sibling ``strip_list_payloads`` path (W1007) — this closes
+        #     the inconsistency between the two.
+        "attestation",
+        "agent_contract",
     }
 
     result = _copy_envelope_mutable(data)
