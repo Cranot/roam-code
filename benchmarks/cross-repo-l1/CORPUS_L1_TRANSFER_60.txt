@@ -1,0 +1,85 @@
+# CORPUS_L1_TRANSFER_60 — 60 authored, repo-agnostic developer prompts.
+#
+# PURPOSE: measure whether roam's L1 compile path transfers to FOREIGN repos.
+# The same frozen corpus is compiled against every target repo; the metric is
+# `l1_route_rate_pct` from `roam compiler-corpus`.
+#
+# PROVENANCE: hand-authored 2026-07-26. NOT mined from task_prefix, telemetry,
+# or any captured user prompt. No repo-specific symbol names appear anywhere in
+# this file, by construction — every target noun is a generic English concept
+# ("the router", "the config loader") that plausibly exists in a Python web
+# framework, a Go HTTP framework, and a JS compiler alike.
+#
+# COMPOSITION (deliberate, fixed before any run):
+#   12  callers / uses
+#   10  blast radius
+#   10  recent change / history
+#    8  coupling / imports
+#    8  structural health (dead / complexity / cycles)
+#    6  locate / search
+#    6  open-ended freeform  <- included ON PURPOSE so the denominator is not
+#                               stacked with L1-eligible intents only.
+#
+# PREREGISTERED WIN BAR (fixed before the first run):
+#   transfer holds iff l1_route_rate_pct >= 45 on ALL THREE target repos.
+
+who calls the router setup function
+who calls the config loader
+what calls the request handler
+find the callers of the error formatter
+what uses the logging helper
+how many callers does the parser entry point have
+references to the cache invalidation helper
+consumers of the middleware registry
+who calls the response encoder
+what uses the retry helper
+callers of the session store
+users of the token validator
+what breaks if I change the router signature
+what breaks if I change the config schema
+blast radius of renaming the request context type
+impact of changing the default timeout value
+what breaks if I remove the deprecated client helper
+blast radius of the error type refactor
+what breaks if I change the parser return type
+impact of moving the validation helpers to a new module
+what breaks if I change the middleware ordering
+blast radius of changing the serializer interface
+what changed in the router recently
+what changed in the test suite in the last month
+which files changed most in the last 90 days
+what changed recently in the build configuration
+recent changes to the error handling code
+what changed in the parser over the last release
+show recent churn in the middleware layer
+what changed recently in the public API surface
+which files have the most commits recently
+recent changes to the dependency configuration
+what imports the config module
+which files import the logging utilities
+what is most strongly coupled to the router
+temporal coupling for the request handler
+dependencies of the core module
+top 10 most imported files
+what co-changes with the test helpers
+dependency graph of the public entry point
+find dead code in this repo
+what are the most complex functions here
+are there any import cycles
+which functions are unused
+find circular dependencies between modules
+what is the most complex file in the codebase
+show unreachable code paths
+which modules have the highest cyclomatic complexity
+where is the entry point defined
+where is the timeout configured
+find the code that handles errors
+where is logging configured
+find where request parsing happens
+locate the test fixtures setup
+explain how this project is structured
+how do I add a new feature here
+what is this repository for
+summarize the architecture of this codebase
+how should I approach onboarding to this project
+what are the main conventions used in this project
