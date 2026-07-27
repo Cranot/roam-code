@@ -38,6 +38,104 @@ def test_cycles_finds_cross_file_cycle(cli_runner, tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Token-budget survival / disclosure (Task #49)
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT: on a repo whose ``cycles`` envelope exceeds the JSON token
+# budget, ``budget_truncate_json``'s ``_drop_fields_to_budget`` deletes the
+# whole non-preserved ``cycles`` payload key (it is the only payload field
+# this command emits, so there is nothing smaller to drop instead) while
+# ``summary.cycle_count`` / ``summary.verdict`` still report the true,
+# pre-truncation count. Before this fix ``summary.partial_success`` stayed
+# ``False`` — the default ``_prepare_envelope_summary`` stamps — because
+# ``_annotate_truncation`` (the function ``budget_truncate_json`` calls to
+# stamp ``truncated`` / ``omitted_low_importance_nodes``) never touched
+# ``partial_success``. A consumer reading only ``summary`` saw a complete,
+# successful result over a payload that had just been discarded; a consumer
+# reading ``data.get("cycles", [])`` could not tell "0 cycles found" from
+# "cycles found but dropped".
+#
+# This drives the REAL budget path end-to-end (``ROAM_DEFAULT_JSON_BUDGET``,
+# the same env lever production reads -- see ``formatter._default_json_budget``)
+# on a genuine two-file cross-import cycle, exactly mirroring the
+# ``TestAttestSurvivesTokenBudget`` regression added in dfe5966 for the
+# sibling ``roam attest`` defect (attestation/agent_contract dropped ahead
+# of the oversized ``evidence`` blob). No mocking of ``budget_truncate_json``
+# itself -- the tiny env-var cap forces the genuine truncation branch.
+
+
+def _build_cycle_project(tmp_path):
+    proj = tmp_path / "cyc_budget"
+    proj.mkdir()
+    (proj / ".git").mkdir()
+    (proj / "a.py").write_text("from b import foo\n\n\ndef bar():\n    return foo()\n")
+    (proj / "b.py").write_text("from a import bar\n\n\ndef foo():\n    return bar()\n")
+    return proj
+
+
+class TestCyclesSurvivesTokenBudget:
+    """W1327 regression: a budget-truncated `cycles` envelope must disclose
+    partial_success=True, never assert completeness over a dropped payload."""
+
+    def test_dropped_cycles_payload_flips_partial_success(self, cli_runner, tmp_path, monkeypatch):
+        proj = _build_cycle_project(tmp_path)
+        monkeypatch.chdir(proj)
+        out, rc = index_in_process(proj, "--force")
+        assert rc == 0, out
+
+        # Force the JSON budget down far enough that the whole `cycles`
+        # payload key gets dropped by `_drop_fields_to_budget` -- the exact
+        # branch that silently discarded the payload pre-fix.
+        monkeypatch.setenv("ROAM_DEFAULT_JSON_BUDGET", "100")
+
+        result = invoke_cli(cli_runner, ["cycles"], cwd=proj, json_mode=True)
+        assert result.exit_code == 0, result.output
+        data = parse_json_output(result, command="cycles")
+
+        summary = data["summary"]
+        # Guard the guard: if the budget gate did not fire, this test proves
+        # nothing about the disclosure it's meant to verify.
+        assert summary.get("truncated") is True, (
+            f"budget gate did not fire -- fixture outgrew the cap? summary={summary!r}"
+        )
+        # Confirm the actual defect condition: the cycles payload really was
+        # dropped even though summary still reports a nonzero count.
+        assert "cycles" not in data, (
+            f"expected the whole 'cycles' payload key to be dropped by the tiny "
+            f"budget; it survived -- test no longer exercises the reported defect. "
+            f"data keys={sorted(data.keys())!r}"
+        )
+        assert summary.get("cycle_count", 0) >= 1, (
+            "expected summary.cycle_count to still report the true count even "
+            "though the payload was dropped -- that mismatch IS the defect"
+        )
+        # THE regression assertion.
+        assert summary.get("partial_success") is True, (
+            f"budget-truncated cycles envelope must disclose partial_success=True "
+            f"-- a consumer cannot otherwise distinguish 'no cycles found' from "
+            f"'cycles found but discarded'; got summary={summary!r}"
+        )
+
+    def test_untruncated_cycles_keeps_partial_success_false(self, cli_runner, tmp_path, monkeypatch):
+        """Sanity anchor: a normal-sized envelope must NOT be flipped to
+        partial_success=True just because the fix exists -- only a genuine
+        truncation event should raise it."""
+        proj = _build_cycle_project(tmp_path)
+        monkeypatch.chdir(proj)
+        out, rc = index_in_process(proj, "--force")
+        assert rc == 0, out
+
+        result = invoke_cli(cli_runner, ["cycles"], cwd=proj, json_mode=True)
+        assert result.exit_code == 0, result.output
+        data = parse_json_output(result, command="cycles")
+
+        summary = data["summary"]
+        assert summary.get("truncated") is not True, f"unexpected truncation on untouched budget: {summary!r}"
+        assert "cycles" in data
+        assert summary.get("partial_success") is False
+
+
+# ---------------------------------------------------------------------------
 # Shadow-artifact classification (mark_shadow_artifacts) — label-only.
 # Unit tests build the index DB directly so the graph shape (phantom edges,
 # non-exported bindings, import linkage) is exact and deterministic.
