@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from roam.commands.audit_trail_helpers import AUDIT_TRAIL_SCHEMA, next_sequence_number
+from roam.commands.audit_trail_helpers import (
+    AUDIT_TRAIL_SCHEMA,
+    next_sequence_number,
+    write_audit_trail_head,
+)
 from roam.commands.git_helpers import (
     detect_roam_version,
     git_actor,
@@ -150,4 +154,16 @@ def _emit_audit_trail_record(
     line = _json.dumps(record, separators=(",", ":"), sort_keys=True)
     with audit_trail_path.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
+    # Tail-record protection (bug #286): stamp this record's own hash
+    # into a sibling head-pointer file (see audit_trail_helpers module
+    # docstring). Best-effort — a write failure here must never block
+    # the audit-trail record itself, which is the higher invariant.
+    try:
+        write_audit_trail_head(
+            audit_trail_path,
+            tail_hash=hashlib.sha256(line.encode("utf-8")).hexdigest(),
+            sequence_number=record["sequence_number"],
+        )
+    except OSError:
+        pass
     return record

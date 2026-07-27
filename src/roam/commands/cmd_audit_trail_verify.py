@@ -6,6 +6,28 @@ unbroken from the first record (genesis, ``previous_record_hash = ""``)
 to the last. Returns exit code 5 (gate failure) when the chain breaks,
 so it can be wired into CI as a tamper-detection gate.
 
+Tail-record protection (bug #286). The ``previous_record_hash`` chain
+detects a tampered record N via record N+1's back-link — by
+construction it CANNOT catch tampering of the LAST record, since
+there is no N+1 to check it. That gap used to be silent: the docstring
+claimed "tampering with any record ... breaks the chain" while the
+tail was provably exempt. The fix stamps every append's tail hash into
+a sibling ``<trail>.head.json`` file (see
+``roam.commands.audit_trail_helpers``, mirroring the R20-phase-4
+``final_signature``-in-``meta.json`` pattern used by the runs ledger)
+and cross-checks it here. Concretely:
+
+* Middle-record tamper -> caught by the existing back-link check,
+  surfaced at the FOLLOWING line.
+* Tail-record tamper -> caught by the head-pointer cross-check
+  (``tail_hash mismatch``), surfaced at the LAST line — but ONLY when
+  a head-pointer file is present. A trail with no head file (hand
+  built, foreign, or written before this fix) has no tail protection,
+  exactly as before.
+* Residual gap: an attacker who can rewrite BOTH the trail file and
+  its head-pointer file has no obstacle — this is a plain hash chain,
+  not a keyed signature, so self-consistency is all it can prove.
+
 Gate semantics (W830). ``--gate`` is **fail-closed by design**. Three
 states map onto the gate as follows:
 
@@ -45,7 +67,11 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
-from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
+from roam.commands.audit_trail_helpers import (
+    DEFAULT_AUDIT_TRAIL_PATH,
+    audit_trail_head_path,
+    read_audit_trail_head,
+)
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
 
 EXIT_GATE_FAILURE = 5
@@ -55,10 +81,12 @@ EXIT_GATE_FAILURE = 5
 # onto the central findings registry (after ``clones`` in W95, ``dead`` in
 # W99, ``complexity`` in W102, ``smells`` in W109, and the W110-W145
 # emitters). Each row in the registry is one per-entry chain anomaly
-# (previous_record_hash mismatch or invalid JSON) keyed deterministically
-# on ``(audit_trail_path, line_number, issue_kind)`` so a re-run upserts
-# in place. Bump this when ``_verify_chain``'s issue-shape changes.
-AUDIT_TRAIL_VERIFY_DETECTOR_VERSION: str = "1.0.0"
+# (previous_record_hash mismatch, invalid JSON, or tail_hash mismatch)
+# keyed deterministically on ``(audit_trail_path, line_number, issue_kind)``
+# so a re-run upserts in place. Bump this when ``_verify_chain``'s
+# issue-shape changes. 1.1.0 (bug #286): added the ``tail_hash mismatch``
+# issue kind for head-pointer-file tail-tamper detection.
+AUDIT_TRAIL_VERIFY_DETECTOR_VERSION: str = "1.1.0"
 
 
 # Per-issue-kind confidence tier mapping. All current issue kinds
@@ -69,6 +97,10 @@ AUDIT_TRAIL_VERIFY_DETECTOR_VERSION: str = "1.0.0"
 _ISSUE_KIND_TO_CONFIDENCE: dict[str, str] = {
     "previous_record_hash mismatch": "static_analysis",
     "invalid JSON": "static_analysis",
+    # bug #286 — tail-record protection via the sibling head-pointer
+    # file (see module docstring + audit_trail_helpers). Same
+    # deterministic SHA-256 comparison shape as the other two kinds.
+    "tail_hash mismatch": "static_analysis",
 }
 _ISSUE_DEFAULT_CONFIDENCE: str = "static_analysis"
 
@@ -80,6 +112,7 @@ _ISSUE_DEFAULT_CONFIDENCE: str = "static_analysis"
 _ISSUE_KIND_TO_SLUG: dict[str, str] = {
     "previous_record_hash mismatch": "hash_mismatch",
     "invalid JSON": "invalid_json",
+    "tail_hash mismatch": "tail_hash_mismatch",
 }
 
 
@@ -167,10 +200,19 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
     to the record's ``previous_record_hash``. Genesis (first record)
     expects an empty string. Any mismatch is recorded in ``issues`` so the
     caller can render line numbers + computed-vs-expected hashes.
+
+    Tail-record protection (bug #286): the back-link check above cannot
+    catch tampering of the LAST record (no N+1 exists to flag it), so
+    after the walk this also cross-checks the trail's actual last-line
+    hash against an independently-stored ``<trail>.head.json`` pointer
+    (see ``audit_trail_helpers`` module docstring). Absent a head file
+    (foreign / pre-fix trail), the tail check is silently skipped — the
+    pre-fix behaviour — so this stays backward compatible.
     """
     records: list[dict] = []
     issues: list[dict] = []
     prev_hash = ""
+    last_line_no = 0
 
     # Hoist loop-invariant attribute/method lookups out of the hot line loop.
     # _json.loads, hashlib.sha256, and the per-hasher hexdigest method are all
@@ -216,6 +258,30 @@ def _verify_chain(path: Path) -> tuple[list[dict], list[dict]]:
 
             records.append(rec)
             prev_hash = hexdigest(sha256(line.encode("utf-8")))
+            last_line_no = line_no
+
+    # --- Tail-record protection (bug #286) --------------------------------
+    # ``prev_hash`` now holds the hash of the actual last processed line
+    # (whatever is on disk right now, tampered or not). If a head-pointer
+    # file was stamped at write time, its ``tail_hash`` is what the tail
+    # SHOULD hash to; a mismatch means the tail record changed after the
+    # head file was written — the exact hole the back-link chain cannot
+    # see (no following record to flag it).
+    if records:
+        head = read_audit_trail_head(path)
+        if head is not None:
+            stored_tail_hash = head.get("tail_hash")
+            if stored_tail_hash != prev_hash:
+                issues.append(
+                    {
+                        "line": last_line_no,
+                        "issue": "tail_hash mismatch",
+                        "expected_prev": (stored_tail_hash or "")[:32] or "<empty>",
+                        "computed_prev": (prev_hash or "")[:32] or "<empty>",
+                        "timestamp": records[-1].get("timestamp"),
+                        "verdict": records[-1].get("verdict"),
+                    }
+                )
 
     return records, issues
 
@@ -248,7 +314,11 @@ def _build_rollup(_records, _issues, _records_count: int, _issues_count: int) ->
         _kind = _i.get("issue", "")
         if "not found" in _kind:
             continue
-        if "previous_record_hash mismatch" in _kind or "invalid JSON" in _kind:
+        if (
+            "previous_record_hash mismatch" in _kind
+            or "invalid JSON" in _kind
+            or "tail_hash mismatch" in _kind  # bug #286
+        ):
             broken += 1
     for _idx, _r in enumerate(_records):
         if _idx == 0:
@@ -315,8 +385,17 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
       roam audit-trail-verify --input .roam/audit-trail.jsonl --gate
       roam --json audit-trail-verify   # for CI parsing
 
-    Tampering with any record (or splicing a record into the middle)
-    breaks the chain — this command surfaces the affected line.
+    Tampering a MIDDLE record (or splicing one into the middle) breaks
+    the previous_record_hash chain — surfaced at the following line.
+    Tampering the LAST record is caught too, but only when a sibling
+    head-pointer file (<trail>.head.json, auto-written by `roam
+    pr-analyze --audit-trail`) is present: the tail's own hash is
+    committed there, outside the trail file, specifically because the
+    chain has no downstream record to catch a change to the final one.
+    A trail with no head file (hand-built, foreign, or pre-13.10) has
+    NO tail protection. Residual gap either way: this is a hash chain,
+    not a keyed signature — an attacker who can rewrite the trail AND
+    its head file together leaves no trace.
     """
     # W107/W120 composition: global `roam --ci` also flips the local
     # `--gate` flag so a chain-broken audit trail fails the CI job
@@ -839,6 +918,15 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
     # / ``records[-1]`` access on ``has_records`` (a predicate-derived
     # bool) rather than ``if records else None`` -- the truthiness check
     # also calls ``__len__`` for list subclasses and would re-raise.
+    # bug #286 disclosure — was a head-pointer file present for this run,
+    # i.e. did the tail record actually get a tamper check? Independent
+    # of whether the trail came out clean or broken: this tells a
+    # consumer whether ``chain_valid: true`` also vouches for the LAST
+    # record, or only for the middle ones (no head file -> tail
+    # unprotected, matching the pre-fix behaviour for foreign/legacy
+    # trails). See module docstring "Tail-record protection".
+    tail_protected = has_records and audit_trail_head_path(path).exists()
+
     summary = {
         "verdict": verdict,
         "state": state,
@@ -850,6 +938,7 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
         "last_timestamp": records[-1].get("timestamp") if has_records else None,
         "first_actor": records[0].get("actor") if has_records else None,
         "audit_trail_path": str(path),
+        "tail_protected": tail_protected,
         # W607-EA: surface aggregation-LAYER signals on the envelope
         # summary so consumers can read the 4-tier classifier and rollup
         # metrics WITHOUT re-walking issues/records. Hash-stable on the
@@ -973,6 +1062,12 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
         # text-mode rendering path.
         click.echo(f"  records: {records_count}")
         click.echo(f"  state:   {state}")
+        # bug #286: name whether the tail record actually got a tamper
+        # check this run — text/JSON parity for ``summary.tail_protected``.
+        # Only worth a line when records exist (an uninitialized/empty
+        # trail has no tail to protect).
+        if has_records and not tail_protected:
+            click.echo("  tail:    UNPROTECTED (no <trail>.head.json — the last record's tamper is undetectable)")
         # Disclose unsigned events in text mode too — the verdict already
         # names them, but a separate line keeps text/JSON parity for the
         # ``unsigned_events`` summary field.
