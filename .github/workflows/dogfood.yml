@@ -74,7 +74,15 @@ jobs:
       - name: Run dogfood (audit + pr-analyze + audit-trail + conformance)
         run: |
           set -euo pipefail
-          .venv/bin/roam --json dogfood --no-audit-trail > dogfood.json
+          # --audit-trail is the default (no flag needed) -- a prior
+          # --no-audit-trail here structurally disabled the very
+          # audit-trail + conformance checking this step's own name and
+          # the workflow header promise, which silently printed
+          # `| conformance | None/100 |` on every run. Each CI run starts
+          # from a fresh checkout (.roam/ is gitignored, never persisted
+          # across runs), so this appends exactly one genesis record and
+          # reports that trail's real Article 12 conformance score.
+          .venv/bin/roam --json dogfood > dogfood.json
           .venv/bin/python - <<'PY'
           import json
           import os

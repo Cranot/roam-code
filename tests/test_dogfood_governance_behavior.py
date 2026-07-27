@@ -11,13 +11,23 @@ and asserts the load-bearing property each one is sold on:
   * a conformance score matches a hand-built ledger
   * the scoring formula behaves as documented
 
-It also PINS three defects surfaced during the dogfood (see the module-level
-DEFECTS note and the xfail/documenting tests):
+It also PINS two remaining defects (and one now-FIXED one) surfaced during
+the dogfood (see the module-level DEFECTS note and the xfail/documenting
+tests):
 
-  1. audit-trail-verify's SHA-256 previous_record_hash chain leaves the FINAL
-     record unprotected — tampering the last record's payload is UNDETECTED,
-     contradicting the command's own docstring ("Tampering with any record ...
-     breaks the chain"). Pinned as a strict-xfail.
+  1. FIXED (bug #286): audit-trail-verify's SHA-256 previous_record_hash
+     chain left the FINAL record unprotected — tampering the last record's
+     payload was UNDETECTED, contradicting the command's own docstring
+     ("Tampering with any record ... breaks the chain"). Was pinned as a
+     strict-xfail; now closed via a sibling ``<trail>.head.json``
+     head-pointer file (mirrors the runs-ledger's R20-phase-4
+     ``final_signature``-in-``meta.json`` pattern) that
+     ``audit-trail-verify`` cross-checks against the trail's actual tail
+     hash. Residual gap, now stated in the docstring rather than implied
+     closed: a trail with no head file (foreign / hand-built / written
+     before this fix) still has no tail protection, and an attacker who
+     can rewrite BOTH the trail and its head file together is
+     undetectable (a hash chain, not a keyed signature).
   2. article-12-check's high-risk classifier word-matches "promote" / "terminate"
      etc., so a benign `def promote()` trips an EU AI Act high-risk REVIEW.
      Pinned as a documenting test.
@@ -389,17 +399,65 @@ def test_audit_trail_verify_detects_middle_tamper(tmp_path):
     assert issues[0]["issue"] == "previous_record_hash mismatch"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "DEFECT: audit-trail-verify's previous_record_hash chain leaves the FINAL "
-        "record unprotected. Tampering the last record's payload is UNDETECTED, "
-        "contradicting the docstring 'Tampering with any record ... breaks the "
-        "chain'. The tail needs a trailing record_hash / signature (cf. the HMAC "
-        "runs ledger, which signs each event including the last)."
-    ),
-)
-def test_audit_trail_verify_SHOULD_detect_tail_tamper(tmp_path):
+def test_audit_trail_verify_detects_tail_tamper_with_head_file(tmp_path):
+    """FIXED (bug #286): tampering the LAST record IS now detected.
+
+    Was pinned ``xfail(strict=True)`` — the previous_record_hash chain
+    structurally cannot protect the tail (no N+1 record exists to flag
+    it). The fix: every real append via ``_emit_audit_trail_record``
+    also stamps a sibling ``<trail>.head.json`` pointer holding the
+    tail line's own hash (mirrors the runs-ledger's R20-phase-4
+    ``final_signature``-in-``meta.json`` mechanism). Verify cross-checks
+    the trail's ACTUAL last-line hash against that independently-stored
+    pointer, so editing the tail record without also rewriting the head
+    file now breaks verification — exactly like the middle-tamper case
+    above, just via a different (tail-specific) issue kind.
+
+    Uses the REAL writer (not the hand-rolled ``_sha256_chain_lines``
+    helper) because the head file is only produced by the real emit
+    path — this is the load-bearing round-trip the module docstring
+    promises ("REAL cryptographic ... round-trips").
+    """
+    from roam.commands.cmd_audit_trail_verify import _verify_chain
+    from roam.commands.pr_analyze.audit_trail import (
+        AuditTrailRecordRequest,
+        _emit_audit_trail_record,
+    )
+
+    trail = tmp_path / "audit-trail.jsonl"
+    bundle = {"summary": {"verdict": "SAFE", "blast_radius": 1, "ai_likelihood": 0}, "rationale": {}}
+    for i in range(4):
+        _emit_audit_trail_record(
+            AuditTrailRecordRequest(audit_trail_path=trail, diff_text=f"diff-{i}", bundle=bundle)
+        )
+
+    # Baseline: a clean, real-written trail (with its head file) verifies clean.
+    _records, issues = _verify_chain(trail)
+    assert issues == [], f"clean trail with head file must verify clean, got {issues}"
+
+    # Tamper the LAST record's payload — leave everything else untouched.
+    lines = trail.read_text(encoding="utf-8").splitlines()
+    last = json.loads(lines[-1])
+    last["verdict"] = "BLOCK"  # flip the most-recent decision
+    lines[-1] = json.dumps(last, separators=(",", ":"), sort_keys=True)
+    trail.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    _records, issues = _verify_chain(trail)
+    assert issues, "tail-record tamper must break the chain now that a head file exists"
+    assert issues[0]["issue"] == "tail_hash mismatch"
+    assert issues[0]["line"] == 4
+
+
+def test_audit_trail_verify_tail_tamper_undetected_without_head_file(tmp_path):
+    """DOCUMENTING (residual gap, stated not implied): a trail with NO
+    head-pointer file — hand-built, foreign, or copied from a
+    pre-fix/pre-13.10 checkout — still has no tail protection. This is
+    the backward-compatibility contract, not an oversight: forcing a
+    tail check on trails that never had a head file would fail closed
+    on every trail written before this fix landed. The corrected
+    docstring on ``audit_trail_verify`` names this gap explicitly
+    instead of implying the tail hole is fully closed.
+    """
     from roam.commands.cmd_audit_trail_verify import _verify_chain
 
     lines = _sha256_chain_lines(
@@ -407,6 +465,7 @@ def test_audit_trail_verify_SHOULD_detect_tail_tamper(tmp_path):
     )
     p = tmp_path / "audit.jsonl"
     p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert not (tmp_path / "audit.head.json").exists()  # never written -- hand-rolled trail
 
     data = p.read_text(encoding="utf-8").splitlines()
     last = json.loads(data[-1])
@@ -415,8 +474,7 @@ def test_audit_trail_verify_SHOULD_detect_tail_tamper(tmp_path):
     p.write_text("\n".join(data) + "\n", encoding="utf-8")
 
     _records, issues = _verify_chain(p)
-    # CORRECT behavior would be: issues != []. Today it is [] -> strict xfail.
-    assert issues, "tail-record tamper should break the chain"
+    assert issues == [], "documents the residual gap: no head file -> tail tamper is still invisible"
 
 
 def test_audit_trail_verify_cli_uninitialized_gate_exits_5(tmp_path):
