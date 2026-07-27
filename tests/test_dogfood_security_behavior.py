@@ -200,22 +200,72 @@ def test_taint_command_runs_clean_exit(ro_repo):
     assert "rule(s)" in proc.stdout
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CONFIRMED DEFECT (taint / W452 indexer gap): app/web.py has an unambiguous "
-    "request.args -> cursor.execute SQLi and request.args -> os.system command "
-    "injection, yet `roam taint` reports 'No taint findings across 22 rules' and "
-    "`taint --ci` exits 0. The Python indexer never materialises the source/sink "
-    "symbols (request.args, cursor.execute, os.system) so the BFS has no nodes to "
-    "connect. This is a silent-SAFE on a vulnerable repo — a CI gate on `taint --ci` "
-    "would pass it. Pinned in tests/test_w452_python_taint_indexer_gap.py at the "
-    "engine level; this pins it on the real security fixture.",
-)
+def _finding_rule_id(finding: dict) -> str | None:
+    """Read ``rule_id`` off one entry of the JSON ``findings`` array.
+
+    R22 wraps every taint finding as ``{"value": {...}, "confidence":
+    ..., "reason": ...}`` — the real fields (``rule_id``, ``source``,
+    ``sink``, ...) live under ``finding["value"]``, not at the top
+    level. Falls back to a top-level ``rule_id``/``rule`` for
+    forward-compat with any command whose envelope isn't R22-wrapped.
+    """
+    value = finding.get("value")
+    if isinstance(value, dict):
+        rid = value.get("rule_id") or value.get("rule")
+        if rid:
+            return rid
+    return finding.get("rule_id") or finding.get("rule")
+
+
 def test_taint_flags_obvious_sqli(ro_repo):
+    """FIXED 2026-07-27 (task #285, W452 indexer gap). Was xfail(strict=True):
+    app/web.py has an unambiguous request.args -> cursor.execute SQLi, but
+    `roam taint` used to report 'No taint findings across 22 rules' because
+    the Python indexer never materialises the source/sink symbols
+    (request.args, cursor.execute) so the BFS had no nodes to connect —
+    silent-SAFE on a vulnerable repo. `run_taint`'s text-scan fallback
+    (roam.security.taint_engine._text_scan_rule_anchors) now anchors these
+    literal occurrences to their enclosing function (search / run_query)
+    via the already-indexed line ranges, and forward-BFS connects them
+    through the real search() -> run_query() call edge. Pinned at the
+    engine level in tests/test_w452_python_taint_indexer_gap.py; this pins
+    it on the real security fixture.
+    """
     env = _run_json(ro_repo, "taint", "--rules-pack", "sqli")
     findings = env.get("findings", [])
-    assert any((f.get("rule_id") or f.get("rule")) == "python-sqli" for f in findings), (
+    assert any(_finding_rule_id(f) == "python-sqli" for f in findings), (
         f"python-sqli produced no finding on an obvious SQLi flow: {findings}"
+    )
+
+
+def test_taint_ci_exits_nonzero_on_obvious_sqli(ro_repo):
+    """The literal bug shape (task #285): `roam taint --ci` must exit 5 —
+    not 0 — on a repo containing an unambiguous SQLi flow. A CI gate
+    wired to `taint --ci` silently passing a vulnerable repo was the
+    credibility-critical defect; this locks the actual exit code, not
+    just the JSON findings list."""
+    proc = _run_roam(ro_repo, "taint", "--ci", "--rules-pack", "sqli")
+    assert proc.returncode == 5, (
+        f"taint --ci must exit 5 on an obvious SQLi flow, got {proc.returncode}: stdout={proc.stdout[-500:]!r}"
+    )
+
+
+def test_taint_flags_obvious_command_injection(ro_repo):
+    """Companion to test_taint_flags_obvious_sqli: app/web.py also has an
+    unambiguous request.args -> os.system command injection in ping()
+    (source and sink both inside the same handler — the same-function
+    co-occurrence shape the text-scan fallback detects directly, since
+    forward BFS structurally can't express "source and sink are the same
+    node")."""
+    env = _run_json(ro_repo, "taint", "--rules-pack", "command-injection")
+    findings = env.get("findings", [])
+    assert any(_finding_rule_id(f) == "python-command-injection" for f in findings), (
+        f"python-command-injection produced no finding on an obvious os.system flow: {findings}"
+    )
+    proc = _run_roam(ro_repo, "taint", "--ci", "--rules-pack", "command-injection")
+    assert proc.returncode == 5, (
+        f"taint --ci must exit 5 on an obvious command-injection flow, got {proc.returncode}: "
+        f"stdout={proc.stdout[-500:]!r}"
     )
 
 
