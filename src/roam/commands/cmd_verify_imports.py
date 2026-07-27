@@ -1055,6 +1055,7 @@ def _scan_import_entry(
     *,
     project_root: str,
     is_py: bool,
+    stdlib_scope: bool = False,
     js_deps: frozenset[str] | None,
     js_aliases: dict[str, list[str]],
     symbol_names: set[str] | None,
@@ -1062,8 +1063,15 @@ def _scan_import_entry(
     file_index: _FilePathIndex | None,
     declared_deps: frozenset[str] | None,
 ) -> dict:
-    """Validate one extracted import name and return its scan row."""
-    if is_py and _is_stdlib_module(name):
+    """Validate one extracted import name and return its scan row.
+
+    ``stdlib_scope`` (M5 fix) gates the stdlib skip by the IMPORT's apparent
+    language rather than the host file's: it is True for real Python files
+    AND for any non-JS/non-Go host whose extraction fell back to the
+    Python-shaped regexes (e.g. a `python -c "import json"` heredoc inside a
+    YAML CI step). Defaults to ``is_py`` for callers that don't pass it.
+    """
+    if (stdlib_scope or is_py) and _is_stdlib_module(name):
         return _import_scan_entry(file_path, line_num, name, resolved=True)
 
     if js_deps is not None and name.startswith(("./", "../")):
@@ -1141,6 +1149,19 @@ def _scan_file_imports(
     seen: set[tuple[str, int]] = set()
 
     is_py = _is_python_file(language, file_path)
+    # M5 fix: the stdlib skip must key off the IMPORT's own (apparent)
+    # language, not the host file's. `_extract_import_names_from_line` falls
+    # back to the Python-shaped regexes for ANY non-JS/non-Go host -- that's
+    # how a `python -c "import json"` heredoc embedded in a `.yml` CI step
+    # gets extracted at all -- so any name pulled out of a non-JS, non-Go
+    # host is Python-shaped by construction, even when the host file itself
+    # is `.yml`/`.hcl`/etc. Real JS/TS/Go hosts keep the old is_py-only gate:
+    # their import names come from language-specific regexes and can
+    # coincidentally collide with a Python stdlib module name (an npm
+    # package literally called `os` or `csv`, a Go `os`/`io` import) — those
+    # already have their own correct builtin/declared-dependency resolution
+    # path and must not be short-circuited by an unrelated Python stdlib list.
+    stdlib_scope = is_py or (not is_js_like and lang_lower != "go")
     try:
         with open(full_path, "r", encoding="utf-8", errors="replace") as f:
             prev_stripped = ""
@@ -1192,6 +1213,7 @@ def _scan_file_imports(
                             name,
                             project_root=project_root,
                             is_py=is_py,
+                            stdlib_scope=stdlib_scope,
                             js_deps=js_deps,
                             js_aliases=js_aliases,
                             symbol_names=symbol_names,
