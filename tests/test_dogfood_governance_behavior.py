@@ -581,9 +581,14 @@ def _clean_tmpdir():
 
 
 def test_article12_high_risk_false_positive_on_benign_promote():
-    """DEFECT (documenting): the high-risk classifier word-matches 'promote', so a
-    totally benign `def promote()` (e.g. 'promote a prism') is flagged as an EU AI
-    Act high-risk system needing counsel. Over-broad keyword matching."""
+    """M7 FIXED (2026-07-28): the high-risk classifier used to word-match bare
+    'promote' over raw file text, so a totally benign `def promote()` (e.g.
+    'promote a prism') was flagged as an EU AI Act high-risk system needing
+    counsel. It now walks the AST and only counts real code identifiers
+    (the comment is excluded), and 'promote' alone — with no employment
+    noun like 'employee'/'staff' co-occurring in the SAME identifier — is
+    not by itself a risk signal (it's equally at home in cache/release
+    "promotion" code)."""
     import shutil
 
     from roam.commands.cmd_article_12_check import _classify_high_risk_likelihood
@@ -592,9 +597,10 @@ def test_article12_high_risk_false_positive_on_benign_promote():
     try:
         (d / "benign.py").write_text("def promote(x):\n    return x  # promote a champion prism\n")
         res = _classify_high_risk_likelihood(d)
-        # 'passed' == True means "NOT high risk". A benign promote() flips it to False.
-        assert res["passed"] is False, res["evidence"]
-        assert "REVIEW" in res["evidence"]
+        # 'passed' == True means "NOT high risk" -- a benign promote() no
+        # longer flips it to False.
+        assert res["passed"] is True, res["evidence"]
+        assert "NOT high-risk" in res["evidence"]
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -614,19 +620,28 @@ def test_article12_clean_code_is_not_high_risk():
         shutil.rmtree(d, ignore_errors=True)
 
 
-def test_article12_high_risk_skips_any_path_containing_test_substring(tmp_path):
-    """DEFECT (documenting): the 'test' path filter is a bare substring match, so a
-    file under ANY path containing 'test' (incl. 'latest'/'greatest' and pytest's
-    own tmp dir) is silently skipped — sample=0 -> classified NOT high-risk even
-    when it literally defines `promote()`."""
+def test_article12_high_risk_does_not_skip_paths_merely_containing_test_substring(tmp_path):
+    """M7 FIXED (2026-07-28): the old 'test' path filter was a bare substring
+    match, so a file under ANY path containing 'test' (incl. 'latest'/
+    'greatest' and pytest's own tmp dir) was silently skipped — sample=0 ->
+    falsely classified NOT high-risk even when it literally defined a
+    `terminate_employee` function. It now delegates to the canonical
+    `roam.index.file_roles.is_test` (path-CONVENTION based: an exact
+    tests/test/__tests__/spec/testing/ directory component or a
+    test_*.py-shaped basename), so a pytest tmp dir — whose basename is the
+    test FUNCTION name, not an exact 'test' segment — is no longer
+    misdetected as a test directory and the file underneath it gets scanned
+    for real."""
     from roam.commands.cmd_article_12_check import _classify_high_risk_likelihood
 
-    # tmp_path (pytest) always contains 'test' in its absolute path.
+    # tmp_path (pytest) always contains 'test' as a SUBSTRING in its
+    # absolute path, but not as an exact path component.
     assert "test" in str(tmp_path).lower()
     (tmp_path / "promote.py").write_text("def terminate_employee():\n    return True\n")
     res = _classify_high_risk_likelihood(tmp_path)
-    assert res["passed"] is True  # skipped -> falsely 'not high risk'
-    assert "0 files scanned" in res["evidence"]
+    assert res["passed"] is False, res["evidence"]  # terminate_employee IS a real risk signal
+    assert "REVIEW" in res["evidence"]
+    assert "1 file(s)" in res["evidence"], res["evidence"]
 
 
 @needs_index
