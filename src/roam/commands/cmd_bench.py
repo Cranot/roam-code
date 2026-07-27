@@ -23,6 +23,7 @@ import json
 import os
 import statistics
 import subprocess
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -76,7 +77,7 @@ def _compile_envelope(task: str, cwd: str) -> str:
         # an explicit env so it holds regardless of the parent's own mode.
         env = {**os.environ, ENV_VAR: MODE_BENCH}
         proc = subprocess.run(
-            ["roam", "compile", task, "--artifact", "auto"],
+            [sys.executable, "-m", "roam", "compile", task, "--artifact", "auto"],
             capture_output=True,
             text=True,
             timeout=10,

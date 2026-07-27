@@ -56,6 +56,56 @@ MIN_COVERAGE_PCT = 95.0
 TERMINAL_GRACE_SECONDS = 600
 MIN_LIVE_HOOK_VERSION = 6
 
+# The measurement-admissibility gate is a 7-way conjunction. Reporting only its
+# boolean AND makes every null look identical: "withheld" cannot be told apart
+# from "never evaluated", and a reader cannot see WHICH conjunct is short or by
+# how much. These names are the single source of truth for the breakdown, used
+# both when the gate runs and when it could not be reached.
+SAVINGS_GATE_CONJUNCTS = (
+    "canaries_passed",
+    "integrity_clean",
+    "min_eligible_episodes",
+    "terminal_coverage",
+    "episode_join_coverage",
+    "compile_identity_coverage",
+    "hook_version_coverage",
+)
+
+
+def unevaluated_savings_gate(reason: str) -> dict:
+    """Breakdown for a run that stopped before the gate could be evaluated.
+
+    ``passed: None`` is the third value the boolean gate never had: not "failed"
+    (which asserts evidence was weighed and found short) but "unevaluated".
+    """
+
+    return {
+        name: {"passed": None, "observed": None, "required": None, "reason": reason} for name in SAVINGS_GATE_CONJUNCTS
+    }
+
+
+def savings_gate_breakdown(*, canary_state: str, integrity_clean: bool, eligible_count: int, coverage: dict) -> dict:
+    """Evaluate each admissibility conjunct separately, keeping its evidence."""
+
+    def _coverage_conjunct(key: str) -> dict:
+        observed = coverage.get(key) or 0
+        return {"passed": observed >= MIN_COVERAGE_PCT, "observed": observed, "required": MIN_COVERAGE_PCT}
+
+    return {
+        "canaries_passed": {"passed": canary_state == "passed", "observed": canary_state, "required": "passed"},
+        "integrity_clean": {"passed": bool(integrity_clean), "observed": bool(integrity_clean), "required": True},
+        "min_eligible_episodes": {
+            "passed": eligible_count >= MIN_ADMISSIBLE_EPISODES,
+            "observed": eligible_count,
+            "required": MIN_ADMISSIBLE_EPISODES,
+        },
+        "terminal_coverage": _coverage_conjunct("terminal_coverage_pct"),
+        "episode_join_coverage": _coverage_conjunct("episode_join_coverage_pct"),
+        "compile_identity_coverage": _coverage_conjunct("compile_identity_coverage_pct"),
+        "hook_version_coverage": _coverage_conjunct("hook_version_coverage_pct"),
+    }
+
+
 EVENT_LOG_NAME = "episodes.jsonl"
 TRANSCRIPT_EVENT_LOG_NAME = "transcript-episodes.jsonl"
 COMPILE_LOG_NAME = "compile-runs.jsonl"
@@ -905,7 +955,20 @@ def _canonical_hash(prefix: str, value: dict[str, Any]) -> str:
 
 
 class SavingsLedgerSafetyError(ValueError):
-    """The derived ledger could not be kept inside owner-only state."""
+    """The derived ledger could not be kept inside owner-only state.
+
+    ``degradable`` separates two refusals that are not alike. A hard link,
+    symlink, reparse point or out-of-tree state directory is evidence that
+    someone is redirecting the ledger: that stays a hard error. A directory or
+    artifact that merely INHERITS its parent's ACL is the ordinary state of any
+    repo predating the owner-only writer, or living under a group-writable
+    parent — no redirection, just a weaker guarantee. Collapsing the two forced
+    the benign case to exit non-zero, which made a null result unloggable.
+    """
+
+    def __init__(self, message: str, *, degradable: bool = False) -> None:
+        super().__init__(message)
+        self.degradable = degradable
 
 
 def _is_reparse_point(value: os.stat_result) -> bool:
@@ -936,7 +999,7 @@ def _validate_ledger_artifact(
         raise SavingsLedgerSafetyError(f"savings ledger artifact must be a bounded regular private file: {path}")
     if not path_is_owner_only(path):
         if not parent_was_private or not ensure_owner_only_path(path):
-            raise SavingsLedgerSafetyError(f"savings ledger artifact is not owner-only: {path}")
+            raise SavingsLedgerSafetyError(f"savings ledger artifact is not owner-only: {path}", degradable=True)
 
 
 def _prepare_ledger_directory(path: Path) -> Path:
@@ -963,7 +1026,7 @@ def _prepare_ledger_directory(path: Path) -> Path:
     if secured != state:
         raise SavingsLedgerSafetyError(f"savings ledger directory escaped project state: {state}")
     if not ensure_owner_only_path(state):
-        raise SavingsLedgerSafetyError(f"savings ledger directory is not owner-only: {state}")
+        raise SavingsLedgerSafetyError(f"savings ledger directory is not owner-only: {state}", degradable=True)
     return state
 
 
@@ -2283,15 +2346,13 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
     }
 
     integrity_clean = materialization["invalid_event_rows"] == 0 and materialization["invalid_compile_rows"] == 0
-    measurement_admissible = (
-        canaries["state"] == "passed"
-        and integrity_clean
-        and len(eligible) >= MIN_ADMISSIBLE_EPISODES
-        and (coverage["terminal_coverage_pct"] or 0) >= MIN_COVERAGE_PCT
-        and (coverage["episode_join_coverage_pct"] or 0) >= MIN_COVERAGE_PCT
-        and (coverage["compile_identity_coverage_pct"] or 0) >= MIN_COVERAGE_PCT
-        and (coverage["hook_version_coverage_pct"] or 0) >= MIN_COVERAGE_PCT
+    gate = savings_gate_breakdown(
+        canary_state=canaries["state"],
+        integrity_clean=integrity_clean,
+        eligible_count=len(eligible),
+        coverage=coverage,
     )
+    measurement_admissible = all(conjunct["passed"] for conjunct in gate.values())
     policy_admissible = (
         measurement_admissible
         and bool(health_expected)
@@ -2343,6 +2404,7 @@ def analyze_ledger(root: str | Path) -> dict[str, Any]:
             "north_star": "durable successful outcomes per unit of constrained resource",
         },
         "coverage": coverage,
+        "admissibility_gate": gate,
         "sensor_canaries": canaries,
         "event_distribution": event_counts,
         "outcome_distribution": dict(Counter(ep["outcome"] or "open" for ep in episodes).most_common()),

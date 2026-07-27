@@ -19,6 +19,7 @@ Output formats: text (default), --json.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import os
@@ -65,6 +66,28 @@ class _TelemetryRows(list[dict]):
         super().__init__(values)
         self.read_state = read_state
         self.invalid_rows = invalid_rows
+
+
+# Read states in which NO row was ever parsed, because the reader refused the
+# file rather than measuring it. `row_count: 0` is then an artifact of the
+# refusal, not an observation about the log, and must not be stated as one.
+_REFUSED_READ_STATES = frozenset(
+    {
+        "unavailable",
+        "unsafe_state_directory",
+        "unsafe_log_path",
+        "changed_during_read",
+        "oversized",
+    }
+)
+
+
+def _row_count_fact(row_count: int, read_state: str) -> str:
+    """State the row count only when a row count was actually measured."""
+
+    if read_state in _REFUSED_READ_STATES:
+        return f"Telemetry log was not read ({read_state}) — row count unknown"
+    return f"Telemetry log has {row_count} rows"
 
 
 def _is_reparse_point(value: os.stat_result) -> bool:
@@ -186,17 +209,29 @@ def _read_telemetry(root: str, *, retain_legacy_task_text: bool = True) -> list[
         return _TelemetryRows(read_state="missing")
     except OSError:
         return _TelemetryRows(read_state="unavailable")
-    if (
-        not stat.S_ISDIR(state_info.st_mode)
-        or stat.S_ISLNK(state_info.st_mode)
-        or _is_reparse_point(state_info)
-        or not path_is_owner_only(state_dir)
-    ):
+    if not stat.S_ISDIR(state_info.st_mode) or stat.S_ISLNK(state_info.st_mode) or _is_reparse_point(state_info):
+        # Structural redirection (a symlink/junction standing in for the state
+        # directory) is never readable — an attacker controls where it points.
         return _TelemetryRows(read_state="unsafe_state_directory")
+
+    # DACL exclusivity is a WEAKER property than redirection safety, and it is
+    # degradable for this read-only aggregate report. A `.roam` that merely
+    # inherits its parent's ACL is the normal case for any repo created before
+    # the owner-only writer shipped, or living under a group-writable parent
+    # (shared dev box, corporate profile, network or WSL mount). Refusing there
+    # made `compile-stats` report `row_count: 0` over a fully populated log and
+    # assert "Telemetry log has 0 rows" — reporting a false zero rather than an
+    # unreadable file. Degrade and disclose instead: every redirection check
+    # below (regular file, no symlink, no reparse point, single link, bounded
+    # size, dev/ino identity across the open) stays enforced.
+    degraded_state = "" if path_is_owner_only(state_dir) else "unprotected_state_directory"
 
     descriptor = -1
     try:
-        with pinned_owner_only_directory(state_dir):
+        # `pinned_owner_only_directory` raises unless the DACL is protected, so
+        # it can only pin in the non-degraded case.
+        pin = contextlib.nullcontext() if degraded_state else pinned_owner_only_directory(state_dir)
+        with pin:
             try:
                 before = os.lstat(log_path)
             except FileNotFoundError:
@@ -214,7 +249,16 @@ def _read_telemetry(root: str, *, retain_legacy_task_text: bool = True) -> list[
             flags |= getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(log_path, flags)
             if not file_descriptor_is_owner_only(descriptor, log_path):
-                return _TelemetryRows(read_state="unsafe_log_path")
+                # That helper proves two different things at once: the file's
+                # IDENTITY (regular, single-link, still the same object as the
+                # path) and its EXCLUSIVITY (owner-only mode/DACL). Only the
+                # second is degradable. Re-check the identity half explicitly;
+                # if it holds, the file is simply not private, which is a
+                # disclosure concern rather than grounds to report a false zero.
+                opened_now = os.fstat(descriptor)
+                if not stat.S_ISREG(opened_now.st_mode) or opened_now.st_nlink != 1:
+                    return _TelemetryRows(read_state="unsafe_log_path")
+                degraded_state = degraded_state or "unprotected_state_directory"
             opened = os.fstat(descriptor)
             if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
                 return _TelemetryRows(read_state="changed_during_read")
@@ -273,6 +317,9 @@ def _read_telemetry(root: str, *, retain_legacy_task_text: bool = True) -> list[
             rows.invalid_rows += 1
     if rows.invalid_rows and rows.read_state == "ok":
         rows.read_state = "partial_invalid_rows"
+    if degraded_state and rows.read_state == "ok":
+        # Disclose the weaker guarantee rather than claiming a clean read.
+        rows.read_state = degraded_state
     return rows
 
 
@@ -795,7 +842,7 @@ def compile_stats(
                     summary=summary,
                     agent_contract={
                         "facts": [
-                            f"Telemetry log has {summary['row_count']} rows",
+                            _row_count_fact(summary["row_count"], telemetry_read_state),
                             f"L1-probe envelope chosen on {summary.get('l1_probe_pct', 0)}% of calls",
                             f"Top procedure: {next(iter((summary.get('procedure_distribution') or {'(none)': 0}).keys()))}",
                         ],
