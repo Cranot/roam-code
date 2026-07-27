@@ -984,6 +984,106 @@ def test_git_capture_is_binary_and_locale_independent(tmp_path: Path, monkeypatc
 
 
 # ---------------------------------------------------------------------------
+# Value-shape precision: name-vs-value discrimination (ported from
+# compile-code's scripts/secret_scan.py, commit ee7896e)
+# ---------------------------------------------------------------------------
+
+
+def test_screaming_snake_identifier_value_is_not_flagged() -> None:
+    """A bare SCREAMING_SNAKE_CASE value is the NAME of a secret (an env var
+    or a secret to read at runtime), not a credential value."""
+    findings = secret_scan._scan_text(
+        "app.py",
+        "SECRET = 'RELEASE_GUARD_READ_TOKEN'",
+        commit="a" * 40,
+    )
+    assert findings == []
+
+
+def test_screaming_snake_rule_does_not_swallow_a_real_looking_secret() -> None:
+    """The identifier-value discrimination must be narrow: a value with
+    mixed case and digits (i.e. actual entropy, not just an identifier
+    shape) still has to fire Generic Secret Assignment."""
+    findings = secret_scan._scan_text(
+        "app.py",
+        "API_SECRET = 'aB3xQ7zRt9LmZp2w'",
+        commit="a" * 40,
+    )
+    assert any(f["pattern_name"] == "Generic Secret Assignment" for f in findings)
+
+
+def test_screaming_snake_rule_does_not_weaken_vendor_patterns() -> None:
+    """AWS Access Key IDs are themselves canonically all-uppercase-and-
+    digits -- the identifier-value discrimination is scoped to the generic
+    assignment patterns only and must not exempt a vendor-shaped credential
+    just because it happens to look like a constant name."""
+    secret = "AKIA" + "Q" * 16
+    findings = secret_scan._scan_text("app.py", f"AWS_KEY = '{secret}'", commit="a" * 40)
+    assert any(f["pattern_name"] == "AWS Access Key" for f in findings)
+
+
+@pytest.mark.parametrize("wrapped", ["{secret}", "${secret}", "%(secret)s"])
+def test_unresolved_template_placeholder_value_is_not_flagged(wrapped: str) -> None:
+    """An un-interpolated f-string/format/shell placeholder is template
+    syntax, not a literal value -- e.g. a parametrized test's own
+    assignment-fixture line, which must not read as the credential it
+    is a template FOR."""
+    findings = secret_scan._scan_text("app.py", f"API_KEY = '{wrapped}'", commit="a" * 40)
+    assert findings == []
+
+
+def test_own_test_corpus_predicate_is_one_file_not_a_directory() -> None:
+    """A path allowlist, not a directory rule: only these exact files are
+    exempt as the scanner's own fixture corpus, so the exemption cannot
+    quietly grow into "tests/ is exempt" (which would reopen the coverage
+    gap this scanner exists to close)."""
+    assert secret_scan._is_own_test_corpus("tests/test_secrets_v2.py")
+    assert secret_scan._is_own_test_corpus("tests\\test_secrets_v2.py")
+    assert secret_scan._is_own_test_corpus("tests/test_secrets_ai_provider_keys.py")
+    assert not secret_scan._is_own_test_corpus("tests/test_secrets_v2_other.py")
+    assert not secret_scan._is_own_test_corpus("tests/test_secret_scan_hook.py")
+    assert not secret_scan._is_own_test_corpus("scripts/secret_scan.py")
+
+
+def test_legacy_fixture_exemption_predicate_is_one_file_not_a_directory() -> None:
+    """Same one-file-not-a-directory discipline for the (separate, own-
+    reasoned) legacy exemption bucket: these are ordinary tests, not the
+    scanner's own corpus, so they must not be foldable into
+    ``_OWN_TEST_CORPUS_FILES`` and must not widen to their directory."""
+    assert secret_scan._is_legacy_fixture_exemption("tests/test_hooks_claude_setup.py")
+    assert secret_scan._is_legacy_fixture_exemption("tests/test_evidence_pr_replay.py")
+    assert not secret_scan._is_legacy_fixture_exemption("tests/test_hooks_claude_setup_other.py")
+    assert not secret_scan._is_own_test_corpus("tests/test_hooks_claude_setup.py")
+    assert not secret_scan._is_legacy_fixture_exemption("tests/test_secrets_v2.py")
+
+
+def test_own_test_corpus_file_is_exempt_across_its_whole_history(tmp_path: Path) -> None:
+    """Reproduces the real shape this fix closes: a commit adds a
+    credential-shaped fixture line to the scanner's own test corpus
+    unmarked, and a LATER commit adds a ``# secretsallow`` marker at the
+    tip. Because the range scan reads every commit's own full blob, the
+    tip-side marker does not retroactively clean the earlier commit --
+    only the path exemption (``_OWN_TEST_CORPUS_FILES``) does that."""
+    repo = _make_repo(tmp_path)
+    fixture = repo / "tests" / "test_secrets_v2.py"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("# corpus\n", encoding="utf-8")
+    git_init(repo)
+
+    secret = "AKIA" + "Z" * 16
+    fixture.write_text(f"TEST_KEY = '{secret}'\n", encoding="utf-8")
+    git_commit(repo, "add fixture corpus (unmarked)")
+    unmarked_oid = _git(repo, "rev-parse", "HEAD").stdout.decode("ascii").strip()
+
+    fixture.write_text(f"TEST_KEY = '{secret}'  # secretsallow\n", encoding="utf-8")
+    git_commit(repo, "mark the corpus fixture")
+
+    findings = secret_scan.scan_commit_range(repo, f"{unmarked_oid}~1..HEAD")
+
+    assert findings == []
+
+
+# ---------------------------------------------------------------------------
 # Drift guard: first-party source must stay clean under roam's own gate
 # ---------------------------------------------------------------------------
 
