@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +37,78 @@ def _redact_path(path: str) -> str:
     """
     parts = path.replace("\\", "/").split("/")
     return "/".join(hashlib.sha256(p.encode()).hexdigest()[:6] for p in parts)
+
+
+# ---------------------------------------------------------------------------
+# Free-text redaction choke point (H4 follow-up)
+# ---------------------------------------------------------------------------
+#
+# ``_redact_path`` above handles STRUCTURED path fields (``symbols[].file``,
+# ``clusters[].label``) where the whole field value IS a path. It does not
+# help ``symbols[].signature`` or diagnostic ``warnings_out`` strings, which
+# are free text lifted from source (default-value literals, module-level
+# string constants, exception messages) that can embed the exact same path
+# fragments as an ordinary substring, e.g. a constant declared as
+# ``FILE = "src/roam/commands/cmd_hooks.py"`` shows up verbatim in that
+# symbol's ``signature``. A per-field allowlist of "redact this field" is
+# exactly the kind of choke point that a new free-text field can bypass by
+# omission (as ``clusters[].label`` did before this fix, and as
+# ``signature``/``warnings_out`` did until this pass). Route every
+# free-text field through ``_scrub_text`` instead of hand-redacting fields
+# one at a time.
+_PATH_TOKEN_RE = re.compile(r"[A-Za-z0-9_.\-]+")
+
+
+def _real_path_segments(conn) -> set[str]:
+    """Every distinct path component that appears in the indexed corpus.
+
+    Used to recognise a real path fragment inside free text; splitting on
+    both slash directions mirrors ``_redact_path``'s own component split.
+    """
+    rows = conn.execute("SELECT DISTINCT path FROM files").fetchall()
+    segments: set[str] = set()
+    for (path,) in rows:
+        if not path:
+            continue
+        segments.update(part for part in path.replace("\\", "/").split("/") if part)
+    return segments
+
+
+def _scrub_token(token: str, segments: set[str]) -> str:
+    """Hash *token* if it (or it minus a trailing sentence period) is a
+    known path component.
+
+    ``.`` is a valid path-component character (extensions), so the token
+    regex must keep it -- but that means a filename mentioned at the end of
+    a sentence (``"...generated AGENTS.md."``) glues the sentence-final
+    period onto the token, and ``"AGENTS.md."`` no longer exactly equals
+    the indexed component ``"AGENTS.md"``. Strip a lone trailing period
+    before the lookup and re-attach it after, so prose containing a
+    filename still gets caught.
+    """
+    if token in segments:
+        return _redact_path(token)
+    if token.endswith(".") and (stripped := token.rstrip(".")) in segments:
+        return _redact_path(stripped) + token[len(stripped) :]
+    return token
+
+
+def _scrub_text(text: str, segments: set[str]) -> str:
+    """Hash any real path component found verbatim inside free text.
+
+    Only tokens that are KNOWN indexed path components get hashed (via the
+    same ``_redact_path`` formula, so a component's hash is identical
+    whether it came from a structured ``file``/``label`` field or from this
+    text scrub). Unknown tokens -- ordinary identifiers, numbers, prose --
+    are left untouched. This intentionally over-redacts common short
+    directory names (e.g. a source tree with a ``test`` or ``app``
+    directory will also hash a same-named parameter in a signature): for a
+    flag whose whole purpose is anonymization, an unnecessary hash is a far
+    safer failure than a missed one.
+    """
+    if not text or not segments:
+        return text
+    return _PATH_TOKEN_RE.sub(lambda m: _scrub_token(m.group(0), segments), text)
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +137,11 @@ def _gather_topology(conn) -> dict:
 
 def _gather_symbols(conn, redact_paths: bool, no_signatures: bool) -> list[dict]:
     """Return symbol list with optional path redaction and signature omission."""
+    # H4 follow-up: a signature can embed a path as a free-text substring
+    # (a module-level string constant, a default-value literal) even though
+    # the structured ``file`` field is hashed. Scrub the same known path
+    # components out of the signature text too.
+    segments = _real_path_segments(conn) if (redact_paths and not no_signatures) else set()
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path, s.line_start, "
         "s.signature, s.visibility, s.is_exported "
@@ -94,6 +172,8 @@ def _gather_symbols(conn, redact_paths: bool, no_signatures: bool) -> list[dict]
         sig = r[6]  # s.signature
         if no_signatures:
             sig = None
+        elif redact_paths and sig:
+            sig = _scrub_text(sig, segments)
 
         # Metrics
         m = metrics_map.get(sid)
@@ -282,7 +362,19 @@ def _build_capsule(
     "--redact-paths",
     is_flag=True,
     default=False,
-    help="Anonymize file paths by hashing each path component.",
+    help=(
+        "Hash every indexed path component wherever it appears in the "
+        "capsule: symbols[].file, clusters[].label, path fragments quoted "
+        'inside symbol signatures/constants (e.g. FILE = "src/x.py"), and '
+        "diagnostic warnings_out messages. Same component always hashes to "
+        "the same value within one capsule. LIMIT: only path text the "
+        "indexer actually knows about (a path present in the file table) is "
+        "recognised -- a path string that names a file OUTSIDE this repo, "
+        "or is built at runtime rather than written literally, will not be "
+        "matched and can still surface. Symbol NAMES are never hashed, only "
+        "path-shaped text. Function bodies are excluded from the capsule "
+        "regardless of this flag."
+    ),
 )
 @click.option(
     "--no-signatures",
@@ -343,6 +435,13 @@ def capsule(ctx, redact_paths, no_signatures, output):
     # ``summary.warnings_out`` field outright.
     _w607bd_warnings_out: list[str] = []
 
+    # H4 follow-up: an exception's ``str()`` can embed a real path (e.g. a
+    # DB/file error surfacing the offending row's path) even though the
+    # NORMAL gather output is redacted. Populated below, right after
+    # ``conn`` is available, and read by both closures at call time (they
+    # look this name up in the enclosing scope, not at definition time).
+    _redact_diag_segments: set[str] = set()
+
     def _run_check_bd(phase: str, fn, *args, default=None, **kwargs):
         """Run one substrate helper with W607-BD marker emission.
 
@@ -355,6 +454,13 @@ def capsule(ctx, redact_paths, no_signatures, output):
             return fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 -- top-level disclosure
             _w607bd_warnings_out.append(f"capsule_{phase}_failed:{type(exc).__name__}:{exc}")
+            # H4 follow-up: scrub AFTER the canonical append so the marker
+            # family's fstring shape stays exactly ``capsule_<phase>_failed:
+            # <exc_class>:<detail>`` (asserted at the source-text level by
+            # test_w607dk_marker_shape_documented_in_source) while a path
+            # the exception text happened to embed still gets hashed.
+            if redact_paths:
+                _w607bd_warnings_out[-1] = _scrub_text(_w607bd_warnings_out[-1], _redact_diag_segments)
             return default
 
     # W607-DK -- substrate-CALL-layer plumbing for cmd_capsule.
@@ -401,9 +507,19 @@ def capsule(ctx, redact_paths, no_signatures, output):
             return fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001 -- top-level disclosure
             _w607dk_warnings_out.append(f"capsule_{phase}_failed:{type(exc).__name__}:{exc}")
+            # H4 follow-up: see the matching comment in ``_run_check_bd`` --
+            # scrub after the canonical append so the marker fstring shape
+            # stays intact for the source-level guard.
+            if redact_paths:
+                _w607dk_warnings_out[-1] = _scrub_text(_w607dk_warnings_out[-1], _redact_diag_segments)
             return default
 
     with open_db(readonly=True) as conn:
+        if redact_paths:
+            # Populate before any gather phase runs so a raise in the very
+            # first phase still gets its diagnostic scrubbed.
+            _redact_diag_segments = _real_path_segments(conn)
+
         # W607-BD: the capsule builder composes five distinct gather
         # boundaries; each individual gather is wrapped via the injected
         # ``_run_check_bd`` so a raise inside any one boundary degrades

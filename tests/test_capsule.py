@@ -89,6 +89,40 @@ def capsule_project(tmp_path, monkeypatch):
     return proj
 
 
+@pytest.fixture
+def capsule_project_leaky_signature(tmp_path, monkeypatch):
+    """Distinctive tree + a source-level string constant embedding its own
+    path (H4 follow-up fixture).
+
+    Reproduces the deeper form of H4: ``symbols[].file`` and
+    ``clusters[].label`` are STRUCTURED path fields and get hashed, but a
+    plain string constant like ``SELF_PATH = "<dir>/<file>.py"`` is free
+    text that lands verbatim in that symbol's ``signature`` unless the
+    redaction choke point also scrubs free text, not just path-shaped
+    fields. ``HELP_TEXT`` additionally covers the sentence-final-period
+    edge case (a filename mentioned in prose immediately followed by the
+    period ending the sentence, e.g. ``"...see acme_factory_secret.py."``)
+    where the trailing ``.`` glues onto the path token and defeats a naive
+    exact-match lookup.
+    """
+    proj = tmp_path / "repo"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+    pkg = proj / "zzqumbaville_widgets"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "acme_factory_secret.py").write_text(
+        'SELF_PATH = "zzqumbaville_widgets/acme_factory_secret.py"\n'
+        'HELP_TEXT = "See zzqumbaville_widgets/acme_factory_secret.py."\n\n\n'
+        "def build():\n    return SELF_PATH\n"
+    )
+    git_init(proj)
+    monkeypatch.chdir(proj)
+    out, rc = index_in_process(proj, "--force")
+    assert rc == 0, f"index failed: {out}"
+    return proj
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -231,6 +265,39 @@ class TestCapsuleCommand:
         # The capsule meta should flag redaction
         capsule_meta = data.get("capsule", {})
         assert capsule_meta.get("redacted") is True
+
+    def test_capsule_redact_paths_whole_envelope_no_leak(
+        self, capsule_project_leaky_signature, cli_runner, tmp_path
+    ) -> None:
+        """H4 follow-up: --redact-paths must leave NO fragment of the fixture
+        tree's distinctive directory/file names ANYWHERE in the serialised
+        capsule -- a whole-envelope scan, not a per-field assertion.
+
+        ``symbols[].file`` and ``clusters[].label`` are structured path
+        fields that were already hashed; this fixture's ``SELF_PATH``
+        constant instead leaks through the free-text ``signature`` field
+        unless the redaction choke point scrubs known path fragments out of
+        free text too, not just fields that are wholesale a path.
+        """
+        out_file = tmp_path / "capsule_leak_check.json"
+        result = _invoke_capsule(
+            cli_runner,
+            args=["--redact-paths", "--output", str(out_file)],
+            cwd=capsule_project_leaky_signature,
+        )
+        assert result.exit_code == 0, result.output
+        raw = out_file.read_text(encoding="utf-8")
+
+        distinctive_fragments = [
+            "zzqumbaville_widgets",
+            "acme_factory_secret",
+            "acme_factory_secret.py",
+            "zzqumbaville_widgets/acme_factory_secret.py",
+        ]
+        leaked = [frag for frag in distinctive_fragments if frag in raw]
+        assert not leaked, (
+            f"whole-envelope scan found fixture-tree fragments surviving redaction: {leaked}\n{raw[:2000]}"
+        )
 
     def test_capsule_no_signatures(self, capsule_project, cli_runner):
         """--no-signatures omits the signature field from all symbol entries."""
