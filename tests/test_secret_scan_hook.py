@@ -1040,8 +1040,13 @@ def test_own_test_corpus_predicate_is_one_file_not_a_directory() -> None:
     assert secret_scan._is_own_test_corpus("tests/test_secrets_v2.py")
     assert secret_scan._is_own_test_corpus("tests\\test_secrets_v2.py")
     assert secret_scan._is_own_test_corpus("tests/test_secrets_ai_provider_keys.py")
+    # test_secret_scan_hook.py joined the corpus deliberately (it carries its
+    # own entropy-bearing regression fixtures) -- exact membership, both
+    # separator styles, still per-file rather than a directory rule.
+    assert secret_scan._is_own_test_corpus("tests/test_secret_scan_hook.py")
+    assert secret_scan._is_own_test_corpus("tests\\test_secret_scan_hook.py")
     assert not secret_scan._is_own_test_corpus("tests/test_secrets_v2_other.py")
-    assert not secret_scan._is_own_test_corpus("tests/test_secret_scan_hook.py")
+    assert not secret_scan._is_own_test_corpus("tests/test_secret_scan_hook_other.py")
     assert not secret_scan._is_own_test_corpus("scripts/secret_scan.py")
 
 
