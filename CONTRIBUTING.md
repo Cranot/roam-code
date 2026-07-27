@@ -56,7 +56,7 @@ That single command activates all three tracked hooks:
 
 | Hook | When | What it does |
 |---|---|---|
-| `pre-commit` | every `git commit` | **Anti-leak scan** of the *staged* changes (`scripts/scan_internal_language.py --staged`) + count-drift checks. Blocks the commit on any internal-language leak (day-job customer name, session markers, sales-positioning shorthand, personal paths, etc). |
+| `pre-commit` | every `git commit` | **Anti-leak scan** of the *staged* changes (`scripts/scan_internal_language.py --staged`) + count-drift checks. Blocks the commit on any internal-language leak (day-job customer name, session markers, sales-positioning shorthand, personal paths, etc.). |
 | `pre-push` | every `git push` | **Anti-leak scan** of *every tracked file* (`--all`) as a `--no-verify` backstop + the structural-gate bundle (`scripts/prepush_check.py`). |
 | `commit-msg` | every `git commit` | Rejects `Co-Authored-By:` trailers and AI-attribution lines (single-author project policy). |
 
