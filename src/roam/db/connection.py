@@ -65,11 +65,86 @@ def _safe_mkdir(db_dir: Path | str, source: str = "") -> Path:
     return p
 
 
+def _is_genuine_git_marker(git_path: Path) -> bool:
+    """Return True if *git_path* (a ``.git`` entry) is a REAL git marker.
+
+    W741-followup: the original predicate was mere ``.exists()`` — ANY
+    ``.git`` path, including an empty/stray directory (interrupted
+    ``git init``, a half-finished clone, a leftover ``mkdir .git``),
+    was treated as proof of a repository. A stray empty ``.git`` in a
+    tmp-dir ancestor once made ``find_project_root`` silently root an
+    entire pytest run at ``/tmp`` — every path-relative behaviour
+    (indexing, globs, rule scope, the leak gate's ``should_scan``,
+    blast radius) then computed against the wrong tree, and 214 tests
+    failed with no indication why.
+
+    Two legitimate shapes must both validate:
+
+    * A real ``.git`` DIRECTORY (the common case) — checked via the
+      structural markers every git repo has immediately after
+      ``git init``, before any commit: a ``HEAD`` file plus
+      ``objects/`` and ``refs/`` subdirectories. This intentionally
+      does NOT require ``objects/`` to be non-empty — a brand-new
+      ``git init`` repo has an empty ``objects/`` dir and must still
+      validate.
+    * A ``.git`` FILE (worktree / submodule pointer, W741) — this repo
+      itself is worked in via `git worktree` heavily, so a naive
+      "``.git`` must be a directory with ``objects/``" check would
+      BREAK every worktree/submodule user, which is worse than the bug
+      being fixed here. Validated by checking the pointer's contents
+      start with ``gitdir:`` rather than trusting any file named
+      ``.git``.
+
+    Anything else (empty dir, zero-byte file, garbage file contents)
+    returns False so the caller treats it as absent and keeps walking
+    up — see ``find_project_root`` for why "skip and keep walking" (not
+    raise) is the chosen policy for an invalid marker.
+    """
+    try:
+        if git_path.is_dir():
+            return (git_path / "HEAD").is_file() and (git_path / "objects").is_dir() and (git_path / "refs").is_dir()
+        if git_path.is_file():
+            try:
+                head = git_path.read_text(encoding="utf-8", errors="ignore")[:64]
+            except OSError:
+                return False
+            return head.lstrip().startswith("gitdir:")
+    except OSError:
+        # Race (deleted between the caller's .exists() gate and here) or a
+        # permission-denied stat — either way, not a usable marker.
+        return False
+    return False
+
+
 def find_project_root(start: str = ".") -> Path:
-    """Find the project root by looking for .git directory."""
+    """Find the project root by looking for a *genuine* ``.git`` marker.
+
+    Validation choice (measured, not assumed): a real ``git rev-parse
+    --show-toplevel`` subprocess call is authoritative but costs ~35ms
+    per invocation on this machine (Windows process spawn) — with 160+
+    call sites across the command surface, that is a bad trade for a
+    hot-path helper. The filesystem-marker check in
+    ``_is_genuine_git_marker`` costs ~150-200us extra over the old
+    bare-``.exists()`` check (measured: ~0.85ms -> ~1.0ms per call
+    walking this repo's real tree) — roughly 150-200x cheaper than
+    shelling out to git, for the same correctness gain against the
+    reported defect (an empty stray ``.git`` directory).
+
+    Invalid-``.git`` policy: SKIP and keep walking up, do not raise.
+    An invalid marker (empty dir, corrupt pointer file) is treated
+    exactly like "no ``.git`` here" — which is already a documented,
+    tested contract (falls back to the resolved ``start`` when the
+    walk reaches the filesystem root without finding one). Raising
+    instead would turn a harmless leftover directory into a hard
+    crash for anyone who has one lying around, which is a worse
+    outcome than quietly not treating it as a repo. The one truly bad
+    outcome — silently adopting the WRONG root — is exactly what this
+    fix removes.
+    """
     current = Path(start).resolve()
     while current != current.parent:
-        if (current / ".git").exists():
+        git_path = current / ".git"
+        if git_path.exists() and _is_genuine_git_marker(git_path):
             return current
         current = current.parent
     return Path(start).resolve()
