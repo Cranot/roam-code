@@ -76,6 +76,10 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h3>Fixed</h3>
+<ul>
+<li><strong>Telemetry fields whose meaning depends on how a run ended now carry explicit provenance instead of an implicit default.</strong> Three surfaces where a mixed or historically-overloaded bucket could be silently averaged as if it were one clean cohort: (1) the compile-telemetry <code>agent_mode=unknown</code> bucket — verified to never mean "the field didn't exist" (it predates every retained row), but it does mix a wider pre-call-site-coverage cohort with a narrower post-coverage one; a documented epoch marker and opt-in split now separate them instead of blending an "unknown" statistic across two different real compositions. (2) the engagement ledger, historically dominated by our own test runs with no field distinguishing them from real usage — new rows now carry an authoritative, non-heuristic source stamp, and legacy rows classify into their own disclosed-heuristic cohort rather than defaulting into "real". (3) the local CLI telemetry ring buffer's <code>exit_code</code>, which a pre-fix build recorded as a hardcoded constant — rows now carry a schema marker so a consumer computing a success/failure rate cannot mistake an always-0 legacy row for a real outcome. In all three cases a row lacking the new marker is classified as pre-marker, never defaulted into the current cohort.</li>
+</ul>
 <h2>[13.10.0] — 2026-07-26</h2>
 <h3>Added</h3>
 <ul>
