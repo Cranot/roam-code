@@ -19,6 +19,16 @@
 #   2. python scripts/sync_surface_counts.py
 #        Free-form prose surfaces (landing-page HTML, llms.txt,
 #        server.json, skills/roam/SKILL.md, etc). Defaults to dry-run.
+#   3. python scripts/build_changelog_html.py
+#        changelog.html (the landing-page mirror of CHANGELOG.md) is a
+#        generated, tracked file. It used to be regenerated only at push
+#        time (scripts/prepush_check.py) / in CI -- so a commit that edited
+#        CHANGELOG.md without re-rendering the page landed with the two
+#        tracked files disagreeing, and the drift wasn't caught until
+#        later (or not at all if the push path was skipped: commit
+#        5e8d6360 "regenerate html after the telemetry changelog entry"
+#        is the fix-forward this produced -- twice in one day). Defaults
+#        to dry-run/check mode (exit 1 on drift); never writes.
 #
 # To install on a fresh clone (same one-liner as the commit-msg hook):
 #   git config core.hooksPath .githooks
@@ -80,6 +90,19 @@ if ! "$PY" "$REPO_ROOT/scripts/sync_surface_counts.py"; then
     echo "  Fix: run" >&2
     echo "    python scripts/sync_surface_counts.py --write" >&2
     echo "  then re-stage the updated files and commit again." >&2
+    exit 1
+fi
+
+# --- 3. changelog.html render drift (landing-page mirror of CHANGELOG.md) ---
+if ! "$PY" "$REPO_ROOT/scripts/build_changelog_html.py"; then
+    echo "" >&2
+    echo "ERROR: pre-commit hook (.githooks/pre-commit)" >&2
+    echo "" >&2
+    echo "  changelog.html has drifted from CHANGELOG.md." >&2
+    echo "" >&2
+    echo "  Fix: run" >&2
+    echo "    python scripts/build_changelog_html.py --write" >&2
+    echo "  then re-stage templates/distribution/landing-page/changelog.html and commit again." >&2
     exit 1
 fi
 
