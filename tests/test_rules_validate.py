@@ -112,7 +112,42 @@ def test_validate_glob_rejects_unbalanced_brackets():
 
 def test_validate_glob_accepts_well_formed():
     assert _validate_glob("src/**/*.py", field="source_glob", rule_id="x") is None
+    # NOTE (2026-07-27): this next assertion pre-dates the brace-expansion fix
+    # to roam._glob_match and roam.commands.pr_analyze.rules._compile_path_glob.
+    # Before that fix, `{py,ts}` was matched as LITERAL characters in both
+    # matching engines, so this "well-formed" glob could never match a real
+    # path -- _validate_glob certified a dead rule as valid, and this
+    # assertion pinned that certification without anyone noticing the rule
+    # behind it could never fire. The assertion's VALUE hasn't changed
+    # (`None` = no error), but its MEANING has: it's now correct because the
+    # pattern genuinely works, not merely because nothing crashed while
+    # checking it. Kept, plus the edge cases below that had zero coverage
+    # before today.
     assert _validate_glob("*.{py,ts}", field="source_glob", rule_id="x") is None
+
+
+def test_validate_glob_accepts_brace_edge_cases():
+    """Edge cases _expand_braces documents explicitly (roam._glob_match)."""
+    # Nested braces.
+    assert _validate_glob("src/**/*.{ts,{jsx,tsx}}", field="source_glob", rule_id="x") is None
+    # Single-item brace -- collapses to a literal, still well-formed.
+    assert _validate_glob("src/**/*.{ts}", field="source_glob", rule_id="x") is None
+    # Empty alternative -- a legal "optional suffix" branch.
+    assert _validate_glob("src/**/*.ts{.bak,}", field="source_glob", rule_id="x") is None
+    # `/` inside a brace alternative is ordinary text, not special.
+    assert _validate_glob("{src/api,src/web}/**/*.ts", field="source_glob", rule_id="x") is None
+
+
+def test_validate_glob_rejects_unbalanced_braces():
+    """An unmatched `{` doesn't crash fnmatch, but silently means something
+    different from what the author almost certainly intended (see
+    _validate_glob's docstring) -- same "obviously broken" tier as the
+    unbalanced-bracket check just above."""
+    err = _validate_glob("src/**/*.{ts,tsx", field="source_glob", rule_id="x")
+    assert err and "unbalanced braces" in err
+
+    err2 = _validate_glob("src/**/*.ts}", field="source_glob", rule_id="x")
+    assert err2 and "unbalanced braces" in err2
 
 
 # ---- _check_duplicate_ids ----------------------------------------------------
