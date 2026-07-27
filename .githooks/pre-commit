@@ -21,6 +21,7 @@
 #        server.json, skills/roam/SKILL.md, etc). Defaults to dry-run.
 #   3. python scripts/build_changelog_html.py
 #   4. python dev/build_internal_index.py
+#   5. ruff format --check + ruff check, on the STAGED python files only
 #        changelog.html (the landing-page mirror of CHANGELOG.md) is a
 #        generated, tracked file. It used to be regenerated only at push
 #        time (scripts/prepush_check.py) / in CI -- so a commit that edited
@@ -125,6 +126,38 @@ if ! "$PY" "$REPO_ROOT/dev/build_internal_index.py"; then
     echo "    python dev/build_internal_index.py --write" >&2
     echo "  (internal/ is gitignored, so there is nothing to re-stage.)" >&2
     exit 1
+fi
+
+# --- 5. ruff format/lint on the STAGED python files -----------------------
+# Until now this hook had no ruff gate at all -- so unformatted code landed in
+# commits routinely and only surfaced at PUSH time, where `ruff --check` runs
+# over the whole working tree and blocks EVERY push, including unrelated ones.
+# On 2026-07-28 that happened three times in one session: three agents each
+# committed an unformatted file, and each one held up a 15+ commit release
+# push for everybody until it was found and fixed by hand.
+#
+# Scoped to the STAGED files deliberately. A commit-time gate should describe
+# the commit -- the same principle the leak and secret gates already follow by
+# scoping to the pushed range rather than the tree.
+STAGED_PY="$(git diff --cached --name-only --diff-filter=ACM -- '*.py' | tr '\n' ' ')"
+if [ -n "${STAGED_PY// /}" ]; then
+    # shellcheck disable=SC2086  # deliberate word-splitting: a file list
+    if ! "$PY" -m ruff format --check $STAGED_PY >/dev/null 2>&1 \
+       || ! "$PY" -m ruff check $STAGED_PY >/dev/null 2>&1; then
+        echo "" >&2
+        echo "ERROR: pre-commit hook (.githooks/pre-commit)" >&2
+        echo "" >&2
+        echo "  Staged Python files are not ruff-clean." >&2
+        echo "" >&2
+        echo "  Fix: run" >&2
+        echo "    python -m ruff format $STAGED_PY" >&2
+        echo "    python -m ruff check --fix $STAGED_PY" >&2
+        echo "  then re-stage them and commit again." >&2
+        echo "" >&2
+        echo "  Why this blocks here: an unformatted file that reaches a commit" >&2
+        echo "  blocks the pre-push gate for every OTHER push too, not just yours." >&2
+        exit 1
+    fi
 fi
 
 exit 0
