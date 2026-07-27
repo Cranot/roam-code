@@ -47,15 +47,20 @@ EXEMPLARS = [
     ("Claude-memory slug reference", "Per the pivot memo (`project_pivot_to_roam_guard`), this is the gap"),
     ("Claude-memory slug reference", "exhausted. See [[project_v04_envelope_regression]]."),
     ("Claude-memory slug reference", "anchor: [[feedback_measurement_variance_protocol]]"),
-    # Host-platform name.
-    ("Host-platform name", "wired the compiler into Stoa via the verify hook"),
     # VPS absolute paths.
     ("VPS absolute path", '"command": "/root/repos/roam-code/.venv/bin/roam"'),
     ("VPS absolute path", "results live at /root/apps/someproject/bench/cells.tsv"),
-    # Day-job customer name.
-    ("Day-job customer name", "reproduced on the union-web frontend"),
-    # Greek domain terms.
-    ("Greek domain term — kiniseis", '"find where useKiniseisBalance is",'),
+    # NOTE: exemplars for the platform name / day-job codename / Greek
+    # domain terms used to live here as plaintext lines. Those patterns are
+    # now hashed literal terms (see "Hashed literal terms" in
+    # scripts/internal_language_patterns.py) with genericized labels
+    # (private-platform-name, internal-project-codename,
+    # internal-domain-term-*) — putting their real plaintext values in this
+    # file, even as a whitelisted fixture, would re-ship exactly the values
+    # hashing exists to stop shipping. Their "still detected" coverage lives
+    # in tests/test_leak_gate_hashed_terms.py instead, which reads real
+    # values from a gitignored file and SKIPS (never fabricates a pass)
+    # when that file is absent.
     # Internal planning cross-reference.
     (
         "Internal/ folder revenue-ops or planning cross-reference",

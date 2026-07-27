@@ -312,7 +312,7 @@ def test_published_path_names_are_scanned(tmp_path: Path) -> None:
     assert all(secret not in finding["file"] for finding in secret_findings)
     assert secret not in secret_scan._format_findings(secret_findings)
     assert any("published path name" in finding[0] for finding in internal_findings)
-    assert any(finding[1] == "Day-job customer name" for finding in internal_findings)
+    assert any(finding[1] == "internal-project-codename" for finding in internal_findings)
 
 
 def test_commit_author_metadata_is_scanned(tmp_path: Path) -> None:
@@ -339,7 +339,7 @@ def test_commit_author_metadata_is_scanned(tmp_path: Path) -> None:
     internal_findings = internal_scan._collect_commit_message_hits_for_commits(str(repo), [commit])
 
     assert any(finding["pattern_name"] == "AWS Access Key" for finding in secret_findings)
-    assert any(finding[1] == "Day-job customer name" for finding in internal_findings)
+    assert any(finding[1] == "internal-project-codename" for finding in internal_findings)
 
 
 def test_pre_push_new_ref_scans_all_reachable_history(tmp_path: Path) -> None:
@@ -557,7 +557,7 @@ def test_pre_push_scans_annotated_tag_tagger_metadata(tmp_path: Path) -> None:
 
     assert any(finding["file"] == f"{tag_oid[:7]} (annotated tag object)" for finding in secret_findings)
     assert any(finding["pattern_name"] == "AWS Access Key" for finding in secret_findings)
-    assert any(finding[1] == "Day-job customer name" for finding in internal_findings)
+    assert any(finding[1] == "internal-project-codename" for finding in internal_findings)
 
 
 def test_pre_push_scans_published_ref_names(tmp_path: Path) -> None:
@@ -580,7 +580,7 @@ def test_pre_push_scans_published_ref_names(tmp_path: Path) -> None:
     assert all(secret not in finding["file"] for finding in secret_findings)
     assert secret not in secret_scan._format_findings(secret_findings)
     assert any("published ref name" in finding[0] for finding in internal_findings)
-    assert any(finding[1] == "Day-job customer name" for finding in internal_findings)
+    assert any(finding[1] == "internal-project-codename" for finding in internal_findings)
 
 
 def test_pre_push_scans_direct_blob_and_tree_refs(tmp_path: Path) -> None:
@@ -671,7 +671,7 @@ def test_direct_tree_gitlink_path_names_are_scanned(tmp_path: Path) -> None:
     internal_findings = internal_scan._collect_pre_push_history_hits(str(repo), str(updates))
 
     assert any("published path name" in finding["file"] for finding in secret_findings)
-    assert any(finding[1] == "Day-job customer name" for finding in internal_findings)
+    assert any(finding[1] == "internal-project-codename" for finding in internal_findings)
 
 
 def test_pre_push_deletion_has_no_commits_to_scan(tmp_path: Path) -> None:

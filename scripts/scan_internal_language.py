@@ -204,10 +204,13 @@ def _print_hits(findings: list[tuple[str, str, int, str]], *, mode: str) -> None
 
     sys.stderr.write("\n")
     sys.stderr.write("Each pattern was deliberately removed during the 2026-05 stealth sweeps.\n")
-    sys.stderr.write("If a hit is intentional:\n")
+    sys.stderr.write("Fix it: reword or remove the flagged line. If the hit is intentional:\n")
     sys.stderr.write("  - add the file to WHITELIST_FILES in\n")
     sys.stderr.write("    scripts/internal_language_patterns.py (with a comment explaining why), or\n")
-    sys.stderr.write("  - tighten the offending regex to exclude the legitimate case.\n")
+    sys.stderr.write("  - tighten the offending rule to exclude the legitimate case (a plain\n")
+    sys.stderr.write("    regex for a SHAPE pattern; a matching-logic change, e.g. an\n")
+    sys.stderr.write("    adjacency exemption, for a hashed literal term — see that module's\n")
+    sys.stderr.write('    "Hashed literal terms" docstring section before touching one).\n')
 
 
 def _resolve_commits(repo_root: str, revision_args: str | tuple[str, ...]) -> list[str]:
