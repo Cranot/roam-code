@@ -1902,6 +1902,17 @@ _FRAMEWORK_PROFILES: dict[str, dict[str, set[str]]] = {
             "vuequery",
         },
     },
+    # Generic Laravel (no tenancy package required). Deliberately EMPTY
+    # in-memory-call sets -- this profile exists only so autodetection
+    # (composer.json requiring laravel/framework, without a tenancy
+    # package) gives framework-aware consumers a "this is Laravel"
+    # signal without changing the N+1 in-memory-call allowlist for
+    # every plain Laravel app that previously autodetected to None.
+    "laravel": {
+        "in_memory_exact": set(),
+        "in_memory_leaves": set(),
+        "in_memory_receivers": set(),
+    },
     "laravel-multitenant": {
         # stancl/tenancy + Laravel multi-DB patterns.
         "in_memory_exact": {
@@ -1978,10 +1989,18 @@ def _detect_composer_profile(cwd: str) -> str | None:
     if not composer:
         return None
     require = composer.get("require") or {}
+    if "laravel/framework" not in require:
+        return None
+    # G1: a plain Laravel app (the overwhelming majority — stancl/tenancy
+    # and spatie/laravel-multitenancy are niche multi-tenant add-ons) used
+    # to fall through to None here, so ``roam smells``/``roam algo`` never
+    # recognised "this is Laravel" unless the app also happened to be
+    # multi-tenant. Return the generic ``laravel`` profile so framework-
+    # aware consumers (e.g. the feature-envy idiom exemption) still get a
+    # signal; ``laravel-multitenant`` stays the more specific match when
+    # a tenancy package is also present.
     tenancy = "stancl/tenancy" in require or "spatie/laravel-multitenancy" in require
-    if "laravel/framework" in require and tenancy:
-        return "laravel-multitenant"
-    return None
+    return "laravel-multitenant" if tenancy else "laravel"
 
 
 def _detect_python_profile(cwd: str) -> str | None:
@@ -2031,6 +2050,8 @@ def autodetect_framework_profile() -> str | None:
 
     * ``vue3-tanstack`` — package.json depends on ``vue@3.x`` AND on
       ``@tanstack/vue-query`` (or ``@tanstack/query-core``).
+    * ``laravel`` — composer.json depends on ``laravel/framework`` (no
+      tenancy package).
     * ``laravel-multitenant`` — composer.json depends on ``laravel/framework``
       AND on ``stancl/tenancy`` or ``spatie/laravel-multitenancy``.
 

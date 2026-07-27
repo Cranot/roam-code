@@ -47,6 +47,7 @@ from roam.catalog._shared import is_test_path as _is_test_path
 from roam.catalog._shared import loc as _loc
 from roam.catalog._shared import make_smell_finding as _finding
 from roam.catalog.clones_cross_layer import detect_cross_layer_clones
+from roam.catalog.detectors import autodetect_framework_profile
 from roam.catalog.parallel_hierarchy import detect_parallel_hierarchy
 from roam.catalog.registry import all_detectors, detector, freeze_registry
 from roam.catalog.type_switch import detect_type_switch
@@ -524,13 +525,39 @@ _FEATURE_ENVY_MIN_DOMINANT_FOREIGN_SHARE = 0.5
 # Keyed by the exact profile name ``autodetect_framework_profile`` /
 # ``--framework`` resolve to (see ``_FRAMEWORK_PROFILES`` in detectors.py).
 # Path-based, not content-based, so it works without re-parsing source.
+#
+# Measured on two real dogfood corpora (a Vue 3 + Pinia + TanStack-Query
+# frontend and its Laravel 12 backend — see the G1 wave notes) before
+# shipping this table:
+#
+# - vue3-tanstack: 119 pre-fix hits -> 25 (21%) had a dominant foreign file
+#   under stores?/composables?/ — a view/modal calling ITS designated
+#   composable, or a composable delegating to a co-located composables/
+#   helper. A first draft also matched on a ``use<Name>.ts`` FILENAME
+#   (composable naming convention without a stores?/composables?/
+#   directory), but on this corpus every such match was already inside a
+#   composables? directory -- the filename clause never fired on its own,
+#   so it was dropped rather than shipped unverified.
+# - laravel(-multitenant): 70 pre-fix hits -> only 5 (7%) had a dominant
+#   foreign file under app/Models/. The measured majority of the real
+#   noise (50/70, 71%) was Controller/Model/Observer -> Service: Laravel's
+#   own "thin controller, fat service" recommended architecture, which
+#   necessarily concentrates a controller method's external refs on the
+#   one service it was handed via DI. Shipping Models-only would have left
+#   the dominant real FP shape unfixed, so the pattern covers app/Models/
+#   AND app/Services/ -- broader than the gap's illustrative wording, but
+#   that is what the measurement showed, not an assumption.
+# - django / rails / nestjs: same idiom shape (one DI-style collaborator
+#   dominates by design), extended by analogy — NOT separately measured
+#   on a real corpus in this wave. Tune independently if a future corpus
+#   shows they need adjusting.
 _FEATURE_ENVY_FRAMEWORK_IDIOM_PATTERNS: dict[str, re.Pattern] = {
-    "vue3-tanstack": re.compile(r"(?:^|/)(?:stores?|composables?)/|(?:^|/)use[A-Z]\w*\.(?:vue|ts|js)$"),
-    "laravel": re.compile(r"(?:^|/)[Mm]odels?/"),
-    "laravel-multitenant": re.compile(r"(?:^|/)[Mm]odels?/"),
+    "vue3-tanstack": re.compile(r"(?:^|/)(?:stores?|composables?)/"),
+    "laravel": re.compile(r"(?:^|/)(?:[Mm]odels?|[Ss]ervices?)/"),
+    "laravel-multitenant": re.compile(r"(?:^|/)(?:[Mm]odels?|[Ss]ervices?)/"),
     "django": re.compile(r"(?:^|/)models(?:\.py$|/)"),
-    "rails": re.compile(r"(?:^|/)app/models/"),
-    "nestjs": re.compile(r"(?:^|/)(?:services?|providers?)/|\.service\.ts$"),
+    "rails": re.compile(r"(?:^|/)app/(?:models|services)/"),
+    "nestjs": re.compile(r"(?:^|/)(?:services?|providers?)/"),
 }
 
 
@@ -543,6 +570,14 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
     feature envy). Skips test-role files and orchestrator/assembler-named
     functions (emit_/build_/render_/collect_/assemble_/section_/_findings),
     whose cross-file breadth is by-design coupling, not envy (W1280).
+
+    G1: also skips a candidate when the *dominant* foreign file matches the
+    detected framework's idiomatic shared-dependency convention (a Vue 3
+    composable/view leaning on its designated stores?/composables? file, a
+    Laravel controller/model/observer leaning on its injected Models?/
+    Services? collaborator, ...). ``autodetect_framework_profile`` sniffs
+    the project once per run; see ``_FEATURE_ENVY_FRAMEWORK_IDIOM_PATTERNS``
+    above for the measured per-framework path conventions and rationale.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, s.line_start, s.file_id, "
@@ -554,15 +589,25 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
     # Bulk-fetch every outbound edge ONCE and bucket by source_id, replacing
     # the per-symbol ``WHERE e.source_id = ?`` N+1 query. The in-memory bucket
     # is keyed by source symbol id; iteration order over ``rows`` below is
-    # unchanged so the emitted findings stay byte-identical.
+    # unchanged so the emitted findings stay byte-identical. The target
+    # file's path rides along (G1) so the framework-idiom exemption below
+    # can classify the dominant foreign file without a second query.
     from collections import defaultdict
 
-    edges_by_source: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    edges_by_source: dict[int, list[tuple[int, int, str]]] = defaultdict(list)
     edge_rows = conn.execute(
-        "SELECT e.source_id, e.target_id, t.file_id as target_file_id FROM edges e JOIN symbols t ON e.target_id = t.id"
+        "SELECT e.source_id, e.target_id, t.file_id as target_file_id, tf.path as target_file_path "
+        "FROM edges e JOIN symbols t ON e.target_id = t.id JOIN files tf ON t.file_id = tf.id"
     ).fetchall()
     for e in edge_rows:
-        edges_by_source[e["source_id"]].append((e["target_id"], e["target_file_id"]))
+        edges_by_source[e["source_id"]].append((e["target_id"], e["target_file_id"], e["target_file_path"]))
+
+    # G1: resolve the framework idiom pattern ONCE per run (a couple of cheap
+    # manifest reads), not per candidate -- autodetect_framework_profile is
+    # the same mechanism already wired for the N+1 in-memory-call allowlist.
+    _framework = autodetect_framework_profile()
+    _idiom_pattern = _FEATURE_ENVY_FRAMEWORK_IDIOM_PATTERNS.get(_framework) if _framework else None
+
     results = []
     for r in rows:
         # (1) Skip test-role files + orchestrator/assembler-named functions.
@@ -574,17 +619,30 @@ def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
         total = len(edges)
         if total < 4:
             continue
-        external = sum(1 for (_tid, tfid) in edges if tfid != r["file_id"])
+        external = sum(1 for (_tid, tfid, _tpath) in edges if tfid != r["file_id"])
         ratio = external / total
         if ratio <= 0.5:
             continue
         # (2) Concentration gate: the external refs must be dominated by one
         # foreign file. Spread-across-many-files is orchestration, not envy.
-        foreign_counts = Counter(tfid for (_tid, tfid) in edges if tfid != r["file_id"])
+        foreign_counts = Counter(tfid for (_tid, tfid, _tpath) in edges if tfid != r["file_id"])
         max_foreign = max(foreign_counts.values())
         dominant_share = max_foreign / external
         if dominant_share < _FEATURE_ENVY_MIN_DOMINANT_FOREIGN_SHARE:
             continue
+        # (3) G1 framework-idiom exemption: the SAME concentration that (2)
+        # treats as true envy is also the shape of "this file leans on its
+        # one designated framework collaborator" -- exempt when the
+        # dominant foreign file's path matches that idiom for the detected
+        # framework.
+        if _idiom_pattern is not None:
+            dominant_tfid, _dominant_count = foreign_counts.most_common(1)[0]
+            dominant_path = next(
+                (tpath for (_tid, tfid, tpath) in edges if tfid == dominant_tfid),
+                None,
+            )
+            if dominant_path and _idiom_pattern.search(dominant_path):
+                continue
         loc_str = _loc(r["file_path"], r["line_start"])
         results.append(
             _finding(
