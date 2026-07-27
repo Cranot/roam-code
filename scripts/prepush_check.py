@@ -499,6 +499,12 @@ def main(argv: list[str] | None = None) -> int:
         # The parallel form remains available for the FAST/FULL drift-guard
         # bundles above, where the files are pure in-process scans with no
         # shared fixtures and the distribution is genuinely race-free.
+        # `-rf` so a failure NAMES the failing tests. Without it the gate reports
+        # only "FAIL (6339.6s)" and the operator must re-run a 105-minute suite to
+        # learn which nine of ~19,300 tests broke. A gate that tells you it failed
+        # but not what failed is barely more useful than one that cannot fail --
+        # the same shape as a crashed worker being indistinguishable from a red
+        # suite, which is what made the parallel form untenable above.
         runner._run(
             "FULL test suite (-m 'not slow', serial — exactly what CI verifies)",
             [
@@ -511,8 +517,13 @@ def main(argv: list[str] | None = None) -> int:
                 "not slow",
                 "-p",
                 "no:cacheprovider",
+                "-rf",
             ],
-            fix_hint="fix the failing tests — CI runs exactly this surface, serially",
+            fix_hint=(
+                "fix the failing tests — CI runs exactly this surface, serially. "
+                "The FAILED lines above name them; re-run just those with "
+                "`python -m pytest <nodeid> -q` rather than the whole suite"
+            ),
         )
 
     ok = _print_summary(runner.results)
