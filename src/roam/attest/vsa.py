@@ -31,6 +31,17 @@ Two predicate shapes produced here:
    (``https://roam-code.com/spec/RunLedgerRoot/v1``) because no
    external standard covers "HMAC root of an append-only event chain".
 
+   Wording-lint (W-SEC): the HMAC chain being tamper-evident proves the
+   predicate's ``status`` field wasn't altered AFTER
+   :func:`roam.runs.ledger.end_run` stamped it. It proves NOTHING about
+   whether ``status`` was ever true — that is a separate claim, carried
+   by the sibling ``status_source`` field (``"derived"`` when roam
+   computed ``status`` from the run's own recorded check outcomes,
+   ``"asserted"`` when it's a bare claim). Never describe a signed
+   run-ledger-root attestation as "verifying the agent's run succeeded" —
+   it verifies the RECORD's integrity; ``status_source`` is what tells a
+   verifier how much to trust the RECORD's content.
+
 Hash-stability contract: this module is ADDITIVE. It consumes
 ``ChangeEvidence`` read-only and produces new in-toto Statement
 dicts; the source dataclass and its canonical JSON are untouched.
@@ -385,6 +396,7 @@ def build_run_ledger_root_predicate(
     started_at: str | None = None,
     ended_at: str | None = None,
     status: str | None = None,
+    status_source: str | None = None,
     repo_id: str | None = None,
 ) -> dict[str, Any]:
     """Build the predicate body for a run-ledger root attestation.
@@ -401,6 +413,29 @@ def build_run_ledger_root_predicate(
     the operational record (HMAC chain). They're orthogonal; mixing
     them into one predicate would prevent independent
     publication / verification.
+
+    W-SEC (security-model hole close): tamper-evidence over the HMAC
+    chain proves the ``status`` field was not altered AFTER
+    :func:`roam.runs.ledger.end_run` stamped it — it proves NOTHING
+    about whether ``status`` was ever true. ``status_source`` closes
+    that gap by carrying the claim's PROVENANCE alongside its value:
+
+      * ``"derived"`` — ``roam.runs.ledger.end_run`` computed ``status``
+        from the run's own recorded check outcomes (events with
+        ``partial_success``); the recorded evidence and the stamped
+        status agree.
+      * ``"asserted"`` — ``status`` is a bare claim: either the run
+        recorded nothing to derive from, or the caller chose a status
+        the recorded evidence doesn't corroborate (e.g. ``abandoned``,
+        or a self-reported ``"failed"`` on an otherwise-clean run).
+        Not inherently untrustworthy — but a verifier MUST NOT read it
+        with the same confidence as ``"derived"``.
+
+    Omitted (as with every other optional field here) when the caller
+    doesn't supply it — this keeps runs closed before this field
+    existed, or via a direct API caller that doesn't pass it,
+    structurally distinguishable from a run that was actively labelled
+    one way or the other.
     """
     predicate: dict[str, Any] = {
         "schema_version": "1",
@@ -417,6 +452,8 @@ def build_run_ledger_root_predicate(
         predicate["ended_at"] = ended_at
     if status:
         predicate["status"] = status
+    if status_source:
+        predicate["status_source"] = status_source
     if repo_id:
         predicate["repo_id"] = repo_id
     return predicate
@@ -459,6 +496,7 @@ def build_run_ledger_root_statement(
         started_at=getattr(meta, "started_at", None),
         ended_at=getattr(meta, "ended_at", None),
         status=getattr(meta, "status", None),
+        status_source=getattr(meta, "status_source", None),
     )
     subject = {
         "name": f"urn:roam:run:{run_id}",

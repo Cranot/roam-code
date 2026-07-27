@@ -32,7 +32,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
 from roam.runs.ledger import (
     VALID_STATUSES,
     end_run,
@@ -528,7 +528,16 @@ def runs_log(
     default="completed",
     show_default=True,
     type=click.Choice(sorted(VALID_STATUSES - {"in_progress"})),
-    help="Final status. Cannot be 'in_progress'.",
+    help=(
+        "Final status. Cannot be 'in_progress'. This is an ASSERTION, not a "
+        "verification: if the run recorded at least one failing check "
+        "(a logged event with partial_success=true), roam DERIVES the "
+        "status from that evidence and refuses --status completed (or the "
+        "default) when it contradicts a recorded failure -- pass --status "
+        "failed or --status abandoned instead. A run that recorded nothing "
+        "to derive from accepts whatever you pass here; the signed "
+        "attestation's status_source field says which case applied."
+    ),
 )
 @click.option(
     "--with-pr-bundle-emit",
@@ -550,6 +559,20 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     agent loop ``open run → do work → close run + ship bundle`` into one
     command. The run is closed FIRST so a partial pr-bundle emit can never
     block the close.
+
+    \b
+    W-SEC: ``--status`` does NOT make roam verify the run succeeded — it
+    is a claim. What roam DOES do: if the run logged at least one event
+    with ``partial_success=true`` (any gate command's auto-logged
+    envelope, or a manual ``roam runs log --partial-success``), that is
+    treated as a recorded check failure, and closing with a status other
+    than ``failed``/``abandoned`` is refused outright rather than silently
+    accepted (this applies to the default ``completed`` too). A run that
+    logged nothing has no recorded evidence to check the claim against,
+    so ``--status`` is honoured as given. Either way, the eventual signed
+    attestation carries a ``status_source`` of ``"derived"`` or
+    ``"asserted"`` so a verifier can tell which case produced it without
+    reading roam's source.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -630,6 +653,12 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
         "ended": True,
         "run_id": meta.run_id,
     }
+    if meta.status_source:
+        # W-SEC -- surface provenance in the summary too (not just buried
+        # in ``run``) so an agent reading only summary.* still sees
+        # whether ``status`` was derived from recorded check outcomes or
+        # merely asserted.
+        summary["status_source"] = meta.status_source
     if pr_bundle_state is not None:
         summary["pr_bundle_state"] = pr_bundle_state
 
@@ -664,6 +693,8 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
     click.echo(f"  started:   {meta.started_at}")
     click.echo(f"  ended:     {meta.ended_at}")
     click.echo(f"  status:    {meta.status}")
+    if meta.status_source:
+        click.echo(f"  status_source: {meta.status_source}")
     if pr_bundle_state is not None:
         click.echo(f"  pr_bundle: {pr_bundle_state}")
 
@@ -1446,7 +1477,7 @@ def runs_verify(ctx, run_id, verify_all):
         # the floor stub still sees the broken state vs. a clean SAFE.
         _envelope_floor: dict = {
             "command": "runs-verify",
-            "schema_version": "1.0.0",
+            "schema_version": ENVELOPE_SCHEMA_VERSION,
             "summary": {
                 "verdict": verdict,
                 "state": state,
