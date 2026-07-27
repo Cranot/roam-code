@@ -295,15 +295,17 @@ def test_reader_never_repairs_state_or_log_permissions(tmp_path: Path) -> None:
 
     rows = _read_telemetry(str(tmp_path), retain_legacy_task_text=False)
 
-    assert rows == []
-    assert getattr(rows, "read_state") == "unsafe_log_path"
+    # A group/world-readable log is a privacy weakness, not a redirection: the
+    # rows are still read and the weaker guarantee is disclosed instead of
+    # being reported as an empty log. What must never happen is a silent chmod.
+    assert getattr(rows, "read_state") == "unprotected_state_directory"
     assert stat.S_IMODE(log.stat().st_mode) == 0o644
 
     state.chmod(0o755)
     rows = _read_telemetry(str(tmp_path), retain_legacy_task_text=False)
-    assert rows == []
-    assert getattr(rows, "read_state") == "unsafe_state_directory"
+    assert getattr(rows, "read_state") == "unprotected_state_directory"
     assert stat.S_IMODE(state.stat().st_mode) == 0o755
+    assert stat.S_IMODE(log.stat().st_mode) == 0o644
 
 
 def test_reader_rejects_deep_bounded_json_without_recursion_error(tmp_path: Path) -> None:

@@ -561,7 +561,14 @@ def status(ctx):
 # v13 (2026-07-20): bind receipt target counts to ``targets_checked`` rather
 # than indexed ``files_checked`` so deleted and non-code episode targets retain
 # exact receipt coverage. Deployed v12 bodies heal to the strict v13 contract.
-_HOOK_BODY_VERSION = 13
+# v14 (2026-07-27): the UserPromptSubmit cold-compile path spawns the compiler
+# as ``sys.executable -m roam`` instead of a bare ``roam`` off PATH. A stale
+# global install shadowing the active environment wrote telemetry in an older
+# row schema and never installed the owner-only state directory, which made
+# `compile-stats` report 0 rows over a fully populated log. Deployed v13 bodies
+# heal so wired installs stop writing through whichever roam PATH happens to
+# resolve to.
+_HOOK_BODY_VERSION = 14
 _HOOK_VERSION_MARKER = "# roam-hook-version:"
 
 _CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
@@ -916,7 +923,7 @@ def _start_episode(payload, prompt):
             _release_lock(lock_path, fd)
         event = {
             "schema_version": _EPISODE_SCHEMA,
-            "hook_version": 13,
+            "hook_version": 14,
             "evidence_source": "live_hook",
             "event_id": "evt_" + hashlib.sha256((episode_id + ":start").encode("utf-8")).hexdigest()[:24],
             "episode_id": episode_id,
@@ -1003,8 +1010,14 @@ def main():
             # mixed 'unknown' bucket in compile-stats. setdefault, not assign: an
             # explicit ROAM_AGENT_MODE (a policy mode the user set) is preserved.
             env.setdefault("ROAM_AGENT_MODE", "hook")
+            # Resolve the compiler through the *running* interpreter, never a
+            # bare "roam" off PATH. A stale global install shadowing the active
+            # environment writes telemetry in an older row schema and skips the
+            # owner-only state-directory install, which silently zeroes
+            # `compile-stats` afterwards. Matches the house pattern used by
+            # ask/runner, cmd_report, cmd_replay and mcp_server.
             proc = subprocess.run(
-                ["roam", "--json", "compile", prompt],
+                [sys.executable, "-m", "roam", "--json", "compile", prompt],
                 capture_output=True, text=True, timeout=_COMPILE_TIMEOUT_S,
                 env=env,
             )
@@ -1164,7 +1177,7 @@ _ADVISORY_CATEGORIES = frozenset({
     "llm_smells", "test_hermeticity", "smells",
 })
 _EPISODE_SCHEMA = 1
-_EPISODE_HOOK_VERSION = 13
+_EPISODE_HOOK_VERSION = 14
 _EPISODE_LOCK_ATTEMPTS = 20
 _EPISODE_LOCK_SLEEP_S = 0.005
 _EPISODE_LOCK_STALE_S = 30.0
@@ -2523,54 +2536,33 @@ _CLAUDE_STOP_HOOK_SCRIPT = _with_version_stamp(_CLAUDE_STOP_HOOK_SCRIPT)
 # defect that shipped in #77).
 _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
     {
-        "25e552061e4737bac27cbd547cade4189c84f207b2f466d410e1d036a1b1f1ca",  # ups v12 pristine (2026-07-19 cross-volume evidence)
-        "4df987f04f024d36867c608ce971bf4a6c18b36b36a1a11babf9f569eb36e9e3",  # ups v12 pristine (2026-07-19 evidence hardening)
-        "d6521a89e559fb875e2d949f2a13e9710aa378edd505b688362c07137bb1e0d1",  # stop v12 pristine (2026-07-19 cross-volume evidence)
-        "d91b18607d6175b4aa90023172f52663a6c8f3d16a714f78615a559d2913e7ef",  # ups v2 pristine (2026-07-16 rewritten history)
-        "f83329cc80eed97f62b388c2a5ee8c8e81118475dc04b04eca6cc2fac28fac1b",  # stop pre-stamp pristine (2026-06-10 rewritten history)
-        "fa249e6a5bd660cd9d6592bab09321552d7c8bc4e01206ffec724ee0d8e85904",  # stop pre-stamp pristine (2026-06-11 rewritten history)
-        "c15f23363571215a5d168d150ba650ca1a6c2cf1480573957bcb9eaadbdfcc3f",  # ups pre-stamp pristine (2026-07-11 rewritten history)
-        "feab198c56d960eb310746712cc170bdbe60a38c78f0508095f1d9ebca9dbdb9",  # ups pre-stamp pristine (2026-07-16 rewritten history)
-        "5c0fde3d99b0d23474d142016487ad0c6e4fb74a978cc113f274fd02a99aef08",  # ups pre-stamp pristine (2026-07-16 rewritten history)
-        "6ab4f91dc4c407c2fa82cb4e51bb5fd5268563150598650e4928618834a59a04",  # ups v11 pristine (canonical override ownership)
-        "391fd8b9044037b20000fc301415137647b51f7bf60bfcf35a84a05ec94a3bb8",  # stop v11 pristine (canonical override ownership)
-        "62e71df1b62b44860b5eccb181022bb5d1dfa1a751d5c0593c787c99d13e59ed",  # ups v10 pristine (2026-07-17 receipt-v3 identity binding)
-        "731d9593da3bf3fefb513e5dd89d44337bc474305da705f74462c00c630968d8",  # stop v10 pristine (2026-07-17 receipt-v3 identity binding)
-        "170b382530bb56b1301f069981a6404d8bf4441ae2a29e7c8b5716037e04ceeb",  # stop v10 surgered (2026-07-17 receipt-v3 identity binding)
-        "73cecf9fb98139944257c5193a10f53e10bc14dc819ac93dd6d9e0793d0e0510",  # ups v9 pristine (2026-07-17 receipt-v2 episode binding)
-        "335f74c850f8ce0651268571d17152308ecdd4c651ac561c9b8981230bc47848",  # stop v9 pristine (2026-07-17 receipt-v2 episode binding)
-        "3a74a4e09cef342e6c9490292c0b0adab626180592ccf3bc06f68fba03c4604b",  # stop v9 surgered (2026-07-17 receipt-v2 episode binding)
-        "187c9b317434ce85f2593b4d1c6043a083432d1430f355f5daa9001e6ab1de03",  # ups v8 pristine (2026-07-17 strict continuation verify)
-        "515d432ae0171628ff6d9a46589f733f4395d86e0aacb6dd291d6c2d78ca3f49",  # stop v8 pristine (2026-07-17 strict continuation verify)
-        "6e7bd67b651c0ae2dac0bf3739d7b1a0525e3c069467bcc57ab14befbbfb825e",  # stop v8 surgered (2026-07-17 strict continuation verify)
-        "bafb2a1af1735f754645a80caa967c5b3c1c0692c78a79b0d09d44fbd3dd71aa",  # ups v7 pristine (2026-07-17 fail-closed verify)
-        "c9bd8df743d83ae21a21b5f2825e6df3dceefe4b723cc088877437f3dcb4e29c",  # stop v7 pristine (2026-07-17 fail-closed verify)
-        "07915b8913ee53f387ef0d74a57306191f7a66358cfd11bf702ee71a8ffa00c8",  # stop v7 surgered (2026-07-17 fail-closed verify)
-        "d3ed7a41d1836445eed526d4ae7929af3e90b288b89db1d8f9796fa4b2fad3fb",  # ups v6 pristine (2026-07-16 evidence states)
-        "a8a68ecec99484aafa0049b6b16c5ff35cb813fbace746395f01e47907a5884a",  # stop v6 pristine (2026-07-16 evidence states)
-        "35a7e01d539c4febd3ee903ba2efc034fdca3e7173db823cd9960efdcd4c5a63",  # stop v6 surgered (2026-07-16 evidence states)
-        "2957cd0432e95cfd8b1117972863b3b54ef5ae3afea5dd5851a7d8aa66adcc81",  # ups v5 pristine (2026-07-16 episodes)
-        "d72e7f56aebe28579348a0ff4b9205e91fa651795e2e6e019d9f35ad35e8d931",  # stop v5 pristine (2026-07-16 episodes)
-        "c9f030f130dae5dd1b76e79850479b59898375d3868ba97da13201e2633450b5",  # stop v5 surgered (2026-07-16 episodes)
-        "25492394429ce7416b7ba3f80b0f2c38accb79136f04a47e28fb51d828a0cc08",  # ups v4 pristine (2026-07-16 s2lite)
-        "9d6d69d97cc29639f27b3c45b8a02d4488712bf8fdece9a49cf2d250a219a378",  # stop v4 pristine (2026-07-16 s2lite)
-        "3a9db464c1480afabfc3cf20f474c75184c5088083085d763592804e7ea6422e",  # stop v4 surgered (2026-07-16 s2lite)
-        "b28bcb7a414f92e1694ecbeb54ff1d5e69b8a4c46d4ee035e6b88975712e0805",  # stop v3 pristine (2026-07-16 loop-b)
-        "fa76db1e06bb44a947084ed10f94b553aa68289d60511cb246b67f5f85acfd44",  # stop v3 surgered (2026-07-16 loop-b)
-        "18e19f503c957e09850ec4173fc451b078c7a0356eb6c964d6406b9e5a8300a5",  # ups v3 pristine (2026-07-16 loop-b)
-        "0313b8d53749fa9d188c9e6554b37826ff677cdd166627ab5b613538bb4b4573",  # stop v2 pristine (2026-07-16 18326816)
-        "2c81e646c1102ebd010b6f470d6a153d8b47d68921584e55806de9052da13fa7",  # stop v2 surgered (2026-07-16 18326816)
-        "fd8a7522fe488b6429f159146523524dcab6465ddbdc09aa91a3515a89bf58a2",  # stop pre-stamp (2026-06-10 ffa51bb1)
-        "23dc563a465af1e5e11f698ce2e8f1aa2cbae0959b7fbbd2ade9ce7abd7bebd6",  # stop pre-stamp (2026-06-11 16871343)
-        "6f95e9afb5f19c6479ca72647ffca014effe453bceaeba47d06d83a898bac3fc",  # stop pre-stamp (2026-07-08 118dcf55)
-        "929f2e2bc35b1b75874194d9e1843b8868a4f8795c8dbe47da29c9fe841fbf32",  # stop pre-stamp (2026-07-16 19e74bd5)
-        "cc1b6fdda85ce004c620ff01f0b7096b910395c224c0f723947d5c6d127343c2",  # stop pre-stamp surgered (07-08 118dcf55)
-        "2fe9800b212926cb332a903114534a9891ddb790d54ec1b7aeb90b740bf67b68",  # stop pre-stamp surgered (07-16 19e74bd5)
-        "0a33b73872a9e507521aa8feea09a9b14525ebc7f91ccc6ae5cce0c9cd83c224",  # ups v2 pristine (2026-07-16 18326816)
-        "c01d848b2da0503ca91460858da9a926851c0e6ce2d6a253b7a1f28fdc96aa8d",  # ups pre-stamp (2026-06-10 ffa51bb1)
-        "849c787f92d385f6eb2e2ca832a5cd85b2f29691dd3dc590381db2a05642fd09",  # ups pre-stamp (2026-07-11 dcf7b2af)
-        "527471d9c46f89825d79196bb092340b019d3f42ffbfcc96023ecda8c07d5433",  # ups pre-stamp (2026-07-16 19e74bd5)
-        "9bae32c06f5b850a6faa92ae926294fedc1036f651282d648f9858c6bcd07e41",  # ups pre-stamp (2026-07-16 30801aad)
+        "f83329cc80eed97f62b388c2a5ee8c8e81118475dc04b04eca6cc2fac28fac1b",  # stop pre-stamp pristine (2026-06-10 ffa51bb1)
+        "fa249e6a5bd660cd9d6592bab09321552d7c8bc4e01206ffec724ee0d8e85904",  # stop pre-stamp pristine (2026-06-11 16871343)
+        "6f95e9afb5f19c6479ca72647ffca014effe453bceaeba47d06d83a898bac3fc",  # stop pre-stamp pristine (2026-07-08 118dcf55)
+        "929f2e2bc35b1b75874194d9e1843b8868a4f8795c8dbe47da29c9fe841fbf32",  # stop pre-stamp pristine (2026-07-16 19e74bd5)
+        "cc1b6fdda85ce004c620ff01f0b7096b910395c224c0f723947d5c6d127343c2",  # stop pre-stamp surgered (2026-07-08 118dcf55)
+        "2fe9800b212926cb332a903114534a9891ddb790d54ec1b7aeb90b740bf67b68",  # stop pre-stamp surgered (2026-07-16 19e74bd5)
+        "d6521a89e559fb875e2d949f2a13e9710aa378edd505b688362c07137bb1e0d1",  # stop v12 pristine (2026-07-20 24f29f64)
+        "f8bafe491891a4fac7609105f7531613e56b3319b7e2fde345b9f02fbf94a95f",  # stop v13 pristine (2026-07-23 44132a70)
+        "0313b8d53749fa9d188c9e6554b37826ff677cdd166627ab5b613538bb4b4573",  # stop v2 pristine (2026-07-16 585d88f3)
+        "2c81e646c1102ebd010b6f470d6a153d8b47d68921584e55806de9052da13fa7",  # stop v2 surgered (2026-07-16 585d88f3)
+        "b28bcb7a414f92e1694ecbeb54ff1d5e69b8a4c46d4ee035e6b88975712e0805",  # stop v3 pristine (2026-07-16 046fecee)
+        "fa76db1e06bb44a947084ed10f94b553aa68289d60511cb246b67f5f85acfd44",  # stop v3 surgered (2026-07-16 046fecee)
+        "9d6d69d97cc29639f27b3c45b8a02d4488712bf8fdece9a49cf2d250a219a378",  # stop v4 pristine (2026-07-16 0506aede)
+        "3a9db464c1480afabfc3cf20f474c75184c5088083085d763592804e7ea6422e",  # stop v4 surgered (2026-07-16 0506aede)
+        "a8a68ecec99484aafa0049b6b16c5ff35cb813fbace746395f01e47907a5884a",  # stop v6 pristine (2026-07-17 a2e32526)
+        "35a7e01d539c4febd3ee903ba2efc034fdca3e7173db823cd9960efdcd4c5a63",  # stop v6 surgered (2026-07-17 a2e32526)
+        "c01d848b2da0503ca91460858da9a926851c0e6ce2d6a253b7a1f28fdc96aa8d",  # ups pre-stamp pristine (2026-06-10 ffa51bb1)
+        "c15f23363571215a5d168d150ba650ca1a6c2cf1480573957bcb9eaadbdfcc3f",  # ups pre-stamp pristine (2026-07-11 dcf7b2af)
+        "feab198c56d960eb310746712cc170bdbe60a38c78f0508095f1d9ebca9dbdb9",  # ups pre-stamp pristine (2026-07-16 19e74bd5)
+        "5c0fde3d99b0d23474d142016487ad0c6e4fb74a978cc113f274fd02a99aef08",  # ups pre-stamp pristine (2026-07-16 30801aad)
+        "4df987f04f024d36867c608ce971bf4a6c18b36b36a1a11babf9f569eb36e9e3",  # ups v12 pristine (2026-07-19 5ad38c53)
+        "25e552061e4737bac27cbd547cade4189c84f207b2f466d410e1d036a1b1f1ca",  # ups v12 pristine (2026-07-20 24f29f64)
+        "67d1e9d6b67ea6401b3fbb45593e0bc7605cce70304ebe5f1487035d07962e75",  # ups v13 pristine (2026-07-23 44132a70)
+        "d91b18607d6175b4aa90023172f52663a6c8f3d16a714f78615a559d2913e7ef",  # ups v2 pristine (2026-07-16 585d88f3)
+        "18e19f503c957e09850ec4173fc451b078c7a0356eb6c964d6406b9e5a8300a5",  # ups v3 pristine (2026-07-16 046fecee)
+        "25492394429ce7416b7ba3f80b0f2c38accb79136f04a47e28fb51d828a0cc08",  # ups v4 pristine (2026-07-16 0506aede)
+        "d3ed7a41d1836445eed526d4ae7929af3e90b288b89db1d8f9796fa4b2fad3fb",  # ups v6 pristine (2026-07-17 a2e32526)
     }
 )
 

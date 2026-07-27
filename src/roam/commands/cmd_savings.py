@@ -18,6 +18,7 @@ from roam.savings import (
     SavingsLedgerSafetyError,
     aggregate_savings_result,
     analyze_ledger,
+    unevaluated_savings_gate,
 )
 
 
@@ -80,6 +81,47 @@ def savings(ctx: click.Context, root: str, schema: bool, aggregate: bool) -> Non
     try:
         result = analyze_ledger(root)
     except (OSError, SavingsLedgerSafetyError, TimeoutError, sqlite3.Error) as exc:
+        if isinstance(exc, SavingsLedgerSafetyError) and exc.degradable:
+            # An ACL-only refusal is a NULL, not a crash. Exiting RUN_FAILED here
+            # made "the gate was not passed" indistinguishable from "the gate
+            # itself broke", and left no loggable entry of either — while the
+            # ledger's own rule is that a null result is an entry, not a
+            # discard. Report it as ordinary insufficient evidence, with every
+            # gate conjunct explicitly marked unevaluated so that no reader
+            # mistakes this for a measured zero. Redirection-shaped refusals
+            # (hard link, symlink, escaped state directory) are NOT degradable
+            # and still fall through to the error path below.
+            verdict = "Savings claims withheld — episode ledger could not be read under its safety policy"
+            gate = unevaluated_savings_gate(str(exc))
+            degraded_summary = {
+                "verdict": verdict,
+                "state": "insufficient_evidence",
+                "partial_success": True,
+                "measurement_admissible": False,
+                "policy_admissible": False,
+                "gate_evaluated": False,
+                "ledger_read_state": "refused_by_safety_policy",
+                "reason": str(exc),
+            }
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "savings",
+                            budget=token_budget,
+                            summary=degraded_summary,
+                            admissibility_gate=gate,
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {verdict}")
+                click.echo("state:  insufficient_evidence (gate unevaluated)")
+                click.echo(f"reason: {exc}")
+                for name in gate:
+                    click.echo(f"  {name:<28s} unevaluated")
+            return
+        # Genuine faults stay errors — that distinction is the point.
         verdict = "Savings ledger unavailable because materialization stopped safely"
         failure_summary = {
             "verdict": verdict,

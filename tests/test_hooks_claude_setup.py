@@ -417,18 +417,32 @@ class TestUpsDaemonPath:
         assert "investigate why login is slow" not in (in_tmp / ".roam" / "episodes.jsonl").read_text()
 
     def test_daemon_error_falls_back_without_injecting_junk(self, in_tmp):
-        """A daemon refusal (wrong_repo/bad_token) must never be injected; with
-        no roam on PATH the cold fallback fails open -> empty output, exit 0."""
+        """A daemon refusal (wrong_repo/bad_token) must never be injected.
+
+        Emptying PATH no longer simulates an absent compiler: the cold fallback
+        resolves through the hook's own interpreter (``sys.executable -m roam``)
+        precisely so a stale or missing PATH entry cannot decide which roam
+        runs. The invariant that still matters, and the one this test owns, is
+        that the daemon's refusal payload never reaches the model — whether the
+        fallback then produces a real plan or nothing at all.
+        """
         _invoke("claude", "--write")
         (in_tmp / ".git").mkdir()
         self._fake_daemon(in_tmp, {"error": "wrong_repo"})
         proc = self._run_hook(in_tmp, '{"prompt": "investigate why login is slow"}', {"PATH": ""})
         assert proc.returncode == 0
-        assert proc.stdout == ""
+        assert "wrong_repo" not in proc.stdout
+        assert "daemon_served" not in proc.stdout  # a refusal is not a served envelope
 
     def test_dead_daemon_config_fails_open(self, in_tmp):
         """Config present but nothing listening: connect fails inside the 10 ms
-        budget -> cold path; with no roam on PATH -> quiet exit 0."""
+        budget and the hook falls through to the cold path, exit 0.
+
+        The cold path resolves through ``sys.executable -m roam``, so an empty
+        PATH no longer suppresses it — that is the point of the change. What is
+        asserted here is the fail-open contract itself: a dead daemon never
+        blocks the turn and never leaks its own connection failure.
+        """
         import json as _json
 
         _invoke("claude", "--write")
@@ -439,7 +453,8 @@ class TestUpsDaemonPath:
         )
         proc = self._run_hook(in_tmp, '{"prompt": "investigate why login is slow"}', {"PATH": ""})
         assert proc.returncode == 0
-        assert proc.stdout == ""
+        assert proc.stderr == ""
+        assert "daemon_served" not in proc.stdout  # nothing was listening to serve it
 
 
 class TestVerifyStopHook:

@@ -25,6 +25,7 @@ import re
 import shlex
 import sqlite3
 import subprocess
+import sys
 import threading as _w131_threading  # W131 — pre-import for cross-block use
 import time
 from functools import lru_cache as _w144_lru_cache
@@ -2866,7 +2867,7 @@ def _run_roam_invoke(cli_args: list[str], cwd: str | None, timeout: float) -> di
         if exit_code == 0 and stdout:
             return _run_roam_parse_json(stdout, "compile._run_roam.inproc_json")
         return None
-    cmd = ["roam", *cli_args]
+    cmd = [sys.executable, "-m", "roam", *cli_args]
     try:
         result = subprocess.run(
             cmd,
