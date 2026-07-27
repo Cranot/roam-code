@@ -16,6 +16,21 @@ W250 ask:
 Why both gates: the GitHub Actions job is the hard merge gate; the
 pre-commit hook is the fast local feedback loop. A drop on either
 surface re-opens the bug class W250 was designed to close.
+
+Also covers the ``scripts/build_changelog_html.py`` render-drift gate
+(changelog.html is a generated, tracked mirror of CHANGELOG.md). That
+generator used to run only at push time (``scripts/prepush_check.py``)
+and in CI, never at commit time -- so a commit that edited CHANGELOG.md
+without re-rendering the page landed with the two tracked files already
+disagreeing, and nothing caught it until the next push (or never, under
+``--no-verify``). Commit 5e8d6360 ("regenerate html after the telemetry
+changelog entry") is the fix-forward that produced -- twice in one
+session. The ``test_pre_commit_hook_invokes_changelog_html_check`` /
+``test_doc_hygiene_workflow_runs_changelog_html_check`` pair below mirrors
+the count-script pair so the wiring cannot silently drop again; the
+regenerate-and-diff assertion itself is ``build_changelog_html.py``
+(no ``--write`` = dry-run, exits 1 on drift), the same shape as
+``build_readme_counts.py --check``.
 """
 
 from __future__ import annotations
@@ -36,6 +51,7 @@ PRE_COMMIT_HOOK = REPO_ROOT / ".githooks" / "pre-commit"
 
 BUILD_README_REL = "dev/build_readme_counts.py"
 SYNC_SURFACE_REL = "scripts/sync_surface_counts.py"
+CHANGELOG_HTML_REL = "scripts/build_changelog_html.py"
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +115,26 @@ def test_doc_hygiene_workflow_triggers_on_pr_and_push() -> None:
         )
 
 
+def test_doc_hygiene_workflow_runs_changelog_html_check() -> None:
+    """Some workflow must run ``build_changelog_html.py`` so render drift fails CI.
+
+    This is the CI-side half of the changelog.html drift gate; the
+    pre-commit half is ``test_pre_commit_hook_invokes_changelog_html_check``
+    below. Both must hold, same as the count-drift pair above.
+    """
+    workflows = _workflow_texts()
+    assert workflows, (
+        f"Expected at least one GitHub Actions workflow under {WORKFLOWS_DIR}; "
+        "the changelog-render drift gate relies on Actions to block merges on drift."
+    )
+
+    runs_changelog_html = [p.name for p, text in workflows.items() if CHANGELOG_HTML_REL in text]
+    assert runs_changelog_html, (
+        f"No workflow in {WORKFLOWS_DIR} runs `python {CHANGELOG_HTML_REL}`. "
+        "Add it so changelog.html drift from CHANGELOG.md fails CI."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pre-commit hook surface
 # ---------------------------------------------------------------------------
@@ -151,6 +187,26 @@ def test_pre_commit_hook_invokes_both_drift_scripts() -> None:
     )
 
 
+def test_pre_commit_hook_invokes_changelog_html_check() -> None:
+    """The hook must run ``build_changelog_html.py`` so a CHANGELOG.md edit
+    that doesn't also re-render changelog.html is BLOCKED AT COMMIT TIME.
+
+    Before this gate, the render-drift check only ran at push time
+    (``scripts/prepush_check.py``) and in CI, both well after the stale
+    pair had already been committed. Wiring it into pre-commit closes that
+    window: the commit that introduces the drift is the one that fails.
+    """
+    if not PRE_COMMIT_HOOK.is_file():
+        pytest.skip("pre-commit hook missing (handled by sibling test)")
+    text = PRE_COMMIT_HOOK.read_text(encoding="utf-8")
+    assert CHANGELOG_HTML_REL in text, (
+        f"{PRE_COMMIT_HOOK} does not invoke {CHANGELOG_HTML_REL}. Add a "
+        f"`python {CHANGELOG_HTML_REL}` step so changelog.html render drift is "
+        "caught at commit time (mirrors the build_readme_counts.py / "
+        "sync_surface_counts.py gates above)."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Script invocability
 # ---------------------------------------------------------------------------
@@ -181,6 +237,30 @@ def test_build_readme_counts_check_invocable() -> None:
     # We allow 0 (clean) and 1 (drift); we reject 2 (argparse) and >2.
     assert result.returncode in (0, 1), (
         f"`python {BUILD_README_REL} --check` returned {result.returncode}; "
+        f"expected 0 (in sync) or 1 (drift detected). "
+        f"stderr: {result.stderr[:500]!r}"
+    )
+
+
+def test_build_changelog_html_check_invocable() -> None:
+    """``python scripts/build_changelog_html.py`` (dry-run/check mode) runs cleanly.
+
+    Mirrors ``test_build_readme_counts_check_invocable``: any return code is
+    acceptable except the ones Python uses for a crash before the gate did
+    its work (0 = in sync, 1 = drift detected; both valid in a hostile tree).
+    """
+    script = REPO_ROOT / CHANGELOG_HTML_REL
+    assert script.is_file(), f"{script} missing"
+
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode in (0, 1), (
+        f"`python {CHANGELOG_HTML_REL}` returned {result.returncode}; "
         f"expected 0 (in sync) or 1 (drift detected). "
         f"stderr: {result.stderr[:500]!r}"
     )
