@@ -21,6 +21,23 @@ from roam.db.connection import db_exists, find_project_root
 from roam.db.fs_detect import cloud_sync_warning, detect_cloud_sync
 from roam.output.formatter import json_envelope, to_json
 
+# Self-ignoring marker for ``.roam/``. Git honours a ``.gitignore`` placed
+# INSIDE the directory it ignores, so this keeps Roam's index, cache, and
+# generated config out of the user's ``git status`` without ever editing a
+# file the user owns. Appending ``.roam/`` to the repo's own ``.gitignore``
+# was the alternative and is worse: it dirties a TRACKED file on command 2
+# of the golden path (a real diff to review and commit) to silence an
+# UNTRACKED one, and it silently loses the entry on any repo that keeps
+# ignores in ``.git/info/exclude`` or a global excludesfile. Same pattern
+# CPython's ``venv`` and Cargo's ``target/`` use. ``.roamignore`` is left
+# visible on purpose — it is user-authored config in gitignore syntax,
+# meant to be edited and committed like ``.dockerignore``.
+_ROAM_DIR_GITIGNORE = """\
+# Created by `roam init`. Everything under .roam/ is a derived artifact
+# (SQLite index, caches, generated fitness config) — never commit it.
+*
+"""
+
 _FITNESS_YAML = """\
 rules:
   - name: No circular imports in core
@@ -267,6 +284,17 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # advisory belongs on commands that consume an index, not the one
     # building it.
     ensure_index(quiet=json_mode, suppress_cold_start_advisory=True)
+
+    # 2b. Self-ignore .roam/ so `roam init` does not dirty `git status`
+    # (and so `roam health` does not then report that dirt as index
+    # staleness). Written only when absent — a user who deliberately
+    # deleted it, or who committed .roam/ on purpose, keeps their choice.
+    roam_gitignore_path = roam_dir / ".gitignore"
+    if not roam_gitignore_path.exists():
+        roam_gitignore_path.write_text(_ROAM_DIR_GITIGNORE, encoding="utf-8")
+        created.append(".roam/.gitignore")
+    else:
+        skipped.append(".roam/.gitignore")
 
     # 3. Generate .roam/fitness.yaml
     fitness_path = roam_dir / "fitness.yaml"

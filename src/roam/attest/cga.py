@@ -28,12 +28,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Predicate type IRIs are served at https://roam-code.com/spec/... so
-# SLSA / in-toto consumers that dereference the IRI find a real
-# schema page (or at least a 200 from the canonical site, not a DNS
-# 000 from an unowned domain). Earlier statements used the .dev
-# domain which never resolved; verifier accepts both during the
-# transition (see ``_LEGACY_PREDICATE_TYPES`` below).
+# These are in-toto TypeURIs: stable IDENTIFIERS for the predicate shape,
+# not fetchable documents. Per the in-toto v1 field-types spec a TypeURI
+# "SHOULD resolve to a human-readable description, but MAY be
+# unresolvable" — and today ``https://roam-code.com/spec/...`` returns 404.
+# The human-readable description a reviewer actually wants is
+# https://roam-code.com/docs/architecture (200), which documents the CGA
+# and VSA predicate bodies.
+#
+# The strings themselves are frozen: every statement already signed carries
+# them, and ``verify`` matches on exact equality, so changing one silently
+# invalidates historical attestations. Do NOT "fix" a 404 by editing these —
+# either publish the page at the existing IRI or keep pointing readers at
+# the architecture doc. Earlier statements used the .dev domain; the
+# verifier accepts both (see ``_LEGACY_PREDICATE_TYPES`` below).
 PREDICATE_TYPE = "https://roam-code.com/spec/CodeGraph/v1"
 # v12.2: fused CodeGraph + AIBOM predicate. Owns the "structurally bound
 # AI authorship for tamper-evident codebases" lane that SLSA + SPDX +

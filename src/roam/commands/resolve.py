@@ -60,6 +60,58 @@ def index_staleness_hint() -> str | None:
     return status.get("hint")
 
 
+# Roam's own on-disk artifacts. ``roam init`` creates these seconds before the
+# first ``roam health`` runs, so counting them as working-tree drift made a
+# pristine clone report "2 file(s) modified since last index — run `roam index`
+# to refresh" on command 3 of the documented 4-command golden path, naming the
+# two files the previous command had just written.
+#
+# ``.roam/`` is purely derived (SQLite index, caches, generated fitness config)
+# — nothing under it can change a symbol or an edge, so it never counts.
+#
+# The root dotfiles are different: they are user-authored config, and an EDIT
+# to ``.roamignore`` genuinely changes which files are indexed. They are
+# therefore excused only while UNTRACKED (``??``) — i.e. freshly written by
+# ``roam init`` and not yet adopted into the repo. Once the user commits one,
+# a later modification counts as real drift again.
+_ROAM_ARTIFACT_DIR_PREFIX = ".roam/"
+_ROAM_INIT_CONFIG_FILES: frozenset[str] = frozenset(
+    {
+        ".roamignore",
+        ".roamignore-findings",
+        ".roam-fitness.yml",
+        ".roam-fitness.yaml",
+    }
+)
+
+
+def _porcelain_path(line: str) -> str:
+    """Extract the (destination) path from one ``git status --porcelain`` line.
+
+    Format is ``XY <path>`` where ``XY`` is the two-column status code.
+    Renames and copies render as ``R  old -> new``; the destination is what
+    exists on disk, so that is the side we classify. Paths git considers
+    unusual arrive double-quoted.
+    """
+    body = line[3:] if len(line) > 3 else ""
+    if " -> " in body:
+        body = body.split(" -> ", 1)[1]
+    body = body.strip()
+    if len(body) >= 2 and body.startswith('"') and body.endswith('"'):
+        body = body[1:-1]
+    if body.startswith("./"):
+        body = body[2:]
+    return body
+
+
+def _is_roam_own_artifact(line: str) -> bool:
+    """True when a porcelain entry is Roam's own output, not user source."""
+    path = _porcelain_path(line)
+    if path.startswith(_ROAM_ARTIFACT_DIR_PREFIX):
+        return True
+    return line[:2] == "??" and path in _ROAM_INIT_CONFIG_FILES
+
+
 def _git_dirty_count() -> int | None:
     """Return the number of files with working-tree modifications.
 
@@ -68,6 +120,10 @@ def _git_dirty_count() -> int | None:
     git is unavailable. surfaces working-tree drift that the
     HEAD-vs-indexed check misses (you can be at the same commit but have
     edits the index hasn't seen).
+
+    Roam's own artifacts (``.roam/``, ``.roamignore``, …) are excluded —
+    they are outputs of the very command that would "refresh" them, so
+    counting them produced a permanent, self-inflicted staleness NOTE.
     """
     try:
         root = find_project_root()
@@ -97,7 +153,7 @@ def _git_dirty_count() -> int | None:
     if result.returncode != 0:
         return None
     lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    return len(lines)
+    return sum(1 for ln in lines if not _is_roam_own_artifact(ln))
 
 
 def index_status() -> dict | None:

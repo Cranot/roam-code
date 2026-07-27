@@ -2321,7 +2321,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     # numpy+scipy substrate is missing, with a companion availability
                     # flag so a programmatic consumer can tell "couldn't compute"
                     # apart from a legitimate 0.0 disconnected-graph reading. The text
-                    # display already shows "n/a (requires numpy+scipy)" via
+                    # display already shows the n/a + `roam-code[metrics]` hint via
                     # fiedler_failed; this makes the JSON export equally honest. The
                     # MCP output schema already declares this field number|null.
                     "algebraic_connectivity": (None if fiedler_failed else fiedler),
@@ -2487,7 +2487,11 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             f"Health Score: {health_score}/100  |  "
             f"Tangle: {tangle_ratio}% ({len(cycle_symbol_ids)}/{total_symbols} symbols in cycles)"
         )
-        _ac_str = "n/a (requires numpy+scipy)" if fiedler_failed else f"{fiedler:.4f}"
+        # Name the install command, not just the two packages. The old
+        # "requires numpy+scipy" told the user what was missing but not how to
+        # get it — numpy was only reachable via the heavy `semantic` extra and
+        # scipy only via `dev`. The `metrics` extra exists for exactly this.
+        _ac_str = 'n/a (pip install "roam-code[metrics]")' if fiedler_failed else f"{fiedler:.4f}"
         click.echo(f"Propagation Cost: {prop_cost:.1%}  |  Algebraic Connectivity: {_ac_str}")
         if coverage_import.get("coverable_lines", 0) > 0:
             click.echo(

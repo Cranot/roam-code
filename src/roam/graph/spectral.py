@@ -158,10 +158,19 @@ def _compute_algebraic_connectivity(G: nx.Graph) -> float:
     The 0.0 return is overloaded across three cases:
       * ``len(G) < 2`` — domain-legitimate (trivial graph).
       * ``not nx.is_connected(G)`` — domain-legitimate (disconnected).
-      * scipy missing / eigensolver crash — compute-unavailable; emits a
-        ``RuntimeWarning`` so the lineage isn't silent. ``fiedler_partition``
-        treats 0.0 as "stop bisecting" which is the right *behaviour* on
-        compute failure even though the *signal* is now degraded.
+      * eigensolver crash with the numeric stack present — compute-unavailable;
+        emits a ``RuntimeWarning`` so the lineage isn't silent.
+        ``fiedler_partition`` treats 0.0 as "stop bisecting" which is the right
+        *behaviour* on compute failure even though the *signal* is now degraded.
+      * numpy / scipy simply not installed — the documented, CI-tested optional
+        state (see the ``Fallback contracts (minimal dependencies)`` lane). That
+        is a configuration fact, not an anomaly, so it goes to the quiet
+        observability channel instead of stderr. It used to print a raw
+        ``RuntimeWarning`` with a ``site-packages`` path in the middle of
+        ``roam init`` — command 2 of the documented 4-command golden path —
+        which reads as a crash. ``roam health`` still reports the metric as
+        ``n/a`` with the extra to install, so the degradation stays visible
+        exactly once, where it means something.
     """
     if len(G) < 2:
         return 0.0
@@ -169,6 +178,13 @@ def _compute_algebraic_connectivity(G: nx.Graph) -> float:
         return 0.0
     try:
         return float(nx.linalg.algebraicconnectivity.algebraic_connectivity(G))
+    except ImportError as exc:
+        # ModuleNotFoundError subclasses ImportError, so this covers both the
+        # missing-numpy and missing-scipy forms networkx raises.
+        from roam.observability import log_swallowed
+
+        log_swallowed("spectral:_compute_algebraic_connectivity:numeric_stack_absent", exc)
+        return 0.0
     except Exception as exc:
         warnings.warn(
             f"_compute_algebraic_connectivity failed ({type(exc).__name__}): {exc}; "

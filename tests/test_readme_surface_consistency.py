@@ -42,6 +42,17 @@ def _readme_text() -> str:
     return (ROOT / "README.md").read_text(encoding="utf-8")
 
 
+def _mcp_tools_doc_text() -> str:
+    """The full MCP tool table's home since it moved out of the README.
+
+    At 244 rows the table was ~26% of the README and sat between the pitch
+    and the pricing section. It now lives in ``docs/mcp-tools.md``; the
+    README keeps the default ``core`` preset inline plus a link. The
+    membership + count gates below follow it there rather than being dropped.
+    """
+    return (ROOT / "docs" / "mcp-tools.md").read_text(encoding="utf-8")
+
+
 def _readme_cli_commands(text: str) -> set[str]:
     rows = re.findall(r"\|\s*`roam\s+([^`]+)`\s*\|", text)
     cmds: set[str] = set()
@@ -93,22 +104,42 @@ def test_readme_covers_all_canonical_cli_commands():
 
 
 def test_readme_mcp_tool_list_matches_source():
-    text = _readme_text()
-    readme_tools = _readme_mcp_tools(text)
+    text = _mcp_tools_doc_text()
+    doc_tools = _readme_mcp_tools(text)
     source_tools = set(mcp_tool_names())
-    missing = sorted(source_tools - readme_tools)
-    extra = sorted(readme_tools - source_tools)
-    assert not missing, f"README missing MCP tools: {missing}"
-    assert not extra, f"README has unknown MCP tools: {extra}"
-    # The collapsed-section header must quote the same integer as the
-    # tool list itself. Pre-v12 this drifted (header said "all 101" while
-    # there were 102 entries). Extract the literal and compare.
+    missing = sorted(source_tools - doc_tools)
+    extra = sorted(doc_tools - source_tools)
+    assert not missing, f"docs/mcp-tools.md missing MCP tools: {missing}"
+    assert not extra, f"docs/mcp-tools.md has unknown MCP tools: {extra}"
+    # The section header must quote the same integer as the tool list
+    # itself. Pre-v12 this drifted (header said "all 101" while there were
+    # 102 entries). Extract the literal and compare. Header and table live
+    # in the same file so they cannot be split across a move again.
     match = re.search(r"MCP tool list \(all (\d+)\)", text)
-    assert match, "README must contain a 'MCP tool list (all N)' header"
+    assert match, "docs/mcp-tools.md must contain a 'MCP tool list (all N)' header"
     quoted = int(match.group(1))
-    assert quoted == len(source_tools) == len(readme_tools), (
-        f"README header says 'all {quoted}', source has {len(source_tools)}, "
-        f"README table has {len(readme_tools)} — these must agree"
+    assert quoted == len(source_tools) == len(doc_tools), (
+        f"docs/mcp-tools.md header says 'all {quoted}', source has {len(source_tools)}, "
+        f"table has {len(doc_tools)} — these must agree"
+    )
+
+
+def test_readme_links_to_the_full_mcp_tool_table():
+    """The README must not silently lose the pointer to the moved table.
+
+    Deleting the link would leave a reader with only the 17-tool `core`
+    preset and no way to discover the other 227 — the exact regression a
+    "trim the README" edit invites.
+    """
+    text = _readme_text()
+    assert "docs/mcp-tools.md" in text, (
+        "README must link to docs/mcp-tools.md — that is where the full MCP tool table lives."
+    )
+    match = re.search(r"full (\d+)-tool table", text)
+    assert match, "README must state the full tool count alongside the docs/mcp-tools.md link"
+    assert int(match.group(1)) == len(mcp_tool_names()), (
+        f"README says '{match.group(1)}-tool table', source has {len(mcp_tool_names())}. "
+        f"Regenerate via `python dev/build_readme_counts.py --apply`."
     )
 
 

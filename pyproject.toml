@@ -68,6 +68,20 @@ mcp = [
     # WebSocket Host/Origin validation required at Roam's MCP boundary.
     "mcp>=1.28.1",
 ]
+metrics = [
+    # The numeric stack behind the spectral metrics: `Algebraic Connectivity`
+    # in `roam health`, `roam spectral`, and the exact (alpha-honouring)
+    # Personalized PageRank used for blast radius. Without it those degrade to
+    # documented sentinels/fallbacks rather than failing — the `Fallback
+    # contracts (minimal dependencies)` CI lane asserts scipy is ABSENT from a
+    # base install, so these stay optional on purpose. Before this extra
+    # existed, `roam health` told users the metric "requires numpy+scipy" with
+    # no install command that would deliver them: numpy was reachable only via
+    # the heavy `semantic` extra (which also drags onnxruntime + tokenizers)
+    # and scipy only via `dev`. This is the small, honest upgrade path.
+    "numpy>=1.24",
+    "scipy>=1.11",
+]
 semantic = [
     "numpy>=1.24",
     "onnxruntime>=1.16",
