@@ -1071,11 +1071,15 @@ def _text_scan_rule_anchors(
         if not (src_hits or sink_hits or san_hits):
             continue
 
-        src_anchors = [a for a in (_hit_to_anchor(h, _innermost_enclosing(candidates, h[1]), path) for h in src_hits) if a]
+        src_anchors = [
+            a for a in (_hit_to_anchor(h, _innermost_enclosing(candidates, h[1]), path) for h in src_hits) if a
+        ]
         sink_anchors = [
             a for a in (_hit_to_anchor(h, _innermost_enclosing(candidates, h[1]), path) for h in sink_hits) if a
         ]
-        san_anchors = [a for a in (_hit_to_anchor(h, _innermost_enclosing(candidates, h[1]), path) for h in san_hits) if a]
+        san_anchors = [
+            a for a in (_hit_to_anchor(h, _innermost_enclosing(candidates, h[1]), path) for h in san_hits) if a
+        ]
 
         out_sources.extend(src_anchors)
         out_sinks.extend(sink_anchors)
