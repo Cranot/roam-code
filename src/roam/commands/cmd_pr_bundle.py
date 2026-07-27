@@ -2317,8 +2317,18 @@ def pr_bundle_init(ctx, intent):
     _atomic_write_bundle(path, bundle)
     env = _build_envelope(bundle, command_label="pr-bundle-init")
     env["summary"]["state"] = "initialized"
-    # init never reports incomplete -- it just opened a bundle.
-    env["summary"]["partial_success"] = False
+    # init never reports incomplete on its OWN account -- it just opened a
+    # bundle. But do NOT clobber a True the JSON-budget truncator
+    # (`_annotate_truncation`, see roam.output.formatter) may have already
+    # stamped on THIS SAME envelope: `_build_envelope` -> `json_envelope`
+    # applies the default `ROAM_DEFAULT_JSON_BUDGET` cap unconditionally,
+    # so an init envelope large enough to exceed it (a bundle re-init over
+    # an already-populated bundle, for instance) would be truncated and
+    # `partial_success` correctly raised -- and this line used to
+    # unconditionally reset it to False right after, silently re-clobbering
+    # a legitimate disclosure (Task #57). OR-combine, never overwrite.
+    if not env["summary"].get("partial_success"):
+        env["summary"]["partial_success"] = False
     env["summary"]["verdict"] = f"pr-bundle initialised at {path.name} (intent={intent or '(unset)'})"
     env["summary"]["missing_proofs"] = []
     env["bundle_path"] = str(path)

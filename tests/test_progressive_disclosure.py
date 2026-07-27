@@ -101,6 +101,90 @@ class TestStripListPayloads:
 
 
 # ---------------------------------------------------------------------------
+# Task #57: summary.truncation_reason disambiguates the two independent
+# truncation mechanisms. ``truncated: true`` alone used to mean either "the
+# JSON token budget forced a drop" (involuntary, budget_truncate_json) or
+# "this --detail-aware command elided its lists by default" (intentional,
+# strip_list_payloads) with no way to tell which without inference. Both
+# now stamp a distinguishing summary.truncation_reason.
+# ---------------------------------------------------------------------------
+
+
+class TestTruncationReasonDisclosure:
+    def test_budget_path_sets_reason_budget(self):
+        """budget_truncate_json (INVOLUNTARY) stamps truncation_reason='budget'."""
+        from roam.output.formatter import budget_truncate_json
+
+        data = {
+            "command": "cycles",
+            "summary": {"verdict": "ok", "cycle_count": 5},
+            "cycles": [{"id": i, "path": "x" * 100} for i in range(200)],
+        }
+        result = budget_truncate_json(data, 100)
+        assert result["summary"]["truncated"] is True
+        assert result["summary"]["truncation_reason"] == "budget"
+        # W1327 invariant preserved unchanged: budget truncation is
+        # incomplete relative to the request, so partial_success is True.
+        assert result["summary"]["partial_success"] is True
+
+    def test_detail_mode_path_sets_reason_detail_mode(self):
+        """strip_list_payloads (INTENTIONAL) stamps truncation_reason='detail_mode'."""
+        data = _make_envelope(items=[1, 2, 3])
+        result = strip_list_payloads(data)
+        assert result["summary"]["truncated"] is True
+        assert result["summary"]["truncation_reason"] == "detail_mode"
+        # The per-command partial_success discipline (7 commands, their own
+        # tests) is NOT touched by this helper — must stay untouched here.
+        assert result["summary"].get("partial_success") is not True
+
+    def test_no_truncation_sets_no_reason(self):
+        """A clean, untruncated envelope carries no truncation_reason at all."""
+        from roam.output.formatter import budget_truncate_json
+
+        data = _make_envelope(items=[])
+        budget_result = budget_truncate_json(data, 0)
+        assert "truncation_reason" not in budget_result.get("summary", {})
+
+        detail_result = strip_list_payloads(_make_envelope(items=[]))
+        assert "truncation_reason" not in detail_result.get("summary", {})
+
+    def test_both_paths_are_distinguishable_by_reason_alone(self):
+        """The defect under test: two mechanisms both set truncated=True,
+        so a consumer branching only on `truncated` cannot tell them apart.
+        `truncation_reason` must resolve the ambiguity without requiring
+        the consumer to infer meaning from `partial_success` or from which
+        command was called."""
+        from roam.output.formatter import budget_truncate_json
+
+        budget_data = {
+            "command": "cycles",
+            "summary": {"verdict": "ok"},
+            "cycles": [{"id": i, "path": "x" * 100} for i in range(200)],
+        }
+        budget_result = budget_truncate_json(budget_data, 100)
+
+        detail_result = strip_list_payloads(_make_envelope(items=[1, 2, 3]))
+
+        # Both fire the shared `truncated` flag ...
+        assert budget_result["summary"]["truncated"] is True
+        assert detail_result["summary"]["truncated"] is True
+        # ... but the reason is never ambiguous between them.
+        assert budget_result["summary"]["truncation_reason"] == "budget"
+        assert detail_result["summary"]["truncation_reason"] == "detail_mode"
+        assert (
+            budget_result["summary"]["truncation_reason"] != detail_result["summary"]["truncation_reason"]
+        )
+        # And the reason alone recovers what partial_success cannot: both
+        # commands could plausibly report partial_success=False (a
+        # --detail-elided command always does), yet one lost data it was
+        # asked for and the other did not.
+        assert {budget_result["summary"]["truncation_reason"], detail_result["summary"]["truncation_reason"]} == {
+            "budget",
+            "detail_mode",
+        }
+
+
+# ---------------------------------------------------------------------------
 # Fixtures & helpers for CLI runner tests
 # ---------------------------------------------------------------------------
 
