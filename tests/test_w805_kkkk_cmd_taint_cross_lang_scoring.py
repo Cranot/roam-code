@@ -97,7 +97,6 @@ import json
 import os
 import subprocess
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
