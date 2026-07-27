@@ -24,10 +24,29 @@ def ensure_vuln_table(conn: sqlite3.Connection) -> None:
 
     Delegates to the canonical schema in roam.db.schema so there is a single
     source of truth for the table definition.
+
+    Also creates the M4 idempotency UNIQUE index (normally applied via the
+    ``roam.db.connection`` migration ledger, seq 61/62). Callers that open
+    a standalone connection (tests, external tools) bypass that ledger
+    entirely, so ``_insert_vuln``'s ``ON CONFLICT (...)`` upsert target
+    would otherwise raise ``OperationalError: ON CONFLICT clause does not
+    match any PRIMARY KEY or UNIQUE constraint``. Mirrors the migration's
+    dedup-then-index order for a standalone connection that already has
+    duplicate rows.
     """
     from roam.db.schema import SCHEMA_SQL
 
     conn.executescript(SCHEMA_SQL)
+    conn.execute(
+        "DELETE FROM vulnerabilities WHERE id NOT IN ("
+        "  SELECT MAX(id) FROM vulnerabilities "
+        "  GROUP BY cve_id, package_name, source"
+        ")"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vuln_dedup "
+        "ON vulnerabilities(COALESCE(cve_id, ''), package_name, source)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -203,10 +222,37 @@ def _insert_vuln(
     else:
         matched_file = None
 
+    # M4 (DOGFOOD-DEFECTS-2026-07-15): dedup on (cve_id, package_name,
+    # source) via the seq-62 UNIQUE index (roam.db.connection). Re-
+    # importing the SAME report used to double the row count on every
+    # run (unbounded on repeat, silently breaking any count-based CI
+    # gate) -- this UPSERT makes ingestion idempotent instead.
+    #
+    # Key choice: `source` stays IN the key deliberately. Dropping it
+    # would collapse independent findings from two different scanners
+    # (e.g. npm-audit AND osv both reporting the same CVE+package) into
+    # one row, silently discarding the fact that two scanners agree --
+    # a narrower key trades a real bug for a worse, quieter one. The
+    # table has no version/manifest-path column, so (cve_id,
+    # package_name, source) is already the finest identity it can
+    # express; a NULL cve_id (npm-audit/generic reports lacking a
+    # resolved identifier) is handled NULL-safely by the COALESCE(...,
+    # '') index key -- see connection.py's seq-61/62 migrations.
+    #
+    # `reachable` / `shortest_path` / `hop_count` are deliberately
+    # OMITTED from the UPDATE SET: they're populated by a separate
+    # reachability pass (vuln-reach / _compute_reachability_in_memory),
+    # not by this insert, and a re-import must not wipe out reachability
+    # analysis a prior pass already computed.
     conn.execute(
         "INSERT INTO vulnerabilities "
         "(cve_id, package_name, severity, title, source, matched_symbol_id, matched_file) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (COALESCE(cve_id, ''), package_name, source) DO UPDATE SET "
+        "severity = excluded.severity, "
+        "title = excluded.title, "
+        "matched_symbol_id = excluded.matched_symbol_id, "
+        "matched_file = excluded.matched_file",
         (cve_id, package_name, severity, title, source, matched_id, matched_file),
     )
 

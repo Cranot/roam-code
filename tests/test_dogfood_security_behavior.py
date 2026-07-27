@@ -306,24 +306,32 @@ def test_vuln_reach_reports_import_reachable(vuln_repo):
     assert env["summary"]["import_reachable_count"] == 2, env["summary"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CONFIRMED DEFECT (vulns --reachable-only): after importing 4 vulns, "
-    "`vulns --reachable-only` prints 'no vulnerability scan available "
-    "(vulnerabilities table is empty; run roam vulns --import-file ...)'. The table "
-    "is NOT empty. src/roam/commands/cmd_vulns.py: _query_vulns filters to "
-    "reachable==1 (line ~1024); every third-party CVE has matched_symbol_id=None "
-    "(import-site matches never seed a symbol id), so the post-filter list is empty "
-    "and _build_verdict_str treats total==0 as 'table empty', hiding the 4 "
-    "import-reachable vulns and telling the user to re-import. Should report "
-    "'4 vulnerabilities, 0 reachable' instead.",
-)
 def test_vulns_reachable_only_does_not_claim_empty(vuln_repo):
+    """FIXED (M2, DOGFOOD-DEFECTS-2026-07-15): after importing 4 vulns,
+    `vulns --reachable-only` used to print 'no vulnerability scan available
+    (vulnerabilities table is empty; ...)' even though the table held 4
+    rows -- every third-party CVE has matched_symbol_id=None (import-site
+    matches never seed a symbol id), so the reachable==1 post-filter list
+    was empty and the verdict treated total==0 as 'table empty', hiding
+    the 4 import-reachable vulns and telling the user to re-import data
+    that was already there. Fixed by carrying the pre-filter row count
+    (cmd_vulns._count_all_vulns) through the verdict/summary so 'no data'
+    and 'N rows, 0 reachable' are distinguishable in both text and JSON.
+    """
     proc = _run_roam(vuln_repo, "vulns", "--reachable-only")
     assert proc.returncode == 0, proc.stderr[-500:]
     low = proc.stdout.lower()
     assert "table is empty" not in low, proc.stdout
     assert "no vulnerability scan" not in low, proc.stdout
+    # The verdict must positively disclose that real data exists.
+    assert "4 vulnerabilities" in low, proc.stdout
+    assert "0 reachable" in low, proc.stdout
+
+    env = _run_json(vuln_repo, "vulns", "--reachable-only")
+    assert env["summary"]["state"] == "scanned", env["summary"]
+    assert env["summary"]["partial_success"] is False, env["summary"]
+    assert env["summary"]["total"] == 0, env["summary"]
+    assert env["summary"]["pre_filter_total"] == 4, env["summary"]
 
 
 # ===========================================================================
@@ -331,35 +339,46 @@ def test_vulns_reachable_only_does_not_claim_empty(vuln_repo):
 # ===========================================================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CONFIRMED DEFECT (vuln ingestion not idempotent): importing the SAME "
-    "report twice duplicates every row (4 -> 8 -> 12 ...). src/roam/security/"
-    "vuln_store.py _insert_vuln does a bare INSERT with no dedup on "
-    "(cve_id, package_name, source). The user-facing count inflates unbounded "
-    "('8 vulnerabilities' for the same 4), so any count-based CI gate misfires.",
-)
 def test_vuln_import_is_idempotent(tmp_path_factory):
+    """FIXED (M4, DOGFOOD-DEFECTS-2026-07-15): importing the SAME report
+    twice used to duplicate every row (4 -> 8 -> 12 ...) because
+    vuln_store._insert_vuln was a bare INSERT with no dedup on (cve_id,
+    package_name, source) -- an unbounded inflation on repeat that
+    silently broke any count-based CI gate. Fixed via an UPSERT keyed on
+    a NULL-safe (COALESCE(cve_id, ''), package_name, source) UNIQUE
+    index (roam.db.connection migrations seq 61/62 + vuln_store.
+    ensure_vuln_table for standalone connections): a re-import updates
+    the existing row's severity/title/match evidence instead of
+    inserting a duplicate.
+    """
     repo = _build_repo(tmp_path_factory, "dogfood_dup")
     _run_roam(repo, "vulns", "--import-file", "seeds/generic_vulns.json")
     _run_roam(repo, "vulns", "--import-file", "seeds/generic_vulns.json")
     env = _run_json(repo, "vulns")
     assert env["summary"]["total"] == 4, f"re-import duplicated rows: {env['summary']}"
+    # A third import (different call path timing) must still be stable.
+    _run_roam(repo, "vulns", "--import-file", "seeds/generic_vulns.json")
+    env3 = _run_json(repo, "vulns")
+    assert env3["summary"]["total"] == 4, f"third import drifted: {env3['summary']}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="CONFIRMED DEFECT (vuln-map): `vuln-map --generic` reports imported "
-    "packages as '-> no match (not imported)'. Deeper than the missing "
-    "project_root: verified 2026-07-15 that find_project_root() resolves and "
-    "scan_import_reachability() DOES find the sites (526 for 'click'), yet vuln-map "
-    "still reports 0 matched. Root cause: third-party packages have no indexed "
-    "SYMBOL, so match_vuln_to_symbols leaves matched_symbol_id=None, and vuln-map "
-    "counts only symbol-matches. Fix: count import-site reachability as a match "
-    "(matched_file / import-reachable), mirroring vulns/sbom/vuln-reach which "
-    "detect the same imports correctly.",
-)
 def test_vuln_map_matches_imported_packages(tmp_path_factory):
+    """FIXED (M1, DOGFOOD-DEFECTS-2026-07-15): `vuln-map --generic` used
+    to report every imported package as '-> no match (not imported)'.
+    Two stacked bugs: (1) cmd_vuln_map.vuln_map_cmd called the
+    ingest_* helpers without project_root, so match_vuln_to_symbols
+    never scanned concrete import specifiers at all; (2) even with
+    project_root wired through, third-party packages have no indexed
+    SYMBOL, so matched_symbol_id stays None by design (a bare name
+    coincidence must not seed graph reachability) and the old `matched`
+    counter only counted matched_symbol_id. Fixed by passing
+    project_root=find_project_root() to every ingest_* call AND
+    counting matched_file (import-site evidence) as a match too,
+    mirroring vulns/sbom/vuln-reach.
+    """
     repo = _build_repo(tmp_path_factory, "dogfood_map")
     env = _run_json(repo, "vuln-map", "--generic", "seeds/generic_vulns.json")
     assert env["summary"]["matched"] >= 2, env["summary"]
+    by_pkg = {v["package_name"]: v for v in env["vulnerabilities"]}
+    assert by_pkg["requests"]["matched_file"] == "app/web.py", by_pkg["requests"]
+    assert by_pkg["PyYAML"]["matched_file"] == "app/web.py", by_pkg["PyYAML"]

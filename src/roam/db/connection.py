@@ -448,6 +448,35 @@ def _exec(sql: str):
     return lambda c: c.execute(sql)
 
 
+def _dedup_vulnerabilities(conn: sqlite3.Connection) -> None:
+    """Collapse pre-existing duplicate vulnerability rows (M4 fix).
+
+    Before this migration, ``vuln_store._insert_vuln`` did a bare INSERT
+    with no dedup, so any DB where a scanner report was imported more
+    than once -- or ingested via both ``vuln-map`` and ``vulns
+    --import-file`` -- carries exact-duplicate ``(cve_id, package_name,
+    source)`` rows (a re-import doubled the count; unbounded on repeat).
+    The seq-62 UNIQUE index below enforces the fix going forward, but
+    ``CREATE UNIQUE INDEX`` fails outright if duplicates already exist
+    on disk, so this migration MUST run first and collapse them.
+
+    ``GROUP BY cve_id, package_name, source`` groups NULL ``cve_id``
+    values together (standard SQL GROUP BY semantics), matching the
+    NULL-safe ``COALESCE(cve_id, '')`` key the next migration indexes
+    on -- a plain UNIQUE index would treat every NULL as distinct and
+    silently fail to dedup CVE-less findings (npm-audit / generic
+    reports without a resolved identifier). The highest-id (most
+    recently ingested) row per group survives: it reflects the freshest
+    symbol/import match evidence.
+    """
+    conn.execute(
+        "DELETE FROM vulnerabilities WHERE id NOT IN ("
+        "  SELECT MAX(id) FROM vulnerabilities "
+        "  GROUP BY cve_id, package_name, source"
+        ")"
+    )
+
+
 _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     # symbols extras
     (1, "symbols.default_value", _alter("symbols", "default_value", "TEXT")),
@@ -606,6 +635,19 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     # snapshot rows leave this NULL; `forecast_spectral_decay` skips NULLs
     # when assembling the series, so a partial-history series is honest.
     (60, "snapshots.spectral_gap", _alter("snapshots", "spectral_gap", "REAL")),
+    # M4 (DOGFOOD-DEFECTS-2026-07-15) -- vuln ingestion idempotency.
+    # Must run in this order: dedup existing duplicate rows BEFORE the
+    # UNIQUE index is created, or the CREATE UNIQUE INDEX step raises
+    # IntegrityError on any DB that already accumulated duplicates.
+    (61, "dedup vulnerabilities pre-existing duplicates", lambda c: _dedup_vulnerabilities(c)),
+    (
+        62,
+        "idx_vuln_dedup unique index",
+        _exec(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_vuln_dedup "
+            "ON vulnerabilities(COALESCE(cve_id, ''), package_name, source)"
+        ),
+    ),
 ]
 
 
