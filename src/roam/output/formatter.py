@@ -477,6 +477,48 @@ def _count_omitted(data: dict, result: dict, preserved: set) -> int:
     return total
 
 
+# -- Truncation-reason disclosure (Task #57) ---------------------------
+#
+# ``summary.truncated: true`` is set by two INDEPENDENT mechanisms in this
+# module and they mean different things to a consumer deciding whether to
+# retry, and how:
+#
+#   * ``budget_truncate_json`` / ``_annotate_truncation`` (below): the JSON
+#     token budget forced a payload drop. INVOLUNTARY -- the result is
+#     incomplete relative to what was requested, so ``partial_success`` is
+#     ``True``. Reached by every ``json_envelope()`` caller (~150+
+#     commands), either via an explicit ``--budget`` or the default
+#     ``ROAM_DEFAULT_JSON_BUDGET`` cap.
+#   * ``strip_list_payloads`` / ``_annotate_summary_disclosure`` (below):
+#     a ``--detail``-aware command elided its list payloads because
+#     ``--detail`` was not requested. INTENTIONAL -- the result is exactly
+#     what was asked for, so ``partial_success`` stays whatever that
+#     command's own (tested, per-command) discipline says -- typically
+#     ``False``. Used by exactly seven commands: ``clusters``, ``dead``,
+#     ``deps``, ``health``, ``hotspots``, ``layers``, ``smells``.
+#
+# Before this field, both mechanisms stamped the SAME ``truncated: true``
+# with no way to tell them apart short of inferring it from
+# ``partial_success`` (itself ambiguous -- a ``False`` could mean "nothing
+# was dropped" OR "something was intentionally elided") or from which
+# command was called. ``summary.truncation_reason`` names the cause
+# directly. Three states are legible from the pair
+# ``(truncated, truncation_reason)`` without inference:
+#
+#   truncated absent/False, reason absent   -- complete: nothing elided
+#   truncated True,  reason "detail_mode"   -- intentionally elided;
+#                                              re-request with ``--detail``
+#   truncated True,  reason "budget"        -- involuntarily truncated;
+#                                              re-request with a larger
+#                                              ``--budget`` (or drop it)
+#
+# Closed enum, mirrors the ``_RESOLUTION_KINDS`` idiom above: any code path
+# that sets ``summary["truncated"] = True`` MUST also set
+# ``summary["truncation_reason"]`` to one of these values --
+# ``truncated: true`` must never appear without a reason.
+_TRUNCATION_REASONS: frozenset[str] = frozenset({"budget", "detail_mode"})
+
+
 def _annotate_truncation(
     result: dict, budget: int, full_json: str, total_omitted: int, importance_sorted: bool
 ) -> None:
@@ -499,11 +541,17 @@ def _annotate_truncation(
     discipline (W1250, see ``resolution_disclosure``) applies here too,
     but since this path only ever needs to RAISE the flag, a plain
     assignment is equivalent to OR-combining with an existing True/False.
+
+    Task #57: also stamps ``truncation_reason="budget"`` (see
+    :data:`_TRUNCATION_REASONS`) so a consumer can tell this INVOLUNTARY
+    drop apart from the sibling ``strip_list_payloads`` INTENTIONAL
+    ``--detail`` elision without inferring it from ``partial_success``.
     """
     if "summary" not in result or not isinstance(result["summary"], dict):
         return
     s = result["summary"]
     s["truncated"] = True
+    s["truncation_reason"] = "budget"
     s["partial_success"] = True
     s["budget_tokens"] = budget
     s["full_output_tokens"] = estimate_tokens(full_json)
@@ -1758,6 +1806,14 @@ def _annotate_summary_disclosure(
     * ``summary.detail_available`` always true;
     * ``summary.truncated`` true iff any non-empty list was dropped OR
       any preserved list was capped;
+    * ``summary.truncation_reason`` set to ``"detail_mode"`` (see
+      :data:`_TRUNCATION_REASONS`) whenever ``truncated`` is set — Task
+      #57: this is the INTENTIONAL ``--detail``-elision path, distinct
+      from the INVOLUNTARY ``"budget"`` reason ``_annotate_truncation``
+      stamps on the sibling JSON-budget path. Deliberately does NOT
+      touch ``partial_success`` here — the whole point of this field is
+      that the two truncation causes stay distinguishable WITHOUT
+      folding one into the other's success signal;
     * ``summary.preserved_list_truncations`` always present (W1102
       symmetry) — empty dict when nothing was capped;
     * ``summary.partial_success`` overridden to true when schema
@@ -1778,6 +1834,7 @@ def _annotate_summary_disclosure(
         summary["detail_available"] = True
         if has_non_empty_lists or has_preserved_truncations:
             summary["truncated"] = True
+            summary["truncation_reason"] = "detail_mode"
         # W1102: emit preserved_list_truncations always for symmetry with
         # W1101 list_counts + W1006 redactions[]. Empty dict tells the
         # consumer "strip_list_payloads ran and no preserved field was
@@ -1824,7 +1881,11 @@ def strip_list_payloads(data: dict, keep_summary: bool = True) -> dict:
     list.  Full payloads return when ``--detail`` is set; in default mode the
     dropped fields are summarized via the ``detail_available`` flag on the
     summary dict.  When non-empty lists were stripped, also sets
-    ``truncated: true`` in the summary.
+    ``truncated: true`` and ``truncation_reason: "detail_mode"`` in the
+    summary (Task #57) — the latter distinguishes this INTENTIONAL elision
+    from the sibling INVOLUNTARY ``budget_truncate_json`` truncation, which
+    stamps ``truncation_reason: "budget"`` instead. See
+    :data:`_TRUNCATION_REASONS` for the full three-state contract.
 
     NOTE: this helper is only appropriate for commands whose primary signal is
     in scalar/dict summary fields.  Commands whose headline payload IS a list
