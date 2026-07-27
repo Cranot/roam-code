@@ -439,6 +439,7 @@ def test_loop_constitution_apply_gates(tmp_path, cli_runner, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.needs_dogfood
 def test_loop_dogfood_corpus_shrink(cli_runner):
     """Re-run ``roam dogfood-aggregate`` against the live corpus.
 
