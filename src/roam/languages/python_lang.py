@@ -560,6 +560,35 @@ class PythonExtractor(LanguageExtractor):
                 # `except ValueError as e:` → type_ref to ValueError
                 self._extract_except_refs(child, source, refs, scope_name)
                 self._walk_refs(child, source, file_path, refs, scope_name)
+            elif (
+                child.type == "identifier"
+                and node.type in ("argument_list", "list", "tuple", "set")
+                and not self._is_class_base_list(node)
+            ):
+                # Higher-order-dispatch blind spot: a bare identifier handed
+                # to a call as a positional argument (`safe("disk", probe)`)
+                # or sitting inside a list/tuple/set literal
+                # (`[probe_disk, probe_cpu]`) is a real reference — the
+                # function is being registered for later invocation through
+                # a runtime lookup the static walker can't follow otherwise.
+                # Without this, every callback in a dispatch table looks
+                # dead to `roam dead`. Mirrors the JS extractor's
+                # `_emit_argument_identifier_ref` (Bug 2) plus the
+                # container-literal case Python's registry idiom needs.
+                # Class base lists (`class Foo(Base):`) are excluded — an
+                # `argument_list` there already gets an `inherits` edge from
+                # `_pending_inherits`; adding a `reference` edge too would
+                # just double the row for no precision gain.
+                self._emit_bare_identifier_ref(child, source, refs, scope_name)
+            elif child.type == "keyword_argument":
+                # `safe(name="disk", fn=probe_disk)` — same higher-order
+                # reference as a positional argument, just named.
+                self._extract_keyword_argument_ref(child, source, refs, scope_name)
+            elif child.type == "pair" and node.type == "dictionary":
+                # `{"disk": probe_disk}` — a dict-literal registry entry.
+                # The concrete defect this closes: `handlers = {"a":
+                # probe_disk}` left every `probe_*` handler unreferenced.
+                self._extract_pair_value_ref(child, source, refs, scope_name)
             else:
                 # Recurse, updating scope for classes/functions
                 new_scope = scope_name
@@ -907,3 +936,63 @@ class PythonExtractor(LanguageExtractor):
         args = node.child_by_field_name("arguments")
         if args:
             self._walk_refs(args, source, "", refs, scope_name)
+
+    @staticmethod
+    def _is_class_base_list(node) -> bool:
+        """True when ``node`` is the ``argument_list`` of a class's base-class
+        list (``class Foo(Base):``) rather than a call's arguments. Tree-
+        sitter-python reuses the ``argument_list`` node type for both."""
+        parent = node.parent
+        return node.type == "argument_list" and parent is not None and parent.type == "class_definition"
+
+    def _emit_bare_identifier_ref(self, node, source, refs, scope_name) -> None:
+        """Record a bare identifier used in VALUE position as a reference.
+
+        Covers the higher-order-dispatch blind spot: a function/class name
+        that is handed to something else by name — as a call argument
+        (``safe("disk", probe_disk)``) or as an element of a list/tuple/set
+        literal (``[probe_disk, probe_cpu]``) — rather than called or
+        assigned directly. Builtin type names (``list``, ``dict``, ...) are
+        skipped since they never resolve to an indexed symbol and would
+        only add noise.
+        """
+        name = self.node_text(node, source)
+        if not name or name in _BUILTIN_TYPES:
+            return
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="reference",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
+
+    def _extract_keyword_argument_ref(self, node, source, refs, scope_name):
+        """``fn=probe_disk`` in a call: the VALUE is a higher-order
+        reference (see ``_emit_bare_identifier_ref``); the parameter NAME
+        (``fn``) is a label, not a symbol lookup, and is skipped. Nested
+        expressions on the value side (calls, containers) still need the
+        normal walk, so a non-identifier value falls through to it.
+        """
+        value = node.child_by_field_name("value")
+        if value is None:
+            return
+        if value.type == "identifier":
+            self._emit_bare_identifier_ref(value, source, refs, scope_name)
+        else:
+            self._walk_refs(node, source, "", refs, scope_name)
+
+    def _extract_pair_value_ref(self, node, source, refs, scope_name):
+        """``"disk": probe_disk`` in a dict literal — the VALUE is a
+        dispatch-table registration (see ``_emit_bare_identifier_ref``).
+        Nested values (nested dict/list/call) fall through to the normal
+        walk so they still resolve through their own specific handling.
+        """
+        value = node.child_by_field_name("value")
+        if value is None:
+            return
+        if value.type == "identifier":
+            self._emit_bare_identifier_ref(value, source, refs, scope_name)
+        else:
+            self._walk_refs(node, source, "", refs, scope_name)
