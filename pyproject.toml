@@ -103,7 +103,7 @@ typecheck = [
     # `dev` dependency because the test suite does not require it; treat it as
     # an opt-in tool for type-stamping work. Pin to a recent stable; tightening
     # the lower bound is fine when annotations need a newer mypy feature.
-    "mypy>=1.10",
+    "mypy>=2.3.0",
 ]
 dev = [
     "pytest>=7.0",
