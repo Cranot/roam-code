@@ -172,9 +172,7 @@ def test_compile_stats_split_unknown_cohort_does_not_blend(tmp_path):
     ]
     _write_telemetry(tmp_path, rows)
     runner = CliRunner()
-    result = runner.invoke(
-        compile_stats, ["--root", str(tmp_path), "--split-unknown-cohort"], obj={"json": True}
-    )
+    result = runner.invoke(compile_stats, ["--root", str(tmp_path), "--split-unknown-cohort"], obj={"json": True})
     assert result.exit_code == 0, result.output
     env = json.loads(result.output)
     split = env["summary"]["unknown_cohort_split"]
