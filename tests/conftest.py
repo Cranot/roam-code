@@ -146,35 +146,29 @@ def index_in_process(project_path, *extra_args):
 
 
 # ===========================================================================
-# Collection hook: skip dogfood-corpus-dependent tests when internal/dogfood
+# Collection hook: skip tests marked ``needs_dogfood`` when internal/dogfood
 # is absent (gitignored private corpus per CLAUDE.md — not on CI / public clones)
 # ===========================================================================
-
-
-def _references_dogfood(src, cache: dict) -> bool:
-    """Return True if *src* contains an internal/dogfood reference (cached)."""
-    import pathlib
-
-    path = pathlib.Path(src)
-    if path not in cache:
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-            cache[path] = ("internal/dogfood" in text) or ("internal\\dogfood" in text)
-        except OSError:
-            cache[path] = False
-    return cache[path]
+#
+# W-audit (2026-07-27): the prior version of this hook skipped a test if its
+# *source file's text* contained the substring "internal/dogfood" anywhere —
+# docstring, comment, or a mocked argument value. That was whole-file and
+# substring-based, so ONE test merely passing the string
+# "internal/dogfood/evals/" to a mocked function (no real filesystem access)
+# took its entire module down with it. Measured effect: 161 collected tests
+# across 9 files were skipped on any CI run / public clone, of which only 7
+# had a genuine dependency on the corpus. The other 154 — including a
+# leak-gate correctness test and a shipped-bug regression guard — never ran
+# on the only environment where a stranger's change gets checked.
+#
+# Fixed to be per-test and marker-based: a test opts in with
+# ``@pytest.mark.needs_dogfood`` because it actually reads the corpus.
+# tests/test_dogfood_skip_marker_gate.py guards against reintroducing a
+# source-text/substring rule here.
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip tests whose source file references ``internal/dogfood`` when
-    that directory is absent on disk.
-
-    The dogfood corpus is intentionally gitignored. Tests that depend on it
-    pass on local dev (where Cranot has the dir) but fail on CI / public
-    clones with FileNotFoundError or empty-corpus assertions. Rather than
-    edit each of the 17 dogfood-dependent test files individually, do the
-    skip centrally based on a source-text check.
-    """
+    """Skip tests marked ``needs_dogfood`` when the corpus is absent."""
     import pathlib
 
     dogfood_dir = pathlib.Path(__file__).resolve().parent.parent / "internal" / "dogfood"
@@ -182,11 +176,10 @@ def pytest_collection_modifyitems(config, items):
         return
 
     skip_marker = pytest.mark.skip(
-        reason="internal/dogfood/ is gitignored — not available on CI / public clones",
+        reason="needs_dogfood: internal/dogfood/ is gitignored — not available on CI / public clones",
     )
-    cache: dict = {}
     for item in items:
-        if _references_dogfood(item.fspath, cache):
+        if item.get_closest_marker("needs_dogfood") is not None:
             item.add_marker(skip_marker)
 
 

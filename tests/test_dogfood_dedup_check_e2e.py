@@ -33,11 +33,10 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "dev"))
 
-_DOGFOOD_DIR_PRESENT = (_REPO_ROOT / "internal" / "dogfood").is_dir()
-pytestmark = pytest.mark.skipif(
-    not _DOGFOOD_DIR_PRESENT,
-    reason="internal/dogfood/ is gitignored — not available on CI / public clones",
-)
+# Every test in this module runs against the live corpus on disk — all
+# three genuinely need it, so a module-level marker is correct (see
+# tests/conftest.py pytest_collection_modifyitems).
+pytestmark = pytest.mark.needs_dogfood
 
 
 # Dogfood-v2 commands grouped by current expected state.
