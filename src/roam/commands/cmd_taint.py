@@ -26,7 +26,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.db.edge_kinds import call_or_ref_in_clause
 from roam.output.confidence import (
     confidence_distribution,
@@ -734,6 +734,29 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             click.echo(f"VERDICT: {verdict}")
             return
 
+        # W1330: resolve project_root so run_taint's text-scan fallback
+        # (closes the W452 indexer gap -- import-bound Python
+        # sources/sinks like request.args / cursor.execute / os.system
+        # never land as symbols rows) can read indexed files off disk.
+        # Wrapped defensively: a raise (no .git marker, permission
+        # error) degrades to None, which simply keeps run_taint on the
+        # pre-W1330 DB-only path -- no crash, no behaviour change beyond
+        # "the fallback didn't activate."
+        _project_root = _run_check_ay(
+            "find_project_root",
+            lambda: str(find_project_root()),
+            default=None,
+        )
+
+        # W1330: populated by run_taint with {"rules_evaluated",
+        # "rules_zero_anchors", "zero_anchor_rule_ids"} -- the "instrument
+        # counted nothing" signal (task #285 / AP-206-213 family). A rule
+        # whose sources/sinks never resolved to any anchor (DB symbol or
+        # text-scan hit) was evaluated as INCONCLUSIVE, not "scanned and
+        # clean" -- distinct from a rule that resolved real anchors and
+        # genuinely found no reachable path.
+        _anchor_stats: dict = {}
+
         # W607-AY: the BFS source->sink propagation is THE critical
         # correctness boundary (W493/W499/W512 audit history -- edge-kind
         # vocabulary, sanitizer-stop semantics, sub-pass co-call
@@ -747,8 +770,12 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             conn,
             rules,
             max_hops=max_hops,
+            project_root=_project_root,
+            anchor_stats=_anchor_stats,
             default=[],
         )
+        _rules_zero_anchors = _anchor_stats.get("rules_zero_anchors", 0)
+        _zero_anchor_rule_ids = _anchor_stats.get("zero_anchor_rule_ids", [])
 
         # W607-CJ -- score_classify boundary. Wraps the per-flow severity
         # classification + the 0-100 risk_score computation + the
@@ -1078,6 +1105,17 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 "qualified_only_violations": len(_w489_a_violations),
                 "total_rules": _w489_a_total_rules,
             },
+            # W1330: "instrument counted nothing" vs "clean" (task #285 /
+            # AP-206-213). anchor_coverage is always present (symmetric
+            # emission, same discipline as rules_lint above);
+            # zero_anchor_rule_ids[] only ships when non-empty. A rule
+            # counted here NEVER resolved a source or sink anchor (DB
+            # symbol nor text-scan hit) -- it was evaluated as
+            # inconclusive, not scanned-and-clean.
+            "anchor_coverage": {
+                "rules_evaluated": len(rules),
+                "rules_zero_anchors": _rules_zero_anchors,
+            },
         }
         if _w489_a_violations:
             _w489_a_summary["partial_success"] = True
@@ -1085,6 +1123,15 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
             ]
             envelope_kwargs["qualified_only_violations"] = _w489_a_violations
+        if _rules_zero_anchors:
+            _w489_a_summary["partial_success"] = True
+            _existing_wo = list(_w489_a_summary.get("warnings_out") or [])
+            _w489_a_summary["warnings_out"] = _existing_wo + [
+                f"{_rules_zero_anchors} of {len(rules)} rule(s) matched zero source/sink anchors "
+                f"in the indexed graph -- evaluated as inconclusive, not clean "
+                f"(rule_ids: {', '.join(_zero_anchor_rule_ids)})"
+            ]
+            envelope_kwargs["zero_anchor_rule_ids"] = _zero_anchor_rule_ids
         # W607-AY / W607-CJ: append BOTH substrate-CALL markers AND
         # aggregation-phase markers to ``summary.warnings_out`` and
         # top-level ``warnings_out``. Both buckets share the canonical
@@ -1155,6 +1202,11 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
 
     click.echo(f"VERDICT: {verdict}")
     click.echo(f"Rules:   {', '.join(r.rule_id for r in rules)}")
+    if _rules_zero_anchors:
+        click.echo(
+            f"NOTE: {_rules_zero_anchors} of {len(rules)} rule(s) matched zero source/sink "
+            f"anchors in the indexed graph -- evaluated as inconclusive, not clean."
+        )
     click.echo()
     for f in findings_dump:
         click.echo(f"[{f['severity'].upper()}] {f['rule_id']} ({f['cwe'] or 'no CWE'})")

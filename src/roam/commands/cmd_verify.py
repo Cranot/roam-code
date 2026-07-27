@@ -3889,7 +3889,13 @@ def _check_taint(conn, file_ids: list[int], target_paths: list[str], root: Path)
         from roam.security.taint_engine import load_rules, run_taint
 
         rules = load_rules(_default_rules_dir())
-        findings = run_taint(conn, rules) if rules else []
+        # W1330: same text-scan fallback as `roam taint` (closes the W452
+        # indexer gap for import-bound Python sources/sinks). This gate is
+        # opt-in / advisory-only already (ROAM_VERIFY_TAINT=1, never hard-
+        # blocks per the module docstring above), so widening its recall
+        # carries no new blocking risk — it can only surface MORE real
+        # source->sink paths that touch changed files, never fewer.
+        findings = run_taint(conn, rules, project_root=str(root)) if rules else []
     except Exception as exc:  # noqa: BLE001 — opt-in security surface must never break the gate
         from roam.observability import log_swallowed
 

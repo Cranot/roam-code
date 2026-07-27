@@ -1,4 +1,5 @@
-"""W452 — pin the indexer-side gap that silently no-ops python-* taint rules.
+"""W452 / #285 — CLOSED 2026-07-27. Was: pin the indexer-side gap that
+silently no-op'd python-* taint rules. Now: regression pin for the fix.
 
 The python-* taint rules in ``src/roam/security/taint_rules/`` enumerate
 canonical Python sinks and sources using their import-bound,
@@ -6,44 +7,53 @@ attribute-access spellings (``request.args``, ``request.form``,
 ``render_template_string``, ``pickle.loads``, ``yaml.load``,
 ``cursor.execute``, ``subprocess.run``, ``os.system``, ...).
 
-But the Python indexer at ``src/roam/languages/python_lang.py`` only
-records *function and class definitions* and *call edges between them*
-as symbols. It does NOT record:
+The Python indexer at ``src/roam/languages/python_lang.py`` only records
+*function and class definitions* and *call edges between them* as
+``symbols`` rows — it does NOT record import-bound names or
+attribute-access chains as standalone symbols (they're not local
+definitions). ``run_taint``'s original DB-only matching
+(``_symbols_matching`` in ``roam.security.taint_engine``) therefore
+matched ZERO rows for these rules on real Flask/Django code: rules
+loaded cleanly, were listed in ``rule_ids``, advertised non-empty
+source/sink sets, but emitted ZERO findings on a canonical positive
+case — a silent-no-op shape (Pattern 2 in CLAUDE.md) where ``verdict:
+"No taint findings"`` was indistinguishable from a clean run.
 
-* Import-bound names (the imported ``render_template_string`` from
-  ``from flask import render_template_string`` never lands as a symbol
-  separate from its definition in the flask package — which is not in
-  the workspace).
-* Attribute-access chains (``request.args.get(...)`` produces zero
-  symbols matching ``request.args``).
-
-Net effect on real Flask / Django code: the python-* taint rules load
-cleanly, are listed in ``rule_ids``, advertise non-empty source/sink
-sets, but match ZERO symbols and emit ZERO findings on a canonical
-positive case. This is a silent-no-op shape (Pattern 2 in CLAUDE.md):
-``verdict: "No taint findings"`` is indistinguishable from a clean run.
+THE FIX (2026-07-27, task #285): ``run_taint`` gained a text-scan
+fallback (``_text_scan_rule_anchors`` in ``taint_engine.py``) that
+activates when a rule's DB-indexed sources/sinks come back empty and a
+``project_root`` was supplied. It re-reads the already-indexed Python
+file, masks comments/strings the same way the W167 import-verifier
+does, and anchors each literal source/sink text occurrence to its
+enclosing function via the already-indexed ``line_start``/``line_end``
+span — real symbol ids, so they slot straight into the existing
+forward-BFS pass, plus a same-function co-occurrence pass for the
+"source and sink both in one handler" shape forward BFS can't express.
+Opt-in via an explicit ``project_root`` kwarg (default ``None``): every
+pre-existing direct ``run_taint(conn, rules)`` call site (most of
+``tests/test_taint.py``, ``test_taint_ssti.py``'s engine-level classes,
+``test_w681_taint_engine_positive_smoke.py``) is byte-identical; only
+the CLI path (``cmd_taint.py``) passes ``project_root`` and gets the
+fallback. Separately, ``roam taint``'s JSON envelope now discloses
+``summary.anchor_coverage`` (``rules_evaluated`` / ``rules_zero_anchors``)
+and, when non-zero, ``partial_success`` + a ``warnings_out`` entry
+naming which rules never resolved an anchor at all — the residual
+"instrument counted nothing" case (non-Python rules, or a rule with a
+name/pattern this fallback can't yet resolve) stays LOUD rather than
+folding into an indistinguishable "0 findings" verdict.
 
 Existing engine-level tests (``tests/test_w681_taint_engine_positive_smoke.py``
-and ``tests/test_taint_ssti.py``) document this in their docstrings and
-work around it by inserting synthetic ``qualified_name`` rows directly
-(W681) or by asserting rule-shape invariants and skipping the
-empirically-zero finding outcome (test_taint_ssti). This test file is
+and ``tests/test_taint_ssti.py``) predate this fix and deliberately call
+``run_taint`` WITHOUT ``project_root`` — they still lock rule-shape
+invariants on the DB-only path and are unaffected. This test file is
 the END-TO-END regression pin: it walks the real CLI pipeline
 (``roam index`` -> ``roam taint``) on a synthetic Flask SSTI fixture and
-asserts the bug.
-
-The tests below are marked ``xfail(strict=True)``. They will:
-
-* PASS (as xfail) for as long as the indexer does NOT capture
-  import-bound name references, so python-ssti continues to silently
-  no-op on real Flask code.
-* FAIL (as XPASS) the moment W452 is closed — at which point the
-  ``strict=True`` makes the suite explode, forcing the W452-closer to
-  flip these tests to assertions of correct behaviour.
+now asserts the CORRECT (fixed) behaviour.
 
 This is the canonical agi-in-md CP44/CP45 discipline: load fallback
 paths emit a finding, but the "no symbols matched" silent-zero path
-above still inherits the engine's silence. Make the absence loud.
+above used to still inherit the engine's silence. The absence is now
+loud, and the positive case is now detected.
 """
 
 from __future__ import annotations
@@ -173,28 +183,26 @@ def _run_taint_json(proj: Path, rules_pack: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# The W452 regression pins. xfail(strict=True) — they will XPASS the moment
-# the indexer gains import-bound reference capture, forcing W452 closure to
-# convert these into positive assertions.
+# The W452 regression pins. Were xfail(strict=True); flipped to plain
+# assertions 2026-07-27 when the text-scan fallback (see module docstring)
+# closed the indexer gap for these three canonical shapes.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W452: indexer does not capture import-bound names "
-        "(request.args, render_template_string). The python-ssti rule "
-        "silently emits 0 findings on canonical Flask SSTI. Pin will "
-        "XPASS once W452 closes the indexer gap; flip to assertion."
-    ),
-)
 def test_python_ssti_flags_real_flask_request_args_to_render_template_string(
     ssti_real_world_project: Path,
 ) -> None:
     """python-ssti SHOULD flag the canonical Flask request -> template chain.
 
-    When W452 lands, this test must pass (W452-closer flips the xfail to
-    a positive assertion).
+    W452/#285 CLOSED (2026-07-27): ``run_taint`` now falls back to a
+    text-scan anchor pass (``roam.security.taint_engine._text_scan_rule_anchors``)
+    when a rule's DB-indexed sources/sinks come back empty. It re-reads
+    the already-indexed Python file, masks comments/strings the same
+    way the W167 import-verifier does, and anchors each literal
+    ``request.args`` / ``render_template_string`` occurrence to its
+    enclosing function via the already-indexed ``line_start``/``line_end``
+    span. Both patterns land in ``handle_greet`` here, so the
+    same-function co-occurrence path fires directly.
     """
     data = _run_taint_json(ssti_real_world_project, "ssti")
     findings = data.get("summary", {}).get("findings", 0)
@@ -204,19 +212,16 @@ def test_python_ssti_flags_real_flask_request_args_to_render_template_string(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W452: indexer does not capture import-bound names "
-        "(pickle.loads, request.data). The python-deserialization rule "
-        "silently emits 0 findings on canonical pickle RCE shape. Pin "
-        "will XPASS once W452 closes the indexer gap; flip to assertion."
-    ),
-)
 def test_python_deserialization_flags_real_pickle_loads_chain(
     pickle_deserialization_project: Path,
 ) -> None:
-    """python-deserialization SHOULD flag request.data -> pickle.loads."""
+    """python-deserialization SHOULD flag request.data -> pickle.loads.
+
+    W452/#285 CLOSED (2026-07-27): see the ssti test above — same
+    text-scan fallback, same-function co-occurrence shape
+    (``request.data`` and ``pickle.loads`` both inside
+    ``deserialize_user``).
+    """
     data = _run_taint_json(pickle_deserialization_project, "deserialization")
     findings = data.get("summary", {}).get("findings", 0)
     assert findings >= 1, (
@@ -225,19 +230,16 @@ def test_python_deserialization_flags_real_pickle_loads_chain(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W452: indexer does not capture import-bound names "
-        "(request.args, cursor.execute). The python-sqli rule "
-        "silently emits 0 findings on canonical SQLi chain. Pin will "
-        "XPASS once W452 closes the indexer gap; flip to assertion."
-    ),
-)
 def test_python_sqli_flags_real_request_args_to_cursor_execute(
     sqli_cursor_project: Path,
 ) -> None:
-    """python-sqli SHOULD flag request.args -> cursor.execute."""
+    """python-sqli SHOULD flag request.args -> cursor.execute.
+
+    W452/#285 CLOSED (2026-07-27): see the ssti test above — same
+    text-scan fallback, same-function co-occurrence shape
+    (``request.args`` and ``cursor.execute`` both inside
+    ``lookup_user``).
+    """
     data = _run_taint_json(sqli_cursor_project, "sqli")
     findings = data.get("summary", {}).get("findings", 0)
     assert findings >= 1, (
