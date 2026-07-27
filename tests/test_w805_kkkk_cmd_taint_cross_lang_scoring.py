@@ -1,11 +1,14 @@
 """W805-KKKK — cmd_taint cross-language source/sink scoring (W805 sweep).
+CLOSED 2026-07-27 as a side effect of task #285 (taint loud-verdict):
+see ``summary.anchor_coverage`` in ``cmd_taint.py`` / ``anchor_stats`` in
+``taint_engine.run_taint``.
 
 Eighty-ninth-in-batch W805 sweep. Distinct axis from W825/W826 (empty
 corpus) and the paired-scoring family (dark_matter / duplicates / clones
 / smells).
 
-Hypothesis (CONFIRMED).
------------------------
+Hypothesis (was CONFIRMED, now fixed).
+---------------------------------------
 ``taint`` rules carry a ``languages: [...]`` tag. The matcher in
 ``roam.security.taint_engine._symbols_matching`` filters candidate
 symbols by ``f.language IN (<rule.languages>)``. When the indexed
@@ -72,13 +75,14 @@ or taint_engine.py. One local import inside ``_emit_taint_findings``
 is explicitly labelled "keep the cost out of the readonly path", which
 is a legitimate lazy-import for cost, not a false cycle hedge. Clean.
 
-Pinning style: xfail(strict=True).
-----------------------------------
+Pinning style: was xfail(strict=True), flipped to a plain assertion.
+----------------------------------------------------------------------
 HIGH-severity class given the security-gate context — the failure
-mode is silent-SAFE on a security command. xfail-strict so the moment
-the fix lands (envelope discloses ``partial_success`` /
-``resolution`` / a language-mismatch ``state``), the xfail flips to
-XPASS and forces removal of the pin.
+mode was silent-SAFE on a security command. The fix landed as the
+``anchor_coverage`` / ``rules_zero_anchors`` disclosure built for task
+#285 (a rule that never resolves ANY anchor, for any reason, flips
+``summary.partial_success = True``), so the pin below now asserts the
+correct behaviour directly instead of xfailing.
 
 Sister-test parity.
 -------------------
@@ -222,34 +226,23 @@ def _run_taint_json(proj, *args):
 
 
 class TestCrossLanguageScoringDisclosure:
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-KKKK: HIGH-severity silent-SAFE on language-mismatched rule "
-            "pack. roam.security.taint_engine._symbols_matching applies "
-            "AND f.language IN (...) so a JS-only rule against a Python "
-            "corpus matches zero sources, run_taint returns [], and the "
-            "envelope emits 'No taint findings across 1 rule(s)' with "
-            "partial_success=False and no 'state' / 'resolution' field — "
-            "indistinguishable from a clean run. Pattern-1 variant D + "
-            "Pattern-2. Distinct from W826 (empty corpus)."
-        ),
-    )
     def test_cross_lang_unindexed_sink_disclosed(self, tmp_path):
         """JS-only rule pack against a populated Python corpus.
 
-        Expected on fix: the envelope discloses that the rule was a
-        language-mismatch no-op via at least one of:
-
-        * ``summary.partial_success: True``
-        * ``summary.state``: a closed-enum string naming the degraded
-          state (e.g. ``"language_mismatch"`` / ``"no_sources_matched"``)
-        * ``summary.resolution`` or per-rule resolution metadata
-          showing the rule matched 0 sources / 0 sinks
-
-        Until the fix, this test xfails-strict so the moment the
-        envelope grows ANY of those signals, the xfail flips to XPASS
-        and forces removal of the pin.
+        FIXED 2026-07-27 (task #285 W1330 fallout, not a direct target of
+        that task but closed as a side effect): ``run_taint`` now tracks,
+        per invocation, how many rules matched zero source/sink anchors
+        (``anchor_stats`` out-param in ``taint_engine.py``) regardless of
+        WHY — language mismatch, absent third-party symbols, or a rule
+        vocabulary the text-scan fallback doesn't cover. ``cmd_taint.py``
+        surfaces this as ``summary.anchor_coverage`` and, when non-zero,
+        flips ``summary.partial_success = True`` plus a ``warnings_out``
+        entry naming the affected rule_ids. This JS-only-vs-Python-corpus
+        case never resolves any anchor (the text-scan fallback is
+        Python-only and doesn't touch this rule's javascript/typescript
+        language filter either), so it lands in the same disclosure path
+        as a Python rule that found nothing — the fix generalizes across
+        the cause, not just the Python indexer gap it was built for.
         """
         proj = _make_python_corpus(tmp_path)
         rules_dir = _make_js_only_rules_dir(tmp_path)

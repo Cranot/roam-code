@@ -23,6 +23,7 @@ we never emit it. The legal strings are
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import warnings
 from collections import deque
@@ -33,6 +34,7 @@ from typing import Iterable
 from roam.commands._yaml_loader import load_yaml_with_warnings
 from roam.db.connection import batched_in
 from roam.db.edge_kinds import call_or_ref_in_clause
+from roam.index.relations import _mask_strings_and_comments, _read_source_text
 from roam.output._severity import validate_severity
 
 __all__ = [
@@ -687,12 +689,14 @@ def run_taint(
     rules: list[TaintRule],
     *,
     max_hops: int = 6,
+    project_root: str | None = None,
+    anchor_stats: dict | None = None,
 ) -> list[TaintFinding]:
     """Execute every rule against the indexed graph. Returns one finding
     per (rule, source, sink, path) tuple. When a rule's sources never
     reach its sinks, no findings are emitted for that rule.
 
-    Two passes:
+    Three passes:
     1. Forward BFS for cross-procedural call chains where source and
        sink connect via intermediate hops.
     2. Intraprocedural co-call check for the
@@ -700,13 +704,45 @@ def run_taint(
        source and a sink are flagged even though no forward edge
        connects them. Mirrors Semgrep's Feb 2026 assignment-propagation
        improvement.
+    3. W1330 text-scan fallback (only when *project_root* is given AND
+       a rule's DB-indexed sources or sinks came back empty): see
+       :func:`_text_scan_rule_anchors`. Closes the W452 indexer gap for
+       import-bound Python sources/sinks (``request.args``,
+       ``cursor.execute``, ``os.system`` — never materialised as
+       ``symbols`` rows because they're not local definitions) without
+       touching the general indexer or the ``symbols`` table. Callers
+       that never pass *project_root* (every pre-existing direct
+       ``run_taint(conn, rules)`` call site) get byte-identical
+       behaviour — this is purely additive and opt-in.
+
+    *anchor_stats*, when given an (initially empty) dict, is populated
+    with ``{"rules_evaluated": int, "rules_zero_anchors": int,
+    "zero_anchor_rule_ids": [...]}`` — the "instrument counted nothing"
+    signal from AP-206-213 / task #285: a rule whose sources or sinks
+    NEVER resolved to any anchor (DB symbol or text-scan hit) was
+    evaluated as inconclusive, not as "scanned and clean." Mirrors the
+    ``drop_stats`` out-param convention already used by
+    :func:`roam.index.relations.resolve_references`. ``None`` (the
+    default) skips the bookkeeping entirely — zero cost for callers
+    that don't need it.
     """
     findings: list[TaintFinding] = []
+    text_scan_cache: dict[int, tuple[str, list[dict]]] = {}
+    zero_anchor_rule_ids: list[str] = []
     for rule in rules:
         sources = _symbols_matching(conn, rule.sources, rule.languages, qualified_only=rule.qualified_only)
         sinks = _symbols_matching(conn, rule.sinks, rule.languages, qualified_only=rule.qualified_only)
         sanitizers = _symbols_matching(conn, rule.sanitizers, rule.languages, qualified_only=rule.qualified_only)
+
+        if project_root and (not sources or not sinks):
+            scan = _text_scan_rule_anchors(conn, project_root, rule, text_scan_cache)
+            sources = sources + scan["sources"]
+            sinks = sinks + scan["sinks"]
+            sanitizers = sanitizers + scan["sanitizers"]
+            findings.extend(scan["co_occurrence_findings"])
+
         if not sources or not sinks:
+            zero_anchor_rule_ids.append(rule.rule_id)
             continue
         findings.extend(
             _collect_findings_for_rule_isolation(
@@ -719,7 +755,375 @@ def run_taint(
             )
         )
 
+    if anchor_stats is not None:
+        anchor_stats["rules_evaluated"] = len(rules)
+        anchor_stats["rules_zero_anchors"] = len(zero_anchor_rule_ids)
+        anchor_stats["zero_anchor_rule_ids"] = zero_anchor_rule_ids
+
     return findings
+
+
+# ---------------------------------------------------------------------------
+# W1330 — text-scan fallback anchors (closes the W452 indexer gap for taint)
+# ---------------------------------------------------------------------------
+#
+# ROOT CAUSE (audited 2026-07-15, task #285): the Python indexer records
+# function/class definitions and forward call edges between THEM, but never
+# materialises import-bound names (``request.args`` from ``from flask
+# import request``) or attribute-access chains (``cursor.execute``,
+# ``os.system``) as rows in the ``symbols`` table — they're not local
+# definitions, so there's nothing to index. ``_symbols_matching`` above
+# only ever looks at ``symbols``, so a rule whose source/sink vocabulary is
+# entirely import-bound (true of nearly every real Flask/Django taint
+# rule) matches ZERO rows and the rule is silently skipped
+# (``if not sources or not sinks: continue``) — 0 findings that look
+# identical to "scanned and clean."
+#
+# Rather than growing the general indexer (new symbol kind, wider
+# ``edges`` semantics, blast radius across every other command that reads
+# ``symbols``/``edges``), this fallback stays entirely inside the taint
+# engine: when a rule's DB-indexed anchors come back empty, re-read the
+# already-indexed Python files from disk and regex-scan (comments/strings
+# masked via the same state machine ``index/relations.py`` uses for W167
+# import verification) for the rule's literal source/sink/sanitizer
+# names. Each hit is anchored to its ENCLOSING function/method via the
+# already-indexed ``line_start``/``line_end`` span — that real symbol id
+# feeds the existing forward-BFS pass unchanged (cross-function reach,
+# e.g. ``search()`` calling ``run_query()``). Same-function occurrences
+# (source and sink text both inside one function body, e.g. a Flask route
+# handler) can't be expressed as "enclosing calls both" — the enclosing
+# node in that shape IS the occurrence — so they're detected directly as
+# ``co_occurrence_findings`` rather than routed through the co-call BFS.
+#
+# Deliberately narrow: Python-only for now (the exact shape W452 named),
+# opt-in via `project_root` (every existing direct ``run_taint(conn,
+# rules)`` call site is unaffected), and only engaged as a fallback when
+# the DB path found nothing — a rule that already resolves real symbols
+# never has its behaviour changed by this pass.
+
+_TEXT_SCAN_LANGUAGES: frozenset[str] = frozenset({"python"})
+_WORD_CHAR_CLASS = "[A-Za-z0-9_]"
+_dotted_pattern_cache: dict[str, re.Pattern[str]] = {}
+
+
+def _dotted_name_pattern(name: str) -> re.Pattern[str]:
+    """Compile (and cache) a word-boundary regex for a literal dotted name.
+
+    Blocks a preceding/trailing identifier character so ``cursor.execute``
+    doesn't match inside ``mycursor.execute_batch``, but tolerates a
+    preceding ``.`` so ``self.cursor.execute`` still counts — mirroring
+    the suffix tolerance ``_symbols_matching`` already applies via its
+    ``qualified_name LIKE '%.<name>'`` branch.
+    """
+    pat = _dotted_pattern_cache.get(name)
+    if pat is None:
+        pat = re.compile(rf"(?<!{_WORD_CHAR_CLASS}){re.escape(name)}(?!{_WORD_CHAR_CLASS})")
+        _dotted_pattern_cache[name] = pat
+    return pat
+
+
+def _text_scan_python_files(conn: sqlite3.Connection, languages: Iterable[str]) -> list[tuple[int, str]]:
+    """Return ``(file_id, path)`` for indexed Python files eligible for scan.
+
+    Empty ``languages`` on the rule (applies to any language) still scopes
+    to :data:`_TEXT_SCAN_LANGUAGES` — this fallback only knows how to
+    anchor hits to Python's function/method symbol shape today.
+    """
+    lang_list = list(languages)
+    scan_langs = (set(lang_list) & _TEXT_SCAN_LANGUAGES) if lang_list else set(_TEXT_SCAN_LANGUAGES)
+    if not scan_langs:
+        return []
+    placeholders = ",".join("?" for _ in scan_langs)
+    rows = conn.execute(
+        f"SELECT id, path FROM files WHERE language IN ({placeholders})",
+        list(scan_langs),
+    ).fetchall()
+    return [(int(r[0]), r[1]) for r in rows]
+
+
+def _enclosing_candidates_for_file(conn: sqlite3.Connection, file_id: int) -> list[dict]:
+    """Function/method symbols in *file_id*, for line-range anchoring."""
+    rows = conn.execute(
+        "SELECT id, name, qualified_name, line_start, line_end FROM symbols "
+        "WHERE file_id = ? AND kind IN ('function', 'method') AND line_start IS NOT NULL",
+        (file_id,),
+    ).fetchall()
+    return [
+        {
+            "id": int(r[0]),
+            "name": r[1],
+            "qualified_name": r[2] or r[1],
+            "line_start": int(r[3]),
+            "line_end": int(r[4]) if r[4] is not None else int(r[3]),
+        }
+        for r in rows
+    ]
+
+
+def _innermost_enclosing(candidates: list[dict], line: int) -> dict | None:
+    """Smallest-span symbol whose ``[line_start, line_end]`` contains *line*."""
+    best: dict | None = None
+    for sym in candidates:
+        if sym["line_start"] <= line <= sym["line_end"]:
+            if best is None or (sym["line_end"] - sym["line_start"]) < (best["line_end"] - best["line_start"]):
+                best = sym
+    return best
+
+
+def _masked_text_and_symbols_for_file(
+    conn: sqlite3.Connection,
+    project_root: str,
+    file_id: int,
+    path: str,
+    cache: dict[int, tuple[str, list[dict]]],
+) -> tuple[str, list[dict]] | None:
+    """Read + mask a file's source once per ``run_taint`` call, cached by file id.
+
+    Several python-* rules typically share the same fallback pass in one
+    invocation (sqli, ssti, deserialization, command-injection all fire
+    on real Flask code) — caching keeps the file I/O + comment/string
+    masking to O(files) instead of O(rules x files).
+    """
+    cached = cache.get(file_id)
+    if cached is not None:
+        return cached
+    text = _read_source_text(path, project_root)
+    if not text:
+        return None
+    masked = _mask_strings_and_comments(text)
+    candidates = _enclosing_candidates_for_file(conn, file_id)
+    entry = (masked, candidates)
+    cache[file_id] = entry
+    return entry
+
+
+def _call_args_span(masked_text: str, call_end: int) -> str | None:
+    """Return the argument-list text of a call starting right after
+    *call_end* (the offset just past the callee name), or ``None`` if
+    *call_end* isn't immediately followed by ``(`` (not a call at all —
+    e.g. the sink name was passed as a bare reference).
+
+    Depth-scanned on the ALREADY comment/string-masked text so a literal
+    ``(`` or ``,`` inside a SQL string (``"SELECT f(x)"``) can't skew the
+    paren-depth count or look like a second argument.
+    """
+    n = len(masked_text)
+    i = call_end
+    while i < n and masked_text[i] in " \t":
+        i += 1
+    if i >= n or masked_text[i] != "(":
+        return None
+    depth = 0
+    j = i
+    while j < n:
+        ch = masked_text[j]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return masked_text[i + 1 : j]
+        j += 1
+    return masked_text[i + 1 : j]  # unterminated — best effort
+
+
+def _has_top_level_char(args_text: str, target: str) -> bool:
+    """True if *target* appears in *args_text* outside any nested bracket."""
+    depth = 0
+    for ch in args_text:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == target and depth == 0:
+            return True
+    return False
+
+
+def _looks_like_parameterized_db_call(masked_text: str, call_end: int) -> bool:
+    """Heuristic: does the call right after *call_end* look like a
+    parameterized DB call (``execute(sql, params)``) rather than a
+    concatenated/formatted SQL string (``execute(sql + user_input)``)?
+
+    Scoped narrowly to *sinks whose name contains "execute"* (the whole
+    ``python-sqli`` sink vocabulary: ``cursor.execute`` / ``conn.execute``
+    / ``db.execute`` / ``connection.execute`` / ``session.execute``) —
+    Python's DB-API idiom passes bind parameters as a SEPARATE positional
+    argument (``execute(sql, (value,))``), unlike ``os.system`` /
+    ``pickle.loads`` / ``render_template_string``, which have no "safe
+    argument shape": any tainted argument to those IS the vulnerability,
+    so this heuristic must never suppress a hit for them.
+
+    A top-level comma (a second argument) with no top-level ``+``
+    (no on-the-fly string concatenation feeding the SQL text) reads as
+    the parameterized idiom. Anything else — no second argument at all,
+    or a ``+`` anywhere at the top level — stays flagged. Conservative
+    by construction: this can only SUPPRESS a text-scan sink hit, never
+    manufacture one, so it cannot introduce a false negative on a rule
+    that would otherwise have zero anchors.
+    """
+    args_text = _call_args_span(masked_text, call_end)
+    if args_text is None:
+        return False
+    return _has_top_level_char(args_text, ",") and not _has_top_level_char(args_text, "+")
+
+
+def _scan_hits(masked_text: str, names: Iterable[str]) -> list[tuple[str, int]]:
+    """Return ``(matched_name, 1-based_line)`` for every pattern occurrence.
+
+    Skips a hit when :func:`_looks_like_parameterized_db_call` says the
+    call looks like the safe ``execute(sql, params)`` idiom — see that
+    function's docstring for why this is scoped to "execute"-named
+    sinks only.
+    """
+    hits: list[tuple[str, int]] = []
+    for name in names:
+        if not name:
+            continue
+        is_execute_sink = "execute" in name.lower()
+        for m in _dotted_name_pattern(name).finditer(masked_text):
+            if is_execute_sink and _looks_like_parameterized_db_call(masked_text, m.end()):
+                continue
+            line = masked_text.count("\n", 0, m.start()) + 1
+            hits.append((name, line))
+    return hits
+
+
+def _dotted_names_only(names: Iterable[str]) -> list[str]:
+    """Filter to qualified (dotted) names only — text-scan SOURCE matching
+    uses this, sinks/sanitizers don't.
+
+    A bare single-word source name (``data``, ``payload``, ``input`` —
+    ``python_socketio_remote_source.yaml`` lists exactly this shape) has
+    no import-bound anchor: it's just as likely to be a coincidental
+    local variable/parameter name as it is the actual attacker-controlled
+    value the rule means. A DB-indexed ``symbols`` row for that bare name
+    at least required someone to DEFINE something with that exact name;
+    a text-scan hit requires nothing more than the word appearing
+    anywhere in the file, which is far too permissive for single common
+    words. Every source in the rules that motivated this fallback
+    (python-sqli/ssti/deserialization/command-injection) is already a
+    qualified name (``request.args``, ``request.data``, ...), so this
+    costs nothing there. Sinks stay unrestricted: a sink is always
+    something CALLED, so a bare match like ``render_template_string(...)``
+    or ``eval(...)`` is a real invocation, not an incidental variable read.
+    """
+    return [n for n in names if n and "." in n]
+
+
+def _hit_to_anchor(hit: tuple[str, int], enclosing: dict | None, path: str) -> dict | None:
+    """Project one text hit to the ``_symbols_matching``-shaped anchor dict.
+
+    ``id`` is the REAL enclosing symbol id (not a synthetic row) so the
+    hit slots straight into the existing forward-BFS / co-call machinery
+    unchanged. Hits with no enclosing function (module-level code, or a
+    match inside a docstring/comment before masking removed it) are
+    dropped — there's no graph node to anchor them to.
+    """
+    if enclosing is None:
+        return None
+    name, line = hit
+    return {
+        "id": enclosing["id"],
+        "name": name.rsplit(".", 1)[-1],
+        "qualified_name": name,
+        "line": line,
+        "file": path,
+        "_enclosing_id": enclosing["id"],
+    }
+
+
+def _text_scan_rule_anchors(
+    conn: sqlite3.Connection,
+    project_root: str,
+    rule: TaintRule,
+    cache: dict[int, tuple[str, list[dict]]],
+) -> dict:
+    """Text-scan indexed Python files for *rule*'s source/sink/sanitizer names.
+
+    Returns ``{"sources": [...], "sinks": [...], "sanitizers": [...],
+    "co_occurrence_findings": [TaintFinding, ...]}``. The three anchor
+    lists carry REAL enclosing-symbol ids for the caller to union into
+    the forward-BFS pass. ``co_occurrence_findings`` are built directly
+    here for the same-function shape (source and sink text both inside
+    one function body) that forward BFS structurally cannot express —
+    see the module-level W1330 docstring above.
+    """
+    empty: dict = {"sources": [], "sinks": [], "sanitizers": [], "co_occurrence_findings": []}
+    files = _text_scan_python_files(conn, rule.languages)
+    if not files:
+        return empty
+
+    out_sources: list[dict] = []
+    out_sinks: list[dict] = []
+    out_sanitizers: list[dict] = []
+    co_findings: list[TaintFinding] = []
+
+    for file_id, path in files:
+        loaded = _masked_text_and_symbols_for_file(conn, project_root, file_id, path, cache)
+        if loaded is None:
+            continue
+        masked, candidates = loaded
+
+        src_hits = _scan_hits(masked, _dotted_names_only(rule.sources))
+        sink_hits = _scan_hits(masked, rule.sinks)
+        san_hits = _scan_hits(masked, rule.sanitizers)
+        if not (src_hits or sink_hits or san_hits):
+            continue
+
+        src_anchors = [a for a in (_hit_to_anchor(h, _innermost_enclosing(candidates, h[1]), path) for h in src_hits) if a]
+        sink_anchors = [
+            a for a in (_hit_to_anchor(h, _innermost_enclosing(candidates, h[1]), path) for h in sink_hits) if a
+        ]
+        san_anchors = [a for a in (_hit_to_anchor(h, _innermost_enclosing(candidates, h[1]), path) for h in san_hits) if a]
+
+        out_sources.extend(src_anchors)
+        out_sinks.extend(sink_anchors)
+        out_sanitizers.extend(san_anchors)
+
+        sinks_by_enclosing: dict[int, list[dict]] = {}
+        for a in sink_anchors:
+            sinks_by_enclosing.setdefault(a["_enclosing_id"], []).append(a)
+        sanitized_enclosing_ids = {a["_enclosing_id"] for a in san_anchors}
+
+        seen_pairs: set[tuple[int, int]] = set()
+        candidates_by_id = {c["id"]: c for c in candidates}
+        for src_anchor in src_anchors:
+            eid = src_anchor["_enclosing_id"]
+            for sink_anchor in sinks_by_enclosing.get(eid, ()):
+                pair_key = (src_anchor["line"], sink_anchor["line"])
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+                enclosing_sym = candidates_by_id.get(eid, {})
+                enclosing_dict = {
+                    "id": eid,
+                    "name": enclosing_sym.get("name"),
+                    "qualified_name": enclosing_sym.get("qualified_name"),
+                    "line": enclosing_sym.get("line_start"),
+                    "file": path,
+                }
+                source_symbol = {k: v for k, v in src_anchor.items() if k != "_enclosing_id"}
+                sink_symbol = {k: v for k, v in sink_anchor.items() if k != "_enclosing_id"}
+                co_findings.append(
+                    TaintFinding(
+                        rule_id=rule.rule_id,
+                        severity=rule.severity,
+                        cwe=rule.cwe,
+                        source_symbol=source_symbol,
+                        sink_symbol=sink_symbol,
+                        path_symbols=[source_symbol, enclosing_dict, sink_symbol],
+                        sanitizer_in_path=eid in sanitized_enclosing_ids,
+                        owasp_top10=rule.owasp_top10,
+                    )
+                )
+
+    return {
+        "sources": out_sources,
+        "sinks": out_sinks,
+        "sanitizers": out_sanitizers,
+        "co_occurrence_findings": co_findings,
+    }
 
 
 def vex_justification_for(finding: TaintFinding) -> str:
