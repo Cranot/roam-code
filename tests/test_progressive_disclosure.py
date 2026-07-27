@@ -171,9 +171,7 @@ class TestTruncationReasonDisclosure:
         # ... but the reason is never ambiguous between them.
         assert budget_result["summary"]["truncation_reason"] == "budget"
         assert detail_result["summary"]["truncation_reason"] == "detail_mode"
-        assert (
-            budget_result["summary"]["truncation_reason"] != detail_result["summary"]["truncation_reason"]
-        )
+        assert budget_result["summary"]["truncation_reason"] != detail_result["summary"]["truncation_reason"]
         # And the reason alone recovers what partial_success cannot: both
         # commands could plausibly report partial_success=False (a
         # --detail-elided command always does), yet one lost data it was

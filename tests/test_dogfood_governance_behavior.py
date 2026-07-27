@@ -427,9 +427,7 @@ def test_audit_trail_verify_detects_tail_tamper_with_head_file(tmp_path):
     trail = tmp_path / "audit-trail.jsonl"
     bundle = {"summary": {"verdict": "SAFE", "blast_radius": 1, "ai_likelihood": 0}, "rationale": {}}
     for i in range(4):
-        _emit_audit_trail_record(
-            AuditTrailRecordRequest(audit_trail_path=trail, diff_text=f"diff-{i}", bundle=bundle)
-        )
+        _emit_audit_trail_record(AuditTrailRecordRequest(audit_trail_path=trail, diff_text=f"diff-{i}", bundle=bundle))
 
     # Baseline: a clean, real-written trail (with its head file) verifies clean.
     _records, issues = _verify_chain(trail)
