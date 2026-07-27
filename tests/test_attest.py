@@ -309,6 +309,59 @@ class TestAttestSign:
 
 
 # ---------------------------------------------------------------------------
+# Token-budget survival
+# ---------------------------------------------------------------------------
+
+
+class TestAttestSurvivesTokenBudget:
+    """The token budget must never delete the attestation block.
+
+    v13.7.0-v13.9.0: every JSON envelope over ~20000 tokens went through
+    ``budget_truncate_json``, which preserved a fixed envelope set that did
+    NOT include ``attestation`` and dropped the rest in dict insertion
+    order. ``attestation`` is the first payload kwarg on this command, so it
+    was deleted ahead of the ``evidence`` blob that was 98% of the payload.
+    On a real repo ``roam attest --sign --format json`` therefore emitted a
+    packet with no ``content_hash``, exit 0, and no warning -- the tamper
+    seal silently gone.
+
+    The rest of this file never caught it because ``attest_project`` is a
+    three-file repo whose envelope is ~1000 tokens, far under the default
+    cap. These tests force the cap down instead, via the same env lever
+    production reads (``formatter._default_json_budget``), so the truncator
+    genuinely fires on the toy fixture.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _tiny_json_budget(self, monkeypatch):
+        monkeypatch.setenv("ROAM_DEFAULT_JSON_BUDGET", "200")
+
+    def _truncated_envelope(self, cli_runner, project, *args):
+        result = invoke_cli(cli_runner, ["attest", *args], cwd=project, json_mode=True)
+        data = parse_json_output(result, "attest")
+        # Guard the guard: if the budget did not fire, the test proves nothing.
+        assert data["summary"].get("truncated") is True, "budget gate did not fire — fixture outgrew the cap?"
+        return data
+
+    def test_stale_if_survives_truncation(self, cli_runner, attest_project, monkeypatch):
+        monkeypatch.chdir(attest_project)
+        data = self._truncated_envelope(cli_runner, attest_project)
+        att = data.get("attestation")
+        assert att is not None, "token budget deleted the attestation block"
+        conds = {c["condition"] for c in att["stale_if"]}
+        assert TestAttestStalenessContract.CANONICAL <= conds, f"missing conditions: {conds}"
+
+    def test_sign_content_hash_survives_truncation(self, cli_runner, attest_project, monkeypatch):
+        """The --sign tamper seal must outlive truncation: a packet with no
+        content_hash and no error is worse than no packet at all."""
+        monkeypatch.chdir(attest_project)
+        data = self._truncated_envelope(cli_runner, attest_project, "--sign")
+        att = data.get("attestation")
+        assert att is not None, "token budget deleted the attestation block"
+        assert att.get("content_hash", "").startswith("sha256:"), "tamper seal lost to truncation"
+
+
+# ---------------------------------------------------------------------------
 # Verdict tests
 # ---------------------------------------------------------------------------
 

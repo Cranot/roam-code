@@ -196,6 +196,49 @@ class TestBudgetTruncateJson:
         assert result["command"] == "test"
         assert result["summary"]["truncated"] is True
 
+    def test_drops_largest_field_before_smaller_ones(self):
+        """The key that blew the budget goes first, not whichever happened to
+        be declared first. Insertion order let a tiny block be deleted ahead
+        of the oversized one it sat in front of — and then the oversized one
+        went too, so the small block bought nothing."""
+        from roam.output.formatter import budget_truncate_json
+
+        data = {
+            "command": "test",
+            "summary": {"verdict": "ok"},
+            "small_block": {"note": "must survive"},  # declared first, tiny
+            "huge_payload": {"blob": "x" * 40000},  # declared last, oversized
+        }
+
+        result = budget_truncate_json(data, 200)
+
+        assert "huge_payload" not in result
+        assert result["small_block"] == {"note": "must survive"}
+
+    def test_attestation_and_agent_contract_are_preserved(self):
+        """Both contract blocks survive any budget. ``attestation`` carries
+        ``stale_if`` and the ``--sign`` ``content_hash`` seal; ``agent_contract``
+        is the bounded block that exists for context-constrained consumers."""
+        from roam.output.formatter import budget_truncate_json
+
+        data = {
+            "command": "attest",
+            "summary": {"verdict": "ok"},
+            "attestation": {
+                "content_hash": "sha256:abc",
+                "stale_if": [{"condition": "head_commit_changed"}],
+            },
+            "agent_contract": {"facts": ["1 critical"]},
+            "evidence": {"blob": "x" * 40000},
+        }
+
+        result = budget_truncate_json(data, 100)
+
+        assert "evidence" not in result
+        assert result["attestation"]["content_hash"] == "sha256:abc"
+        assert result["attestation"]["stale_if"] == [{"condition": "head_commit_changed"}]
+        assert result["agent_contract"] == {"facts": ["1 critical"]}
+
 
 # ---------------------------------------------------------------------------
 # Unit tests for estimate_tokens()
