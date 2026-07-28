@@ -15,6 +15,7 @@ Whitelisted contexts (intentional uses):
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 from pathlib import Path
 
@@ -56,15 +57,35 @@ EXCLUDED_DIRS = _patterns.EXCLUDED_DIRS
 SCAN_EXTENSIONS = _patterns.SCAN_EXTENSIONS
 should_scan = _patterns.should_scan
 scan_text = _patterns.scan_text
+scan_bytes = _patterns.scan_bytes
+
+
+def _without_git_controls() -> dict[str, str]:
+    """Copy the environment without Git's repository-redirection controls.
+
+    Mirrors ``scripts/scan_internal_language.py::_without_git_controls``
+    deliberately: both gates enumerate the tracked tree and both must
+    enumerate *this* tree. ``git ls-files`` honours ``GIT_INDEX_FILE`` /
+    ``GIT_DIR`` / ``GIT_WORK_TREE``; pointed elsewhere it prints nothing and
+    exits 0, and this gate's verdict is shaped as "hits among the enumerated
+    files" -- so an empty inventory is an unconditional pass.
+    """
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
 
 
 def _git_tracked_files() -> list[Path]:
-    """Return every file tracked by git, relative to the repo root."""
+    """Return every file tracked by git, or fail the gate closed.
+
+    Zero tracked files is never a real state for this repository, so it means
+    the inventory did not compute rather than that there is nothing to scan.
+    Returning ``[]`` would make this gate pass without opening a single file.
+    """
     result = subprocess.run(
         ["git", "ls-files"],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,
+        env=_without_git_controls(),
         check=True,
     )
     paths = []
@@ -75,6 +96,10 @@ def _git_tracked_files() -> list[Path]:
         if not p.exists() or p.is_dir():
             continue
         paths.append(p)
+    if not paths:
+        raise AssertionError(
+            "git ls-files reported zero tracked files; the anti-leak gate would pass without reading anything"
+        )
     return paths
 
 
@@ -84,17 +109,25 @@ def _should_scan(path: Path) -> bool:
 
 
 def _scan_for_leaks() -> list[tuple[str, str, int, str]]:
-    """Return [(rel_path, pattern_name, line_no, line_text)] for every hit."""
+    """Return [(rel_path, pattern_name, line_no, line_text)] for every hit.
+
+    Reads bytes and applies the catalogue through ``scan_bytes``. The previous
+    ``read_text(encoding="utf-8")`` made UTF-16 content invisible two ways at
+    once: a BOM'd file raised ``UnicodeDecodeError`` and was silently skipped,
+    and a BOM-less one decoded "successfully" into NUL-interleaved text that
+    matches no pattern. Either way the gate reported clean on a file it never
+    read correctly -- and PowerShell's ``>`` emits UTF-16LE by default.
+    """
     findings: list[tuple[str, str, int, str]] = []
     for path in _git_tracked_files():
         rel = path.relative_to(REPO_ROOT).as_posix()
         if not should_scan(rel):
             continue
         try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
+            data = path.read_bytes()
+        except OSError:
             continue
-        for name, line_no, text_snippet in scan_text(rel, text):
+        for name, line_no, text_snippet in scan_bytes(rel, data):
             findings.append((rel, name, line_no, text_snippet))
     return findings
 

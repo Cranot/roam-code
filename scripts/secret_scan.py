@@ -329,6 +329,47 @@ def _decode_content_bytes(data: bytes, *, operation: str) -> str:
     return _decode_git_text(data, operation=operation, encoding="utf-8", errors="replace")
 
 
+def _decode_content_views(data: bytes, *, operation: str) -> list[str]:
+    """Every text reading of *data* the patterns must be applied to.
+
+    ``_decode_content_bytes`` handles a BOM exactly, which covers the common
+    Windows case (PowerShell's ``>`` and ``Out-File`` emit UTF-16LE *with* a
+    BOM). It cannot, by construction, see BOM-LESS UTF-16: those bytes are
+    every one of them valid UTF-8, so the UTF-8 reading succeeds and a real
+    token arrives as ``g\\x00h\\x00p\\x00_\\x00...``, matching no pattern. The
+    gate then reports clean over content it decoded wrong.
+
+    The NUL-stripped reading closes that. It costs a second pass only on
+    content that already contains embedded NULs, which no legitimate text blob
+    in this repository's history does.
+    """
+    primary = _decode_content_bytes(data, operation=operation)
+    if "\x00" not in primary:
+        return [primary]
+    return [primary, primary.replace("\x00", "")]
+
+
+def _scan_content_bytes(
+    rel_path: str,
+    data: bytes,
+    *,
+    operation: str,
+    commit: str,
+    allow_suppression: bool = True,
+) -> list[dict]:
+    """``_scan_text`` over every reading of *data*, deduplicated.
+
+    Two agreeing readings must not double-report the same line, so findings
+    are keyed on everything that identifies them.
+    """
+    seen: dict[tuple, dict] = {}
+    for view in _decode_content_views(data, operation=operation):
+        for finding in _scan_text(rel_path, view, commit=commit, allow_suppression=allow_suppression):
+            key = (finding["file"], finding["line"], finding["pattern_name"], finding["matched_text"])
+            seen.setdefault(key, finding)
+    return list(seen.values())
+
+
 def _redact_label(label: str) -> str:
     """Mask credential-shaped values before a label reaches diagnostics."""
     redacted = label
@@ -390,14 +431,11 @@ def _scan_commits(repo_root: Path, commits: list[str]) -> list[dict]:
             commit_raw = _prepush_refs.read_commit_object(repo_root, commit)
         except _prepush_refs.PrePushGitError as exc:
             raise SystemExit(f"cannot inspect commit object: {exc}") from exc
-        commit_text = _decode_content_bytes(
-            commit_raw,
-            operation=f"decode commit object {commit}",
-        )
         findings.extend(
-            _scan_text(
+            _scan_content_bytes(
                 f"{commit[:7]} (commit object)",
-                commit_text,
+                commit_raw,
+                operation=f"decode commit object {commit}",
                 commit=commit,
                 allow_suppression=False,
             )
@@ -434,11 +472,14 @@ def _scan_commits(repo_root: Path, commits: list[str]) -> list[dict]:
                 ["show", f"{commit}:{rel_path}"],
                 operation=f"read blob {commit}:{rel_path}",
             )
-            blob = _decode_content_bytes(
-                blob_raw,
-                operation=f"read blob {commit}:{rel_path}",
+            findings.extend(
+                _scan_content_bytes(
+                    rel_path,
+                    blob_raw,
+                    operation=f"read blob {commit}:{rel_path}",
+                    commit=commit,
+                )
             )
-            findings.extend(_scan_text(rel_path, blob, commit=commit))
     findings.sort(key=lambda row: (row["commit"], row["file"], row["line"], row["pattern_name"]))
     return findings
 
@@ -466,14 +507,11 @@ def scan_pre_push_updates(
     except _prepush_refs.PrePushGitError as exc:
         raise SystemExit(f"cannot inspect pushed objects: {exc}") from exc
     for published in direct_texts:
-        text = _decode_content_bytes(
-            published.data,
-            operation=f"decode pushed {published.kind} {published.oid}",
-        )
         findings.extend(
-            _scan_text(
+            _scan_content_bytes(
                 published.path,
-                text,
+                published.data,
+                operation=f"decode pushed {published.kind} {published.oid}",
                 commit=published.oid,
                 allow_suppression=published.kind == "blob",
             )
