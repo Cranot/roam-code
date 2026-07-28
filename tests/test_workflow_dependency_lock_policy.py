@@ -18,6 +18,7 @@ EXAMPLE_ACTION_SHA = "24f29f646748bc63adbdebc3b4440f6a72e599af"
 EXAMPLE_ROAM_VERSION = "13.10.0"
 
 EXPECTED_WORKFLOWS = {
+    "actions-pinning.yml",
     "architecture-guardian.yml",
     "cga-attestation.yml",
     "dogfood.yml",

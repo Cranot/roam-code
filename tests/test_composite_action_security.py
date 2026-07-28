@@ -459,7 +459,16 @@ def test_pin_helper_covers_composite_actions_without_cross_repo_replacement() ->
     text = PIN_SCRIPT.read_text(encoding="utf-8")
     executable = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
-    assert ".github/workflows/*.yml .github/workflows/*.yaml action.yml" in text
+    # This used to assert the literal hardcoded glob list
+    # `.github/workflows/*.yml .github/workflows/*.yaml action.yml`. That list
+    # was the defect: it silently missed the CI templates that live outside
+    # .github/, so a template could ship an unpinned action. The helper now
+    # enumerates every tracked YAML file, which covers composite actions by
+    # construction rather than by naming them one at a time. Assert the
+    # enumeration is repo-wide instead of re-pinning a fresh hardcoded list,
+    # which would recreate the same brittleness one rename later.
+    assert "git ls-files -- '*.yml' '*.yaml'" in executable
+    assert "composite actions" in text, "the rationale must still name what the enumeration covers"
     assert "awk '{print $2}'" not in executable
     assert "escaped_ref=" in text
     assert "s|${escaped_ref}|${pinned}|g" in text

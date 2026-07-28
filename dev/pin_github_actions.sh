@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pin every GitHub Action in .github/workflows/ and action.yml to a commit SHA.
+# Pin every GitHub Action reference in repository YAML files to a commit SHA.
 #
 # Why: floating major tags (@v4, @v5, @v3) let an action publisher
 # silently move HEAD — exactly the supply-chain takeover risk that
@@ -13,11 +13,69 @@
 #
 # Requires: gh CLI authenticated.
 #
-# Run: bash dev/pin_github_actions.sh
+# Run: bash dev/pin_github_actions.sh [--check]
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+if [[ "${1:-}" == "--check" ]]; then
+  check_only=true
+elif [[ -n "${1:-}" ]]; then
+  echo "usage: $0 [--check]" >&2
+  exit 2
+else
+  check_only=false
+fi
+
+# Any YAML file can be used as a workflow template, and composite actions are
+# named action.yml/action.yaml anywhere in the tree. Enumerate all YAML files
+# so new workflows and templates are covered without updating this script.
+#
+# Enumerated from git's index rather than a filesystem walk, and the difference
+# is load-bearing: `find` also descends into gitignored trees. This repo checks
+# out third-party repositories under bench-repos/ as benchmark fixtures, and
+# those carry hundreds of deliberately-unpinned workflows that are not part of
+# this repo's supply chain at all. Walking the filesystem reported every one of
+# them and would have left the gate permanently red. Tracked files are also the
+# correct scope on the merits: only what this repo ships can be pushed. Staged
+# additions are included, since `git ls-files` reads the index.
+mapfile -t files < <(
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    git ls-files -- '*.yml' '*.yaml' | sed 's|^|./|'
+  else
+    find . -path './.git' -prune -o -type f \( -name '*.yml' -o -name '*.yaml' \) -print
+  fi | sort
+)
+
+scan_refs() {
+  local file relative line line_number ref
+  local uses_re='^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*([^[:space:]#]+)'
+
+  for file in "${files[@]}"; do
+    relative="${file#./}"
+    line_number=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line_number=$((line_number + 1))
+      if [[ "$line" =~ $uses_re ]]; then
+        ref="${BASH_REMATCH[2]}"
+        [[ "$ref" == *@* ]] || continue
+        printf '%s\t%s\t%s\n' "$relative" "$line_number" "$ref"
+      fi
+    done < "$file"
+  done
+}
+
+if [[ "$check_only" == true ]]; then
+  unpinned=0
+  while IFS=$'\t' read -r file line ref; do
+    [[ "$ref" =~ @[0-9a-fA-F]{40}$ ]] && continue
+    [[ "$ref" == ./* ]] && continue
+    printf '%s:%s: uses: %s\n' "$file" "$line" "$ref"
+    unpinned=1
+  done < <(scan_refs)
+  exit "$unpinned"
+fi
 
 # Resolve `org/repo@TAG` to its commit SHA via the GitHub API.
 sha_for() {
@@ -26,20 +84,11 @@ sha_for() {
   gh api "repos/${repo}/commits/${ref}" --jq '.sha'
 }
 
-# Include both workflow syntax (``- uses:``) and composite-action syntax
-# (``uses:``). Extract the reference itself rather than a whitespace column:
-# the old ``awk '{print $2}'`` read workflow lines as the literal ``uses:``.
-shopt -s nullglob
-files=(.github/workflows/*.yml .github/workflows/*.yaml action.yml)
-mapfile -t refs < <(
-  grep -hE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[a-zA-Z0-9_./-]+@[a-zA-Z0-9._/-]+' "${files[@]}" |
-    sed -E 's|^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*([^[:space:]#]+).*|\2|' |
-    sort -u
-)
+mapfile -t refs < <(scan_refs | cut -f3 | sort -u)
 
 for ref in "${refs[@]}"; do
   # Skip already-pinned (40-char hex) and local action references.
-  if [[ "$ref" =~ @[0-9a-f]{40}$ ]]; then continue; fi
+  if [[ "$ref" =~ @[0-9a-fA-F]{40}$ ]]; then continue; fi
   if [[ "$ref" == ./* ]]; then continue; fi
 
   repo="${ref%@*}"
