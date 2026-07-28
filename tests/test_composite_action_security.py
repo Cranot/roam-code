@@ -21,7 +21,7 @@ CI_DOC = ROOT / "docs" / "ci-integration.md"
 GITHUB_GUARD_TEMPLATE = ROOT / "templates" / "examples" / "roam-guard-pr.github-actions.yml"
 
 SETUP_PYTHON_REF = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
-CACHE_REF = "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830"
+CACHE_REF = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
 CODEQL_REF = "github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57"
 GITHUB_SCRIPT_REF = "actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b"
 
@@ -109,7 +109,7 @@ def test_all_composite_action_dependencies_are_reviewed_commit_pins() -> None:
     assert all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", ref) for ref in refs)
 
     text = ACTION_PATH.read_text(encoding="utf-8")
-    for version_comment in ("# v5.6.0", "# v4.3.0", "# v3.36.0", "# v7.1.0"):
+    for version_comment in ("# v5.6.0", "# v6.1.0", "# v3.36.0", "# v7.1.0"):
         assert version_comment in text
 
 
