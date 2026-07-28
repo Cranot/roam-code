@@ -19,7 +19,14 @@ from roam.db.connection import open_db
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.graph.clone_detect import _UnionFind
 from roam.index.file_roles import is_test as _is_test
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    abbrev_kind,
+    echo_text_warnings,
+    json_envelope,
+    loc,
+    to_json,
+)
 
 # W165 — Test / fixture / production bucketing for duplicates findings.
 #
@@ -1043,6 +1050,10 @@ def duplicates(
                     _early_kwargs["warnings_out"] = list(_w607bm_warnings_out)
                 click.echo(to_json(json_envelope("duplicates", **_early_kwargs)))
             else:
+                # W1331: the early-exit path is reached when the candidate
+                # query itself raised and was floored to [], which reads
+                # from text as "this repo has fewer than 2 candidates".
+                echo_text_warnings(_w607bm_warnings_out)
                 click.echo(f"VERDICT: {verdict}")
             return
 
@@ -1525,6 +1536,10 @@ def duplicates(
                 },
             )
             click.echo(write_sarif(sarif_doc))
+            # W1331: a SARIF document has nowhere to carry these markers,
+            # so a Code-Scanning gate reads a floored similarity pass as a
+            # repo with no semantic duplicates.
+            echo_text_warnings(list(_w607bm_warnings_out) + list(_w607dd_warnings_out))
             return
 
         if json_mode:
@@ -1612,6 +1627,8 @@ def duplicates(
             return
 
         # -- Text output ----------------------------------------------
+        # W1331: same disclosure for the human-readable branch.
+        echo_text_warnings(list(_w607bm_warnings_out) + list(_w607dd_warnings_out))
         click.echo(f"VERDICT: {verdict}")
         if not cluster_list:
             return

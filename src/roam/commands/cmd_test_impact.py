@@ -18,7 +18,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.index.file_roles import is_test
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
 def _changed_files(commit_range: str | None) -> list[str]:
@@ -178,6 +178,14 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
         else f"no tests reach the {len(files)} changed file(s) within {max_hops} hop(s)"
     )
 
+    # W1331: the --limit cap-hit marker used to be built inside the JSON
+    # branch alone, so `--sarif` handed a CI gate the top-N slice as though
+    # it were the whole impacted-test set, and the text table said nothing
+    # about the rows it dropped. Build it once, render it in every branch.
+    _cap_warnings_out: list[str] = []
+    if items_truncated:
+        _cap_warnings_out.append(f"truncated to {len(items)} of {total_tests_full} — pass --limit larger to see more")
+
     if sarif_mode:
         # W1203: SARIF projection for CI / GitHub Code Scanning. Branches
         # BEFORE json/text so the pre-existing paths stay byte-identical
@@ -196,6 +204,7 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
                 )
             )
         )
+        echo_text_warnings(_cap_warnings_out)
         return
 
     if json_mode:
@@ -207,10 +216,8 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
             "truncated": items_truncated,
             "limit": limit,
         }
-        if items_truncated:
-            _summary["warnings_out"] = [
-                f"truncated to {len(items)} of {total_tests_full} — pass --limit larger to see more"
-            ]
+        if _cap_warnings_out:
+            _summary["warnings_out"] = list(_cap_warnings_out)
             _summary["partial_success"] = True
         click.echo(
             to_json(
@@ -224,6 +231,7 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
         )
         return
 
+    echo_text_warnings(_cap_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     if not items:
         return

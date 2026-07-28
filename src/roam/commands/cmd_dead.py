@@ -39,6 +39,8 @@ from roam.output.confidence import (
 from roam.output.formatter import (
     ENVELOPE_SCHEMA_VERSION,
     abbrev_kind,
+    echo_text_empty_corpus,
+    echo_text_warnings,
     format_table,
     json_envelope,
     loc,
@@ -2250,6 +2252,13 @@ def dead(
                     click.echo(write_sarif(sarif))
 
                 _run_check_bx("serialize_to_sarif", _emit_empty_sarif, default=None)
+                # W1331: an empty SARIF ``results`` array is what a
+                # Code-Scanning gate reads as PASS. It looks identical
+                # whether the corpus was clean, whether ``_analyze_dead``
+                # raised and was floored to no rows, or whether nothing is
+                # indexed at all -- and only the JSON branch said which.
+                echo_text_warnings(list(_w607bx_warnings_out) + list(_w607dl_warnings_out))
+                echo_text_empty_corpus(empty_corpus_state(conn))
                 return
             if json_mode:
                 summary = {
@@ -2312,6 +2321,12 @@ def dead(
                     )
                 )
             else:
+                # W1331: same disclosure for the human-readable branch --
+                # "every exported symbol has at least one consumer" is a
+                # false claim when the scan was floored or nothing is
+                # indexed.
+                echo_text_warnings(list(_w607bx_warnings_out) + list(_w607dl_warnings_out))
+                echo_text_empty_corpus(empty_corpus_state(conn))
                 click.echo("VERDICT: no dead exports — every exported symbol has at least one consumer")
                 click.echo()
                 click.echo("=== Unreferenced Exports (0) ===")
@@ -2414,6 +2429,10 @@ def dead(
                 click.echo(write_sarif(sarif))
 
             _run_check_bx("serialize_to_sarif", _emit_populated_sarif, default=None)
+            # W1331: nothing in a SARIF document carries these markers, so
+            # a partially-floored dead scan reaches the gate looking like a
+            # complete one.
+            echo_text_warnings(list(_w607bx_warnings_out) + list(_w607dl_warnings_out))
             return
 
         # --- Cluster detection (also needed for extended data) ---
@@ -2814,6 +2833,11 @@ def dead(
                 envelope = strip_list_payloads(envelope)
             click.echo(to_json(envelope))
             return
+
+        # W1331: one disclosure for all three text tails below (summary-only,
+        # grouped, standard) -- placed here so a new tail cannot be added
+        # blind.
+        echo_text_warnings(list(_w607bx_warnings_out) + list(_w607dl_warnings_out))
 
         # --- Text: summary-only mode (also used by --detail-less default) ---
         if summary_only or not detail:

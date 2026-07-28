@@ -42,7 +42,7 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, loc, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, loc, to_json
 
 # W110: n1 is the fourth detector migrating onto the central findings
 # registry (after `clones` in W95, `dead` in W99, and `complexity` in
@@ -2289,6 +2289,10 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
                 click.echo(write_sarif(n1_to_sarif(findings)))
 
             _run_check_cb("serialize_to_sarif", _emit_sarif, default=None)
+            # W1331: a SARIF document has nowhere to carry these markers,
+            # so a Code-Scanning gate reads a floored N+1 detector as a
+            # repo with no N+1 patterns.
+            echo_text_warnings(list(_w607cb_warnings_out) + list(_w607dq_warnings_out))
             return
 
         # --- JSON output ---
@@ -2403,6 +2407,8 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
             return
 
         # --- Text output ---
+        # W1331: same disclosure for the human-readable branch.
+        echo_text_warnings(list(_w607cb_warnings_out) + list(_w607dq_warnings_out))
         click.echo(f"VERDICT: {verdict}")
         if framework != "generic":
             click.echo(f"Framework: {framework}")
