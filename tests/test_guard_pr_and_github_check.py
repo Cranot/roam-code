@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import urllib.error
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -241,7 +242,7 @@ def test_cli_guard_pr_json_envelope(tmp_path):
         ],
     )
     assert result.exit_code in (0, 4, 5)
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["command"] == "guard-pr"
     assert "agent_change_proof_bundle" in payload
 
@@ -317,7 +318,7 @@ def test_cli_guard_pr_post_check_requires_gh_repo_and_sha(tmp_path):
         ],
     )
     assert result.exit_code in (0, 4, 5)
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     check_result = payload.get("github_check_result")
     assert check_result is not None
     assert check_result.get("error") in ("missing_gh_repo_or_sha", "gh_repo_must_be_owner_slash_repo")
@@ -421,7 +422,7 @@ def test_cli_guard_pr_ci_preset_yields_to_explicit_format(tmp_path):
     )
     # --json wins; output is a JSON envelope, not markdown headers.
     assert target_path.is_file()
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["command"] == "guard-pr"
 
 
@@ -488,7 +489,7 @@ def test_cli_guard_pr_dry_run_json_surface(tmp_path):
             "--skip-collect",
         ],
     )
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["summary"]["dry_run"] is True
 
 
@@ -512,7 +513,7 @@ def test_cli_guard_pr_dry_run_skips_post_check(tmp_path):
             "abc" * 14,
         ],
     )
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # check_result is None when dry-run skipped the POST.
     assert payload.get("github_check_result") is None
 
@@ -533,8 +534,163 @@ def test_cli_guard_pr_dry_run_still_computes_verdict(tmp_path):
             "--skip-collect",
         ],
     )
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     # Verdict is still computed.
     assert payload["summary"]["verdict"] in {"pass", "pass_with_warnings", "needs_review", "blocked"}
     # The agent_change_proof_bundle is still in the envelope.
     assert "agent_change_proof_bundle" in payload
+
+
+# ---- gate-suppression disclosure (silent-pass regression) ----
+#
+# `guard-pr` is reporting-only without --strict/--ci and exits 0 even when its
+# own verdict is `blocked`. That default is deliberate — the shipped CI
+# templates run a bare `guard-pr --post-check` reporting step under
+# `set -euo pipefail`, and it runs precisely when the verdict is blocked, so
+# flipping the default to non-zero would break them. What is NOT acceptable is
+# doing it silently: printing `blocked` and handing back success with no signal
+# is indistinguishable from a clean run to anyone reading the exit status.
+# These tests pin the disclosure on both surfaces (stderr banner + JSON).
+
+
+def _blocking_bundle_path(tmp_path):
+    """A bundle whose verdict is `blocked` (required checks exist, none ran)."""
+    bundle_path = tmp_path / "blocking.json"
+    bundle_path.write_text(
+        json.dumps(
+            _make_pr_bundle(
+                risks=[{"severity": "high", "paths": ["src/auth/x.py"], "description": "auth"}],
+                files=["src/auth/x.py"],
+            )
+        )
+    )
+    return bundle_path
+
+
+def test_guard_pr_non_strict_blocked_exits_0_but_says_so_loudly(tmp_path):
+    """The core regression: exit 0 on `blocked` is allowed, exit 0 in SILENCE is not."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["guard-pr", "--bundle", str(_blocking_bundle_path(tmp_path)), "--skip-collect"],
+    )
+
+    assert result.exit_code == 0, "non-strict guard-pr must stay reporting-only"
+    assert "blocked" in result.output
+
+    stderr = result.stderr
+    # Names the state, the flag that changes it, and the exit code it withheld.
+    assert "NOT gating" in stderr
+    assert "--ci" in stderr
+    assert "would exit 5" in stderr
+    # Loud, not a single grey line lost in the scrollback.
+    assert "!!!!" in stderr
+
+
+def test_guard_pr_non_strict_blocked_marks_gate_suppressed_in_json(tmp_path):
+    """A machine consumer must be able to tell a clean verdict from a withheld gate.
+
+    `exit_code` is 0 in BOTH cases, so it cannot carry that distinction alone.
+    """
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "guard-pr", "--bundle", str(_blocking_bundle_path(tmp_path)), "--skip-collect"],
+    )
+
+    assert result.exit_code == 0
+    # The banner goes to stderr, so stdout is still a clean JSON document.
+    summary = json.loads(result.stdout)["summary"]
+
+    assert summary["verdict"] == "blocked"
+    assert summary["exit_code"] == 0  # what the process actually returned
+    assert summary["verdict_exit_code"] == 5  # what the gate would have returned
+    assert summary["gate_enforced"] is False
+    assert summary["gate_suppressed"] is True
+
+
+def test_guard_pr_strict_blocked_gates_and_emits_no_banner(tmp_path):
+    """Under --strict the gate is real, so there is nothing to disclose."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "guard-pr", "--bundle", str(_blocking_bundle_path(tmp_path)), "--strict", "--skip-collect"],
+    )
+
+    assert result.exit_code == 5
+    summary = json.loads(result.stdout)["summary"]
+    assert summary["gate_enforced"] is True
+    assert summary["gate_suppressed"] is False
+    assert summary["exit_code"] == summary["verdict_exit_code"] == 5
+    assert "NOT gating" not in result.stderr
+
+
+def test_guard_pr_ci_preset_gates_and_emits_no_banner(tmp_path):
+    """--ci implies --strict, so it must gate rather than warn."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "guard-pr", "--bundle", str(_blocking_bundle_path(tmp_path)), "--ci", "--skip-collect"],
+    )
+
+    assert result.exit_code == 5
+    assert json.loads(result.stdout)["summary"]["gate_suppressed"] is False
+    assert "NOT gating" not in result.stderr
+
+
+def test_guard_pr_non_blocking_verdict_emits_no_banner(tmp_path, monkeypatch):
+    """The banner is keyed off the verdict's exit code, not off `--strict` alone.
+
+    A non-blocking verdict in non-strict mode suppresses nothing, so warning
+    about it would be noise — and noise is how loud warnings get ignored.
+    """
+    monkeypatch.setattr(cmd_guard_pr, "verdict_exit_code", lambda _v: 0)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "guard-pr", "--bundle", str(_blocking_bundle_path(tmp_path)), "--skip-collect"],
+    )
+
+    assert result.exit_code == 0
+    summary = json.loads(result.stdout)["summary"]
+    assert summary["gate_suppressed"] is False
+    assert summary["verdict_exit_code"] == 0
+    assert "NOT gating" not in result.stderr
+
+
+def test_guard_pr_suppressed_gate_is_disclosed_in_agent_contract(tmp_path):
+    """Agents read agent_contract.facts, not stderr."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "guard-pr", "--bundle", str(_blocking_bundle_path(tmp_path)), "--skip-collect"],
+    )
+    facts = json.loads(result.stdout)["agent_contract"]["facts"]
+    assert any("NOT GATING" in f for f in facts), facts
+
+
+def test_guard_pr_dry_run_still_discloses_suppressed_gate(tmp_path):
+    """--dry-run predicts the verdict, so it inherits the same silent-pass trap."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["guard-pr", "--bundle", str(_blocking_bundle_path(tmp_path)), "--dry-run", "--skip-collect"],
+    )
+    assert result.exit_code == 0
+    assert "NOT gating" in result.stderr
+
+
+def test_guard_pr_banner_names_the_flag_and_the_withheld_code():
+    """Unit-level pin on the banner text: a hint that omits the flag is useless."""
+    runner = CliRunner()
+
+    @click.command()
+    def _probe():
+        cmd_guard_pr._emit_gate_suppressed_banner("needs_review", 4)
+
+    result = runner.invoke(_probe)
+    stderr = result.stderr
+    assert "needs_review" in stderr
+    assert "--ci" in stderr
+    assert "--strict" in stderr
+    assert "would exit 4" in stderr
