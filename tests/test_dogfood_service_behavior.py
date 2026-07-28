@@ -272,6 +272,19 @@ def _make_floating_commit(rel_path: str, new_text: str, index_file: Path, messag
     """
     env = dict(os.environ)
     env["GIT_INDEX_FILE"] = str(index_file)
+    # ``git commit-tree`` REFUSES (exit 128) without a committer identity.
+    # A developer machine has one in git config, a CI runner does not -- so
+    # relying on ambient config makes this test pass locally and fail in CI,
+    # which is exactly what happened. Supply the identity explicitly so the
+    # test is hermetic and does not depend on how the host is configured.
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "roam-tests",
+            "GIT_AUTHOR_EMAIL": "roam-tests@localhost",
+            "GIT_COMMITTER_NAME": "roam-tests",
+            "GIT_COMMITTER_EMAIL": "roam-tests@localhost",
+        }
+    )
 
     def _git(*args: str, input_text: str | None = None) -> str:
         return subprocess.run(
