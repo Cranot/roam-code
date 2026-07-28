@@ -81,6 +81,9 @@ __all__ = (
     "FORBIDDEN_PATTERNS",
     "SCAN_EXTENSIONS",
     "WHITELIST_FILES",
+    "decode_text",
+    "decode_views",
+    "scan_bytes",
     "scan_text",
     "should_scan",
 )
@@ -718,3 +721,66 @@ def scan_text(rel_posix_path: str, text: str) -> list[tuple[str, int, str]]:
         if name is not None:
             hits.append((name, line_no, line.strip()[:200]))
     return hits
+
+
+def decode_views(data: bytes) -> list[str]:
+    """Every text reading of *data* the catalogue must be applied to.
+
+    A UTF-16 file decoded as UTF-8 is read WRONG rather than failing: every
+    NUL padding byte is itself valid UTF-8, so ``errors="replace"`` drops
+    nothing and an ASCII payload arrives as ``g\\x00h\\x00p\\x00_\\x00...``,
+    which matches no pattern in the catalogue. The gate then reports clean
+    over content it decoded incorrectly, which is not the same as content it
+    proved safe -- and nothing in the output distinguishes the two.
+
+    The vector is concrete on this repository rather than theoretical. Windows
+    PowerShell's ``>`` redirect and ``Out-File`` emit UTF-16LE by default and
+    roam-code is developed on Windows, so ``gh auth token > token.txt``
+    followed by an accidental ``git add`` produces exactly a tracked file
+    holding a live credential the gate cannot see.
+
+    Two readings, because the two failure shapes are different:
+
+    * The BOM-directed decode handles the common case exactly. This is the
+      reading ``scan_internal_language.py`` already applied to pushed history
+      but not to the working tree or the staged index.
+    * The NUL-stripped reading is the belt-and-braces one, and is the only
+      thing that catches BOM-LESS UTF-16 -- which the BOM decode cannot see by
+      construction. It costs a second pass only on content that already holds
+      embedded NULs, which no legitimate scannable text file here does.
+    """
+    primary = decode_text(data)
+    if "\x00" not in primary:
+        return [primary]
+    return [primary, primary.replace("\x00", "")]
+
+
+def decode_text(data: bytes) -> str:
+    """Decode a text body, honouring a UTF-32/UTF-16/UTF-8 byte-order mark.
+
+    ``errors="replace"`` throughout: an undecodable byte must not discard the
+    rest of the file, because ASCII leaks after a bad byte still publish.
+    """
+    if data.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+        return data.decode("utf-32", errors="replace")
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+    if data.startswith(b"\xef\xbb\xbf"):
+        return data.decode("utf-8-sig", errors="replace")
+    return data.decode("utf-8", errors="replace")
+
+
+def scan_bytes(rel_posix_path: str, data: bytes) -> list[tuple[str, int, str]]:
+    """``scan_text`` applied to every text reading *data* admits.
+
+    The single entry point every consumer of this catalogue should use when
+    it holds bytes: the hook CLI's working-tree, staged and pushed-history
+    readers, and the CI gate. Hits are deduplicated across readings so two
+    agreeing views cannot double-report the same line, and NULs are stripped
+    from the reported snippet so a finding stays readable.
+    """
+    hits: dict[tuple[str, int, str], None] = {}
+    for view in decode_views(data):
+        for name, line_no, snippet in scan_text(rel_posix_path, view):
+            hits[(name, line_no, snippet.replace("\x00", "").strip()[:200])] = None
+    return sorted(hits, key=lambda hit: (hit[1], hit[0]))

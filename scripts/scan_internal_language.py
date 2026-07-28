@@ -19,9 +19,17 @@ Modes (exactly one required):
              Scan committed blobs and messages introduced by the authoritative
              ref-update records Git supplied to the pre-push hook.
 
+Every mode reads BYTES and applies the catalogue through
+``internal_language_patterns.scan_bytes``, which scans each text reading the
+content admits (BOM-directed, plus a NUL-stripped pass that catches BOM-less
+UTF-16). Decoding a UTF-16 file as UTF-8 does not fail — NUL padding bytes are
+themselves valid UTF-8 — it silently yields ``g\\x00h\\x00p\\x00_\\x00...``,
+which matches nothing. "Decoded without error" is not "proved safe".
+
 Exit codes:
   0  clean — no forbidden-pattern hits.
-  1  one or more hits (printed, grouped by pattern) OR a usage / git error.
+  1  one or more hits (printed, grouped by pattern) OR a usage / git error,
+     including an empty ``--all`` inventory (see ``_tracked_paths``).
 """
 
 from __future__ import annotations
@@ -54,6 +62,7 @@ def _load_patterns_module():
 
 _patterns = _load_patterns_module()
 scan_text = _patterns.scan_text
+scan_bytes = _patterns.scan_bytes
 should_scan = _patterns.should_scan
 _HISTORY_WHITELIST_FILES = frozenset(_patterns.WHITELIST_FILES)
 
@@ -74,11 +83,46 @@ def _load_prepush_refs_module():
 _prepush_refs = _load_prepush_refs_module()
 
 
-def _git_bytes(repo_root: str | None, args: list[str], *, operation: str) -> bytes:
+def _without_git_controls() -> dict[str, str]:
+    """Copy the environment without Git's repository-redirection controls.
+
+    ``git ls-files`` honours ``GIT_INDEX_FILE``/``GIT_DIR``/``GIT_WORK_TREE``.
+    Pointed at another index it prints NOTHING and exits 0 -- no error, no
+    diagnostic, just an empty inventory that turns a whole-tree scan into an
+    unconditional PASS. That matters here specifically: this CLI runs from
+    ``.githooks/pre-commit`` and ``.githooks/pre-push``, exactly the context
+    where Git exports repository-local ``GIT_*`` controls.
+
+    ``.githooks/pre-push`` already unsets ``git rev-parse --local-env-vars``
+    before invoking anything, so a push through that hook was defended.
+    Nothing defended the CI invocation (``.github/workflows/secret-scan.yml``
+    runs ``--all``) or a direct run, and a gate should not depend on its
+    caller having remembered.
+
+    Applied ONLY to the ``--all`` inventory, deliberately. For ``--staged``
+    the same variable is load-bearing rather than hostile: ``git commit --
+    <pathspec>`` builds a temporary index and hands the hook its path in
+    ``GIT_INDEX_FILE``, and that temporary index -- not ``.git/index`` -- is
+    the authoritative statement of what the commit will contain. Stripping it
+    there would make the staged scan describe a different change than the one
+    being made. ``--all`` has no such excuse: "every file tracked by this
+    repository" is a claim about *this* repository.
+    """
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+
+
+def _git_bytes(
+    repo_root: str | None,
+    args: list[str],
+    *,
+    operation: str,
+    env: dict[str, str] | None = None,
+) -> bytes:
     proc = subprocess.run(
         ["git", "--no-replace-objects", *args],
         capture_output=True,
         cwd=repo_root,
+        env=env,
         check=False,
     )
     if proc.returncode != 0:
@@ -94,17 +138,6 @@ def _decode_git_text(data: bytes, *, operation: str, encoding: str, errors: str 
     except UnicodeDecodeError as exc:
         sys.stderr.write(f"ERROR: {operation} produced invalid {encoding} output.\n")
         raise SystemExit(1) from exc
-
-
-def _decode_content_bytes(data: bytes, *, operation: str) -> str:
-    """Decode text bodies, recognizing BOM-marked UTF-16/32 content."""
-    if data.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
-        return _decode_git_text(data, operation=operation, encoding="utf-32", errors="replace")
-    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return _decode_git_text(data, operation=operation, encoding="utf-16", errors="replace")
-    if data.startswith(b"\xef\xbb\xbf"):
-        return _decode_git_text(data, operation=operation, encoding="utf-8-sig", errors="replace")
-    return _decode_git_text(data, operation=operation, encoding="utf-8", errors="replace")
 
 
 def _repo_root() -> str:
@@ -137,30 +170,54 @@ def _staged_paths(repo_root: str) -> list[str]:
 
 
 def _tracked_paths(repo_root: str) -> list[str]:
-    """Posix relative paths of every git-tracked file (NUL-delimited)."""
-    raw = _git_bytes(repo_root, ["ls-files", "-z"], operation="list tracked paths")
-    text = _decode_git_text(raw, operation="list tracked paths", encoding="utf-8")
-    return [p for p in text.split("\0") if p]
+    """Posix relative paths of every git-tracked file, or fail the gate closed.
 
+    Two ways this enumeration can lie, both ending in a scan that reads
+    nothing and reports clean:
 
-def _read_staged_blob(repo_root: str, rel_path: str) -> str:
-    """Return the STAGED content of ``rel_path`` (``git show :<path>``).
-
-    Invalid UTF-8 bytes are replaced so they cannot hide later ASCII leaks.
-    Git failures block the scan.
+    * Inherited redirection -- see ``_without_git_controls``.
+    * An empty answer. Zero tracked files is never a real pre-push or CI
+      state (a push with nothing tracked has nothing to publish), so it means
+      the inventory failed to compute rather than that there is nothing to
+      scan. Returning ``[]`` would silently turn ``--all`` into an
+      unconditional exit 0. Guarding the RESULT rather than only its causes
+      also fails closed on redirections this function does not enumerate.
     """
-    raw = _git_bytes(repo_root, ["show", f":{rel_path}"], operation=f"read staged blob {rel_path}")
-    return _decode_git_text(raw, operation=f"read staged blob {rel_path}", encoding="utf-8", errors="replace")
+    raw = _git_bytes(
+        repo_root,
+        ["ls-files", "-z"],
+        operation="list tracked paths",
+        env=_without_git_controls(),
+    )
+    text = _decode_git_text(raw, operation="list tracked paths", encoding="utf-8")
+    tracked = [p for p in text.split("\0") if p]
+    if not tracked:
+        sys.stderr.write(
+            "ERROR: git ls-files reported zero tracked files; the whole-tree scan "
+            "would pass without reading anything.\n"
+        )
+        raise SystemExit(1)
+    return tracked
 
 
-def _read_disk_file(repo_root: str, rel_path: str) -> str | None:
-    """Return on-disk content; missing tracked paths skip, read errors block."""
+def _read_staged_blob(repo_root: str, rel_path: str) -> bytes:
+    """Return the raw STAGED bytes of ``rel_path`` (``git show :<path>``).
+
+    Returns bytes, not text: the caller applies the catalogue across every
+    encoding the content admits (``scan_bytes``). Decoding here would fix one
+    reading and hide the others. Git failures block the scan.
+    """
+    return _git_bytes(repo_root, ["show", f":{rel_path}"], operation=f"read staged blob {rel_path}")
+
+
+def _read_disk_file(repo_root: str, rel_path: str) -> bytes | None:
+    """Return on-disk bytes; missing tracked paths skip, read errors block."""
     abs_path = os.path.join(repo_root, rel_path)
     if not os.path.isfile(abs_path):
         return None
     try:
         with open(abs_path, "rb") as fh:
-            return fh.read().decode("utf-8", errors="replace")
+            return fh.read()
     except OSError as exc:
         sys.stderr.write(f"ERROR: could not read tracked file {rel_path}: {exc}\n")
         raise SystemExit(1) from exc
@@ -179,10 +236,10 @@ def _collect_hits(repo_root: str, *, staged: bool) -> list[tuple[str, str, int, 
     for rel in paths:
         if not should_scan(rel):
             continue
-        text = reader(repo_root, rel)
-        if text is None:
+        data = reader(repo_root, rel)
+        if data is None:
             continue
-        for name, line_no, text_snippet in scan_text(rel, text):
+        for name, line_no, text_snippet in scan_bytes(rel, data):
             findings.append((rel, name, line_no, text_snippet))
     return findings
 
@@ -229,14 +286,8 @@ def _collect_commit_message_hits_for_commits(repo_root: str, commits: list[str])
         except _prepush_refs.PrePushGitError as exc:
             sys.stderr.write(f"ERROR: cannot inspect commit object: {exc}\n")
             raise SystemExit(1) from exc
-        body = _decode_git_text(
-            raw,
-            operation=f"decode commit object {commit}",
-            encoding="utf-8",
-            errors="replace",
-        )
         label = f"{commit[:7]} (commit object)"
-        for name, line_no, text_snippet in scan_text(label, body):
+        for name, line_no, text_snippet in scan_bytes(label, raw):
             findings.append((label, name, line_no, text_snippet))
     return findings
 
@@ -270,12 +321,13 @@ def _collect_commit_blob_hits(repo_root: str, commits: list[str]) -> list[tuple[
                 findings.append((label, name, line_no, text_snippet))
             if rel_path in _HISTORY_WHITELIST_FILES:
                 continue
-            body = _decode_content_bytes(
-                _git_bytes(repo_root, ["show", f"{commit}:{rel_path}"], operation=f"read blob {commit}:{rel_path}"),
+            body = _git_bytes(
+                repo_root,
+                ["show", f"{commit}:{rel_path}"],
                 operation=f"read blob {commit}:{rel_path}",
             )
             label = f"{commit[:7]}:{rel_path}"
-            for name, line_no, text_snippet in scan_text(rel_path, body):
+            for name, line_no, text_snippet in scan_bytes(rel_path, body):
                 findings.append((label, name, line_no, text_snippet))
     return findings
 
@@ -310,12 +362,8 @@ def _collect_pre_push_history_hits(
     for published in direct_texts:
         if published.kind == "blob" and published.path in _HISTORY_WHITELIST_FILES:
             continue
-        body = _decode_content_bytes(
-            published.data,
-            operation=f"decode pushed {published.kind} {published.oid}",
-        )
         label = published.path
-        for name, line_no, text_snippet in scan_text(label, body):
+        for name, line_no, text_snippet in scan_bytes(label, published.data):
             direct_findings.append((label, name, line_no, text_snippet))
 
     published_commits: tuple[str, ...] = ()
