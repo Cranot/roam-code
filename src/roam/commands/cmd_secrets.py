@@ -541,13 +541,30 @@ def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: 
 
     findings: list[dict] = []
     try:
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            for line_num, line in enumerate(f, start=1):
+        # Read BYTES, not text. `errors="replace"` reads a UTF-16 file WRONG
+        # rather than failing -- NUL padding is itself valid UTF-8, so nothing
+        # is dropped and a token arrives as `g\x00h\x00p\x00_\x00...`, matching
+        # no pattern. This is a blocking CI gate (`--fail-on-found`), and
+        # PowerShell's `>` emits UTF-16LE by default, so `gh auth token >
+        # token.txt` plus an accidental `git add` was invisible here.
+        from roam.security.text_views import decode_views
+
+        seen: set[tuple] = set()
+        for view in decode_views(Path(file_path).read_bytes()):
+            for line_num, line in enumerate(view.splitlines(), start=1):
                 if _is_placeholder_line(line) or _is_env_var_line(line):
                     continue
                 for pat in patterns:
                     finding = _match_pattern_to_finding(line, pat, file_path, line_num, min_rank)
                     if finding is not None:
+                        key = (
+                            tuple(sorted(finding.items(), key=lambda kv: kv[0]))
+                            if isinstance(finding, dict)
+                            else finding
+                        )
+                        if key in seen:
+                            continue
+                        seen.add(key)
                         findings.append(finding)
     except (OSError, UnicodeDecodeError) as _exc:
         from roam.observability import log_swallowed

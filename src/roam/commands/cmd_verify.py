@@ -2963,11 +2963,27 @@ def _secret_scan_targets(changed_paths: list[str], root: Path) -> list[tuple[str
     return targets
 
 
-def _read_secret_scan_text(path: Path) -> str | None:
+def _read_secret_scan_views(path: Path) -> list[str] | None:
+    """Every text reading of *path* the credential scan must cover.
+
+    Was ``read_text(encoding="utf-8")``, which reads a UTF-16 file WRONG
+    rather than failing -- NUL padding is valid UTF-8, so a token arrives as
+    ``g\\x00h\\x00p\\x00_\\x00...`` and matches no pattern. This gate rides
+    ``verify --auto`` and therefore the Claude Stop hook, so a clean verdict
+    over undecoded content is a credential shipped.
+    """
+    from roam.security.text_views import decode_views
+
     try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        return decode_views(path.read_bytes())
+    except OSError:
         return None
+
+
+def _read_secret_scan_text(path: Path) -> str | None:
+    """Back-compat single-view reader; prefer ``_read_secret_scan_views``."""
+    views = _read_secret_scan_views(path)
+    return None if views is None else views[0]
 
 
 def _repo_patterns_enabled(norm: str, repo_patterns: list, repo_should_scan) -> bool:
@@ -3085,20 +3101,30 @@ def _check_secrets(changed_paths: list[str], root: Path) -> dict:
     violations: list[dict] = []
     checked = 0
     for norm, path in _secret_scan_targets(changed_paths, root):
-        text = _read_secret_scan_text(path)
-        if text is None:
+        views = _read_secret_scan_views(path)
+        if views is None:
             continue
         checked += 1
-        violations.extend(
-            _secret_violations_for_file(
+        # One pass per decoding, deduplicated: a BOM-less UTF-16 file is only
+        # visible in the NUL-stripped view, and a file with no NULs yields a
+        # single view so the common case pays nothing.
+        seen: set[tuple] = set()
+        for text in views:
+            for violation in _secret_violations_for_file(
                 norm,
                 text,
                 SECRET_PATTERNS,
                 pattern_id,
                 repo_patterns,
                 _repo_patterns_enabled(norm, repo_patterns, repo_should_scan),
-            )
-        )
+            ):
+                key = (
+                    tuple(sorted(violation.items(), key=lambda kv: kv[0])) if isinstance(violation, dict) else violation
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                violations.append(violation)
 
     return _secrets_result(_secrets_score(checked, violations), violations, repo_error, repo_patterns)
 
