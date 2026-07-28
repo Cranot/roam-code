@@ -22,6 +22,7 @@ EXPECTED_WORKFLOWS = {
     "cga-attestation.yml",
     "dogfood.yml",
     "publish.yml",
+    "repo-description-drift.yml",
     "roam-ci.yml",
     "roam.yml",
     "secret-scan.yml",

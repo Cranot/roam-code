@@ -39,6 +39,7 @@ PUBLIC_ALLOWLIST = (
     ".editorconfig",
     ".gitattributes",
     ".gitignore",
+    ".mailmap",
     ".mcp.json",
     ".pre-commit-config.yaml",
     ".pre-commit-hooks.yaml",

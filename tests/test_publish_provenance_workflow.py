@@ -80,10 +80,10 @@ def test_partial_pypi_recovery_accepts_only_an_exact_manifest_subset() -> None:
 
 def test_every_remote_download_has_a_hard_size_and_time_ceiling() -> None:
     text = _text()
-    assert text.count("curl \\") == 5
-    assert text.count("--max-filesize 16777216") == 4
+    assert text.count("curl \\") == 6
+    assert text.count("--max-filesize 16777216") == 5
     assert text.count("--max-filesize 104857600") == 1
-    assert text.count("--connect-timeout 10") == 5
+    assert text.count("--connect-timeout 10") == 6
     assert text.count("--max-time 90") == 1
 
 
