@@ -361,7 +361,7 @@ jobs:
 
       - name: Upload one immutable release bundle
         id: upload_bundle
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-bundle
           path: |
@@ -478,7 +478,7 @@ jobs:
       - name: Upload the immutable missing-file subset
         id: upload_subset
         if: steps.recovery.outputs.publish_required == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: publish-subset
           path: release-bundle/publish-dist/
@@ -1222,7 +1222,7 @@ jobs:
 
       - name: Upload one immutable signed-evidence artifact
         id: upload_signed_evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: signed-evidence
           path: signed-evidence/
