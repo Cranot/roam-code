@@ -130,32 +130,55 @@ def _configured_guard_map(signals: Iterable[str]) -> dict[str, str]:
     return out
 
 
-def load_tenant_guard_signals(root: Path) -> tuple[str, ...]:
-    """Load tenant guards from ``.roam/verify.yaml`` or return defaults.
+def load_tenant_guard_signals_status(root: Path) -> tuple[tuple[str, ...], str | None]:
+    """Load tenant guards and disclose whether the config could be honoured.
+
+    Returns ``(guards, error)``.  ``error`` is ``None`` when the configuration
+    was read as written — including the deliberate ``tenant_guards: []`` that
+    disables the detector.  It is a human-readable reason when the config could
+    NOT be honoured (unreadable file, malformed YAML, wrong shape), in which
+    case ``guards`` is empty *because nothing could be parsed*, not because the
+    project asked for nothing.
+
+    The two states produce the same empty tuple but mean opposite things, so
+    callers must branch on ``error`` rather than on emptiness: an unreadable
+    config silently returning "no guards configured" turns the detector off
+    while still reporting a clean result.
 
     Both ``tenant_guards: [...]`` and ``tenant_scope: {guards: [...]}`` are
-    accepted.  An explicit empty list disables the detector.
+    accepted.
     """
     path = root / ".roam" / "verify.yaml"
     if not path.exists():
-        return DEFAULT_TENANT_GUARDS
+        return DEFAULT_TENANT_GUARDS, None
     try:
         import yaml
 
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001 - malformed config must fail closed
-        return ()
+    except Exception as exc:  # noqa: BLE001 - malformed config must be disclosed
+        return (), f"{path.as_posix()} could not be parsed: {type(exc).__name__}: {exc}"
     if not isinstance(data, dict):
-        return ()
+        return (), f"{path.as_posix()} is not a YAML mapping (got {type(data).__name__})"
     raw = data.get("tenant_guards")
     nested = data.get("tenant_scope")
     if raw is None and isinstance(nested, dict):
         raw = nested.get("guards")
     if raw is None:
-        return DEFAULT_TENANT_GUARDS
+        return DEFAULT_TENANT_GUARDS, None
     if not isinstance(raw, list):
-        return ()
-    return tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
+        return (), f"{path.as_posix()}: tenant guards must be a list (got {type(raw).__name__})"
+    return tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip())), None
+
+
+def load_tenant_guard_signals(root: Path) -> tuple[str, ...]:
+    """Load tenant guards from ``.roam/verify.yaml`` or return defaults.
+
+    Thin wrapper over :func:`load_tenant_guard_signals_status` that drops the
+    error channel.  Use the ``_status`` variant anywhere the caller reports a
+    result to a human or a gate — this one cannot tell "disabled on purpose"
+    apart from "config unreadable".
+    """
+    return load_tenant_guard_signals_status(root)[0]
 
 
 def _dotted_name(node: ast.AST | None) -> str:
@@ -565,4 +588,9 @@ def find_tenant_scope_findings(
     return findings
 
 
-__all__ = ["DEFAULT_TENANT_GUARDS", "find_tenant_scope_findings", "load_tenant_guard_signals"]
+__all__ = [
+    "DEFAULT_TENANT_GUARDS",
+    "find_tenant_scope_findings",
+    "load_tenant_guard_signals",
+    "load_tenant_guard_signals_status",
+]

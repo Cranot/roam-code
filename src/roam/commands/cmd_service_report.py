@@ -1875,9 +1875,13 @@ def _render_reachability_triage(*, env: dict, meta: dict) -> str:
     # Executive summary — the reachability wedge.
     total_deps = _g(sbom, "total_dependencies")
     reachable_deps = _g(sbom, "reachable_count")
-    taint_findings = _g(taint, "findings", 0)
-    secret_findings = _g(secrets, "total_findings", 0)
-    reach_vulns = _g(vuln_reach, "reachable_count", 0)
+    # No `0` default: on a component failure the key is absent, and a floored
+    # zero here printed "Taint flows: 0" in the executive summary while
+    # sections 4 and 5 printed the em-dash for the SAME missing field. `_cell`
+    # renders None as the em-dash, so the summary now agrees with the sections.
+    taint_findings = _g(taint, "findings")
+    secret_findings = _g(secrets, "total_findings")
+    reach_vulns = _g(vuln_reach, "reachable_count")
 
     out.append("## 1. Executive summary")
     out.append("")

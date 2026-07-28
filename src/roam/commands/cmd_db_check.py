@@ -29,6 +29,17 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
 
+#: Severity for a check that could NOT be computed on this database (an
+#: optional feature is absent). It is deliberately NOT ``ok``: ``ok`` means
+#: "measured, nothing wrong", and the two must never render the same. ``count``
+#: is ``None`` for these rows so no consumer can read a measured zero out of a
+#: check that never ran.
+SEVERITY_UNSUPPORTED = "unsupported"
+
+
+def _unsupported(name: str, note: str) -> dict:
+    return {"name": name, "count": None, "severity": SEVERITY_UNSUPPORTED, "note": note}
+
 
 def _check_orphan_symbols(conn) -> dict:
     cur = conn.execute("SELECT COUNT(*) FROM symbols s WHERE s.file_id NOT IN (SELECT id FROM files)")
@@ -59,9 +70,14 @@ def _check_missing_fts(conn) -> dict:
         cur = conn.execute("SELECT COUNT(*) FROM symbols WHERE id NOT IN (SELECT rowid FROM symbol_fts)")
         n = cur.fetchone()[0]
         sev = "medium" if n else "ok"
-    except sqlite3.OperationalError:
-        # FTS5 table not present (very old schema or build without FTS)
-        return {"name": "missing_fts_rows", "count": 0, "severity": "ok", "note": "fts5 not available"}
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc).lower():
+            # Not a capability gap -- a real DB fault. Let _run_checks record
+            # it as an `error` rather than reporting a computed zero.
+            raise
+        # FTS5 table not present (very old schema or build without FTS).
+        # UNSUPPORTED, not OK: nothing was measured, so `count` stays None.
+        return _unsupported("missing_fts_rows", f"fts5 not available: {exc}")
     return {"name": "missing_fts_rows", "count": n, "severity": sev}
 
 
@@ -78,45 +94,43 @@ def _check_invalid_line_spans(conn) -> dict:
 
 
 def _check_corrupt_metrics(conn) -> dict:
-    try:
-        cur = conn.execute(
-            """
-            SELECT COUNT(*) FROM symbol_metrics
-            WHERE cognitive_complexity < 0
-               OR nesting_depth < 0
-               OR param_count < 0
-               OR line_count < 0
-            """
-        )
-        n = cur.fetchone()[0]
-        sev = "medium" if n else "ok"
-        note = None
-    except sqlite3.OperationalError as exc:
-        n = 0
-        sev = "ok"
-        note = f"symbol_metrics not queryable: {exc.__class__.__name__}"
-    out = {"name": "corrupt_metrics", "count": n, "severity": sev}
-    if note:
-        out["note"] = note
-    return out
+    # `symbol_metrics` is created unconditionally by the shipped schema, so a
+    # query failure here is a fault in THIS database, not an optional feature.
+    # It propagates to _run_checks, which records severity `error` -- a caught
+    # OperationalError used to report count=0/severity=ok, i.e. "metrics are
+    # clean" for a table that could not be read at all.
+    cur = conn.execute(
+        """
+        SELECT COUNT(*) FROM symbol_metrics
+        WHERE cognitive_complexity < 0
+           OR nesting_depth < 0
+           OR param_count < 0
+           OR line_count < 0
+        """
+    )
+    n = cur.fetchone()[0]
+    return {"name": "corrupt_metrics", "count": n, "severity": "medium" if n else "ok"}
 
 
 def _check_zero_symbols_per_file(conn) -> dict:
-    """Files with role=source that have zero symbols. Often a parser failure."""
-    try:
-        cur = conn.execute(
-            """
-            SELECT COUNT(*) FROM files f
-            WHERE COALESCE(f.file_role, 'source') = 'source'
-              AND NOT EXISTS (SELECT 1 FROM symbols WHERE file_id = f.id)
-              AND f.lang NOT IN ('json', 'yaml', 'toml', 'markdown', 'text', 'xml')
-            """
-        )
-        n = cur.fetchone()[0]
-        sev = "medium" if n > 0 else "ok"
-    except sqlite3.OperationalError:
-        return {"name": "files_with_zero_symbols", "count": 0, "severity": "ok", "note": "unsupported"}
-    return {"name": "files_with_zero_symbols", "count": n, "severity": sev}
+    """Files with role=source that have zero symbols. Often a parser failure.
+
+    The column is ``files.language``; this check queried ``f.lang`` and so
+    raised on EVERY database, healthy or not, and the swallowed
+    OperationalError reported it as `ok`/`unsupported`. Both are fixed: the
+    column name is correct, and a genuine query failure now propagates to
+    _run_checks instead of being floored to a clean zero.
+    """
+    cur = conn.execute(
+        """
+        SELECT COUNT(*) FROM files f
+        WHERE COALESCE(f.file_role, 'source') = 'source'
+          AND NOT EXISTS (SELECT 1 FROM symbols WHERE file_id = f.id)
+          AND f.language NOT IN ('json', 'yaml', 'toml', 'markdown', 'text', 'xml')
+        """
+    )
+    n = cur.fetchone()[0]
+    return {"name": "files_with_zero_symbols", "count": n, "severity": "medium" if n > 0 else "ok"}
 
 
 CHECKS = (
@@ -138,8 +152,12 @@ def _run_checks(conn) -> list[dict]:
         except sqlite3.Error as exc:
             findings.append(
                 {
-                    "name": check.__name__.lstrip("_check_"),
-                    "count": 0,
+                    # removeprefix, not lstrip: lstrip strips a CHARACTER SET,
+                    # so `_check_corrupt_metrics` came out as "orrupt_metrics".
+                    "name": check.__name__.removeprefix("_check_"),
+                    # None, not 0 -- the check produced no measurement, and a
+                    # zero here reads as "measured, nothing wrong".
+                    "count": None,
                     "severity": "error",
                     "note": f"check failed: {exc.__class__.__name__}: {exc}",
                 }
@@ -169,7 +187,11 @@ EXIT_GATE_FAILURE = 5
     stale_sensitive=False,
 )
 @click.command("db-check")
-@click.option("--ci", is_flag=True, help="Exit with code 5 on any high-severity finding (CI gate).")
+@click.option(
+    "--ci",
+    is_flag=True,
+    help="Exit with code 5 on any high-severity finding or failed check (CI gate).",
+)
 @click.pass_context
 def db_check(ctx, ci: bool):
     """Integrity sweep over the local index. Reports orphans, broken edges, missing FTS, etc."""
@@ -182,7 +204,18 @@ def db_check(ctx, ci: bool):
     high = sum(1 for f in findings if f["severity"] == "high")
     medium = sum(1 for f in findings if f["severity"] == "medium")
     errors = sum(1 for f in findings if f["severity"] == "error")
-    verdict = "BAD" if (high or errors) else ("REVIEW" if medium else "OK")
+    unsupported = sum(1 for f in findings if f["severity"] == SEVERITY_UNSUPPORTED)
+    # A check that could not run is not a passing check: INCOMPLETE ranks
+    # between REVIEW and OK so an uncomputed sweep never renders as a clean one.
+    if high or errors:
+        verdict = "BAD"
+    elif medium:
+        verdict = "REVIEW"
+    elif unsupported:
+        verdict = "INCOMPLETE"
+    else:
+        verdict = "OK"
+    checks_complete = not (errors or unsupported)
 
     if json_mode:
         click.echo(
@@ -194,22 +227,33 @@ def db_check(ctx, ci: bool):
                         "high": high,
                         "medium": medium,
                         "errors": errors,
+                        "unsupported": unsupported,
                         "checks_run": len(findings),
+                        "checks_complete": checks_complete,
+                        "partial_success": not checks_complete,
                     },
                     findings=findings,
                 )
             )
         )
     else:
-        click.echo(f"VERDICT: {verdict}  ({high} high, {medium} medium, {errors} error)")
+        click.echo(f"VERDICT: {verdict}  ({high} high, {medium} medium, {errors} error, {unsupported} not computed)")
         click.echo("")
         for f in findings:
             sev_tag = f["severity"].upper()
             note = f.get("note")
-            line = f"  [{sev_tag:6s}] {f['name']:30s} count={f['count']}"
+            count = f["count"]
+            rendered = "n/a" if count is None else str(count)
+            line = f"  [{sev_tag:11s}] {f['name']:30s} count={rendered}"
             if note:
                 line += f"  ({note})"
             click.echo(line)
+        if not checks_complete:
+            click.echo("")
+            click.echo(
+                f"INCOMPLETE: {errors + unsupported} of {len(findings)} checks produced no measurement; "
+                "the counts above do not cover them."
+            )
 
     if ci and (high or errors):
         ctx.exit(EXIT_GATE_FAILURE)
