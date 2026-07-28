@@ -194,3 +194,61 @@ def test_pr_self_analysis_explicitly_installs_the_local_action_source() -> None:
     assert len(local_action_steps) == 1
     assert local_action_steps[0].get("with", {}).get("version") == "source"
     assert "no PyPI fallback" in workflow_text
+
+
+def _jobs(document: object) -> dict[str, dict]:
+    assert isinstance(document, dict)
+    return {name: job for name, job in (document.get("jobs") or {}).items() if isinstance(job, dict)}
+
+
+def _steps(job: dict) -> list[dict]:
+    return [step for step in (job.get("steps") or []) if isinstance(step, dict)]
+
+
+def test_every_workflow_job_declares_least_privilege_permissions() -> None:
+    """A job with no `permissions:` block inherits the workflow default, and
+    with no workflow default it inherits the repository default -- which on
+    some configurations is a read/write GITHUB_TOKEN for every job in the
+    repo. Least privilege has to be written down to be true, and the token
+    scope a job runs with should be reviewable in the diff that adds the job
+    rather than inferred from repository settings.
+
+    This is the sibling of the SHA-pinning assertion above: the pin controls
+    WHAT third-party code runs, this controls WHAT THAT CODE CAN DO.
+    """
+    for path in _workflow_paths():
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        workflow_default = document.get("permissions")
+        for job_name, job in _jobs(document).items():
+            assert job.get("permissions") is not None or workflow_default is not None, (
+                f"{path.name} job '{job_name}' declares no `permissions:` and the workflow sets "
+                f"no default. Add the least privilege the job actually needs, e.g. "
+                f"`permissions:\n  contents: read`."
+            )
+
+
+def test_no_expression_is_interpolated_into_a_run_script() -> None:
+    """`${{ }}` is substituted into the script text BEFORE the shell parses
+    it, so an expression carrying attacker-controlled content -- a PR title,
+    a branch name, an issue body -- is executed as shell source, with this
+    repository's token in the environment. Mapping the value through the
+    step's `env:` and referencing it as "$VAR" makes the shell treat it as
+    data instead.
+
+    action.yml is already held to this rule by
+    tests/test_composite_action_security.py; the repository's own workflows
+    were not covered by any gate until this one.
+    """
+    for path in _workflow_paths():
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_name, job in _jobs(document).items():
+            for step in _steps(job):
+                script = step.get("run")
+                if not isinstance(script, str):
+                    continue
+                expressions = re.findall(r"\$\{\{.*?\}\}", script, flags=re.DOTALL)
+                assert not expressions, (
+                    f"{path.name} job '{job_name}' step {step.get('name', '<unnamed>')!r} interpolates "
+                    f"{expressions} directly into a `run:` block. Map each through the step's `env:` "
+                    f'and reference it as "$VAR".'
+                )
