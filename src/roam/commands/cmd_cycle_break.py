@@ -19,7 +19,7 @@ from roam.db.connection import find_project_root, open_db
 from roam.graph.builder import build_file_graph
 from roam.graph.cycles import find_cycles, find_minimum_cycle_break_edge_sets
 from roam.index.relations import _extract_imported_names, _read_source_text
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_empty_corpus, json_envelope, to_json
 
 
 def _path(graph: nx.DiGraph, file_id: int) -> str:
@@ -214,6 +214,13 @@ def cycle_break(ctx, json_output):
                         )
                     )
                 )
+            else:
+                # W1331: the text branch had NO else at all -- on a
+                # 0-symbol corpus ``cycle-break`` printed nothing
+                # whatsoever and exited 0, which a caller reads as
+                # "no cycles to break".
+                echo_text_empty_corpus(empty)
+                click.echo("VERDICT: no dependency graph to analyze")
             return
 
         graph = build_file_graph(conn)
