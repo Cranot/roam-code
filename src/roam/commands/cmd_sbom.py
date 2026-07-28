@@ -22,7 +22,7 @@ from roam import __version__
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import StaleDbDirError, find_project_root, open_db
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 
 _SBOM_BOUNDARY_EXCEPTIONS = (
     click.ClickException,
@@ -1014,6 +1014,10 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
         if json_mode:
             click.echo(output_text)
         else:
+            # W1331: a floored dependency-collection substrate yields a
+            # SHORT bill of materials, not an error -- and a short SBOM
+            # is indistinguishable from an accurate one.
+            echo_text_warnings(list(_w607am_warnings_out) + list(_w607cg_warnings_out))
             # Text mode with no output path: print verdict header + SBOM
             click.echo(f"VERDICT: {verdict}")
             click.echo()

@@ -22,7 +22,7 @@ from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output._severity import severity_rank
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import abbrev_kind, echo_text_warnings, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Severity ordering (W564: ranks via canonical ``severity_rank``)
@@ -1281,6 +1281,11 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         else:
             output = _format_text(challenges, verdict, len(file_map))
 
+        # W1331: the VERDICT line already names the constituent checks that
+        # ERRORED, but a substrate boundary raising is a different failure
+        # class -- it never reaches ``check_status`` at all, and only the
+        # JSON envelope carried it.
+        echo_text_warnings(_w607ek_warnings_out)
         click.echo(output)
 
         if fail_on_critical and critical > 0:

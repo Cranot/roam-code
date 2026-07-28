@@ -20,7 +20,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output._severity import severity_rank
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 
 
 @roam_capability(
@@ -474,6 +474,10 @@ def _output_all(
         click.echo(output_text)
         return
 
+    # W1331: a floored reachability pass renders as "not reachable",
+    # which is the answer a human uses to DEFER a CVE. Only the JSON
+    # envelope said the analysis had degraded.
+    echo_text_warnings(list(_w607au_warnings_out) + list(_w607cl_warnings_out))
     click.echo(f"VERDICT: {verdict}")
     click.echo("")
 

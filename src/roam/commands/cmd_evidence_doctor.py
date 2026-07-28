@@ -72,7 +72,13 @@ import click
 
 from roam.capability import roam_capability
 from roam.evidence.completeness_compat import classify_completeness
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    echo_text_warnings,
+    format_table,
+    json_envelope,
+    to_json,
+)
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -1446,6 +1452,9 @@ def evidence_doctor(ctx, packet_path, from_stdin):
         return
 
     # Text output
+    # W1331: same disclosure for the human-readable branch -- an
+    # evidence audit whose scorer was floored still prints a verdict.
+    echo_text_warnings(_combined_warnings_out_cf)
     click.echo(f"VERDICT: {verdict_line}")
     click.echo(f"  source: {source_label}")
     click.echo("")

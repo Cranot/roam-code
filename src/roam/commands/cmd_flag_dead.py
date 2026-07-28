@@ -25,7 +25,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import WarningsOut, format_table, json_envelope, to_json
+from roam.output.formatter import WarningsOut, echo_text_warnings, format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Feature flag API call patterns — compiled once at module level
@@ -513,9 +513,9 @@ def flag_dead(ctx, config_path, include_tests):
 
     # Load known-stale flags from config file if provided
     known_stale: set[str] = set()
-    _known_stale_warnings: list[str] = []
+    _known_stale_warnings_out: list[str] = []
     if config_path:
-        known_stale = _load_known_stale(config_path, warnings_out=_known_stale_warnings)
+        known_stale = _load_known_stale(config_path, warnings_out=_known_stale_warnings_out)
 
     # Scan for flag usage
     findings = scan_project_for_flags(project_root, include_tests=include_tests)
@@ -531,7 +531,7 @@ def flag_dead(ctx, config_path, include_tests):
     # bucket is filtered upstream by ``flag_dead_to_sarif`` (not
     # actionable).
     #
-    # W1113: plumb the ``_known_stale_warnings`` accumulator onto the
+    # W1113: plumb the ``_known_stale_warnings_out`` accumulator onto the
     # SARIF ``run.invocations[].toolExecutionNotifications[]`` array
     # via :func:`flag_dead_to_sarif`'s W1060-style opt-in. Hash-stable
     # when the accumulator is empty (``emit_runtime_notifications=
@@ -544,8 +544,8 @@ def flag_dead(ctx, config_path, include_tests):
             write_sarif(
                 flag_dead_to_sarif(
                     flag_summaries,
-                    emit_runtime_notifications=bool(_known_stale_warnings),
-                    warnings_out=_known_stale_warnings,
+                    emit_runtime_notifications=bool(_known_stale_warnings_out),
+                    warnings_out=_known_stale_warnings_out,
                 )
             )
         )
@@ -587,8 +587,8 @@ def flag_dead(ctx, config_path, include_tests):
             "suspect": suspect_count,
             "ok": ok_count,
         }
-        if _known_stale_warnings:
-            summary_payload["warnings_out"] = list(_known_stale_warnings)
+        if _known_stale_warnings_out:
+            summary_payload["warnings_out"] = list(_known_stale_warnings_out)
             summary_payload["partial_success"] = True
         envelope = json_envelope(
             "flag-dead",
@@ -612,6 +612,11 @@ def flag_dead(ctx, config_path, include_tests):
         return
 
     # --- Text output ---
+    # W1331: an unreadable ``--config`` silently disables known-stale
+    # matching. The SARIF branch already carries the marker as a
+    # toolExecutionNotification and the JSON envelope as warnings_out; the
+    # text tail printed the flag table as though the config had applied.
+    echo_text_warnings(_known_stale_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     click.echo()
 

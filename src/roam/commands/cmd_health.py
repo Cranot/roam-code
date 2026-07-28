@@ -63,6 +63,7 @@ from roam.graph.layers import detect_layers, find_violations
 from roam.output.formatter import (
     WarningsOut,
     abbrev_kind,
+    echo_text_warnings,
     format_table,
     json_envelope,
     loc,
@@ -2283,6 +2284,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     "runs": [],
                 }
             click.echo(write_sarif(sarif))
+            # W1331: nothing in a SARIF document carries these markers.
+            echo_text_warnings(list(_w607m_warnings_out) + list(_w607ba_warnings_out))
             return
 
         if json_mode:
@@ -2454,6 +2457,13 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         _idx_status = _index_status()
         if _idx_status and not _idx_status.get("fresh"):
             click.echo(f"NOTE: {_idx_status['hint']}\n")
+        # W1331: a floored substrate turns a health FACTOR into a
+        # measured zero -- a failed graph build renders as
+        # "Tangle: 0.0% (0/44309 symbols in cycles)", which reads as the
+        # best possible score. Only the JSON envelope named the failure;
+        # the gate-mode text tail above already prints its own
+        # ``_gate_warnings``.
+        echo_text_warnings(list(_w607m_warnings_out) + list(_w607ba_warnings_out))
         click.echo(f"VERDICT: {verdict}\n")
         # when --explain, decompose the score before everything
         # else so the user understands which factor is dragging it down.

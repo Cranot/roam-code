@@ -855,11 +855,11 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
     # sub-loaders both call _load_raw_config, so a file-level malformation
     # would otherwise be reported twice.
     seen_warnings: set[str] = set()
-    deduped_warnings: list[str] = []
+    deduped_warnings_out: list[str] = []
     for w in check_rules_warnings:
         if w not in seen_warnings:
             seen_warnings.add(w)
-            deduped_warnings.append(w)
+            deduped_warnings_out.append(w)
 
     if not results:
         verdict = "no rules matched"
@@ -875,7 +875,7 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
             # warning in warnings_out).
             empty_summary["config_state"] = _config_state
             _empty_degraded = _config_state in _DEGRADED_LOAD_STATUSES
-            if deduped_warnings:
+            if deduped_warnings_out:
                 empty_summary["partial_success"] = True
             elif _empty_degraded:
                 # W1030-followup-C: a degraded config_state flips
@@ -888,7 +888,7 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
             empty_envelope_kwargs: dict = dict(
                 summary=empty_summary,
                 results=[],
-                warnings_out=list(deduped_warnings),
+                warnings_out=list(deduped_warnings_out),
             )
             if _empty_facts:
                 empty_envelope_kwargs["agent_contract"] = {
@@ -898,10 +898,10 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
             click.echo(to_json(json_envelope("check-rules", **empty_envelope_kwargs)))
         else:
             click.echo("VERDICT: {}".format(verdict))
-            if deduped_warnings:
+            if deduped_warnings_out:
                 click.echo()
-                click.echo(f"Warnings ({len(deduped_warnings)}):")
-                for w in deduped_warnings:
+                click.echo(f"Warnings ({len(deduped_warnings_out)}):")
+                for w in deduped_warnings_out:
                     click.echo(f"  - {w}")
         return
 
@@ -955,7 +955,7 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
         )
         sarif = _results_to_sarif(
             results,
-            warnings_out=list(deduped_warnings),
+            warnings_out=list(deduped_warnings_out),
             runtime_overrides=sarif_overrides or None,
             runtime_notification_overrides=sarif_notif_overrides or None,
         )
@@ -999,7 +999,7 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
         # too -- even when no warning fired (e.g. empty stub on disk),
         # agents must see that the user's intent did not materialize.
         _config_degraded = _config_state in _DEGRADED_LOAD_STATUSES
-        if deduped_warnings or _config_degraded:
+        if deduped_warnings_out or _config_degraded:
             summary["partial_success"] = True
 
         # W1030-followup-C: surface the on-disk state via
@@ -1012,7 +1012,7 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
             budget=token_budget,
             summary=summary,
             results=results,
-            warnings_out=list(deduped_warnings),
+            warnings_out=list(deduped_warnings_out),
         )
         if _state_facts:
             envelope_kwargs["agent_contract"] = {
@@ -1042,9 +1042,9 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
     # W1019d: surface accumulated config-load warnings prominently — before
     # the rule list so the user sees the silent-state disclosure even when
     # stdout is piped to ``head``. Mirrors the cmd_smells discipline (W987).
-    if deduped_warnings:
-        click.echo(f"Warnings ({len(deduped_warnings)}):")
-        for w in deduped_warnings:
+    if deduped_warnings_out:
+        click.echo(f"Warnings ({len(deduped_warnings_out)}):")
+        for w in deduped_warnings_out:
             click.echo(f"  - {w}")
         click.echo()
 
