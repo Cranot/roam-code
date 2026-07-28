@@ -81,7 +81,19 @@ jobs:
       # modules shell out), so at 2 workers a 4-vCPU runner sits part-idle.
       # workflow_dispatch can override this per run to re-measure at another
       # worker count without a commit; blank/absent falls back to the default.
-      ROAM_XDIST_WORKERS: ${{ inputs.xdist_workers || '3' }}
+      #
+      # 3 WAS TRIED AND REVERTED (run 30352316483). Both SIGBUS causes above are
+      # genuinely closed, but they were not the only thing the cap held back: at
+      # 3 workers, 8 subprocess tests fail with "The roam index is currently
+      # being built by another process" in test_agents_md, test_dead_code_intra_
+      # module_regression and test_dogfood_core_behavior. Those tests shell out
+      # to `python -m roam <cmd>` against the shared workspace index, so a third
+      # concurrent worker pushes index-lock contention past what they tolerate.
+      # The cap was therefore NOT vestigial -- it was also bounding that
+      # contention, incidentally and undocumented. Raising it needs the lock
+      # race fixed first (the subprocess tests need their own index, or a
+      # bounded wait on the lock), not another headcount experiment.
+      ROAM_XDIST_WORKERS: ${{ inputs.xdist_workers || '2' }}
     # Measured at 2 workers, `Run tests` step wall clock, 2026-07-28:
     #   run 30331612772  3.10 44m05s  3.11 43m45s  3.12 39m47s  3.13 38m28s
     #   run 30331709179  3.10 51m45s  3.11 39m21s  3.12 39m28s  3.13 36m13s
