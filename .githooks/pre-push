@@ -1,30 +1,40 @@
 #!/bin/sh
-# pre-push hook -- anti-leak (whole-tree) + structural-gate bundle.
+# pre-push hook -- pushed-history leak/secret gates + structural-gate bundle.
 #
 # Runs before `git push`. Two stages:
-#   A. python scripts/scan_internal_language.py --all
-#        Anti-leak gate over EVERY tracked file (not just staged). This is
-#        the whole-tree backstop for the pre-commit staged scan: it catches
-#        a leak that slipped past commit time (e.g. `git commit --no-verify`)
-#        before it reaches the public remote. Same stdlib-only scanner and
-#        single-source pattern catalogue as the commit-time gate.
+#   A. Pushed-history gates, scoped to the exact ref updates Git hands this
+#      hook on stdin (local/remote OID pairs) -- NOT the working tree:
+#        * scripts/secret_scan.py --pre-push-updates
+#        * scripts/scan_internal_language.py --pre-push-updates
+#      Both are sub-second because they read only the blobs and commit
+#      messages this push publishes. They run FIRST so a leak in what you
+#      are about to publish blocks the push in ~1s instead of ~70s.
 #   B. python scripts/prepush_check.py --fast
-#        Repo-wide structural drift-guards (the gate that would have
-#        prevented this session's ~14 CI fix-forward cascade). Delegates so
-#        the gate list lives in ONE place (FAST_/FULL_PYTEST_GUARDS there).
+#        Repo-wide structural drift-guards AND the whole-tree anti-leak
+#        scan. Delegates so the gate list lives in ONE place
+#        (_run_leak_gate + FAST_/FULL_PYTEST_GUARDS there).
 #
 # Design authority: (internal memo)
-#   FAST tier (default, ~43s): ruff format/check + count-drift scripts +
-#   the structural-lint pytest bundle (W547/W564 severity-rank, LAW-4,
-#   fragile-path, bare-except, detector-count, card-hash, compound-recipe).
+#   FAST tier (default): whole-tree anti-leak scan + ruff format/check +
+#   count-drift scripts + the structural-lint pytest bundle (W547/W564
+#   severity-rank, LAW-4, fragile-path, bare-except, detector-count,
+#   card-hash, compound-recipe, and the closed-set registry inventories).
 #   FULL tier (--full): adds heavy doc-hygiene (test_no_internal_language,
 #   shape-axis, smells-severity-parity).
 #
+# WHAT A GREEN RUN HERE DOES *NOT* PROVE: that CI will be green. This hook
+# runs the FAST structural drift-guards, not the test suite. On 2026-07-28
+# four commits passed this hook and then took all four CI lanes red. Before
+# a tag, run `python scripts/prepush_check.py --release` -- that tier runs
+# what CI runs.
+#
 # COMPOSITION -- this hook does NOT duplicate the existing surfaces:
-#   * .githooks/pre-commit -- anti-leak STAGED scan + count scripts at
-#     COMMIT time. Stage A here re-runs the anti-leak scan over the WHOLE
-#     tree (not just staged) as the --no-verify backstop; prepush_check.py
-#     re-runs the count scripts as a cheap (~2s) backstop too.
+#   * .githooks/pre-commit -- anti-leak STAGED scan + count scripts + ruff
+#     on staged Python at COMMIT time. The whole-tree anti-leak scan (the
+#     `--no-verify` backstop) runs exactly ONCE per push, inside stage B.
+#     It used to run here in stage A as well, byte-identical to the
+#     prepush_check.py gate and over the same unchanged tree, costing a
+#     measured 36.6s of the ~113s hook for zero additional coverage.
 #   * .githooks/commit-msg + .pre-commit-config.yaml no-coauthor (Wave59) --
 #     reject Co-Authored-By trailers (Cranot-only). NOT touched here.
 #
@@ -96,15 +106,6 @@ if [ "$PY_SENTINEL" != "roam-prepush-python-ok" ]; then
     exit 1
 fi
 unset PY_SENTINEL
-
-# --- A. Anti-leak gate (WHOLE tracked tree) ---------------------------------
-if ! run_python "$REPO_ROOT/scripts/scan_internal_language.py" --all; then
-    echo "" >&2
-    echo "BLOCKED: internal-language leak in tracked files -- see above." >&2
-    echo "  Fix the offending line(s), or (if intentional) add the file to" >&2
-    echo "  WHITELIST_FILES in scripts/internal_language_patterns.py." >&2
-    exit 1
-fi
 
 # --- A1. Secret scan over the commits being pushed --------------------------
 if ! run_python "$REPO_ROOT/scripts/secret_scan.py" --pre-push-updates "$UPDATES_FILE" --remote-url "$2"; then

@@ -510,6 +510,39 @@ def _hash_index() -> tuple[dict[bytes, str], dict[bytes, tuple[int, ...]], froze
     return lookup, {h: tuple(sorted(sizes)) for h, sizes in leading.items()}, exempt
 
 
+@functools.lru_cache(maxsize=1 << 18)
+def _token_is_candidate(token: str, salts: tuple[str, ...]) -> bool:
+    """True iff any candidate hash of *token* appears anywhere in the index.
+
+    A pure memoized guard for the ``_first_hashed_match`` token loop, NOT a
+    filter that can hide a hit. When every candidate hash of a token is
+    absent from all three structures (``lookup``, ``leading``, ``exempt``),
+    each iteration of that loop provably falls through to ``continue``:
+    ``h not in exempt`` skips the adjacency branch, ``lookup.get(h)`` is
+    ``None`` (values are labels, never ``None``), and ``leading.get(h)`` is
+    ``None`` so ``not sizes`` continues. Nothing is read, returned, or
+    recorded. Skipping the token is therefore identical in result, and any
+    token that COULD contribute — directly, via the adjacency exemption, or
+    as the leading word of an n-gram — still takes the full slow path.
+
+    Why it matters: the whole-tree ``--all`` scan tokenizes 4.6M tokens on
+    this repo, of which only 104K are distinct (44.5x repetition), and each
+    one otherwise costs one SHA-256 per salt per case-form on every single
+    occurrence. Memoizing the verdict took the hashed half of the scan from
+    12.8s to 4.9s measured, with byte-identical findings.
+
+    Bounded rather than unbounded: 2^18 entries comfortably holds a repo of
+    this size without eviction, and caps the cost on a pathological one.
+    ``salts`` is part of the key so a process that changes ``ROAM_LEAK_SALT``
+    mid-life cannot reuse a verdict computed under the previous salt set.
+    """
+    lookup, leading, exempt = _hash_index()
+    for h in _candidate_hashes(token, salts):
+        if h in lookup or h in leading or h in exempt:
+            return True
+    return False
+
+
 def _first_hashed_match(line: str) -> str | None:
     """Single tokenization pass covering both the adjacency-exempt
     single-token check and the general n-gram check (they used to be two
@@ -533,6 +566,10 @@ def _first_hashed_match(line: str) -> str | None:
 
     for start in range(n):
         token = tokens[start]
+        # Memoized no-op guard; see _token_is_candidate for why skipping here
+        # cannot hide a hit.
+        if not _token_is_candidate(token, salts):
+            continue
         for h in _candidate_hashes(token, salts):
             if h in exempt:
                 # Exact case only (the standalone-abbreviation term is in

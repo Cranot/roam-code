@@ -49,8 +49,23 @@ _EXPECTED_FAST_GUARDS = frozenset(
         "test_w462_landing_page_tool_count_drift.py",
         "test_mcp_server_card_hash.py",
         "test_compound_recipe_registry.py",
+        # 2026-07-28: the closed-set registry inventories. Four commits passed
+        # the pre-push hook and then took all four CI lanes red because files
+        # were added without being registered in these. They are pure
+        # file/AST assertions with no index dependency and measured +0.26s on
+        # the bundle, so there is no performance argument for dropping them.
+        "test_public_allowlist.py",
+        "test_workflow_dependency_lock_policy.py",
+        "test_publish_provenance_workflow.py",
+        "test_composite_action_security.py",
     }
 )
+
+HOOK_PATH = REPO_ROOT / ".githooks" / "pre-push"
+
+
+def _strip_shell_comments(text: str) -> str:
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
 def _parse_script() -> ast.Module:
@@ -139,6 +154,74 @@ def test_fast_bundle_contains_expected_guards() -> None:
         "These are the dominant structural-drift fix-forward class (severity-rank, "
         "LAW-4, fragile-path, card-hash, detector-count, compound-recipe). Re-add "
         "them or update (internal memo) if intentionally removed."
+    )
+
+
+def _driver_whole_tree_leak_invocations(tree: ast.Module) -> int:
+    """Count subprocess argv literals that run the scanner in ``--all`` mode."""
+    found = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.List, ast.Tuple)):
+            continue
+        strings = {elt.value for elt in node.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)}
+        if "--all" in strings and any(s.endswith("scan_internal_language.py") for s in strings):
+            found += 1
+    return found
+
+
+def test_whole_tree_leak_scan_runs_exactly_once_in_the_push_path() -> None:
+    """The whole-tree anti-leak scan must run — and must run only once.
+
+    Both halves of this matter and they pull in opposite directions:
+
+    * It must RUN. The hook's other two leak gates scope themselves to the
+      pushed ref updates, which by construction cannot see a leak sitting in
+      a file this push does not touch — the case a GROWN pattern catalogue
+      creates. Whole-tree is the only scope that catches that, so this gate
+      may never be rescoped to a range to save time. The 2026-05-20 incident
+      (a customer name reaching the public repo, history purged by
+      force-push) is what it exists to prevent.
+    * It must run ONCE. Until 2026-07-28 ``.githooks/pre-push`` ran a
+      byte-identical ``--all`` invocation of its own moments before handing
+      off to ``prepush_check.py``, over the same unchanged tree. Measured:
+      36.6s, roughly a third of the whole hook, for zero extra coverage.
+
+    Pinning both ends means neither a well-meaning "add a backstop" nor a
+    well-meaning "make it faster" can quietly restore the waste or remove
+    the protection.
+    """
+    driver_count = _driver_whole_tree_leak_invocations(_parse_script())
+    assert driver_count == 1, (
+        f"scripts/prepush_check.py should run the whole-tree "
+        f"`scan_internal_language.py --all` gate exactly once; found {driver_count}. "
+        "It is the single whole-tree pass in the push path (see _run_leak_gate)."
+    )
+
+    hook_src = _strip_shell_comments(HOOK_PATH.read_text(encoding="utf-8"))
+    offenders = [
+        line.strip() for line in hook_src.splitlines() if "scan_internal_language.py" in line and "--all" in line
+    ]
+    assert not offenders, (
+        "`.githooks/pre-push` must NOT run `scan_internal_language.py --all` itself. "
+        f"Found: {offenders}. That invocation is byte-identical to the one "
+        "scripts/prepush_check.py already runs seconds later over the same tree, "
+        "and cost a measured 36.6s per push for no additional coverage. The hook's "
+        "own leak gates are the sub-second --pre-push-updates ones."
+    )
+
+
+def test_hook_still_delegates_the_whole_tree_scan() -> None:
+    """Removing the duplicate must not have removed the protection.
+
+    The dedupe above is only safe because the hook still runs the driver,
+    which still runs the whole-tree scan. If the hook ever stops delegating,
+    the push path loses the whole-tree leak gate entirely — a silent
+    downgrade that would look like a speed-up.
+    """
+    hook_src = _strip_shell_comments(HOOK_PATH.read_text(encoding="utf-8"))
+    assert "scripts/prepush_check.py" in hook_src, (
+        ".githooks/pre-push must still invoke scripts/prepush_check.py: that is now "
+        "the ONLY thing running the whole-tree anti-leak scan on the push path."
     )
 
 
