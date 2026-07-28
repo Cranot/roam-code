@@ -1,0 +1,75 @@
+# Numeric-claim drift gate for the GitHub repository *description*.
+#
+# WHY THIS IS ITS OWN WORKFLOW, AND NOT A STEP IN AN EXISTING GATE
+#
+# The description is the one count surface no in-tree gate can reach. It is
+# not a file: it lives on GitHub, is edited in the About panel, and is
+# rendered above the file list, in search results, and in every listing that
+# scrapes it. It drifted 43 commands (238/224 against a real 281/244) while
+# the in-tree count gates (the README/card count writer and the surface-count
+# sync script, both run by the doc-hygiene job) stayed green, because neither
+# can see it.
+#
+# Three placement constraints follow from that:
+#
+#   * NOT in .githooks/pre-commit. That hook is the fast local gate and must
+#     work offline and token-free; this check needs the GitHub API.
+#   * NOT in the roam-ci doc-hygiene job. That job is the blocking merge gate.
+#     A network-dependent step there would fail pull requests for a reason a
+#     contributor cannot fix (only a maintainer can edit the description) and
+#     would go red on a transient API blip.
+#   * ON A SCHEDULE, not only on push. The description can change without any
+#     commit — someone edits it in the About panel — and the truth can change
+#     without the description, when a wave adds commands. Only a periodic run
+#     catches the first case; the push-to-main trigger makes the second case
+#     report within minutes of the count moving.
+#
+# The job is therefore advisory-by-placement (nothing is blocked) but loud by
+# construction: a mismatch fails the run, which shows red on the Actions tab
+# and notifies the repository owner.
+name: Repo description drift
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Daily, off the hour to avoid the cron stampede.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  description-drift:
+    name: GitHub description numeric claims
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      # No dependency install: both the checker and this repo's truth
+      # provider are stdlib-only and read the counts by AST, so the job is a
+      # checkout plus one interpreter.
+      - name: Show what this repository can prove
+        run: python dev/repo_description_drift.py --truth-module dev/description_truth.py --list-truth
+
+      - name: Check the live description against computed truth
+        env:
+          # Only buys a saner API rate limit; the endpoint is public.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ github.repository }}
+        run: >-
+          python dev/repo_description_drift.py
+          --repo "$TARGET_REPO"
+          --truth-module dev/description_truth.py
