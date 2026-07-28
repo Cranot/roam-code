@@ -18,6 +18,19 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # On-demand re-run of the full matrix on any ref. Every push to main shares
+  # one concurrency group with cancel-in-progress, so a ~40-minute timing
+  # measurement taken on main is routinely killed mid-flight by the next push
+  # and never reports. Dispatching on a branch puts the run in its own group
+  # so it can finish, which is the only way to compare lane runtimes honestly.
+  # The worker input makes that comparison possible without committing a
+  # workflow edit per data point.
+  workflow_dispatch:
+    inputs:
+      xdist_workers:
+        description: "pytest-xdist workers per test lane (blank = the workflow default)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -66,7 +79,9 @@ jobs:
       # by xdist_group("grammar_heavy") (e0ee4360). Nothing ever re-tested the
       # cap after those landed. The suite is also subprocess-heavy (286 test
       # modules shell out), so at 2 workers a 4-vCPU runner sits part-idle.
-      ROAM_XDIST_WORKERS: "3"
+      # workflow_dispatch can override this per run to re-measure at another
+      # worker count without a commit; blank/absent falls back to the default.
+      ROAM_XDIST_WORKERS: ${{ inputs.xdist_workers || '3' }}
     # Measured at 2 workers, `Run tests` step wall clock, 2026-07-28:
     #   run 30331612772  3.10 44m05s  3.11 43m45s  3.12 39m47s  3.13 38m28s
     #   run 30331709179  3.10 51m45s  3.11 39m21s  3.12 39m28s  3.13 36m13s
