@@ -762,7 +762,15 @@ def evidence_diff(ctx, old_path, new_path):
                 f"# inspect Q-regression: {q} dropped from {regressions[0]['old']} to {regressions[0]['new']}"
             )
         if hash_drift_block is not None:
-            next_commands.append("roam attest verify")
+            # NOT ``roam attest verify``. ``attest`` has no verify subcommand
+            # and no --verify flag -- only --sign, which STAMPS a hash. So
+            # ``verify`` was swallowed as attest's positional commit_range,
+            # printed "No changes found for verify." and exited 0. Suggesting a
+            # silent no-op at the exact moment two packets' content hashes
+            # disagree is the worst possible place to be reassuring.
+            # ``evidence-doctor`` genuinely checks content-hash integrity and
+            # takes the packet path, which we already have.
+            next_commands.append(f"roam evidence-doctor {new_path}")
 
         # W607-CK -- serialize_envelope boundary. Wraps the envelope
         # serialisation so a downstream schema-shape refactor that breaks

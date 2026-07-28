@@ -268,12 +268,22 @@ def test_attest_sign_emits_content_hash_json():
 
 @needs_index
 def test_attest_verify_is_NOT_a_subcommand_arg_trap():
-    """DEFECT (documenting): `roam attest verify` is not a subcommand.
+    """`roam attest verify` is not a subcommand — 'verify' is a COMMIT_RANGE.
 
-    'verify' is parsed as a COMMIT_RANGE, so the command silently exits 0 with
-    "No changes found for verify." — despite cmd_evidence_diff suggesting
-    `roam attest verify` as a next_command. Attestation verification actually
-    lives in `cga verify` / `audit-trail-verify`.
+    attest has no verify subcommand and no --verify flag (only --sign, which
+    STAMPS a hash), so 'verify' resolves as an empty range and the command
+    exits 0 with "No changes found for verify.".
+
+    The exit 0 is defensible on its own: the envelope for that path already
+    discloses ``state: "no_changes"``, ``partial_success: true`` and
+    ``safe_to_merge: null``, so a machine reader is not misled.
+
+    What was NOT defensible was cmd_evidence_diff recommending this exact
+    string as a next_command on hash drift — i.e. handing the user a silent
+    no-op at the moment two packets' content hashes disagree. Fixed: it now
+    suggests ``roam evidence-doctor <packet>``, which genuinely checks
+    content-hash integrity. This test keeps pinning the arg-trap behaviour so
+    a future reader does not re-add the bad suggestion believing it works.
     """
     r = run_roam("attest", "verify")
     assert r.returncode == 0
