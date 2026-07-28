@@ -54,12 +54,21 @@ def xdist_args_to_inject(args, env, xdist_available):
             return []
         if a == "-pno:xdist":
             return []
-    # ``-n auto`` spawns one worker per core; on CI runners each worker loads
-    # the tree-sitter native grammars (28 languages) + per-worker SQLite temp
-    # files, and the aggregate mmap / ``/dev/shm`` pressure triggers SIGBUS
-    # ("Fatal Python error: Bus error") during parallel test-module import,
-    # crashing workers and reddening the whole test lane. Cap the worker count
-    # to keep memory bounded (override via ``ROAM_XDIST_WORKERS``).
+    # Default 2, overridable via ``ROAM_XDIST_WORKERS``.
+    #
+    # This default was originally a SIGBUS mitigation: ``-n auto`` spawns one
+    # worker per core and the aggregate memory pressure was blamed for
+    # "Fatal Python error: Bus error" during parallel test-module import. Both
+    # actual root causes were later found and fixed structurally (see
+    # ``_suppress_bytecode_writes_under_ci_xdist``), and a 2/3/4-worker
+    # comparison on CI produced no Bus error at any count, so the number is no
+    # longer load-bearing for SIGBUS.
+    #
+    # It stays conservative because of a different failure mode that generalises
+    # to any suite like this one: tests that shell out to a CLI which lazily
+    # builds a shared on-disk artifact (an index, a cache, a compiled bundle)
+    # will each race to build it and collide on its lock, and more workers only
+    # widen that window. Build the artifact once, up front, before raising this.
     workers = env.get("ROAM_XDIST_WORKERS", "2")
     return ["-n", workers, "--dist", "loadgroup"]
 
