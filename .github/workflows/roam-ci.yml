@@ -53,7 +53,22 @@ jobs:
     # cancelled while 3.11/3.12/3.13 passed just under it. 45 min restores
     # real headroom for the slowest lane without masking regressions
     # (a genuine hang would trip -x long before 45 min).
-    timeout-minutes: 45
+    #
+    # 2026-07-28 -> 60. THIRD time this exact shape has recurred (20->30->45->60):
+    # test (3.10) hit the cap at 45m14s and was cancelled, while 3.11 passed at
+    # 38m39s -- i.e. the fastest-reporting lane was already at 86% of budget, so
+    # this was about to fail for every version, not just the slowest one.
+    # Raising it is legitimate here ONLY because a timeout guards against HANGS,
+    # and a suite that genuinely takes 45+ minutes is not hanging. It is NOT a
+    # fix: each previous bump was described as restoring "real headroom" and
+    # each was consumed by ordinary growth within a few releases.
+    # The real problem is suite runtime, and the two obvious levers are both
+    # already ruled out for stated reasons -- worker count is pinned at 2
+    # because `-n auto` triggers SIGBUS from the 28 tree-sitter grammars
+    # (src/roam/testing/ci_xdist.py), and moving the slow real-subprocess
+    # dogfood tests behind `-m "not slow"` would drop exactly the tests that
+    # caught four HIGH defects this week. Needs profiling, not another bump.
+    timeout-minutes: 60
     strategy:
       fail-fast: false   # let all Python versions report; don't abort early
       matrix:
