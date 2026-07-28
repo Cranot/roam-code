@@ -83,19 +83,29 @@ DISCLOSURE_TOKENS: tuple[str, ...] = (
     "empty_corpus_state",
     "truncation_reason",
     "scan_incomplete",
-    "failed_checks",
 )
 
-#: ``partial_success`` is deliberately NOT enforced. It is a key of the
-#: shared ``json_envelope`` schema, so every JSON branch in the tree carries
-#: it by construction and the check degenerates into "the text branch is not
-#: JSON" — 164 hits, none of them actionable, and the only way to satisfy it
-#: would be to print the word ``partial_success`` at a human. The signals
-#: above are different in kind: each is a value the command COMPUTES from a
-#: failure it just survived, so routing it to one branch and not another is
-#: a real, fixable information loss. Measure the schema-key spread with
-#: ``--include-schema-keys``; do not gate on it.
-SCHEMA_TOKENS: tuple[str, ...] = ("partial_success",)
+#: Tokens that are ENVELOPE KEY NAMES rather than computed signals: measured
+#: on request, never gated. A JSON branch carries them by construction and a
+#: text branch never spells them, so the check degenerates into "the text
+#: branch is not JSON". The signals above are different in kind — each is a
+#: value the command COMPUTES from a failure it just survived, so routing it
+#: to one branch and not another is a real, fixable information loss. Measure
+#: the spread with ``--include-schema-keys``; do not gate on it.
+#:
+#: * ``partial_success`` — a key of the shared ``json_envelope`` schema, so
+#:   every JSON branch in the tree carries it: 164 hits, none actionable.
+#: * ``failed_checks`` — demoted here after BOTH live instances were run and
+#:   found to disclose in every branch, just not under that name.
+#:   ``adversarial`` with ``build_symbol_graph`` raising prints
+#:   ``VERDICT: 2 high-severity of 131 challenges -- 3 check(s) errored:
+#:   cross_cluster, layer_violations, new_cycles`` in TEXT — the identical
+#:   list the envelope carries as ``summary.failed_checks``, because
+#:   ``_compose_verdict`` appends it. ``doctor`` renders one ``[WARN]`` /
+#:   ``[FAIL]`` line per entry plus a count line: four ``[WARN]`` rows in
+#:   text against a four-name ``failed_checks`` array. Gating the KEY NAME
+#:   there measured spelling, not disclosure.
+SCHEMA_TOKENS: tuple[str, ...] = ("partial_success", "failed_checks")
 
 #: Pseudo-token for the second rule: a NON-ZERO exit (a CI gate) that only
 #: some output modes can reach. This is the ``py-types`` defect verbatim —
@@ -656,10 +666,6 @@ REASON_CODES: dict[str, str] = {
         "found'; only the JSON branch renders the distinction. The text and "
         "SARIF branches print the same thing for both."
     ),
-    "json-only-failed-checks": (
-        "The list of checks that errored is carried in the JSON envelope only, "
-        "so the text verdict reads clean even when checks did not run."
-    ),
     "structured-envelope-instead-of-exit": (
         "DELIBERATE and pinned by a test: the JSON branch answers a "
         "resolution failure with a structured envelope (partial_success, "
@@ -675,7 +681,6 @@ REASON_CODES: dict[str, str] = {
 _DERIVED_REASON: dict[str, str] = {
     "warnings_out": "json-only-warnings-bucket",
     "empty_corpus_state": "json-only-empty-corpus-state",
-    "failed_checks": "json-only-failed-checks",
     GATE_SIGNAL: "structured-envelope-instead-of-exit",
 }
 

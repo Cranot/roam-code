@@ -24,7 +24,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 # W156 — doctor is the first detector migrating an "environment" namespace
 # onto the central findings registry (after clones / dead / complexity).
@@ -2989,6 +2989,14 @@ def doctor(ctx, strict, persist):
         return None
 
     _run_check_dw("format_text", _format_text, default=None)
+
+    # W1331: a check helper that RAISES is skipped entirely -- it produces
+    # no PASS line, no FAIL line, and no entry in ``failed_checks``, so the
+    # text report a human reads to answer "is my install healthy?" simply
+    # omits it and the verdict counts one fewer check. Only the JSON
+    # envelope named the skipped checks. Emitted after ``format_text`` so a
+    # raise inside the formatter itself is disclosed too.
+    echo_text_warnings(list(_w607n_warnings_out) + list(_w607be_warnings_out) + list(_w607dw_warnings_out))
 
     # Two-tier exit codes — see JSON path above. Advisory-only failures
     # exit 0; only blocking failures or --strict-promoted advisories exit 2.

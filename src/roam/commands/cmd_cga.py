@@ -42,7 +42,7 @@ from roam.attest.cga import (
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.runs.helpers import auto_log
 
 
@@ -540,6 +540,14 @@ def cga_emit(
         default="CGA emit completed",
     )
 
+    # W1331: the W489-A lint bucket used to be BUILT inside the
+    # ``if json_mode:`` branch below, so the text tail had nothing to
+    # disclose and could not even name the bucket. Built here instead;
+    # the JSON envelope's contents are unchanged.
+    _w489_a_lint_warnings: list[str] = []
+    if include_taint and _w489_a_violations:
+        _w489_a_lint_warnings.append(f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations")
+
     if json_mode:
         # W489-A-followup: stamp the qualified_only lint result on the
         # cga-emit envelope. ``rules_lint`` is emitted symmetrically
@@ -577,16 +585,12 @@ def cga_emit(
         # the marker PREFIX disambiguates them downstream
         # (``qualified_only lint flagged ...`` vs ``cga_<phase>_failed:*``).
         # ``partial_success`` flips when EITHER bucket is non-empty.
-        _w489_a_lint_warnings: list[str] = []
         if include_taint:
             _w489_a_summary["rules_lint"] = {
                 "qualified_only_violations": len(_w489_a_violations),
                 "total_rules": _w489_a_total_rules,
             }
             if _w489_a_violations:
-                _w489_a_lint_warnings.append(
-                    f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
-                )
                 _w489_a_envelope_extra["qualified_only_violations"] = _w489_a_violations
         # W607-BZ -- ADDITIVE aggregation-phase markers join the combined
         # channel: W489-A lint + W607-AF substrate-CALL + W607-BZ
@@ -702,6 +706,9 @@ def cga_emit(
         click.echo(to_json(cga_envelope))
         return
 
+    # W1331: same disclosure for the human-readable branch -- a CGA
+    # statement built over a floored substrate still prints a verdict.
+    echo_text_warnings(list(_w489_a_lint_warnings) + list(_w607af_warnings_out) + list(_w607bz_warnings_out))
     click.echo(f"VERDICT: {verdict}")
     click.echo(f"Predicate type: {statement.get('predicateType', PREDICATE_TYPE)}")
     click.echo(f"Statement type: {STATEMENT_TYPE}")
@@ -983,6 +990,10 @@ def cga_verify_command(ctx, statement_path, cosign_bundle, cosign_key, no_cosign
             ctx.exit(5)
         return
 
+    # W1331: "CGA verified -- predicate matches live index" is a
+    # provenance claim. A floored substrate means the comparison did not
+    # fully run, and only the JSON envelope said so.
+    echo_text_warnings(_w607af_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     if cosign_result:
         if cosign_result["verified"]:

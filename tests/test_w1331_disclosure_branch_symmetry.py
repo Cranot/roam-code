@@ -34,17 +34,21 @@ and recursing into in-module helpers — including shared emitters that take
 two kinds of asymmetry:
 
 1. a *disclosure token* (``warnings_out``, ``empty_corpus_state``,
-   ``truncation_reason``, ``scan_incomplete``, ``failed_checks``) that
-   reaches the output of one supported mode but not another;
+   ``truncation_reason``, ``scan_incomplete``) that reaches the output of
+   one supported mode but not another;
 2. a *non-zero exit* — a CI gate — reachable in one mode but not another.
    Rule 2 is the ``py-types`` defect stated as an invariant, and
    ``test_scanner_catches_the_prefix_py_types_defect`` below pins it
    against the real pre-fix source from git rather than a mock.
 
-``partial_success`` is deliberately NOT gated; it is a key of the shared
-``json_envelope`` schema, so every JSON branch carries it by construction
-and the check would degenerate into "text is not JSON" (164 hits, none
-actionable). Measure it with ``--include-schema-keys`` for reporting.
+``partial_success`` and ``failed_checks`` are deliberately NOT gated: both
+are envelope KEY NAMES rather than computed signals, so a JSON branch
+carries them by construction and a text branch never spells them, and the
+check degenerates into "text is not JSON". ``partial_success`` had 164
+such hits; ``failed_checks`` had two, and running both proved the text
+branch discloses the identical list under a different name (``adversarial``
+appends it to the VERDICT line, ``doctor`` renders one ``[WARN]``/``[FAIL]``
+row per entry). Measure them with ``--include-schema-keys`` for reporting.
 
 RATCHET
 -------

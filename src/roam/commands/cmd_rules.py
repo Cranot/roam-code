@@ -290,14 +290,14 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
     # `_error` placeholders.
     # W1030-followup-F: also surface the directory-level LoadStatus rollup
     # so the envelope can disambiguate missing / empty / parse_error / ok.
-    _rules_warnings: list[str] = []
+    _rules_warnings_out: list[str] = []
     with open_db(readonly=True) as conn:
         results, config_state = evaluate_all_with_status(
             rules_dir,
             conn,
             max_depth=depth,
             max_nodes=max_nodes,
-            warnings_out=_rules_warnings,
+            warnings_out=_rules_warnings_out,
         )
 
     # Tally results
@@ -363,8 +363,8 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
         # pre-W1114 because emit_runtime_notifications stays False.
         sarif = rules_to_sarif(
             results,
-            emit_runtime_notifications=bool(_rules_warnings),
-            warnings_out=list(_rules_warnings),
+            emit_runtime_notifications=bool(_rules_warnings_out),
+            warnings_out=list(_rules_warnings_out),
         )
         click.echo(write_sarif(sarif))
         if ci_mode and failed_errors > 0:
@@ -388,11 +388,11 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
         }
         if partial_success:
             summary_dict["partial_success"] = True
-        if _rules_warnings:
+        if _rules_warnings_out:
             # W1036: surface loader warnings (malformed files that were
             # skipped) so the agent doesn't see a green verdict that
             # silently dropped half its rules.
-            summary_dict["warnings_out"] = list(_rules_warnings)
+            summary_dict["warnings_out"] = list(_rules_warnings_out)
             summary_dict["partial_success"] = True
         # W1030-followup-F: degraded config_state flips partial_success
         # even when no warning fired (e.g. empty stub directory).
@@ -465,9 +465,9 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
             "rules that DID run; consult evidence for partial cases."
         )
 
-    if _rules_warnings:
+    if _rules_warnings_out:
         click.echo()
-        for w in _rules_warnings:
+        for w in _rules_warnings_out:
             click.echo(f"WARNING: {w}")
 
     if ci_mode and failed_errors > 0:

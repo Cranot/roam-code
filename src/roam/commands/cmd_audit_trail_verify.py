@@ -72,7 +72,7 @@ from roam.commands.audit_trail_helpers import (
     audit_trail_head_path,
     read_audit_trail_head,
 )
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 
 EXIT_GATE_FAILURE = 5
 
@@ -1055,6 +1055,10 @@ def audit_trail_verify(ctx, input_path: str | None, gate: bool, persist: bool) -
 
         click.echo(to_json(_envelope))
     else:
+        # W1331: the tamper-seal verdict a human reads is the whole
+        # point of this command; a floored substrate that could not
+        # evaluate the chain must not read as an intact chain.
+        echo_text_warnings(_combined_warnings_out)
         click.echo(f"VERDICT: {verdict}")
         click.echo(f"  path:    {path}")
         # W607-CN: use predicate-derived ``records_count`` here too so a
