@@ -46,28 +46,40 @@ jobs:
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-24.04
-    # 3.10 is consistently slower than 3.11/3.12/3.13 (no stdlib tomllib,
-    # legacy pathlib, slower asyncio). History: 20 min was tight (killed at
-    # ~95% on 84343dc4) -> 30 min. The suite kept growing; on the v13.3
-    # storm-reset run (fdd2d3be) test (3.10) hit the 30-min cap and was
-    # cancelled while 3.11/3.12/3.13 passed just under it. 45 min restores
-    # real headroom for the slowest lane without masking regressions
-    # (a genuine hang would trip -x long before 45 min).
-    #
-    # 2026-07-28 -> 60. THIRD time this exact shape has recurred (20->30->45->60):
-    # test (3.10) hit the cap at 45m14s and was cancelled, while 3.11 passed at
-    # 38m39s -- i.e. the fastest-reporting lane was already at 86% of budget, so
-    # this was about to fail for every version, not just the slowest one.
-    # Raising it is legitimate here ONLY because a timeout guards against HANGS,
-    # and a suite that genuinely takes 45+ minutes is not hanging. It is NOT a
-    # fix: each previous bump was described as restoring "real headroom" and
-    # each was consumed by ordinary growth within a few releases.
-    # The real problem is suite runtime, and the two obvious levers are both
-    # already ruled out for stated reasons -- worker count is pinned at 2
-    # because `-n auto` triggers SIGBUS from the 28 tree-sitter grammars
-    # (src/roam/testing/ci_xdist.py), and moving the slow real-subprocess
-    # dogfood tests behind `-m "not slow"` would drop exactly the tests that
-    # caught four HIGH defects this week. Needs profiling, not another bump.
+    env:
+      # pytest-xdist worker count, consumed by src/roam/testing/ci_xdist.py
+      # (code default stays 2 so local/other consumers are unchanged).
+      #
+      # The 2-worker cap was a BLIND SIGBUS mitigation landed 2026-07-08 08:42
+      # (b74fc2b6) -- hours BEFORE either real root cause was diagnosed. Both
+      # were found and closed the same day, and both fixes are structural
+      # rather than headcount-dependent:
+      #   - the shared-.pyc assertion-rewrite race (2b881d24) is gone because
+      #     no .pyc is written at all: sys.dont_write_bytecode is set in the
+      #     controller AND every worker, so there is no shared file to race on
+      #     no matter how many workers exist;
+      #   - the 1 GB SQLite mmap (cd887438) is gone because mmap_size=0 under
+      #     CI+xdist, with cache_size (64 MB -> 8 MB) and temp_store
+      #     (MEMORY -> FILE) bounded alongside it (7765098c), so per-worker
+      #     memory is small and constant instead of gigabyte-scale.
+      # Grammar-heavy index builds are additionally serialized onto one worker
+      # by xdist_group("grammar_heavy") (e0ee4360). Nothing ever re-tested the
+      # cap after those landed. The suite is also subprocess-heavy (286 test
+      # modules shell out), so at 2 workers a 4-vCPU runner sits part-idle.
+      ROAM_XDIST_WORKERS: "3"
+    # Measured at 2 workers, `Run tests` step wall clock, 2026-07-28:
+    #   run 30331612772  3.10 44m05s  3.11 43m45s  3.12 39m47s  3.13 38m28s
+    #   run 30331709179  3.10 51m45s  3.11 39m21s  3.12 39m28s  3.13 36m13s
+    #   run 30334868017  3.10 41m31s  3.11 36m50s  3.12 37m37s  3.13 42m38s
+    #   run 30344348643  3.10 49m56s  3.11 36m52s  3.12 41m53s  3.13 36m57s
+    # 3.10 is the slowest lane in 3 of those 4 and peaked at 51m45s -- 86% of
+    # this cap -- but it is NOT a 3.10-only problem: on 30334868017 the 3.13
+    # lane was slowest, and the whole matrix sits in a 36-52 min band. Run-to-
+    # run variance on a single lane is ~10 min, larger than the gap between
+    # lanes. That band is why the timeout was bumped three times
+    # (20 -> 30 -> 45 -> 60), each bump consumed by ordinary growth within a
+    # few releases. A fourth bump is not on the table: the lever is the worker
+    # count above, not the clock. A genuine hang still trips this cap.
     timeout-minutes: 60
     strategy:
       fail-fast: false   # let all Python versions report; don't abort early
