@@ -68,9 +68,34 @@ RUN_ID_RE = re.compile(r"^run_\d{8}_[0-9a-f]{6,}$")
 STATUS_SOURCE_DERIVED = "derived"
 STATUS_SOURCE_ASSERTED = "asserted"
 
+# W-SEC followup (predicate-narrowing) — closed vocabulary for
+# ``event["partial_success_kind"]``. Set ONLY by
+# :func:`roam.runs.helpers.auto_log` when it mirrors a gate/strategic
+# command's ``summary.partial_success`` onto a ledger event. It marks that
+# the ``True`` value was COPIED from the emitting command's own envelope,
+# where (per Task #57's ``summary.truncation_reason`` formalisation, and
+# confirmed across ``cmd_pr_bundle.py``, ``cmd_verify.py``,
+# ``cmd_preflight.py`` and ``cmd_attest.py``) ``partial_success`` names
+# OUTPUT/EXECUTION completeness ("this command's own result is not fully
+# populated / ran in a degraded mode") — never a verdict about the code
+# being checked. A ``roam pr-bundle init`` on a fresh bundle sets
+# ``partial_success=True`` because the bundle document isn't fully
+# assembled yet, exactly analogous to a JSON-budget-truncated payload;
+# neither is "a check failed".
+#
+# See :func:`_derive_status_from_recorded_checks` for the consumer:
+# events carrying this marker are tracked as PARTIAL OUTPUT, not folded
+# into the FAILED-check set. Events with ``partial_success=true`` and NO
+# marker (every direct :func:`log_event` call and every ``roam runs log
+# --partial-success``) are an explicit, un-mirrored claim by whoever
+# logged them and still count as a real recorded failure — this is what
+# keeps the original W-SEC hole (12c8b34d) closed.
+PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE = "output_incomplete"
+
 __all__ = [
     "EVENTS_FILE",
     "META_FILE",
+    "PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE",
     "RUNS_DIR_NAME",
     "RUNS_SUBDIR",
     "RUN_ID_RE",
@@ -140,6 +165,18 @@ class RunMeta:
     # before this field existed -- absence is itself informative ("this
     # run predates status provenance labelling"), not a silent default.
     status_source: Optional[str] = None
+    # W-SEC followup (predicate-narrowing) — count of recorded events whose
+    # ``partial_success=true`` was traced to
+    # :data:`PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE` (mirrored OUTPUT
+    # completeness, not a check failure) at ``end_run`` time. Stamped
+    # every time :func:`end_run` runs (0 when there were none), so ``None``
+    # unambiguously means "this run predates the narrowed predicate" —
+    # same absence-is-informative convention as ``status_source``. Exists
+    # so a downstream reader (CLI, or the signed RunLedgerRoot/v1
+    # predicate via :func:`roam.attest.vsa.build_run_ledger_root_predicate`)
+    # can still see that SOME recorded checks returned partial output even
+    # though that fact no longer drives ``status``.
+    partial_output_count: Optional[int] = None
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -169,6 +206,8 @@ class RunMeta:
             merged.pop("event_count", None)
         if merged.get("status_source") is None:
             merged.pop("status_source", None)
+        if merged.get("partial_output_count") is None:
+            merged.pop("partial_output_count", None)
         return merged
 
 
@@ -437,29 +476,71 @@ def _last_event_signature(events_path: Path) -> Optional[str]:
     return sig if isinstance(sig, str) else None
 
 
-def _derive_status_from_recorded_checks(repo_root: Path, run_id: str) -> tuple[Optional[str], list[str], int]:
+def _derive_status_from_recorded_checks(
+    repo_root: Path, run_id: str
+) -> tuple[Optional[str], list[str], int, list[str]]:
     """Derive a run's status from its own recorded check outcomes.
 
     W-SEC (security-model hole close): ``end_run`` used to accept
     ``status`` as a bare, unchecked claim — a TYPE check (member of
     :data:`VALID_STATUSES`) stood in for a TRUTH check. This function is
-    the truth check. Every event a run accumulates (whether auto-logged
-    by a gate command's envelope via :func:`roam.runs.helpers.auto_log`,
-    or appended manually via ``roam runs log``) carries a
-    ``partial_success`` boolean — the SAME recorded signal
-    ``roam replay``/``roam agent-score`` already reduce over to summarise
-    "did anything in this run report trouble" (see
-    ``cmd_replay.py``'s ``partial_failures`` computation). We reuse that
-    existing, already-load-bearing signal rather than inventing a second,
-    parallel notion of "check failed":
+    the truth check.
 
-      * Zero events recorded  -> ``(None, [], 0)``. Nothing was recorded
-        to derive a status from; the caller's ``status`` stays a bare
-        assertion (this is the by-design residual gap — see
+    W-SEC followup (predicate-narrowing) — the ORIGINAL version of this
+    function treated ANY recorded event with ``partial_success=true`` as
+    a failed check, reasoning that ``partial_success`` was "the same
+    recorded signal ``roam replay``/``roam agent-score`` already reduce
+    over". That reasoning was already shaky and Task #57 (commit
+    ``baa37ec9``) proved it wrong outright: ``partial_success`` is an
+    OUTPUT-COMPLETENESS signal ("this command's own result is not fully
+    populated / ran degraded"), not a verdict about the code being
+    checked. Confirmed by inspection: ``cmd_pr_bundle.py`` sets
+    ``partial_success = state != "complete"`` (a bundle document still
+    being assembled), ``cmd_verify.py``'s top-level ``partial_success``
+    tracks execution degradation (``capped``/``timed_out``/index-refresh
+    failures), never ``violation_count``, and ``cmd_preflight.py`` uses it
+    for degraded symbol resolution / substrate warnings, never for "this
+    edit is risky". Treating any of these as "check failed" refused a
+    plain ``roam pr-bundle init`` + ``roam runs end`` — an ordinary,
+    correct sequence — because a brand-new bundle document isn't
+    "complete" yet, which is not the same claim as "a check failed".
+
+    The fix distinguishes WHO set ``partial_success`` and HOW:
+
+      * :func:`roam.runs.helpers.auto_log` — the boundary that MIRRORS a
+        command's ``envelope.summary.partial_success`` onto a ledger
+        event — stamps
+        ``partial_success_kind="output_incomplete"`` (see
+        :data:`PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE`) alongside any
+        ``partial_success=true`` it copies. This is the "output was
+        partial" case: real, worth recording, but NOT a check failure.
+      * A raw :func:`log_event` call or ``roam runs log
+        --partial-success`` carries NO such marker — it is an explicit,
+        un-mirrored assertion by whoever logged it ("this action
+        failed"), and stays a real recorded failure. This is what keeps
+        the original hole (12c8b34d) closed: an agent that manually (or
+        via a future command wired the same way) records a genuine
+        failure still cannot walk it back with ``--status completed``.
+      * A non-empty ``warnings_out`` on its own is NOT a failure signal
+        either (a warning is not a failure) and was never folded into
+        ``partial_success`` derivation here — only ``partial_success``
+        itself (with the marker check above) drives this predicate.
+
+    Returns ``(status, failing, total, partial_output)``:
+
+      * Zero events recorded  -> ``(None, [], 0, [])``. Nothing was
+        recorded to derive a status from; the caller's ``status`` stays a
+        bare assertion (this is the by-design residual gap — see
         :func:`end_run`).
-      * >=1 event, all clean  -> ``("completed", [], N)``.
-      * >=1 event, >=1 with ``partial_success=true`` -> ``("failed",
-        [<action-or-seq for each failing event>], N)``.
+      * >=1 event, none failing (clean, or ``partial_success=true`` but
+        every occurrence carries the output-incomplete marker) ->
+        ``("completed", [], N, partial_output)``. ``partial_output`` names
+        the output-incomplete events so the fact is not silently
+        discarded even though it no longer blocks ``status`` — see
+        :func:`end_run` for where it surfaces.
+      * >=1 event, >=1 REAL failure (``partial_success=true`` without the
+        marker) -> ``("failed", [<action-or-seq per failing event>], N,
+        partial_output)``.
 
     Never raises. A corrupt/partially-unreadable ``events.jsonl`` degrades
     toward "nothing recorded" (via :func:`read_run_events`'s own
@@ -467,16 +548,22 @@ def _derive_status_from_recorded_checks(repo_root: Path, run_id: str) -> tuple[O
     derived claim — the conservative direction.
     """
     failing: list[str] = []
+    partial_output: list[str] = []
     total = 0
     for event in read_run_events(repo_root, run_id):
         total += 1
-        if bool(event.get("partial_success")):
-            failing.append(event.get("action") or f"seq={event.get('seq', '?')}")
+        if not bool(event.get("partial_success")):
+            continue
+        label = event.get("action") or f"seq={event.get('seq', '?')}"
+        if event.get("partial_success_kind") == PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE:
+            partial_output.append(label)
+        else:
+            failing.append(label)
     if total == 0:
-        return None, [], 0
+        return None, [], 0, []
     if failing:
-        return "failed", failing, total
-    return "completed", [], total
+        return "failed", failing, total, partial_output
+    return "completed", [], total, partial_output
 
 
 def end_run(
@@ -494,18 +581,25 @@ def end_run(
 
     W-SEC — ``status`` is an ASSERTION, not a fact, until corroborated.
     Before stamping, this function derives a status from the run's OWN
-    recorded check outcomes via :func:`_derive_status_from_recorded_checks`
-    (every logged event carries ``partial_success``; see that function's
-    docstring). Two outcomes:
+    recorded check outcomes via :func:`_derive_status_from_recorded_checks`,
+    which distinguishes a REAL recorded failure from a merely PARTIAL
+    output (see that function's docstring for the ``partial_success`` vs
+    ``partial_success_kind`` split). Two outcomes:
 
       * The run recorded at least one check AND at least one of them
-        failed (``partial_success=true``): asserting anything other than
+        genuinely failed: asserting anything other than
         ``"failed"``/``"abandoned"`` is a claim the run's own evidence
         contradicts, so it is REFUSED (``ValueError``) rather than
         silently honoured. ``"abandoned"`` is always exempt — it is not a
-        claim about whether checks passed.
-      * Otherwise (nothing recorded, or everything recorded was clean):
-        ``status`` is honoured as given.
+        claim about whether checks passed. A recorded event whose
+        ``partial_success=true`` is explained by
+        :data:`PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE` (e.g. a
+        ``pr-bundle`` document that isn't fully assembled yet, or a
+        JSON-budget-truncated payload) is NOT a failure and does not
+        trigger this refusal on its own.
+      * Otherwise (nothing recorded, everything recorded was clean, or
+        every ``partial_success=true`` was output-incomplete rather than
+        a real failure): ``status`` is honoured as given.
 
     The resulting :attr:`RunMeta.status_source` records which case applied
     — ``"derived"`` when the stamped ``status`` matches what the recorded
@@ -515,6 +609,16 @@ def end_run(
     carries the same label into the signed attestation so a downstream
     verifier can tell "roam derived this from recorded checks" apart from
     "the agent merely asserted this" WITHOUT reading roam's source.
+
+    Partial output is not discarded just because it stopped driving
+    ``status``: :attr:`RunMeta.partial_output_count` records how many
+    recorded events were output-incomplete (0 when none), and that count
+    flows into the same signed predicate via
+    :func:`roam.attest.vsa.build_run_ledger_root_predicate`
+    (``partial_output_count``) — a downstream verifier can see "this run
+    reports completed, derived from evidence, AND N of its recorded
+    checks returned partial output" all at once, without it silently
+    weakening the pass/fail claim.
 
     Residual gap (by design, not an oversight): a run that logs zero
     events between ``start`` and ``end`` has nothing to derive a status
@@ -533,7 +637,9 @@ def end_run(
     if meta is None:
         raise FileNotFoundError(f"run {run_id} does not exist")
 
-    derived_status, failing_checks, _checks_recorded = _derive_status_from_recorded_checks(repo_root, run_id)
+    derived_status, failing_checks, _checks_recorded, partial_output_checks = _derive_status_from_recorded_checks(
+        repo_root, run_id
+    )
 
     if derived_status == "failed" and status not in ("failed", "abandoned"):
         raise ValueError(
@@ -552,6 +658,7 @@ def end_run(
     meta.ended_at = ended_at or _utc_now_iso()
     meta.status = status
     meta.status_source = status_source
+    meta.partial_output_count = len(partial_output_checks)
 
     # R20 phase 4 — stamp the final-signature fingerprint into meta.json
     # so callers can do a cheap integrity-changed-since-close check
@@ -694,6 +801,7 @@ def read_run_meta(
         "final_signature",
         "event_count",
         "status_source",
+        "partial_output_count",
     }
     kwargs = {k: raw.get(k) for k in known if k in raw}
     extras = {k: v for k, v in raw.items() if k not in known}

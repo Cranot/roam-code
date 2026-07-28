@@ -258,25 +258,32 @@ def test_loop_full_chain_with_runs_ledger(tmp_path, cli_runner, monkeypatch):
 
     # Step 11: runs end.
     #
-    # The bundle emitted above is legitimately PARTIAL -- `pr-bundle` reports
-    # ``partial_success = state != "complete"`` (cmd_pr_bundle.py:1820) and this
-    # chain never fills every required section. Closing the run as "completed"
-    # would assert a success the run's OWN RECORDED EVIDENCE contradicts, which
-    # is precisely what the status-provenance contract refuses: a cosign-signed
-    # VSA predicate must not be able to carry an unearned "completed".
-    #
-    # Before that contract existed this asserted exit 0 on the default status,
-    # i.e. it encoded the permissive behaviour. Asserting the REFUSAL is the
-    # point -- it pins the contract instead of routing around it.
+    # REVISITED (predicate-narrowing followup): this assertion previously
+    # expected `runs end` to be REFUSED, reasoning that the bundle emitted
+    # above is "legitimately PARTIAL" -- `pr-bundle` reports
+    # ``partial_success = state != "complete"`` (cmd_pr_bundle.py:1820) --
+    # and treating that as a recorded check FAILURE. That reasoning was
+    # wrong: ``partial_success`` on a `pr-bundle` event names the bundle
+    # DOCUMENT's own completeness (it isn't fully assembled yet), not a
+    # verdict that any check found a problem -- the same OUTPUT-COMPLETENESS
+    # vs check-failure distinction Task #57 formalised via
+    # ``summary.truncation_reason``. `roam.runs.helpers.auto_log` now marks
+    # such mirrored events with ``partial_success_kind="output_incomplete"``,
+    # and `_derive_status_from_recorded_checks` (roam/runs/ledger.py) no
+    # longer folds them into the FAILED-check set. A plain
+    # `pr-bundle init/add/emit` + `runs end` sequence -- exactly what this
+    # test walks -- is ordinary, correct agent behaviour and must close
+    # cleanly.
     r = _invoke(cli_runner, ["--json", "runs", "end"])
-    assert r.exit_code != 0, f"expected refusal of an unearned 'completed': {r.output}"
-    assert "contradicts the asserted status" in r.output, r.output
-
-    # Closing with the status the evidence supports must succeed.
-    r = _invoke(cli_runner, ["--json", "runs", "end", "--status", "failed"])
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == 0, f"expected a clean close (pr-bundle partial output is not a check failure): {r.output}"
     eend = _parse_json(r)
-    assert eend["summary"]["state"] in ("failed", "completed", "ok"), eend
+    assert eend["summary"]["state"] == "completed", eend
+    # Derived, not merely asserted: recorded evidence (preflight/diff/
+    # pr-bundle events) was checked and none of it was a genuine failure.
+    assert eend["summary"]["status_source"] == "derived", eend["summary"]
+    # The partial-output fact is NOT discarded just because it stopped
+    # blocking the status -- it is still visible on the run record.
+    assert eend["run"].get("partial_output_count", 0) > 0, eend["run"]
 
     # runs list should show our run.
     r = _invoke(cli_runner, ["--json", "runs", "list"])

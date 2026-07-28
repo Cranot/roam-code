@@ -398,6 +398,7 @@ def build_run_ledger_root_predicate(
     status: str | None = None,
     status_source: str | None = None,
     repo_id: str | None = None,
+    partial_output_count: int | None = None,
 ) -> dict[str, Any]:
     """Build the predicate body for a run-ledger root attestation.
 
@@ -431,6 +432,19 @@ def build_run_ledger_root_predicate(
         Not inherently untrustworthy — but a verifier MUST NOT read it
         with the same confidence as ``"derived"``.
 
+    W-SEC followup (predicate-narrowing): ``status``/``status_source`` no
+    longer treat a recorded event's ``partial_success=true`` as a check
+    failure when :func:`roam.runs.ledger._derive_status_from_recorded_checks`
+    traces it to mirrored output-completeness (see that function's
+    docstring) rather than an assessed failure — a ``pr-bundle`` document
+    that isn't fully assembled yet is not the same claim as "a check
+    failed". That fact is not simply dropped: ``partial_output_count``
+    carries how many recorded events were output-incomplete (omitted
+    when not supplied or zero), so a verifier reading only the signed
+    predicate can still see "``status_source: derived``, ``status:
+    completed``, AND N recorded checks returned partial output" without
+    it silently weakening the pass/fail claim itself.
+
     Omitted (as with every other optional field here) when the caller
     doesn't supply it — this keeps runs closed before this field
     existed, or via a direct API caller that doesn't pass it,
@@ -454,6 +468,8 @@ def build_run_ledger_root_predicate(
         predicate["status"] = status
     if status_source:
         predicate["status_source"] = status_source
+    if partial_output_count:
+        predicate["partial_output_count"] = int(partial_output_count)
     if repo_id:
         predicate["repo_id"] = repo_id
     return predicate
@@ -497,6 +513,7 @@ def build_run_ledger_root_statement(
         ended_at=getattr(meta, "ended_at", None),
         status=getattr(meta, "status", None),
         status_source=getattr(meta, "status_source", None),
+        partial_output_count=getattr(meta, "partial_output_count", None),
     )
     subject = {
         "name": f"urn:roam:run:{run_id}",

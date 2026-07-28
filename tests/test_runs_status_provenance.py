@@ -25,6 +25,31 @@ Covers the required matrix:
   (c) no recorded checks                             -> still works, asserted
   (d) passing recorded checks                        -> derived
   (e) --status abandoned is still reachable over failing checks
+
+W-SEC followup (predicate-narrowing, see roam/runs/ledger.py's
+``_derive_status_from_recorded_checks`` docstring): the ORIGINAL version
+of the predicate above treated ANY event with ``partial_success=true`` as
+a failing check. Task #57 (commit ``baa37ec9``) proved that reading wrong
+for AUTO-LOGGED events: ``partial_success`` there names OUTPUT-COMPLETENESS
+("this command's own result isn't fully populated / ran degraded" -- e.g.
+``pr-bundle`` reports ``partial_success = state != "complete"`` for a
+bundle document still being assembled), never a verdict about the code
+being checked. ``roam.runs.helpers.auto_log`` now marks every mirrored
+``partial_success=true`` it writes with
+``partial_success_kind="output_incomplete"``, and the derivation function
+excludes marked events from the FAILED-check set while still counting them
+as partial output (visible via ``RunMeta.partial_output_count`` and the
+signed predicate's ``partial_output_count``).
+
+Everything in the matrix above is UNCHANGED and still covered by the tests
+below: they all log events via the raw :func:`log_event` /
+``roam runs log --partial-success`` paths, which carry NO
+``partial_success_kind`` marker -- an explicit, un-mirrored claim of
+failure, exactly the shape the original hole (12c8b34d) needs closed.
+Covers the additional matrix:
+  (f) auto-mirrored partial output (marked) -> NOT refused, derived completed
+  (g) a genuine failure alongside marked partial output -> still REFUSED
+      (the marker never masks a real failure)
 """
 
 from __future__ import annotations
@@ -48,6 +73,7 @@ from roam.attest.vsa import (  # noqa: E402
     build_run_ledger_root_statement,
 )
 from roam.runs.ledger import (  # noqa: E402
+    PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE,
     STATUS_SOURCE_ASSERTED,
     STATUS_SOURCE_DERIVED,
     end_run,
@@ -312,3 +338,110 @@ def test_self_reported_failed_on_clean_run_is_allowed_but_asserted(runs_project)
     ended = end_run(runs_project, meta.run_id, status="failed")
     assert ended.status == "failed"
     assert ended.status_source == STATUS_SOURCE_ASSERTED
+
+
+# ---------------------------------------------------------------------------
+# (f) auto-mirrored partial output (marked) -> NOT a recorded failure
+# ---------------------------------------------------------------------------
+
+
+def test_auto_mirrored_partial_output_does_not_block_completion(runs_project):
+    """A ``pr-bundle``-shaped event: partial_success=true because the
+    bundle DOCUMENT isn't fully assembled yet, not because any check
+    found a problem. ``roam.runs.helpers.auto_log`` marks this with
+    ``partial_success_kind=PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE``; the
+    derivation must not fold it into the failed-check set."""
+    meta = start_run(runs_project, agent="claude-code")
+    log_event(
+        runs_project,
+        meta.run_id,
+        action="pr-bundle",
+        partial_success=True,
+        partial_success_kind=PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE,
+    )
+
+    ended = end_run(runs_project, meta.run_id, status="completed")
+    assert ended.status == "completed"
+    # Derived, not merely asserted -- the recorded evidence was checked
+    # and none of it was a genuine failure.
+    assert ended.status_source == STATUS_SOURCE_DERIVED
+    # The partial-output fact is not discarded -- it is still visible.
+    assert ended.partial_output_count == 1
+
+    fresh = read_run_meta(runs_project, meta.run_id)
+    assert fresh.status == "completed"
+    assert fresh.partial_output_count == 1
+
+
+def test_marked_partial_output_alongside_clean_checks_is_still_derived_completed(runs_project):
+    """Mix of a clean check and a marked partial-output event: still no
+    genuine failure recorded, so ``completed`` is honoured and derived."""
+    meta = start_run(runs_project, agent="claude-code")
+    log_event(runs_project, meta.run_id, action="preflight", partial_success=False)
+    log_event(
+        runs_project,
+        meta.run_id,
+        action="pr-bundle",
+        partial_success=True,
+        partial_success_kind=PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE,
+    )
+
+    ended = end_run(runs_project, meta.run_id)  # default --status completed
+    assert ended.status == "completed"
+    assert ended.status_source == STATUS_SOURCE_DERIVED
+    assert ended.partial_output_count == 1
+
+
+# ---------------------------------------------------------------------------
+# (g) a genuine failure alongside marked partial output -> still REFUSED
+# ---------------------------------------------------------------------------
+
+
+def test_genuine_failure_still_refused_even_alongside_marked_partial_output(runs_project):
+    """The narrowing must never mask a REAL recorded failure. An
+    unmarked ``partial_success=true`` (a raw/manual assertion, exactly
+    the shape ``roam runs log --partial-success`` writes) sitting
+    alongside a marked, output-incomplete ``pr-bundle`` event must still
+    trigger the refusal -- this is the regression that proves the
+    original hole (12c8b34d) stays closed even after the narrowing."""
+    meta = start_run(runs_project, agent="claude-code")
+    log_event(
+        runs_project,
+        meta.run_id,
+        action="pr-bundle",
+        partial_success=True,
+        partial_success_kind=PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE,
+    )
+    log_event(runs_project, meta.run_id, action="verify", partial_success=True)
+
+    with pytest.raises(ValueError, match="refusing to end run"):
+        end_run(runs_project, meta.run_id, status="completed")
+
+    fresh = read_run_meta(runs_project, meta.run_id)
+    assert fresh.status == "in_progress"
+
+
+# ---------------------------------------------------------------------------
+# partial_output_count also reaches the signed predicate
+# ---------------------------------------------------------------------------
+
+
+def test_predicate_carries_partial_output_count_when_supplied():
+    pred = build_run_ledger_root_predicate(
+        run_id="r1",
+        final_signature="aa" * 32,
+        event_count=1,
+        status="completed",
+        status_source="derived",
+        partial_output_count=2,
+    )
+    assert pred["partial_output_count"] == 2
+
+
+def test_predicate_omits_partial_output_count_when_zero_or_absent():
+    pred = build_run_ledger_root_predicate(run_id="r1", final_signature="aa" * 32, event_count=1)
+    assert "partial_output_count" not in pred
+    pred_zero = build_run_ledger_root_predicate(
+        run_id="r1", final_signature="aa" * 32, event_count=1, partial_output_count=0
+    )
+    assert "partial_output_count" not in pred_zero
