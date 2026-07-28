@@ -681,8 +681,17 @@ verdict is reporting-only, so a CI gate must pass `--ci` or `--strict`:
 |---|---|---|---|---|
 | `pass` | 0 | 0 | `success` | ✅ green |
 | `pass_with_warnings` | 0 | 0 | `neutral` | 🟡 yellow |
-| `needs_review` | 4 | 0 | `action_required` | 🟠 attention |
-| `blocked` | 5 | 0 | `failure` | 🛑 red |
+| `needs_review` | 4 | 0 (+ stderr banner) | `action_required` | 🟠 attention |
+| `blocked` | 5 | 0 (+ stderr banner) | `failure` | 🛑 red |
+
+A reporting-only run never passes *silently*. When the verdict would have
+gated (`needs_review` / `blocked`) but no `--strict`/`--ci` was given, `guard-pr`
+writes a loud banner to **stderr** naming the flag and the exit code it
+suppressed, and the `--json` envelope carries the same fact in
+`summary.gate_enforced`, `summary.gate_suppressed` and
+`summary.verdict_exit_code`. Check `gate_suppressed`, not `exit_code`, if you
+need to tell "verdict was clean" from "verdict was blocking but this run
+wasn't gating" — `exit_code` is 0 in both cases.
 
 **Output formats:** `text` (default), `markdown` (PR comment / GH Check), `json` (the full AgentChangeProofBundle v1). SARIF is not a `guard-pr` format — emit it from the same bundle with `roam proof-bundle --format sarif`.
 

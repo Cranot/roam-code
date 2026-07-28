@@ -15,6 +15,15 @@ One CLI invocation that runs the full Phase 1+2 flow:
   6. Optionally POST to GitHub Check Run API
   7. Exit per verdict (0 = pass/warnings, 4 = needs_review, 5 = blocked under --strict)
 
+Reporting-only by default, and LOUD about it. Without --strict/--ci the
+process always exits 0 — that is deliberate (the shipped CI templates run a
+bare `guard-pr --post-check` reporting step under `set -euo pipefail`, and it
+runs precisely when the verdict is blocked). But a suppressed gate is never
+silent: `_emit_gate_suppressed_banner` writes a stderr banner naming the exact
+flag, and the JSON envelope carries `gate_enforced` / `gate_suppressed` /
+`verdict_exit_code` so a machine consumer can see the same thing. Seeing
+`blocked` and getting exit 0 with no signal is the defect this guards.
+
 Distinct from `roam guard` (per-symbol pre-edit packet).
 
 Per the Roam Guard pivot decision, this is the
@@ -119,7 +128,13 @@ def _run_auto_collect_inline(bundle_path: Path, root: Path) -> dict:
 @click.option(
     "--policy-profile", type=click.Choice(["startup", "regulated"]), default="startup", help="Policy profile floor."
 )
-@click.option("--strict", is_flag=True, default=False, help="Exit non-zero on blocked / needs_review.")
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Exit non-zero on blocked / needs_review. Without it guard-pr is reporting-only "
+    "and always exits 0 (it says so loudly on stderr when it suppresses a gate).",
+)
 @click.option(
     "--format",
     "fmt",
@@ -310,7 +325,13 @@ def guard_pr(
     )
 
     verdict_value = (v1.get("verdict") or {}).get("value", "pass")
-    exit_code = verdict_exit_code(verdict_value) if strict else 0
+    # The exit code the gate WOULD use, kept separate from the process exit
+    # code so a non-strict run can DISCLOSE what it suppressed rather than
+    # silently flooring it to 0.
+    gate_exit_code = verdict_exit_code(verdict_value)
+    gate_enforced = bool(strict)
+    exit_code = gate_exit_code if gate_enforced else 0
+    gate_suppressed = gate_exit_code != 0 and not gate_enforced
 
     # ---- persistent verdict log (.roam/verdict-log.jsonl) ----
     # Append-only; best-effort. Powers `roam guard-history` fast-path AND
@@ -370,6 +391,13 @@ def guard_pr(
                         "verdict": verdict_value,
                         "schema": PROOF_BUNDLE_SCHEMA,
                         "exit_code": exit_code,
+                        # Gate disclosure — a machine consumer must be able to
+                        # tell "verdict was fine" from "verdict was blocking
+                        # but this run wasn't gating". `exit_code` alone is 0
+                        # in both cases.
+                        "gate_enforced": gate_enforced,
+                        "gate_suppressed": gate_suppressed,
+                        "verdict_exit_code": gate_exit_code,
                         "required_count": len(v1["verification_contract"]["required"]),
                         "executed_count": len(v1["executed_checks"]),
                         "missing_count": len(v1["missing_checks"]),
@@ -383,6 +411,14 @@ def guard_pr(
                             f"{len(v1['changed_files'])} files changed",
                             f"{len(v1['verification_contract']['required'])} checks required",
                             f"{len(v1['executed_checks'])} checks executed",
+                            *(
+                                [
+                                    f"NOT GATING: verdict {verdict_value} would exit "
+                                    f"{gate_exit_code} under --ci, but this run exits 0"
+                                ]
+                                if gate_suppressed
+                                else []
+                            ),
                         ],
                         "next_commands": ["roam pr-bundle add affected <symbol>"]
                         if verdict_value == "blocked"
@@ -422,7 +458,31 @@ def guard_pr(
                     body_str = str(body)[:500]
                     click.echo(f"  body: {body_str}")
 
+    # Loud disclosure LAST, so it is the final thing on the terminal and is not
+    # scrolled away by the rendered verdict body. stderr in both JSON and text
+    # mode — it must never corrupt the stdout JSON document.
+    if gate_suppressed:
+        _emit_gate_suppressed_banner(verdict_value, gate_exit_code)
+
     ctx.exit(exit_code)
+
+
+def _emit_gate_suppressed_banner(verdict_value: str, gate_exit_code: int) -> None:
+    """Announce, loudly on stderr, that a blocking verdict did NOT gate.
+
+    Without ``--strict``/``--ci`` this command is reporting-only and exits 0.
+    That default stays (see module docstring), but the combination "prints
+    ``blocked``, returns success, says nothing" is indistinguishable from a
+    passing run to anyone reading only the exit status. This banner is the
+    signal that tells them apart, and it names the exact flag that changes it.
+    """
+    bar = "!" * 72
+    click.echo(bar, err=True)
+    click.echo(f"WARNING: roam guard-pr verdict is `{verdict_value}` — this run is NOT gating.", err=True)
+    click.echo(f"         Exiting 0. With --ci (or --strict) it would exit {gate_exit_code}.", err=True)
+    click.echo("         A CI gate built on this command MUST pass --ci, or the build", err=True)
+    click.echo("         goes green on a blocked verdict.", err=True)
+    click.echo(bar, err=True)
 
 
 def _text_render(v1: dict, bundle_path: Path) -> str:
