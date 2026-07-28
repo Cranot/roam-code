@@ -32,21 +32,30 @@ updates:
       - dependency-name: "onnxruntime"
         update-types: ["version-update:semver-major"]
 
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - ci
-    commit-message:
-      prefix: "ci"
-    # GitHub Actions supports the ecosystem-wide default cooldown. Keep the
-    # window short so reviewed SHA bumps remain prompt while avoiding day-zero
-    # adoption of a compromised or immediately regressed action release.
-    cooldown:
-      default-days: 7
-      include:
-        - "*"
+  # NO github-actions ecosystem here, deliberately.
+  #
+  # Action SHAs in this repo are a PRODUCT surface, not just CI config. The
+  # same pinned SHA appears in all of:
+  #
+  #   .github/workflows/*.yml          <- the only place Dependabot can edit
+  #   action.yml                       <- the composite action we publish
+  #   src/roam/templates/ci/*.yml      <- what `roam init` emits for users
+  #   templates/examples/*.yml         <- documented copy-paste examples
+  #
+  # and is asserted as a literal in tests/test_ci_setup.py,
+  # tests/test_ci_template_family_systemic_hardening.py,
+  # tests/test_composite_action_security.py and tests/test_init_cmd.py.
+  #
+  # Dependabot's github-actions ecosystem sees only the first of those. A bump
+  # it proposes therefore desynchronises this repo's own CI from the templates
+  # it ships to users -- which the tests correctly refuse, so the PR is red by
+  # construction and cannot be made green by Dependabot. That is not a test
+  # problem to fix by loosening the assertions: the assertions are what keep
+  # the shipped templates honest. Permanent red PRs are worse than none,
+  # because they train you to ignore red.
+  #
+  # Bumps go through dev/pin_github_actions.sh instead, which repins every
+  # surface in one pass, and the version comment it writes is what makes the
+  # current pin auditable. Dependabot SECURITY updates are enabled at the
+  # repository level and do not need an entry here, so an advisory against a
+  # pinned action still opens a PR.
