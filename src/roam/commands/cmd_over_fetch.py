@@ -59,7 +59,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.confidence import confidence_level_rank
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, loc, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, loc, to_json
 
 # W114 (W93 follow-up): over-fetch is the seventh detector migrating onto
 # the central findings registry (after ``clones`` in W95, ``dead`` in
@@ -1737,6 +1737,10 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
             click.echo(write_sarif(over_fetch_to_sarif(combined)))
 
         _run_check_ce("serialize_to_sarif", _emit_sarif, default=None)
+        # W1331: a SARIF document has nowhere to carry these markers, so a
+        # Code-Scanning gate reads a floored over-fetch scan as a repo with
+        # no over-fetching.
+        echo_text_warnings(list(_w607ce_warnings_out) + list(_w607dt_warnings_out))
         return
 
     # -------------------------------------------------------------------
@@ -1850,6 +1854,8 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
     # -------------------------------------------------------------------
     # Text output
     # -------------------------------------------------------------------
+    # W1331: same disclosure for the human-readable branch.
+    echo_text_warnings(list(_w607ce_warnings_out) + list(_w607dt_warnings_out))
     click.echo(f"VERDICT: {verdict}")
 
     # Endpoint-level 3-state block — printed BEFORE the model-level findings

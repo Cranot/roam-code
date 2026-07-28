@@ -36,7 +36,7 @@ from roam.critique.checks import (
     parse_diff,
 )
 from roam.db.connection import open_db
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -1305,9 +1305,15 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
 
         sarif = critique_to_sarif(result["findings"])
         click.echo(write_sarif(sarif))
+        # W1331: a SARIF document has nowhere to carry these markers, so a
+        # gate reads a critique whose risk classifier raised -- and was
+        # floored to "low" -- as a clean patch review.
+        echo_text_warnings(_combined_warnings_out)
     elif json_mode:
         click.echo(to_json(critique_envelope))
     else:
+        # W1331: same disclosure for the human-readable branch.
+        echo_text_warnings(_combined_warnings_out)
         # W641-followup-B — the text-mode verdict also carries the
         # canonical risk_level suffix so a human-readable run discloses
         # the bucket (LAW 6 — the line works standalone).

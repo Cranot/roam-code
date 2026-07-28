@@ -53,6 +53,39 @@ def echo_text_warnings(warnings_out: WarningsOut) -> int:
     return len(warnings_out)
 
 
+def echo_text_empty_corpus(empty_corpus_state: Mapping[str, object] | None) -> bool:
+    """Render the empty-corpus disclosure for the NON-JSON output branches.
+
+    Sibling of :func:`echo_text_warnings` for the second-most-common W1331
+    shape. ``roam.commands.resolve.empty_corpus_state()`` distinguishes
+    "scanned a populated corpus and found nothing" from "there is nothing
+    indexed to scan", and on a 0-symbol index every detector produces a
+    vacuous all-clear. Commands render that distinction in the JSON
+    envelope (``summary.state == "empty_corpus"``) and then print the same
+    ``VERDICT: no findings`` in text — and the same empty ``results: []``
+    in SARIF — for both cases, so the reader cannot tell a clean repo from
+    an unbuilt index.
+
+    Pass the helper's return value straight through; ``None`` (a populated
+    corpus) is a no-op. The note goes to STDERR for the same reason
+    :func:`echo_text_warnings` does: stdout stays byte-identical, so no
+    golden-output test moves.
+
+    Returns True iff a note was emitted.
+    """
+    if not empty_corpus_state:
+        return False
+    import click
+
+    state = str(empty_corpus_state.get("state") or "empty_corpus")
+    click.echo(
+        f"# warning: {state} — 0 symbols indexed, so the result above is "
+        "vacuous rather than clean (run `roam index --force`)",
+        err=True,
+    )
+    return True
+
+
 _NON_CACHEABLE_COMMANDS = {
     "mutate",
     "annotate",

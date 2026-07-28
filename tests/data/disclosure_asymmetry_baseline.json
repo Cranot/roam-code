@@ -1,7 +1,7 @@
 {
   "_comment": "W1331 ratchet baseline -- see tests/test_w1331_disclosure_branch_symmetry.py. Every entry is a command that routes a disclosure signal to one output branch and not another, so a consumer of the other branch reads a degraded run as a clean one. This list may only SHRINK: the test fails both on a new violation and on a stale entry. Every entry names a reason code from _reason_codes; adding a code, or an entry, is a reviewable diff by construction.",
   "_regenerate": "python scripts/scan_disclosure_asymmetry.py --baseline",
-  "_high_water_mark": 80,
+  "_high_water_mark": 67,
   "_reason_codes": {
     "json-only-warnings-bucket": "The W607 warnings_out bucket is threaded into the JSON envelope only. A human running the command without --json, and a CI job consuming --sarif, cannot see that a substrate call failed and was floored. Fix template: cmd_understand.py -- echo '# warning: <marker>' to STDERR in the non-JSON tails, which leaves stdout byte-identical.",
     "json-only-empty-corpus-state": "empty_corpus_state() distinguishes 'nothing indexed' from 'nothing found'; only the JSON branch renders the distinction. The text and SARIF branches print the same thing for both.",
@@ -155,32 +155,6 @@
       "reason": "json-only-warnings-bucket"
     },
     {
-      "command": "clones",
-      "token": "empty_corpus_state",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_clones.py",
-      "reason": "json-only-empty-corpus-state"
-    },
-    {
-      "command": "clones",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_clones.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
       "command": "closure_cmd",
       "token": "warnings_out",
       "observed_by": [
@@ -229,19 +203,6 @@
       "reason": "json-only-warnings-bucket"
     },
     {
-      "command": "critique",
-      "token": "warnings_out",
-      "observed_by": [
-        "json",
-        "text"
-      ],
-      "blind": [
-        "sarif"
-      ],
-      "module": "cmd_critique.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
       "command": "cut",
       "token": "warnings_out",
       "observed_by": [
@@ -278,19 +239,6 @@
       "reason": "json-only-empty-corpus-state"
     },
     {
-      "command": "hidden_coupling_cmd",
-      "token": "warnings_out",
-      "observed_by": [
-        "json",
-        "text"
-      ],
-      "blind": [
-        "sarif"
-      ],
-      "module": "cmd_dark_matter.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
       "command": "dashboard",
       "token": "warnings_out",
       "observed_by": [
@@ -300,32 +248,6 @@
         "text"
       ],
       "module": "cmd_dashboard.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
-      "command": "dead",
-      "token": "empty_corpus_state",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_dead.py",
-      "reason": "json-only-empty-corpus-state"
-    },
-    {
-      "command": "dead",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_dead.py",
       "reason": "json-only-warnings-bucket"
     },
     {
@@ -425,19 +347,6 @@
       "reason": "json-only-warnings-bucket"
     },
     {
-      "command": "duplicates",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_duplicates.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
       "command": "evidence_diff",
       "token": "warnings_out",
       "observed_by": [
@@ -459,19 +368,6 @@
         "text"
       ],
       "module": "cmd_evidence_doctor.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
-      "command": "fan",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_fan.py",
       "reason": "json-only-warnings-bucket"
     },
     {
@@ -609,19 +505,6 @@
       "reason": "json-only-warnings-bucket"
     },
     {
-      "command": "math_cmd",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_math.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
       "command": "metrics_push",
       "token": "warnings_out",
       "observed_by": [
@@ -658,19 +541,6 @@
       "reason": "json-only-warnings-bucket"
     },
     {
-      "command": "n1_cmd",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_n1.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
       "command": "orchestrate_cmd",
       "token": "warnings_out",
       "observed_by": [
@@ -680,32 +550,6 @@
         "text"
       ],
       "module": "cmd_orchestrate.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
-      "command": "orphan_imports",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_orphan_imports.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
-      "command": "over_fetch_cmd",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_over_fetch.py",
       "reason": "json-only-warnings-bucket"
     },
     {
@@ -923,19 +767,6 @@
         "text"
       ],
       "module": "cmd_simulate.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
-      "command": "test_impact",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "sarif",
-        "text"
-      ],
-      "module": "cmd_test_impact.py",
       "reason": "json-only-warnings-bucket"
     },
     {

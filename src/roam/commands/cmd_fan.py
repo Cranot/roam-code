@@ -13,7 +13,15 @@ from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.file_role_hints import is_excluded_path
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, abbrev_kind, format_table, json_envelope, loc, to_json
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    abbrev_kind,
+    echo_text_warnings,
+    format_table,
+    json_envelope,
+    loc,
+    to_json,
+)
 from roam.output.framework_filter import FRAMEWORK_PRIMITIVE_NAMES as _FRAMEWORK_NAMES
 
 # W152: fan is the fifth detector migrating onto the central findings
@@ -954,6 +962,10 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
                     from roam.output.sarif import fan_to_sarif, write_sarif
 
                     click.echo(write_sarif(fan_to_sarif([])))
+                    # W1331: an empty SARIF results array is what the CI
+                    # gate reads; only the JSON branch said the row query
+                    # was floored.
+                    echo_text_warnings(_w607x_warnings_out)
                     return
                 if json_mode:
                     # W805-followup-C: empty-state disclosure (Pattern 2
@@ -979,6 +991,8 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
                         )
                     )
                 else:
+                    # W1331: same disclosure for the human-readable branch.
+                    echo_text_warnings(_w607x_warnings_out)
                     click.echo(f"VERDICT: {_empty_verdict}")
                     click.echo(f"HINT: {_empty_hint}")
                 return
@@ -1055,6 +1069,10 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
                 from roam.output.sarif import fan_to_sarif, write_sarif
 
                 click.echo(write_sarif(fan_to_sarif(symbol_items)))
+                # W1331: nothing in a SARIF document carries these
+                # markers, so a floored fan scan reaches the gate looking
+                # like a complete one.
+                echo_text_warnings(_w607x_warnings_out)
                 return
 
             if json_mode:
@@ -1102,6 +1120,8 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
                 f"top fan-in: {_top_in_r['name']}({_top_in_r['in_degree'] or 0}), "
                 f"top fan-out: {_top_out_r['name']}({_top_out_r['out_degree'] or 0})"
             )
+            # W1331: same disclosure for the human-readable branch.
+            echo_text_warnings(_w607x_warnings_out)
             click.echo(f"VERDICT: {_verdict}\n")
             # F3: name the test-role rows dropped from the headline so the
             # split is visible in text mode too (loud lineage).
@@ -1185,6 +1205,8 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
                     from roam.output.sarif import fan_to_sarif, write_sarif
 
                     click.echo(write_sarif(fan_to_sarif([])))
+                    # W1331: same disclosure on the file-mode empty path.
+                    echo_text_warnings(_w607x_warnings_out)
                     return
                 if json_mode:
                     # W805-followup-C: empty-state disclosure (Pattern 2
@@ -1210,6 +1232,8 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
                         )
                     )
                 else:
+                    # W1331: same disclosure for the human-readable branch.
+                    echo_text_warnings(_w607x_warnings_out)
                     click.echo(_file_empty_verdict)
                     click.echo(f"HINT: {_file_empty_hint}")
                 return
@@ -1278,6 +1302,8 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
                 from roam.output.sarif import fan_to_sarif, write_sarif
 
                 click.echo(write_sarif(fan_to_sarif(file_items)))
+                # W1331: same disclosure on the file-mode SARIF path.
+                echo_text_warnings(_w607x_warnings_out)
                 return
 
             if json_mode:
@@ -1314,6 +1340,8 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
                 f"top fan-in: {_top_in_name}({_top_in_r['fan_in']}), "
                 f"top fan-out: {_top_out_name}({_top_out_r['fan_out']})"
             )
+            # W1331: same disclosure for the human-readable branch.
+            echo_text_warnings(_w607x_warnings_out)
             click.echo(f"VERDICT: {_verdict}\n")
             # F3: name the test-role files dropped from the headline.
             if not include_tests and _file_test_filtered:

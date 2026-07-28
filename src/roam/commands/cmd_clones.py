@@ -29,6 +29,8 @@ from roam.output.confidence import (
 )
 from roam.output.formatter import (
     ENVELOPE_SCHEMA_VERSION,
+    echo_text_empty_corpus,
+    echo_text_warnings,
     json_envelope,
     loc,
     to_json,
@@ -635,6 +637,11 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                 },
             )
             click.echo(write_sarif(sarif_doc))
+            # W1331: a SARIF document has nowhere to carry these, so a
+            # Code-Scanning gate reads a detector that raised -- or a
+            # corpus with nothing in it -- as a clean clone scan.
+            echo_text_warnings(list(_w607bq_warnings_out) + list(_w607dc_warnings_out))
+            echo_text_empty_corpus(empty_corpus_state(conn) if not clusters else None)
             return
 
         # aggregate clone pairs into (file_a, file_b) coupling.
@@ -657,6 +664,8 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     )
                 )
                 return
+            # W1331: same disclosure for the --by-file human view.
+            echo_text_warnings(list(_w607bq_warnings_out) + list(_w607dc_warnings_out))
             click.echo(f"VERDICT: {verdict}")
             if not file_pairs:
                 return
@@ -925,6 +934,11 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             return
 
         # Text output
+        # W1331: "No structural clones detected" is a claim about the code;
+        # a floored detector or an unindexed corpus makes it a claim about
+        # nothing, and only the JSON envelope said so.
+        echo_text_warnings(list(_w607bq_warnings_out) + list(_w607dc_warnings_out))
+        echo_text_empty_corpus(empty_corpus_state(conn) if not clusters else None)
         click.echo(f"VERDICT: {verdict}")
 
         if not clusters:

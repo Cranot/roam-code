@@ -12,7 +12,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 
 # W154 (W93 follow-up): dark-matter is the Nth detector migrating onto the
@@ -544,6 +544,10 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                 default={"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": []},
             )
             click.echo(write_sarif(sarif_doc))
+            # W1331: a SARIF document has nowhere to carry these markers,
+            # so a Code-Scanning gate reads a floored co-change query as a
+            # repo with no hidden coupling.
+            echo_text_warnings(list(_w607bk_warnings_out) + list(_w607cz_warnings_out))
             return
 
         if json_mode:
@@ -837,6 +841,12 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
             return
 
         total = len(pairs)
+
+        # W1331: same disclosure for the human-readable branch. The
+        # comment on the ``not pairs`` probe below used to say "text mode
+        # does not surface warnings_out on stdout" -- it does now, on
+        # stderr, so stdout stays byte-identical.
+        echo_text_warnings(list(_w607bk_warnings_out) + list(_w607cz_warnings_out))
 
         # W641-followup-G — surface canonical W631 risk-LEVEL on the text
         # VERDICT line too (parity with the JSON envelope augmentation +

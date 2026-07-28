@@ -33,7 +33,7 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 # W132 (W93 follow-up): orphan-imports is the fifth detector migrating
 # onto the central findings registry (after ``clones`` in W95, ``dead``
@@ -1236,6 +1236,9 @@ def orphan_imports(ctx, lang, persist) -> None:
             click.echo(write_sarif(orphan_imports_to_sarif(all_orphans)))
 
         _run_check_cr("serialize_to_sarif", _emit_sarif, default=None)
+        # W1331: a SARIF document has nowhere to carry these markers, so a
+        # Code-Scanning gate reads a floored orphan-imports scan as clean.
+        echo_text_warnings(_w607cr_warnings_out)
         return
 
     if json_mode:
@@ -1294,6 +1297,8 @@ def orphan_imports(ctx, lang, persist) -> None:
         )
         return
 
+    # W1331: same disclosure for the human-readable branch.
+    echo_text_warnings(_w607cr_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     if not all_orphans:
         return

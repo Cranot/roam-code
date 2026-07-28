@@ -12,7 +12,7 @@ from roam.catalog.tasks import get_task, get_tip
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.confidence import confidence_level_rank
-from roam.output.formatter import abbrev_kind, json_envelope, to_json
+from roam.output.formatter import abbrev_kind, echo_text_warnings, json_envelope, to_json
 
 
 def _resolve_scope_file_ids(conn, scope_paths) -> tuple[set[int], list[str]]:
@@ -708,6 +708,13 @@ def math_cmd(
                 parts.append(f"unknown --exclude: {', '.join(exclude_unknown_names)}")
             verdict = f"WARNING ({'; '.join(parts)}) — {verdict}"
 
+        # W1331: the three warning buckets used to be folded together
+        # inside the ``if json_mode:`` branch alone. A malformed
+        # ``.roamignore-findings`` therefore disabled every suppression
+        # rule while ``--sarif`` handed the CI gate an unannotated finding
+        # set and the text tail printed a clean-looking report.
+        _all_warnings_out = list(_json_mode_warnings) + list(_suppression_warnings) + list(_filter_warnings)
+
         if sarif_mode:
             from roam.output.sarif import algo_to_sarif, write_sarif
 
@@ -716,6 +723,7 @@ def math_cmd(
                 detector_meta.get("detector_metadata", {}),
             )
             click.echo(write_sarif(sarif))
+            echo_text_warnings(_all_warnings_out)
             return
 
         # --- JSON output ---
@@ -769,10 +777,9 @@ def math_cmd(
             # mirrors the cmd_alerts / cmd_pr_risk warnings_out discipline.
             # W1057 (Pattern 1D + Pattern 2): unknown --only/--exclude names
             # fold into the same warnings_out / partial_success discipline.
-            _all_warnings = list(_json_mode_warnings) + list(_suppression_warnings) + list(_filter_warnings)
-            if _all_warnings:
+            if _all_warnings_out:
                 _math_summary["partial_success"] = True
-                _math_summary["warnings_count"] = len(_all_warnings)
+                _math_summary["warnings_count"] = len(_all_warnings_out)
             # W1057: surface the unknown-name lists on the summary ONLY when
             # the caller supplied --only/--exclude (detector-meta keys are
             # conditional). Keeps the default-path envelope byte-identical.
@@ -815,13 +822,13 @@ def math_cmd(
                 # forward-compat with a future --exclude typo run.
                 _math_summary["only_did_you_mean"] = _math_summary.pop("did_you_mean")
             _envelope_extras: dict = {"findings": findings}
-            if _all_warnings:
+            if _all_warnings_out:
                 # Carry the actionable warning strings on the envelope so the
                 # agent can see WHY suppressions did not load (malformed YAML,
                 # missing `rules:` key, non-dict entries, etc.) OR why --only /
                 # --exclude filtered to zero (unknown detector name). Empty
                 # list on the happy path.
-                _envelope_extras["warnings_out"] = _all_warnings
+                _envelope_extras["warnings_out"] = _all_warnings_out
             click.echo(
                 to_json(
                     json_envelope(
@@ -834,6 +841,8 @@ def math_cmd(
             return
 
         # --- Text output ---
+        # W1331: same disclosure for the human-readable branch.
+        echo_text_warnings(_all_warnings_out)
         click.echo(f"VERDICT: {verdict}")
         if effective_cap > 0 and not task_filter:
             click.echo(f"Ordering: highest impact first (diversity cap {effective_cap}/task on first page)")
