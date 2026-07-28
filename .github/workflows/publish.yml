@@ -404,11 +404,22 @@ jobs:
         with:
           python-version: "3.12.13"
 
+      # `path: .`, NOT `path: release-bundle`. When download-artifact@v4 resolves
+      # by `artifact-ids` it always extracts INTO a subdirectory named after the
+      # artifact, even for a single id -- so `path: release-bundle` produced
+      # `release-bundle/release-bundle/release/release-manifest.json` and every
+      # consumer below, which expects `release-bundle/release/...`, failed with
+      # "Recovery input manifest differs from the build output". Proven from the
+      # action's own log on the first real run of this workflow (v13.10.0,
+      # 2026-07-28): "Starting download of artifact to: .../release-bundle/release-bundle".
+      # Downloading to `.` yields the artifact-named directory the rest of this
+      # file already assumes. Keep `artifact-ids` -- resolving strictly by id is
+      # the immutability property this workflow is built on; only the path moved.
       - name: Download the immutable release bundle by artifact ID
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
-          path: release-bundle
+          path: .
 
       - name: Materialize an exact-subset PyPI recovery set
         id: recovery
@@ -469,7 +480,7 @@ jobs:
         if: steps.recovery.outputs.publish_required == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pypi-publish-subset
+          name: publish-subset
           path: release-bundle/publish-dist/
           if-no-files-found: error
           include-hidden-files: false
@@ -491,7 +502,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
-          path: release-bundle
+          path: .
 
       - name: Verify exact bundle before requesting publish credentials
         env:
@@ -650,7 +661,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.recover.outputs.artifact_id }}
-          path: publish-subset
+          path: .
 
       - name: Re-resolve tag immediately before PyPI publication
         if: needs.recover.outputs.publish_required == 'true'
@@ -798,7 +809,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
-          path: release-bundle
+          path: .
 
       - name: Recheck the manifest anchor
         env:
@@ -1231,7 +1242,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}
-          path: release-bundle
+          path: .
 
       - name: Download the signed evidence by artifact ID
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
