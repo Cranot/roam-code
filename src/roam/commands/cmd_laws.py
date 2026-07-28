@@ -26,7 +26,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.exit_codes import EXIT_GATE_FAILURE
-from roam.laws.checker import check_laws, get_diff_text, parse_added
+from roam.laws.checker import check_laws, get_diff_text_status, parse_added
 from roam.laws.miner import Law, mine_laws
 from roam.laws.serializer import (
     dump_laws_yaml,
@@ -608,7 +608,7 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
 
     # Resolve diff source.
     actual_source = "file" if diff_file else diff_source
-    diff_text = get_diff_text(
+    diff_text, diff_error = get_diff_text_status(
         repo_root=root,
         diff_source=actual_source,
         diff_file=diff_file,
@@ -616,7 +616,15 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
     )
 
     if not diff_text.strip():
-        verdict = "no diff content — nothing to check"
+        # An unproducible diff is NOT an empty diff. Pre-fix both landed on
+        # "no diff content — nothing to check" with partial_success=False,
+        # so `laws check --strict` on a shallow CI clone whose --base-ref
+        # does not exist (git exits 128) reported a complete, clean run and
+        # exited 0 without ever evaluating a single law.
+        if diff_error is not None:
+            verdict = f"DIFF UNAVAILABLE — no laws were evaluated: {diff_error}"
+        else:
+            verdict = "no diff content — nothing to check"
         envelope = json_envelope(
             "laws-check",
             budget=token_budget,
@@ -625,7 +633,9 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
                 "violations": 0,
                 "law_count": len(laws),
                 "diff_source": actual_source,
-                "partial_success": False,
+                "diff_available": diff_error is None,
+                "diff_error": diff_error,
+                "partial_success": diff_error is not None,
             },
             violations=[],
         )
@@ -639,6 +649,10 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
             click.echo(to_json(envelope))
         else:
             click.echo(f"VERDICT: {verdict}")
+        # Fail closed under --strict: a gate that could not read the diff
+        # has not cleared anything.
+        if strict and diff_error is not None:
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     parsed = parse_added(diff_text)

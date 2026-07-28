@@ -214,6 +214,18 @@ norecursedirs = ["tests/fixtures"]
 # Requires roam to be installed (``pip install -e .``), which every test
 # environment already needs because the tests import roam.
 addopts = "-q --tb=short -p roam.testing.ci_xdist"
+# A non-strict xfail absorbs BOTH outcomes: it reports "expected failure"
+# whether the code is broken or fixed, so it can never tell you anything.
+# A strict xfail is the opposite — it FAILS on an unexpected PASS, which is
+# what makes it an assertion ("this must still be broken") rather than a
+# permanent excuse. Every marker in the suite is already explicit
+# strict=True; this makes the safe behaviour the DEFAULT so a future xfail
+# has to opt out visibly (`strict=False` + a reason saying why the outcome
+# is legitimately non-deterministic).
+# NOTE: this does NOT cover imperative ``pytest.xfail()`` calls, which are
+# always non-strict. tests/test_json_contracts.py carries a staleness
+# ratchet for its imperative allowlist for exactly that reason.
+xfail_strict = true
 # Keep one failed run for diagnosis without retaining every large nested Git
 # fixture tree. Interrupted runs can still leave artifacts, so the release
 # gate also checks temp-volume headroom before starting the expensive suite.

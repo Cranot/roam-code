@@ -1341,6 +1341,12 @@ def _emit_auth_gaps_json(
     _w607cm_warnings_out,
     _w607ed_warnings_out,
     excluded_tests=0,
+    *,
+    routes_only=False,
+    controllers_only=False,
+    min_confidence="low",
+    scanned_findings=0,
+    filtered_out=0,
 ):
     """Emit the canonical auth-gaps JSON envelope.
 
@@ -1436,6 +1442,18 @@ def _emit_auth_gaps_json(
         # Dogfood FP transparency: how many findings were dropped because
         # they live in test files (default-excluded; --include-tests keeps).
         "excluded_tests": excluded_tests,
+        # Scope disclosure: route_gaps/controller_gaps are 0 both when a
+        # scope was scanned and clean AND when --routes-only/
+        # --controllers-only skipped it entirely. These two booleans are
+        # the only way a consumer can tell those apart.
+        "routes_scanned": not controllers_only,
+        "controllers_scanned": not routes_only,
+        # Post-filter disclosure: how many real findings --min-confidence
+        # discarded. total==0 with filtered_out>0 is NOT "no auth gaps".
+        "min_confidence": min_confidence,
+        "scanned_findings": scanned_findings,
+        "filtered_out": filtered_out,
+        "partial_success": bool(controllers_only or routes_only or filtered_out),
     }
     envelope_kwargs: dict = {
         "summary": summary_block,
@@ -1473,7 +1491,21 @@ def _emit_auth_gaps_json(
     click.echo(to_json(envelope))
 
 
-def _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit, excluded_tests=0):
+def _emit_auth_gaps_text(
+    total,
+    n_high,
+    n_medium,
+    n_low,
+    route_findings,
+    ctrl_findings,
+    limit,
+    excluded_tests=0,
+    *,
+    routes_scanned=True,
+    controllers_scanned=True,
+    filtered_out=0,
+    min_confidence="low",
+):
     """Emit the human-readable auth-gaps report."""
     click.echo("=== Auth Gaps ===\n")
 
@@ -1509,6 +1541,10 @@ def _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_fi
             )
         )
         click.echo()
+    elif not routes_scanned:
+        # --controllers-only skipped the route scan entirely. Saying
+        # "(none found)" here asserts a result for a scan that never ran.
+        click.echo("Routes without auth middleware: NOT SCANNED (--controllers-only)\n")
     else:
         click.echo("Routes without auth middleware: (none found)\n")
 
@@ -1542,10 +1578,22 @@ def _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_fi
             )
         )
         click.echo()
+    elif not controllers_scanned:
+        click.echo("Controllers without authorization: NOT SCANNED (--routes-only)\n")
     else:
         click.echo("Controllers without authorization: (none found)\n")
 
-    if total == 0:
+    if total == 0 and filtered_out:
+        # The scan DID find gaps; --min-confidence discarded them all.
+        click.echo(
+            f"0 gaps at or above --min-confidence {min_confidence}; "
+            f"{filtered_out} lower-confidence finding(s) were filtered out. "
+            "This is NOT 'no auth gaps'."
+        )
+    elif total == 0 and not (routes_scanned and controllers_scanned):
+        scope = "routes" if routes_scanned else "controllers"
+        click.echo(f"No auth gaps detected in {scope} — the other scope was NOT scanned.")
+    elif total == 0:
         click.echo("No auth gaps detected.")
     elif n_high == 0:
         click.echo("No high-confidence gaps found. Review medium/low findings manually.")
@@ -1664,7 +1712,7 @@ def _collect_auth_gaps_findings(
     return all_findings, route_protected_controllers
 
 
-def _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm):
+def _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm, filter_stats=None):
     """Apply confidence floor, sort, count, and split auth-gap findings.
 
     Encapsulates the W607-CM boundaries for filtering, sorting, and
@@ -1675,6 +1723,7 @@ def _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm):
     def _apply_confidence_filter():
         return [f for f in all_findings if severity_rank(f["confidence"]) >= min_conf_rank]
 
+    _pre_filter_count = len(all_findings)
     _filtered = _run_check_cm(
         "apply_confidence_filter",
         _apply_confidence_filter,
@@ -1682,6 +1731,11 @@ def _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm):
     )
     if _filtered is not None:
         all_findings = _filtered
+    if filter_stats is not None:
+        # Retain the drop count: a post-filter that empties the list must
+        # not read as "the scan found nothing".
+        filter_stats["scanned_findings"] = _pre_filter_count
+        filter_stats["filtered_out"] = _pre_filter_count - len(all_findings)
 
     def _sort_findings():
         all_findings.sort(
@@ -2021,6 +2075,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
                 _w607cm_warnings_out.append(f"auth_gaps_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
     # Apply confidence floor, sort, count, and split findings for display.
+    _filter_stats: dict = {}
     (
         all_findings,
         n_high,
@@ -2029,7 +2084,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         total,
         route_findings,
         ctrl_findings,
-    ) = _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm)
+    ) = _prepare_auth_gaps_findings(all_findings, min_conf_rank, _run_check_cm, _filter_stats)
 
     # --- SARIF output ---
     # W1195: SARIF projection mirrors the three confidence tiers used
@@ -2070,8 +2125,26 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
             _w607cm_warnings_out,
             _w607ed_warnings_out,
             excluded_tests,
+            routes_only=routes_only,
+            controllers_only=controllers_only,
+            min_confidence=min_confidence,
+            scanned_findings=_filter_stats.get("scanned_findings", 0),
+            filtered_out=_filter_stats.get("filtered_out", 0),
         )
         return
 
     # --- Text output ---
-    _emit_auth_gaps_text(total, n_high, n_medium, n_low, route_findings, ctrl_findings, limit, excluded_tests)
+    _emit_auth_gaps_text(
+        total,
+        n_high,
+        n_medium,
+        n_low,
+        route_findings,
+        ctrl_findings,
+        limit,
+        excluded_tests,
+        routes_scanned=not controllers_only,
+        controllers_scanned=not routes_only,
+        filtered_out=_filter_stats.get("filtered_out", 0),
+        min_confidence=min_confidence,
+    )

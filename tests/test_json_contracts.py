@@ -107,28 +107,73 @@ COMMAND_ARGS = {
 
 # Commands that genuinely cannot satisfy the JSON envelope contract on
 # the minimal `python_project` fixture (no rich git history, no staged
-# changes, no test-coverage map, no PR context). They are marked xfailed
-# with ``pytest.xfail(strict=False)`` inside each parametrized test.
+# changes, no test-coverage map, no PR context). Membership dispatches an
+# imperative ``pytest.xfail()`` inside each parametrized test — which is
+# always non-strict, hence the ratchet immediately below the set.
 #
 # **Audit history**: this set was originally 28 entries (v11.x). The
 # DOG.4 audit (2026-04-29) ran ``pytest --runxfail`` against the suite
 # and found that 20 of those entries actually pass cleanly now —
-# they were defensive xfails that never got pruned. Tightening to the
-# 7 below means real regressions in the previously-stale commands
-# (trace, uses, impact, preflight, etc.) get caught instead of silently
+# they were defensive xfails that never got pruned. v13.10 found two
+# more (``diff``, ``pr-risk``) had gone stale since, and replaced the
+# periodic hand audit with ``test_fragile_commands_allowlist_is_not_stale``
+# so real regressions in these commands get caught instead of silently
 # xfailed forever.
 FRAGILE_COMMANDS = {
     "affected-tests",  # needs staged changes or a target with test coverage
     "coverage-gaps",  # needs test file mapping
     "deps",  # symbol resolution against minimal `models`/`service`/`utils`
-    "diff",  # needs uncommitted changes
-    "pr-risk",  # needs uncommitted changes or PR context
     "report",  # may need specific report config or flags
     # ``dead`` was xfailed in v11.x because its summary envelope was
     # missing ``verdict``. v12.x added the verdict field; --runxfail
     # confirms all four parametrized tests pass on the minimal
     # fixture. Removed from the fragile set in v12.12.2.
+    # ``diff`` and ``pr-risk`` were pruned in v13.10 — see
+    # test_fragile_commands_allowlist_is_not_stale below, which now
+    # enforces mechanically what the DOG.4 audit had to do by hand.
 }
+
+
+def _envelope_contract_holds(cli_runner, project, cmd) -> bool:
+    """Return True when ``cmd`` fully satisfies the JSON envelope contract.
+
+    Mirrors the assertions in ``test_json_envelope_contract`` without
+    raising, so the staleness ratchet below can probe an allowlisted
+    command without tripping its own xfail.
+    """
+    try:
+        result = _invoke_json(cli_runner, project, cmd)
+        if result.exit_code != 0:
+            return False
+        assert_json_envelope(json.loads(result.output), command=cmd)
+    except Exception:  # noqa: BLE001 — any failure means "still fragile"
+        return False
+    return True
+
+
+def test_fragile_commands_allowlist_is_not_stale(cli_runner, indexed_project):
+    """Every FRAGILE_COMMANDS entry must STILL fail the envelope contract.
+
+    ``pytest.xfail()`` is imperative, so it is always non-strict — unlike a
+    ``@pytest.mark.xfail(strict=True)`` marker it absorbs BOTH outcomes and
+    reports "expected failure" whether the command is broken or fixed. The
+    ``xfail_strict = true`` setting in pyproject.toml does not reach it
+    either; that option only governs markers. So an entry here can go stale
+    and nothing ever says so: the DOG.4 audit (2026-04-29) had to discover
+    by hand that 20 of 28 entries were dead weight, and by v13.10 two more
+    (``diff``, ``pr-risk``) had silently gone stale the same way.
+
+    This test replaces that periodic manual ``--runxfail`` sweep with a
+    ratchet: fixing a fragile command now FAILS here until the entry is
+    pruned, which is exactly the unexpected-pass signal strict xfail gives
+    for the marker-based ones.
+    """
+    stale = sorted(cmd for cmd in FRAGILE_COMMANDS if _envelope_contract_holds(cli_runner, indexed_project, cmd))
+    assert not stale, (
+        f"FRAGILE_COMMANDS entries that now satisfy the JSON envelope contract: {stale}. "
+        f"Remove them from the allowlist in {__file__} so real regressions in these "
+        f"commands are caught instead of silently xfailed forever."
+    )
 
 
 # ============================================================================
