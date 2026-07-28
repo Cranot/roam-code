@@ -20,7 +20,13 @@ from roam.db.connection import batched_in, open_db
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.builder import build_symbol_graph
 from roam.graph.clusters import cluster_quality, compare_with_directories
-from roam.output.formatter import format_table, json_envelope, strip_list_payloads, to_json
+from roam.output.formatter import (
+    echo_text_empty_corpus,
+    format_table,
+    json_envelope,
+    strip_list_payloads,
+    to_json,
+)
 from roam.output.mermaid import (
     diagram as mdiagram,
 )
@@ -421,6 +427,12 @@ def clusters_cmd(ctx, min_size, mermaid_mode, weak_mode, strong_mode):
             )
         else:
             verdict_text = "no clusters detected"
+        # W1331: the JSON branch distinguishes 'no community structure
+        # in a populated graph' from 'nothing indexed'; text printed
+        # "no clusters detected" for both, which reads as a
+        # well-modularised repo when the truth is that no repo was
+        # scanned.
+        echo_text_empty_corpus(empty_corpus_state(conn) if not visible_pre else None)
         click.echo(f"VERDICT: {verdict_text}\n")
 
         click.echo("=== Clusters ===")
