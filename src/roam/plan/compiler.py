@@ -11932,6 +11932,31 @@ def known_procedures() -> frozenset[str]:
     return frozenset(_ARTIFACT_POLICY) | frozenset(_L1_PROBE_ELIGIBLE)
 
 
+# Pre-split vocabulary the registries still carry so cached rows keep
+# resolving. ``structural_query`` is the back-compat alias documented above:
+# it means "any structural sub-type matched", not a procedure a classifier
+# should newly emit. It is part of ``known_procedures()`` on purpose — routing
+# must still recognise it — but it is NOT one of the canonical procedures the
+# product describes to users.
+_BACK_COMPAT_PROCEDURES = frozenset({"structural_query"})
+
+
+def canonical_procedures() -> frozenset[str]:
+    """The procedures roam actually offers, excluding back-compat vocabulary.
+
+    ``known_procedures()`` is the ROUTING universe and deliberately includes
+    pre-split aliases, so it is one larger than the number that belongs in
+    user-facing prose. Downstream consumers (compile-code's description-drift
+    gate, docs counts) need the canonical figure and previously had to infer
+    it — subtracting an alias they had to know about, or reading a literal out
+    of roam's test suite, which does not ship in the wheel.
+
+    Derived from the registries rather than restated as a second list, so a
+    new procedure cannot appear in one place and not the other.
+    """
+    return known_procedures() - _BACK_COMPAT_PROCEDURES
+
+
 def _l1_has_target(plan: "PlanV0") -> bool:
     return bool(plan.likely_files) or plan.procedure in _L1_TASK_TEXT_TARGET_PROCEDURES
 
