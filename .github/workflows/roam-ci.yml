@@ -82,31 +82,38 @@ jobs:
       # workflow_dispatch can override this per run to re-measure at another
       # worker count without a commit; blank/absent falls back to the default.
       #
-      # 3 WAS TRIED AND REVERTED (run 30352316483). Both SIGBUS causes above are
-      # genuinely closed, but they were not the only thing the cap held back: at
-      # 3 workers, 8 subprocess tests fail with "The roam index is currently
-      # being built by another process" in test_agents_md, test_dead_code_intra_
-      # module_regression and test_dogfood_core_behavior. Those tests shell out
-      # to `python -m roam <cmd>` against the shared workspace index, so a third
-      # concurrent worker pushes index-lock contention past what they tolerate.
-      # The cap was therefore NOT vestigial -- it was also bounding that
-      # contention, incidentally and undocumented. Raising it needs the lock
-      # race fixed first (the subprocess tests need their own index, or a
-      # bounded wait on the lock), not another headcount experiment.
-      ROAM_XDIST_WORKERS: ${{ inputs.xdist_workers || '2' }}
-    # Measured at 2 workers, `Run tests` step wall clock, 2026-07-28:
-    #   run 30331612772  3.10 44m05s  3.11 43m45s  3.12 39m47s  3.13 38m28s
-    #   run 30331709179  3.10 51m45s  3.11 39m21s  3.12 39m28s  3.13 36m13s
-    #   run 30334868017  3.10 41m31s  3.11 36m50s  3.12 37m37s  3.13 42m38s
-    #   run 30344348643  3.10 49m56s  3.11 36m52s  3.12 41m53s  3.13 36m57s
-    # 3.10 is the slowest lane in 3 of those 4 and peaked at 51m45s -- 86% of
-    # this cap -- but it is NOT a 3.10-only problem: on 30334868017 the 3.13
-    # lane was slowest, and the whole matrix sits in a 36-52 min band. Run-to-
-    # run variance on a single lane is ~10 min, larger than the gap between
-    # lanes. That band is why the timeout was bumped three times
-    # (20 -> 30 -> 45 -> 60), each bump consumed by ordinary growth within a
-    # few releases. A fourth bump is not on the table: the lever is the worker
-    # count above, not the clock. A genuine hang still trips this cap.
+      # MEASURED, not argued. Three dispatched runs at 2 / 3 / 4 workers on
+      # ONE commit -- 30352654081, 30352423645, 30352656081 -- produced ZERO
+      # "Fatal Python error: Bus error", zero MemoryError and zero ENOSPC
+      # across all twelve lanes. The SIGBUS story above really is closed.
+      #
+      # Those runs did surface a different constraint the cap was hiding by
+      # accident: "The roam index is currently being built by another
+      # process". Failed tests per lane at 2 / 3 / 4 workers were
+      #   3.10  1 / 19 / 31     3.11  1 / 19 / 30     3.13  1 /  8 / 36
+      #   3.12  0 /  0 /  0   <- the ONLY lane that pre-built the index
+      # so it is not a worker-count bug: it already fires at 2, and the cap
+      # was never actually protecting against it. It is dogfood tests that
+      # shell out to `python -m roam <cmd>` each racing to build the missing
+      # index; more workers only widen the window. The index step below now
+      # runs on EVERY lane, which closes it at the source -- run 30356351018
+      # (4 workers, index everywhere) was green on all four lanes.
+      # Do not raise this further, and do not make that step conditional
+      # again, without repeating the same multi-arm comparison.
+      ROAM_XDIST_WORKERS: ${{ inputs.xdist_workers || '4' }}
+    # Lane wall clock (index build + `Run tests`), all 2026-07-28.
+    #   2 workers, index on 3.12 only -- 30352654081, three lanes RED:
+    #     3.10 49m56s   3.11 33m18s   3.12 41m54s   3.13 36m43s
+    #   4 workers, index on every lane -- 30356351018, all four GREEN:
+    #     3.10 41m16s   3.11 35m54s   3.12 36m35s   3.13 36m07s
+    # Worst lane 49m56s -> 41m16s, i.e. 83% -> 69% of this cap, while the
+    # matrix spread collapses from 33-52 min to 36-41 min and ~19 dogfood
+    # tests go from running on one lane to running on four. Earlier 2-worker
+    # runs peaked at 51m45s (30331709179), so the old worst case was 86%.
+    # That band is why the timeout was bumped three times (20 -> 30 -> 45 ->
+    # 60), each bump consumed by ordinary growth within a few releases. A
+    # fourth bump is not the lever; the worker count and the index step are.
+    # A genuine hang still trips this cap.
     timeout-minutes: 60
     strategy:
       fail-fast: false   # let all Python versions report; don't abort early
@@ -151,11 +158,17 @@ jobs:
       # while the lane reported green. Skipping cleanly was the safety fix after
       # they raced a half-built index -- running them is the point.
       #
-      # One lane, not four: the index costs ~2.5 min to build and the tests are
-      # interpreter-independent, so paying for it four times buys nothing. The
-      # other lanes still skip, guarded by tests/_helpers/repo_index.py.
+      # EVERY lane, not one. This was 3.12-only on the reasoning that the
+      # tests are interpreter-independent, so paying ~4 min four times buys
+      # nothing. It buys the suite's stability. The lanes without a pre-built
+      # index fail with "The roam index is currently being built by another
+      # process" because the dogfood tests that shell out to the roam CLI
+      # each try to build the missing index and collide on its build lock --
+      # see the failure counts in the job's env block above, where 3.12 is
+      # the only clean lane at every worker count. Building up front turns a
+      # race into a serialized step and is what makes a higher worker count
+      # safe. It also stops those ~19 tests skipping on three of four lanes.
       - name: Build the repo index (dogfood coverage lane)
-        if: matrix.python-version == '3.12'
         run: .venv/bin/python -m roam index --quiet
 
       # No ``-x``. Fail-fast on the authoritative lane is information loss: all
