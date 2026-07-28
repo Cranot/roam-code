@@ -454,17 +454,14 @@ def _js_source_findings_preserving_evidence_lines(
     confidence: str,
 ) -> list[dict]:
     """Run JS-family source-pattern detectors through one evidence-line path."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
+    ).fetchall()
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -2880,19 +2877,16 @@ def detect_async_blocking_sleep(conn: sqlite3.Connection) -> list[dict]:
     Conservative: only fires for Python (the bug shape is language-specific)
     and only when ``is_async`` is set on the symbol row.
     """
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end, ms.calls_in_loops, ms.calls_in_loops_qualified "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "JOIN math_signals ms ON ms.symbol_id = s.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND s.is_async = 1 "
-            "AND f.language = 'python'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "s.line_start, s.line_end, ms.calls_in_loops, ms.calls_in_loops_qualified "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND s.is_async = 1 "
+        "AND f.language = 'python'"
+    ).fetchall()
 
     _BLOCKING_CALLS = {
         "time.sleep",
@@ -2981,17 +2975,14 @@ def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
     - Function name suggests it's an error-recovery wrapper
       (`safe_*`, `_try_*`, `with_default`, `silent_*`).
     """
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language = 'python'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND f.language = 'python'"
+    ).fetchall()
 
     _RECOVERY_PREFIXES = (
         "safe_",
@@ -3064,17 +3055,14 @@ _RE_USEEFFECT_WITH_DEPS = re.compile(
 )
 def detect_useeffect_missing_deps(conn: sqlite3.Connection) -> list[dict]:
     """React: `useEffect(() => {...})` without a dependency array."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
+    ).fetchall()
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -3194,16 +3182,13 @@ def _is_dangerous_eval_false_positive(snippet: str, match: re.Match[str]) -> boo
 )
 def detect_dangerous_eval(conn: sqlite3.Connection) -> list[dict]:
     """Detect `eval`, `exec`, `new Function(...)`, `setTimeout(string)` — code-injection sinks."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "f.language AS language, s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method')"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "f.language AS language, s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method')"
+    ).fetchall()
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -3264,17 +3249,14 @@ _RE_LIFECYCLE = re.compile(
 )
 def detect_unremoved_event_listener(conn: sqlite3.Connection) -> list[dict]:
     """JS/TS: `addEventListener` in a lifecycle without paired `removeEventListener`."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND f.language IN " + _JS_FAMILY_SQL_TUPLE + ""
+    ).fetchall()
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -3410,19 +3392,19 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     Generalizes fibonacci to any branching recursion: tree traversals,
     divide-and-conquer, DP problems.  O(2^n) -> O(n) with memoization.
     """
-    # self_call_count column may not exist in older DBs — fall back safely
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-            "f.language as language, s.line_start, s.line_end, ms.self_call_count "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "JOIN math_signals ms ON ms.symbol_id = s.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND ms.self_call_count >= 2"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    # `self_call_count` may be absent on an index built by an older roam. That
+    # now surfaces through the orchestrator's `failed_detectors` (W1332) rather
+    # than as a silent empty result -- a stale index the user should reindex is
+    # exactly the thing the old `return []` hid.
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "f.language as language, s.line_start, s.line_end, ms.self_call_count "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND ms.self_call_count >= 2"
+    ).fetchall()
 
     results = []
 
@@ -3577,18 +3559,15 @@ def detect_quadratic_string(conn: sqlite3.Connection) -> list[dict]:
     """String concatenation via += inside a loop — O(n^2) due to
     immutable string reallocation in Python/Java/Go.
     """
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-            "s.line_start, ms.str_concat_in_loop "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "JOIN math_signals ms ON ms.symbol_id = s.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND ms.str_concat_in_loop = 1"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "s.line_start, ms.str_concat_in_loop "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND ms.str_concat_in_loop = 1"
+    ).fetchall()
 
     results = []
     for r in rows:
@@ -3636,19 +3615,16 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
     These can be hoisted before the loop to avoid repeated computation.
     Suppresses common intentional per-iteration calls (logging, metrics, etc.).
     """
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-            "s.line_start, ms.loop_invariant_calls "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "JOIN math_signals ms ON ms.symbol_id = s.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND ms.loop_invariant_calls IS NOT NULL "
-            "AND ms.loop_invariant_calls != '[]'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
+        "s.line_start, ms.loop_invariant_calls "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND ms.loop_invariant_calls IS NOT NULL "
+        "AND ms.loop_invariant_calls != '[]'"
+    ).fetchall()
 
     # Calls that are intentionally per-iteration (suppress)
     _INTENTIONAL_CALLS = {
@@ -4107,18 +4083,15 @@ def detect_async_nested_run(conn: sqlite3.Connection) -> list[dict]:
 
     Python only, fires only when the host is async.
     """
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND s.is_async = 1 "
-            "AND f.language = 'python'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND s.is_async = 1 "
+        "AND f.language = 'python'"
+    ).fetchall()
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -4181,17 +4154,14 @@ def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
 )
 def detect_defer_in_loop(conn: sqlite3.Connection) -> list[dict]:
     """Go: `defer` inside a `for`/`range` loop accumulates instead of firing per-iteration."""
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "f.language AS language, s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language = 'go'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "f.language AS language, s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND f.language = 'go'"
+    ).fetchall()
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -4241,17 +4211,14 @@ def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
     Conservative: Python only, only fires when the line clearly creates
     a task without storing it.
     """
-    try:
-        rows = conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
-            "s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind IN ('function', 'method') "
-            "AND f.language = 'python'"
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND f.language = 'python'"
+    ).fetchall()
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):

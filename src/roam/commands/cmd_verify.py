@@ -3947,9 +3947,19 @@ def _check_tenant_scope(conn, file_ids: list[int], target_paths: list[str], root
     if not changed:
         return {"score": 100, "violations": [], "advisory": True}
     try:
-        from roam.security.tenant_scope import find_tenant_scope_findings, load_tenant_guard_signals
+        from roam.security.tenant_scope import find_tenant_scope_findings, load_tenant_guard_signals_status
 
-        guards = load_tenant_guard_signals(root)
+        guards, guard_config_error = load_tenant_guard_signals_status(root)
+        if guard_config_error:
+            # An unreadable guard config yields the same empty tuple as
+            # `tenant_guards: []` (detector deliberately off) but means the
+            # opposite. Reporting score 100 / 0 violations here would turn the
+            # detector off on a typo and still look like a clean result.
+            return _verify_check_incomplete(
+                _VERIFY_TENANT_SCOPE_CATEGORY,
+                f"tenant-guard configuration could not be honoured: {guard_config_error}",
+                advisory=True,
+            )
         findings = find_tenant_scope_findings(conn, root, guard_signals=guards)
     except Exception as exc:  # noqa: BLE001 - opt-in security analysis must fail closed
         from roam.observability import log_swallowed
@@ -4924,9 +4934,16 @@ def _apply_report_mode(
     selected: list[str],
     target_paths: list[str],
     root: Path,
-) -> tuple[list[str], list[str], bool]:
+) -> tuple[list[str], list[str], bool, str | None]:
+    """Return ``(selected, targets, forced_full_files, discovery_error)``.
+
+    ``discovery_error`` is non-None when whole-repo target discovery could not
+    read the index. An unreadable index yields the same empty target list as a
+    genuinely empty repo, so the caller must branch on it rather than on
+    emptiness -- otherwise ``--report`` reports PASS/100 having checked nothing.
+    """
     if not report:
-        return selected, target_paths, False
+        return selected, target_paths, False, None
     # REPORT is a whole-repo, non-gating punch-list. Skip the diff/gate-only
     # checks: the executable `tests` run and the breaking/taint guardrails are
     # change-relative, not repo-wide lint, so they have no meaning here.
@@ -4939,8 +4956,10 @@ def _apply_report_mode(
         _VERIFY_MIGRATION_CATEGORY,
     )
     report_selected = selected if checks_opt else [check for check in _ALL_CHECKS if check not in _report_excluded]
-    report_targets = target_paths if files else _all_report_paths(root, report_selected)
-    return report_selected, report_targets, True
+    if files:
+        return report_selected, target_paths, True, None
+    report_targets, discovery_error = _all_report_paths(root, report_selected)
+    return report_selected, report_targets, True, discovery_error
 
 
 def _empty_verify_envelope(threshold: int) -> dict:
@@ -4991,20 +5010,23 @@ def _emit_verify_discovery_failure(
     resolution: dict,
 ) -> None:
     state = str(resolution.get("state") or "git_failed")
+    detail = str(resolution.get("message") or f"changed-file discovery did not complete ({state})")
+    fix = str(resolution.get("fix") or "Restore Git status discovery, then rerun `roam verify --changed`")
+    incomplete_reason = str(resolution.get("incomplete_reason") or "changed_file_discovery_failed")
     violation = {
         "category": "verification",
         "severity": SEVERITY_FAIL,
         "file": "",
         "line": None,
-        "message": f"changed-file discovery did not complete ({state})",
-        "fix": "Restore Git status discovery, then rerun `roam verify --changed`",
+        "message": detail,
+        "fix": fix,
         "hard_block": True,
     }
     envelope = json_envelope(
         "verify",
         budget=token_budget,
         summary={
-            "verdict": "FAIL: changed-file discovery unavailable",
+            "verdict": f"FAIL: {detail}",
             "score": 0,
             "threshold": threshold,
             "files_checked": 0,
@@ -5013,7 +5035,7 @@ def _emit_verify_discovery_failure(
             "state": state,
             "partial_success": True,
             "verification_complete": False,
-            "incomplete_reasons": ["changed_file_discovery_failed"],
+            "incomplete_reasons": [incomplete_reason],
         },
         categories={
             "verification": {
@@ -5030,8 +5052,8 @@ def _emit_verify_discovery_failure(
     if json_mode:
         click.echo(to_json(envelope))
     else:
-        click.echo(f"VERDICT: FAIL -- changed-file discovery unavailable ({state})")
-        click.echo("FIX: Restore Git status discovery, then rerun `roam verify --changed`")
+        click.echo(f"VERDICT: FAIL -- {detail}")
+        click.echo(f"FIX: {fix}")
     ctx.exit(EXIT_GATE_FAILURE)
 
 
@@ -6362,15 +6384,23 @@ def _resolve_verify_request(
     target_resolution = _resolve_verify_target_request(files, root)
     target_paths = target_resolution["paths"]
     selected = resolve_selected_checks(checks_opt, auto, cfg, target_paths)
-    selected, target_paths, report_forced_full_files = _resolve_report_scope(
+    selected, target_paths, report_forced_full_files, report_discovery_error = _resolve_report_scope(
         report, files, checks_opt, selected, target_paths, root
     )
     if report and not files:
         target_resolution = {
             "paths": target_paths,
-            "state": "report_scope",
-            "partial_success": False,
+            "state": "report_scope_index_unreadable" if report_discovery_error else "report_scope",
+            "partial_success": bool(report_discovery_error),
         }
+        if report_discovery_error:
+            # Whole-repo discovery came back empty because the index could not
+            # be read, not because the repo is empty. Route it into the same
+            # loud discovery-failure emitter the --changed path uses instead of
+            # letting it fall through to the empty-envelope PASS.
+            target_resolution["message"] = f"whole-repo report scope unavailable ({report_discovery_error})"
+            target_resolution["fix"] = "Rebuild the index with `roam init --force`, then rerun `roam verify --report`"
+            target_resolution["incomplete_reason"] = "report_scope_discovery_failed"
     else:
         target_resolution["paths"] = target_paths
     return {
@@ -6390,9 +6420,9 @@ def _resolve_report_scope(
     selected: list[str],
     target_paths: list[str],
     root: Path,
-) -> tuple[list[str], list[str], bool]:
+) -> tuple[list[str], list[str], bool, str | None]:
     if not report:
-        return selected, target_paths, False
+        return selected, target_paths, False, None
     return _apply_report_mode(report, files, checks_opt, selected, target_paths, root)
 
 
@@ -6791,28 +6821,40 @@ def _print_category(label: str, result: dict, fix_suggestions: bool, *, root: Pa
     click.echo("")
 
 
-def _all_source_paths(root: Path) -> list[str]:
+def _all_source_paths(root: Path) -> tuple[list[str], str | None]:
     """All indexed CODE files (excludes data/markup languages). The report-mode
-    whole-repo target when no path is given."""
+    whole-repo target when no path is given.
+
+    Returns ``(paths, error)``. An unreadable index returns ``([], reason)`` --
+    NOT a bare empty list, which ``--report`` would spend as "repo has no
+    source files" and score 100/PASS. The non-report path already surfaces the
+    same failure as ``Database error: ...``; this keeps the two in agreement.
+    """
     try:
         with open_db(readonly=True) as conn:
             rows = conn.execute("SELECT path, language FROM files").fetchall()
-    except Exception:  # noqa: BLE001 — best-effort; never break verify
-        return []
+    except Exception as exc:  # noqa: BLE001 — disclose, never silently empty
+        _swallow_verify("verify.report.all_source_paths", exc)
+        first_line = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+        return [], f"index unreadable: {type(exc).__name__}: {first_line}".rstrip(": ")
     out: list[str] = []
     for r in rows:
         lang = (r["language"] or "").lower()
         if lang and lang not in _MODULE_INIT_SKIP_LANGS:
             out.append(r["path"].replace("\\", "/"))
-    return out
+    return out, None
 
 
-def _all_advisory_surface_paths(root: Path, selected: list[str]) -> list[str]:
+def _all_advisory_surface_paths(root: Path, selected: list[str]) -> tuple[list[str], str | None]:
+    """Advisory (docs/config) report targets. Same ``(paths, error)`` contract
+    as :func:`_all_source_paths`."""
     try:
         with open_db(readonly=True) as conn:
             rows = conn.execute("SELECT path FROM files").fetchall()
-    except Exception:  # noqa: BLE001 - report mode stays best-effort
-        return []
+    except Exception as exc:  # noqa: BLE001 - disclose, never silently empty
+        _swallow_verify("verify.report.all_advisory_surface_paths", exc)
+        first_line = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+        return [], f"index unreadable: {type(exc).__name__}: {first_line}".rstrip(": ")
     include_commands = "command_examples" in selected
     include_claims = "claims" in selected
     return [
@@ -6820,11 +6862,13 @@ def _all_advisory_surface_paths(root: Path, selected: list[str]) -> list[str]:
         for row in rows
         if (include_commands and _is_command_example_surface(row["path"]))
         or (include_claims and _is_claim_surface(row["path"]))
-    ]
+    ], None
 
 
-def _all_report_paths(root: Path, selected: list[str]) -> list[str]:
-    return sorted(set(_all_source_paths(root)) | set(_all_advisory_surface_paths(root, selected)))
+def _all_report_paths(root: Path, selected: list[str]) -> tuple[list[str], str | None]:
+    source_paths, source_error = _all_source_paths(root)
+    advisory_paths, advisory_error = _all_advisory_surface_paths(root, selected)
+    return sorted(set(source_paths) | set(advisory_paths)), source_error or advisory_error
 
 
 def _render_verify_report(
