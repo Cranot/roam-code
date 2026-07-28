@@ -33,7 +33,7 @@ ACTION_PINS = {
     "actions/setup-python": "a26af69be951a213d495a4c3e4e4022e16d87065",
     "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
     "github/codeql-action/upload-sarif": "03e4368ac7daa2bd82b3e85262f3bf87ee112f57",
-    "marocchino/sticky-pull-request-comment": "773744901bac0e8cbb5a0dc842800d45e9b2b405",
+    "marocchino/sticky-pull-request-comment": "5770ad5eb8f42dd2c4f34da00c94c5381e49af88",
     "sigstore/cosign-installer": "398d4b0eeef1380460a10c8013a76f728fb906ac",
 }
 
