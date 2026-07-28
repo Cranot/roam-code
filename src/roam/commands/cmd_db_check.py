@@ -3,8 +3,14 @@
 Looks for: orphan symbols (no file row), broken edges (referenced
 symbol missing), duplicate file paths, missing FTS rows, invalid
 line spans, corrupt or missing metrics. Returns a verdict and a
-list of findings. Exit code 5 on any HIGH-severity finding so CI
-can gate on it.
+list of findings. Exit code 5 on any HIGH-severity finding, or on a
+check that could not run at all, so CI can gate on it.
+
+Severity vocabulary: ``high`` / ``medium`` gate as findings, ``ok``
+means MEASURED and clean, ``error`` means the check raised, and
+``unsupported`` means the feature it inspects is absent here. The last
+two carry ``count: None`` -- they produced no measurement, and a floored
+zero would read as "measured, nothing wrong" (W1332).
 
 Output formats: text (default), ``--json``. SARIF is deliberately NOT
 emitted because db-check verifies INDEX INTEGRITY (orphan symbol rows,
