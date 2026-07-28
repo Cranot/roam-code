@@ -96,7 +96,11 @@ from typing import Any, Optional
 
 from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
-from roam.runs.ledger import latest_in_progress_run, log_event
+from roam.runs.ledger import (
+    PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE,
+    latest_in_progress_run,
+    log_event,
+)
 
 # W294 - closed-allowlist of authority-shaped event fields that callers
 # may stamp onto a run-ledger event via :func:`auto_log` 's
@@ -221,6 +225,22 @@ def auto_log(
     Consumers (``roam runs show``, future ``roam replay``) can render
     a run timeline straight from this stream.
 
+    W-SEC followup (predicate-narrowing): when the mirrored
+    ``envelope["summary"]["partial_success"]`` is true, the event ALSO
+    gets ``partial_success_kind="output_incomplete"``
+    (:data:`roam.runs.ledger.PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE`).
+    This marks the flag as COPIED from the emitting command's own
+    envelope, where it names output/execution completeness ("this
+    command's result isn't fully populated / ran degraded" — e.g. a
+    ``pr-bundle`` document that isn't assembled yet, or a JSON-budget
+    truncated payload) rather than a verdict about the code being
+    checked. :func:`roam.runs.ledger._derive_status_from_recorded_checks`
+    reads this marker to keep such events out of its "recorded check
+    FAILED" set while still tracking them as partial output — see that
+    function's docstring for the full rationale. A manually-typed
+    ``roam runs log --partial-success`` never carries this marker, so it
+    stays a real, explicit recorded failure.
+
     W294 extension - ``extra_event_fields`` lets writer-side call sites
     stamp authority-shaped corroboration fields onto the emitted event
     so the W292 collector harvester
@@ -244,21 +264,29 @@ def auto_log(
         summary = _as_dict(envelope.get("summary"))
         agent_contract = _as_dict(envelope.get("agent_contract"))
         extra_fields_safe = _filter_authority_fields(extra_event_fields)
+        is_partial_success = bool(summary.get("partial_success", False))
 
-        return log_event(
-            repo_root,
-            run_id,
-            action=action,
-            target=target or "",
-            envelope_command=envelope.get("command", "") or "",
-            summary_verdict=summary.get("verdict", "") or "",
-            partial_success=bool(summary.get("partial_success", False)),
-            signals={
+        event_fields: dict[str, Any] = {
+            "action": action,
+            "target": target or "",
+            "envelope_command": envelope.get("command", "") or "",
+            "summary_verdict": summary.get("verdict", "") or "",
+            "partial_success": is_partial_success,
+            "signals": {
                 "facts": agent_contract.get("facts", []) or [],
                 "next_commands": agent_contract.get("next_commands", []) or [],
             },
-            **extra_fields_safe,
-        )
+        }
+        if is_partial_success:
+            # W-SEC followup (predicate-narrowing) — mark this
+            # partial_success as MIRRORED (output-completeness), not an
+            # assessed check failure. Only stamped when true so a clean
+            # event's on-disk shape is byte-identical to before this
+            # change. See the docstring above + ledger.py's consumer.
+            event_fields["partial_success_kind"] = PARTIAL_SUCCESS_KIND_OUTPUT_INCOMPLETE
+        event_fields.update(extra_fields_safe)
+
+        return log_event(repo_root, run_id, **event_fields)
     except _AUTO_LOG_EXPECTED_FAILURES as exc:
         # Loud-fallback per CLAUDE.md §"Make fallback chains loud" —
         # auto-logging is OPPORTUNISTIC and must never crash the gate
