@@ -1,0 +1,17 @@
+name: GitHub Actions SHA pinning
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check GitHub Actions references are pinned
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - run: bash dev/pin_github_actions.sh --check
