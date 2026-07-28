@@ -39,7 +39,7 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.evidence._vocabulary import REFERENCE_REMOVAL_VERDICTS
 from roam.git_utils import worktree_git_env
-from roam.output.formatter import json_envelope, loc, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, loc, to_json
 
 # Exit code 5 signals a CI gate failure (matches cmd_rules)
 EXIT_GATE_FAILURE = 5
@@ -612,6 +612,10 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
                 }
             )
         click.echo(write_sarif(delete_check_to_sarif({"command": "delete-check", "deletions": deletions_for_sarif})))
+        # W1331: the search engine can fail and floor ``matches`` to [];
+        # only the JSON envelope said so, so a Code-Scanning gate read an
+        # unrun search as a clean one.
+        echo_text_warnings(warnings_out)
     elif json_mode:
         results = []
         for d in decorated[:count]:
@@ -664,6 +668,8 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
             )
         )
     else:
+        # W1331: same disclosure for the human-readable branch.
+        echo_text_warnings(warnings_out)
         click.echo(f"VERDICT: {len(decorated)} deletion(s) — {breaks} BREAK-RISK / {likely} LIKELY-SAFE / {safe} SAFE")
         click.echo()
         for d in decorated[:count]:

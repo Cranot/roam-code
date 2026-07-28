@@ -16,7 +16,13 @@ _RE_REQUIREMENT = re.compile(r"^([A-Za-z0-9_.\-]+)(\[.*?\])?(.*)?$")
 from roam import __version__
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    echo_text_warnings,
+    format_table,
+    json_envelope,
+    to_json,
+)
 from roam.output.sarif import to_sarif, write_sarif
 
 
@@ -1035,6 +1041,9 @@ def supply_chain(ctx, top):
         )
         _sarif_text = _run_check_ak("write_sarif", write_sarif, sarif, default="")
         click.echo(_sarif_text)
+        # W1331: a SARIF document has nowhere to carry these markers, so a
+        # Code-Scanning gate reads a degraded dependency scan as a clean one.
+        echo_text_warnings(list(_w607ak_warnings_out) + list(_w607cd_warnings_out))
         return
 
     if json_mode:
@@ -1171,6 +1180,8 @@ def supply_chain(ctx, top):
         click.echo(to_json(envelope))
         return
 
+    # W1331: same disclosure for the human-readable branch.
+    echo_text_warnings(list(_w607ak_warnings_out) + list(_w607cd_warnings_out))
     click.echo(f"VERDICT: {verdict}")
     click.echo()
 

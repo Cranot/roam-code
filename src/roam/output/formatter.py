@@ -27,6 +27,32 @@ ENVELOPE_SCHEMA_NAME = "roam-envelope-v1"
 # canonical loader helper that owns the warning format.
 WarningsOut: TypeAlias = list[str] | None
 
+
+def echo_text_warnings(warnings_out: WarningsOut) -> int:
+    """Render a warnings bucket for the NON-JSON output branches.
+
+    W1331: the recurring shape behind the W1320 false-clean sweep is a
+    disclosure that only ever reaches the ``if json_mode:`` branch — the
+    branch the tests exercise. The JSON envelope honestly reports that a
+    substrate call failed and its result was floored, while the text a
+    human reads and the SARIF a CI gate consumes both say clean.
+
+    This is the canonical fix for the text and SARIF tails. Markers go to
+    STDERR, so stdout stays byte-identical and no golden-output test moves;
+    a human sees the degradation, and a pipeline redirecting stderr into
+    its log does too.
+
+    Returns the number of markers emitted, so a caller can assert on it.
+    """
+    if not warnings_out:
+        return 0
+    import click
+
+    for marker in warnings_out:
+        click.echo(f"# warning: {marker}", err=True)
+    return len(warnings_out)
+
+
 _NON_CACHEABLE_COMMANDS = {
     "mutate",
     "annotate",
