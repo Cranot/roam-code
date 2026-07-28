@@ -256,13 +256,92 @@ def test_critique_detects_intent_removal_mismatch() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pr_analyze_commit_range_flags_real_risk() -> None:
-    """The commit-range form DOES compute blast/critique (control for the bug below)."""
-    proc = _roam("--json", "pr-analyze", "HEAD~3..HEAD", timeout=SLOW)
+def _make_floating_commit(rel_path: str, new_text: str, index_file: Path, message: str) -> tuple[str, str]:
+    """Build a real, addressable commit on top of HEAD that replaces
+    *rel_path*'s content with *new_text*, WITHOUT touching the working
+    tree, the real index, or any ref.
+
+    Uses a throwaway ``GIT_INDEX_FILE`` (a plain temp path, never
+    ``git init``-ed) so concurrent work in this repo — other agents'
+    staged changes — is never disturbed: ``git read-tree`` populates it
+    fresh from HEAD each call. The resulting commit is unreachable from
+    any branch (a normal, harmless dangling object subject to ordinary
+    git gc) and is never checked out.
+
+    Returns ``(parent_sha, new_sha)``.
+    """
+    env = dict(os.environ)
+    env["GIT_INDEX_FILE"] = str(index_file)
+
+    def _git(*args: str, input_text: str | None = None) -> str:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(REPO_ROOT),
+            env=env,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout.strip()
+
+    parent = _git("rev-parse", "HEAD")
+    _git("read-tree", parent)
+    blob = _git("hash-object", "-w", "--stdin", input_text=new_text)
+    _git("update-index", "--add", "--cacheinfo", f"100644,{blob},{rel_path}")
+    tree = _git("write-tree")
+    new_sha = _git("commit-tree", tree, "-p", parent, input_text=message + "\n")
+    return parent, new_sha
+
+
+def test_pr_analyze_commit_range_flags_real_risk(tmp_path: Path) -> None:
+    """The commit-range form DOES compute blast/critique (control for the
+    --input bug H3 fixed).
+
+    Regression note: this test used to point at the LIVE ``HEAD~3..HEAD``
+    window on this dogfooded repo, on the assumption that "the last 3
+    commits are always a broad, risky change." pr-analyze cannot guarantee
+    that -- it depends entirely on whatever the most recent commits on
+    THIS repo happen to be at the moment the suite runs, which drifts with
+    every commit any agent lands here, including small style/test-only
+    ones. Concretely: pr-prep's ``pr-risk`` sub-invocation has never honored
+    ``commit_range`` (true both before and independent of H3 -- it always
+    scores the ambient staged/unstaged tree, tracing back to the v12.17
+    release), so on a clean checkout the commit-range path's ONLY route to
+    a non-SAFE verdict is critique flagging a real high-blast symbol in
+    whatever the last 3 commits happen to touch. That is not a meaningful
+    regression signal: it can flip from pass to fail purely from ambient
+    repo history, independent of pr-analyze's own correctness -- exactly
+    what happened here (the last 3 commits at failure time were a style
+    fix, a test-assertion flip, and an 11-line defensive fix, none of
+    which touch a high-fan-in symbol).
+
+    Fix: build a floating commit (git commit-tree, no working-tree/index/
+    ref mutation) reproducing the SAME high-blast ``open_db`` signature
+    change as ``OPEN_DB_DIFF`` on top of the real indexed HEAD. This stays
+    deterministic and reliably HIGH via critique's real (indexed) caller
+    graph, regardless of what unrelated commits landed most recently.
+    """
+    connection_py = REPO_ROOT / "src" / "roam" / "db" / "connection.py"
+    original = connection_py.read_text(encoding="utf-8")
+    old_sig = "def open_db(\n    readonly: bool = False,\n    project_root: Path | None = None,\n    *,\n"
+    new_sig = (
+        "def open_db(\n    readonly: bool = False,\n    project_root: Path | None = None,\n"
+        "    strict_validation: bool = False,\n    *,\n"
+    )
+    assert old_sig in original, "open_db's signature shape changed — update this test's replacement text"
+    modified = original.replace(old_sig, new_sig, 1)
+
+    parent, new_sha = _make_floating_commit(
+        "src/roam/db/connection.py",
+        modified,
+        tmp_path / "floating_index",
+        "test: open_db signature change (floating, unreachable from any branch)",
+    )
+    proc = _roam("--json", "pr-analyze", f"{parent}..{new_sha}", timeout=SLOW)
     data = json.loads(proc.stdout)
     verdict = str(data["summary"].get("verdict", ""))
-    # HEAD~3..HEAD on this repo is a broad, multi-file change → not SAFE.
-    assert verdict.startswith(("REVIEW", "BLOCK")), f"unexpected verdict: {verdict!r}"
+    assert verdict.startswith(("REVIEW", "BLOCK")), f"unexpected verdict: {verdict!r}\nsummary={data.get('summary')!r}"
 
 
 def _require_clean_worktree() -> None:

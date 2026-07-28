@@ -1,8 +1,8 @@
 diff --git a/src/roam/db/connection.py b/src/roam/db/connection.py
-index 1234567..89abcde 100644
+index 5d9689ea..46112309 100644
 --- a/src/roam/db/connection.py
 +++ b/src/roam/db/connection.py
-@@ -960,6 +960,7 @@ def open_db(
+@@ -1077,6 +1077,7 @@ def _commit_and_optimize(conn: sqlite3.Connection) -> None:
  def open_db(
      readonly: bool = False,
      project_root: Path | None = None,
