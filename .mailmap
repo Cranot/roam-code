@@ -1,0 +1,20 @@
+# Canonical author identity.
+#
+# The `Cranot`, `Dimitris` and `t` identities are all the same person, spread
+# across machines and git configs over the life of the repo. Folding them here
+# makes `git shortlog`, `git blame`, `git log --use-mailmap` and GitHub's
+# contributor graph agree, without rewriting published history.
+#
+# Deliberately NOT remapped:
+#   - amir-rezaei and holive are genuine outside contributors.
+#   - prakteon-operator, stoa and stoa-automerge are automation identities.
+#     They share an address with a human identity but are a different actor,
+#     which is why the entries below that touch that address match on name as
+#     well as email rather than on email alone.
+
+Cranot <44682693+Cranot@users.noreply.github.com> <cranot@users.noreply.github.com>
+Cranot <44682693+Cranot@users.noreply.github.com> <bonum.galaxy@gmail.com>
+Cranot <44682693+Cranot@users.noreply.github.com> <mojitogr@gmail.com>
+Cranot <44682693+Cranot@users.noreply.github.com> Cranot <unionwebapps@gmail.com>
+Cranot <44682693+Cranot@users.noreply.github.com> Dimitris <44682693+Cranot@users.noreply.github.com>
+Cranot <44682693+Cranot@users.noreply.github.com> t <44682693+Cranot@users.noreply.github.com>
