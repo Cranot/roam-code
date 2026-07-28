@@ -17,7 +17,14 @@ from roam.db.connection import find_project_root, open_db
 from roam.observability import log_swallowed
 from roam.output._severity import severity_rank
 from roam.output.confidence import confidence_level_rank
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, loc, to_json
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    echo_text_warnings,
+    format_table,
+    json_envelope,
+    loc,
+    to_json,
+)
 
 # W116 — auth-gaps is the fourth detector migrating onto the central
 # findings registry (after `clones` in W95, `dead` in W99, and
@@ -2108,6 +2115,9 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
             click.echo(write_sarif(sarif))
 
         _run_check_cm("serialize_to_sarif", _emit_sarif, default=None)
+        # W1331: a SARIF document has nowhere to carry these markers, so a
+        # Code-Scanning gate would read a degraded scan as a clean one.
+        echo_text_warnings(list(_w607cm_warnings_out) + list(_w607ed_warnings_out))
         return
 
     # --- JSON output ---
@@ -2134,6 +2144,8 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         return
 
     # --- Text output ---
+    # W1331: same disclosure for the human-readable branch.
+    echo_text_warnings(list(_w607cm_warnings_out) + list(_w607ed_warnings_out))
     _emit_auth_gaps_text(
         total,
         n_high,

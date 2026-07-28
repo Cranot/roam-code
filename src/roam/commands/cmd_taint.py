@@ -33,7 +33,12 @@ from roam.output.confidence import (
     verdict_with_high_count,
     wrap_findings,
 )
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    echo_text_warnings,
+    json_envelope,
+    to_json,
+)
 from roam.security.taint_engine import (
     OPENVEX_JUSTIFICATIONS,
     OPENVEX_STATUSES,
@@ -1005,6 +1010,10 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             default="{}",
         )
         click.echo(_sarif_text if _sarif_text is not None else "{}")
+        # W1331: the substrate markers below reach the JSON envelope but
+        # nothing in a SARIF document carries them, so a Code-Scanning gate
+        # would read a floored/degraded taint run as a clean one.
+        echo_text_warnings(list(_w607ay_warnings_out) + list(_w607cj_warnings_out))
         if ci_mode and high_count > 0:
             ctx.exit(5)
         return
@@ -1200,6 +1209,8 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             ctx.exit(5)
         return
 
+    # W1331: same disclosure for the human-readable branch.
+    echo_text_warnings(list(_w607ay_warnings_out) + list(_w607cj_warnings_out))
     click.echo(f"VERDICT: {verdict}")
     click.echo(f"Rules:   {', '.join(r.rule_id for r in rules)}")
     if _rules_zero_anchors:
