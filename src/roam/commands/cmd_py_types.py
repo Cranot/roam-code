@@ -333,6 +333,22 @@ def _maybe_exit_py_types_gate(ctx, ci_mode: bool, min_coverage: int | None, cove
         ctx.exit(5)
 
 
+def _exit_py_types_gate_uncomputable(ctx, ci_mode: bool, min_coverage: int | None, state: str) -> None:
+    """Fail the CI gate when coverage could not be computed at all.
+
+    With no public Python functions indexed there is no denominator, so
+    coverage is UNKNOWN — not 0%, and certainly not "meets the bar". The
+    pre-fix code returned before the gate, so ``--ci --min-coverage 90``
+    exited 0 on an empty/unindexed corpus: a signal that could not be
+    computed collapsing into the value that means fine. Fail closed and
+    name the reason instead.
+    """
+    if ci_mode and min_coverage is not None:
+        click.echo()
+        click.echo(f"GATE FAILED: type coverage not computable ({state}) — required {min_coverage}%")
+        ctx.exit(5)
+
+
 def _emit_empty_json(state: str, verdict: str, python_files: int, indexed_files: int) -> None:
     click.echo(
         to_json(
@@ -349,6 +365,18 @@ def _emit_empty_json(state: str, verdict: str, python_files: int, indexed_files:
                     "old_typing": 0,
                     "coverage_pct": 0,
                     "coverage_pct_definition": _COVERAGE_PCT_DEFINITION,
+                    # There is no denominator here, so 0 is a FLOOR, not a
+                    # measurement. Say so explicitly: a consumer that reads
+                    # coverage_pct alone would otherwise treat "nothing to
+                    # measure" as "measured, and it is 0%".
+                    #
+                    # partial_success stays False deliberately (pinned by
+                    # test_py_types_json_no_python_files_emits_envelope):
+                    # "this project has no Python" is a COMPLETE answer, not
+                    # a degraded run. The uncomputability is carried by the
+                    # dedicated flag above and by the --ci gate, which now
+                    # fails closed here instead of returning before it.
+                    "coverage_pct_computable": False,
                     "python_files": python_files,
                     "indexed_files": indexed_files,
                     "partial_success": False,
@@ -448,26 +476,31 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
         verdict = "no public Python functions/methods indexed"
         if json_mode:
             _emit_empty_json(state, verdict, n_py_files, n_total_files)
-            return
-
-        _emit_no_public_text(verdict, n_py_files, n_total_files)
+        else:
+            _emit_no_public_text(verdict, n_py_files, n_total_files)
+        # Gate AFTER emitting, in every output mode — coverage is unknown
+        # here, not zero, so --ci must not read it as a pass.
+        _exit_py_types_gate_uncomputable(ctx, ci_mode, min_coverage, state)
         return
 
     stats = _type_stats(rows)
     coverage = _coverage_pct(total, stats["no_return"], stats["untyped_params"])
     verdict = _type_verdict(coverage, total)
 
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     if json_mode:
         click.echo(to_json(_py_types_json_envelope(verdict, stats, coverage, detail, limit)))
-        return
-
-    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
-    if sarif_mode:
+    elif sarif_mode:
         click.echo(_py_types_sarif(stats["by_file"], coverage))
-        return
-
-    _emit_py_types_text(verdict, stats, coverage, detail, limit)
+    else:
+        _emit_py_types_text(verdict, stats, coverage, detail, limit)
 
     # CI gate — exit 5 (mirrors EXIT_GATE_FAILURE used by ``roam rules
     # --ci``) when coverage falls below the requested threshold.
+    #
+    # This MUST run for every output mode. Pre-fix it sat after the
+    # ``json_mode`` / ``sarif_mode`` early returns, so the two modes a CI
+    # job actually consumes (--json for agents, --sarif for GitHub Code
+    # Scanning) exited 0 at ANY coverage while text mode exited 5 on the
+    # very same number.
     _maybe_exit_py_types_gate(ctx, ci_mode, min_coverage, coverage)

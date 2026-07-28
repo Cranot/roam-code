@@ -1421,6 +1421,15 @@ def _emit_skeleton_json(cmd_name, directory, by_file, symbols, skeleton_tier, to
         skeleton_tier or "file",
         target=directory,
     )
+    # W1311: ``--skeleton DIR`` resolves a DIRECTORY, so its tier space is
+    # {file, file_substring} — there is no "symbol" tier to degrade from.
+    # resolution_disclosure()'s generic rule is ``partial_success =
+    # resolution != "symbol"``, which is a category error here: it flags the
+    # exact-prefix hit (``DIR/%``, the primary non-degraded path in
+    # _fetch_skeleton_symbols) as degraded. Per the helper's own Pattern-2c
+    # discipline, override the flag with the tier that actually degraded --
+    # only the ``%DIR/%`` substring fallback is a partial success.
+    skeleton_disclosure["partial_success"] = skeleton_tier == "file_substring"
     verdict_suffix = " [file substring match]" if skeleton_tier == "file_substring" else ""
     _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols{verdict_suffix}"
     result = _build_skeleton_json_result(by_file)

@@ -113,14 +113,26 @@ _STDLIB_MODULES = frozenset(
 # ---------------------------------------------------------------------------
 
 
-def get_diff_text(
+def get_diff_text_status(
     *,
     repo_root: Path,
     diff_source: str = "working",
     diff_file: Optional[str] = None,
     base_ref: str = "main",
-) -> str:
-    """Return the unified-diff text for the requested source.
+) -> tuple[str, Optional[str]]:
+    """Return ``(diff_text, error)`` for the requested source.
+
+    ``error`` is ``None`` when the diff was produced successfully — note
+    that a SUCCESSFUL diff can still be the empty string (a branch with no
+    changes). When the diff could not be produced at all, ``error`` is a
+    short human-readable reason.
+
+    This split exists because :func:`get_diff_text` collapses four distinct
+    failures (git missing, 30s timeout, non-zero git exit such as an
+    unknown ``base_ref`` on a shallow CI clone, unreadable ``--diff-file``)
+    into ``""`` — the same value a genuinely clean diff produces. Callers
+    that gate CI on the result MUST be able to tell those apart, otherwise
+    "we could not look" is reported as "we looked and it was fine".
 
     Parameters
     ----------
@@ -137,11 +149,11 @@ def get_diff_text(
     """
     if diff_source == "file":
         if not diff_file:
-            return ""
+            return "", "--diff-source file given without --diff-file"
         try:
-            return Path(diff_file).read_text(encoding="utf-8", errors="replace")
-        except (OSError, ValueError):
-            return ""
+            return Path(diff_file).read_text(encoding="utf-8", errors="replace"), None
+        except (OSError, ValueError) as exc:
+            return "", f"could not read --diff-file {diff_file!r}: {type(exc).__name__}"
 
     cmd = ["git", "diff", "--unified=3"]
     if diff_source == "staged":
@@ -162,11 +174,39 @@ def get_diff_text(
             encoding="utf-8",
             errors="replace",
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return ""
+    except FileNotFoundError:
+        return "", "git executable not found"
+    except subprocess.TimeoutExpired:
+        return "", "git diff timed out after 30s"
+    except OSError as exc:
+        return "", f"git diff failed: {type(exc).__name__}"
     if result.returncode != 0:
-        return ""
-    return result.stdout or ""
+        detail = (result.stderr or "").strip().splitlines()
+        reason = detail[0] if detail else f"exit {result.returncode}"
+        return "", f"`{' '.join(cmd)}` failed: {reason}"
+    return result.stdout or "", None
+
+
+def get_diff_text(
+    *,
+    repo_root: Path,
+    diff_source: str = "working",
+    diff_file: Optional[str] = None,
+    base_ref: str = "main",
+) -> str:
+    """Return the unified-diff text, or ``""`` on any failure.
+
+    Back-compat wrapper over :func:`get_diff_text_status`. Prefer the
+    status form in gating code — this one cannot distinguish "no changes"
+    from "could not compute the diff".
+    """
+    text, _error = get_diff_text_status(
+        repo_root=repo_root,
+        diff_source=diff_source,
+        diff_file=diff_file,
+        base_ref=base_ref,
+    )
+    return text
 
 
 # ---------------------------------------------------------------------------

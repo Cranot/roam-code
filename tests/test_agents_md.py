@@ -287,9 +287,6 @@ def test_cli_project_root_fallback_only_catches_oserror():
     assert handler_names == ["OSError"]
 
 
-@pytest.mark.xfail(
-    reason="W11 live-smoke test against roam-code repo — failing on CI env JSON-parse; tracked, generator behavior is covered by the fixture-based tests above (deferred fix)"
-)
 def test_agents_md_smoke_on_roam_code(cli_runner):
     """End-to-end smoke: run against the actual roam-code repo.
 

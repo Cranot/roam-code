@@ -557,11 +557,40 @@ def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: 
     return findings
 
 
+def emit_vocab_max_label(patterns: list[dict] | None = None) -> str:
+    """Return the highest severity LABEL any secret pattern can emit."""
+    pats = _COMPILED_PATTERNS if patterns is None else patterns
+    best = max(pats, key=lambda p: severity_rank(p["severity"]), default=None)
+    return str(best["severity"]) if best else "none"
+
+
+def emit_vocab_max_rank(patterns: list[dict] | None = None) -> int:
+    """Return the highest severity rank any secret pattern can actually emit.
+
+    The ``--severity`` choice list is the canonical W547 7-tier vocabulary,
+    but the pattern table only ever tags findings ``high``/``medium``/
+    ``low``. A floor above this rank therefore cannot match anything —
+    the scan is vacuous by construction, not clean. Callers use this to
+    tell those two states apart instead of printing "No secrets found"
+    for both.
+    """
+    pats = _COMPILED_PATTERNS if patterns is None else patterns
+    return max((severity_rank(p["severity"]) for p in pats), default=-1)
+
+
+def severity_floor_is_vacuous(min_severity: str, patterns: list[dict] | None = None) -> bool:
+    """True when ``min_severity`` filters out every pattern the scanner has."""
+    if min_severity.lower() == "all":
+        return False
+    return severity_rank(min_severity) > emit_vocab_max_rank(patterns)
+
+
 def scan_project(
     project_root: Path,
     min_severity: str = "all",
     use_index: bool = True,
     include_tests: bool = False,
+    stats: dict | None = None,
 ) -> list[dict]:
     """Scan all indexed files in a project for secrets.
 
@@ -587,6 +616,8 @@ def scan_project(
         file_paths = _walk_for_files(root)
 
     all_findings: list[dict] = []
+    files_scanned = 0
+    files_unresolved = 0
     for rel_path in file_paths:
         if _is_binary(rel_path):
             continue
@@ -598,13 +629,26 @@ def scan_project(
 
         full_path = root / rel_path
         if not full_path.is_file():
+            # Indexed but not present on disk under this root (index built
+            # from a different root, file deleted since). Counted, not
+            # silently dropped — see stats["files_unresolved"].
+            files_unresolved += 1
             continue
 
+        files_scanned += 1
         file_findings = scan_file(str(full_path), min_severity=min_severity)
         # Store relative path in findings for cleaner output
         for f in file_findings:
             f["file"] = rel_path
         all_findings.extend(file_findings)
+
+    if stats is not None:
+        # Out-param so "0 findings because we read 0 files" is separable
+        # from "0 findings because the code is clean". Without this the
+        # envelope had no field that could tell the two apart.
+        stats["files_scanned"] = files_scanned
+        stats["files_unresolved"] = files_unresolved
+        stats["files_listed"] = len(file_paths)
 
     # Sort: high severity first, then by file path, then line number
     all_findings.sort(key=lambda f: (-severity_rank(f["severity"]), f["file"], f["line"]))
@@ -688,7 +732,12 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     ensure_index()
 
     project_root = find_project_root()
-    findings = scan_project(project_root, min_severity=severity, include_tests=include_tests)
+    scan_stats: dict = {}
+    findings = scan_project(project_root, min_severity=severity, include_tests=include_tests, stats=scan_stats)
+    # A zero here can mean three very different things. Name which one.
+    vacuous_filter = severity_floor_is_vacuous(severity)
+    files_scanned = scan_stats.get("files_scanned", 0)
+    scan_incomplete = vacuous_filter or files_scanned == 0
 
     # Compute summary stats. W566 — bucketing delegates to the canonical
     # ``severity_breakdown`` helper. Secrets patterns at module-load
@@ -707,8 +756,27 @@ def secrets(ctx, severity, fail_on_found, include_tests):
         drop_zero=False,
     )
 
-    if total == 0:
-        verdict = "No secrets found"
+    if total == 0 and vacuous_filter:
+        # The floor is above every severity the pattern table emits, so no
+        # finding could have survived it regardless of what is in the code.
+        # Reporting this as "No secrets found" made a vacuous scan
+        # indistinguishable from a clean one.
+        verdict = (
+            f"NOT SCANNED: --severity {severity.lower()} is above the highest severity "
+            f"the secret patterns emit ({emit_vocab_max_label()}), so no finding can match. "
+            f"Re-run with --severity {emit_vocab_max_label()} or --severity all."
+        )
+    elif total == 0 and files_scanned == 0:
+        # Nothing was read: empty index, index built from another root, or
+        # every candidate filtered out before the scan loop.
+        verdict = (
+            f"NOT SCANNED: 0 files were read "
+            f"({scan_stats.get('files_listed', 0)} listed, "
+            f"{scan_stats.get('files_unresolved', 0)} unresolved under {project_root}). "
+            "Run `roam index` and retry."
+        )
+    elif total == 0:
+        verdict = f"No secrets found ({files_scanned} files scanned)"
     else:
         parts = []
         if by_severity["high"]:
@@ -726,7 +794,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
 
         sarif = secrets_to_sarif(findings)
         click.echo(write_sarif(sarif))
-        if fail_on_found and total > 0:
+        if fail_on_found and (total > 0 or scan_incomplete):
             from roam.exit_codes import GateFailureError
 
             raise GateFailureError(verdict)
@@ -758,6 +826,11 @@ def secrets(ctx, severity, fail_on_found, include_tests):
                 "verdict": wrapped_verdict,
                 "total_findings": total,
                 "files_affected": files_affected,
+                "files_scanned": files_scanned,
+                "severity_floor": severity.lower(),
+                "severity_floor_vacuous": vacuous_filter,
+                "scan_incomplete": scan_incomplete,
+                "partial_success": scan_incomplete,
                 "by_severity": by_severity,
                 "findings_confidence_distribution": distribution,
             },
@@ -765,7 +838,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             findings=finding_triples,
         )
         click.echo(to_json(envelope))
-        if fail_on_found and total > 0:
+        if fail_on_found and (total > 0 or scan_incomplete):
             from roam.exit_codes import GateFailureError
 
             raise GateFailureError(verdict)
@@ -812,10 +885,16 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             click.echo("  Per-pattern guidance:")
             for line in remediation_lines:
                 click.echo(line)
+    elif scan_incomplete:
+        click.echo("  Scan did not run over any pattern/file — this is NOT a clean result.")
     else:
-        click.echo("  No hardcoded secrets detected.")
+        click.echo(f"  No hardcoded secrets detected ({files_scanned} files scanned).")
 
-    if fail_on_found and total > 0:
+    # Fail closed: --fail-on-found must not report success when the scan
+    # could not have found anything (vacuous --severity floor, or zero
+    # files actually read). Exit 0 there meant "clean" for a scan that
+    # never ran.
+    if fail_on_found and (total > 0 or scan_incomplete):
         from roam.exit_codes import GateFailureError
 
         raise GateFailureError(verdict)
