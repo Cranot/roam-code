@@ -1389,7 +1389,14 @@ jobs:
 
           download_release_assets() {
             local destination="$1" name
-            mkdir -m 0700 "$destination"
+            # Every caller passes a `mktemp -d` directory, which already exists
+            # with 0700. Creating it again is fatal under set -e, so assert the
+            # shape we require instead of re-creating it.
+            if [[ ! -d "$destination" || -L "$destination" ]]; then
+              echo "::error::Release asset destination is not a directory: $destination"
+              return 1
+            fi
+            chmod 0700 "$destination"
             while IFS= read -r name; do
               gh release download "$TAG" --repo "$REPO" --pattern "$name" --dir "$destination"
             done < /tmp/expected-release-assets
