@@ -164,6 +164,13 @@ def _emit_audit_trail_record(
             tail_hash=hashlib.sha256(line.encode("utf-8")).hexdigest(),
             sequence_number=record["sequence_number"],
         )
-    except OSError:
-        pass
+    except OSError as exc:
+        # Loud, not silent: a swallowed failure here means the trail has NO
+        # head pointer, so tail tampering becomes undetectable -- the exact
+        # gap this head file was added to close. `verify` still discloses it
+        # downstream via `tail_protected: false`, but the operator deserves
+        # to learn about it at write time rather than at audit time.
+        from roam.observability import log_swallowed
+
+        log_swallowed("pr_analyze.audit_trail.write_head", exc)
     return record
