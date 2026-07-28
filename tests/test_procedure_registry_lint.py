@@ -159,3 +159,33 @@ def test_classifier_returns_only_canonical_procedures():
     for p in prompts:
         proc, _ = C._classify(p)
         assert proc in CANONICAL_PROCEDURES, f"{p!r} -> {proc!r} not canonical"
+
+
+def test_canonical_procedures_accessor_matches_the_reviewed_literal():
+    """The shipped accessor and this file's reviewed list must agree.
+
+    ``CANONICAL_PROCEDURES`` above is the human review gate: adding a
+    procedure means consciously adding a name here. But that literal lives in
+    the test suite, which does not ship in the wheel, so downstream consumers
+    (compile-code's description-drift gate, docs counts) could not read it and
+    had to INFER the canonical count — by subtracting a back-compat alias they
+    had to know about, or by trailing ``known_procedures()`` by one.
+
+    ``C.canonical_procedures()`` derives the same set from the registries, so
+    consumers get an exact figure. This test is the join: the derived accessor
+    and the reviewed literal cannot drift apart silently.
+    """
+    assert C.canonical_procedures() == CANONICAL_PROCEDURES
+
+
+def test_known_procedures_keeps_the_back_compat_alias_that_canonical_drops():
+    """The two accessors differ by exactly the documented legacy vocabulary.
+
+    ``structural_query`` must stay routable — cached rows still reference it —
+    while never being counted as a procedure the product offers. Pinning the
+    difference stops someone "tidying" the alias out of routing, or quietly
+    promoting it into the user-facing set.
+    """
+    assert C.known_procedures() - C.canonical_procedures() == LEGACY_PROCEDURES
+    assert LEGACY_PROCEDURES <= C.known_procedures()
+    assert not (LEGACY_PROCEDURES & C.canonical_procedures())
