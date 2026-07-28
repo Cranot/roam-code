@@ -5,13 +5,40 @@ Runs locally, before ``git push``, the repo-wide structural drift-guards
 that CI runs but contributors routinely skip — the exact class of failure
 that produced this session's ~14 CI fix-forward cascade. Every gate here
 is a pure AST / file / registry scan: NO ``roam`` index build, NO graph
-construction, NO network. The whole FAST bundle measures ~43s on a
-Windows host (ruff + count scripts ~2s; the structural-lint pytest
-bundle ~41s).
+construction, NO network.
 
-Design authority: ``(internal memo)`` (the measured
-~43s design + back-test showing this bundle would have caught the dominant
-structural-drift fix-forward class). Read that memo before editing the
+Measured push path on a Windows host, 4895 tracked files / 4820 scanned /
+44.5 MB (2026-07-28). The first two run in ``.githooks/pre-push``; the rest
+are this script's FAST tier::
+
+    secret_scan.py --pre-push-updates     0.5s   pushed range only
+    scan_internal_language --pre-push-..  0.4s   pushed range only
+    scan_internal_language.py --all      29.6s   WHOLE TREE
+    ruff format --check                   0.1s
+    ruff check                            0.1s
+    sync_surface_counts.py                1.0s
+    build_readme_counts.py --check        1.9s
+    build_changelog_html.py               0.2s
+    pytest structural drift-guards       44.1s   24 files, 4 xdist workers
+                                        -----
+                                         77.9s   (end-to-end hook: 78.7s)
+
+That is down from a measured ~113s: the hook used to run its own
+byte-identical ``--all`` scan (-36.6s, deleted — see ``_run_leak_gate``)
+and the scanner's hashed-term hot path was not memoized (-7.5s, median of
+three interleaved A/B runs). The pytest bundle is by far the noisiest gate on a
+loaded host: the same 24 files measured 37s and 46s on the same afternoon,
+so read a single run of it as a range, not a number.
+
+WHAT A GREEN FAST RUN DOES **NOT** PROVE: that CI will be green. This tier
+runs the structural drift-guards, not the test suite. On 2026-07-28 four
+commits passed it and then took all four CI lanes red. ``--release`` is the
+tier that runs what CI runs; use it before a tag.
+
+Design authority: ``(internal memo)`` (the original
+design + back-test showing this bundle would have caught the dominant
+structural-drift fix-forward class; its ~43s figure predates the release
+drift-guards being folded into FAST). Read that memo before editing the
 gate list.
 
 Composition (does NOT duplicate existing hooks):
@@ -19,9 +46,14 @@ Composition (does NOT duplicate existing hooks):
   scripts at *commit* time.
 - ``.githooks/commit-msg`` + ``.pre-commit-config.yaml`` (Wave59) already
   reject ``Co-Authored-By`` trailers (Cranot-only policy).
+- ``.githooks/pre-push`` runs the two *pushed-range* gates (secret scan +
+  internal-language scan over the exact ref updates) and then delegates
+  here. It does NOT run the whole-tree leak scan of its own; ``--all``
+  below is the single whole-tree pass in the push path.
 This gate's unique value-add is the **structural-lint pytest bundle**
 (W547/W564 severity-rank, LAW-4, fragile-path, bare-except, optional-imports,
-detector-count, card-hash, compound-recipe) that NO existing hook runs. The ruff + 3 count
+detector-count, card-hash, compound-recipe, closed-set registry inventories)
+that NO existing hook runs. The ruff + 3 count
 scripts are re-run here as a cheap (~2s) backstop for ``--no-verify``
 commit-time bypasses.
 
@@ -134,11 +166,32 @@ FAST_PYTEST_GUARDS: tuple[str, ...] = (
     "test_snake_case_function_lint.py",
     "test_cli_contract.py",
     "test_canonical_constant_citations.py",
+    # 2026-07-28: four commits passed this hook and then took ALL FOUR CI
+    # lanes red. Not flakiness -- four CLOSED-SET registries rejected files
+    # added without registering them (.mailmap absent from PUBLIC_ALLOWLIST,
+    # a new workflow absent from the closed workflow inventory, a stale curl
+    # tally, and a pinned docs phrase reworded across two lines). Every one
+    # is a pure file/AST assertion with no index dependency, and folding all
+    # four into the existing worker pool measured +0.26s on the bundle
+    # (38.79s -> 39.05s). A whole class of CI-red for a quarter of a second.
+    "test_public_allowlist.py",
+    "test_workflow_dependency_lock_policy.py",
+    "test_publish_provenance_workflow.py",
+    "test_composite_action_security.py",
 )
 
 # FULL-tier additions (heavy doc-hygiene + extra-axis guards). Per the memo,
-# test_no_internal_language scans every git-tracked file (~20s) — too heavy
-# for FAST, earns its place in FULL.
+# test_no_internal_language scans every git-tracked file — too heavy for FAST,
+# earns its place in FULL.
+#
+# KNOWN, DELIBERATE OVERLAP (measured 2026-07-28): that guard's single test
+# walks every tracked file through the SAME catalogue as the `--all` CLI gate
+# above, so `--full` scans the whole tree twice (31.6s + 29.6s) and `--release`
+# three times, since the full suite runs it again. Left in place on purpose:
+# `--release` exists to run WHAT CI RUNS, and this file IS the CI gate. Buying
+# ~30s on a manual tier by making the release preflight diverge from CI is the
+# wrong trade — the push path, where the cost was paid on EVERY push, is the
+# one that was worth de-duplicating, and it has been.
 FULL_PYTEST_GUARDS: tuple[str, ...] = (
     "test_no_internal_language.py",
     "test_w805_qqqqq_compound_recipe_shape_axis_drift.py",
@@ -314,6 +367,19 @@ class GateRunner:
         # before CI catches it is exactly the 2026-05-20 incident — so
         # run it here, so a leak fails the push LOCALLY before anything
         # leaves the machine.
+        #
+        # This is the ONLY whole-tree run in the push path, and it must stay
+        # whole-tree. The hook's cheap sibling gates scope themselves to the
+        # pushed ref updates, which cannot see a leak that a GROWN pattern
+        # catalogue newly makes visible in a file this push does not touch.
+        # `.githooks/pre-push` ran a byte-identical `--all` invocation of its
+        # own until 2026-07-28; over the same unchanged tree, in the same
+        # process tree, seconds apart, for a measured 36.6s and zero extra
+        # coverage. Deleting it there rather than here is deliberate: this is
+        # the single place the gate list lives, and `prepush_check.py --fast`
+        # is also run directly, without the hook.
+        #
+        # tests/test_prepush_gate_wired.py pins the once-and-only-once shape.
         self._run(
             "scan_internal_language.py --all",
             [sys.executable, "scripts/scan_internal_language.py", "--all"],
@@ -367,7 +433,7 @@ class GateRunner:
         )
 
 
-def _print_summary(results: list[GateResult]) -> bool:
+def _print_summary(results: list[GateResult], tier: str = "FAST") -> bool:
     total = sum(r.seconds for r in results)
     failures = [r for r in results if not r.passed]
     print("\n" + "=" * 64)
@@ -383,7 +449,19 @@ def _print_summary(results: list[GateResult]) -> bool:
                 print(f"      fix: {r.fix_hint}")
         print("[prepush] push BLOCKED. Resolve the above, or bypass with `git push --no-verify` (deliberate).")
     else:
-        print("[prepush] all gates passed — safe to push.")
+        print("[prepush] all gates passed - safe to push.")
+        if tier != "RELEASE":
+            # Honesty, not decoration. On 2026-07-28 four commits passed this
+            # tier and then took all four CI lanes red, because the tier runs
+            # structural drift-guards and NOT the test suite. An operator who
+            # reads "all gates passed" as "CI will be green" is reading
+            # something this gate never measured.
+            print(
+                f"[prepush] NOTE: {tier} tier proves no leak/secret in the push, no ruff or\n"
+                "[prepush]   count drift, and no structural-registry drift. It does NOT run\n"
+                "[prepush]   the test suite, so it does NOT prove CI will be green.\n"
+                "[prepush]   Before a tag: python scripts/prepush_check.py --release"
+            )
     print("=" * 64)
     return not failures
 
@@ -421,9 +499,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[prepush] pytest workers: {args.workers} (loadfile distribution)")
     print(f"[prepush] native math threads per worker: {_NATIVE_THREADS_PER_WORKER}")
 
+    tier_label = "RELEASE" if release else "FULL" if full else "FAST"
     runner = GateRunner(root=root, pytest_workers=args.workers)
     if release and not runner.run_release_temp_capacity_gate().passed:
-        _print_summary(runner.results)
+        _print_summary(runner.results, tier_label)
         return 1
     runner._run_leak_gate()
     runner._run_ruff()
@@ -526,7 +605,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
         )
 
-    ok = _print_summary(runner.results)
+    ok = _print_summary(runner.results, tier_label)
     return 0 if ok else 1
 
 
