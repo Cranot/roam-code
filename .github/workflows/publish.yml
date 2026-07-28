@@ -1313,6 +1313,50 @@ jobs:
             fi
           }
 
+          # GitHub's /releases/tags/{tag} endpoint does not resolve DRAFT
+          # releases: a draft carries no tag ref yet (hence its untagged-*
+          # URL), so the lookup 404s even though the draft exists. Without
+          # this fallback the create -> upload -> publish flow could never
+          # find the draft it had just created, and the whole draft branch
+          # below was unreachable. The listing is newest-first and a draft we
+          # just made is the newest release, so one page is sufficient.
+          fetch_draft_release_state() {
+            local listing listing_status draft_count
+            listing=$(mktemp /tmp/roam-release-listing.XXXXXXXXXX)
+            if ! listing_status=$(curl \
+              --silent --show-error \
+              --proto '=https' --tlsv1.2 \
+              --connect-timeout 10 --max-time 30 \
+              --max-filesize 16777216 \
+              --retry 3 --retry-all-errors \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2026-03-10' \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --output "$listing" --write-out '%{http_code}' \
+              "https://api.github.com/repos/${REPO}/releases?per_page=100"); then
+              echo "::error::Could not list GitHub Releases."
+              return 1
+            fi
+            if [[ "$listing_status" != 200 ]]; then
+              echo "::error::Unexpected GitHub Release listing status: $listing_status"
+              return 1
+            fi
+            strict_json_file "$listing" 16777216 "GitHub Release listing"
+            draft_count=$(jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag and .draft == true)] | length' "$listing")
+            case "$draft_count" in
+              0) ;;
+              1)
+                jq --arg tag "$TAG" 'map(select(.tag_name == $tag and .draft == true)) | .[0]' "$listing" > "$release_state"
+                strict_json_file "$release_state" 16777216 "GitHub Release draft"
+                release_status=200
+                ;;
+              *)
+                echo "::error::Found ${draft_count} draft releases for ${TAG}; refusing to guess which to publish."
+                return 1
+                ;;
+            esac
+          }
+
           fetch_release_state() {
             if ! release_status=$(curl \
               --silent --show-error \
@@ -1330,7 +1374,7 @@ jobs:
             fi
             case "$release_status" in
               200) strict_json_file "$release_state" 16777216 "GitHub Release response" ;;
-              404) ;;
+              404) fetch_draft_release_state ;;
               *)
                 echo "::error::Unexpected GitHub Release lookup status: $release_status"
                 return 1
