@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import ensure_index, index_status
 from roam.db.connection import find_project_root, open_db
 from roam.output._severity import severity_breakdown, severity_rank
 from roam.output.confidence import (
@@ -622,11 +622,13 @@ def scan_project(
     """
     root = Path(project_root).resolve()
 
+    index_backed = False
     if use_index:
         try:
             with open_db(readonly=True) as conn:
                 rows = conn.execute("SELECT path FROM files").fetchall()
                 file_paths = [row["path"] for row in rows]
+            index_backed = True
         except (click.ClickException, sqlite3.DatabaseError):
             file_paths = _walk_for_files(root)
     else:
@@ -666,10 +668,43 @@ def scan_project(
         stats["files_scanned"] = files_scanned
         stats["files_unresolved"] = files_unresolved
         stats["files_listed"] = len(file_paths)
+        # ...and separable again from "0 findings because the newest files
+        # were never in the list we scanned". See _count_unindexed.
+        stats["files_unindexed"] = _count_unindexed(root, file_paths) if index_backed else 0
 
     # Sort: high severity first, then by file path, then line number
     all_findings.sort(key=lambda f: (-severity_rank(f["severity"]), f["file"], f["line"]))
     return all_findings
+
+
+def _count_unindexed(root: Path, indexed_paths: list[str]) -> int | None:
+    """Count files roam's own discovery would index that the index has never seen.
+
+    An index-backed scan takes its file list from the DB, so a file created
+    since the last ``roam index`` is not scanned *at all*. Reporting "no
+    secrets found" over a set that omits precisely the newest files is the
+    false-clean this counter exists to name: a freshly-pasted credential is,
+    by definition, in a file the index has not caught up with.
+
+    Measured against ``discover_files`` rather than a raw filesystem walk.
+    That distinction is what keeps the count at 0 on a fresh index — files
+    discovery deliberately excludes (generated artefacts, distribution
+    templates) are not blind spots, and counting them would make the signal
+    fire constantly and be tuned out.
+
+    Returns ``None`` when the probe itself could not run. That is deliberately
+    NOT 0: "I could not determine whether anything was missed" and "nothing
+    was missed" are different answers, and collapsing the first into the
+    second is the very defect this function guards against.
+    """
+    try:
+        from roam.index.discovery import discover_files
+
+        discovered = {str(p).replace("\\", "/") for p in discover_files(root)}
+    except (ImportError, OSError, ValueError, sqlite3.DatabaseError):
+        return None
+    known = {p.replace("\\", "/") for p in indexed_paths}
+    return len(discovered - known)
 
 
 def _walk_for_files(root: Path) -> list[str]:
@@ -754,7 +789,12 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     # A zero here can mean three very different things. Name which one.
     vacuous_filter = severity_floor_is_vacuous(severity)
     files_scanned = scan_stats.get("files_scanned", 0)
-    scan_incomplete = vacuous_filter or files_scanned == 0
+    # A third way a zero can lie: the index predates the files that matter.
+    # None means the freshness probe could not run, which is itself not a
+    # clean answer, so it counts as incomplete rather than as "0 missed".
+    files_unindexed = scan_stats.get("files_unindexed", 0)
+    unindexed_blind = files_unindexed is None or files_unindexed > 0
+    scan_incomplete = vacuous_filter or files_scanned == 0 or unindexed_blind
 
     # Compute summary stats. W566 — bucketing delegates to the canonical
     # ``severity_breakdown`` helper. Secrets patterns at module-load
@@ -792,6 +832,17 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             f"{scan_stats.get('files_unresolved', 0)} unresolved under {project_root}). "
             "Run `roam index` and retry."
         )
+    elif total == 0 and unindexed_blind:
+        # The scan ran, but not over everything on disk. Saying "no secrets
+        # found" here would certify files that were never opened.
+        if files_unindexed is None:
+            missed = "an undetermined number of files are"
+        else:
+            missed = f"{files_unindexed} file(s) present on disk are"
+        verdict = (
+            f"NOT PROVEN CLEAN: {files_scanned} indexed files scanned, but {missed} "
+            "not in the index and were NOT scanned. Run `roam index` and retry."
+        )
     elif total == 0:
         verdict = f"No secrets found ({files_scanned} files scanned)"
     else:
@@ -804,6 +855,10 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             parts.append(f"{by_severity['low']} low")
         sev_str = ", ".join(parts)
         verdict = f"{total} secrets found in {files_affected} files ({sev_str})"
+        if unindexed_blind:
+            # Findings are real, but the list is a floor rather than a total.
+            extra = "an undetermined number of" if files_unindexed is None else str(files_unindexed)
+            verdict += f" — and this is a LOWER BOUND: {extra} unindexed file(s) were not scanned"
 
     # --- SARIF output ---
     if sarif_mode:
@@ -844,6 +899,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
                 "total_findings": total,
                 "files_affected": files_affected,
                 "files_scanned": files_scanned,
+                "files_unindexed": files_unindexed,
                 "severity_floor": severity.lower(),
                 "severity_floor_vacuous": vacuous_filter,
                 "scan_incomplete": scan_incomplete,
@@ -862,6 +918,15 @@ def secrets(ctx, severity, fail_on_found, include_tests):
         return
 
     # --- Text output ---
+    # index_status()'s own docstring specifies that callers print this
+    # "before the VERDICT in text mode" so a reader going top-down cannot
+    # miss it. The JSON envelope has carried it in _meta all along; the text
+    # branch never did, so a CI log — the surface a human actually reads —
+    # showed a bare clean verdict over a possibly-stale file set.
+    _index = index_status()
+    if isinstance(_index, dict) and _index.get("fresh") is False:
+        _hint = _index.get("hint") or "run `roam index` and retry"
+        click.echo(f"WARNING: index is stale — {_hint}")
     click.echo(f"VERDICT: {verdict}")
     click.echo()
 
@@ -902,6 +967,15 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             click.echo("  Per-pattern guidance:")
             for line in remediation_lines:
                 click.echo(line)
+    elif unindexed_blind:
+        # Distinct from the "nothing ran" case below: the scan DID run, it
+        # just did not cover everything on disk. Saying otherwise here would
+        # reintroduce the false-clean one layer down from the verdict.
+        _n = "an undetermined number of" if files_unindexed is None else str(files_unindexed)
+        click.echo(
+            f"  Scanned {files_scanned} indexed files and found nothing, but {_n} file(s) "
+            "on disk were never scanned — this is NOT a clean result."
+        )
     elif scan_incomplete:
         click.echo("  Scan did not run over any pattern/file — this is NOT a clean result.")
     else:
