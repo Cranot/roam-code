@@ -402,8 +402,14 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
         }
         _w607ac_warnings_out.append("pr_prep_pr_risk_skipped:external_diff_no_git_range")
     else:
+        # Forward the range exactly as the `diff` sub-invocation above does.
+        # Without this, `pr-prep <range>` scored the ambient working tree
+        # instead of the range the caller asked about -- on a clean tree that
+        # is `no-changes`/0, so a genuinely critical range reported as safe.
         pr_risk_args = ["pr-risk"]
-        if staged:
+        if commit_range:
+            pr_risk_args.append(commit_range)
+        elif staged:
             pr_risk_args.append("--staged")
         pr_risk_payload = _run_check(
             "capture_pr_risk",
