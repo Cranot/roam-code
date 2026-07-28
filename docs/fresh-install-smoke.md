@@ -3,7 +3,7 @@
 A clean-environment install and end-to-end run on a three-file synthetic
 project, captured verbatim. Anyone with Python 3.10+ and `pip` can replay
 these commands and reproduce the output. The transcript proves three claims
-from the README's "Install + first three commands" section without taking
+from the README's "Install + first four commands" section without taking
 Roam's word for it:
 
 1. **Zero accounts, zero API keys, zero cloud logins.** Install is one
@@ -12,7 +12,7 @@ Roam's word for it:
    read and write a local SQLite DB under `.roam/`; no source, index, finding,
    or evidence content is transmitted. A cold parser cache may retrieve one
    checksum-verified grammar bundle before analysis begins.
-3. **The "first three commands" actually do what they claim.** A new repo
+3. **The "first four commands" actually do what they claim.** A new repo
    reaches a working `preflight` verdict in under a minute on a synthetic
    project, with real blast-radius, tests-affected, complexity, and fitness
    data — not a stubbed envelope.

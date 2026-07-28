@@ -86,9 +86,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # The release tag is readable here because its commit does not exist
-      # while release documentation is prepared. Resolve v13.10.0 after
-      # publication and replace the tag with its reviewed 40-character SHA.
+      # The readable tag is shown here. For production, replace it with the
+      # reviewed 40-character SHA that v13.10.0 points at (see below).
       - uses: Cranot/roam-code@v13.10.0
         with:
           version: '13.10.0'

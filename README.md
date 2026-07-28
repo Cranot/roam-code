@@ -50,7 +50,7 @@
 
 Underneath sits a SQLite-backed graph of symbols, calls, imports, layers, git history, runtime traces, smells, clones, security flows, and algorithmic patterns across 28 languages — the same local facts queried before, during, and after a change.
 
-**Dependency-aware, not string-based.** Roam knows `Flask` has 47 dependents and 31 affected tests; `grep` knows it appears 847 times. One command replaces 5-10 tool calls — <0.5s per query, plain-ASCII output, `--json` and `--sarif` envelopes for agents and CI.
+**Dependency-aware, not string-based.** Roam knows `Flask` has 47 dependents and 31 affected tests; `grep` knows it appears 847 times. One command replaces 5-10 tool calls, with terminal-friendly UTF-8 output and `--json` / `--sarif` envelopes for agents and CI. See [Performance](#performance) for timings.
 
 |  | Without Roam | With Roam |
 |--|-------------|-----------|
@@ -58,7 +58,7 @@ Underneath sits a SQLite-backed graph of symbols, calls, imports, layers, git hi
 | Wall time | ~11s | **<0.5s** |
 | Tokens consumed | ~15,000 | **~3,000** |
 
-*Illustrative — a typical agent workflow on a 200-file Python project (Flask). Reproducible smoke transcript in [`docs/fresh-install-smoke.md`](docs/fresh-install-smoke.md); full indexing-rate harness in [`benchmarks/`](benchmarks/). Exact numbers vary with repo size, agent prompt, and model.*
+*Illustrative — a typical agent workflow on a 200-file Python project (Flask). Reproducible smoke transcript in [`docs/fresh-install-smoke.md`](docs/fresh-install-smoke.md); OSS benchmark harness in [`benchmarks/oss-eval/`](benchmarks/oss-eval/). Exact numbers vary with repo size, host, agent prompt, and model.*
 
 ---
 
@@ -80,18 +80,19 @@ Step 4 is the payoff — `roam preflight` on a hot symbol returns a verdict befo
 
 ```text
 $ roam preflight open_db
-VERDICT: Significant risk — CRITICAL, 1847 symbols in blast radius
+VERDICT: Significant risk — CRITICAL, 17922 symbols in blast radius
 
-Pre-flight check for `open_db (src/roam/db/connection.py:799)`:
+Pre-flight check for `open_db (src/roam/db/connection.py:1076)`:
 
-  Blast radius:     1847 symbols in 382 files                [CRITICAL]
-  Affected tests:   617 direct, 962 transitive               [OK]
-  Complexity:       cc=30, nest=4                            [CRITICAL]
+  Blast radius:     17922 symbols in 1732 files              [CRITICAL]
+  Affected tests:   681 direct, 14126 transitive             [OK]
+  Complexity:       cc=5, nest=2                             [LOW]
   Coupling:         2 files often change together            [MEDIUM]
   Conventions:      no violations                            [OK]
+  Fitness:          target passes; 1 rule(s) fail on sibling symbols [OK]
 
   Overall risk: CRITICAL
-  Risk driver:  complexity (cc=30, CRITICAL)
+  Risk driver:  blast radius (17922 symbols in 1732 files, CRITICAL)
 ```
 
 *An agent sees the blast radius before it edits — not after the tests fail.*
@@ -104,7 +105,7 @@ pipx install roam-code                                   # isolated environment 
 uv tool install roam-code                                # uv-managed tool
 pip install git+https://github.com/Cranot/roam-code.git  # from source
 
-# Docker (alpine-based)
+# Docker (python:3.12-slim-bookworm base)
 docker build -t roam-code .
 docker run --rm -v "$PWD:/workspace" roam-code index
 docker run --rm -v "$PWD:/workspace" roam-code health
@@ -346,7 +347,7 @@ refactors, never lose entries).
 
 ## What's New
 
-**v13.10 (2026-07-23) — repeated work becomes measurable procedures, and post-edit verification becomes proof-complete.** Privacy-preserving transcript/shell-template mining can nominate repeated-work interventions without exposing raw prompts or claiming causal savings; `roam savings` promotes only prospectively joined, integrity-checked outcomes. The Claude adapter now binds every edited turn to a strict Verify receipt and blocks unavailable, malformed, incomplete, or failing evidence. Interrupted indexes carry a generation-bound, durably synced lifecycle marker and force a full non-light rebuild before analysis regardless of the direct caller; completion is published only after SQLite checkpoint/fsync, so a crash cannot turn partial graph state into plausible empty answers. Roam owns the canonical hooks end to end—Compile Code no longer rewrites installed source. Full notes: [CHANGELOG.md](CHANGELOG.md).
+**v13.10 (2026-07-28) — repeated work becomes measurable procedures, and post-edit verification becomes proof-complete.** Privacy-preserving transcript/shell-template mining can nominate repeated-work interventions without exposing raw prompts or claiming causal savings; `roam savings` promotes only prospectively joined, integrity-checked outcomes. The Claude adapter now binds every edited turn to a strict Verify receipt and blocks unavailable, malformed, incomplete, or failing evidence. Interrupted indexes carry a generation-bound, durably synced lifecycle marker and force a full non-light rebuild before analysis regardless of the direct caller; completion is published only after SQLite checkpoint/fsync, so a crash cannot turn partial graph state into plausible empty answers. Roam owns the canonical hooks end to end—Compile Code no longer rewrites installed source. Full notes: [CHANGELOG.md](CHANGELOG.md).
 
 <details>
 <summary><strong>Earlier release notes — v13.6 → v13.0</strong></summary>
@@ -452,7 +453,7 @@ A few representative commands beyond the core five:
 
 - **Health & architecture:** `roam health` (0-100 score), `roam weather` (churn × complexity hotspots), `roam smells` (24 deterministic detectors), `roam algo` (34-task anti-pattern catalog), `roam clusters` / `roam layers` / `roam cycles`.
 - **Change safety:** `roam impact <symbol>` (blast radius), `roam diff` (uncommitted-change blast radius), `roam pr-risk` (0-100 PR risk), `roam diagnose <symbol>` (root-cause ranking).
-- **Backend quality:** `roam n1` (N+1 queries), `roam auth-gaps`, `roam missing-index`, `roam over-fetch`, `roam taint` (graph-reach taint, 10 rule packs).
+- **Backend quality:** `roam n1` (N+1 queries), `roam auth-gaps`, `roam missing-index`, `roam over-fetch`, `roam taint` (graph-reach taint, 11 rule packs).
 - **Index-aware search:** `roam search <pattern>`, `roam grep <pattern> -C 5` (grep + bounded code packets + reachability + PageRank), `roam grep <pattern> --whole-symbol` (deduplicated enclosing functions/classes), `roam uses <name>` (graph-precise references, no string-literal false positives).
 - **Multi-agent:** `roam orchestrate --agents 3` (conflict-aware partitioning), `roam fleet plan`, `roam lease` (parallel-agent coordination).
 
@@ -464,13 +465,7 @@ A few representative commands beyond the core five:
 How you'd use Roam to understand a project you've never seen before, using Flask as an example.
 
 ```
-$ roam understand
-Tech stack: Python (flask, jinja2, werkzeug)
-Architecture: Monolithic — 3 layers, 5 clusters
-Key abstractions: Flask, Blueprint, Request, Response
-Health: 78/100 — 1 god component (Flask)
-Entry points: src/flask/__init__.py, src/flask/cli.py
-
+$ roam understand                       # briefing: languages, stack, layers/clusters, health, key abstractions, entry points
 $ roam file src/flask/app.py            # file skeleton: definitions + signatures + health
 $ roam deps src/flask/app.py            # what imports this file
 $ roam weather                          # hotspots ranked by churn × complexity
@@ -492,17 +487,19 @@ Roam is designed to be called by coding agents. Instead of repeatedly grepping a
 
 ```text
 $ roam health
-VERDICT: Fair codebase (75/100) — 47 critical, 9 warnings, focus: god_components
+VERDICT: Fair codebase (77/100) — 65 critical, 0 warnings, focus: god_components
 
-Health Score: 75/100  |  Tangle: 0.0% (7/33395 symbols in cycles)
-Propagation Cost: 0.1%  |  Algebraic Connectivity: 0.0074
+Health Score: 77/100  |  Tangle: 0.0% (0/44056 symbols in cycles)
+Propagation Cost: 6.0%  |  Algebraic Connectivity: 0.0146
 
-Health: 67 issues — 47 CRITICAL, 9 WARNING, 19 INFO
-  Breakdown: cycles [1 CRITICAL, 1 WARNING], god [31 CRITICAL, 8 WARNING, 11 INFO], bottlenecks [15 CRITICAL]
+Health: 65 issues — 65 CRITICAL, 37 INFO
+  (0 actionable cycles, 37 local/test cycles ignored, 50 god components
+   (19 actionable, 31 expected utilities), 15 bottlenecks (2 actionable))
+  Breakdown: cycles [0 issues], god [50 CRITICAL], bottlenecks [15 CRITICAL], layers [0 issues]
 
 Top CRITICAL issues (run `roam --detail health` for the full breakdown):
-  cycle (5 symbols): _COMMANDS, complete, _reconstruct_command
-  god component: path (prop, degree=2408)
+  god component: result (prop, degree=2198)
+  god component: path (prop, degree=677)
 ```
 
 *The verdict line works alone — an agent that reads nothing else still knows where to look.* Pipe `--json` for the structured envelope your agent consumes.
@@ -615,7 +612,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Resolve v13.10.0 after release and pin its reviewed 40-character SHA.
+      # For production, replace the tag with the reviewed 40-character SHA it
+      # points at — a release tag is readable but remains movable.
       - uses: Cranot/roam-code@v13.10.0
         with:
           commands: health
@@ -675,16 +673,18 @@ roam guard-pr --post-check --gh-repo $REPO --gh-sha $SHA
 | 🛑 missing | `test.make.test` | config_file_changed |
 ```
 
-**Verdict → CI exit + GitHub conclusion map:**
+**Verdict → CI exit + GitHub conclusion map.** Exit codes are only emitted under
+`--strict` (which `--ci` implies); without it `guard-pr` always exits 0 and the
+verdict is reporting-only, so a CI gate must pass `--ci` or `--strict`:
 
-| Roam verdict | Exit code | GitHub conclusion | Build status |
-|---|---|---|---|
-| `pass` | 0 | `success` | ✅ green |
-| `pass_with_warnings` | 0 (4 with `--strict`) | `neutral` | 🟡 yellow |
-| `needs_review` | 4 | `action_required` | 🟠 attention |
-| `blocked` | 5 | `failure` | 🛑 red |
+| Roam verdict | Exit code (`--strict` / `--ci`) | Exit code (default) | GitHub conclusion | Build status |
+|---|---|---|---|---|
+| `pass` | 0 | 0 | `success` | ✅ green |
+| `pass_with_warnings` | 0 | 0 | `neutral` | 🟡 yellow |
+| `needs_review` | 4 | 0 | `action_required` | 🟠 attention |
+| `blocked` | 5 | 0 | `failure` | 🛑 red |
 
-**Output formats:** `text` (default), `markdown` (PR comment / GH Check), `json` (the full AgentChangeProofBundle v1), `sarif` (GitHub Code Scanning / GitLab SAST / Defender).
+**Output formats:** `text` (default), `markdown` (PR comment / GH Check), `json` (the full AgentChangeProofBundle v1). SARIF is not a `guard-pr` format — emit it from the same bundle with `roam proof-bundle --format sarif`.
 
 **Pluggable rule packs.** The verification contract (what counts as a required check for a given change) lives in YAML, not code. Default pack ships with the binary; override with `roam guard-pr --rules templates/examples/roam-guard-rules.default.yml`:
 
@@ -766,7 +766,11 @@ Tier 2 languages (and `.jsonc` / `.mdx`) get basic symbol extraction via a gener
 | Incremental (no changes) | <1s |
 | Any query command | <0.5s |
 
-After the first full index, `roam index` only re-processes changed files (mtime + SHA-256 hash). Detailed indexing benchmarks across Express / Axios / Vue / Laravel / Svelte live in [`benchmarks/`](benchmarks/).
+Every figure includes CLI process startup, which is host- and platform-dependent:
+on a slow Windows host `roam --version` alone can cost ~1.5s, putting a floor
+under every row above. Measure on your own machine before gating on these.
+
+After the first full index, `roam index` only re-processes changed files (mtime + SHA-256 hash). The OSS benchmark harness in [`benchmarks/oss-eval/`](benchmarks/oss-eval/) tracks 14 repositories (Express, Axios, Vue, Laravel, Svelte, React, Django, cpython, Linux, …); the committed snapshot in `results/latest.md` records which targets completed and which failed or were not present locally.
 
 Compiler A/B results, the per-task gallery, routing stats, and the
 version-keyed eval history live in [The Compiler](#the-compiler--your-agents-first-token-already-knows-the-answer)
@@ -810,7 +814,7 @@ roam-code combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), 
 | Local source analysis, zero API keys | Yes | No | No | Partial |
 | Open source | Apache 2.0 | No | Partial | Partial |
 | Interprocedural taint depth | shallow (OpenVEX-shaped) | n/a | n/a | **deep (CodeQL)** |
-| Built-in rule packs | 10 taint packs, 10 governance rules | n/a | n/a | **2,000+ (Semgrep community)** |
+| Built-in rule packs | 11 taint packs, 10 governance rules | n/a | n/a | **2,000+ (Semgrep community)** |
 | Cross-repo at GitHub scale | workspace overlay (sibling repos) | n/a | n/a | **native (Sourcegraph)** |
 
 ### Key Differentiators
@@ -870,7 +874,7 @@ The CLI is Apache 2.0, runs its analysis engine locally, and never expires. Roam
 | Problem | Solution |
 |---------|----------|
 | `roam: command not found` | Ensure install location is on PATH. For `uv`: `uv tool update-shell` |
-| `Another indexing process is running` | Delete `.roam/index.lock` and retry |
+| `Another indexing process owns the workspace` | Wait for the other `roam index` to finish. If nothing else is running, the lock is unprovable-stale (`An index lifecycle owner is live or cannot be proven stale`) — delete `.roam/index.lock` and retry |
 | `database is locked` | `roam index --force` to rebuild |
 | Unicode errors on Windows | `chcp 65001` for UTF-8 |
 | Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` |

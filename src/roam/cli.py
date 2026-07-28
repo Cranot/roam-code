@@ -1113,20 +1113,33 @@ class LazyGroup(click.Group):
             formatter.write(self.help + "\n\n")
 
         formatter.write("Start here — the 5 verbs cover ~80% of agent workflows:\n\n")
+        # Recipe count is read from the registry, not hardcoded: the literal
+        # "24 recipes" shipped here drifted to a real registry size of 31
+        # while the README quoted the correct number. Same discipline as the
+        # `len(_COMMANDS)` total below — one source of truth, no drift.
+        try:
+            from roam.ask.recipes import RECIPES
+
+            ask_blurb = f"free-form intent — {len(RECIPES)} recipes"
+        except Exception:  # pragma: no cover - help must never hard-fail
+            ask_blurb = "free-form intent — recipe registry"
         starter = [
             ("roam init", "initialize this repo (one-time)"),
             ("roam understand", "what is this codebase? (briefing)"),
             ("roam context <symbol>", "files + lines to read before editing"),
             ("roam preflight <symbol>", "what breaks if I change this?"),
             ("git diff | roam critique", "review my patch before merge"),
-            ('roam ask "<question>"', "free-form intent — 24 recipes"),
+            ('roam ask "<question>"', ask_blurb),
         ]
         for cmd, blurb in starter:
             formatter.write(f"  {cmd:30s} {blurb}\n")
 
         formatter.write("\nCommon next steps:\n\n")
         common = [
-            ("roam doctor", "diagnose your install (20 checks)"),
+            # No check count here: a helper that raises is skipped by
+            # ``_run_check``, so the total is runtime-variable (the literal
+            # "20 checks" had drifted to a real 29 on a clean run).
+            ("roam doctor", "diagnose your install"),
             ("roam tour", "5-minute guided walkthrough"),
             ("roam mcp-setup <editor>", "wire roam into your AI agent"),
             ("roam --help-all", f"every command ({len(_COMMANDS)} total)"),
