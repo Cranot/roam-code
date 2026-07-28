@@ -354,9 +354,13 @@ def _assigned_names(node: ast.AST) -> list[str]:
         targets = [node.target]
     names: list[str] = []
     for target in targets:
-        for sub in ast.walk(target):
-            if isinstance(sub, ast.Name):
-                names.append(sub.id)
+        # Only a SINGLE-name binding aliases the whole value. A tuple
+        # unpack -- ``a, b, c = _prepare(...)`` -- does not put the
+        # disclosure in all three names, and pretending it does credited
+        # cmd_auth_gaps' text branch for a call it never received the
+        # bucket through.
+        if isinstance(target, ast.Name):
+            names.append(target.id)
     return names
 
 
