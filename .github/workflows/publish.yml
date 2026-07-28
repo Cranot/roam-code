@@ -1352,7 +1352,7 @@ jobs:
           }
 
           verify_evidence_set() {
-            local directory="$1" subject name size pubkey signature identity
+            local directory="$1" subject name size pubkey signature certificate identity
             find "$directory" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort > /tmp/actual-evidence-files
             diff -u /tmp/expected-release-assets /tmp/actual-evidence-files
             for name in "${evidence_names[@]}"; do
@@ -1366,10 +1366,18 @@ jobs:
             for subject in "$directory/$manifest_name" "$directory/$sbom_name"; do
               pubkey=$(mktemp /tmp/roam-release-pubkey.XXXXXXXXXX)
               signature=$(mktemp /tmp/roam-release-signature.XXXXXXXXXX)
-              openssl x509 -in "${subject}.crt" -pubkey -noout > "$pubkey"
+              # cosign's --output-certificate emits base64-encoded PEM, which cosign
+              # itself decodes but openssl cannot read. Decode it, and fall back to the
+              # file as-is so a cosign that emits bare PEM keeps verifying.
+              certificate=$(mktemp /tmp/roam-release-cert.XXXXXXXXXX)
+              if ! base64 --decode "${subject}.crt" > "$certificate" 2>/dev/null \
+                || ! grep -q 'BEGIN CERTIFICATE' "$certificate"; then
+                cat "${subject}.crt" > "$certificate"
+              fi
+              openssl x509 -in "$certificate" -pubkey -noout > "$pubkey"
               base64 --decode "${subject}.sig" > "$signature"
               openssl dgst -sha256 -verify "$pubkey" -signature "$signature" "$subject"
-              identity=$(openssl x509 -in "${subject}.crt" -noout -ext subjectAltName)
+              identity=$(openssl x509 -in "$certificate" -noout -ext subjectAltName)
               if ! grep -Fq "URI:https://github.com/${REPO}/.github/workflows/publish.yml@refs/tags/${TAG}" <<<"$identity" \
                 && ! grep -Fq "URI:https://github.com/${REPO}/.github/workflows/publish.yml@refs/heads/${DEFAULT_BRANCH}" <<<"$identity"; then
                 echo "::error::Evidence certificate has an unexpected workflow identity."
