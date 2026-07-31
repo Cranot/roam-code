@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -224,29 +223,11 @@ def _read_recent_envelope_next_command(root: Path) -> tuple[str | None, str | No
     next step, and surfacing it ahead of the uncommitted-changes /
     constitution-pending branches misroutes agents to do-nothing work.
     """
-    responses_dir = root / ".roam" / "responses"
-    if not responses_dir.is_dir():
+    from roam.response_store import newest_response
+
+    newest = newest_response(root, max_age_seconds=_envelope_max_age_sec())
+    if newest is None:
         return (None, None)
-    try:
-        entries = [p for p in responses_dir.iterdir() if p.suffix == ".json" and p.is_file()]
-    except OSError:
-        return (None, None)
-    if not entries:
-        return (None, None)
-    try:
-        newest = max(entries, key=lambda p: p.stat().st_mtime)
-    except (OSError, ValueError):
-        return (None, None)
-    # W19.1: skip stale envelopes. Cutoff is configurable via env var
-    # so the test suite can pin it deterministically (set to 0 to disable).
-    max_age = _envelope_max_age_sec()
-    if max_age > 0:
-        try:
-            age = time.time() - newest.stat().st_mtime
-        except OSError:
-            return (None, None)
-        if age > max_age:
-            return (None, None)
     try:
         data = json.loads(newest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
