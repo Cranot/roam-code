@@ -3510,10 +3510,18 @@ def _persist_handle_blob(handle_dir: Path, sha: str, blob: str) -> Path | None:
                 # POSIX-only semantics; on Windows chmod is a near no-op
                 # but the call shouldn't fail. Swallow and continue.
                 pass
-        target = handle_dir / f"{sha}.json"
-        # content-addressed → identical payload reuses the same file
-        if not target.is_file():
-            target.write_text(blob, encoding="utf-8")
+        from roam.response_store import store_response_text
+
+        # content-addressed → identical payload reuses the same file without
+        # refreshing its ordering timestamp.  New handles are atomically
+        # replaced and indexed in the same cross-process transaction used by
+        # CLI side-car envelopes.
+        target = store_response_text(
+            handle_dir.parent.parent,
+            f"{sha}.json",
+            blob,
+            overwrite=False,
+        )
     except OSError:
         return None
     return target

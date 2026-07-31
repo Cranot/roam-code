@@ -118,7 +118,6 @@ _DETACHED_FILENAME = "pr-bundle.json"
 # that ran `roam --json preflight` etc. without MCP do NOT write here, so
 # auto-collect is best-effort: tests verify the *happy path* (envelope JSON
 # files dropped in this dir get folded into the bundle).
-_RESPONSES_DIRNAME = "responses"
 
 
 # W14.2 Synergy 2 — read-only mode soft-gate. Modes are a SOFT gate (Pattern 2
@@ -357,26 +356,20 @@ def _candidate_responses(root: Path, since_ts: str | None) -> list[Path]:
     auto-collect window scoped to "envelopes generated while preparing
     this PR" rather than scooping up the entire response cache.
     """
-    responses_dir = root / ".roam" / _RESPONSES_DIRNAME
-    if not responses_dir.is_dir():
-        return []
-    try:
-        files = [p for p in responses_dir.iterdir() if p.suffix == ".json" and p.is_file()]
-    except OSError:
-        return []
+    from roam.response_store import response_candidates
+
+    cutoff: float | None = None
     if since_ts:
         try:
             since_dt = datetime.fromisoformat(since_ts.replace("Z", "+00:00"))
             cutoff = since_dt.timestamp()
-            files = [p for p in files if p.stat().st_mtime >= (cutoff - 1)]
         except (ValueError, OSError) as _exc:
             # A bad since_ts silently disables the time-window filter —
             # surface lineage so an over-broad envelope set has a cause.
             from roam.observability import log_swallowed
 
             log_swallowed("cmd_pr_bundle:collect_envelopes:since_ts", _exc)
-    files.sort(key=lambda p: p.stat().st_mtime)
-    return files
+    return response_candidates(root, since_epoch=cutoff)
 
 
 def _merge_str_list(target: list, additions: list) -> int:

@@ -98,6 +98,29 @@ def test_with_run_id_writes_envelope(project, monkeypatch):
     assert on_disk["summary"]["verdict"] == env["summary"]["verdict"]
 
 
+def test_fat_sidecar_is_capped_but_returned_envelope_stays_complete(project, monkeypatch):
+    """Only the persisted auto-collect copy is bounded, with disclosure."""
+    from roam.output.formatter import json_envelope
+
+    monkeypatch.setenv("ROAM_RUN_ID", "test-run-fat")
+    monkeypatch.setenv("ROAM_RESPONSE_STORE_MAX_BYTES", "8192")
+    monkeypatch.setenv("ROAM_DEFAULT_JSON_BUDGET", "0")
+    findings = [{"name": f"finding-{i}", "body": "x" * 400} for i in range(200)]
+
+    env = json_envelope("dead", summary={"verdict": "many findings"}, findings=findings)
+
+    assert env["findings"] == findings
+    assert env["summary"].get("truncated") is not True
+    files = _list_responses(project)
+    assert len(files) == 1
+    assert files[0].stat().st_size <= 8192
+    stored = json.loads(files[0].read_text(encoding="utf-8"))
+    assert stored["summary"]["truncated"] is True
+    assert stored["summary"]["partial_success"] is True
+    assert stored["summary"]["response_store"]["payload_truncated"] is True
+    assert stored["summary"]["response_store"]["stored_bytes"] == files[0].stat().st_size
+
+
 def test_excluded_commands_skip_write(project, monkeypatch):
     """``runs-log`` / ``memory-add`` / ``pr-bundle-emit`` etc. must NEVER echo."""
     from roam.output.formatter import json_envelope
@@ -149,19 +172,17 @@ def test_write_failure_does_not_raise(project, monkeypatch):
 
     monkeypatch.setenv("ROAM_RUN_ID", "test-run-boom")
 
-    # Force write_text to raise on every call.
-    original_write_text = Path.write_text
+    from roam import response_store
 
-    def boom(self, *args, **kwargs):
-        if ".roam" in str(self) and "responses" in str(self):
-            raise OSError("simulated disk failure")
-        return original_write_text(self, *args, **kwargs)
+    def boom(*args, **kwargs):
+        raise OSError("simulated disk failure")
 
-    monkeypatch.setattr(Path, "write_text", boom)
+    monkeypatch.setattr(response_store, "store_response_text", boom)
 
     # Must NOT raise: the side-car write is best-effort.
     env = json_envelope("health", summary={"verdict": "ok"})
     assert env["command"] == "health"  # parent command still got its envelope
+    assert _list_responses(project) == []
 
 
 def test_unexpected_response_write_error_propagates(project, monkeypatch):
