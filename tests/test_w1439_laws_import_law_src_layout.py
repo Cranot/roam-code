@@ -30,17 +30,17 @@ passes only because its fixture diff imports ``from src.forbidden.module
 import bad_helper`` — a module path that includes the source root, which
 a real src-layout project never writes.
 
-The two ``xfail(strict=True)`` tests below pin the defect. They flip to
-XPASS — and therefore fail under this repo's ``xfail_strict = true`` — the
-moment the two namespaces are reconciled, which is the signal to delete
-the markers.
+FIXED: both halves now bucket through :mod:`roam.laws.namespace`, which
+re-expresses file paths in the import namespace (``src/roam`` -> ``roam``)
+using source roots detected from repo layout. The two tests below shipped
+as ``xfail(strict=True)`` pins; they flipped to XPASS the moment the
+namespaces were reconciled and are now ordinary assertions. Same repo,
+same 29 commits, after the fix: 47 raised -> 1 raised.
 """
 
 from __future__ import annotations
 
 import textwrap
-
-import pytest
 
 from roam.laws.checker import check_laws
 from roam.laws.miner import Law
@@ -113,13 +113,6 @@ def test_naming_law_still_fires_so_the_checker_is_not_wholly_inert():
     assert "camelCase" in violations[0].message
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W1439: checker buckets the module path (roam/db) while the mined law "
-        "carries the file path (src/roam), so the conventional import is flagged"
-    ),
-)
 def test_conventional_src_layout_import_is_not_a_violation():
     """``from roam.db.connection import open_db`` is how every test here imports.
 
@@ -134,14 +127,6 @@ def test_conventional_src_layout_import_is_not_a_violation():
     assert violations == [], [v.to_dict() for v in violations]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W1439: `src.roam...` is the only spelling that satisfies the bucket "
-        "comparison, so the checker's polarity is inverted — it clears the "
-        "import that cannot resolve at runtime"
-    ),
-)
 def test_src_prefixed_import_that_cannot_resolve_is_reported():
     """``from src.roam...`` is unimportable under a src layout.
 

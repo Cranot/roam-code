@@ -13,9 +13,12 @@ A. **Naming laws** — leverages ``conventions_helper.compute_conventions``
    is at >= 90 %, ``medium`` at >= 80 %, otherwise ``low``.
 
 B. **Import-layering laws** — queries ``file_edges`` (kind = ``imports``)
-   grouped by the top-level src-directory of source / target. When a
-   source directory imports from a target directory in >= 95 % of its
-   cross-directory imports, emit ``A imports from B (95%)``.
+   grouped by the source / target directory *expressed in the import
+   namespace* (:mod:`roam.laws.namespace`). When a source directory
+   imports from a target directory in >= 95 % of its cross-directory
+   imports, emit ``A imports from B (95%)``. The namespace step is what
+   makes the emitted law checkable against a diff at all — see W1439 in
+   that module's docstring.
 
 C. **Test-coverage laws** — for each public-symbol kind, computes the
    fraction that have a matching ``test_*`` file. If the fraction
@@ -51,6 +54,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
+
+from roam.laws.namespace import bucket_for_file, detect_source_roots_from_paths
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -146,6 +151,7 @@ def mine_laws(
     min_conformance_pct: float = _MIN_CONFORMANCE_PCT,
     min_sample_size: int = _MIN_SAMPLE_SIZE,
     top: Optional[int] = None,
+    diagnostics: Optional[dict[str, Any]] = None,
 ) -> list[Law]:
     """Discover laws from the indexed codebase at *conn*.
 
@@ -162,6 +168,11 @@ def mine_laws(
     top
         If set, keep only the *top* highest-confidence laws (after
         sorting by ``confidence`` desc + ``conformance_pct`` desc).
+    diagnostics
+        Optional out-dict. Mining writes what it deliberately did *not*
+        emit here (currently ``skipped_naming_kinds``) so a caller can
+        disclose the gap instead of reporting a shorter law list with no
+        explanation.
 
     Returns
     -------
@@ -170,7 +181,7 @@ def mine_laws(
     """
     laws: list[Law] = []
 
-    laws.extend(_mine_naming_laws(conn, min_conformance_pct, min_sample_size))
+    laws.extend(_mine_naming_laws(conn, min_conformance_pct, min_sample_size, diagnostics))
     laws.extend(_mine_import_laws(conn, min_conformance_pct, min_sample_size))
     laws.extend(_mine_testing_laws(conn, min_conformance_pct, min_sample_size))
     laws.extend(_mine_error_laws(conn, min_conformance_pct, min_sample_size))
@@ -212,11 +223,26 @@ def _confidence_from_pct(pct: float) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _mine_naming_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
+def _mine_naming_laws(
+    conn,
+    min_pct: float,
+    min_sample: int,
+    diagnostics: Optional[dict[str, Any]] = None,
+) -> list[Law]:
     """Emit a naming law per symbol kind that has a dominant style.
 
     Defers to the canonical conventions helper so all five consumers of
     naming detection agree on the answer.
+
+    Kinds the checker cannot observe in a diff are skipped, not emitted
+    (W1439). ``added_symbols`` recognises exactly ``function`` and
+    ``class``; a mined ``constant`` / ``method`` / ``property`` /
+    ``variable`` law therefore matched no symbol on any diff and could
+    never raise a violation — a diff flagrantly breaking all four
+    reported clean. Skipped kinds are recorded in *diagnostics* so the
+    drop is disclosed rather than silent, and the gate is driven by
+    :data:`roam.laws.checker.CHECKABLE_SYMBOL_KINDS` so teaching the
+    checker a new kind re-enables its law automatically.
     """
     try:
         from roam.commands.conventions_helper import compute_conventions
@@ -231,12 +257,17 @@ def _mine_naming_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     laws: list[Law] = []
     by_kind = result.get("by_kind", {}) or {}
     outliers_by_kind = _outliers_by_kind(result)
+    checkable = _checkable_symbol_kinds()
+    skipped: list[str] = []
 
     for kind, info in sorted(by_kind.items()):
         total = info.get("total", 0)
         pct = info.get("pct", 0)
         style = info.get("style", "")
         if total < min_sample or pct < min_pct or not style:
+            continue
+        if kind not in checkable:
+            skipped.append(kind)
             continue
 
         examples = _naming_examples(conn, kind, style, limit=3)
@@ -263,7 +294,25 @@ def _mine_naming_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
             },
         )
         laws.append(law)
+
+    if diagnostics is not None and skipped:
+        diagnostics["skipped_naming_kinds"] = sorted(skipped)
     return laws
+
+
+def _checkable_symbol_kinds() -> frozenset[str]:
+    """Symbol kinds the diff checker can actually observe.
+
+    Sourced from the checker rather than duplicated here: the two halves
+    disagreeing about a vocabulary is precisely the W1439 failure mode.
+    Falls back to the empty set only if the checker cannot be imported,
+    which also stops mining — an unenforceable law is worse than none.
+    """
+    try:
+        from roam.laws.checker import CHECKABLE_SYMBOL_KINDS
+    except ImportError:
+        return frozenset()
+    return CHECKABLE_SYMBOL_KINDS
 
 
 def _outliers_by_kind(result: dict) -> dict[str, list[dict]]:
@@ -317,11 +366,18 @@ def _mine_import_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     ---------
     1. Join ``file_edges`` (kind = ``imports``) with ``files`` to get
        source path + target path.
-    2. Bucket each edge by its top-level src directory (``src/A`` ->
-       ``src/A``, ``src/A/sub`` -> ``src/A``).
+    2. Bucket each edge into the **import namespace** via
+       :func:`roam.laws.namespace.bucket_for_file` (``src/A/sub/x.py`` ->
+       ``A`` when ``src`` is a source root, ``A/sub`` otherwise).
     3. For each source bucket, sum the edges going to each distinct
        target bucket. If one target bucket accounts for >= ``min_pct``
        of that source's outbound cross-bucket imports, emit a law.
+
+    Step 2 is load-bearing (W1439). Bucketing raw file paths emits laws
+    in a namespace no import statement can ever name — ``tests ->
+    src/roam`` can only be satisfied by ``from src.roam...``, which does
+    not import under a src layout — so the checker's polarity inverts and
+    the law fires on every conforming import instead of the wrong ones.
     """
     laws: list[Law] = []
 
@@ -340,7 +396,8 @@ def _mine_import_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     except sqlite3.Error:
         return []
 
-    counts = _count_cross_bucket_imports(rows)
+    source_roots = _source_roots_from_index(conn)
+    counts = _count_cross_bucket_imports(rows, source_roots)
 
     for src_bucket, tgt_counts in sorted(counts.items()):
         total = sum(tgt_counts.values())
@@ -352,7 +409,7 @@ def _mine_import_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
         if pct < min_pct:
             continue
 
-        examples = _import_examples(conn, src_bucket, dominant_tgt, limit=3)
+        examples = _import_examples(rows, src_bucket, dominant_tgt, source_roots, limit=3)
         law = Law(
             id=_safe_id(f"imports_{src_bucket}_to_{dominant_tgt}"),
             kind="import",
@@ -379,16 +436,30 @@ def _mine_import_laws(conn, min_pct: float, min_sample: int) -> list[Law]:
     return laws
 
 
-def _count_cross_bucket_imports(rows) -> dict[str, dict[str, int]]:
-    """Bucket import edges by directory: source_bucket -> target_bucket -> count.
+def _source_roots_from_index(conn) -> frozenset[str]:
+    """Detect the repo's source roots from the indexed file list.
+
+    Index-side twin of the checker's filesystem probe — both call the
+    same rule in :mod:`roam.laws.namespace`, so mining and checking can
+    never disagree about which prefixes are importable.
+    """
+    try:
+        rows = conn.execute("SELECT path FROM files").fetchall()
+    except sqlite3.Error:
+        return frozenset()
+    return detect_source_roots_from_paths((r["path"] if hasattr(r, "keys") else r[0]) or "" for r in rows)
+
+
+def _count_cross_bucket_imports(rows, source_roots: frozenset[str] = frozenset()) -> dict[str, dict[str, int]]:
+    """Bucket import edges by namespace: source_bucket -> target_bucket -> count.
 
     Same-bucket and unbucketable edges are skipped — only cross-directory
     imports carry layering signal.
     """
     counts: dict[str, dict[str, int]] = {}
     for r in rows:
-        src_bucket = _import_bucket(r["src_path"])
-        tgt_bucket = _import_bucket(r["tgt_path"])
+        src_bucket = _import_bucket(r["src_path"], source_roots)
+        tgt_bucket = _import_bucket(r["tgt_path"], source_roots)
         if not src_bucket or not tgt_bucket or src_bucket == tgt_bucket:
             continue
         counts.setdefault(src_bucket, {})
@@ -396,59 +467,42 @@ def _count_cross_bucket_imports(rows) -> dict[str, dict[str, int]]:
     return counts
 
 
-def _import_bucket(path: str | None) -> str:
-    """Return the top-two-*directory*-segment bucket for a file path.
+def _import_bucket(path: str | None, source_roots: frozenset[str] = frozenset()) -> str:
+    """Return the import-namespace bucket for a file path.
 
-    The bucket excludes the file basename so every file under
-    ``tests/`` ends up in the same ``tests`` bucket rather than its own
-    per-file silo. Examples::
+    Thin alias for :func:`roam.laws.namespace.bucket_for_file`, kept so
+    the mining strategy reads in its own vocabulary. Examples::
 
-        src/handlers/auth.py        -> src/handlers
-        src/roam/commands/foo.py    -> src/roam        (skip the deepest dir
-                                                        — too granular)
-        tests/test_foo.py            -> tests
-        app.py                       -> ""             (no directory)
-        scripts/setup.py             -> scripts
+        src/handlers/auth.py        -> src/handlers   (no packages -> no root)
+        src/roam/commands/foo.py    -> roam           (src is a source root)
+        tests/test_foo.py           -> tests
+        app.py                      -> ""             (no directory)
     """
-    if not path:
-        return ""
-    norm = path.replace("\\", "/").lstrip("./")
-    parts = norm.split("/")
-    # Drop the basename — buckets are directories only.
-    dirs = parts[:-1]
-    if not dirs:
-        return ""
-    # Keep at most the top two directory segments. Anything deeper makes
-    # the bucket so specific the law has no generalisation value.
-    return "/".join(dirs[:2])
+    return bucket_for_file(path or "", source_roots)
 
 
-def _import_examples(conn, src_bucket: str, tgt_bucket: str, *, limit: int = 3) -> list[str]:
+def _import_examples(
+    rows,
+    src_bucket: str,
+    tgt_bucket: str,
+    source_roots: frozenset[str] = frozenset(),
+    *,
+    limit: int = 3,
+) -> list[str]:
     """Return concrete ``src_file -> tgt_file`` pairs for the law's
-    evidence panel."""
-    try:
-        like_src = src_bucket.replace("\\", "/") + "/%"
-        like_tgt = tgt_bucket.replace("\\", "/") + "/%"
-        rows = conn.execute(
-            """
-            SELECT src.path AS s, tgt.path AS t
-            FROM file_edges fe
-            JOIN files src ON fe.source_file_id = src.id
-            JOIN files tgt ON fe.target_file_id = tgt.id
-            WHERE fe.kind = 'imports'
-              AND (src.path LIKE ? OR src.path LIKE ?)
-              AND (tgt.path LIKE ? OR tgt.path LIKE ?)
-            LIMIT ?
-            """,
-            (like_src, like_src.replace("/", "\\"), like_tgt, like_tgt.replace("/", "\\"), limit * 4),
-        ).fetchall()
-    except sqlite3.Error:
-        return []
+    evidence panel.
+
+    Filters the edge rows the caller already fetched rather than issuing
+    a second LIKE query: once buckets live in the import namespace
+    (``roam``), no LIKE pattern over raw file paths (``src/roam/...``)
+    can match them, so the SQL form silently returned no examples on
+    exactly the src-layout repos this law is mined for.
+    """
     examples: list[str] = []
     for r in rows:
-        s = (r["s"] or "").replace("\\", "/")
-        t = (r["t"] or "").replace("\\", "/")
-        if s.startswith(src_bucket + "/") and t.startswith(tgt_bucket + "/"):
+        s = (r["src_path"] or "").replace("\\", "/")
+        t = (r["tgt_path"] or "").replace("\\", "/")
+        if _import_bucket(s, source_roots) == src_bucket and _import_bucket(t, source_roots) == tgt_bucket:
             examples.append(f"{s} -> {t}")
             if len(examples) >= limit:
                 break

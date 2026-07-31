@@ -13,79 +13,38 @@ laws and routes them by ``rule.kind``.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 from roam.laws.miner import Law, Violation
+from roam.laws.namespace import detect_source_roots, namespace_contains, normalize_path, strip_source_root
 
-# Small stdlib + common-3rd-party allowlist for the import-law checker.
-# When a diff adds ``import sqlite3`` inside ``tests/`` we shouldn't flag
-# it just because the mined law says ``tests -> src/roam``. The list is
-# intentionally short — anything not here gets treated as internal,
-# which is the conservative default (false-positive > false-negative
-# when the gate is advisory).
-_STDLIB_MODULES = frozenset(
+# Symbol kinds this checker can actually see in a diff. ``added_symbols``
+# below labels every Python/JS/Go declaration it recognises as exactly
+# one of these two, so a law targeting any other kind matches nothing on
+# every diff and can never raise a violation. The miner imports this set
+# and declines to mine laws it cannot enforce (W1439) — widen it here and
+# those laws start being mined again, in lockstep, automatically.
+CHECKABLE_SYMBOL_KINDS = frozenset({"function", "class"})
+
+# Modules that are never repo-internal, whatever the repo contains.
+# ``sys.stdlib_module_names`` is the authoritative list for the running
+# interpreter (3.10+); the hand-rolled predecessor was missing
+# ``statistics``, which alone produced a false positive in this repo's
+# trailing history — and would have kept producing one per newly-used
+# stdlib module forever.
+_STDLIB_MODULES = frozenset(sys.stdlib_module_names) | frozenset(
     {
-        # Python stdlib (most-imported)
-        "os",
-        "sys",
-        "re",
-        "json",
-        "io",
-        "math",
-        "time",
-        "datetime",
-        "pathlib",
-        "subprocess",
-        "collections",
-        "itertools",
-        "functools",
-        "typing",
-        "dataclasses",
-        "abc",
-        "enum",
-        "contextlib",
-        "logging",
-        "sqlite3",
-        "shutil",
-        "tempfile",
-        "textwrap",
-        "argparse",
-        "ast",
-        "asyncio",
-        "copy",
-        "csv",
-        "hashlib",
-        "hmac",
-        "html",
-        "http",
-        "inspect",
-        "operator",
-        "pickle",
-        "platform",
-        "random",
-        "secrets",
-        "socket",
-        "ssl",
-        "string",
-        "struct",
-        "threading",
-        "traceback",
-        "unittest",
-        "urllib",
-        "uuid",
-        "warnings",
-        "weakref",
-        "xml",
-        "zipfile",
-        "zlib",
-        "__future__",
-        "importlib",
-        # Frequent third-party
+        # Frequent third-party. Only consulted when the repo layout is
+        # unavailable (see _module_is_internal); a readable repo answers
+        # "is this ours?" from its own directory tree instead.
         "click",
         "pytest",
         "numpy",
@@ -94,7 +53,6 @@ _STDLIB_MODULES = frozenset(
         "requests",
         "yaml",
         "toml",
-        "tomllib",
         "tomli",
         "tree_sitter",
         "tree_sitter_language_pack",
@@ -418,6 +376,7 @@ def check_laws(
     parsed: dict | None = None,
     conn=None,
     repo_root: Optional[Path] = None,
+    source_roots: Optional[frozenset[str]] = None,
 ) -> list[Violation]:
     """Run every law against the (parsed) diff and collect violations.
 
@@ -434,9 +393,17 @@ def check_laws(
     conn
         Optional DB connection. Used by co-change checks (stub for v1).
     repo_root
-        Optional repo root. Used by testing law when scanning for sibling
-        test files inside the diff (so the gate doesn't false-positive
-        when the PR adds the test alongside the new symbol).
+        Repo being checked. Used by the import law to read the repo's
+        source layout (which prefixes are importable, which directories
+        are the repo's own) and by the testing law when scanning for
+        sibling test files inside the diff. Defaults to the current
+        working directory — ``roam laws check`` runs inside the repo it
+        checks, and an import law read against the wrong layout is worse
+        than one read against none.
+    source_roots
+        Pre-computed source roots, bypassing detection. Mainly for
+        callers that already know the layout (and for tests that want a
+        layout independent of the filesystem).
     """
     if parsed is None:
         if diff is None:
@@ -444,6 +411,8 @@ def check_laws(
         parsed = parse_added(diff)
 
     syms_added = added_symbols(parsed)
+    root = repo_root if repo_root is not None else Path.cwd()
+    roots = source_roots if source_roots is not None else detect_source_roots(root)
 
     violations: list[Violation] = []
     for law in laws:
@@ -451,7 +420,7 @@ def check_laws(
         if rkind == "naming":
             violations.extend(_check_naming_law(law, syms_added))
         elif rkind == "import":
-            violations.extend(_check_import_law(law, parsed))
+            violations.extend(_check_import_law(law, parsed, roots, root))
         elif rkind == "testing":
             violations.extend(_check_testing_law(law, parsed, syms_added))
         elif rkind == "errors":
@@ -512,36 +481,63 @@ def _check_naming_law(law: Law, syms_added: list[dict]) -> list[Violation]:
     return violations
 
 
-def _check_import_law(law: Law, parsed: dict) -> list[Violation]:
+def _check_import_law(
+    law: Law,
+    parsed: dict,
+    source_roots: frozenset[str] = frozenset(),
+    repo_root: Optional[Path] = None,
+) -> list[Violation]:
     """Flag new imports that violate the (from_dir, to_dir) law.
 
     Specifically: when a file inside ``from_dir`` adds an import whose
-    resolved-target path lives **outside** the allowed ``to_dir`` (and
-    is itself another repo-internal directory), we flag it.
+    target lives **outside** the allowed ``to_dir`` (and is itself
+    another repo-internal namespace), we flag it.
+
+    Both sides are compared in the import namespace (W1439). The law's
+    buckets arrive as directories and are normalised through
+    :func:`~roam.laws.namespace.strip_source_root`, which also rescues
+    laws mined by an older roam that recorded raw file paths
+    (``src/roam``): they now name the same thing an import statement
+    names (``roam``). Without that, under a ``src/`` layout the two
+    namespaces never intersect, and the checker flags every conventional
+    internal import while clearing ``from src.roam...`` — the one
+    spelling that cannot resolve at runtime.
 
     The check is intentionally narrow: we only flag *new* imports
     added in the diff; we don't try to validate the entire transitive
     closure. Cheap, deterministic, agent-friendly.
     """
     rule = law.rule or {}
-    from_dir = rule.get("from_dir") or ""
-    to_dir = rule.get("to_dir") or ""
-    if not from_dir:
+    from_ns = strip_source_root(rule.get("from_dir") or "", source_roots)
+    to_ns = strip_source_root(rule.get("to_dir") or "", source_roots)
+    if not from_ns:
         return []
 
     violations: list[Violation] = []
-    for source_path, import_line in _iter_imports_that_can_break_boundary_law(parsed, from_dir):
-        violation = _violation_when_import_breaks_allowed_bucket(law, source_path, import_line, from_dir, to_dir)
+    for source_path, import_line in _iter_imports_that_can_break_boundary_law(parsed, from_ns, source_roots):
+        violation = _violation_when_import_breaks_allowed_bucket(
+            law, source_path, import_line, from_ns, to_ns, source_roots, repo_root
+        )
         if violation:
             violations.append(violation)
     return violations
 
 
-def _iter_imports_that_can_break_boundary_law(parsed: dict, from_dir: str) -> Iterator[tuple[str, str]]:
-    """Yield added imports from files governed by the import-boundary law."""
+def _iter_imports_that_can_break_boundary_law(
+    parsed: dict,
+    from_ns: str,
+    source_roots: frozenset[str] = frozenset(),
+) -> Iterator[tuple[str, str]]:
+    """Yield added imports from files governed by the import-boundary law.
+
+    Governance is decided in the import namespace, so a law that says
+    ``roam`` still governs the file the index stores as
+    ``src/roam/commands/foo.py``. The *raw* path is what gets yielded —
+    a violation has to point at a path the reader can open.
+    """
     for path, entry in parsed.get("files", {}).items():
         norm = path.replace("\\", "/")
-        if not norm.startswith(from_dir + "/"):
+        if not namespace_contains(from_ns, strip_source_root(norm, source_roots)):
             continue
         for import_line in entry["added_imports"]:
             yield norm, import_line
@@ -551,26 +547,31 @@ def _violation_when_import_breaks_allowed_bucket(
     law: Law,
     source_path: str,
     import_line: str,
-    from_dir: str,
-    to_dir: str,
+    from_ns: str,
+    to_ns: str,
+    source_roots: frozenset[str] = frozenset(),
+    repo_root: Optional[Path] = None,
 ) -> Violation | None:
-    """Return a violation only for new internal imports outside the law bucket."""
-    target = _resolve_import_target(import_line)
+    """Return a violation only for new internal imports outside the law's namespace."""
+    target = _import_target_namespace(source_path, import_line, source_roots)
     if not target:
         return None
 
-    # Skip stdlib / 3rd-party imports: the law only applies to internal
-    # cross-directory traffic.
-    top_module = target.replace("\\", "/").split("/", 1)[0]
-    if top_module in _STDLIB_MODULES:
+    # Only internal cross-namespace traffic is governed. Stdlib and
+    # third-party imports are nobody's layering violation.
+    top_module = target.split("/", 1)[0]
+    if not _module_is_internal(top_module, repo_root, source_roots):
+        return None
+
+    # Containment, not equality: the law names a directory (``roam``)
+    # while the import names a module inside it (``roam/db/connection``).
+    if namespace_contains(from_ns, target):
+        return None  # same namespace — never a cross-boundary import
+    if to_ns and namespace_contains(to_ns, target):
         return None
 
     target_bucket = _path_bucket(target)
     if not target_bucket:
-        return None
-    if target_bucket == from_dir:
-        return None
-    if to_dir and target_bucket == to_dir:
         return None
 
     return Violation(
@@ -578,16 +579,114 @@ def _violation_when_import_breaks_allowed_bucket(
         kind="import",
         severity=law.severity,
         confidence=law.confidence,
-        message=(f"{source_path} imports from {target_bucket}/ — law requires imports from {to_dir}/"),
+        message=(f"{source_path} imports from {target_bucket}/ — law requires imports from {to_ns}/"),
         file=source_path,
         line=0,
         evidence={
             "import_line": import_line,
-            "from_dir": from_dir,
-            "to_dir": to_dir,
+            "from_dir": from_ns,
+            "to_dir": to_ns,
             "actual_target_dir": target_bucket,
         },
     )
+
+
+def _import_target_namespace(source_path: str, import_line: str, source_roots: frozenset[str]) -> str:
+    """Return what *import_line* names, in the import namespace.
+
+    An absolute import already names the import namespace
+    (``roam.db.connection`` -> ``roam/db/connection``). A *relative*
+    import names a location instead, so it is resolved against the
+    importing file's own directory and then re-expressed — otherwise
+    ``from .helpers import x`` reads as a top-level package ``helpers``
+    and every relative import in the repo becomes a layering violation.
+    """
+    relative = _relative_import_target(source_path, import_line)
+    if relative is not None:
+        return strip_source_root(relative, source_roots)
+    return _resolve_import_target(import_line).replace("\\", "/").strip("/")
+
+
+def _relative_import_target(source_path: str, import_line: str) -> Optional[str]:
+    """Resolve a relative import to a repo path, or None if it isn't one."""
+    stripped = import_line.strip()
+    base = source_path.rpartition("/")[0]
+
+    m = _PY_RELATIVE_IMPORT_RE.match(stripped)
+    if m:
+        dots, tail = m.group(1), m.group(2)
+        # One dot is the current package; each extra dot climbs one level.
+        for _ in range(len(dots) - 1):
+            base = base.rpartition("/")[0]
+        return "/".join(p for p in (base, tail.replace(".", "/")) if p)
+
+    m = _JS_RELATIVE_IMPORT_RE.match(stripped)
+    if m:
+        return posixpath.normpath(posixpath.join(base, m.group(1))).replace("\\", "/")
+    return None
+
+
+def _module_is_internal(top_module: str, repo_root: Optional[Path], source_roots: frozenset[str]) -> bool:
+    """Return True when *top_module* names something this repo owns.
+
+    Asks the repo, not a hand-maintained list: a top-level import is
+    internal when the checkout actually contains a directory or module
+    of that name, at the repo root or under one of its source roots.
+    That is the same question the miner answered from the index, and it
+    is why a newly-used stdlib or third-party module can no longer
+    become a false positive just by not having been listed yet.
+
+    Falls back to the name allowlist when the repo is unreadable, which
+    preserves the pre-W1439 conservative default (unknown -> internal).
+    """
+    if not top_module:
+        return False
+    if top_module in _STDLIB_MODULES:
+        return False
+    if repo_root is None:
+        return True
+    return _repo_owns_namespace(str(repo_root), top_module, source_roots)
+
+
+@lru_cache(maxsize=2048)
+def _repo_owns_namespace(repo_root: str, top_module: str, source_roots: frozenset[str]) -> bool:
+    """Does *repo_root* contain a package/module named *top_module*?
+
+    Cached: a diff repeats the same handful of top-level module names on
+    every import line, and the answer cannot change mid-run.
+    """
+    root = Path(repo_root)
+    for base in ("", *sorted(source_roots)):
+        parent = root / base if base else root
+        try:
+            if (parent / top_module).is_dir():
+                return True
+            if any((parent / f"{top_module}{ext}").is_file() for ext in _MODULE_FILE_EXTENSIONS):
+                return True
+        except OSError:
+            return True  # unreadable checkout — stay conservative
+    return False
+
+
+# Extensions consulted when asking "is this top-level name something this checkout
+# owns?", used to distinguish a first-party module from a third-party package.
+#
+# 7 entries, covering the languages whose imports the two relative-import regexes
+# below can actually parse: Python (.py/.pyi) and the JS/TS family (.js/.ts/.jsx/
+# .tsx), plus .go. Adding an extension here without a matching import parser is
+# inert — the checker would recognise the file as ours but never see an import
+# statement naming it.
+#
+# W1440: this ownership probe replaced a hand-maintained third-party allowlist and
+# closed 1 of the 4 false-positive classes measured in the src-layout defect —
+# 47 violations raised / 0 true positives before the fix, 1 raised / 1 true after,
+# over the same 29 non-merge commits.
+_MODULE_FILE_EXTENSIONS = (".py", ".pyi", ".js", ".ts", ".jsx", ".tsx", ".go")
+
+_PY_RELATIVE_IMPORT_RE = re.compile(r"^from\s+(\.+)([\w\.]*)\s+import\b")
+_JS_RELATIVE_IMPORT_RE = re.compile(
+    r"""^(?:import\s+.*?from\s+|import\s+|(?:const|let|var)\s+.*?=\s*require\()['"](\.{1,2}/[^'"]+)['"]"""
+)
 
 
 def _resolve_import_target(import_line: str) -> str:
@@ -613,25 +712,23 @@ def _resolve_import_target(import_line: str) -> str:
 
 
 def _path_bucket(path: str) -> str:
-    """Top-two-directory-segment bucket (mirrors :func:`miner._import_bucket`).
+    """Name the namespace an offending import landed in, for the message.
 
-    Drops the basename so paths inside the same directory collapse to
-    one bucket. Import targets resolved from source — e.g. the dotted
-    module ``src.db.users`` returned by :func:`_resolve_import_target`
-    as ``src/db/users`` — also get their last segment trimmed so the
-    target bucket matches the miner's law.
+    Reporting only — the conform / violate decision is made by
+    :func:`~roam.laws.namespace.namespace_contains` against the whole
+    target, never against this truncation. Trimming the module's own
+    last segment (``roam/db/connection`` -> ``roam/db``) keeps the
+    message at directory granularity, which is the granularity the law
+    is stated in.
     """
     if not path:
         return ""
-    norm = path.replace("\\", "/").lstrip("./")
+    norm = normalize_path(path)
     parts = norm.split("/")
     dirs = parts[:-1]
     if not dirs:
-        # No directory part. Treat the single segment as its own bucket
-        # so a top-level import (``from foo import bar``) still resolves
-        # to ``foo``. We're matching against the miner here — the miner
-        # only emits laws when a real directory dominates, so this
-        # branch is mostly for synthetic test diffs.
+        # A bare top-level import (``import roam``): the module is its
+        # own namespace.
         return parts[0]
     return "/".join(dirs[:2])
 
