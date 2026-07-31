@@ -347,8 +347,13 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     ensure_index()
+    # W1439: mining declines to emit naming laws for symbol kinds the diff
+    # checker cannot observe (a law that can never fire is worse than no
+    # law — it inflates the enforced count). Collect what was dropped so
+    # the shorter list comes with a reason attached.
+    mine_diagnostics: dict = {}
     with open_db(readonly=not persist) as conn:
-        laws = mine_laws(conn, top=top)
+        laws = mine_laws(conn, top=top, diagnostics=mine_diagnostics)
 
         if min_confidence:
             # W596: canonical confidence-LEVEL rank — higher = more confident.
@@ -458,6 +463,16 @@ def laws_mine(ctx, top, min_confidence, out_path, persist):
         }
     if out_msg:
         summary["written_to"] = str(out_path)
+
+    skipped_kinds = mine_diagnostics.get("skipped_naming_kinds") or []
+    if skipped_kinds:
+        # Not a failure — a disclosed omission. These kinds had a dominant
+        # style but no way to be checked against a diff, so they are
+        # described here rather than shipped as laws that silently pass.
+        summary["skipped_naming_kinds"] = skipped_kinds
+        summary["skipped_reason"] = (
+            "the diff checker cannot observe these symbol kinds, so a law over them could never fire"
+        )
 
     envelope = json_envelope(
         "laws-mine",
