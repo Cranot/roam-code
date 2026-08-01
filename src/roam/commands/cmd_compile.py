@@ -201,11 +201,24 @@ def _emit_short_task(task: str, json_mode: bool) -> None:
             )
         )
         return
-    # Stdout, not stderr: a short task is a RESULT (partial_success in the JSON
-    # shape), and downstream harnesses treat any stderr as failure — stoa's
-    # trusted runner killed every conversational Compiler·Codex turn ("say hi")
-    # because this one advisory line landed on stderr while exit stayed 0.
-    click.echo(f"VERDICT: task_too_short\n  {msg}")
+    # A short task is a RESULT, and harness consumers (stoa's trusted runner)
+    # only accept the stable envelope grammar on a clean stdout. The old
+    # two-line stderr advisory failed both properties at once, which killed
+    # every conversational Compiler·Codex turn ("say hi"). Emit a real minimal
+    # envelope instead: classified procedure, facts artifact, and
+    # injection_advice skip_task_too_short — deployed hooks already honor any
+    # startswith("skip") advice, and the parser ignores the trailing note line.
+    from roam.plan.compiler import _classifier_confidence, _classify
+
+    proc, _ = _classify(task)
+    conf = _classifier_confidence(task, proc)
+    click.echo(f"VERDICT: facts_envelope for {proc}")
+    click.echo(f"task:              {task.strip()[:200]}")
+    click.echo(f"procedure:         {proc}")
+    click.echo("artifact_type:     facts")
+    click.echo("injection_advice:  skip_task_too_short")
+    click.echo(f"classifier_conf:   {conf}")
+    click.echo(f"note: {msg}")
 
 
 def _emit_brief(task: str, json_mode: bool) -> None:
