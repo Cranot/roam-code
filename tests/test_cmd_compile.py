@@ -354,3 +354,102 @@ def test_compile_checklist_static_and_may_be_empty(runner):
     # note states it is static and NOT live — does not over-promise
     assert "static" in block["note"].lower() and "not" in block["note"].lower()
     assert isinstance(block["checks"], list)  # empty is valid for structural_coupling
+
+
+# --------------------------------------------------------------------------
+# Phased execution contract — implementation-class procedures only.
+# Membership = the compiler's edit-context class (work product is edited
+# code: synthesis_query / stack_trace_fix / refactor_move), never queries.
+# --------------------------------------------------------------------------
+
+from roam.plan.compiler import EXECUTION_CONTRACT  # noqa: E402
+
+
+def test_compile_implementation_task_carries_execution_contract_json(runner):
+    """synthesis_query (work product = edited code) gets the five phased
+    obligations as a top-level `execution_contract` array on the envelope."""
+    result = runner.invoke(cli, ["--json", "compile", "add a logout button to the settings page"])
+    assert result.exit_code == 0
+    envelope = json.loads(result.output)
+    assert envelope["summary"]["procedure"] == "synthesis_query"
+    contract = envelope["execution_contract"]
+    assert contract == list(EXECUTION_CONTRACT)
+    # the five obligations survive any wording tightening
+    assert len(contract) == 5
+    joined = " ".join(contract)
+    for obligation in ("PLAN first", "IMPLEMENT in phases", "PROVE it", "RECHECK", "run for real"):
+        assert obligation in joined
+
+
+def test_compile_implementation_task_carries_execution_contract_text(runner):
+    """Text mode appends the contract as plain lines AFTER the header block."""
+    result = runner.invoke(cli, ["compile", "add a logout button to the settings page"])
+    assert result.exit_code == 0
+    assert "execution_contract:" in result.output
+    for line in EXECUTION_CONTRACT:
+        assert line in result.output
+    # appended after the stable headers, never interleaved among them
+    assert result.output.index("classifier_conf:") < result.output.index("execution_contract:")
+
+
+def test_compile_edit_intent_phrasing_carries_contract(runner):
+    """Natural edit phrasings that classify as freeform still carry the
+    contract: membership is the compiler's FULL edit signal (procedure set
+    union edit-intent task text), not the procedure half alone. The review
+    that forced this found "refactor the auth module" classifying as
+    freeform_explore and silently losing its obligations."""
+    result = runner.invoke(cli, ["--json", "compile", "refactor the auth module to use the new session store"])
+    assert result.exit_code == 0
+    envelope = json.loads(result.output)
+    assert envelope.get("execution_contract") == list(EXECUTION_CONTRACT)
+
+
+def test_compile_contract_survives_json_budget_truncation(runner, monkeypatch):
+    """A tight JSON budget must not silently convert an implementation
+    envelope into a query-shaped one: `execution_contract` is in the
+    formatter's preserved set, so truncation drops payload lists, never
+    the obligations. (Empirically, before the fix, ROAM_DEFAULT_JSON_BUDGET=300
+    produced summary.truncated=True with the contract deleted.)"""
+    monkeypatch.setenv("ROAM_DEFAULT_JSON_BUDGET", "300")
+    result = runner.invoke(cli, ["--json", "compile", "add a logout button to the settings page"])
+    assert result.exit_code == 0
+    envelope = json.loads(result.output)
+    assert envelope.get("execution_contract") == list(EXECUTION_CONTRACT)
+
+
+def test_compile_query_task_has_no_execution_contract(runner):
+    """Read-only/query procedures must NOT get the contract — an execution
+    contract on a question is noise. Absent, not empty, in both modes."""
+    text = runner.invoke(cli, ["compile", "Find files coupled to src/roam/cli.py"])
+    assert text.exit_code == 0
+    assert "execution_contract" not in text.output
+    js = runner.invoke(cli, ["--json", "compile", "Find files coupled to src/roam/cli.py"])
+    assert js.exit_code == 0
+    assert "execution_contract" not in json.loads(js.output)
+
+
+def test_compile_contract_leaves_stable_header_block_parseable(runner):
+    """The VERDICT/task/procedure/artifact_type/classifier_conf grammar is
+    intact ahead of the appended contract (downstream parsers read headers
+    first and ignore unknown lines)."""
+    result = runner.invoke(cli, ["compile", "add a logout button to the settings page"])
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    assert lines[0].startswith("VERDICT:")
+    headers = {}
+    for line in lines[1:]:
+        if line.startswith(" ") or ":" not in line:
+            continue  # contract body / prose lines — parsers skip these
+        key, _, value = line.partition(":")
+        headers.setdefault(key.strip(), value.strip())
+    for key in ("task", "procedure", "artifact_type", "classifier_conf"):
+        assert headers.get(key)  # present with a non-empty value
+    assert headers["procedure"] == "synthesis_query"
+
+
+def test_compile_short_task_skip_envelope_has_no_contract(runner):
+    """`say hi` still yields the task_too_short skip envelope, contract-free."""
+    result = runner.invoke(cli, ["compile", "say hi"])
+    assert result.exit_code == 0
+    assert "skip_task_too_short" in result.output
+    assert "execution_contract" not in result.output
