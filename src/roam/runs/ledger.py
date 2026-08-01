@@ -26,8 +26,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -418,26 +421,104 @@ def log_event(repo_root: Path, run_id: str, **event_fields) -> int:
     # Count existing lines to assign the next seq. For substrate-scale
     # event volumes (hundreds-thousands per run) a full read is fine; if
     # this becomes a hotspot, persist the seq in meta.json.
-    seq = _count_events(events_path) + 1
+    # The whole count -> sign -> append sequence is one read-modify-write:
+    # two concurrent writers that both read the same chain tip would mint
+    # duplicate seqs and fork the HMAC chain, which verify_chain then
+    # reports as tampering on a perfectly honest race (the MCP server runs
+    # several tools in flight against one repo). Serialize it across
+    # processes, and fsync before returning so an acknowledged seq cannot
+    # be lost by a crash while still buffered.
+    with _events_write_lock(events_path):
+        seq = _count_events(events_path) + 1
 
-    event = dict(event_fields)
-    event.setdefault("ts", _utc_now_iso())
-    event["seq"] = seq
+        event = dict(event_fields)
+        event.setdefault("ts", _utc_now_iso())
+        event["seq"] = seq
 
-    prev_sig = _last_event_signature(events_path)
-    # Keep the ledger boundary narrow: this file only supplies the previous
-    # chain tip and event bytes, while signing.py owns key materialisation,
-    # the seed constant, and the HMAC chain math.
-    from roam.runs.signing import sign_event
+        prev_sig = _last_event_signature(events_path)
+        # Keep the ledger boundary narrow: this file only supplies the previous
+        # chain tip and event bytes, while signing.py owns key materialisation,
+        # the seed constant, and the HMAC chain math.
+        from roam.runs.signing import sign_event
 
-    signature = sign_event(repo_root, prev_sig, event)
-    if signature is not None:
-        event["signature"] = signature
+        signature = sign_event(repo_root, prev_sig, event)
+        if signature is not None:
+            event["signature"] = signature
 
-    line = json.dumps(event, ensure_ascii=False, sort_keys=True)
-    with events_path.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
+        line = json.dumps(event, ensure_ascii=False, sort_keys=True)
+        with events_path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
     return seq
+
+
+# Lock acquisition mirrors guard_log's portable pattern (msvcrt on Windows,
+# fcntl elsewhere) against a sentinel beside the events file; the critical
+# section is sub-millisecond, so a bounded retry loop is plenty.
+_EVENTS_LOCK_TIMEOUT_SECONDS = 10.0
+_EVENTS_LOCK_RETRY_SECONDS = 0.02
+
+
+@contextmanager
+def _events_write_lock(events_path: Path):
+    """Serialize ``log_event``'s read-modify-write across processes.
+
+    Uses a ``<events>.lock`` sentinel rather than locking ``events.jsonl``
+    itself: the Windows region lock needs a byte to lock, and seeding one
+    into the ledger would corrupt the JSONL stream.
+    """
+    lock_path = events_path.with_name(events_path.name + ".lock")
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        if os.fstat(fd).st_size == 0:
+            os.write(fd, b"\0")
+        deadline = time.monotonic() + _EVENTS_LOCK_TIMEOUT_SECONDS
+        while not _try_lock_fd(fd):
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out acquiring run-ledger write lock: {lock_path}")
+            time.sleep(_EVENTS_LOCK_RETRY_SECONDS)
+        try:
+            yield
+        finally:
+            _unlock_fd(fd)
+    finally:
+        os.close(fd)
+
+
+def _try_lock_fd(fd: int) -> bool:
+    """One non-blocking exclusive-lock attempt; True when acquired."""
+    if os.name == "nt":
+        import msvcrt
+
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
+def _unlock_fd(fd: int) -> None:
+    """Release the OS-level lock; closing the descriptor is the backstop."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def _last_event_signature(events_path: Path) -> Optional[str]:
