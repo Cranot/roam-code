@@ -102,6 +102,12 @@ _VOLATILE_COMMANDS = {"diff", "pr-risk", "pr-diff", "affected", "affected-tests"
 # Truncating these lists makes their count headlines internally inconsistent.
 _DEFAULT_BUDGET_EXEMPT_COMMANDS = {"surface"}
 
+# Side-car envelopes are an auto-collect cache, not the authoritative command
+# response.  Bound exceptional payloads at 256 KiB while leaving the ordinary
+# corpus byte-identical.  The cap is byte-based (the storage pressure is bytes,
+# not file count) and may be tuned or disabled for controlled environments.
+_DEFAULT_RESPONSE_STORE_MAX_BYTES = 256 * 1024
+
 # Commands whose envelopes should NOT be written to .roam/responses/ even when
 # ROAM_RUN_ID is set. These either log the act of logging (creating feedback
 # loops) or own the responses directory themselves (pr-bundle auto-collect
@@ -663,6 +669,14 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
         "version",
         "project",
         "_meta",
+        # Schema/lineage blocks used by bridge-aware consumers.  They are
+        # normally small, but must never disappear merely because a sibling
+        # payload list exceeded a budget.
+        "bridges",
+        "links",
+        "warnings_out",
+        "errors",
+        "redactions",
         # Contract blocks, not payload — both are small and fixed-shape, so
         # preserving them cannot be what blows a budget:
         #   * ``attestation`` (~450 tokens) carries the ``stale_if`` freshness
@@ -677,6 +691,12 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
         #     the inconsistency between the two.
         "attestation",
         "agent_contract",
+        #   * ``execution_contract`` (~150 tokens, fixed five lines) is the
+        #     phased-work obligation block on edit-context compile envelopes.
+        #     Truncation deleting it silently converts an implementation
+        #     envelope into a query-shaped one — the exact undisclosed-
+        #     truncation defect this preserved set exists to prevent.
+        "execution_contract",
     }
 
     result = _copy_envelope_mutable(data)
@@ -1222,6 +1242,66 @@ def _has_active_bundle(repo_root) -> bool:
         return False
 
 
+def _response_store_max_bytes() -> int:
+    """Resolve the byte cap for persisted side-car envelopes (0 disables)."""
+    raw = (os.environ.get("ROAM_RESPONSE_STORE_MAX_BYTES") or "").strip()
+    if raw.lstrip("-").isdigit():
+        return max(0, int(raw))
+    return _DEFAULT_RESPONSE_STORE_MAX_BYTES
+
+
+def _serialized_response(envelope: dict) -> str:
+    return _json.dumps(envelope, indent=2, default=str)
+
+
+def _cap_response_store_envelope(envelope: dict, max_bytes: int) -> tuple[dict, str]:
+    """Return the disclosed, byte-bounded representation written to disk.
+
+    The command's returned envelope remains complete.  Only the auto-collect
+    side-car is bounded, and its own summary says exactly what was omitted.
+    """
+    full_text = _serialized_response(envelope)
+    full_bytes = len(full_text.encode("utf-8"))
+    if max_bytes <= 0 or full_bytes <= max_bytes:
+        return envelope, full_text
+
+    # budget_truncate_json preserves the envelope/contract blocks and already
+    # stamps the canonical partial-success + truncation-reason disclosure.  Its
+    # budget is character-based, so tighten it until the actual UTF-8 bytes fit.
+    budget = max(1, max_bytes // _CHARS_PER_TOKEN)
+    capped = envelope
+    capped_text = full_text
+    while True:
+        capped = budget_truncate_json(envelope, budget)
+        summary = capped.get("summary")
+        if isinstance(summary, dict):
+            summary["response_store"] = {
+                "payload_truncated": True,
+                "max_bytes": max_bytes,
+                "original_bytes": full_bytes,
+            }
+        capped_text = _serialized_response(capped)
+        capped_bytes = len(capped_text.encode("utf-8"))
+        if capped_bytes <= max_bytes or budget == 1:
+            break
+        next_budget = max(1, int(budget * max_bytes / capped_bytes) - 1)
+        budget = next_budget if next_budget < budget else budget - 1
+
+    summary = capped.get("summary")
+    if isinstance(summary, dict) and isinstance(summary.get("response_store"), dict):
+        summary["response_store"]["stored_bytes"] = len(capped_text.encode("utf-8"))
+        capped_text = _serialized_response(capped)
+        # The stored_bytes field can change its own digit count once.  Iterate
+        # to a fixed point so the disclosed number equals the actual file.
+        for _attempt in range(2):
+            actual_bytes = len(capped_text.encode("utf-8"))
+            if summary["response_store"]["stored_bytes"] == actual_bytes:
+                break
+            summary["response_store"]["stored_bytes"] = actual_bytes
+            capped_text = _serialized_response(capped)
+    return capped, capped_text
+
+
 def _write_response_to_responses_dir(envelope: dict) -> None:
     """Write *envelope* to ``.roam/responses/<sha>.json`` when an agent is active.
 
@@ -1298,8 +1378,11 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
         # Sanitise command for filename use (slashes / spaces would be odd
         # but we have e.g. "pr-bundle-emit" already — slugify defensively).
         safe_cmd = "".join(c if (c.isalnum() or c in "-_") else "_" for c in command)
-        out_path = responses_dir / f"{safe_cmd}_{h}.json"
-        out_path.write_text(_json.dumps(envelope, indent=2, default=str), encoding="utf-8")
+        filename = f"{safe_cmd}_{h}.json"
+        _, stored_text = _cap_response_store_envelope(envelope, _response_store_max_bytes())
+        from roam.response_store import store_response_text
+
+        store_response_text(repo_root, filename, stored_text)
     except (OSError, TypeError, ValueError):
         # Best-effort side-car persistence: filesystem failures and odd payload
         # serialization shapes should not break the parent command.
@@ -1534,9 +1617,10 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     # (W15.2 followup: bundle existence is now a sufficient trigger so the
     # natural ``pr-bundle init → preflight → pr-bundle emit --auto-collect``
     # workflow no longer requires threading ROAM_RUN_ID through). Silent no-op
-    # otherwise. Writes the full untruncated envelope so downstream auto-collect
-    # sees complete fields. Wrapped in try/except inside the helper — must
-    # NEVER break envelope generation.
+    # otherwise. Ordinary envelopes are stored in full; exceptional payloads
+    # are byte-capped with truncation disclosure inside the stored envelope.
+    # Wrapped in try/except inside the helper — must NEVER break envelope
+    # generation.
     _write_response_to_responses_dir(out)
     return _apply_envelope_budget(_project_if_requested(out), budget)
 

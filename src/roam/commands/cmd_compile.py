@@ -35,6 +35,7 @@ from roam.plan.calibration import get_profile
 from roam.plan.compiler import (
     compile_for_artifact,
     compile_plan,
+    execution_contract_for,
     injection_advice,
     route_for_plan,
 )
@@ -482,6 +483,11 @@ def _build_compile_json_envelope(
     task: str, plan, env: dict, art_label: str, verify_hint: str | None, next_evidence: dict
 ) -> dict:
     next_commands = _next_commands_for_compile(verify_hint)
+    # Phased execution contract — implementation-class procedures only (work
+    # product = edited code). Query envelopes carry no key at all: absent, not
+    # empty, so downstream consumers key on presence.
+    contract = execution_contract_for(plan.procedure, task)
+    extra: dict = {"execution_contract": list(contract)} if contract else {}
     return json_envelope(
         "compile",
         summary={
@@ -511,6 +517,7 @@ def _build_compile_json_envelope(
             "confidence": plan.plan_quality,
         },
         artifact=env,
+        **extra,
     )
 
 
@@ -575,6 +582,16 @@ def _emit_text_compile(
     if next_hint:
         click.echo(f"next_evidence:     {next_hint}")
     click.echo(f"model_calls_avoided: {plan.model_calls_avoided}")
+    # Phased execution contract — implementation-class procedures only.
+    # Appended AFTER the stable header block as plain lines: harness
+    # consumers (stoa's trusted runner) parse headers first and ignore
+    # unknown lines, so this adds obligations without touching the
+    # envelope grammar.
+    contract = execution_contract_for(plan.procedure, task)
+    if contract:
+        click.echo("execution_contract:")
+        for line in contract:
+            click.echo(f"  {line}")
 
 
 @click.command()

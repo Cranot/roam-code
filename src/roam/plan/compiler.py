@@ -8849,6 +8849,41 @@ def _is_edit_context(task: str | None, procedure: str | None) -> bool:
     return bool(task and _EDIT_INTENT_RE.search(task))
 
 
+# ---- phased execution contract (implementation-class procedures) ----------
+# The owner's rule: an agent receiving an implementation task must not land
+# it in one pass. Membership is decided by what the procedure's work product
+# IS — edited code — not by name-matching: `_EDIT_CONTEXT_PROCEDURES` above
+# is the compiler's existing "this envelope precedes an EDIT" class, and the
+# contract now uses the FULL signal `_is_edit_context` (procedure set UNION
+# edit-intent task text) — the same signal that already gates edit-probe
+# injection. Using only the procedure half left natural phrasings uncovered
+# ("refactor the auth module" classifies freeform_explore) while the compiler
+# itself treated them as edits. Known trade: `_EDIT_INTENT_RE` matches verbs
+# like "optimize", so a perf QUERY phrased imperatively carries the contract —
+# five harmless lines there, versus silently absent obligations on real
+# refactors the other way. Read-only phrasings of query procedures never
+# carry it — an execution contract on a question is noise.
+EXECUTION_CONTRACT: tuple[str, ...] = (
+    "1. PLAN first: name the files you will touch and the phases of the change before editing anything.",
+    "2. IMPLEMENT in phases, not one pass; keep each phase coherent and verifiable.",
+    "3. PROVE it: run the tests for the touched area (and the project's build/lint gate if one exists); "
+    "show output, never claim green without it.",
+    "4. RECHECK: one fresh-eyes pass over the full diff before declaring done — review passes routinely surface fixes.",
+    "5. Done means run for real: demonstrate the change working on real data/paths, not just compiling.",
+)
+
+
+def execution_contract_for(procedure: str, task: str | None = None) -> tuple[str, ...]:
+    """The phased-work obligations an edit-context envelope carries.
+
+    Returns ``EXECUTION_CONTRACT`` when this envelope precedes an EDIT —
+    judged by ``_is_edit_context``, the compiler's own signal (procedure
+    class union edit-intent task text), the same one that gates edit-probe
+    injection. Query/read-only envelopes must NOT mandate phased edits.
+    """
+    return EXECUTION_CONTRACT if _is_edit_context(task, procedure) else ()
+
+
 def _ctx_primary_target(named_paths: list[str]) -> str | None:
     """First named path (POSIX-normalized) usable as a roam target. Cheap; no IO."""
     for p in (named_paths or [])[:2]:
