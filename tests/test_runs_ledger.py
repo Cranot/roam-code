@@ -324,3 +324,56 @@ def test_log_unknown_run_id_returns_clean_error(cli_runner, runs_project, monkey
     assert data["summary"]["logged"] is False
     assert data["summary"]["state"] == "unknown_run"
     assert data["summary"]["partial_success"] is True
+
+
+# ---------------------------------------------------------------------------
+# 9. log_event survives concurrent writers and is durable (W1440)
+# ---------------------------------------------------------------------------
+
+
+def _race_worker(args):
+    """Top-level so Windows spawn can pickle it: append M events to one run."""
+    proj_str, run_id, worker_idx, per_worker = args
+    from roam.runs.ledger import log_event as _log
+
+    seqs = []
+    for n in range(per_worker):
+        seqs.append(_log(Path(proj_str), run_id, kind="race", worker=worker_idx, n=n))
+    return seqs
+
+
+def test_log_event_concurrent_writers_unique_contiguous_seqs(runs_project):
+    """Cross-process race: the count->sign->append section must serialize.
+
+    Before the events write lock, two concurrent writers could both read
+    the same chain tip, mint duplicate seqs, and fork the HMAC chain --
+    verify_chain would then report tampering on an honest race.
+    """
+    from concurrent.futures import ProcessPoolExecutor
+
+    meta = start_run(runs_project, agent="pytest")
+    workers, per_worker = 4, 8
+    jobs = [(str(runs_project), meta.run_id, i, per_worker) for i in range(workers)]
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(_race_worker, jobs))
+
+    all_seqs = [seq for chunk in results for seq in chunk]
+    total = workers * per_worker
+    assert sorted(all_seqs) == list(range(1, total + 1)), "seqs must be unique and contiguous under concurrent writers"
+
+    # Every line parses (no torn writes) and read-back preserves seq order.
+    events = read_run_events(runs_project, meta.run_id)
+    assert [e["seq"] for e in events] == list(range(1, total + 1))
+
+
+def test_log_event_fsyncs_before_returning(runs_project, monkeypatch):
+    """An acknowledged seq must not be lossable from the OS buffer cache."""
+    import roam.runs.ledger as ledger_mod
+
+    meta = start_run(runs_project, agent="pytest")
+    synced = []
+    real_fsync = ledger_mod.os.fsync
+    monkeypatch.setattr(ledger_mod.os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd))[1])
+    seq = log_event(runs_project, meta.run_id, kind="durable")
+    assert seq == 1
+    assert synced, "log_event must fsync the events file before returning"
