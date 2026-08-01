@@ -201,7 +201,11 @@ def _emit_short_task(task: str, json_mode: bool) -> None:
             )
         )
         return
-    click.echo(f"VERDICT: task_too_short\n  {msg}", err=True)
+    # Stdout, not stderr: a short task is a RESULT (partial_success in the JSON
+    # shape), and downstream harnesses treat any stderr as failure — stoa's
+    # trusted runner killed every conversational Compiler·Codex turn ("say hi")
+    # because this one advisory line landed on stderr while exit stayed 0.
+    click.echo(f"VERDICT: task_too_short\n  {msg}")
 
 
 def _emit_brief(task: str, json_mode: bool) -> None:
