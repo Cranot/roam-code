@@ -218,7 +218,12 @@ def _extract_executed_checks(bundle: dict[str, Any]) -> list[dict[str, Any]]:
         out.append(
             {
                 "command": t.get("command") or t.get("name") or t.get("test"),
-                "status": t.get("status") or t.get("result") or "pass",
+                # W1441 — a record with no status field is a bare claim,
+                # not evidence. It used to default to "pass", which let a
+                # bundle read green without any recorded outcome
+                # (fail-open). "unverified" never satisfies a required
+                # check; see verdict._collect_blockers_that_invalidate_proof.
+                "status": t.get("status") or t.get("result") or "unverified",
                 "evidence": t.get("output") or t.get("evidence") or t.get("log"),
             }
         )

@@ -243,3 +243,53 @@ def test_compute_verdict_aggregates_redundant_reasons():
     aggregated = [r for r in v["reasons"] if r.get("code") == "required_checks_not_run"]
     assert len(aggregated) == 1
     assert aggregated[0]["count"] == 3
+
+
+# ---- W1441: status-less tests_run records are claims, not evidence ----
+
+
+def test_verdict_blocked_when_required_matched_only_by_unverified():
+    """A tests_run record with no status used to default to "pass" and
+    silently satisfy a required check by name membership (fail-open)."""
+    contract = {
+        "required": [{"command": "pytest", "kind": "test", "reason": "auth_file_changed"}],
+        "skipped": [],
+    }
+    v = compute_verdict(
+        verification_contract=contract,
+        executed_checks=[{"command": "pytest", "status": "unverified"}],
+    )
+    assert v["value"] == "blocked"
+    assert any(r["code"] == "required_check_unverified" for r in v["reasons"])
+    # And crucially: it does NOT read as satisfied.
+    assert not any(r["code"] == "all_required_passed" for r in v["reasons"])
+
+
+def test_verdict_unverified_nonrequired_does_not_block():
+    """An unverified record naming a non-required command is informational."""
+    contract = {
+        "required": [{"command": "pytest", "kind": "test", "reason": "auth_file_changed"}],
+        "skipped": [],
+    }
+    v = compute_verdict(
+        verification_contract=contract,
+        executed_checks=[
+            {"command": "pytest", "status": "pass"},
+            {"command": "ruff check", "status": "unverified"},
+        ],
+    )
+    assert v["value"] == "pass"
+
+
+def test_proof_bundle_statusless_tests_run_maps_to_unverified():
+    """The extraction seam itself: no status/result field -> unverified, never pass."""
+    from roam.proof_bundle import _extract_executed_checks
+
+    checks = _extract_executed_checks({"tests_run": [{"command": "pytest -k auth", "output": "claimed done"}]})
+    assert checks == [
+        {
+            "command": "pytest -k auth",
+            "status": "unverified",
+            "evidence": "claimed done",
+        }
+    ]
