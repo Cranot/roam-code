@@ -88,10 +88,13 @@ def compute_verdict(
             ),
             (
                 "pass_with_warnings",
-                lambda: _collect_warnings_that_keep_proof_passable(
-                    optimizer_findings=optimizer_findings,
-                    scope_findings=scope_findings,
-                    mcp_tool_findings=mcp_tool_findings,
+                lambda: (
+                    _collect_warnings_that_keep_proof_passable(
+                        optimizer_findings=optimizer_findings,
+                        scope_findings=scope_findings,
+                        mcp_tool_findings=mcp_tool_findings,
+                    )
+                    + _collect_review_coverage_warnings(review_evidence=review_evidence)
                 ),
             ),
         )
@@ -107,16 +110,28 @@ REVIEW_REQUIRED_TAGS: frozenset[str] = frozenset(
 # blocker code, and no two statuses share one. A status with no entry
 # raises rather than passing silently, so a new failure mode can never
 # become a quiet green.
+# W1445 — ``same_family`` is deliberately ABSENT from this map. Measured
+# 2026-08-02 (pre-registered, blind-judged, n=3/arm on one design with known
+# ground truth): a same-family review found the decisive architectural defect
+# 3/3 -- the same rate as cross-family -- so refusing it rejects a review that
+# demonstrably works. It IS weaker on one class (normalization-collision and
+# duplicate-key parsing: same-family 0/3, cross-family 2/3), which is why the
+# obligation still PREFERS a different family and the status is surfaced as a
+# warning. Evidence strength, stated so it can be re-opened: n=3 per arm, one
+# artifact, one judge. See docs/design/PREREGISTRATION + the E1 result.
 _REVIEW_STATUS_BLOCKERS: dict[str, str] = {
     "receipt_missing": "review_receipt_missing",
     "receipt_malformed": "review_receipt_malformed",
     "wrong_phase": "review_wrong_phase",
     "artifact_stale": "review_artifact_stale",
-    "same_family": "cross_family_violation",
     "family_unresolved": "review_family_unresolved",
     "rejected": "review_rejected",
     "review_error": "review_errored",
 }
+
+# Statuses that are valid outcomes rather than gate failures.
+# ``same_family`` is here on measured evidence (W1445), not by default.
+_NON_BLOCKING_STATUSES: frozenset[str] = frozenset({"declared_accepted", "same_family"})
 
 # The phase was never attempted at all -- distinct from "a receipt exists
 # but is missing/unreadable", which is `review_receipt_missing`.
@@ -217,7 +232,11 @@ def _collect_review_obligation_blockers(
             )
             continue
         status = result["status"]
-        if status == "declared_accepted":
+        # Statuses that do not block. Enumerated explicitly rather than
+        # falling through, so the totality check below still fires for any
+        # genuinely new status: "not a blocker" must be a decision on the
+        # record, never an omission.
+        if status in _NON_BLOCKING_STATUSES:
             continue
         code = _REVIEW_STATUS_BLOCKERS.get(status)
         if code is None:
@@ -362,6 +381,38 @@ def _collect_review_gates_that_preserve_human_judgment(
                 }
             )
 
+    return reasons
+
+
+def _collect_review_coverage_warnings(
+    *,
+    review_evidence: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Surface a same-family review as a coverage note, not a failure.
+
+    The review is valid -- measurement puts its decisive-defect rate level
+    with cross-family. What it measurably does NOT cover is the
+    encoding/parser class. Saying so keeps the honest middle: the proof
+    passes, and the narrower coverage is on the record rather than implied
+    by silence.
+    """
+    if not isinstance(review_evidence, dict):
+        return []
+    reasons: list[dict[str, Any]] = []
+    for phase, result in review_evidence.items():
+        if isinstance(result, dict) and result.get("status") == "same_family":
+            reasons.append(
+                {
+                    "code": "review_same_family_coverage",
+                    "phase": phase,
+                    "detail": (
+                        "reviewer and builder share a model family; measured coverage is "
+                        "narrower on encoding/parser defects (normalization collisions, "
+                        "duplicate-key parsing)"
+                    ),
+                    "suggested_command": "for wider coverage, re-review with a different family",
+                }
+            )
     return reasons
 
 

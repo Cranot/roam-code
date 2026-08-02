@@ -244,7 +244,7 @@ def review_request_cmd(phase: str, artifact: str, json_mode: bool) -> None:
 @click.option("--phase", required=True, help="1b (plan critique) or 4b (done verdict).")
 @click.option("--artifact", required=True, help="File that was reviewed.")
 @click.option("--builder-family", required=True, help="Family that AUTHORED the artifact.")
-@click.option("--reviewer-family", required=True, help="Family that REVIEWED it; must differ.")
+@click.option("--reviewer-family", required=True, help="Family that REVIEWED it; a different family covers more.")
 @click.option("--decision", required=True, help="accept | revise | reject | error.")
 @click.option(
     "--finding",
@@ -309,7 +309,11 @@ def review_accept_cmd(
         artifact_bytes=data,
         repo_root=repo_root,
     )
-    if result["status"] in ("receipt_malformed", "family_unresolved", "same_family", "wrong_phase"):
+    # W1445 — "same_family" is NOT in this refusal set. Measured: a same-family
+    # review finds the decisive defect at the cross-family rate; refusing to
+    # record it would discard a working review. It is surfaced as a coverage
+    # warning by the verdict instead.
+    if result["status"] in ("receipt_malformed", "family_unresolved", "wrong_phase"):
         out_path.unlink(missing_ok=True)
         raise click.ClickException(
             f"refusing to write a receipt the verifier rejects: {result['status']} — {result['reason']}"
@@ -328,8 +332,10 @@ def review_accept_cmd(
                         "artifact_sha256": digest,
                         "blocking_findings": result["derived"].get("blocking_findings_count", 0),
                         # A recorded negative review is a SUCCESSFUL recording of
-                        # a negative outcome, not a failed command.
-                        "partial_success": result["status"] != "declared_accepted",
+                        # a negative outcome, not a failed command. same_family
+                        # is a passing outcome with a coverage note, so it is
+                        # not partial either.
+                        "partial_success": result["status"] not in ("declared_accepted", "same_family"),
                     },
                     verification=result,
                 )
@@ -340,6 +346,9 @@ def review_accept_cmd(
     click.echo(f"receipt: {out_path.relative_to(repo_root)}")
     click.echo(f"status:  {result['status']}")
     click.echo(f"reason:  {result['reason']}")
-    if result["status"] != "declared_accepted":
+    if result["status"] == "same_family":
+        click.echo("")
+        click.echo("Recorded. The verdict PASSES with a coverage warning — this is not a block.")
+    elif result["status"] != "declared_accepted":
         click.echo("")
         click.echo("This is recorded, not hidden — the verdict gate will read it and block.")

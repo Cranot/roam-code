@@ -341,7 +341,6 @@ def test_review_gate_passes_on_two_declared_accepts():
         ("receipt_malformed", "review_receipt_malformed"),
         ("wrong_phase", "review_wrong_phase"),
         ("artifact_stale", "review_artifact_stale"),
-        ("same_family", "cross_family_violation"),
         ("family_unresolved", "review_family_unresolved"),
         ("rejected", "review_rejected"),
         ("review_error", "review_errored"),
@@ -360,12 +359,31 @@ def test_every_verifier_status_maps_to_its_own_blocker(status, code):
     assert code in {r["code"] for r in v["reasons"]}
 
 
+def test_same_family_warns_but_does_not_block():
+    """W1445 — measured: same-family finds the decisive defect at the
+    cross-family rate, so it must not block; its narrower coverage is
+    surfaced as a warning instead of being implied by silence."""
+    v = compute_verdict(
+        verification_contract=_contract(),
+        executed_checks=_ran(),
+        review_evidence={
+            "1b_plan_critique": {"status": "same_family", "reason": "x"},
+            "4b_done_verdict": {"status": "declared_accepted"},
+        },
+    )
+    assert v["value"] == "pass_with_warnings"
+    codes = {r["code"] for r in v["reasons"]}
+    assert "review_same_family_coverage" in codes
+    assert "cross_family_violation" not in codes
+
+
 def test_status_blocker_mapping_is_total_over_the_verifier_vocabulary():
     """A new verifier status with no blocker must fail loudly, not pass."""
     from roam.review_receipt import REVIEW_STATUSES
     from roam.verdict import _REVIEW_STATUS_BLOCKERS
 
-    non_accepted = set(REVIEW_STATUSES) - {"declared_accepted"}
+    # same_family is a WARNING status (W1445), not a blocker
+    non_accepted = set(REVIEW_STATUSES) - {"declared_accepted", "same_family"}
     assert non_accepted == set(_REVIEW_STATUS_BLOCKERS)
     # one-to-one: no two statuses collapse into the same blocker
     assert len(set(_REVIEW_STATUS_BLOCKERS.values())) == len(_REVIEW_STATUS_BLOCKERS)
