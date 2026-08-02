@@ -41,36 +41,41 @@ def test_verify_declares_its_index_refresh_and_ledger_writes() -> None:
 
 
 @pytest.mark.parametrize(
-    ("tool_name", "destructive", "idempotent"),
+    ("tool_name", "destructive", "idempotent", "version"),
     [
-        ("roam_boundary", False, True),
-        ("roam_cga_emit", False, False),
-        ("roam_dogfood", False, False),
-        ("roam_evidence_oscal", False, True),
-        ("roam_fan", False, True),
-        ("roam_fingerprint", False, True),
-        ("roam_graph_diff", False, True),
-        ("roam_metrics_push", False, False),
-        ("roam_pr_analyze", False, False),
-        ("roam_stale_refs", True, False),
-        ("roam_test_hermeticity", False, True),
-        ("roam_test_scaffold", False, False),
-        ("roam_compile", False, False),
-        ("roam_trends", False, False),
-        ("roam_vuln_reach", False, True),
+        ("roam_boundary", False, True, "1.1.0"),
+        ("roam_cga_emit", False, False, "1.1.0"),
+        ("roam_dogfood", False, False, "1.1.0"),
+        ("roam_evidence_oscal", False, True, "1.1.0"),
+        ("roam_fan", False, True, "1.1.0"),
+        ("roam_fingerprint", False, True, "1.1.0"),
+        ("roam_graph_diff", False, True, "1.1.0"),
+        ("roam_metrics_push", False, False, "1.1.0"),
+        ("roam_pr_analyze", False, False, "1.1.0"),
+        ("roam_stale_refs", True, False, "1.1.0"),
+        ("roam_test_hermeticity", False, True, "1.1.0"),
+        ("roam_test_scaffold", False, False, "1.1.0"),
+        # W1442: the compile result gained the additive orchestration_contract
+        # block, so its declared tool version moved with the shape it returns.
+        ("roam_compile", False, False, "1.2.0"),
+        ("roam_trends", False, False, "1.1.0"),
+        ("roam_vuln_reach", False, True, "1.1.0"),
     ],
 )
 def test_option_dependent_write_tools_declare_maximum_effects(
     tool_name: str,
     destructive: bool,
     idempotent: bool,
+    version: str,
 ) -> None:
     """A dry-run default never understates a wrapper's callable write path."""
     meta = _TOOL_METADATA[tool_name]
     assert meta["read_only"] is False
     assert meta["destructive"] is destructive
     assert meta["idempotent"] is idempotent
-    assert meta["version"] == "1.1.0"
+    # Pinned PER TOOL, not globally: a silent version drift still fails, but
+    # a deliberate bump does not force unrelated tools to move with it.
+    assert meta["version"] == version
 
 
 def test_read_only_wrappers_over_max_effect_commands_are_closed_and_audited() -> None:

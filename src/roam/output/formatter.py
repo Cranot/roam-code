@@ -16,7 +16,7 @@ from typing import Any, Literal, Mapping, TypeAlias
 # , `roi_band` on debt items, `context_lines` on rule
 # violations + concerns (D6). All optional — pre-1.1 consumers continue
 # to work; new consumers can opt in to the richer fields.
-ENVELOPE_SCHEMA_VERSION = "1.1.0"
+ENVELOPE_SCHEMA_VERSION = "1.2.0"
 ENVELOPE_SCHEMA_NAME = "roam-envelope-v1"
 
 # Pattern-2 silent-fallback warnings accumulator type. W1043 alias for

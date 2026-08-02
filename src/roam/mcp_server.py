@@ -19559,7 +19559,7 @@ def roam_workflow(
         "Different from roam_plan (symbol-centric execution plan) -- "
         "this is the freeform-task compiler."
     ),
-    version="1.1.0",
+    version="1.2.0",
     read_only=False,
     destructive=False,
     idempotent=False,
