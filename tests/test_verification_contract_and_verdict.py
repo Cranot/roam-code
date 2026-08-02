@@ -6,6 +6,8 @@ the AgentChangeProofBundle v1 schema emission.
 
 from __future__ import annotations
 
+import pytest
+
 from roam.verdict import VERDICTS, compute_verdict, verdict_exit_code
 from roam.verification_contract import build_verification_contract
 
@@ -293,3 +295,114 @@ def test_proof_bundle_statusless_tests_run_maps_to_unverified():
             "evidence": "claimed done",
         }
     ]
+
+
+# ---- W1443: cross-family review obligations gate the verdict ----
+
+
+def _contract():
+    return {"required": [{"command": "pytest", "kind": "test", "reason": "auth_file_changed"}], "skipped": []}
+
+
+def _ran():
+    return [{"command": "pytest", "status": "pass"}]
+
+
+def test_review_gate_is_inactive_for_callers_that_do_not_opt_in():
+    """REGRESSION GUARD: every proof-bundle path that predates this gate
+    passes review_evidence=None and must NOT become blocked."""
+    v = compute_verdict(verification_contract=_contract(), executed_checks=_ran())
+    assert v["value"] == "pass"
+
+
+def test_review_gate_blocks_when_opted_in_and_evidence_absent():
+    v = compute_verdict(verification_contract=_contract(), executed_checks=_ran(), review_evidence={})
+    assert v["value"] == "blocked"
+    codes = {r["code"] for r in v["reasons"]}
+    assert "plan_critique_not_run" in codes and "done_verdict_not_run" in codes
+
+
+def test_review_gate_passes_on_two_declared_accepts():
+    v = compute_verdict(
+        verification_contract=_contract(),
+        executed_checks=_ran(),
+        review_evidence={
+            "1b_plan_critique": {"status": "declared_accepted"},
+            "4b_done_verdict": {"status": "declared_accepted"},
+        },
+    )
+    assert v["value"] == "pass"
+
+
+@pytest.mark.parametrize(
+    "status,code",
+    [
+        ("receipt_missing", "review_receipt_missing"),
+        ("receipt_malformed", "review_receipt_malformed"),
+        ("wrong_phase", "review_wrong_phase"),
+        ("artifact_stale", "review_artifact_stale"),
+        ("same_family", "cross_family_violation"),
+        ("family_unresolved", "review_family_unresolved"),
+        ("rejected", "review_rejected"),
+        ("review_error", "review_errored"),
+    ],
+)
+def test_every_verifier_status_maps_to_its_own_blocker(status, code):
+    v = compute_verdict(
+        verification_contract=_contract(),
+        executed_checks=_ran(),
+        review_evidence={
+            "1b_plan_critique": {"status": status, "reason": "x"},
+            "4b_done_verdict": {"status": "declared_accepted"},
+        },
+    )
+    assert v["value"] == "blocked"
+    assert code in {r["code"] for r in v["reasons"]}
+
+
+def test_status_blocker_mapping_is_total_over_the_verifier_vocabulary():
+    """A new verifier status with no blocker must fail loudly, not pass."""
+    from roam.review_receipt import REVIEW_STATUSES
+    from roam.verdict import _REVIEW_STATUS_BLOCKERS
+
+    non_accepted = set(REVIEW_STATUSES) - {"declared_accepted"}
+    assert non_accepted == set(_REVIEW_STATUS_BLOCKERS)
+    # one-to-one: no two statuses collapse into the same blocker
+    assert len(set(_REVIEW_STATUS_BLOCKERS.values())) == len(_REVIEW_STATUS_BLOCKERS)
+    with pytest.raises(ValueError):
+        compute_verdict(
+            verification_contract=_contract(),
+            executed_checks=_ran(),
+            review_evidence={"1b_plan_critique": {"status": "brand_new_status"}},
+        )
+
+
+def test_all_review_blockers_are_registered_reason_codes():
+    from roam.guard_enums import REASON_CODES
+    from roam.verdict import _PHASE_ABSENT_BLOCKER, _REVIEW_STATUS_BLOCKERS
+
+    codes = set(_REVIEW_STATUS_BLOCKERS.values()) | set(_PHASE_ABSENT_BLOCKER.values())
+    assert codes <= REASON_CODES
+
+
+@pytest.mark.parametrize(
+    "risk,required",
+    [
+        (None, True),
+        ({}, True),
+        ({"level": "low"}, True),  # no assessment_status => not complete
+        ({"assessment_status": "complete", "level": "low", "tags": []}, False),
+        ({"assessment_status": "complete", "level": "high", "tags": []}, True),
+        ({"assessment_status": "partial", "level": "low", "tags": []}, True),
+        ({"assessment_status": "complete", "level": "low", "tags": ["security"]}, True),
+        # shape errors fail CLOSED, never skip: a bare string would iterate
+        # into characters and silently miss every required tag
+        ({"assessment_status": "complete", "level": "low", "tags": "security"}, True),
+        ({"assessment_status": "complete", "level": "spicy", "tags": []}, True),
+        ("not-a-dict", True),
+    ],
+)
+def test_review_required_predicate_fails_closed(risk, required):
+    from roam.verdict import review_required
+
+    assert review_required(risk) is required

@@ -40,8 +40,15 @@ def compute_verdict(
     mcp_tool_findings: list[dict[str, Any]] | None = None,
     risk: dict[str, Any] | None = None,
     ledger: dict[str, Any] | None = None,
+    review_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute the proof-bundle verdict from collected evidence.
+
+    ``review_evidence`` maps a review phase (``1b_plan_critique`` /
+    ``4b_done_verdict``) to the OUTPUT of
+    :func:`roam.review_receipt.verify_receipt` -- never to fields an agent
+    copied out of its own receipt. Absent evidence for a required phase is
+    a blocker, not a silent pass.
 
     Returns:
       {"value": "pass|pass_with_warnings|needs_review|blocked",
@@ -57,11 +64,17 @@ def compute_verdict(
         (
             (
                 "blocked",
-                lambda: _collect_blockers_that_invalidate_proof(
-                    verification_contract=verification_contract,
-                    executed_checks=executed_checks,
-                    mcp_tool_findings=mcp_tool_findings,
-                    ledger=ledger,
+                lambda: (
+                    _collect_blockers_that_invalidate_proof(
+                        verification_contract=verification_contract,
+                        executed_checks=executed_checks,
+                        mcp_tool_findings=mcp_tool_findings,
+                        ledger=ledger,
+                    )
+                    + _collect_review_obligation_blockers(
+                        risk=risk,
+                        review_evidence=review_evidence,
+                    )
                 ),
             ),
             (
@@ -81,6 +94,121 @@ def compute_verdict(
             ),
         )
     )
+
+
+# Tags that force cross-family review regardless of the assessed level.
+REVIEW_REQUIRED_TAGS: frozenset[str] = frozenset(
+    {"security", "auth", "credentials", "migration", "external_api", "irreversible"}
+)
+
+# TOTAL mapping: every status the verifier can return has exactly one
+# blocker code, and no two statuses share one. A status with no entry
+# raises rather than passing silently, so a new failure mode can never
+# become a quiet green.
+_REVIEW_STATUS_BLOCKERS: dict[str, str] = {
+    "receipt_missing": "review_receipt_missing",
+    "receipt_malformed": "review_receipt_malformed",
+    "wrong_phase": "review_wrong_phase",
+    "artifact_stale": "review_artifact_stale",
+    "same_family": "cross_family_violation",
+    "family_unresolved": "review_family_unresolved",
+    "rejected": "review_rejected",
+    "review_error": "review_errored",
+}
+
+# The phase was never attempted at all -- distinct from "a receipt exists
+# but is missing/unreadable", which is `review_receipt_missing`.
+_PHASE_ABSENT_BLOCKER: dict[str, str] = {
+    "1b_plan_critique": "plan_critique_not_run",
+    "4b_done_verdict": "done_verdict_not_run",
+}
+
+
+def review_required(risk: dict[str, Any] | None) -> bool:
+    """Whether cross-family review is required for this change.
+
+    Exact predicate, no prose: required unless the risk assessment is
+    COMPLETE **and** low **and** carries no review-forcing tag. An absent,
+    partial, or MALFORMED assessment is therefore not "low risk" -- it is
+    unknown, which fails closed. (The shipped default elsewhere is
+    ``{"level": "low"}`` when risk is absent, which would otherwise let a
+    change with no assessment at all skip review.)
+
+    Disclosed limit: the risk record is supplied by the same agent whose
+    work is being judged, so the EXEMPTION is agent-influenceable. That is
+    precisely why every ambiguity resolves toward "required" -- an agent
+    must make a positive, complete, low-risk, untagged claim to be exempt,
+    and that claim is recorded in the bundle where it can be audited.
+    """
+    if not isinstance(risk, dict):
+        return True
+    if risk.get("assessment_status") != "complete":
+        return True
+    if risk.get("level") not in ("low", "medium", "high"):
+        return True  # unknown level is not "low"
+    if risk.get("level") in ("medium", "high"):
+        return True
+    tags = risk.get("tags", [])
+    # A bare string here would iterate into characters and silently miss
+    # every required tag: shape errors force review rather than skipping it.
+    if not isinstance(tags, (list, tuple, set, frozenset)):
+        return True
+    return bool(REVIEW_REQUIRED_TAGS & {str(t) for t in tags})
+
+
+def _collect_review_obligation_blockers(
+    *,
+    risk: dict[str, Any] | None,
+    review_evidence: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Block when a required cross-family review is absent or negative.
+
+    The gate is ACTIVE only when the caller passes ``review_evidence``
+    (even ``{}``): a caller that knows nothing about review obligations --
+    every proof-bundle path shipped before this gate existed -- is not
+    silently converted into a blocked one. Callers that opt in get the
+    fail-closed behaviour, including for the empty dict.
+    """
+    if review_evidence is None:
+        return []
+    if not review_required(risk):
+        return []
+    reasons: list[dict[str, Any]] = []
+    for phase, absent_code in _PHASE_ABSENT_BLOCKER.items():
+        result = review_evidence.get(phase)
+        if not isinstance(result, dict) or "status" not in result:
+            reasons.append(
+                {
+                    "code": absent_code,
+                    "phase": phase,
+                    "because": "risk assessment requires cross-family review",
+                    "detail": (
+                        "no verified review result for this phase; results come from "
+                        "roam.review_receipt.verify_receipt, never from an assertion"
+                    ),
+                    "suggested_command": (f"roam compile --json <task>  # see orchestration_contract, phase {phase}"),
+                }
+            )
+            continue
+        status = result["status"]
+        if status == "declared_accepted":
+            continue
+        code = _REVIEW_STATUS_BLOCKERS.get(status)
+        if code is None:
+            raise ValueError(
+                f"unmapped review status {status!r} — every non-accepted status must "
+                "map to exactly one blocker so a new failure mode cannot pass silently"
+            )
+        reasons.append(
+            {
+                "code": code,
+                "phase": phase,
+                "status": status,
+                "detail": result.get("reason"),
+                "suggested_command": f"re-run the {phase} review against the current artifact",
+            }
+        )
+    return reasons
 
 
 def _select_verdict_that_preserves_gate_precedence(
