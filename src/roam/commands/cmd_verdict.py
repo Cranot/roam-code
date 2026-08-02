@@ -33,6 +33,7 @@ import click
 from roam.capability import roam_capability
 from roam.guard_errors import guard_error_envelope
 from roam.output.formatter import json_envelope, to_json
+from roam.proof_bundle import _extract_executed_checks
 from roam.verdict import compute_verdict, verdict_exit_code
 
 
@@ -60,9 +61,16 @@ def _extract_contract_inputs(bundle: dict) -> dict:
         }
     # Legacy pr-bundle shape — best-effort mapping
     body = bundle.get("body") or bundle.get("bundle") or bundle
+    # W1447 — `tests_run` records go through the SAME normaliser
+    # `build_proof_bundle` uses, so a status-less record becomes
+    # "unverified" here exactly as it does there. Reading `tests_run` raw
+    # meant this entry point and the bundle builder disagreed about the
+    # same input: W1441 hardened the normaliser, and this path skipped it.
     return {
         "verification_contract": body.get("verification_contract") or {"required": [], "skipped": []},
-        "executed_checks": body.get("tests_run") or body.get("executed_checks") or [],
+        "executed_checks": (
+            _extract_executed_checks(body) if body.get("tests_run") else body.get("executed_checks") or []
+        ),
         "missing_checks": body.get("missing_checks") or [],
         "optimizer_findings": body.get("optimizer_findings") or [],
         "scope_findings": body.get("scope_findings") or [],

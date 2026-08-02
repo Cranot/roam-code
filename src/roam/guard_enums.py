@@ -89,6 +89,13 @@ REASON_CODES: frozenset[str] = frozenset(
         # (unverified) tests_run record: the record exists but proves
         # nothing, so the requirement is not satisfied.
         "required_check_unverified",
+        # W1447 — a required check matched only by a record whose status
+        # is not in CHECK_STATUSES at all (``null``, ``"skipped"``,
+        # ``"Unverified"``, or anything an author invents). Satisfaction
+        # is an ALLOWLIST on "pass", so an unrecognised status can never
+        # satisfy a requirement; this code names why it was refused
+        # rather than reporting the check as simply not run.
+        "required_check_status_invalid",
         # W1443 — cross-family review obligations (orchestration graph
         # 1b/4b). The mapping in `verdict._REVIEW_STATUS_BLOCKERS` is
         # total and one-to-one over the verifier's status vocabulary, so
