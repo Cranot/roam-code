@@ -1,9 +1,13 @@
 """Architectural fitness function runner.
 
 Reads rules from .roam/fitness.yaml and checks them against the index.
-Supports dependency constraints, layer enforcement, metric thresholds,
-naming conventions, and trend-based regression guards.
-Returns exit code 1 on violations for CI use.
+The rule ``type`` vocabulary is exactly the keys of :data:`_CHECKERS`:
+``dependency`` (which is also how layering is enforced — forbid the
+edge), ``metric``, ``naming``, ``trend``. There is no ``layer`` type;
+W1450 removed that claim from this docstring because it sent users to
+write a rule nothing enforces.
+Returns exit code 1 on violations, and on any rule whose ``type`` no
+checker handles (W1450), for CI use.
 
 Example .roam/fitness.yaml:
   rules:
@@ -65,6 +69,7 @@ W1224-audit memo.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import sqlite3
@@ -241,6 +246,25 @@ def _load_rules_with_status(
                     f"`name` / `type` / ... keys. Skipping entry."
                 )
             continue
+        # W1450 -- validate ``type`` against the SAME registry the
+        # dispatcher dispatches through (:data:`_CHECKERS`, via
+        # :func:`_unknown_rule_type`). Before W1450 the loader checked
+        # only that the entry was a mapping, so an unrecognised type
+        # reached :func:`_run_fitness_rules`, hit ``checker is None``,
+        # and was ``continue``d out of existence -- gone from the
+        # numerator AND the denominator of ``rules_checked``.
+        #
+        # The rule is KEPT in the returned list on purpose: the
+        # dispatcher turns it into an ``ERROR`` row so the user's rule
+        # still occupies a slot in ``rules_checked``, and external
+        # callers of the legacy ``_load_rules`` wrapper
+        # (cmd_diff / cmd_preflight) see the exact same list they saw
+        # before this wave.
+        unknown = _unknown_rule_type(r)
+        if unknown is not None and warnings_out is not None:
+            warnings_out.append(
+                f"fitness: {path_str!r} rules[{idx}] ({r.get('name', 'unnamed')!r}): {_unknown_type_detail(unknown)}"
+            )
         out.append(r)
     return out, status
 
@@ -652,6 +676,61 @@ _CHECKERS = {
 }
 
 
+# -- W1450: one source of truth for "is this rule type dispatchable?" --
+#
+# ``_CHECKERS`` IS the closed set of rule types. The loader
+# (:func:`_load_rules_with_status`) and the dispatcher
+# (:func:`_run_fitness_rules`) both decide "known type?" by calling
+# :func:`_resolve_checker` -- so what the loader accepts is, by
+# construction, what the dispatcher can run. Registering a new checker
+# in ``_CHECKERS`` is the ONLY step needed to teach both halves about
+# it; there is deliberately no second hardcoded list of type names to
+# forget to update. ``cmd_preflight`` imports ``_CHECKERS`` and shares
+# the same dict object, so a monkeypatched / future entry is visible to
+# the loader too.
+
+
+def _resolve_checker(rule: dict):
+    """Return the checker callable for *rule*, or ``None`` when its ``type`` is unknown."""
+    rtype = rule.get("type", "")
+    if not isinstance(rtype, str):
+        return None
+    return _CHECKERS.get(rtype)
+
+
+def _known_rule_types() -> tuple[str, ...]:
+    """Sorted closed set of dispatchable rule types, read off ``_CHECKERS``."""
+    return tuple(sorted(_CHECKERS))
+
+
+def _unknown_rule_type(rule: dict) -> str | None:
+    """Return the offending ``type`` when *rule* is not dispatchable, else ``None``.
+
+    ``""`` is returned for a rule with no ``type`` key at all -- also an
+    unenforceable rule, and equally silent before W1450.
+    """
+    if _resolve_checker(rule) is not None:
+        return None
+    rtype = rule.get("type", "")
+    return rtype if isinstance(rtype, str) else repr(rtype)
+
+
+def _unknown_type_detail(rtype: str) -> str:
+    """Actionable one-liner explaining why a rule cannot be enforced.
+
+    Includes the closed set of known types and, for a near-miss (the
+    common case -- a typo such as ``dependancy``), a did-you-mean.
+    """
+    known = ", ".join(_known_rule_types())
+    if not rtype:
+        return f"rule has no `type`; expected one of: {known}. Rule NOT enforced (reported ERROR, never PASS)."
+    close = difflib.get_close_matches(rtype, _known_rule_types(), n=1, cutoff=0.6)
+    hint = f" Did you mean {close[0]!r}?" if close else ""
+    return (
+        f"unknown rule type {rtype!r}; expected one of: {known}.{hint} Rule NOT enforced (reported ERROR, never PASS)."
+    )
+
+
 def _default_baseline_path(root: Path) -> Path:
     return root / ".roam" / "fitness-baseline.json"
 
@@ -823,8 +902,13 @@ def _run_fitness_rules(conn, rules: list[dict]) -> tuple[list[dict], list[dict]]
     all_violations = []
     rule_results = []
     for rule in rules:
-        checker = _CHECKERS.get(rule.get("type", ""))
+        checker = _resolve_checker(rule)
         if checker is None:
+            # W1450 -- an unrecognised ``type`` is NOT a silent skip.
+            # The user wrote a rule; nothing can enforce it. Record it
+            # as ERROR so it occupies a slot in ``rules_checked`` (the
+            # denominator) and can never be summarised as a pass.
+            rule_results.append(_unevaluable_rule_entry(rule))
             continue
         violations = checker(rule, conn)
         result_entry = _rule_result_entry(rule, violations)
@@ -847,10 +931,70 @@ def _rule_result_entry(rule: dict, violations: list[dict]) -> dict:
     return result
 
 
-def _rule_counts(rule_results: list[dict]) -> tuple[int, int]:
+def _unevaluable_rule_entry(rule: dict) -> dict:
+    """W1450: rule-result row for a rule whose ``type`` no checker handles.
+
+    ``status`` is the third member of the rule-status vocabulary
+    (``PASS`` / ``FAIL`` / ``ERROR``, UPPER per W847): the rule was
+    neither satisfied nor violated -- it was never evaluated. It carries
+    ``violations: 0`` because zero locations were inspected, and the
+    ``error`` field says why. ERROR rows are deliberately kept OUT of
+    ``all_violations``: a config typo is not a per-location architectural
+    finding, and routing it through the violation list would let
+    ``--write-baseline`` bless the typo into permanent silence.
+    """
+    rtype = _unknown_rule_type(rule) or ""
+    result = {
+        "name": rule.get("name", "unnamed"),
+        "type": rtype,
+        "status": "ERROR",
+        "violations": 0,
+        "error": _unknown_type_detail(rtype),
+    }
+    if reason := rule.get("reason", ""):
+        result["reason"] = reason
+    if link := rule.get("link", ""):
+        result["link"] = link
+    return result
+
+
+def _rule_counts(rule_results: list[dict]) -> tuple[int, int, int]:
+    """Return ``(passed, failed, errored)`` -- the three rule-status buckets.
+
+    W1450: ``errored`` is the count of rules that could not be evaluated.
+    ``passed + failed + errored == len(rule_results)`` is an invariant --
+    every rule the user wrote lands in exactly one bucket.
+    """
     passed = sum(1 for result in rule_results if result["status"] == "PASS")
     failed = sum(1 for result in rule_results if result["status"] == "FAIL")
-    return passed, failed
+    errored = sum(1 for result in rule_results if result["status"] == "ERROR")
+    return passed, failed, errored
+
+
+def _unevaluable_rule_types(rule_results: list[dict]) -> list[str]:
+    """Sorted distinct ``type`` values of the ERROR rows (``""`` -> ``"<missing>"``)."""
+    return sorted({(result.get("type") or "<missing>") for result in rule_results if result["status"] == "ERROR"})
+
+
+def _fitness_verdict(passed: int, failed: int, errored: int, violation_count: int, unknown_types: list[str]) -> str:
+    """Single source of the bottom line for BOTH output modes.
+
+    Text mode and JSON mode used to re-derive this string from two
+    copies of the same three-branch ``if`` -- a standing drift hazard,
+    and the surface W1450 has to change in lockstep.
+    """
+    total = passed + failed + errored
+    if errored:
+        types = ", ".join(repr(t) for t in unknown_types)
+        head = f"{errored} of {total} fitness rule(s) NOT evaluated (unknown rule type: {types})"
+        if failed:
+            return f"{head}; {failed} fail ({violation_count} violation(s)); {passed} pass"
+        return f"{head}; {passed} pass"
+    if failed == 0:
+        return f"all {passed} fitness rule(s) pass"
+    if passed == 0:
+        return f"all {failed} fitness rule(s) fail ({violation_count} violation(s))"
+    return f"{failed} of {passed + failed} fitness rule(s) fail ({violation_count} violation(s))"
 
 
 def _baseline_compare(all_violations: list[dict], baseline_path: Path | None) -> tuple[dict | None, list[dict]]:
@@ -873,17 +1017,14 @@ def _maybe_write_baseline(
 
 
 def _fitness_summary(
-    rule_results, passed: int, failed: int, all_violations, baseline_info, written_baseline_path
+    rule_results, passed: int, failed: int, errored: int, all_violations, baseline_info, written_baseline_path
 ) -> dict:
     # Mirror the text-mode verdict so JSON consumers don't have to
     # re-derive the bottom line — and so :func:`verdict_with_high_count`
-    # has something to append the high-count suffix to.
-    if failed == 0:
-        verdict = f"all {passed} fitness rule(s) pass"
-    elif passed == 0:
-        verdict = f"all {failed} fitness rule(s) fail ({len(all_violations)} violation(s))"
-    else:
-        verdict = f"{failed} of {passed + failed} fitness rule(s) fail ({len(all_violations)} violation(s))"
+    # has something to append the high-count suffix to. Both modes now
+    # call the same :func:`_fitness_verdict`.
+    unknown_types = _unevaluable_rule_types(rule_results)
+    verdict = _fitness_verdict(passed, failed, errored, len(all_violations), unknown_types)
     summary = {
         "verdict": verdict,
         "rules_checked": len(rule_results),
@@ -891,6 +1032,13 @@ def _fitness_summary(
         "failed": failed,
         "total_violations": len(all_violations),
     }
+    # W1450: ``rules_checked`` counts every rule the user wrote, so an
+    # unenforceable rule can no longer vanish from the denominator. The
+    # two extra fields say how many of those rules nothing enforced --
+    # emitted only when non-zero so a clean run's envelope is unchanged.
+    if errored:
+        summary["rules_unevaluated"] = errored
+        summary["unknown_rule_types"] = unknown_types
     if baseline_info:
         summary["baseline"] = {k: v for k, v in baseline_info.items() if k != "new_violation_items"}
     if written_baseline_path:
@@ -947,7 +1095,10 @@ def _emit_fitness_json(
     # Pattern-1 machine-gate: only flag a fitness run that actually failed a
     # rule. A clean all-pass run (exit 0) must NOT carry isError/status — gate
     # strictly on the failed-rule count so consumers branch correctly.
-    if enriched_summary.get("failed", 0) > 0:
+    # W1450: a rule nothing could evaluate is equally a non-clean run — it
+    # exits 1, so the envelope must carry the machine-gate too, or an agent
+    # reading only the envelope would branch "clean" on a broken config.
+    if enriched_summary.get("failed", 0) > 0 or enriched_summary.get("rules_unevaluated", 0) > 0:
         envelope_kwargs["status"] = "partial_failure"
         envelope_kwargs["isError"] = True
         envelope_kwargs["error_code"] = "PARTIAL_FAILURE"
@@ -956,8 +1107,14 @@ def _emit_fitness_json(
 
 
 def _emit_rule_line(rule_result: dict, explain: bool) -> None:
-    icon = "PASS" if rule_result["status"] == "PASS" else "FAIL"
+    # W1450: rule-status vocabulary is PASS / FAIL / ERROR (W847, UPPER).
+    # An ERROR row must render as ERROR — rendering it as FAIL would imply
+    # the rule ran and was violated, which is a different claim.
+    status = rule_result["status"]
+    icon = status if status in ("PASS", "FAIL", "ERROR") else "FAIL"
     detail = f" ({rule_result['violations']} violations)" if rule_result["violations"] else ""
+    if status == "ERROR" and (error := rule_result.get("error", "")):
+        detail = f" -- {error}"
     reason = rule_result.get("reason", "")
     link = rule_result.get("link", "")
     line = f"  [{icon}] {rule_result['name']}{detail}"
@@ -1007,6 +1164,7 @@ def _emit_fitness_text(
     written_baseline_path,
     passed,
     failed,
+    errored,
     explain,
     *,
     warnings_out: list[str] | None = None,
@@ -1016,12 +1174,7 @@ def _emit_fitness_text(
     # and had to count the [FAIL] / [PASS] markers themselves to
     # know the bottom line. Mirrors the convention every other
     # command in the surface follows.
-    if failed == 0:
-        verdict = f"all {passed} fitness rule(s) pass"
-    elif passed == 0:
-        verdict = f"all {failed} fitness rule(s) fail ({len(all_violations)} violation(s))"
-    else:
-        verdict = f"{failed} of {passed + failed} fitness rule(s) fail ({len(all_violations)} violation(s))"
+    verdict = _fitness_verdict(passed, failed, errored, len(all_violations), _unevaluable_rule_types(rule_results))
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     click.echo(f"Fitness check: {len(rule_results)} rules\n")
@@ -1031,14 +1184,26 @@ def _emit_fitness_text(
     _emit_baseline_delta_text(baseline_info, new_violations)
     if written_baseline_path:
         click.echo(f"\nBaseline written: {written_baseline_path}")
-    click.echo(f"\n{passed} passed, {failed} failed")
+    tally = f"\n{passed} passed, {failed} failed"
+    if errored:
+        tally += f", {errored} NOT evaluated"
+    click.echo(tally)
     if warnings_out:
         click.echo()
         for w in warnings_out:
             click.echo(f"WARNING: {w}")
 
 
-def _finish_fitness(write_baseline: bool, baseline_info: dict | None, failed: int) -> None:
+def _finish_fitness(write_baseline: bool, baseline_info: dict | None, failed: int, errored: int = 0) -> None:
+    # W1450: a rule nothing could evaluate fails the run CLOSED, ahead of
+    # every baseline branch. Rationale: an unknown ``type`` is a config
+    # error, not accepted architectural debt — ``--write-baseline`` must
+    # not be able to bless a typo into permanent silence, and a
+    # ``--baseline`` comparison cannot be trusted when part of the config
+    # never ran. The gate the user believes is on is off; exit non-zero
+    # so CI says so.
+    if errored > 0:
+        raise SystemExit(1)
     if write_baseline:
         return
     if baseline_info is not None:
@@ -1125,10 +1290,12 @@ def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
     with open_db(readonly=True) as conn:
         rule_results, all_violations = _run_fitness_rules(conn, rules)
 
-    passed, failed = _rule_counts(rule_results)
+    passed, failed, errored = _rule_counts(rule_results)
     baseline_info, new_violations = _baseline_compare(all_violations, baseline_path)
     written_baseline_path = _maybe_write_baseline(root, write_baseline, rule_results, all_violations)
-    summary = _fitness_summary(rule_results, passed, failed, all_violations, baseline_info, written_baseline_path)
+    summary = _fitness_summary(
+        rule_results, passed, failed, errored, all_violations, baseline_info, written_baseline_path
+    )
     # W1030-followup-D: closed-enum LoadStatus disclosure on the envelope.
     # Mirrors the cmd_alerts + cmd_budget + cmd_health + cmd_check_rules
     # vocabulary so the five W1030-followup-cohort emitters use a uniform
@@ -1140,6 +1307,12 @@ def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
         # were skipped) so the agent doesn't see a green verdict that
         # silently dropped half its rules.
         summary["warnings_out"] = list(_fitness_warnings)
+        summary["partial_success"] = True
+    elif errored:
+        # W1450: the loader warning is the usual carrier for this state,
+        # but ``--rule`` filtering (or a caller that suppressed warnings)
+        # can leave an ERROR row with no warning behind it. The
+        # disclosure must not depend on which path got here.
         summary["partial_success"] = True
     elif _config_degraded:
         # W1030-followup-D: a degraded config_state flips partial_success
@@ -1164,11 +1337,12 @@ def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
             written_baseline_path,
             passed,
             failed,
+            errored,
             explain,
             warnings_out=_fitness_warnings,
         )
 
-    _finish_fitness(write_baseline, baseline_info, failed)
+    _finish_fitness(write_baseline, baseline_info, failed, errored)
 
 
 def _init_config(root: Path):
