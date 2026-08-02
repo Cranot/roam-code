@@ -77,10 +77,25 @@ NESTING_DEPTH_DEFINITION = "max nested block depth in the AST (if/for/while/try)
 
 HEALTH_SCORE_DEFINITION = (
     "weighted geometric mean (0-100) of 5 sigmoid health factors: tangle_ratio,"
-    " god_components, bottlenecks, layer_violations, file_health (+coverage if available)."
+    " god_components, bottlenecks, layer_violations, file_health (+coverage if available);"
+    " computed by roam.quality.health_score.compute_health_score, shared verbatim with the"
+    " `snapshots` writer so `roam health --baseline` compares like with like."
 )
 
-TANGLE_RATIO_DEFINITION = "fraction of symbols inside non-trivial SCCs; higher = more cyclic coupling."
+# W1451 — the unit is now stated. The pre-W1451 wording ("fraction of symbols
+# inside non-trivial SCCs") was read two incompatible ways at once: `roam
+# fingerprint` emitted a fraction over ALL non-trivial SCCs (0.0359 here),
+# `roam health` emitted a percent over only the ACTIONABLE ones (0.0 here),
+# and the snapshot writer emitted a percent over all of them (3.6 here). All
+# three claimed this one definition. The measurement is now single-sourced in
+# roam.quality.health_score.compute_tangle_ratio; only the unit differs by
+# surface, and it is named here so the difference cannot be mistaken for a
+# licence to change what is counted.
+TANGLE_RATIO_DEFINITION = (
+    "percent of symbols inside non-trivial SCCs (size >= 2), counting ALL such SCCs, not"
+    " just actionable ones; higher = more cyclic coupling. `roam fingerprint` reports the"
+    " identical measurement as a fraction (percent / 100)."
+)
 
 
 # ---------------------------------------------------------------------------

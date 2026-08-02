@@ -156,16 +156,25 @@ class TestLiveCorpusParity:
         h_score = h_summary.get("health_score")
         h_verdict = h_summary.get("verdict", "")
 
-        # NOTE: ``health`` and ``understand`` each compute a *composite* health
-        # score via a SEPARATE weighted-geometric-mean implementation
-        # (cmd_health's inner ``_compute_health_score`` vs
-        # ``metrics_history._compute_health_score``). They can differ by ~1 point
-        # (e.g. 76 vs 75) from factor/rounding drift — a real but minor Pattern-3a
-        # duplication tracked as a follow-up (unify into one canonical composite,
-        # mirroring the cycles/god_components/health_band consolidation). The
-        # invariant that MATTERS for LAW 6 — and the one the F2 finding flagged —
-        # is that the two commands never map to CONTRADICTORY verdict labels.
-        # Assert band agreement, not raw-score equality.
+        # W1451 — this NOTE used to read "they can differ by ~1 point from
+        # factor/rounding drift ... tracked as a follow-up (unify into one
+        # canonical composite)". That follow-up has landed: ``cmd_health``'s
+        # inner geometric mean and ``metrics_history._compute_health_score``
+        # were TWO implementations of one score, and the drift was not ~1 point
+        # — it was 71 vs 64 on this repo, because cmd_health filtered the
+        # tangle-ratio numerator to actionable SCCs and the other did not.
+        # Both now route through ``roam.quality.health_score``, and
+        # ``roam understand`` reads ``collect_metrics`` directly, so the two
+        # commands must now report the IDENTICAL number — not merely the same
+        # band. Band agreement is the weaker property; asserting equality is
+        # what makes this a drift guard rather than a drift tolerance.
+        assert h_score == u_score, (
+            f"`roam health` and `roam understand` must report the SAME "
+            f"health_score — both route through "
+            f"roam.quality.health_score.compute_health_score. Got "
+            f"health={h_score}, understand={u_score}. A gap here means a third "
+            f"copy of the composite has appeared (W1451)."
+        )
         assert health_band(h_score) == health_band(u_score), (
             f"health and understand must map to the SAME band label; "
             f"health={h_score}->{health_band(h_score)!r}, understand={u_score}->{health_band(u_score)!r}"

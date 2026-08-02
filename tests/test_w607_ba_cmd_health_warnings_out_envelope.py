@@ -177,23 +177,23 @@ def test_health_compute_health_score_failure_marker_format(cli_runner, health_pr
     falls back to a default of 0 -- the verdict scorer then composes
     a degraded "Unhealthy 0/100" verdict that still satisfies LAW 6.
 
-    W978 first-hypothesis discipline: patch the LAST math.exp call (the
-    one inside ``_compute_health_score`` -- it's invoked only once on
-    the final ``100 * math.exp(log_score)`` expression, AFTER all the
-    ``_health_factor`` invocations have completed). Patch via a counter
-    so the per-factor sigmoid calls still go through normally.
+    W1451: the geometric mean itself moved out of ``cmd_health`` into
+    ``roam.quality.health_score`` (one implementation, shared with the
+    ``snapshots`` writer), so the injection point moved with it. The
+    W607-BA wrapper still lives in ``cmd_health`` and still owns the
+    marker -- which is exactly what this test asserts.
     """
-    from roam.commands import cmd_health
+    from roam.quality import health_score as _health_score_mod
 
-    # ``_compute_health_score`` uses ``math.log`` ONLY at the
+    # ``compute_health_score`` uses ``math.log`` ONLY at the
     # geometric-mean sum (one call per health factor inside the sum's
     # generator expression). The per-factor sigmoid uses ``math.exp``,
     # not ``math.log``. So patching math.log raises only inside the
-    # score-compute hot path -- never inside _health_factor.
+    # score-compute hot path -- never inside health_factor.
     def _raise_log(x):
         raise RuntimeError("synthetic-score-from-W607-BA")
 
-    monkeypatch.setattr(cmd_health.math, "log", _raise_log)
+    monkeypatch.setattr(_health_score_mod.math, "log", _raise_log)
 
     result = _invoke_health(cli_runner, health_project)
     assert result.exit_code == 0, result.output
