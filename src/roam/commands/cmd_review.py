@@ -204,26 +204,38 @@ def review_request_cmd(phase: str, artifact: str, json_mode: bool) -> None:
         )
         return
 
-    click.echo(f"REVIEW REQUEST — {resolved}")
-    click.echo(f"artifact:       {path}")
-    click.echo(f"artifact_sha256: {digest}  ({DIGEST_SCHEME})")
+    # STDOUT is the reviewer's prompt and nothing else, addressed to the
+    # reviewer in the second person. A live test proved why: the earlier
+    # wording ("send everything below to a model from a different family")
+    # was read by the reviewer receiving it as an instruction to FORWARD the
+    # work, so it tried to call another provider instead of reviewing.
+    # Operator instructions go to STDERR, so `roam review-request ... | <model>`
+    # pipes a clean prompt while a human still sees what to do next.
+    click.echo(f"You are reviewing an artifact for phase {resolved}.")
+    click.echo("You are the reviewer. Do not delegate, forward, or route this to")
+    click.echo("another model — perform the review yourself and answer directly.")
     click.echo("")
-    click.echo("Send everything below to a model from a DIFFERENT family than yours.")
-    click.echo("Do not include your reasoning for the plan — it anchors the reviewer.")
-    click.echo("")
-    click.echo("--- criteria ---")
+    click.echo("Your criteria:")
     for line in criteria:
-        click.echo(f"  {line}")
+        click.echo(f"  - {line}")
     click.echo("")
     click.echo("--- artifact under review ---")
     click.echo(data.decode("utf-8", "replace"))
     click.echo("--- end artifact ---")
     click.echo("")
-    click.echo("Record the outcome with:")
+    click.echo("Answer with your findings, then a final line:")
+    click.echo("DECISION: <accept|revise|reject>")
+
+    click.echo("", err=True)
+    click.echo(f"[roam] phase={resolved} artifact={path}", err=True)
+    click.echo(f"[roam] artifact_sha256={digest} ({DIGEST_SCHEME})", err=True)
+    click.echo("[roam] stdout above is the reviewer prompt; pipe it to a model.", err=True)
+    click.echo("[roam] then record the outcome:", err=True)
     click.echo(
-        f"  roam review-accept --phase {phase} --artifact {path} \\\n"
-        "      --builder-family <yours> --reviewer-family <theirs> \\\n"
-        "      --decision <accept|revise|reject|error> [--finding 'title|severity']..."
+        f"[roam]   roam review-accept --phase {phase} --artifact {path} \\\n"
+        "[roam]       --builder-family <yours> --reviewer-family <theirs> \\\n"
+        "[roam]       --decision <accept|revise|reject|error> [--finding 'title|severity']...",
+        err=True,
     )
 
 
@@ -352,3 +364,111 @@ def review_accept_cmd(
     elif result["status"] != "declared_accepted":
         click.echo("")
         click.echo("This is recorded, not hidden — the verdict gate will read it and block.")
+
+
+@roam_capability(
+    name="review-verify",
+    category="workflow",
+    summary="Re-verify review receipts against the artifacts as they exist NOW",
+    maturity="experimental",
+    mcp_expose=False,
+    side_effect=False,
+    task_required=False,
+    destructive=False,
+    stale_sensitive=False,
+    ai_safe=True,
+    requires_index=False,
+)
+@click.command("review-verify")
+@click.option("--phase", required=True, help="1b (plan critique) or 4b (done verdict).")
+@click.option("--artifact", required=True, help="File whose review must be verified.")
+@click.option(
+    "--required/--optional",
+    default=True,
+    help="Whether a missing or non-accepted review is an error (default: required).",
+)
+@click.option("--json", "json_mode", is_flag=True, help="Emit the result as JSON.")
+def review_verify_cmd(phase: str, artifact: str, required: bool, json_mode: bool) -> None:
+    """Re-derive the review verdict from the artifact's CURRENT bytes.
+
+    This is the command CI runs, and it is where the design stops being
+    self-report and starts being a gate. The reasoning, stated plainly:
+
+    An agent can write everything in the repository -- the plan, the
+    receipt, the risk record. What it cannot write is a runner it does not
+    control. So this command takes NOTHING on trust: it hashes the artifact
+    as it exists at the checked-out commit and looks for the receipt that
+    binds to THOSE bytes. The receipt's filename carries the digest, so a
+    plan edited after review has no matching receipt and there is nothing
+    to rename or backdate.
+
+    WHAT THIS CLOSES, run on an independent runner:
+      * a review that never happened  -> no receipt for these bytes
+      * a review of an EARLIER draft  -> the digest moved; no match
+      * a negative review, unrecorded -> the recorded decision is read,
+        not the summary the agent wrote about it
+
+    WHAT IT DOES NOT CLOSE, stated so the gate is not oversold: an agent
+    that fabricates a well-formed receipt for a review it never ran still
+    passes. Occurrence needs an authority outside the agent -- a signing
+    key it cannot read, or a runner that performs the review itself.
+    This command raises forgery from "edit a file" to "deliberately author
+    a false record that survives independent recomputation", and stops
+    there.
+    """
+    resolved = _resolve_phase(phase)
+    path, data = _read_artifact(artifact)
+    digest = canonical_artifact_sha256(data)
+
+    repo_root = Path.cwd()
+    receipt_path = repo_root / REVIEWS_DIR / f"{resolved}-{digest[:16]}.json"
+
+    if not receipt_path.is_file():
+        status, reason = (
+            "receipt_missing",
+            (
+                f"no review receipt binds to the current bytes of {path} "
+                f"(digest {digest[:12]}...). Either it was never reviewed, or it "
+                "changed after review — both require a fresh review."
+            ),
+        )
+        result = {"status": status, "reason": reason, "claims": None, "derived": {"artifact_sha256": digest}}
+    else:
+        result = verify_receipt(
+            receipt_path,
+            expected_phase=resolved,
+            artifact_bytes=data,
+            repo_root=repo_root,
+        )
+
+    passing = result["status"] in ("declared_accepted", "same_family")
+
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "review-verify",
+                    summary={
+                        "verdict": f"{result['status']} for {resolved}",
+                        "phase": resolved,
+                        "artifact": str(path),
+                        "artifact_sha256": digest,
+                        "status": result["status"],
+                        "passing": passing,
+                        "required": required,
+                        "partial_success": not passing,
+                    },
+                    verification=result,
+                )
+            )
+        )
+    else:
+        click.echo(f"phase:    {resolved}")
+        click.echo(f"artifact: {path}  ({digest[:16]}...)")
+        click.echo(f"status:   {result['status']}")
+        click.echo(f"reason:   {result['reason']}")
+        if result["status"] == "same_family":
+            click.echo("note:     passes with a coverage warning (see roam review-accept).")
+
+    if required and not passing:
+        raise SystemExit(5)

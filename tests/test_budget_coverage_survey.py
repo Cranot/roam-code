@@ -71,6 +71,7 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         "agent-opt",  # findings bounded by --limit; scans roam's own ~229-tool surface, not a scaling codebase
         "observability-opt",  # findings bounded by --limit/--max-files; per-finding rows, not a paginating result set
         "review-request",  # one artifact + a fixed 5-line criteria list; bounded by the artifact under review, not a corpus
+        "review-verify",  # one verdict for one artifact; single-record, fixed shape
         "review-accept",  # one receipt status + its verification result; single-record, fixed shape
         "commands",  # command-graph bounded by --limit; reads manifests, not a scaling corpus
         "docs-index",  # scans one planning-memo dir (orphans/broken links); bounded by the dir, index-free, not a scaling corpus

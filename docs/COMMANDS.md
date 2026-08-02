@@ -2,7 +2,7 @@
 
 > **Generated — do not hand-edit.** Regenerate with `python scripts/build_commands_doc.py`. Kept in sync by `tests/test_commands_doc_synced.py` (a command dropped from this index, or a new command left undocumented, fails CI — the reconcile-survival invariant).
 
-**283 commands** (276 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.10.0
+**284 commands** (277 canonical + aliases) across 7 categories · 244 MCP tools · roam v13.10.0
 
 ## Getting Started (41)
 
@@ -50,7 +50,7 @@
 | `workflow` | stable | ✓ | — |
 | `ws` | internal | — | — |
 
-## Daily Workflow (91)
+## Daily Workflow (92)
 
 | Command | Maturity | MCP | Aliases |
 |---------|----------|-----|---------|
@@ -128,6 +128,7 @@
 | `retrieve` | stable | ✓ | — |
 | `review-accept` | stable | — | — |
 | `review-request` | stable | — | — |
+| `review-verify` | stable | — | — |
 | `rules-validate` | stable | ✓ | — |
 | `runs` | stable | — | — |
 | `savings` | stable | — | — |
