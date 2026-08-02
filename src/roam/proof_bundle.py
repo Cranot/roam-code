@@ -311,6 +311,12 @@ def compose_agent_change_proof_bundle(
     ]
 
     ledger = bundle.get("ledger") or {}
+    # W1443 — the review gate keys on what the WORK declared, not on what
+    # this call chose to pass: an orchestration_contract recorded in the
+    # bundle (put there by the compile envelope) means 1b/4b obligations
+    # apply, so missing review evidence blocks rather than passing quietly.
+    orchestration_contract = bundle.get("orchestration_contract")
+    review_evidence = bundle.get("review_evidence")
     verdict = compute_verdict(
         verification_contract=contract,
         executed_checks=executed_checks,
@@ -320,6 +326,8 @@ def compose_agent_change_proof_bundle(
         mcp_tool_findings=mcp_tool_findings,
         risk=risk,
         ledger=ledger,
+        review_evidence=review_evidence if isinstance(review_evidence, dict) else None,
+        orchestration_contract=(orchestration_contract if isinstance(orchestration_contract, dict) else None),
     )
 
     return {

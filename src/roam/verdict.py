@@ -41,6 +41,7 @@ def compute_verdict(
     risk: dict[str, Any] | None = None,
     ledger: dict[str, Any] | None = None,
     review_evidence: dict[str, Any] | None = None,
+    orchestration_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute the proof-bundle verdict from collected evidence.
 
@@ -74,6 +75,7 @@ def compute_verdict(
                     + _collect_review_obligation_blockers(
                         risk=risk,
                         review_evidence=review_evidence,
+                        orchestration_contract=orchestration_contract,
                     )
                 ),
             ),
@@ -156,23 +158,47 @@ def review_required(risk: dict[str, Any] | None) -> bool:
     return bool(REVIEW_REQUIRED_TAGS & {str(t) for t in tags})
 
 
+def obligations_declared(orchestration_contract: dict[str, Any] | None) -> bool:
+    """True when an envelope declared 1b/4b review obligations.
+
+    This is the gate's trigger, NOT a caller flag: an agent that simply
+    omits ``review_evidence`` must not thereby skip the gate its own
+    envelope declared. Where the contract is present, absence of evidence
+    is a blocker.
+    """
+    if not isinstance(orchestration_contract, dict):
+        return False
+    return bool(orchestration_contract.get("obligations"))
+
+
 def _collect_review_obligation_blockers(
     *,
     risk: dict[str, Any] | None,
     review_evidence: dict[str, Any] | None,
+    orchestration_contract: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Block when a required cross-family review is absent or negative.
 
-    The gate is ACTIVE only when the caller passes ``review_evidence``
-    (even ``{}``): a caller that knows nothing about review obligations --
-    every proof-bundle path shipped before this gate existed -- is not
-    silently converted into a blocked one. Callers that opt in get the
-    fail-closed behaviour, including for the empty dict.
+    The gate is ACTIVE when EITHER the work declared review obligations
+    (``orchestration_contract`` carries them -- the envelope's own demand,
+    which the caller cannot waive by passing nothing) OR the caller opted
+    in explicitly by passing ``review_evidence``. Work that declares no
+    obligations and whose caller passes nothing keeps its legacy verdict:
+    every proof-bundle path shipped before this gate existed.
+
+    DISCLOSED LIMIT: the contract reaches this function through the same
+    bundle the agent authors, so an agent that strips the contract from
+    its own bundle escapes the gate. That is the general shape of
+    self-reported evidence and is not closable inside a local library --
+    it needs a component outside the agent's write authority (CI
+    recomputing the contract from the envelope, or a signing authority).
+    Naming it here keeps the gate from reading as stronger than it is.
     """
-    if review_evidence is None:
+    if review_evidence is None and not obligations_declared(orchestration_contract):
         return []
     if not review_required(risk):
         return []
+    review_evidence = review_evidence or {}
     reasons: list[dict[str, Any]] = []
     for phase, absent_code in _PHASE_ABSENT_BLOCKER.items():
         result = review_evidence.get(phase)

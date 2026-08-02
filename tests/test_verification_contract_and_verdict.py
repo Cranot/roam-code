@@ -406,3 +406,56 @@ def test_review_required_predicate_fails_closed(risk, required):
     from roam.verdict import review_required
 
     assert review_required(risk) is required
+
+
+# ---- W1443b: the gate keys on the declared contract, not the caller ----
+
+
+def _declared():
+    return {"schema_version": "1.0", "review_policy": "risk_gated", "obligations": ["1b...", "4b..."]}
+
+
+def test_declared_obligations_block_even_when_caller_passes_nothing():
+    """The hole this closes: an agent skipped the gate by omitting evidence."""
+    v = compute_verdict(
+        verification_contract=_contract(),
+        executed_checks=_ran(),
+        orchestration_contract=_declared(),
+    )
+    assert v["value"] == "blocked"
+    codes = {r["code"] for r in v["reasons"]}
+    assert "plan_critique_not_run" in codes and "done_verdict_not_run" in codes
+
+
+def test_no_declared_obligations_and_no_evidence_keeps_legacy_verdict():
+    """REGRESSION GUARD: work that declares nothing is not newly blocked."""
+    v = compute_verdict(verification_contract=_contract(), executed_checks=_ran())
+    assert v["value"] == "pass"
+    v2 = compute_verdict(
+        verification_contract=_contract(),
+        executed_checks=_ran(),
+        orchestration_contract={"schema_version": "1.0", "obligations": []},
+    )
+    assert v2["value"] == "pass"
+
+
+def test_declared_obligations_pass_with_two_declared_accepts():
+    v = compute_verdict(
+        verification_contract=_contract(),
+        executed_checks=_ran(),
+        orchestration_contract=_declared(),
+        review_evidence={
+            "1b_plan_critique": {"status": "declared_accepted"},
+            "4b_done_verdict": {"status": "declared_accepted"},
+        },
+    )
+    assert v["value"] == "pass"
+
+
+def test_obligations_declared_predicate():
+    from roam.verdict import obligations_declared
+
+    assert obligations_declared(_declared()) is True
+    assert obligations_declared({"obligations": []}) is False
+    assert obligations_declared(None) is False
+    assert obligations_declared("not-a-dict") is False
