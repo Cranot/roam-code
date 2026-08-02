@@ -4,7 +4,7 @@ from __future__ import annotations
 
 ENVELOPE_SCHEMA = {
     "name": "roam-envelope-v1",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Standard JSON output envelope for all roam commands",
     "required_fields": {
         "schema": "Schema identifier string",
@@ -20,6 +20,8 @@ ENVELOPE_SCHEMA = {
         "errors": "Hard-failure list (always preserved by strip_list_payloads)",
         "redactions": "ChangeEvidence-style redaction marker list (always preserved by strip_list_payloads)",
         "list_counts": "Top-level roll-up of dropped list-field sizes after strip_list_payloads",
+        "execution_contract": "Phased-work obligations on edit-context compile envelopes (budget-preserved)",
+        "orchestration_contract": "Cross-family review obligations (1b/4b) + criteria-template IDs on edit-context compile envelopes",
         "Any additional keys": "Command-specific data fields",
     },
     "changelog": [
@@ -30,6 +32,19 @@ ENVELOPE_SCHEMA = {
             "changes": [
                 "Moved timestamp and index_age_s to _meta sub-dict for deterministic output",
                 "Added sort_keys=True to JSON serialization for LLM prompt-caching compatibility",
+            ],
+        },
+        {
+            "version": "1.2.0",
+            "date": "2026-08-02",
+            "changes": [
+                "Added optional execution_contract: phased-work obligations on "
+                "edit-context compile envelopes (shipped earlier without a bump; "
+                "recorded here so the declared version matches the emitted shape)",
+                "Added optional orchestration_contract: cross-family review "
+                "obligations (1b/4b) with review policy and criteria-template IDs",
+                "Both are additive and absent (never empty) on envelopes that do "
+                "not carry them, so 1.1.0 consumers are unaffected",
             ],
         },
     ],
