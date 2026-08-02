@@ -89,6 +89,20 @@ REASON_CODES: frozenset[str] = frozenset(
         # (unverified) tests_run record: the record exists but proves
         # nothing, so the requirement is not satisfied.
         "required_check_unverified",
+        # W1443 — cross-family review obligations (orchestration graph
+        # 1b/4b). The mapping in `verdict._REVIEW_STATUS_BLOCKERS` is
+        # total and one-to-one over the verifier's status vocabulary, so
+        # no failure mode can reach a caller unclassified.
+        "plan_critique_not_run",
+        "done_verdict_not_run",
+        "review_receipt_missing",
+        "review_receipt_malformed",
+        "review_wrong_phase",
+        "review_artifact_stale",
+        "cross_family_violation",
+        "review_family_unresolved",
+        "review_rejected",
+        "review_errored",
         "policy_violation",
         "ledger_integrity_failure",
         "mcp_redaction_required",
