@@ -110,21 +110,31 @@ _ALLOWED_FIELDS = frozenset(
 
 
 def canonical_artifact_sha256(data: bytes | str) -> str:
-    """Hash of an artifact under one canonical form.
+    """Digest of the artifact's RAW bytes. No normalisation.
 
-    Line endings are normalised (CRLF/CR -> LF) and trailing whitespace at
-    end-of-text is stripped before hashing. Without this, an honest review
-    of the same plan hashes differently on Windows and Linux and reads as
-    ``artifact_stale`` -- a false block that would train users to bypass
-    the gate. Nothing else is normalised: interior whitespace changes are
-    real content changes and MUST invalidate a receipt.
+    An earlier cut normalised line endings and stripped trailing
+    whitespace, to stop an honest review hashing differently on Windows
+    and Linux. That was the wrong trade twice over:
+
+    * **Normalisation is non-injective.** ``rstrip`` alone made "plan\\n"
+      and "plan\\n\\n\\n   " one digest, so an artifact could be edited
+      after review and still match its receipt. Every normalisation rule
+      widens that equivalence class; the direction of travel is toward
+      collisions, and collisions here mean an unreviewed artifact passing
+      as reviewed.
+    * **The false-stale risk it bought was mostly hypothetical.** The
+      producing and verifying side read the same file on the same machine
+      in the same run. Where bytes genuinely do differ across a boundary
+      (a diff carried through git autocrlf), the failure is
+      ``artifact_stale`` -- fail-CLOSED, re-review, correct. A collision
+      fails OPEN, which is the direction that cannot be allowed.
+
+    Encoding note: ``str`` input is encoded UTF-8 strictly. Bytes are
+    hashed as given; callers should read artifacts in binary mode so what
+    is hashed is exactly what exists on disk.
     """
-    if isinstance(data, bytes):
-        text = data.decode("utf-8", "replace")
-    else:
-        text = data
-    normalised = text.replace("\r\n", "\n").replace("\r", "\n").rstrip()
-    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+    raw = data if isinstance(data, bytes) else data.encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
