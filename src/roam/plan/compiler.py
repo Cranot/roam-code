@@ -8899,12 +8899,13 @@ def execution_contract_for(procedure: str, task: str | None = None) -> tuple[str
 # placeholder that later agent claims could masquerade as a frozen value.
 # Hashes are minted by explicit freeze operations, after each artifact exists.
 REVIEW_OBLIGATIONS: tuple[str, ...] = (
-    "1b. CRITIQUE the plan across families: before implementing, have a model from a "
-    "different family attack the plan as unproven hypotheses (it gets the plan and the "
-    "acceptance criteria, never your rationale); record its verdict.",
-    "4b. VERDICT before done: a model from a family different from yours reviews the "
-    "finished diff against the same frozen criteria; its accept is the done signal, "
-    "not your own assertion.",
+    "1b. CRITIQUE the plan independently: before implementing, have a SEPARATE model "
+    "attack the plan as unproven hypotheses (it gets the plan and the acceptance "
+    "criteria, never your rationale); record its verdict. Prefer a different model "
+    "family - measured to cover encoding/parser defects a same-family review misses.",
+    "4b. VERDICT before done: a SEPARATE model reviews the finished diff against the "
+    "same frozen criteria; its accept is the done signal, not your own assertion. "
+    "Prefer a different family for wider defect coverage.",
 )
 
 REVIEW_POLICY_RISK_GATED = "risk_gated"

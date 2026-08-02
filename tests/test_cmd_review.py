@@ -122,11 +122,20 @@ def test_accept_has_no_digest_flag(project, runner):
     assert "no such option" in res.output.lower()
 
 
-def test_same_family_is_refused_before_any_file_is_written(project, runner):
+def test_same_family_is_recorded_with_a_coverage_note_not_refused(project, runner):
+    """W1445 — measurement changed this behaviour.
+
+    Pre-registered, blind-judged (n=3/arm, one design with known ground
+    truth): a same-family review found the DECISIVE architectural defect
+    3/3 -- level with cross-family. Refusing it would discard a review that
+    demonstrably works. It IS narrower on the encoding/parser class (0/3 vs
+    2/3), so it records with that limitation stated, not silently.
+    """
     res = _accept(runner, **{"--reviewer-family": "claude"})
-    assert res.exit_code != 0
+    assert res.exit_code == 0, res.output
     assert "same_family" in res.output
-    assert not list((project / ".roam" / "reviews").glob("*.json"))
+    assert "narrower" in res.output
+    assert list((project / ".roam" / "reviews").glob("*.json"))
 
 
 def test_unresolved_family_is_refused(project, runner):

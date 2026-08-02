@@ -103,6 +103,9 @@ REASON_CODES: frozenset[str] = frozenset(
         "review_family_unresolved",
         "review_rejected",
         "review_errored",
+        # W1445 — warning tier: a same-family review is valid but measurably
+        # narrower in coverage; the proof passes and the limit is recorded.
+        "review_same_family_coverage",
         "policy_violation",
         "ledger_integrity_failure",
         "mcp_redaction_required",
