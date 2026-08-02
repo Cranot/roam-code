@@ -37,6 +37,7 @@ from roam.plan.compiler import (
     compile_plan,
     execution_contract_for,
     injection_advice,
+    orchestration_contract_for,
     route_for_plan,
 )
 
@@ -488,6 +489,13 @@ def _build_compile_json_envelope(
     # empty, so downstream consumers key on presence.
     contract = execution_contract_for(plan.procedure, task)
     extra: dict = {"execution_contract": list(contract)} if contract else {}
+    # The review obligations (1b/4b) ride as their own additive block, on the
+    # same absent-not-empty rule. Policy + criteria-template IDs only: the
+    # agent's plan and diff do not exist yet at compile time, so any artifact
+    # hash here would be a placeholder a later claim could pass off as frozen.
+    orchestration = orchestration_contract_for(plan.procedure, task)
+    if orchestration:
+        extra["orchestration_contract"] = orchestration
     return json_envelope(
         "compile",
         summary={
@@ -591,6 +599,13 @@ def _emit_text_compile(
     if contract:
         click.echo("execution_contract:")
         for line in contract:
+            click.echo(f"  {line}")
+    # Review obligations (1b/4b) follow the same indented-lines-after-the-
+    # header rule, so the header grammar stays untouched.
+    orchestration = orchestration_contract_for(plan.procedure, task)
+    if orchestration:
+        click.echo("review_contract:")
+        for line in orchestration["obligations"]:
             click.echo(f"  {line}")
 
 

@@ -453,3 +453,54 @@ def test_compile_short_task_skip_envelope_has_no_contract(runner):
     assert result.exit_code == 0
     assert "skip_task_too_short" in result.output
     assert "execution_contract" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# W1442 — the 1b/4b review obligations ride an additive block
+# ---------------------------------------------------------------------------
+
+
+def test_compile_edit_context_carries_orchestration_contract_json(runner):
+    """Edit-context envelopes carry the review block: policy + template IDs."""
+    from roam.plan.compiler import ORCHESTRATION_CONTRACT_SCHEMA_VERSION
+
+    result = runner.invoke(cli, ["--json", "compile", "add a logout button to the settings page"])
+    assert result.exit_code == 0
+    block = json.loads(result.output)["orchestration_contract"]
+    assert block["schema_version"] == ORCHESTRATION_CONTRACT_SCHEMA_VERSION
+    assert block["review_policy"] == "risk_gated"
+    assert len(block["obligations"]) == 2
+    joined = " ".join(block["obligations"])
+    assert "different family" in joined and "unproven hypotheses" in joined
+    assert "never your rationale" in joined
+    assert set(block["criteria_templates"]) == {"1b_plan_critique", "4b_done_verdict"}
+    # No artifact hashes at compile time: the plan and diff do not exist yet,
+    # so a placeholder here could be passed off as a frozen value later.
+    assert "artifact_hash" not in json.dumps(block)
+
+
+def test_compile_query_task_has_no_orchestration_contract(runner):
+    """Absent, never empty — consumers key on presence."""
+    result = runner.invoke(cli, ["--json", "compile", "what does the settings page do"])
+    assert result.exit_code == 0
+    assert "orchestration_contract" not in json.loads(result.output)
+
+
+def test_compile_orchestration_contract_survives_budget_truncation(runner, monkeypatch):
+    """The review block is budget-preserved, like the execution contract."""
+    monkeypatch.setenv("ROAM_DEFAULT_JSON_BUDGET", "300")
+    result = runner.invoke(cli, ["--json", "compile", "refactor the settings page module"])
+    assert result.exit_code == 0
+    envelope = json.loads(result.output)
+    assert len(envelope["orchestration_contract"]["obligations"]) == 2
+    assert len(envelope["execution_contract"]) == 5
+
+
+def test_compile_review_contract_text_keeps_header_grammar(runner):
+    """Text obligations stay indented, after the stable header block."""
+    result = runner.invoke(cli, ["compile", "add a logout button to the settings page"])
+    assert result.exit_code == 0
+    lines = result.output.splitlines()
+    idx = next(i for i, line in enumerate(lines) if line.strip() == "review_contract:")
+    assert lines[idx + 1].startswith("  ") and lines[idx + 2].startswith("  ")
+    assert any(line.startswith("classifier_conf") for line in lines[:idx])

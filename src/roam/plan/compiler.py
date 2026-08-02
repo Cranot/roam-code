@@ -8884,6 +8884,59 @@ def execution_contract_for(procedure: str, task: str | None = None) -> tuple[str
     return EXECUTION_CONTRACT if _is_edit_context(task, procedure) else ()
 
 
+# ---- review obligations (orchestration-graph Phase 3, slice 1) ------------
+# Two obligations the five-line contract cannot express, because each names a
+# REVIEWER rather than a step: the plan must survive a critique by a DIFFERENT
+# model family before implementation (1b), and "done" must carry a same-shaped
+# cross-family verdict (4b). They ride as a separate additive block rather than
+# as sixth and seventh contract lines for two reasons: the five-line tuple is
+# pinned by drift guards asserting its exact length and wording, and these
+# obligations carry POLICY (when they are required) plus the criteria-template
+# IDs a later freeze step binds evidence to.
+#
+# What this block deliberately does NOT carry: artifact hashes. At compile time
+# the agent's plan and diff do not exist yet, so any hash here would be a
+# placeholder that later agent claims could masquerade as a frozen value.
+# Hashes are minted by explicit freeze operations, after each artifact exists.
+REVIEW_OBLIGATIONS: tuple[str, ...] = (
+    "1b. CRITIQUE the plan across families: before implementing, have a model from a "
+    "different family attack the plan as unproven hypotheses (it gets the plan and the "
+    "acceptance criteria, never your rationale); record its verdict.",
+    "4b. VERDICT before done: a model from a family different from yours reviews the "
+    "finished diff against the same frozen criteria; its accept is the done signal, "
+    "not your own assertion.",
+)
+
+REVIEW_POLICY_RISK_GATED = "risk_gated"
+
+# Criteria templates the freeze step binds receipts to. IDs only: the template
+# bodies live with the verifier, so an envelope never carries review criteria
+# that an agent could edit before the reviewer reads them.
+REVIEW_CRITERIA_TEMPLATES: dict[str, str] = {
+    "1b_plan_critique": "plan-critique-v1",
+    "4b_done_verdict": "done-verdict-v1",
+}
+
+ORCHESTRATION_CONTRACT_SCHEMA_VERSION = "1.0"
+
+
+def orchestration_contract_for(procedure: str, task: str | None = None) -> dict | None:
+    """The machine-readable review block for an edit-context envelope.
+
+    ``None`` (absent, never empty) for query envelopes: the same
+    absence-vs-empty discipline the execution contract follows, so a consumer
+    can distinguish "no obligations" from "obligations dropped in transit".
+    """
+    if not _is_edit_context(task, procedure):
+        return None
+    return {
+        "schema_version": ORCHESTRATION_CONTRACT_SCHEMA_VERSION,
+        "review_policy": REVIEW_POLICY_RISK_GATED,
+        "obligations": list(REVIEW_OBLIGATIONS),
+        "criteria_templates": dict(REVIEW_CRITERIA_TEMPLATES),
+    }
+
+
 def _ctx_primary_target(named_paths: list[str]) -> str | None:
     """First named path (POSIX-normalized) usable as a roam target. Cheap; no IO."""
     for p in (named_paths or [])[:2]:
