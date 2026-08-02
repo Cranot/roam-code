@@ -697,6 +697,12 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
         #     envelope into a query-shaped one — the exact undisclosed-
         #     truncation defect this preserved set exists to prevent.
         "execution_contract",
+        #   * ``orchestration_contract`` (~120 tokens) carries the 1b/4b
+        #     cross-family review obligations plus the criteria-template IDs
+        #     a freeze step binds receipts to. Dropping it silently converts
+        #     a review-gated envelope into an ungated one — same defect class
+        #     as dropping the execution contract, so same protection.
+        "orchestration_contract",
     }
 
     result = _copy_envelope_mutable(data)

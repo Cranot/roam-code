@@ -1554,3 +1554,55 @@ class TestLoopBReportRefresh:
         stub_dir, _ = _install_roam_verify_stub(tmp_path, _PASS_ENVELOPE)
         popen_log = self._run(repo, stub_dir, {"ROAM_HOOK_REPORT_REFRESH": "1"}, cwd=sub)
         assert "verify --auto --report --persist" not in popen_log  # root throttle honored
+
+
+class TestW1442ObligationForwarding:
+    """The v15 body forwards the contract obligations it used to drop."""
+
+    def test_ups_body_forwards_both_contracts(self):
+        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
+
+        body = _CLAUDE_UPS_HOOK_SCRIPT
+        assert 'd.get("execution_contract")' in body
+        assert 'd.get("orchestration_contract")' in body
+        assert "_print_obligations" in body
+
+    def test_ups_body_reads_contracts_before_the_skip_return(self):
+        """A1/A2: skip-advised turns are still edit-context, so obligations
+        must be read BEFORE the early return, and the skip path must emit
+        them ALONE — widening it to the facts block would silently repeal
+        the measured net-negative generation-task A/B."""
+        from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
+
+        body = _CLAUDE_UPS_HOOK_SCRIPT
+        read_at = body.index('contract = d.get("execution_contract")')
+        skip_at = body.index("injection_advice")
+        assert read_at < skip_at, "obligations must be read before the skip return"
+        # the skip branch prints obligations, never the facts block
+        skip_branch = body[skip_at : body.index("plan = (d.get")]
+        assert "_print_obligations" in skip_branch
+        assert "prefetched_facts" not in skip_branch
+
+    def test_hook_body_version_bumped_for_the_new_body(self):
+        """A1: without the bump, _hook_heal_state reads a deployed stale body
+        as 'current' (version matches, sha registered) and the fleet silently
+        keeps serving the contract-free block."""
+        from roam.commands.cmd_hooks import _HOOK_BODY_VERSION
+
+        assert _HOOK_BODY_VERSION >= 15
+
+    def test_deployed_previous_version_body_heals(self, in_tmp, monkeypatch):
+        """The registered v14 body must classify as healable, not current."""
+        from roam.commands.cmd_hooks import (
+            _CLAUDE_UPS_HOOK_SCRIPT,
+            _HOOK_BODY_VERSION,
+            _hook_heal_state,
+        )
+
+        canonical = _CLAUDE_UPS_HOOK_SCRIPT
+        previous = canonical.replace(
+            f"# roam-hook-version: {_HOOK_BODY_VERSION}",
+            f"# roam-hook-version: {_HOOK_BODY_VERSION - 1}",
+        )
+        TestHookBodyHeal._register(monkeypatch, previous)
+        assert _hook_heal_state(previous, canonical) == "heal"

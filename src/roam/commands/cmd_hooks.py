@@ -568,7 +568,13 @@ def status(ctx):
 # `compile-stats` report 0 rows over a fully populated log. Deployed v13 bodies
 # heal so wired installs stop writing through whichever roam PATH happens to
 # resolve to.
-_HOOK_BODY_VERSION = 14
+# v15 (2026-08-02): the UserPromptSubmit body forwards the envelope's
+# ``execution_contract`` and ``orchestration_contract`` obligations, which it
+# previously dropped when it rebuilt its own injection block — so the phased
+# and cross-family review obligations never reached the prompt. The skip
+# path emits the obligations ALONE (never the facts block) so the measured
+# net-negative generation-task A/B stays intact. Deployed v14 bodies heal.
+_HOOK_BODY_VERSION = 15
 _HOOK_VERSION_MARKER = "# roam-hook-version:"
 
 _CLAUDE_UPS_HOOK_FILENAME = "roam-compile-ups.py"
@@ -923,7 +929,7 @@ def _start_episode(payload, prompt):
             _release_lock(lock_path, fd)
         event = {
             "schema_version": _EPISODE_SCHEMA,
-            "hook_version": 14,
+            "hook_version": 15,
             "evidence_source": "live_hook",
             "event_id": "evt_" + hashlib.sha256((episode_id + ":start").encode("utf-8")).hexdigest()[:24],
             "episode_id": episode_id,
@@ -1025,10 +1031,21 @@ def main():
                 return
             d = json.loads(proc.stdout)
         summary = d.get("summary") or {}
+        # The obligation blocks ride SEPARATELY from the facts block. An
+        # envelope can be skip-advised (facts not worth injecting) while
+        # still being edit-context, and the obligations are exactly what
+        # such a turn needs -- so they are read before the skip return.
+        contract = d.get("execution_contract") or []
+        review = (d.get("orchestration_contract") or {}).get("obligations") or []
         # Generation-shaped tasks (write a test / implement X): measured
-        # net-negative to inject — the envelope is cache-re-read every turn
-        # while the agent must read/edit/run regardless. Compiler advises.
+        # net-negative to inject the FACTS -- the envelope is cache-re-read
+        # every turn while the agent must read/edit/run regardless. The
+        # measured result is about the facts payload, so the skip path emits
+        # the obligations ALONE and never the full block; widening it here
+        # would silently repeal that A/B.
         if str(summary.get("injection_advice") or "").startswith("skip"):
+            if contract or review:
+                _print_obligations(contract, review)
             return
         plan = (d.get("artifact") or {}).get("plan") or {}
         facts = {k: v for k, v in (plan.get("prefetched_facts") or {}).items()
@@ -1043,12 +1060,28 @@ def main():
         }
         block = {k: v for k, v in block.items() if v}
         if not block:
+            if contract or review:
+                _print_obligations(contract, review)
             return
         print("PRE-COMPUTED PLAN (roam compile -- answer from these "
               "embedded facts; do not re-gather what is already answered):")
         print(json.dumps(block, ensure_ascii=False))
+        if contract or review:
+            _print_obligations(contract, review)
     except Exception:
         return  # fail open
+
+
+def _print_obligations(contract, review):
+    """Emit the phased-work and cross-family review obligations.
+
+    Plain numbered lines, not JSON: these are instructions to the agent,
+    while the facts block above is data for it to answer from.
+    """
+    print("EXECUTION CONTRACT (roam compile -- this turn edits code; "
+          "these obligations are not optional):")
+    for line in list(contract) + list(review):
+        print("  " + str(line))
 
 
 main()
@@ -1177,7 +1210,7 @@ _ADVISORY_CATEGORIES = frozenset({
     "llm_smells", "test_hermeticity", "smells",
 })
 _EPISODE_SCHEMA = 1
-_EPISODE_HOOK_VERSION = 14
+_EPISODE_HOOK_VERSION = 15
 _EPISODE_LOCK_ATTEMPTS = 20
 _EPISODE_LOCK_SLEEP_S = 0.005
 _EPISODE_LOCK_STALE_S = 30.0
@@ -2544,6 +2577,7 @@ _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
         "2fe9800b212926cb332a903114534a9891ddb790d54ec1b7aeb90b740bf67b68",  # stop pre-stamp surgered (2026-07-16 19e74bd5)
         "d6521a89e559fb875e2d949f2a13e9710aa378edd505b688362c07137bb1e0d1",  # stop v12 pristine (2026-07-20 24f29f64)
         "f8bafe491891a4fac7609105f7531613e56b3319b7e2fde345b9f02fbf94a95f",  # stop v13 pristine (2026-07-23 44132a70)
+        "028ae25656c5e8568946e833fda9189c7780334e4872d2f398c5fef5f8a428a4",  # stop v14 pristine (2026-07-27 67385c50)
         "0313b8d53749fa9d188c9e6554b37826ff677cdd166627ab5b613538bb4b4573",  # stop v2 pristine (2026-07-16 585d88f3)
         "2c81e646c1102ebd010b6f470d6a153d8b47d68921584e55806de9052da13fa7",  # stop v2 surgered (2026-07-16 585d88f3)
         "b28bcb7a414f92e1694ecbeb54ff1d5e69b8a4c46d4ee035e6b88975712e0805",  # stop v3 pristine (2026-07-16 046fecee)
@@ -2559,6 +2593,7 @@ _KNOWN_HOOK_BODY_SHAS: frozenset[str] = frozenset(
         "4df987f04f024d36867c608ce971bf4a6c18b36b36a1a11babf9f569eb36e9e3",  # ups v12 pristine (2026-07-19 5ad38c53)
         "25e552061e4737bac27cbd547cade4189c84f207b2f466d410e1d036a1b1f1ca",  # ups v12 pristine (2026-07-20 24f29f64)
         "67d1e9d6b67ea6401b3fbb45593e0bc7605cce70304ebe5f1487035d07962e75",  # ups v13 pristine (2026-07-23 44132a70)
+        "f6ec6e57167e7afbc9eea1dc3d89b0687dbda6965abc1992be577b0aedbc3df4",  # ups v14 pristine (2026-07-27 67385c50)
         "d91b18607d6175b4aa90023172f52663a6c8f3d16a714f78615a559d2913e7ef",  # ups v2 pristine (2026-07-16 585d88f3)
         "18e19f503c957e09850ec4173fc451b078c7a0356eb6c964d6406b9e5a8300a5",  # ups v3 pristine (2026-07-16 046fecee)
         "25492394429ce7416b7ba3f80b0f2c38accb79136f04a47e28fb51d828a0cc08",  # ups v4 pristine (2026-07-16 0506aede)
