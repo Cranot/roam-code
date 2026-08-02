@@ -16,6 +16,13 @@ Current modules:
 - ``god_components`` — Canonical god-component count (degree-thresholded,
   utility-aware). Owned-by: ``cmd_health``'s algorithm. Consumed by:
   ``roam health``, ``roam fingerprint``, ``roam agent-export``.
+- ``health_score`` — Canonical 0-100 composite health score AND the
+  tangle ratio behind it. Owned-by: this module. Consumed by: ``roam
+  health`` and ``metrics_history.collect_metrics`` (the ``snapshots``
+  writer) — the two sides ``roam health --baseline`` compares against
+  each other. They previously each had their own copy and disagreed
+  (64 vs 71 on this repo at one instant), so every ``--baseline`` run
+  reported a phantom improvement; see the module docstring (W1451).
 - ``health_band`` — Canonical health-score band -> verdict label
   (>=80 Healthy / >=60 Fair / >=40 Needs attention / <40 Unhealthy).
   Owned-by: ``cmd_health``'s ``_compose_verdict`` thresholds. Consumed by:

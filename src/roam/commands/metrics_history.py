@@ -12,70 +12,20 @@ import time
 # etc.), which let their dead-export rows leak into the snapshot. The
 # canonical helper covers all of those.
 from roam.commands.changed_files import is_test_file as _is_test_path
+from roam.coverage_reports import imported_coverage_overview
 from roam.db.connection import find_project_root
 from roam.db.queries import TOP_BY_BETWEENNESS, TOP_BY_DEGREE, UNREFERENCED_EXPORTS
 
-
-def _compute_health_score(
-    conn,
-    G,
-    symbols,
-    god_items,
-    bn_items,
-    bn_p90,
-    layer_violations,
-    find_cycles_fn,
-    is_utility_path_fn,
-):
-    """Compute the weighted geometric mean health score (0-100)."""
-    import math
-
-    def _hf(value, scale):
-        return math.exp(-value / scale) if scale > 0 else 1.0
-
-    tangle_r = 0.0
-    if G is not None and symbols > 0:
-        from networkx.exception import NetworkXException
-
-        try:
-            cyc_ids = set()
-            for scc in find_cycles_fn(G):
-                cyc_ids.update(scc)
-            tangle_r = len(cyc_ids) / symbols * 100
-        except (ImportError, NetworkXException) as _exc:
-            from roam.observability import log_swallowed
-
-            log_swallowed("metrics_history:nested", _exc)
-
-    # Score signal: actionable items only (utilities are expected to
-    # have high fan-in / high betweenness — penalising them tanks the
-    # score on healthy codebases). Normalised per 1k symbols so a 14k-
-    # symbol repo with 23 actionable god components (0.16%) doesn't
-    # score the same as a 100-symbol repo with 23 (23%). Mirrors the
-    # fix in cmd_health.py.
-    god_actionable = [g for g in god_items if not is_utility_path_fn(g["file"])]
-    bn_actionable = [b for b in bn_items if not is_utility_path_fn(b["file"])]
-    god_critical = sum(1 for g in god_actionable if g["degree"] > 50)
-    bn_critical = sum(1 for b in bn_actionable if b["betweenness"] > bn_p90)
-
-    size_norm = max(1.0, symbols / 1000.0)
-    god_signal = (god_critical * 3 + len(god_actionable) * 0.5) / size_norm
-    bn_signal = (bn_critical * 2 + len(bn_actionable) * 0.3) / size_norm
-
-    factors = [
-        (_hf(tangle_r, 10), 0.30),
-        (_hf(god_signal, 1.5), 0.20),
-        (_hf(bn_signal, 1.0), 0.15),
-        (_hf(layer_violations, 5), 0.15),
-    ]
-    try:
-        avg_fh = conn.execute("SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL").fetchone()[0]
-        factors.append((min(1.0, (avg_fh or 10) / 10.0), 0.20))
-    except sqlite3.Error:
-        factors.append((1.0, 0.20))
-
-    log_score = sum(w * math.log(max(h, 1e-9)) for h, w in factors)
-    return max(0, min(100, int(100 * math.exp(log_score))))
+# W1451 — the 0-100 score written into ``snapshots`` MUST be the same number
+# ``roam health`` prints today, because ``roam health --baseline <ref>`` diffs
+# one against the other. Two implementations existed and disagreed (64 vs 71
+# on this repository at the same instant), so every --baseline run reported a
+# phantom +7 improvement. One function, both call sites.
+from roam.quality.health_score import (
+    compute_health_score,
+    compute_tangle_ratio,
+    fetch_average_file_health,
+)
 
 
 def _count_layer_violations_for_resilient_snapshots(G):
@@ -109,13 +59,22 @@ def collect_metrics(conn):
     files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
     edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-    # Keep health math aligned with `roam health`.
-    from roam.commands.cmd_health import _betweenness_percentiles, _is_utility_path
+    # Keep health math aligned with `roam health`. W1451: the detection caps
+    # and thresholds are imported as NAMED constants rather than re-typed as
+    # literals — a cap raised on one side and not the other is exactly the
+    # silent-drift shape this module's score divergence came from.
+    from roam.commands.cmd_health import (
+        _BOTTLENECK_LIST_LIMIT,
+        _BOTTLENECK_MIN_BETWEENNESS,
+        _GOD_COMPONENT_LIST_LIMIT,
+        _GOD_COMPONENT_MIN_DEGREE,
+        _betweenness_percentiles,
+    )
 
-    # Cycles. Tarjan runs ONCE here; the SCC list is reused by the
-    # health-score factor and the tangle ratio below (pre-fix each of the
-    # three sites re-ran find_cycles over the full symbol graph — 3x SCC
-    # per collect_metrics call, pure waste on big graphs).
+    # Cycles. Tarjan runs ONCE here; the SCC list is reused by the ``cycles``
+    # count and by the tangle ratio below, which in turn feeds the health
+    # score (an earlier revision re-ran find_cycles at each of those sites —
+    # 3x SCC per collect_metrics call, pure waste on big graphs).
     cycle_list: list = []
     try:
         from roam.graph.builder import build_symbol_graph
@@ -129,11 +88,11 @@ def collect_metrics(conn):
         G = None
 
     # God components (same query + thresholds as cmd_health.py)
-    degree_rows = conn.execute(TOP_BY_DEGREE, (50,)).fetchall()
+    degree_rows = conn.execute(TOP_BY_DEGREE, (_GOD_COMPONENT_LIST_LIMIT,)).fetchall()
     god_items = []
     for r in degree_rows:
         total = (r["in_degree"] or 0) + (r["out_degree"] or 0)
-        if total > 20:
+        if total > _GOD_COMPONENT_MIN_DEGREE:
             god_items.append(
                 {
                     "degree": total,
@@ -145,12 +104,12 @@ def collect_metrics(conn):
     # Bottlenecks (same query + thresholds as cmd_health.py)
     bn_p90 = _betweenness_percentiles(conn, (90,)).values[0]
 
-    bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
+    bw_rows = conn.execute(TOP_BY_BETWEENNESS, (_BOTTLENECK_LIST_LIMIT,)).fetchall()
     _round = round
     bn_items = [
         {"betweenness": _round(r["betweenness"] or 0, 1), "file": r["file_path"]}
         for r in bw_rows
-        if (r["betweenness"] or 0) > 0.5
+        if (r["betweenness"] or 0) > _BOTTLENECK_MIN_BETWEENNESS
     ]
     bottlenecks = len(bn_items)
 
@@ -162,28 +121,42 @@ def collect_metrics(conn):
     # Layer violations
     layer_violations = _count_layer_violations_for_resilient_snapshots(G)
 
-    health_score = _compute_health_score(
-        conn,
-        G,
-        symbols,
-        god_items,
-        bn_items,
-        bn_p90,
-        layer_violations,
-        # Reuse the Tarjan result computed once above instead of re-running
-        # SCC detection over the full symbol graph.
-        lambda _graph: cycle_list,
-        _is_utility_path,
-    )
+    # Tangle ratio: percent of symbols inside a non-trivial SCC. Reuses the
+    # single Tarjan result computed above.
+    tangle_ratio = compute_tangle_ratio(cycle_list, symbols).ratio
 
-    # Tangle ratio: percentage of symbols in cycles (reuses cycle_list —
-    # third pre-fix find_cycles call site).
-    tangle_ratio = 0.0
-    if G is not None and symbols > 0:
-        cycle_sym_ids = set()
-        for scc in cycle_list:
-            cycle_sym_ids.update(scc)
-        tangle_ratio = round(len(cycle_sym_ids) / symbols * 100, 1)
+    # W1451 — imported test coverage was previously read by `roam health` and
+    # NOT by this writer, so on any project with coverage data the stored
+    # snapshot score and the live score would drift apart by the 10% coverage
+    # factor. Both call sites now feed the identical inputs to the identical
+    # function.
+    try:
+        coverage = imported_coverage_overview(conn)
+    except sqlite3.Error as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history:coverage", _exc)
+        coverage = {}
+
+    try:
+        avg_file_health = fetch_average_file_health(conn)
+    except sqlite3.Error as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history:file_health", _exc)
+        avg_file_health = None
+
+    health_score = compute_health_score(
+        tangle_ratio=tangle_ratio,
+        god_items=god_items,
+        bn_items=bn_items,
+        bn_p90=bn_p90,
+        layer_violations=layer_violations,
+        total_symbols=symbols,
+        avg_file_health=avg_file_health,
+        coverage_pct=coverage.get("coverage_pct"),
+        coverable_lines=coverage.get("coverable_lines", 0),
+    ).score
 
     # Average complexity from symbol_metrics
     avg_complexity = 0.0

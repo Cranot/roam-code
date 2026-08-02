@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
-import math
 import sqlite3
 import subprocess
 from collections import namedtuple
@@ -77,6 +76,16 @@ from roam.output.metric_definitions import (
 )
 from roam.quality.cycles import definition as cycles_definition
 from roam.quality.god_components import definition as god_components_definition
+
+# W1451 — the 0-100 composite score and the tangle ratio behind it live in
+# ONE module, shared verbatim with the ``snapshots`` writer
+# (``metrics_history.collect_metrics``). ``roam health --baseline`` compares
+# those two numbers against each other, so a second copy is a false report
+# waiting to happen — and was one: cmd_health's actionable-filtered tangle
+# ratio reported a phantom +7 improvement on an unchanged repository.
+from roam.quality.health_score import compute_health_score as _compute_canonical_health_score
+from roam.quality.health_score import compute_tangle_ratio as _compute_canonical_tangle_ratio
+from roam.quality.health_score import fetch_average_file_health as _fetch_average_file_health
 
 # W151 (W93 follow-up): health is the fifth detector migrating onto the
 # central findings registry (after ``clones`` in W95, ``dead`` in W99,
@@ -145,6 +154,12 @@ INFO = "info"
 _GOD_COMPONENT_LIST_LIMIT = 50
 _GOD_COMPONENT_MIN_DEGREE = 20
 _BOTTLENECK_LIST_LIMIT = 15
+# W1451 — named so the snapshot writer can import it instead of re-typing the
+# literal. ``metrics_history.collect_metrics`` feeds the SAME god/bottleneck
+# item lists into the SAME score function; a cap or threshold changed on one
+# side only would silently reintroduce a score divergence between `roam health`
+# and the stored baseline it is compared against.
+_BOTTLENECK_MIN_BETWEENNESS = 0.5
 
 
 def _normalise_health_severity(sev: str | None) -> str:
@@ -1108,7 +1123,7 @@ def _emit_baseline_diff(
     conn,
     baseline_ref: str,
     health_score: int,
-    actionable_cycles,
+    total_cycles: int,
     god_items,
     bn_items,
     violations,
@@ -1121,10 +1136,23 @@ def _emit_baseline_diff(
     Extracted from ``health()`` (R9.A5) — was a 125-line inline branch.
     Both the JSON and text exit paths terminate the command, so the
     caller does ``return`` immediately after invoking this helper.
+
+    W1451 — every field in ``current_metrics`` MUST be computed the way the
+    matching ``snapshots`` column was computed by
+    ``metrics_history.collect_metrics``. A delta between two differently-
+    defined populations is not a delta; it is a fabricated change report.
     """
     # Dead-export count: mirror the query metrics_history uses so the
     # current vs. baseline comparison is apples-to-apples. Tests that
     # don't care about exports are unaffected by 0-vs-0 deltas.
+    #
+    # W1451/W886 — use the CANONICAL test-file predicate, the same one the
+    # snapshot writer uses. The previous inline check only recognised Python
+    # ``test_*`` / ``*_test.py`` names, so in a Go / Java / JS project the
+    # stored column excluded ``*_test.go`` / ``*Test.java`` / ``*.spec.ts``
+    # dead exports and this side counted them — a standing positive delta on
+    # a repository where nothing had changed.
+    from roam.commands.changed_files import is_test_file as _is_test_path
     from roam.db.queries import UNREFERENCED_EXPORTS as _UNREF_EXPORTS
 
     try:
@@ -1132,17 +1160,11 @@ def _emit_baseline_diff(
     except sqlite3.Error:
         _dead_exports = 0
     else:
-        _dead_exports = 0
-        for r in _dead_rows:
-            file_path = (_row_field(r, "file_path") or "").lower()
-            file_name = file_path.rsplit("/", 1)[-1]
-            if file_name.startswith("test_") or file_path.endswith("_test.py"):
-                continue
-            _dead_exports += 1
+        _dead_exports = sum(1 for r in _dead_rows if not _is_test_path(_row_field(r, "file_path") or ""))
 
     current_metrics = {
         "health_score": health_score,
-        "cycles": len(actionable_cycles),
+        "cycles": total_cycles,
         "god_components": len(god_items),
         "bottlenecks": len(bn_items),
         "dead_exports": _dead_exports,
@@ -1598,7 +1620,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         bn_items = []
         for r in bw_rows:
             bw = r["betweenness"] or 0
-            if bw > 0.5:
+            if bw > _BOTTLENECK_MIN_BETWEENNESS:
                 bn_items.append(
                     {
                         "name": r["name"],
@@ -1809,11 +1831,28 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         except Exception as exc:
             _w607m_warnings_out.append(f"health_tangle_failed:{type(exc).__name__}:{exc}")
             total_symbols = 1
-        cycle_symbol_ids = set()
-        for scc, cyc_info in raw_by_formatted_cycle:
-            if cyc_info.get("actionable"):
-                cycle_symbol_ids.update(scc)
-        tangle_ratio = round(len(cycle_symbol_ids) / total_symbols * 100, 1)
+        # W1451 — count ALL non-trivial SCCs, not just the actionable ones.
+        #
+        # The pre-W1451 form filtered the numerator to `cyc_info["actionable"]`
+        # (SCC spans >= 2 files AND involves no test file). Nothing else in the
+        # estate applies that filter: TANGLE_RATIO_DEFINITION says "symbols
+        # inside non-trivial SCCs", `roam fingerprint` unions every SCC from
+        # `find_cycles(G, min_size=2)`, and so does the snapshot writer. On this
+        # repository the filter dropped 1606 tangled symbols to 0 and reported
+        # tangle_ratio 0.0 against fingerprint's 0.0359 and the stored
+        # snapshot's 3.6 — the same measurement, one of them silently
+        # redefined. Because `roam health --baseline` diffs this number against
+        # the stored one, the gap surfaced as a phantom improvement.
+        #
+        # Actionability still governs which cycles are REPORTED as findings
+        # (`actionable_cycles` / `ignored_cycles` below); it no longer governs
+        # what the tangle ratio measures.
+        _tangle = _compute_canonical_tangle_ratio(
+            [scc for scc, _cyc_info in raw_by_formatted_cycle],
+            total_symbols,
+        )
+        tangle_ratio = _tangle.ratio
+        tangled_symbol_count = _tangle.tangled_symbols
 
         # --- Propagation Cost (MacCormack et al. 2006) ---
         # Fraction of the system affected by a change to any component.
@@ -1866,34 +1905,19 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             fiedler_failed = True
 
         # --- Composite health score (0-100) ---
-        # Weighted geometric mean: score = 100 * product(h_i ^ w_i)
-        # Non-compensatory: a zero in any dimension cannot be masked by
-        # high scores in others, unlike a linear sum.  Each factor h_i
-        # is a "health fraction" in (0, 1] derived from a sigmoid:
-        #   h = e^(-signal / scale)   (1 = pristine, → 0 = worst)
-        # Weights sum to 1 and encode relative importance.
-        def _health_factor(value, scale):
-            """Sigmoid health factor: 1 for no issues, → 0 for many."""
-            return math.exp(-value / scale) if scale > 0 else 1.0
-
-        # Score signals — count *actionable* items only. Utilities
-        # (string/path/datetime helpers) are expected to have high fan-in
-        # and would dominate the formula otherwise. Per dogfood notes
-        # 2026-05-01: this repo had 50 god components total but 27 were
-        # expected utilities; the old formula penalised the score for
-        # all 50 and produced a misleading 2/100 verdict. The display
-        # already classifies them ("23 actionable, 27 expected utilities");
-        # the score should match the display.
-        god_actionable = [g for g in god_items if g.get("category") == "actionable"]
-        god_critical = sum(1 for g in god_actionable if g.get("severity") == CRITICAL)
-        # Normalise by codebase size so a 14k-symbol repo with 23 actionable
-        # god components (0.16%) doesn't score the same as a 100-symbol
-        # repo with 23 (23%). 1k symbols is the unit; signal scales linearly.
-        size_norm = max(1.0, total_symbols / 1000.0)
-        god_signal = (god_critical * 3 + len(god_actionable) * 0.5) / size_norm
-        bn_actionable_items = [b for b in bn_items if b.get("category") == "actionable"]
-        bn_critical = sum(1 for b in bn_actionable_items if b.get("severity") == CRITICAL)
-        bn_signal = (bn_critical * 2 + len(bn_actionable_items) * 0.3) / size_norm
+        # W1451 — the formula itself lives in ``roam.quality.health_score``,
+        # shared verbatim with ``metrics_history.collect_metrics`` (the
+        # ``snapshots`` writer). ``roam health --baseline`` compares this
+        # number against that one, so they MUST come from one implementation;
+        # ``tests/test_w1451_health_score_single_source.py`` fails the build if
+        # they ever diverge again.
+        #
+        # The signals are derived inside the shared function from the raw
+        # ``file`` + ``degree`` / ``betweenness`` fields. That is provably the
+        # same classification the display uses -- ``category == "actionable"``
+        # iff the path is not a utility path, and an actionable god component /
+        # bottleneck is ``critical`` iff ``degree > 50`` / ``betweenness >
+        # bn_p90`` -- but it no longer depends on the display having run first.
 
         # W607-M: per-phase substrate guard for imported coverage helper.
         try:
@@ -1902,73 +1926,43 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             _w607m_warnings_out.append(f"health_imported_coverage_failed:{type(exc).__name__}:{exc}")
             coverage_import = {}
 
-        # Base factors (weights sum to 1.0 before optional imported coverage).
-        # Scales tuned post-normalisation so a normal repo (low percent of
-        # actionable god components) scores in the 60-90 range.
-        base_factors = [
-            (_health_factor(tangle_ratio, 10), 0.30),  # tangle ratio
-            (_health_factor(god_signal, 1.5), 0.20),  # god components (normalised /1k symbols)
-            (_health_factor(bn_signal, 1.0), 0.15),  # bottlenecks (normalised /1k symbols)
-            (_health_factor(len(violations), 5), 0.15),  # layer violations
-        ]
-        # File-level health: map avg [0-10] to a factor
-        # W607-M: per-phase substrate guard. Mirrors the pre-W607-M
-        # try/except floor (1.0) so the score behaviour is unchanged on
-        # the happy path; the only addition is the disclosure marker.
+        # File-level health: AVG(file_stats.health_score) on a 0-10 scale.
+        # W607-M: per-phase substrate guard. ``None`` means "no signal" and
+        # maps to the neutral 1.0 factor inside the shared helper.
         try:
-            avg_file_health = conn.execute(
-                "SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL"
-            ).fetchone()[0]
-            if avg_file_health is not None:
-                base_factors.append((min(1.0, avg_file_health / 10.0), 0.20))
-            else:
-                base_factors.append((1.0, 0.20))
+            avg_file_health = _fetch_average_file_health(conn)
         except Exception as exc:
             _w607m_warnings_out.append(f"health_file_health_failed:{type(exc).__name__}:{exc}")
-            base_factors.append((1.0, 0.20))
+            avg_file_health = None
 
-        # Imported test coverage (#134): when available, reserve 10% score weight
-        # and scale existing weights to 90%. This avoids over-dominance while
-        # still penalizing high-centrality codebases with low real coverage.
-        if coverage_import.get("coverable_lines", 0) > 0 and coverage_import.get("coverage_pct") is not None:
-            cov_factor = min(1.0, max(0.05, coverage_import["coverage_pct"] / 100.0))
-            _health_factors = [(h, w * 0.90) for h, w in base_factors]
-            _health_factors.append((cov_factor, 0.10))
-        else:
-            _health_factors = base_factors
-
-        # Weighted geometric mean in log space
         # W607-BA: wrap the FLAGSHIP 0-100 score composition (CLAUDE.md
         # LAW 6 canonical example) so a math overflow / domain error in
         # the geometric mean surfaces as a marker rather than crashing
-        # the gate. Default 0 keeps the verdict scorer compositable on
+        # the gate. Default keeps the verdict scorer compositable on
         # the degraded path.
-        def _compute_health_score() -> int:
-            log_score = sum(w * math.log(max(h, 1e-9)) for h, w in _health_factors)
-            return max(0, min(100, int(100 * math.exp(log_score))))
-
-        health_score = _run_check_ba("compute_health_score", _compute_health_score, default=0)
-        if health_score is None:
-            health_score = 0
-
-        # record per-factor contributions so --explain can show
-        # WHY the score is what it is. Each factor's "loss" (1 - h) is
-        # what's pulling the score down; the weight scales the impact.
-        _factor_names = ["tangle_ratio", "god_components", "bottlenecks", "layer_violations", "file_health"]
-        if len(_health_factors) > len(_factor_names):
-            _factor_names.append("imported_coverage")
-        score_breakdown = []
-        for (h, w), name in zip(_health_factors, _factor_names):
-            loss_pp = round((1 - h) * w * 100, 1)
-            score_breakdown.append(
-                {
-                    "factor": name,
-                    "health": round(h, 3),
-                    "weight": round(w, 2),
-                    "loss_pp": loss_pp,
-                }
+        def _compute_health_score():
+            return _compute_canonical_health_score(
+                tangle_ratio=tangle_ratio,
+                god_items=god_items,
+                bn_items=bn_items,
+                bn_p90=bn_p90,
+                layer_violations=len(violations),
+                total_symbols=total_symbols,
+                avg_file_health=avg_file_health,
+                coverage_pct=coverage_import.get("coverage_pct"),
+                coverable_lines=coverage_import.get("coverable_lines", 0),
             )
-        score_breakdown.sort(key=lambda b: b["loss_pp"], reverse=True)
+
+        _score_result = _run_check_ba("compute_health_score", _compute_health_score, default=None)
+        if _score_result is None:
+            health_score = 0
+            # record per-factor contributions so --explain can show
+            # WHY the score is what it is. Nothing to decompose on the
+            # degraded path.
+            score_breakdown = []
+        else:
+            health_score = _score_result.score
+            score_breakdown = _score_result.breakdown()
 
         # — name the dominant issue category. The four
         # category counts (cycles, god_components, bottlenecks,
@@ -2047,7 +2041,13 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                 conn=conn,
                 baseline_ref=baseline_ref,
                 health_score=health_score,
-                actionable_cycles=actionable_cycles,
+                # W1451 — the STORED ``snapshots.cycles`` column is
+                # ``len(find_cycles(G))``, i.e. every non-trivial SCC. Diffing
+                # ``len(actionable_cycles)`` against it compared two different
+                # populations: on this repository 0 actionable vs 39 stored,
+                # reported as "39 cycles fixed" on a run where nothing changed.
+                # Pass the same population the column holds.
+                total_cycles=len(formatted_cycles),
                 god_items=god_items,
                 bn_items=bn_items,
                 violations=violations,
@@ -2585,7 +2585,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             parts.append(f"{len(violations)} layer violation{'s' if len(violations) != 1 else ''}")
         click.echo(
             f"Health Score: {health_score}/100  |  "
-            f"Tangle: {tangle_ratio}% ({len(cycle_symbol_ids)}/{total_symbols} symbols in cycles)"
+            f"Tangle: {tangle_ratio}% ({tangled_symbol_count}/{total_symbols} symbols in cycles)"
         )
         # Name the install command, not just the two packages. The old
         # "requires numpy+scipy" told the user what was missing but not how to

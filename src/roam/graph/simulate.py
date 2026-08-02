@@ -49,7 +49,7 @@ def _approx_health(
 ) -> int:
     """Compute an approximate health score from graph-derived signals.
 
-    Uses exponential decay (same family as metrics_history._compute_health_score)
+    Uses exponential decay (same family as roam.quality.health_score.health_factor)
     so that the *delta* between before/after is directionally accurate.
 
     The ``god_count`` and ``bn_count`` terms are normalised to *percentages
