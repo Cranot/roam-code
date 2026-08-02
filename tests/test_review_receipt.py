@@ -72,13 +72,25 @@ def test_honest_receipt_is_accepted(tmp_path):
     assert res["derived"]["blocking_findings_count"] == 0
 
 
-def test_canonical_hash_survives_line_ending_differences(tmp_path):
-    """An honest review on Windows must not read as stale on Linux."""
-    assert canonical_artifact_sha256(PLAN_TEXT) == canonical_artifact_sha256(PLAN_TEXT.replace("\n", "\r\n"))
-    # ...but an interior content change is a real change and must not match
-    assert canonical_artifact_sha256(PLAN_TEXT) != canonical_artifact_sha256(
-        PLAN_TEXT.replace("write lock", "write lock and fsync")
-    )
+def test_hash_is_injective_over_raw_bytes(tmp_path):
+    """No normalisation: every byte difference must change the digest.
+
+    An earlier cut normalised line endings and rstripped, to avoid a false
+    ``artifact_stale`` across platforms. That made the digest non-injective
+    -- an artifact could gain trailing whitespace after review and still
+    match its receipt (fail-OPEN). Raw bytes make the cross-platform case
+    fail-CLOSED instead, which is the safe direction.
+    """
+    base = canonical_artifact_sha256(PLAN_TEXT)
+    # trailing whitespace is a real byte difference and MUST NOT collide
+    assert base != canonical_artifact_sha256(PLAN_TEXT + "   ")
+    assert base != canonical_artifact_sha256(PLAN_TEXT + "\n\n")
+    # line-ending differences now change the digest: fail-closed, not open
+    assert base != canonical_artifact_sha256(PLAN_TEXT.replace("\n", "\r\n"))
+    # interior content changes obviously still differ
+    assert base != canonical_artifact_sha256(PLAN_TEXT.replace("write lock", "write lock and fsync"))
+    # str and its utf-8 bytes are the same artifact
+    assert base == canonical_artifact_sha256(PLAN_TEXT.encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
