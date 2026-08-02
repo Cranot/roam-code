@@ -24,12 +24,18 @@ by executing on the platform that lacks the problem.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
-sys_path_root = Path(__file__).resolve().parent.parent
-HOOKS_DIR = sys_path_root / ".githooks"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _helpers.repo_root import repo_root  # noqa: E402
+
+# W572/W588 — ask git for the canonical toplevel rather than walking
+# `Path(__file__).parents[n]`, which lands on the worktree root under nested
+# dispatch and would make this suite scan a `.githooks/` that isn't there.
+HOOKS_DIR = repo_root() / ".githooks"
 
 # Constructs bash has and POSIX sh does not. Each entry is (regex, what it is).
 # Deliberately narrow: a false positive here blocks every commit, so only

@@ -35,10 +35,14 @@ The tests below pin BOTH directions:
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 import networkx as nx
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _helpers.repo_root import repo_root  # noqa: E402
 
 from roam.graph.pagerank import BETWEENNESS_SEED, compute_centrality
 from roam.graph.simulate import compute_graph_metrics
@@ -234,7 +238,10 @@ def test_production_call_sites_pass_a_seed(monkeypatch, module, call):
 
 
 _SAMPLED_FNS = {"betweenness_centrality", "edge_betweenness_centrality"}
-_SRC = Path(__file__).resolve().parents[1] / "src" / "roam"
+# W572/W588 — canonical toplevel via git, not a parents[] walk: under
+# nested-worktree dispatch parents[1] lands on the worktree root and this
+# AST drift guard would scan a `src/roam` that is not the one under test.
+_SRC = repo_root() / "src" / "roam"
 
 
 def _sampled_calls_without_seed(tree: ast.AST) -> list[int]:
