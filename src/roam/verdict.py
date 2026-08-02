@@ -20,14 +20,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+# Centralized closed enums — single source of truth lives in guard_enums.
+# `VERDICTS` is re-exported here (explicit `as` alias) for external consumers
+# that import it from `roam.verdict`. `CHECK_STATUSES` is the closed set the
+# satisfaction allowlist and `proof_bundle.validate_v1` must both agree with.
+from roam.guard_enums import (
+    CHECK_STATUSES,
+    exit_code_for,
+)
 from roam.guard_enums import (
     VERDICTS as VERDICTS,
 )
-
-# Centralized closed enums — single source of truth lives in guard_enums.
-# `VERDICTS` is re-exported here (explicit `as` alias) for external consumers
-# that import it from `roam.verdict`.
-from roam.guard_enums import exit_code_for
 
 
 def compute_verdict(
@@ -277,15 +280,51 @@ def _collect_blockers_that_invalidate_proof(
     """Return hard-gate reasons that make the proof untrustworthy."""
     reasons: list[dict[str, Any]] = []
     required = verification_contract.get("required", []) if verification_contract else []
-    # W1441 — only checks with a REAL recorded status can satisfy a
-    # requirement. "unverified" records (tests_run entries that carried no
-    # status field) are bare claims: they used to default to "pass" and
-    # silently satisfy required checks by name membership (fail-open).
-    executed_names = {c.get("command") for c in executed_checks if c.get("status") != "unverified"}
+    # W1441/W1447 — only a check RECORDED AS PASSING can satisfy a
+    # requirement. This is an ALLOWLIST on "pass", and that direction is
+    # the whole point.
+    #
+    # W1441 expressed it as a denylist — `status != "unverified"` — which
+    # only refused the one status it had been taught to distrust. Every
+    # other value satisfied the requirement, including ones no author
+    # intends as evidence: measured against the shipped 13.10.0 binary, a
+    # bundle whose only record carried `"skipped"`, `null`, or
+    # `"Unverified"` (capitalised) returned exit 0 / "all_required_passed".
+    # `validate_v1` already rejects those shapes, so the two validators
+    # disagreed about the same bundle; the CLI path (`cmd_verdict`) does
+    # not call it, so nothing caught them.
+    #
+    # An allowlist fails closed on statuses nobody has invented yet, which
+    # a denylist cannot do.
+    executed_names = {c.get("command") for c in executed_checks if c.get("status") == "pass"}
     unverified_names = {c.get("command") for c in executed_checks if c.get("status") == "unverified"}
+    # fail/error are reported precisely by the failure loop below; listing
+    # them here too would double-report one defect as two reasons.
+    failed_names = {c.get("command") for c in executed_checks if c.get("status") in ("fail", "error")}
+    invalid_status_by_name = {
+        c.get("command"): c.get("status") for c in executed_checks if c.get("status") not in CHECK_STATUSES
+    }
     for req in required:
         cmd = req.get("command")
         if cmd not in executed_names:
+            if cmd in failed_names:
+                continue
+            if cmd in invalid_status_by_name:
+                reasons.append(
+                    {
+                        "code": "required_check_status_invalid",
+                        "check": cmd,
+                        "status": invalid_status_by_name[cmd],
+                        "because": req.get("reason"),
+                        "detail": (
+                            "this check's record carries a status outside the closed "
+                            f"set {CHECK_STATUSES}; only a recorded 'pass' satisfies a "
+                            "required check, so an unrecognised status proves nothing"
+                        ),
+                        "suggested_command": cmd,
+                    }
+                )
+                continue
             if cmd in unverified_names:
                 reasons.append(
                     {
