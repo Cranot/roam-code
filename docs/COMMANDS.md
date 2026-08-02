@@ -50,7 +50,7 @@
 | `workflow` | stable | ✓ | — |
 | `ws` | internal | — | — |
 
-## Daily Workflow (89)
+## Daily Workflow (91)
 
 | Command | Maturity | MCP | Aliases |
 |---------|----------|-----|---------|
@@ -126,6 +126,8 @@
 | `recommend` | stable | ✓ | — |
 | `replay` | stable | — | — |
 | `retrieve` | stable | ✓ | — |
+| `review-accept` | stable | — | — |
+| `review-request` | stable | — | — |
 | `rules-validate` | stable | ✓ | — |
 | `runs` | stable | — | — |
 | `savings` | stable | — | — |
@@ -313,7 +315,7 @@
 | `test-scaffold` | stable | ✓ | — |
 | `why` | stable | ✓ | — |
 
-## Uncategorized (9)
+## Uncategorized (7)
 
 | Command | Maturity | MCP | Aliases |
 |---------|----------|-----|---------|
@@ -322,8 +324,6 @@
 | `math` | deprecated | — | algo |
 | `onboard` | deprecated | ✓ | understand |
 | `refs` | deprecated | ✓ | uses |
-| `review-accept` | stable | — | — |
-| `review-request` | stable | — | — |
 | `snapshot` | deprecated | ✓ | digest, trend, trends |
 | `trend` | deprecated | ✓ | digest, snapshot, trends |
 
