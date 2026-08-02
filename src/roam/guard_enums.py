@@ -67,6 +67,12 @@ CHECK_STATUSES: tuple[str, ...] = (
     "pass",
     "fail",
     "error",
+    # W1441 — a tests_run record that carries NO status field at all.
+    # Previously such records silently defaulted to "pass", which let an
+    # agent-authored bundle read as green without any recorded outcome
+    # (fail-open). "unverified" names the honest state: the record exists
+    # but proves nothing; it can never satisfy a required check.
+    "unverified",
 )
 
 
@@ -79,6 +85,10 @@ REASON_CODES: frozenset[str] = frozenset(
         "required_checks_not_run",  # aggregated form
         "required_check_failed",
         "required_checks_failed",
+        # W1441 — a required check matched only by a status-less
+        # (unverified) tests_run record: the record exists but proves
+        # nothing, so the requirement is not satisfied.
+        "required_check_unverified",
         "policy_violation",
         "ledger_integrity_failure",
         "mcp_redaction_required",

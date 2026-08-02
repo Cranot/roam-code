@@ -104,10 +104,26 @@ def _collect_blockers_that_invalidate_proof(
     """Return hard-gate reasons that make the proof untrustworthy."""
     reasons: list[dict[str, Any]] = []
     required = verification_contract.get("required", []) if verification_contract else []
-    executed_names = {c.get("command") for c in executed_checks}
+    # W1441 — only checks with a REAL recorded status can satisfy a
+    # requirement. "unverified" records (tests_run entries that carried no
+    # status field) are bare claims: they used to default to "pass" and
+    # silently satisfy required checks by name membership (fail-open).
+    executed_names = {c.get("command") for c in executed_checks if c.get("status") != "unverified"}
+    unverified_names = {c.get("command") for c in executed_checks if c.get("status") == "unverified"}
     for req in required:
         cmd = req.get("command")
         if cmd not in executed_names:
+            if cmd in unverified_names:
+                reasons.append(
+                    {
+                        "code": "required_check_unverified",
+                        "check": cmd,
+                        "because": req.get("reason"),
+                        "detail": "a tests_run record names this check but carries no status; a record without an outcome is a claim, not evidence",
+                        "suggested_command": cmd,
+                    }
+                )
+                continue
             reasons.append(
                 {
                     "code": "required_check_not_run",

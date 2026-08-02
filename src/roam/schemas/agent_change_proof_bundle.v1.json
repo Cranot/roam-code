@@ -119,7 +119,7 @@
         "type": "object",
         "properties": {
           "command": { "type": ["string", "null"] },
-          "status": { "type": "string", "enum": ["pass", "fail", "error"] },
+          "status": { "type": "string", "enum": ["pass", "fail", "error", "unverified"] },
           "evidence": {}
         },
         "additionalProperties": true
