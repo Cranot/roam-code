@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 283 invokable command names (276 canonical commands + 7 alias names).
+# Total: 284 invokable command names (277 canonical commands + 7 alias names).
 # Guarded against registry drift by scripts/sync_surface_counts.py.
 # Deprecated commands map to a structured record. When a user invokes a
 # deprecated name we still resolve it (no breaking change) and print a
@@ -268,6 +268,7 @@ _COMMANDS = {
     "attest": ("roam.commands.cmd_attest", "attest_cmd"),
     "review-request": ("roam.commands.cmd_review", "review_request_cmd"),
     "review-accept": ("roam.commands.cmd_review", "review_accept_cmd"),
+    "review-verify": ("roam.commands.cmd_review", "review_verify_cmd"),
     "capsule": ("roam.commands.cmd_capsule", "capsule"),
     "path-coverage": ("roam.commands.cmd_path_coverage", "path_coverage"),
     "plugins": ("roam.commands.cmd_plugins", "plugins_cmd"),
@@ -559,6 +560,7 @@ _CATEGORIES = {
         "attest",
         "review-request",
         "review-accept",
+        "review-verify",
         "adversarial",
         "verify",
         "verify-imports",

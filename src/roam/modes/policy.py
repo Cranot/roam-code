@@ -67,6 +67,10 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # brief; it writes nothing. The obligation it serves is a review,
         # not an edit.
         "review-request",
+        # review-verify only re-derives a verdict from bytes already on
+        # disk; it writes nothing. It is the CI-side reader of the receipt
+        # the agent wrote, so it must be runnable in the most restricted mode.
+        "review-verify",
         "search",
         "search-semantic",
         "retrieve",
