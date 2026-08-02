@@ -557,6 +557,8 @@ _CATEGORIES = {
         "test-gaps",
         "affected",
         "attest",
+        "review-request",
+        "review-accept",
         "adversarial",
         "verify",
         "verify-imports",
