@@ -41,6 +41,15 @@ from typing import Any
 
 RECEIPT_SCHEMA = "roam-review-receipt-v1"
 
+# The digest scheme, NAMED and versioned. An unnamed scheme lets a future
+# change (normalisation, a compound-artifact framing, a different hash)
+# silently reinterpret old receipts: same field, different meaning, no
+# way for a verifier to tell. Receipts carry this value and a mismatch is
+# refused rather than assumed compatible. ``raw-sha256-v1`` means exactly
+# "sha256 over the artifact's bytes, unmodified" -- see
+# :func:`canonical_artifact_sha256`.
+DIGEST_SCHEME = "raw-sha256-v1"
+
 # Phases an obligation can name. Mirrors the criteria templates the
 # compile envelope advertises in ``orchestration_contract``.
 REVIEW_PHASES: tuple[str, ...] = ("1b_plan_critique", "4b_done_verdict")
@@ -95,6 +104,7 @@ _REQUIRED_FIELDS = (
     "builder_family",
     "reviewer_family",
     "artifact_sha256",
+    "digest_scheme",
     "decision",
     "findings",
 )
@@ -235,6 +245,14 @@ def _structural_errors(receipt: dict) -> str | None:
     sha = receipt.get("artifact_sha256")
     if not isinstance(sha, str) or len(sha) != 64 or set(sha) - set("0123456789abcdef"):
         return "artifact_sha256 must be a 64-char lowercase hex digest"
+    if receipt.get("digest_scheme") != DIGEST_SCHEME:
+        # Refuse rather than assume compatibility: a receipt minted under a
+        # different scheme means its digest answers a different question.
+        return (
+            f"digest_scheme must be {DIGEST_SCHEME!r}, got "
+            f"{receipt.get('digest_scheme')!r}; a digest under another scheme "
+            "cannot be compared against this one"
+        )
     findings = receipt.get("findings")
     if not isinstance(findings, list):
         return "findings must be a list (use [] for a clean review)"
