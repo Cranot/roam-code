@@ -13,6 +13,7 @@ import json
 import pytest
 
 from roam.review_receipt import (
+    DIGEST_SCHEME,
     REVIEW_FAMILIES,
     REVIEW_STATUSES,
     canonical_artifact_sha256,
@@ -34,6 +35,7 @@ def _receipt(**overrides) -> dict:
         "builder_family": "claude",
         "reviewer_family": "openai",
         "artifact_sha256": _sha(),
+        "digest_scheme": DIGEST_SCHEME,
         "decision": "accept",
         "findings": [],
         "reviewed_at": "2026-08-02T12:00:00Z",
@@ -331,3 +333,21 @@ def test_success_status_names_its_own_limit(tmp_path):
     res = _verify(tmp_path, _write(tmp_path, _receipt()))
     assert res["status"] == "declared_accepted"
     assert "verified" not in res["status"]
+
+
+def test_digest_scheme_is_named_and_mismatches_are_refused(tmp_path):
+    """A digest under another scheme answers a different question.
+
+    Without a named scheme, a future change (normalisation, compound-artifact
+    framing, a different hash) silently reinterprets old receipts: same field,
+    different meaning, no way for a verifier to tell.
+    """
+    res = _verify(tmp_path, _write(tmp_path, _receipt(digest_scheme="sha256-normalised-v0")))
+    assert res["status"] == "receipt_malformed"
+    assert "digest_scheme" in res["reason"]
+    # and it is required, not optional
+    receipt = _receipt()
+    del receipt["digest_scheme"]
+    res2 = _verify(tmp_path, _write(tmp_path, receipt))
+    assert res2["status"] == "receipt_malformed"
+    assert "digest_scheme" in res2["reason"]

@@ -63,6 +63,10 @@ ENV_VAR = "ROAM_AGENT_MODE"
 # materialised policy is the cumulative union (see ``_materialise()``).
 _MODE_EXTRAS: dict[str, set[str]] = {
     "read_only": {
+        # review-request only READS the artifact and prints the reviewer
+        # brief; it writes nothing. The obligation it serves is a review,
+        # not an edit.
+        "review-request",
         "search",
         "search-semantic",
         "retrieve",
@@ -469,6 +473,10 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         # deliberately classified above at autonomous_pr because installation
         # writes outside ordinary repo-local evidence.
         "attest",
+        # review-accept writes a receipt under .roam/reviews/. Same risk
+        # profile as attest: local evidence the verdict gate then reads,
+        # never a source edit.
+        "review-accept",
         "cga",
         "agent-plan",
         "agent-context",
