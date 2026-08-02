@@ -43,6 +43,7 @@ from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
+    echo_text_warnings,
     json_envelope,
     loc,
     resolution_disclosure,
@@ -181,9 +182,18 @@ def _risk_driver(blast, tests, compl, coupl, convs, fitns) -> str:
     > blast > conventions. A complexity warning is more actionable than
     a convention warning even at equal severity.
     """
+    # W1449 — when the fitness row is only WARNING because rules could not
+    # be EVALUATED, saying "0 rules currently fail" names a driver that
+    # reads clean. Name the unevaluated count instead. Byte-identical
+    # detail string when nothing errored.
+    _fit_errored = fitns.get("rules_errored", 0) or 0
+    _fit_detail = f"{fitns.get('rules_failed', 0)} rules currently fail"
+    if _fit_errored:
+        _fit_detail = f"{_fit_detail}, {_fit_errored} could not be evaluated"
+
     rows = [
         ("complexity", compl, f"cc={compl['max_cognitive_complexity']:.0f}"),
-        ("fitness", fitns, f"{fitns.get('rules_failed', 0)} rules currently fail"),
+        ("fitness", fitns, _fit_detail),
         ("tests", tests, f"{tests.get('direct', 0)} direct, {tests.get('transitive', 0)} transitive"),
         ("coupling", coupl, f"{coupl.get('coupled_files', 0)} coupled files"),
         (
@@ -557,7 +567,7 @@ def _check_conventions(conn, sym_ids, min_majority_pct: float = 70.0):
 # ---------------------------------------------------------------------------
 
 
-def _check_fitness(conn, root, target_paths: set[str] | None = None):
+def _check_fitness(conn, root, target_paths: set[str] | None = None, *, warnings_out=None):
     """Run fitness rules and split target failures from sibling failures.
 
     Round 4 #11: when ``target_paths`` is provided, every rule's
@@ -565,6 +575,14 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
     return now distinguishes ``rules_failing_on_target`` (the question
     the user actually asked) from ``rules_failing_on_siblings`` (other
     code in the same files — context, not blame).
+
+    W1449 — a checker that RAISED is reported, never floored to PASS.
+    ``warnings_out`` is the caller's marker bucket (the W1332 idiom: a
+    signal that could not be COMPUTED is not a signal that came back
+    CLEAN). Rules whose checker raised land in ``rule_details`` with
+    ``status="ERROR"`` and ``violations=None`` — no measurement, so no
+    floored zero — and are counted in ``rules_errored`` /
+    ``errored_rules`` with the section severity floored off ``OK``.
     """
     rules = _load_rules(root)
     if not rules:
@@ -574,9 +592,12 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
             "rules_currently_failing": 0,
             "rules_failing_on_target": 0,
             "rules_failing_on_siblings": 0,
+            "rules_evaluated": 0,
+            "rules_errored": 0,
             "total_violations": 0,
             "failed_rules": [],
             "failed_rules_on_siblings": [],
+            "errored_rules": [],
             "rule_details": [],
             "severity": "OK",
         }
@@ -596,17 +617,51 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
     rule_results = []
     target_fail_count = 0
     sibling_fail_count = 0
+    errored_rules: list[str] = []
 
     for rule in rules:
         rtype = rule.get("type", "")
         checker = _CHECKERS.get(rtype)
         if checker is None:
             continue
+        rule_name = rule.get("name", "unnamed")
 
         try:
             violations = checker(rule, conn)
-        except (ImportError, re.error, sqlite3.DatabaseError):
-            violations = []
+        except (ImportError, re.error, sqlite3.DatabaseError) as exc:
+            # W1449 — the checker RAISED, so this rule produced no
+            # measurement at all. The old floor (``violations = []``)
+            # made that indistinguishable from a rule that ran and found
+            # nothing: the row landed in ``rule_details`` as PASS, it was
+            # still counted in ``rules_checked``, and the text renderer
+            # printed "all N rules pass  [OK]". ``roam fitness`` on the
+            # SAME rule file fails loudly (``re.compile`` on a malformed
+            # user pattern is unguarded there) — two commands, one
+            # checker, opposite verdicts.
+            #
+            # W1332 doctrine: an uncomputable signal is not a clean one.
+            # Record the rule as ERROR with ``violations=None`` (no
+            # floored zero, mirroring cmd_db_check's ``count: None``),
+            # and hand the caller a marker so the envelope discloses it
+            # via ``warnings_out`` + ``partial_success``.
+            errored_rules.append(rule_name)
+            if warnings_out is not None:
+                warnings_out.append(f"preflight_fitness_rule_failed:{rule_name}:{type(exc).__name__}:{exc}")
+            rule_results.append(
+                {
+                    "name": rule_name,
+                    "type": rtype,
+                    # W847 — rule-status vocabulary, same slot as
+                    # PASS / FAIL below. ERROR is the third member:
+                    # "the rule could not be evaluated".
+                    "status": "ERROR",
+                    "violations": None,
+                    "violations_on_target": None,
+                    "violations_on_siblings": None,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
 
         on_target = [v for v in violations if _violation_touches_target(v)]
         on_siblings = [v for v in violations if v not in on_target]
@@ -617,7 +672,7 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
         status = "PASS" if not violations else "FAIL"
         rule_results.append(
             {
-                "name": rule.get("name", "unnamed"),
+                "name": rule_name,
                 "type": rtype,
                 "status": status,
                 "violations": len(violations),
@@ -670,15 +725,31 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None):
         if r["status"] == "FAIL" and r["violations_on_target"] == 0 and r["violations_on_siblings"] > 0
     ]
 
+    # W1449 — an unevaluated rule must not be able to roll up as OK.
+    # ``_fitness_severity`` only ever sees FAIL counts, so a section made
+    # entirely of ERROR rows would score ``OK`` and the whole preflight
+    # verdict would inherit a clean fitness signal it never measured.
+    # Floor at WARNING (the same tier one failing rule produces) so
+    # ``_overall_risk`` and the ``[OK]`` text tag both tell the truth.
+    if errored_rules and severity == "OK":
+        severity = "WARNING"
+
     return {
         "rules_checked": len(rule_results),
         "rules_failed": failed,
         "rules_currently_failing": failed,
         "rules_failing_on_target": target_fail_count,
         "rules_failing_on_siblings": sibling_fail_count,
+        # ``rules_evaluated`` is the subset that actually RAN; the text
+        # renderer counts passes off this, never off ``rules_checked``
+        # (which stays the attempted count so it keeps agreeing with
+        # ``len(rule_details)``).
+        "rules_evaluated": len(rule_results) - len(errored_rules),
+        "rules_errored": len(errored_rules),
         "total_violations": len(all_violations),
         "failed_rules": failed_names_emit,
         "failed_rules_on_siblings": failed_names_on_siblings,
+        "errored_rules": errored_rules,
         "rule_details": rule_results,
         "severity": severity,
     }
@@ -988,6 +1059,30 @@ def preflight(ctx, target, staged):
             _w607ec_warnings_out.append(f"preflight_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
+    # W1449 — INSIDE-substrate marker accumulator. The three W607 buckets
+    # above catch a helper that raised OUT to its call site. This one
+    # carries failures the helper survived: ``_check_fitness`` runs N
+    # independent rule checkers, and one raising checker must not take
+    # the other N-1 down — but it must not read as PASS either. Same
+    # ``preflight_*`` family, distinct phase name
+    # (``fitness_rule_failed``) so the marker-prefix discipline holds.
+    # Empty bucket → byte-identical envelope.
+    _w1449_warnings_out: list[str] = []
+
+    def _all_warnings_out() -> list[str]:
+        """Every degradation marker this invocation accumulated, in emission order.
+
+        Single source of truth for the four merge sites (not-found return,
+        success path, post-auto_log rebuild, serialize-failure fallback) so
+        a new bucket cannot reach three of them and silently miss the fourth.
+        """
+        return (
+            list(_w607r_warnings_out)
+            + list(_w607aw_warnings_out)
+            + list(_w607ec_warnings_out)
+            + list(_w1449_warnings_out)
+        )
+
     with open_db(readonly=True) as conn:
         # Resolve targets
         _resolve_default = (set(), set(), [], target or "staged changes", "unresolved")
@@ -1046,9 +1141,7 @@ def preflight(ctx, target, staged):
             # on the not-found path. W607-EC bucket is included for
             # parity (empty here since post-capture phases haven't run
             # yet, but the field shape stays uniform across paths).
-            _combined_warnings_out_nf = (
-                list(_w607r_warnings_out) + list(_w607aw_warnings_out) + list(_w607ec_warnings_out)
-            )
+            _combined_warnings_out_nf = _all_warnings_out()
             if _combined_warnings_out_nf:
                 not_found_summary["warnings_out"] = list(_combined_warnings_out_nf)
                 not_found_envelope_kwargs["warnings_out"] = list(_combined_warnings_out_nf)
@@ -1154,15 +1247,22 @@ def preflight(ctx, target, staged):
             conn,
             root,
             target_paths=set(file_paths),
+            # W1449 — per-RULE checker failures are disclosed through this
+            # bucket. Without it a rule whose checker raised was floored to
+            # zero violations and rendered PASS / [OK].
+            warnings_out=_w1449_warnings_out,
             default={
                 "rules_checked": 0,
                 "rules_failed": 0,
                 "rules_currently_failing": 0,
                 "rules_failing_on_target": 0,
                 "rules_failing_on_siblings": 0,
+                "rules_evaluated": 0,
+                "rules_errored": 0,
                 "total_violations": 0,
                 "failed_rules": [],
                 "failed_rules_on_siblings": [],
+                "errored_rules": [],
                 "rule_details": [],
                 "severity": "OK",
             },
@@ -1388,6 +1488,14 @@ def preflight(ctx, target, staged):
                     "rules_failed": fitns["rules_failed"],
                     "rules_failing_on_target": fitns.get("rules_failing_on_target", 0),
                     "rules_failing_on_siblings": fitns.get("rules_failing_on_siblings", 0),
+                    # W1449 — ``rules_checked`` counts rules ATTEMPTED.
+                    # A consumer that wants "how many rules actually
+                    # produced a verdict" must read ``rules_evaluated``,
+                    # and ``rules_errored`` / ``errored_rules`` name the
+                    # ones whose checker raised.
+                    "rules_evaluated": fitns.get("rules_evaluated", fitns["rules_checked"]),
+                    "rules_errored": fitns.get("rules_errored", 0),
+                    "errored_rules": fitns.get("errored_rules", []),
                     "total_violations": fitns["total_violations"],
                     "failed_rules": fitns["failed_rules"],
                     "failed_rules_on_siblings": fitns.get("failed_rules_on_siblings", []),
@@ -1441,7 +1549,7 @@ def preflight(ctx, target, staged):
         # summary.partial_success=True so the agent can distinguish
         # "clean preflight" from "preflight ran with substrate
         # degradation" via the summary alone.
-        _combined_warnings_out = list(_w607r_warnings_out) + list(_w607aw_warnings_out) + list(_w607ec_warnings_out)
+        _combined_warnings_out = _all_warnings_out()
         if _combined_warnings_out:
             summary_dict["warnings_out"] = list(_combined_warnings_out)
             summary_dict["partial_success"] = True
@@ -1478,7 +1586,7 @@ def preflight(ctx, target, staged):
         if _w607aw_warnings_out and not any(
             m.startswith("preflight_auto_log_failed:") for m in (summary_dict.get("warnings_out") or [])
         ):
-            _combined_warnings_out = list(_w607r_warnings_out) + list(_w607aw_warnings_out) + list(_w607ec_warnings_out)
+            _combined_warnings_out = _all_warnings_out()
             summary_dict["warnings_out"] = list(_combined_warnings_out)
             summary_dict["partial_success"] = True
             envelope_kwargs["warnings_out"] = list(_combined_warnings_out)
@@ -1509,9 +1617,7 @@ def preflight(ctx, target, staged):
                 _fallback_summary = {
                     "verdict": verdict,
                     "partial_success": True,
-                    "warnings_out": (
-                        list(_w607r_warnings_out) + list(_w607aw_warnings_out) + list(_w607ec_warnings_out)
-                    ),
+                    "warnings_out": _all_warnings_out(),
                 }
                 click.echo(
                     _json_fallback.dumps(
@@ -1577,6 +1683,13 @@ def preflight(ctx, target, staged):
                 shown = [n for n in names[:3] if n]
                 return f"{text} ({', '.join(shown)})" if shown else text
 
+            # W1449 — count passes off the rules that actually RAN. A rule
+            # whose checker raised was previously indistinguishable from a
+            # rule that ran clean, so ONE broken regex in .roam/fitness.yaml
+            # printed "all 1 rules pass  [OK]" while ``roam fitness`` on the
+            # same file exited 1 with the re.error.
+            _fit_errored = fitns.get("rules_errored", 0) or 0
+            _fit_evaluated = fitns.get("rules_evaluated", fitns["rules_checked"] - _fit_errored)
             if fitns["rules_checked"] == 0:
                 fit_desc = "no rules configured"
             elif fitns.get("rules_failing_on_target", 0) > 0:
@@ -1597,8 +1710,23 @@ def preflight(ctx, target, staged):
                     f"{fitns['rules_failed']} rules currently fail",
                     fitns.get("failed_rules") or [],
                 )
+            elif _fit_evaluated > 0:
+                fit_desc = f"all {_fit_evaluated} rules pass"
             else:
-                fit_desc = f"all {fitns['rules_checked']} rules pass"
+                # Every configured rule errored — there is no pass count
+                # to report, only the unevaluated clause appended below.
+                fit_desc = ""
+
+            # The unevaluated clause is APPENDED to whatever the branches
+            # above produced, so it survives every branch rather than
+            # racing them. Empty when nothing errored → the line stays
+            # byte-identical to the pre-W1449 output.
+            if _fit_errored:
+                _unevaluated = _with_names(
+                    f"{_fit_errored} rule(s) could not be evaluated",
+                    fitns.get("errored_rules") or [],
+                )
+                fit_desc = f"{fit_desc}; {_unevaluated}" if fit_desc else _unevaluated
             click.echo(f"  Fitness:          {fit_desc:<40s} {_severity_tag(fitns['severity'])}")
 
             # Overall
@@ -1653,3 +1781,11 @@ def preflight(ctx, target, staged):
             return None
 
         _run_check_ec("format_text", _format_text, default=None)
+
+        # W1331 — the same markers the JSON envelope carries must reach the
+        # text branch too, or a human reads a clean gate while the machine
+        # reader is told the gate degraded. Markers go to STDERR, so stdout
+        # stays byte-identical and no golden-output test moves. Emitted
+        # AFTER ``format_text`` so a raise inside the renderer is itself
+        # disclosed. Empty bucket → no output at all.
+        echo_text_warnings(_all_warnings_out())
