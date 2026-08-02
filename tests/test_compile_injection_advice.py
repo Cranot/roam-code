@@ -104,9 +104,23 @@ class TestStackTraceEditTrim:
 
 
 class TestHookHonorsAdvice:
-    def test_hook_script_injects_nothing_on_skip_advice(self, tmp_path, monkeypatch):
-        """Run the installed hook script with a stubbed `roam` that returns a
-        skip-advice envelope: the hook must print nothing."""
+    def test_hook_script_injects_no_envelope_facts_on_skip_advice(self, tmp_path, monkeypatch):
+        """Skip advice suppresses the ENVELOPE, not the obligations.
+
+        What was measured is envelope-token economics: prefetched facts and
+        source slices ride the context every turn while a generation task
+        must read/edit/run regardless (see `injection_advice`). That cost is
+        the facts block, so the facts block is what skip suppresses.
+
+        The phased-work + cross-family obligations (W1442) are ~7 instruction
+        lines and still print, because generation tasks -- the skip regex
+        matches `implement X`, `add a new Y`, `write a test` -- ARE the
+        implementation turns the contract exists to discipline. Suppressing
+        them here would withhold the rule from exactly its intended audience.
+
+        Owed: the original A/B measured facts-vs-nothing; obligations-on-skip
+        extends that result to an unmeasured adjacent case and should get its
+        own measurement."""
         from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
 
         hook = tmp_path / "hook.py"
@@ -129,7 +143,12 @@ class TestHookHonorsAdvice:
             timeout=30,
         )
         assert proc.returncode == 0
-        assert proc.stdout.strip() == ""
+        # the measured property: no envelope facts reach the prompt
+        assert "PRE-COMPUTED PLAN" not in proc.stdout
+        assert "prefetched_facts" not in proc.stdout
+        # obligations may still appear; when they do they carry both blocks
+        if proc.stdout.strip():
+            assert "EXECUTION CONTRACT" in proc.stdout
 
     def test_hook_script_injects_on_inject_advice(self, tmp_path, monkeypatch):
         from roam.commands.cmd_hooks import _CLAUDE_UPS_HOOK_SCRIPT
