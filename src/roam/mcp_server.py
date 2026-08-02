@@ -16610,9 +16610,11 @@ def roam_bus_factor(
     name="roam_fitness",
     description=(
         "Run architectural fitness functions from "
-        "``.roam/fitness.yaml``: dependency constraints, layer "
-        "enforcement, metric thresholds, naming conventions, and "
-        "trend regression guards. Different from ``roam_preflight`` "
+        "``.roam/fitness.yaml``. Rule ``type`` is a closed set: "
+        "``dependency`` (also how layering is enforced -- forbid the "
+        "edge), ``metric``, ``naming``, ``trend``; any other type is "
+        "reported ERROR and exits non-zero rather than being skipped "
+        "(W1450). Different from ``roam_preflight`` "
         "(compound 6-signal pre-edit gate) -- this is the dedicated "
         "fitness surface with per-rule output, baseline / delta mode, "
         "and trend regression guards."
@@ -16627,7 +16629,8 @@ def roam_fitness(
     """Run fitness rules from ``.roam/fitness.yaml``.
 
     WHEN TO USE: gate a PR against architectural rules
-    (dependency / layer / metric / naming / trend) declared in
+    (dependency / metric / naming / trend -- the closed ``type`` set;
+    layering is expressed as a ``dependency`` rule) declared in
     ``.roam/fitness.yaml``. Pair with ``roam_preflight`` for the
     pre-edit composite verdict.
 
