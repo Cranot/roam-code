@@ -37,7 +37,18 @@ from roam.commands.cmd_affected_tests import (
     _resolve_file_symbols,
 )
 from roam.commands.cmd_conventions import classify_case
-from roam.commands.cmd_fitness import _CHECKERS, _load_rules
+
+# ``_CHECKERS`` is re-exported (same dict object as cmd_fitness's) so a
+# ``monkeypatch.setitem(cmd_preflight._CHECKERS, ...)`` registers a checker
+# that ``_resolve_checker`` immediately sees — the shared-registry property
+# W1450 installed and W1453 now depends on. Dispatch goes through
+# ``_resolve_checker``, never through this name directly.
+from roam.commands.cmd_fitness import (  # noqa: F401 — _CHECKERS re-exported for monkeypatching
+    _CHECKERS,
+    _load_rules,
+    _resolve_checker,
+    _unevaluable_rule_entry,
+)
 from roam.commands.conventions_helper import compute_conventions
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, find_symbol
@@ -621,10 +632,37 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None, *, warnings
 
     for rule in rules:
         rtype = rule.get("type", "")
-        checker = _CHECKERS.get(rtype)
-        if checker is None:
-            continue
         rule_name = rule.get("name", "unnamed")
+        # W1453 -- THE shared membership test (cmd_fitness._resolve_checker),
+        # the same one the fitness loader and dispatcher call. The local
+        # ``_CHECKERS.get(rtype)`` this replaces was a second dialect of
+        # the same question, and its ``continue`` deleted the rule from
+        # ``rule_details`` AND from ``rules_checked`` -- so a typo'd type
+        # left ``rules_errored: 0``, ``severity: "OK"`` and the text line
+        # "all 1 rules pass  [OK]" over a rule that was never run.
+        checker = _resolve_checker(rule)
+        if checker is None:
+            # W1449 built exactly the right bucket for "this rule produced
+            # no measurement"; an unknown ``type`` is the same class of
+            # event as a checker that raised, so it routes there rather
+            # than inventing a parallel channel. The severity floor below
+            # (``errored_rules and severity == "OK"`` -> WARNING) and the
+            # ``warnings_out`` -> ``partial_success`` flip both apply
+            # unchanged.
+            unevaluable = _unevaluable_rule_entry(rule)
+            # Preflight's ERROR convention is ``violations: None`` -- no
+            # floored zero, since zero locations were INSPECTED, not found
+            # clean. Overrides the shared row's ``0`` for this consumer.
+            unevaluable["violations"] = None
+            unevaluable["violations_on_target"] = None
+            unevaluable["violations_on_siblings"] = None
+            errored_rules.append(rule_name)
+            if warnings_out is not None:
+                warnings_out.append(
+                    f"preflight_fitness_rule_unevaluable:{rule_name}:{unevaluable.get('error', 'unknown rule type')}"
+                )
+            rule_results.append(unevaluable)
+            continue
 
         try:
             violations = checker(rule, conn)

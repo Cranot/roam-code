@@ -187,9 +187,22 @@ def _collect_fitness_violations(conn, file_map, root):
     For metric rules on per-symbol metrics: only report symbols in changed files.
     For global metrics and naming rules: run normally (not file-scoped).
 
-    Returns (rule_results, violations) lists.
+    W1453 — dispatch is driven by ``cmd_fitness._CHECKERS`` (via
+    :func:`_resolve_checker`), NOT by a literal list of type names here.
+    A registered type with no diff-narrowed variant runs its GLOBAL
+    checker; a type no checker handles becomes an ``ERROR`` row. Neither
+    can be reported ``PASS`` any more.
+
+    Returns (rule_results, violations) lists. Rows carry a ``scope`` key
+    (``changed_files`` / ``repository`` / ``not_evaluated``) naming which
+    claim the row is making.
+
+    NOTE: this is a library function — ``cmd_attest._collect_fitness_evidence``
+    calls it. It never raises ``SystemExit``; the exit-code decision belongs
+    to the CLI layer (and for ``diff`` there is none — see the W1453 note on
+    ``_SCOPED_CHECKERS``).
     """
-    from roam.commands.cmd_fitness import _load_rules
+    from roam.commands.cmd_fitness import _load_rules, _resolve_checker, _unevaluable_rule_entry
 
     rules = _load_rules(root)
     if not rules:
@@ -203,14 +216,29 @@ def _collect_fitness_violations(conn, file_map, root):
 
     for rule in rules:
         rtype = rule.get("type", "")
-        violations = []
+        # W1453 — THE membership test, shared with cmd_fitness's loader and
+        # dispatcher. ``_SCOPED_CHECKERS`` is a narrowing table, never the
+        # gate: a type absent from it may still be perfectly enforceable.
+        checker = _resolve_checker(rule)
+        if checker is None:
+            # Nothing can evaluate this rule. Emit the W1450 ERROR row
+            # (did-you-mean included) rather than asserting a PASS the
+            # command never earned.
+            unevaluable = _unevaluable_rule_entry(rule)
+            unevaluable["scope"] = "not_evaluated"
+            rule_results.append(unevaluable)
+            continue
 
-        if rtype == "dependency":
-            violations = _check_dep_rule_scoped(rule, conn, changed_paths)
-        elif rtype == "metric":
-            violations = _check_metric_rule_scoped(rule, conn, changed_fids)
-        elif rtype == "naming":
-            violations = _check_naming_rule_scoped(rule, conn, changed_fids)
+        scoped = _SCOPED_CHECKERS.get(rtype)
+        if scoped is not None:
+            violations = scoped(rule, conn, changed_paths, changed_fids)
+            scope = "changed_files"
+        else:
+            # Registered checker, no diff-narrowed variant (``trend``
+            # today — a trend rule compares snapshot history and has no
+            # per-file projection to narrow to). Run it GLOBALLY.
+            violations = checker(rule, conn)
+            scope = "repository"
 
         status = "PASS" if not violations else "FAIL"
         rule_results.append(
@@ -219,6 +247,7 @@ def _collect_fitness_violations(conn, file_map, root):
                 "type": rtype,
                 "status": status,
                 "violations": len(violations),
+                "scope": scope,
             }
         )
         all_violations.extend(violations)
@@ -357,6 +386,60 @@ def _check_naming_rule_scoped(rule, conn, changed_fids):
             )
 
     return violations
+
+
+# ---------------------------------------------------------------------------
+# W1453 — diff-scoped fitness dispatch, driven by cmd_fitness._CHECKERS
+# ---------------------------------------------------------------------------
+#
+# ``_SCOPED_CHECKERS`` maps a rule ``type`` to the diff-NARROWED variant of
+# its checker. It is deliberately a SUBSET of ``cmd_fitness._CHECKERS`` and
+# is deliberately NOT the membership test: "is this type known?" is decided
+# by :func:`cmd_fitness._resolve_checker`, the single source of truth W1450
+# installed. Registering a checker in ``_CHECKERS`` therefore teaches this
+# consumer too; adding a scoped adapter here is a pure narrowing
+# optimisation, never a prerequisite for enforcement.
+#
+# Before W1453 this table was an ``if / elif`` over three literal type
+# names and the fall-through was ``violations = []`` → ``status: "PASS"``.
+# Two rules fell through it:
+#
+#   * ``trend`` — a registered checker since trend rules shipped, simply
+#     forgotten here. Measured: ``roam fitness`` reported the rule FAIL
+#     ("health_score dropped by 55.0") while ``roam diff --fitness``, on
+#     the SAME rule file and the SAME index, emitted
+#     ``{"name": ..., "type": "trend", "status": "PASS", "violations": 0}``.
+#   * any typo'd / unknown type — likewise PASS.
+#
+# That is a harder failure than W1450's silent drop: W1450 omitted the
+# rule, this ASSERTED it had been checked and had passed. The fall-through
+# now inverts — an unnarrowable-but-registered checker runs repo-wide
+# (honest over-report, visible and correctable) instead of silently
+# under-reporting, and an unknown type becomes an ERROR row.
+#
+# Exit code deliberately unchanged (see :func:`_collect_fitness_violations`).
+# ``roam diff`` already exits 0 on a genuinely FAILING fitness rule — it is
+# an informational blast-radius report, not a gate (``roam fitness`` is the
+# gate, and it fails closed per W1450). Exiting 1 on an unevaluable rule
+# while exiting 0 on a real architectural violation would rank a config
+# typo above the violation it was meant to catch. Disclosure is the whole
+# remedy here: ERROR status + ``fitness_rules_unevaluated`` +
+# ``warnings_out`` + ``partial_success``.
+_SCOPED_CHECKERS = {
+    "dependency": lambda rule, conn, changed_paths, changed_fids: _check_dep_rule_scoped(rule, conn, changed_paths),
+    "metric": lambda rule, conn, changed_paths, changed_fids: _check_metric_rule_scoped(rule, conn, changed_fids),
+    "naming": lambda rule, conn, changed_paths, changed_fids: _check_naming_rule_scoped(rule, conn, changed_fids),
+}
+
+
+def _unevaluated_fitness_rules(rule_results: list[dict]) -> list[dict]:
+    """W1453 — the rows that made no measurement at all (``status == "ERROR"``)."""
+    return [r for r in rule_results if r.get("status") == "ERROR"]
+
+
+def _unevaluated_fitness_types(rule_results: list[dict]) -> list[str]:
+    """Sorted distinct ``type`` of the unevaluated rows (``""`` -> ``"<missing>"``)."""
+    return sorted({(r.get("type") or "<missing>") for r in _unevaluated_fitness_rules(rule_results)})
 
 
 # ---------------------------------------------------------------------------
@@ -860,6 +943,17 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         # rank. The canonical fields are emitted unconditionally so agents
         # downstream call ``risk_rank(...)`` without None-handling.
         _diff_warnings_out: list[str] = []
+        # W1453 -- a fitness rule nothing could evaluate is a signal that
+        # could not be COMPUTED, not one that came back CLEAN (W1332).
+        # Marker rides the existing ``diff_*`` family so it merges into
+        # ``warnings_out`` and flips ``partial_success`` alongside the
+        # W607-Z / W607-BP buckets. Appended here (rather than at the
+        # summary site) so it lands ahead of ``_combined_warnings_out``.
+        for _unevaluable in _unevaluated_fitness_rules(fitness_rule_results):
+            _diff_warnings_out.append(
+                f"diff_fitness_rule_unevaluable:{_unevaluable.get('name', 'unnamed')}:"
+                f"{_unevaluable.get('error', 'unknown rule type')}"
+            )
         # W607-Z -- substrate-CALL boundary on ``_diff_risk_level``
         # (kept intact). Pinned by tests/test_w607_z_cmd_diff_warnings_out_envelope.py.
         _diff_domain_level_z = _run_check(
@@ -1055,6 +1149,16 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             failed_count = sum(1 for r in fitness_rule_results if r["status"] == "FAIL")
             summary["fitness_violations"] = len(fitness_violations)
             summary["fitness_rules_failed"] = failed_count
+            # W1453 -- rules nothing could evaluate. Emitted only when
+            # non-zero so a clean run's envelope stays byte-identical.
+            # ``fitness_rules_failed`` deliberately does NOT absorb these:
+            # FAIL means "checked and violated", ERROR means "never
+            # checked" — collapsing them would relabel a config typo as
+            # an architectural violation.
+            _fitness_unevaluated = _unevaluated_fitness_rules(fitness_rule_results)
+            if _fitness_unevaluated:
+                summary["fitness_rules_unevaluated"] = len(_fitness_unevaluated)
+                summary["fitness_unknown_rule_types"] = _unevaluated_fitness_types(fitness_rule_results)
             # W1298 Pattern-3a: any cognitive_complexity-keyed violation
             # in ``fitness_violations`` reads from ``symbol_metrics`` — disclose
             # the scorer so consumers cannot confuse it with cyclomatic.
@@ -1324,13 +1428,27 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             else:
                 failed = sum(1 for r in fitness_rule_results if r["status"] == "FAIL")
                 passed = sum(1 for r in fitness_rule_results if r["status"] == "PASS")
-                click.echo(
-                    f"=== Fitness Check ({len(fitness_rule_results)} rules, {passed} passed, {failed} failed) ===\n"
-                )
+                # W1453 -- an unevaluated rule is neither a pass nor a
+                # fail; it gets its own clause so the header can never
+                # read "N passed" over a rule that was never checked.
+                errored = len(_unevaluated_fitness_rules(fitness_rule_results))
+                _tally = f"{len(fitness_rule_results)} rules, {passed} passed, {failed} failed"
+                if errored:
+                    _tally += f", {errored} NOT evaluated"
+                click.echo(f"=== Fitness Check ({_tally}) ===\n")
 
                 for rr in fitness_rule_results:
-                    icon = "PASS" if rr["status"] == "PASS" else "FAIL"
+                    # W847 rule-status vocabulary: PASS / FAIL / ERROR.
+                    status = rr.get("status", "FAIL")
+                    icon = status if status in ("PASS", "FAIL", "ERROR") else "FAIL"
                     detail = f" ({rr['violations']} violations)" if rr["violations"] else ""
+                    if status == "ERROR" and (rule_error := rr.get("error", "")):
+                        detail = f" -- {rule_error}"
+                    elif status == "FAIL" and rr.get("scope") == "repository":
+                        # W1453 -- this rule was evaluated repo-wide, not
+                        # narrowed to the diff. Say so, or the reader will
+                        # attribute a pre-existing regression to this change.
+                        detail += " [repo-wide, not diff-scoped]"
                     click.echo(f"  [{icon}] {rr['name']}{detail}")
 
                 if fitness_violations:

@@ -712,6 +712,38 @@ def to_sarif(
     }
 
 
+def with_sarif_disclosures(document: dict, disclosures: list[str] | None) -> dict:
+    """Attach producer degradation notices to a SARIF document.
+
+    This command-boundary adapter serves detectors whose historical
+    ``*_to_sarif`` projector does not accept ``warnings_out``. It also
+    replaces an empty/floored document with a valid zero-result run so a
+    projection failure can carry its own warning.
+    """
+    if not disclosures:
+        return document
+    if not isinstance(document, dict) or not document.get("runs"):
+        document = to_sarif(_TOOL_NAME, _get_version(), [], [])
+    run = document["runs"][0]
+    invocations = run.setdefault("invocations", [])
+    if invocations:
+        invocation = invocations[0]
+        invocation.setdefault("executionSuccessful", True)
+    else:
+        invocation = {"executionSuccessful": True}
+        invocations.append(invocation)
+    notifications = invocation.setdefault("toolExecutionNotifications", [])
+    notifications.extend(
+        {
+            "level": "warning",
+            "descriptor": {"id": _RUNTIME_NOTIFICATION_PRODUCER_ADVISORY},
+            "message": {"text": str(disclosure)},
+        }
+        for disclosure in disclosures
+    )
+    return document
+
+
 def _automation_details(tool_name: str, version: str) -> dict:
     """Build a SARIF automationDetails block — stable run identifier.
 
@@ -1179,7 +1211,12 @@ def fitness_to_sarif(violations: list[dict]) -> dict:
     Each *violation* dict is expected to carry:
 
     - ``rule`` (str): rule name
-    - ``type`` (str): ``"dependency"`` / ``"metric"`` / ``"naming"``
+    - ``type`` (str): a rule type from ``cmd_fitness._CHECKERS`` —
+      ``"dependency"`` / ``"metric"`` / ``"naming"`` / ``"trend"``.
+      W1453: this list omitted ``trend`` for as long as trend rules had
+      existed; it is documentation only (``rule_id`` is derived from
+      ``v["type"]`` at runtime), but a hand-maintained copy of a registry
+      is the same drift hazard that produced the W1450/W1453 dispatch bugs.
     - ``message`` (str): human-readable detail
     - ``source`` (str, optional): ``"path:line"`` location string
     """
@@ -4782,7 +4819,7 @@ _LAWS_KIND_TO_RULE: dict[str, str] = {
 }
 
 
-def laws_to_sarif(findings: list[dict]) -> dict:
+def laws_to_sarif(findings: list[dict], *, disclosures: list[str] | None = None) -> dict:
     """Convert ``roam laws check`` violations to SARIF.
 
     *findings* is the raw violation list ``cmd_laws`` builds for the
@@ -4928,7 +4965,14 @@ def laws_to_sarif(findings: list[dict]) -> dict:
             )
         )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        rules,
+        results,
+        emit_runtime_notifications=bool(disclosures),
+        warnings_out=disclosures,
+    )
 
 
 # -- LLM-API anti-pattern smells (W1207) ------------------------------
@@ -5038,7 +5082,7 @@ _LLM_SMELLS_RULE_DEFAULT_LEVELS: dict[str, str] = {
 }
 
 
-def llm_smells_to_sarif(findings: list[dict]) -> dict:
+def llm_smells_to_sarif(findings: list[dict], *, disclosures: list[str] | None = None) -> dict:
     """Convert ``roam llm-smells`` detector output to SARIF.
 
     *findings* is the per-occurrence list ``cmd_llm_smells`` builds for
@@ -5154,7 +5198,14 @@ def llm_smells_to_sarif(findings: list[dict]) -> dict:
             )
         )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        rules,
+        results,
+        emit_runtime_notifications=bool(disclosures),
+        warnings_out=disclosures,
+    )
 
 
 # -- Fan detector (W1209) ---------------------------------------------
@@ -6165,7 +6216,7 @@ def _orphan_routes_confidence_level(confidence: str) -> str:
     return "note"
 
 
-def orphan_routes_to_sarif(findings: list[dict]) -> dict:
+def orphan_routes_to_sarif(findings: list[dict], *, disclosures: list[str] | None = None) -> dict:
     """Convert ``roam orphan-routes`` dead-endpoint findings to SARIF.
 
     cmd_orphan_routes parses Laravel route files (``routes/api.php`` and
@@ -6278,7 +6329,14 @@ def orphan_routes_to_sarif(findings: list[dict]) -> dict:
             )
         )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        rules,
+        results,
+        emit_runtime_notifications=bool(disclosures),
+        warnings_out=disclosures,
+    )
 
 
 # -- Verify-imports (import hallucination firewall — W1229) -----------
