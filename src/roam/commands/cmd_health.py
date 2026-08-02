@@ -131,6 +131,21 @@ CRITICAL = "critical"
 WARNING = "warning"
 INFO = "info"
 
+# W1448 — the god-component and bottleneck sections render a TOP-N LIST, not
+# the whole population. These caps were inline literals passed straight to
+# ``LIMIT ?``, which made the returned list length indistinguishable from a
+# measured count: with the caps saturated, ``summary.god_components: 50`` and
+# ``bottlenecks: 15`` read as populations while the true counts on this
+# repository were 553 and 3019, and ``issue_count`` was literally 50 + 15.
+#
+# Naming them lets the disclosure below detect saturation (``len(rows) ==
+# limit``) and lets a guard test assert the published population is not simply
+# the cap. The SQL truncation happens BENEATH ``output.formatter``, which only
+# records truncations it performs itself, so nothing upstream could disclose it.
+_GOD_COMPONENT_LIST_LIMIT = 50
+_GOD_COMPONENT_MIN_DEGREE = 20
+_BOTTLENECK_LIST_LIMIT = 15
+
 
 def _normalise_health_severity(sev: str | None) -> str:
     """Canonicalise a health severity label to lowercase (W718).
@@ -1392,6 +1407,13 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
     # pre-W607-BA shape (W607-M parity discipline).
     _w607ba_warnings_out: list[str] = []
 
+    # W1448 — SQL-level list caps. Kept in its own bucket rather than folded
+    # into the substrate-guard buckets above: "a query failed and I floored
+    # the result" and "the query succeeded but I am showing you the top N of
+    # M" are different claims, and a reader acting on them does different
+    # things. Both raise ``partial_success`` through the same merge below.
+    _w1448_truncation_warnings: list[str] = []
+
     def _run_check_ba(phase, fn, *args, default=None, **kwargs):
         """Run one substrate helper with W607-BA marker emission.
 
@@ -1523,14 +1545,26 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # --- God components ---
         # W607-M: per-phase substrate guard for TOP_BY_DEGREE query.
         try:
-            degree_rows = conn.execute(TOP_BY_DEGREE, (50,)).fetchall()
+            degree_rows = conn.execute(TOP_BY_DEGREE, (_GOD_COMPONENT_LIST_LIMIT,)).fetchall()
         except Exception as exc:
             _w607m_warnings_out.append(f"health_god_components_failed:{type(exc).__name__}:{exc}")
             degree_rows = []
+        # W1448 — the POPULATION, measured, not inferred from the list length.
+        # ``bottleneck_thresholds`` already published its population; the god
+        # section published nothing, so the capped list length was the only
+        # number a reader had and it looked like a count.
+        try:
+            god_population = conn.execute(
+                "SELECT COUNT(*) FROM graph_metrics WHERE (COALESCE(in_degree,0) + COALESCE(out_degree,0)) > ?",
+                (_GOD_COMPONENT_MIN_DEGREE,),
+            ).fetchone()[0]
+        except Exception as exc:
+            _w607m_warnings_out.append(f"health_god_population_failed:{type(exc).__name__}:{exc}")
+            god_population = None
         god_items = []
         for r in degree_rows:
             total = (r["in_degree"] or 0) + (r["out_degree"] or 0)
-            if total > 20:
+            if total > _GOD_COMPONENT_MIN_DEGREE:
                 god_items.append(
                     {
                         "name": r["name"],
@@ -1550,7 +1584,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # health run (see ``_betweenness_percentiles``).
         # W607-M: per-phase substrate guard for betweenness queries.
         try:
-            bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
+            bw_rows = conn.execute(TOP_BY_BETWEENNESS, (_BOTTLENECK_LIST_LIMIT,)).fetchall()
             _bw_pcts = _betweenness_percentiles(conn)
             bn_p70, bn_p90 = _bw_pcts.values
             bw_population = _bw_pcts.population
@@ -1581,6 +1615,36 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             god_items = [g for g in god_items if g["name"] not in _FRAMEWORK_NAMES]
             bn_items = [b for b in bn_items if b["name"] not in _FRAMEWORK_NAMES]
             filtered_count = before - len(god_items) - len(bn_items)
+
+        # W1448 — disclose that these sections are a TOP-N LIST, not a census.
+        #
+        # Saturation is detected on the RAW row counts, before framework
+        # filtering: the question is whether the SQL cursor stopped at the cap,
+        # which is what makes the list length uninformative about the
+        # population. Checked against the named limits rather than a literal so
+        # raising a cap cannot silently disable its own disclosure.
+        #
+        # Both thresholds are structurally unreachable on a repository of any
+        # size: the 50th-ranked symbol here has degree 142 against a threshold
+        # of 20, and betweenness is unnormalised (raw shortest-path counts), so
+        # the 15th-ranked value is ~1.5e7 against a threshold of 0.5. The cap,
+        # not the threshold, is what decides -- so a reader who sees 50 and 15
+        # is reading the LIMITs back.
+        # BOTH conditions are required, and the second is not redundant.
+        # ``TOP_BY_DEGREE`` / ``TOP_BY_BETWEENNESS`` carry no WHERE clause --
+        # they order and cap -- so on any project with at least `limit`
+        # indexed symbols the cursor returns a FULL list even when nothing
+        # clears the qualifying threshold. A full list is not a truncated one.
+        # Asserting truncation off saturation alone would fire on a tiny clean
+        # project whose real population is zero, which is its own false claim.
+        if len(degree_rows) >= _GOD_COMPONENT_LIST_LIMIT and (god_population or 0) > _GOD_COMPONENT_LIST_LIMIT:
+            _w1448_truncation_warnings.append(
+                f"health_god_components_list_capped:showing_top_{_GOD_COMPONENT_LIST_LIMIT}_of_{god_population}"
+            )
+        if len(bw_rows) >= _BOTTLENECK_LIST_LIMIT and (bw_population or 0) > _BOTTLENECK_LIST_LIMIT:
+            _w1448_truncation_warnings.append(
+                f"health_bottlenecks_list_capped:showing_top_{_BOTTLENECK_LIST_LIMIT}_of_{bw_population}"
+            )
 
         # --- Layer violations ---
         # W607-M: per-phase substrate guard for layer detection +
@@ -2401,11 +2465,29 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     for bs in break_suggestions
                 ],
                 god_components=[{**g, "severity": g["severity"], "category": g["category"]} for g in god_items],
+                # W1448 — the god section's counterpart to
+                # ``bottleneck_thresholds``. Without it the only god-component
+                # number in the envelope was the capped list length, which
+                # reads as a census and is not one. ``population`` is measured
+                # against the same ``> min_degree`` predicate the list items
+                # are filtered on, so the two are comparable; ``list_limit``
+                # is published so a reader can tell saturation (list ==
+                # limit < population) from a genuinely short list.
+                god_component_thresholds={
+                    "min_degree": _GOD_COMPONENT_MIN_DEGREE,
+                    "list_limit": _GOD_COMPONENT_LIST_LIMIT,
+                    "population": god_population,
+                },
                 bottleneck_thresholds={
                     "p70": round(bn_p70, 1),
                     "p90": round(bn_p90, 1),
                     "utility_multiplier": _BN_UTIL_MULT,
                     "population": bw_population,
+                    # W1448 — published for the same reason as the god
+                    # section's: `population` alone did not tell a reader that
+                    # `bottlenecks` was capped, so the two numbers sat side by
+                    # side (15 against 3019) with nothing naming the relation.
+                    "list_limit": _BOTTLENECK_LIST_LIMIT,
                 },
                 bottlenecks=[{**b, "severity": b["severity"], "category": b["category"]} for b in bn_items],
                 layer_violations=[
@@ -2435,7 +2517,9 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             # Empty bucket -> no key added -> byte-identical envelope
             # (W607-A..L parity discipline). Both wave's markers share
             # the ``health_*`` family and the same warnings_out axis.
-            _merged_main_warnings: list[str] = list(_w607m_warnings_out) + list(_w607ba_warnings_out)
+            _merged_main_warnings: list[str] = (
+                list(_w607m_warnings_out) + list(_w607ba_warnings_out) + list(_w1448_truncation_warnings)
+            )
             if _merged_main_warnings:
                 envelope["warnings_out"] = list(_merged_main_warnings)
                 _smry = envelope.get("summary")
@@ -2485,10 +2569,16 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             parts.append(cycle_detail)
         if god_items:
             god_detail = f"{len(god_items)} god component{'s' if len(god_items) != 1 else ''}"
+            # W1448 — say "top N of M" when the SQL cap decided the list, so
+            # the text reader is not left inferring a census from a LIMIT.
+            if len(degree_rows) >= _GOD_COMPONENT_LIST_LIMIT and (god_population or 0) > _GOD_COMPONENT_LIST_LIMIT:
+                god_detail = f"top {len(god_items)} of {god_population} god components"
             god_detail += f" ({actionable_count} actionable, {utility_count} expected utilities)"
             parts.append(god_detail)
         if bn_items:
             bn_detail = f"{len(bn_items)} bottleneck{'s' if len(bn_items) != 1 else ''}"
+            if len(bw_rows) >= _BOTTLENECK_LIST_LIMIT and (bw_population or 0) > _BOTTLENECK_LIST_LIMIT:
+                bn_detail = f"top {len(bn_items)} of {bw_population} bottlenecks"
             bn_detail += f" ({bn_actionable} actionable, {bn_utility} expected utilities)"
             parts.append(bn_detail)
         if violations:
