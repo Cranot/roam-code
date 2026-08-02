@@ -140,7 +140,18 @@ fi
 # the commit -- the same principle the leak and secret gates already follow by
 # scoping to the pushed range rather than the tree.
 STAGED_PY="$(git diff --cached --name-only --diff-filter=ACM -- '*.py' | tr '\n' ' ')"
-if [ -n "${STAGED_PY// /}" ]; then
+# POSIX: `${VAR// /}` is a BASH pattern substitution, and this script is
+# `#!/bin/sh`. Under dash -- /bin/sh on Debian, Ubuntu and every Linux CI
+# runner and build lane we use -- it aborts the hook with "Bad substitution"
+# BEFORE any check runs, so every commit fails and none of the gates below
+# ever execute. It was invisible here because git-bash makes /bin/sh bash on
+# Windows, so the construct works on the machine this was written on and
+# nowhere else.
+# The unquoted expansion word-splits on IFS and `echo` rejoins with single
+# spaces, so a value of only whitespace collapses to empty -- the same test,
+# in a form `sh` actually has.
+# shellcheck disable=SC2086  # deliberate word-splitting: collapses whitespace
+if [ -n "$(echo $STAGED_PY)" ]; then
     # shellcheck disable=SC2086  # deliberate word-splitting: a file list
     if ! "$PY" -m ruff format --check $STAGED_PY >/dev/null 2>&1 \
        || ! "$PY" -m ruff check $STAGED_PY >/dev/null 2>&1; then
