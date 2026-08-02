@@ -127,6 +127,7 @@ def compute_graph_metrics(G: nx.DiGraph) -> dict:
     from roam.graph.clusters import detect_clusters
     from roam.graph.cycles import algebraic_connectivity, find_cycles, propagation_cost
     from roam.graph.layers import detect_layers, find_violations
+    from roam.graph.pagerank import BETWEENNESS_SEED
 
     n = len(G)
     e = G.number_of_edges()
@@ -157,10 +158,20 @@ def compute_graph_metrics(G: nx.DiGraph) -> dict:
     god_count = sum(1 for nd in G.nodes if G.degree(nd) > 20)
 
     # Bottlenecks: nodes with betweenness > 90th percentile
+    #
+    # k < n for any n > 50, so this is a SAMPLED estimate and needs the shared
+    # pivot seed. Note what the seed does and does not change here: bn_count
+    # is self-referential (nodes above the 90th percentile OF THIS SAME
+    # distribution), so it lands on ~10% of the graph whatever the pivot draw
+    # was -- measured 104/104 identical across eight unseeded runs. What DID
+    # churn for an unchanged graph was WHICH nodes were selected: Jaccard 0.29
+    # between two runs, i.e. ~71% of the "bottlenecks" were different symbols.
+    # The stable count hid a near-total reshuffle of the set behind it.
+    # See BETWEENNESS_SEED.
     bn_count = 0
     if n > 2:
         k = min(n, max(50, int(n**0.5 * 3)))
-        bc = nx.betweenness_centrality(G, k=k)
+        bc = nx.betweenness_centrality(G, k=k, seed=BETWEENNESS_SEED)
         if bc:
             vals = sorted(bc.values())
             p90 = vals[int(len(vals) * 0.9)] if vals else 0

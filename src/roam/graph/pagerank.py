@@ -234,6 +234,35 @@ def personalized_pagerank(
         return {n: v / total for n, v in raw.items()}
 
 
+# Pivot-sampling seed for every APPROXIMATE (``k=``) centrality in roam.
+#
+# ``nx.betweenness_centrality(G, k=...)`` estimates betweenness from k
+# randomly-drawn source nodes. With ``seed=None`` networkx draws from the
+# process-global ``random`` state, so an UNCHANGED graph produced different
+# betweenness on every ``roam index`` -- a stored score input that moves
+# without a code change, and phantom deltas in exactly the ``--baseline``
+# diffs meant to detect real change (measured on roam-code's 44.7k-node
+# graph: 3.9k nodes changed value between two back-to-back runs, per-node
+# swings of +-3%..+54%, and the positive-betweenness population moved by
+# 120 symbols).
+#
+# A fixed constant -- matching the ``seed=1`` already used at the other
+# sampled-betweenness sites (``graph/partition.py``, ``commands/cmd_cut.py``)
+# -- makes the draw reproducible. Deliberately NOT derived from graph content
+# or repo identity: a content-derived seed would redraw the pivot set on every
+# code change and fold fresh sampling noise straight back into the baseline
+# diff this protects, and a repo-derived seed would make values incomparable
+# across clones and fleet aggregation for no gain.
+#
+# Scope of the guarantee: identical input graph -> identical values. The
+# pivot set is still chosen by position in ``list(G.nodes())``, so it shifts
+# when symbols are added/removed; cross-index betweenness deltas therefore
+# still carry sampling noise. Making pivots stable across indexes would need
+# selection keyed on a stable symbol identity (rowids are reassigned on
+# reindex), which is a separate design change.
+BETWEENNESS_SEED = 1
+
+
 def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
     """Compute SNA metric vector for each symbol.
 
@@ -253,12 +282,16 @@ def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
     # For larger graphs, sample k = max(200, sqrt(n)*5) pivot nodes.
     # sqrt scaling gives diminishing-returns sampling that's well-studied
     # in the betweenness approximation literature (Brandes & Pich, 2007).
+    #
+    # ``seed`` is REQUIRED whenever k < n: without it these values (and the
+    # `roam health` bottleneck population / percentile bands they feed) change
+    # on every index for unchanged code. See BETWEENNESS_SEED above.
     n = len(G)
     if n <= 1000:
         k = n  # exact computation
     else:
         k = min(n, max(200, int(n**0.5 * 5)))
-    betweenness = nx.betweenness_centrality(G, k=k, normalized=False)
+    betweenness = nx.betweenness_centrality(G, k=k, normalized=False, seed=BETWEENNESS_SEED)
 
     # Closeness: for very large graphs use degree-based proxy for speed.
     if n <= 3000:
