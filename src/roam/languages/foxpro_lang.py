@@ -982,6 +982,12 @@ def _extract_procedures(methods_text: str) -> list[dict]:
 class FoxProExtractor(LanguageExtractor):
     """Regex-only extractor for Visual FoxPro .prg and .scx form files."""
 
+    # W1456: VFP identifiers fold case — ``MyProc``, ``myproc`` and
+    # ``MYPROC`` all name the same routine. This is what licenses the
+    # relation resolver's case-folded fallback match, and it is licensed
+    # for THIS language only (see LanguageExtractor.case_insensitive_identifiers).
+    case_insensitive_identifiers: bool = True
+
     @property
     def language_name(self) -> str:
         return "foxpro"

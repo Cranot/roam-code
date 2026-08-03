@@ -15,6 +15,19 @@ class LanguageExtractor(ABC):
     # extraction shape changes.
     VERSION: str = "1.0.0"
 
+    # W1456: does this language fold identifier case? Most languages
+    # resolve identifiers case-sensitively; Visual FoxPro does not
+    # (``MyProc`` and ``myproc`` name the same routine). The relation
+    # resolver consults this — via
+    # ``registry.is_case_insensitive_language`` — before allowing its
+    # case-folded fallback match. Running that fallback on a
+    # case-sensitive language binds every name the repo does NOT define
+    # (stdlib, third-party, builtins) to whatever indexed symbol happens
+    # to case-fold equal, e.g. a ``Path`` import resolving to an
+    # unrelated ``PATH`` constant. Declare ``True`` here rather than
+    # teaching the resolver a new file extension.
+    case_insensitive_identifiers: bool = False
+
     @property
     @abstractmethod
     def language_name(self) -> str: ...
