@@ -44,27 +44,47 @@ A mode counts as *supported* only if some statement attributed to it
 actually emits (``click.echo`` / ``to_json`` / ``print``) — so a bare
 ``if json_mode:`` guard around bookkeeping does not invent a branch.
 
+For SARIF, a text warning written beside the document does not count as
+disclosure in the artifact. The signal must be passed into a SARIF builder
+(``*_to_sarif`` / ``to_sarif``), normally as a runtime notification.
+
 A violation is: mode A observes disclosure token T and supported mode B
 does not.
 
+THE SCANNER FAILS CLOSED (W1455)
+--------------------------------
+Every file gets one of THREE outcomes — ``clean``, ``violation``, or
+``unanalyzable`` — never the two-valued ``[] means fine`` this scanner
+itself shipped with. Before W1455 a single ``def broken(:`` anywhere in
+``src/roam/commands`` made that module vanish from both the scan and the
+coverage enumeration while the gate printed success: an unparseable file was
+byte-identical to a clean repository. That is the very defect class this
+scanner exists to find.
+
+So the report publishes its DENOMINATOR — ``files_parsed``,
+``files_unanalyzable``, ``files_skipped`` — a cannot-analyse exits non-zero
+just like a violation, and every invocation runs a POSITIVE CONTROL over
+``tests/fixtures/scanner_positive_controls/disclosure``: a planted
+asymmetry that must be found, beside its symmetric twin that must not be.
+Without that pair, "0 findings" and "the detector stopped working" are the
+same output.
+
 USAGE
 -----
-    python scripts/scan_disclosure_asymmetry.py            # raw JSON
+    python scripts/scan_disclosure_asymmetry.py            # JSON report
     python scripts/scan_disclosure_asymmetry.py --text     # human report
-    python scripts/scan_disclosure_asymmetry.py --baseline # ratchet file
 
-``--baseline`` regenerates the file consumed by
-``tests/test_w1331_disclosure_branch_symmetry.py``. Each entry names a
-reason code from ``REASON_CODES``; a token with no mapping emits
-``"TODO"``, which that test rejects. Exempting a command is a reviewable
-diff by construction — the guard exists precisely because the fix keeps
-getting written into the branch that is already under test.
+Exit codes: 0 clean, 1 violations, 2 unanalyzable files, 3 the scanner
+cannot be trusted (positive control failed, or nothing was parsed at all).
+The test consuming this scanner has a zero baseline: every live violation
+fails.  There is no command allowlist to update.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import dataclasses
 import json
 import pathlib
 import sys
@@ -83,18 +103,20 @@ DISCLOSURE_TOKENS: tuple[str, ...] = (
     "empty_corpus_state",
     "truncation_reason",
     "scan_incomplete",
+    "degradation_state",
 )
 
 #: Tokens that are ENVELOPE KEY NAMES rather than computed signals: measured
-#: on request, never gated. A JSON branch carries them by construction and a
-#: text branch never spells them, so the check degenerates into "the text
-#: branch is not JSON". The signals above are different in kind — each is a
-#: value the command COMPUTES from a failure it just survived, so routing it
-#: to one branch and not another is a real, fixable information loss. Measure
-#: the spread with ``--include-schema-keys``; do not gate on it.
+#: on request, never gated by their spelling alone. A JSON branch carries them
+#: by construction and a text branch never spells them, so a raw key-name
+#: check degenerates into "the text branch is not JSON". The semantic
+#: ``degradation_state`` rule above separately seeds when a command supplies
+#: a ``partial_success`` value that can be true and accepts equivalent
+#: text/SARIF prose.
 #:
-#: * ``partial_success`` — a key of the shared ``json_envelope`` schema, so
-#:   every JSON branch in the tree carries it: 164 hits, none actionable.
+#: * ``partial_success`` — a key of the shared ``json_envelope`` schema. Its
+#:   raw spelling stays reporting-only; a non-constant-false value is gated
+#:   via ``degradation_state``.
 #: * ``failed_checks`` — demoted here after BOTH live instances were run and
 #:   found to disclose in every branch, just not under that name.
 #:   ``adversarial`` with ``build_symbol_graph`` raising prints
@@ -107,6 +129,62 @@ DISCLOSURE_TOKENS: tuple[str, ...] = (
 #:   there measured spelling, not disclosure.
 SCHEMA_TOKENS: tuple[str, ...] = ("partial_success", "failed_checks")
 
+# A non-zero text/SARIF exit is symmetric with a structured JSON failure
+# envelope.  These tokens are collected only to compensate the gate rule;
+# they are not independently reported as spelling differences.
+_GATE_COMPENSATION_TOKENS: tuple[str, ...] = (
+    "isError",
+    "error_code",
+)
+
+# Cross-format semantic family. JSON usually spells the fact as
+# ``partial_success``/``state`` while text and SARIF use prose.  Matching the
+# family prevents the lint from degenerating into "text is not JSON".
+_DEGRADATION_MARKERS: tuple[str, ...] = (
+    "partial result",
+    "truncat",
+    "degrad",
+    "incomplete",
+    "scan_incomplete",
+    "state=",
+    "skipp",
+    "unavailable",
+    "warnings_out",
+    "warning:",
+    "failed_checks",
+    "failed",
+    "failure",
+    "error_count",
+    " errors",
+    "error:",
+    " error",
+    "invalid",
+    "omitted",
+    "empty_corpus",
+    "empty corpus",
+    "not found",
+    "no matches",
+    "no symbols",
+    "no files",
+    "no code",
+    "unresolved",
+    "unknown",
+    "missing",
+    "not initialized",
+    "not available",
+    "cannot ",
+    "no ",
+    "not ",
+    "blocked",
+    "refused",
+    "stale",
+    "tamper",
+    "absent",
+    "disabled",
+    "unsupported",
+    "required",
+)
+
 #: Pseudo-token for the second rule: a NON-ZERO exit (a CI gate) that only
 #: some output modes can reach. This is the ``py-types`` defect verbatim —
 #: ``--ci --min-coverage 90`` at 0% coverage exited 5 in text and 0 in both
@@ -116,6 +194,7 @@ SCHEMA_TOKENS: tuple[str, ...] = ("partial_success", "failed_checks")
 #: branch-specific placement: an exit in shared code is symmetric by
 #: construction, and that is exactly what the fix looks like.
 GATE_SIGNAL = "nonzero_exit"
+_PARTIAL_TRUE_SEED = "_partial_success_true"
 
 #: Names ending in one of these count as the token (``_w607cm_warnings_out``,
 #: ``_combined_warnings_out``, … are all the same signal).
@@ -140,7 +219,7 @@ def _predicate_modes(node: ast.expr) -> set[str] | None:
     if isinstance(node, ast.Name):
         if node.id in ("json_mode", "_json_mode"):
             return {"json"}
-        if node.id in ("sarif_mode", "_sarif_mode"):
+        if node.id in ("sarif", "sarif_mode", "_sarif_mode"):
             return {"sarif"}
         return None
     if isinstance(node, ast.Call):
@@ -297,6 +376,9 @@ class _Partition:
 
 
 def _matches_token(name: str, token: str) -> bool:
+    if token == "degradation_state":
+        lowered = name.lower()
+        return any(marker in lowered for marker in _DEGRADATION_MARKERS)
     if name == token:
         return True
     return token in SUFFIX_TOKENS and name.endswith("_" + token)
@@ -378,6 +460,35 @@ def _node_tokens(node: ast.AST, vocabulary: tuple[str, ...]) -> set[str]:
     """Every disclosure token referenced anywhere under ``node``."""
     found: set[str] = set()
     for sub in ast.walk(node):
+        if "degradation_state" in vocabulary:
+            if isinstance(sub, ast.Dict):
+                for key, value in zip(sub.keys, sub.values):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and key.value == "partial_success"
+                        and not (isinstance(value, ast.Constant) and value.value is False)
+                    ):
+                        found.add("degradation_state")
+                        found.add(_PARTIAL_TRUE_SEED)
+            elif (
+                isinstance(sub, ast.keyword)
+                and sub.arg == "partial_success"
+                and not (isinstance(sub.value, ast.Constant) and sub.value.value is False)
+            ):
+                found.add("degradation_state")
+                found.add(_PARTIAL_TRUE_SEED)
+            elif isinstance(sub, (ast.Assign, ast.AnnAssign)):
+                value = getattr(sub, "value", None)
+                targets = list(sub.targets) if isinstance(sub, ast.Assign) else [sub.target]
+                if not (isinstance(value, ast.Constant) and value.value is False):
+                    for target in targets:
+                        if (
+                            isinstance(target, ast.Subscript)
+                            and isinstance(target.slice, ast.Constant)
+                            and target.slice.value == "partial_success"
+                        ):
+                            found.add("degradation_state")
+                            found.add(_PARTIAL_TRUE_SEED)
         text: str | None = None
         if isinstance(sub, ast.Name):
             text = sub.id
@@ -449,6 +560,11 @@ def _emits_output(node: ast.AST) -> bool:
     return False
 
 
+def _sarif_artifact_call(node: ast.AST) -> bool:
+    """True when ``node`` passes data through a SARIF document builder."""
+    return any("sarif" in name.lower() and name not in {"write_sarif"} for name in _called_names(node))
+
+
 def _is_command(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     for dec in func.decorator_list:
         node = dec.func if isinstance(dec, ast.Call) else dec
@@ -494,6 +610,7 @@ def _collect_tokens(
     funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
     n_supported: int,
     observed: dict[str, set[str]],
+    observed_lines: dict[str, dict[str, set[int]]],
     vocabulary: tuple[str, ...],
     carried: dict[str, set[str]],
     visited: set[tuple[str, frozenset[str]]],
@@ -526,38 +643,78 @@ def _collect_tokens(
             owners[id(node)] = owners.get(id(node), 0) + 1
 
     # Pass 1 -- local aliases. A name bound to a token-bearing expression
-    # stands in for the token for the rest of this mode's region.
+    # stands in for the token for the rest of this mode's region. Walk into
+    # conditionals as well: verdicts are commonly assigned in
+    # ``if no_data: verdict = "No symbols..."`` and later emitted by every
+    # mode. Treating only top-level Assign nodes made those honest prose
+    # mirrors invisible and produced false positives.
     aliases: dict[str, dict[str, set[str]]] = {}
     for mode in active:
         bound: dict[str, set[str]] = {}
         for node in part.regions[mode]:
-            if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                continue
-            value = getattr(node, "value", None)
-            if value is None:
-                continue
-            tokens = _observed_tokens(value, vocabulary, carried, bound)
-            if tokens:
-                for name in _assigned_names(node):
-                    bound.setdefault(name, set()).update(tokens)
+            assignments = (sub for sub in ast.walk(node) if isinstance(sub, (ast.Assign, ast.AnnAssign, ast.AugAssign)))
+            for assignment in assignments:
+                value = getattr(assignment, "value", None)
+                if value is None:
+                    continue
+                if assignment is node:
+                    tokens = _observed_tokens(value, vocabulary, carried, bound)
+                else:
+                    # Nested aliases are needed for conditional verdict
+                    # prose, but must not turn an ordinary result into a
+                    # disclosure merely because its producer accepted a
+                    # ``warnings_out=...`` accumulator. Only propagate the
+                    # semantic prose family here; explicit warning buckets
+                    # still have to reach an emitter themselves.
+                    tokens = _node_tokens(value, vocabulary) & {"degradation_state"}
+                    for sub in ast.walk(value):
+                        if isinstance(sub, ast.Name):
+                            tokens |= bound.get(sub.id, set()) & {"degradation_state"}
+                if tokens:
+                    for name in _assigned_names(assignment):
+                        bound.setdefault(name, set()).update(tokens)
         aliases[mode] = bound
 
     callers: dict[str, set[str]] = {}
     for mode in active:
         for node in part.regions[mode]:
             if owners[id(node)] < n_supported or _emits_output(node):
-                observed[mode] |= _observed_tokens(node, vocabulary, carried, aliases[mode])
+                node_tokens = _observed_tokens(node, vocabulary, carried, aliases[mode])
+                if (
+                    mode == "sarif"
+                    and {"echo_text_warnings", "echo_text_empty_corpus"} & _called_names(node)
+                    and not _sarif_artifact_call(node)
+                ):
+                    # STDERR alongside a SARIF document is not retained by
+                    # code-scanning consumers. Require the warning to enter
+                    # the SARIF builder (normally as a runtime notification).
+                    node_tokens -= set(vocabulary)
+                observed[mode] |= node_tokens
+                for token in node_tokens:
+                    observed_lines[mode].setdefault(token, set()).add(getattr(node, "lineno", func.lineno))
             # The gate rule is judged on plain REACHABILITY: an exit in
             # shared code is symmetric, an exit only one branch can reach
             # is the py-types defect.
             if _has_nonzero_exit(node):
                 observed[mode].add(GATE_SIGNAL)
+                observed_lines[mode].setdefault(GATE_SIGNAL, set()).add(getattr(node, "lineno", func.lineno))
             for name in _called_names(node):
                 if name in funcs and name != func.name:
                     callers.setdefault(name, set()).add(mode)
 
     for name, modes in callers.items():
-        _collect_tokens(funcs[name], modes, funcs, n_supported, observed, vocabulary, carried, visited, depth + 1)
+        _collect_tokens(
+            funcs[name],
+            modes,
+            funcs,
+            n_supported,
+            observed,
+            observed_lines,
+            vocabulary,
+            carried,
+            visited,
+            depth + 1,
+        )
 
 
 def analyze_command(
@@ -596,14 +753,17 @@ def analyze_command(
         return []
 
     observed: dict[str, set[str]] = {m: set() for m in supported}
+    observed_lines: dict[str, dict[str, set[int]]] = {m: {} for m in supported}
+    analysis_vocabulary = tuple(dict.fromkeys((*vocabulary, *_GATE_COMPENSATION_TOKENS)))
     _collect_tokens(
         func,
         supported,
         funcs,
         len(supported),
         observed,
-        vocabulary,
-        _carried_tokens(funcs, vocabulary),
+        observed_lines,
+        analysis_vocabulary,
+        _carried_tokens(funcs, analysis_vocabulary),
         set(),
         0,
     )
@@ -611,78 +771,350 @@ def analyze_command(
     violations: list[dict[str, object]] = []
     for token in (*vocabulary, GATE_SIGNAL):
         seeing = sorted(m for m in supported if token in observed[m])
-        if seeing and len(seeing) < len(supported):
+        if token == "degradation_state" and _PARTIAL_TRUE_SEED not in observed.get("json", set()):
+            # Text commonly contains words such as "failed" as a normal
+            # result label. Only a JSON ``partial_success`` value that can
+            # become true seeds this semantic family; prose supplies the
+            # cross-format mirror but cannot create a violation on its own.
+            continue
+        blind = supported - set(seeing)
+        if token == GATE_SIGNAL:
+            blind = {
+                mode
+                for mode in blind
+                if not any(compensation in observed[mode] for compensation in _GATE_COMPENSATION_TOKENS)
+            }
+        if seeing and blind:
+            source_lines = [line for mode in seeing for line in observed_lines[mode].get(token, set())]
             violations.append(
                 {
                     "command": func.name,
                     "token": token,
                     "observed_by": seeing,
-                    "blind": sorted(supported - set(seeing)),
+                    "blind": sorted(blind),
+                    "line": min(source_lines, default=func.lineno),
                 }
             )
     return violations
 
 
-def scan_file(path: pathlib.Path, vocabulary: tuple[str, ...] = DISCLOSURE_TOKENS) -> list[dict[str, object]]:
+# --------------------------------------------------------------------------
+# Three-valued file outcomes (W1455)
+# --------------------------------------------------------------------------
+
+#: A file was read, parsed, analysed, and found symmetric.
+CLEAN = "clean"
+#: A file was read, parsed, analysed, and found asymmetric.
+VIOLATION = "violation"
+#: A file could NOT be read, parsed, or analysed. This is the third value the
+#: scanner used to collapse into ``[]`` — i.e. into CLEAN.
+UNANALYZABLE = "unanalyzable"
+#: A file the scan deliberately does not cover, recorded WITH a reason so the
+#: coverage hole is a number in the report rather than an absence.
+SKIPPED = "skipped"
+
+EXIT_OK = 0
+EXIT_VIOLATIONS = 1
+EXIT_UNANALYZABLE = 2
+EXIT_SCANNER_BROKEN = 3
+
+#: Directory of the planted defect the scanner must find on every run.
+POSITIVE_CONTROL_DIR = pathlib.PurePosixPath("tests/fixtures/scanner_positive_controls/disclosure")
+
+#: The sentinel: what the positive-control fixture is planted to produce.
+#: A change to ``ast``, to the token vocabulary, or to the partitioner that
+#: stops this from matching means the scanner has stopped detecting, and the
+#: run is reported BROKEN instead of clean.
+POSITIVE_CONTROL_SENTINEL: dict[str, object] = {
+    "module": "cmd_sentinel_asymmetry.py",
+    "command": "sentinel_disclosure_probe",
+    "token": "warnings_out",
+    "blind": ["text"],
+    "observed_by": ["json"],
+}
+#: The other half of the control: the symmetric twin that must stay silent,
+#: so "always fire" cannot satisfy the check.
+POSITIVE_CONTROL_SILENT_MODULE = "cmd_sentinel_symmetric.py"
+
+
+@dataclasses.dataclass(frozen=True)
+class FileResult:
+    """The outcome of ONE file. ``status`` is never inferred from emptiness."""
+
+    module: str
+    path: str
+    status: str
+    violations: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    sites: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    reason: str | None = None
+
+    def as_record(self) -> dict[str, object]:
+        return {"module": self.module, "path": self.path, "status": self.status, "reason": self.reason}
+
+
+@dataclasses.dataclass(frozen=True)
+class ControlResult:
+    """Did the detector detect its own planted defect on this invocation?"""
+
+    status: str  # "ok" | "broken"
+    detail: str
+    fixture: str
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok"
+
+    def as_record(self) -> dict[str, object]:
+        return {"status": self.status, "detail": self.detail, "fixture": self.fixture}
+
+
+@dataclasses.dataclass(frozen=True)
+class ScanReport:
+    """Violations AND the denominator they were counted against.
+
+    ``violations == []`` is only meaningful beside ``files_unanalyzable == 0``
+    and ``positive_control.ok``; consumers must assert all three separately,
+    which is why they are three fields and not one boolean.
+    """
+
+    violations: list[dict[str, object]]
+    sites: list[dict[str, object]]
+    files_parsed: int
+    files_unanalyzable: int
+    files_skipped: int
+    unanalyzable: list[dict[str, object]]
+    skipped: list[dict[str, object]]
+    positive_control: ControlResult
+    root: str
+
+    @property
+    def files_seen(self) -> int:
+        return self.files_parsed + self.files_unanalyzable
+
+    @property
+    def ok(self) -> bool:
+        return not self.violations and self.files_unanalyzable == 0 and self.positive_control.ok
+
+    def summary(self) -> str:
+        """The disclosure is the COUNT, never the silence."""
+        return (
+            f"checked {self.files_parsed} files, "
+            f"{len(self.violations)} violations, "
+            f"{self.files_unanalyzable} unanalyzable, "
+            f"positive control {'OK' if self.positive_control.ok else 'BROKEN'}"
+        )
+
+    def as_record(self) -> dict[str, object]:
+        return {
+            "root": self.root,
+            "violations": self.violations,
+            "files_parsed": self.files_parsed,
+            "files_unanalyzable": self.files_unanalyzable,
+            "files_skipped": self.files_skipped,
+            "unanalyzable": self.unanalyzable,
+            "skipped": self.skipped,
+            "positive_control": self.positive_control.as_record(),
+            "summary": self.summary(),
+        }
+
+
+def _parse_source(path: pathlib.Path) -> tuple[ast.Module | None, str | None]:
+    """Parse ``path``; on failure return the REASON rather than an empty result."""
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
-        return []
-    funcs = _collect_functions(tree)
-    out: list[dict[str, object]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_command(node):
-            for violation in analyze_command(node, funcs, vocabulary):
-                violation["module"] = path.name
-                out.append(violation)
-    return out
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, f"read failed: {type(exc).__name__}: {exc}"
+    try:
+        return ast.parse(source, filename=str(path)), None
+    except (SyntaxError, ValueError, RecursionError) as exc:
+        return None, f"parse failed: {type(exc).__name__}: {exc}"
 
 
-def scan(commands_dir: pathlib.Path, vocabulary: tuple[str, ...] = DISCLOSURE_TOKENS) -> list[dict[str, object]]:
-    results: list[dict[str, object]] = []
-    for path in sorted(commands_dir.glob("cmd_*.py")):
-        results.extend(scan_file(path, vocabulary))
-    results.sort(key=lambda v: (str(v["module"]), str(v["command"]), str(v["token"])))
+def scan_file(path: pathlib.Path, vocabulary: tuple[str, ...] = DISCLOSURE_TOKENS) -> FileResult:
+    """Analyse one module. NEVER returns an empty result for a file it failed on.
+
+    Every exception is caught PER FILE and recorded as ``UNANALYZABLE`` with
+    its reason — the walk keeps going, but the failure is carried into the
+    report instead of being swallowed by a bare ``continue``.
+    """
+    tree, reason = _parse_source(path)
+    if tree is None:
+        return FileResult(module=path.name, path=str(path), status=UNANALYZABLE, reason=reason)
+    try:
+        funcs = _collect_functions(tree)
+        violations: list[dict[str, object]] = []
+        sites: list[dict[str, object]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_command(node):
+                sites.append({"module": path.name, "command": node.name, "line": node.lineno})
+                for violation in analyze_command(node, funcs, vocabulary):
+                    violation["module"] = path.name
+                    violations.append(violation)
+    except Exception as exc:  # noqa: BLE001 — a scanner crash is UNANALYZABLE, not clean
+        return FileResult(
+            module=path.name,
+            path=str(path),
+            status=UNANALYZABLE,
+            reason=f"analysis failed: {type(exc).__name__}: {exc}",
+        )
+    return FileResult(
+        module=path.name,
+        path=str(path),
+        status=VIOLATION if violations else CLEAN,
+        violations=violations,
+        sites=sites,
+    )
+
+
+def scan_files(commands_dir: pathlib.Path, vocabulary: tuple[str, ...] = DISCLOSURE_TOKENS) -> list[FileResult]:
+    """Per-file outcomes for a directory, including the files it did not cover."""
+    results: list[FileResult] = []
+    try:
+        candidates = sorted(commands_dir.glob("*.py"))
+    except OSError as exc:
+        return [
+            FileResult(
+                module=commands_dir.name,
+                path=str(commands_dir),
+                status=UNANALYZABLE,
+                reason=f"directory listing failed: {type(exc).__name__}: {exc}",
+            )
+        ]
+    for path in candidates:
+        if not path.name.startswith("cmd_"):
+            # Recorded, not ignored: a refactor that moves commands out of the
+            # ``cmd_*.py`` glob shows up as a jump in ``files_skipped``.
+            results.append(
+                FileResult(
+                    module=path.name,
+                    path=str(path),
+                    status=SKIPPED,
+                    reason="outside the cmd_*.py glob",
+                )
+            )
+            continue
+        results.append(scan_file(path, vocabulary))
     return results
+
+
+def _build_report(
+    commands_dir: pathlib.Path,
+    vocabulary: tuple[str, ...],
+    control: ControlResult,
+) -> ScanReport:
+    results = scan_files(commands_dir, vocabulary)
+    violations = [v for r in results for v in r.violations]
+    violations.sort(key=lambda v: (str(v["module"]), str(v["command"]), str(v["token"])))
+    sites = [s for r in results for s in r.sites]
+    sites.sort(key=lambda s: (str(s["module"]), int(s["line"])))  # type: ignore[arg-type]
+    unanalyzable = [r.as_record() for r in results if r.status == UNANALYZABLE]
+    skipped = [r.as_record() for r in results if r.status == SKIPPED]
+    return ScanReport(
+        violations=violations,
+        sites=sites,
+        files_parsed=sum(1 for r in results if r.status in (CLEAN, VIOLATION)),
+        files_unanalyzable=len(unanalyzable),
+        files_skipped=len(skipped),
+        unanalyzable=unanalyzable,
+        skipped=skipped,
+        positive_control=control,
+        root=str(commands_dir),
+    )
+
+
+# --------------------------------------------------------------------------
+# Positive control
+# --------------------------------------------------------------------------
+
+
+def positive_control_dir(root: pathlib.Path | None = None) -> pathlib.Path:
+    return (root or _repo_root()).joinpath(*POSITIVE_CONTROL_DIR.parts)
+
+
+def run_positive_control(root: pathlib.Path | None = None) -> ControlResult:
+    """Re-prove, on THIS invocation, that the detector still detects.
+
+    Scans a fixture holding one planted asymmetry and its symmetric twin. The
+    control passes only if the scanner fires on the first and stays silent on
+    the second — an "always fire" or "never fire" regression fails it either
+    way. Without this, a future ``ast`` change or a renamed node type turns
+    the gate into a rubber stamp that still prints ``0 violations``.
+    """
+    fixture = positive_control_dir(root)
+    if not fixture.is_dir():
+        return ControlResult("broken", f"positive-control fixture directory missing: {fixture}", str(fixture))
+
+    results = scan_files(fixture, DISCLOSURE_TOKENS)
+    broken = [r for r in results if r.status == UNANALYZABLE]
+    if broken:
+        return ControlResult("broken", f"control fixture unanalyzable: {broken[0].reason}", str(fixture))
+
+    modules = {r.module for r in results if r.status in (CLEAN, VIOLATION)}
+    required = {str(POSITIVE_CONTROL_SENTINEL["module"]), POSITIVE_CONTROL_SILENT_MODULE}
+    if not required <= modules:
+        return ControlResult(
+            "broken",
+            f"control fixture incomplete: expected {sorted(required)}, parsed {sorted(modules)}",
+            str(fixture),
+        )
+
+    noisy = [v for r in results if r.module == POSITIVE_CONTROL_SILENT_MODULE for v in r.violations]
+    if noisy:
+        return ControlResult(
+            "broken",
+            f"the symmetric control twin was flagged — the scanner is over-firing: {noisy}",
+            str(fixture),
+        )
+
+    found = [v for r in results if r.module == str(POSITIVE_CONTROL_SENTINEL["module"]) for v in r.violations]
+    match = [v for v in found if all(v.get(field) == expected for field, expected in POSITIVE_CONTROL_SENTINEL.items())]
+    if not match:
+        return ControlResult(
+            "broken",
+            "the planted sentinel asymmetry was NOT detected — a '0 violations' verdict "
+            f"from this scanner is meaningless. expected {POSITIVE_CONTROL_SENTINEL}, got {found}",
+            str(fixture),
+        )
+    return ControlResult(
+        "ok",
+        f"sentinel detected: {POSITIVE_CONTROL_SENTINEL['module']}::"
+        f"{POSITIVE_CONTROL_SENTINEL['command']}::{POSITIVE_CONTROL_SENTINEL['token']} "
+        f"blind={POSITIVE_CONTROL_SENTINEL['blind']}; symmetric twin silent",
+        str(fixture),
+    )
+
+
+# --------------------------------------------------------------------------
+# Public entry points
+# --------------------------------------------------------------------------
+
+
+def scan(
+    commands_dir: pathlib.Path,
+    vocabulary: tuple[str, ...] = DISCLOSURE_TOKENS,
+    root: pathlib.Path | None = None,
+) -> ScanReport:
+    """Scan a directory and return violations WITH their denominator.
+
+    The positive control runs on every invocation; ``report.ok`` is false when
+    it fails even if no violation was found, because in that case "no
+    violation" carries no information.
+    """
+    return _build_report(commands_dir, vocabulary, run_positive_control(root))
+
+
+def enumerate_command_sites(commands_dir: pathlib.Path) -> ScanReport:
+    """Every Click command the scan traverses, plus the files it could not read.
+
+    Returns the full report rather than a bare site list: a module dropped by
+    a parse failure used to disappear from here silently, which is how a
+    coverage-proving enumeration came to under-report its own coverage.
+    """
+    return scan(commands_dir)
 
 
 def violation_key(v: dict[str, object]) -> str:
     return f"{v['module']}::{v['command']}::{v['token']}"
-
-
-#: Reason codes usable in the ratchet baseline. Each entry MUST name one.
-#: They are deliberately few and deliberately specific: a code that would
-#: fit any violation is not a reason, it is a shrug.
-REASON_CODES: dict[str, str] = {
-    "json-only-warnings-bucket": (
-        "The W607 warnings_out bucket is threaded into the JSON envelope only. "
-        "A human running the command without --json, and a CI job consuming "
-        "--sarif, cannot see that a substrate call failed and was floored. "
-        "Fix template: cmd_understand.py -- echo '# warning: <marker>' to "
-        "STDERR in the non-JSON tails, which leaves stdout byte-identical."
-    ),
-    "json-only-empty-corpus-state": (
-        "empty_corpus_state() distinguishes 'nothing indexed' from 'nothing "
-        "found'; only the JSON branch renders the distinction. The text and "
-        "SARIF branches print the same thing for both."
-    ),
-    "structured-envelope-instead-of-exit": (
-        "DELIBERATE and pinned by a test: the JSON branch answers a "
-        "resolution failure with a structured envelope (partial_success, "
-        "state, error) and exit 0, because a non-zero exit strips the "
-        "structured signal at the MCP wrapper -- see the Pattern-1B/1C note "
-        "in cmd_diagnose.py and test_cmd_why_resolution.py's explicit "
-        "assert exit_code == 0. The text branch has no envelope to carry the "
-        "signal, so it uses the exit code instead. Not a defect; do not "
-        "'fix' by making --json exit non-zero without changing those tests."
-    ),
-}
-
-_DERIVED_REASON: dict[str, str] = {
-    "warnings_out": "json-only-warnings-bucket",
-    "empty_corpus_state": "json-only-empty-corpus-state",
-    GATE_SIGNAL: "structured-envelope-instead-of-exit",
-}
 
 
 def _repo_root() -> pathlib.Path:
@@ -692,46 +1124,49 @@ def _repo_root() -> pathlib.Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--text", action="store_true", help="human-readable report")
-    parser.add_argument("--baseline", action="store_true", help="emit a baseline skeleton")
     parser.add_argument(
         "--include-schema-keys",
         action="store_true",
-        help="also measure json_envelope schema keys (partial_success) -- reporting only, never gated",
+        help="also measure raw json_envelope schema-key spelling (semantic partial_success=true is always gated)",
     )
     args = parser.parse_args(argv)
 
     vocabulary = DISCLOSURE_TOKENS + (SCHEMA_TOKENS if args.include_schema_keys else ())
-    results = scan(_repo_root() / "src" / "roam" / "commands", vocabulary)
-    if args.baseline:
-        print(
-            json.dumps(
-                {
-                    "_comment": (
-                        "W1331 ratchet baseline -- see tests/"
-                        "test_w1331_disclosure_branch_symmetry.py. Every entry is a "
-                        "command that routes a disclosure signal to one output "
-                        "branch and not another, so a consumer of the other branch "
-                        "reads a degraded run as a clean one. This list may only "
-                        "SHRINK: the test fails both on a new violation and on a "
-                        "stale entry. Every entry names a reason code from "
-                        "_reason_codes; adding a code, or an entry, is a reviewable "
-                        "diff by construction."
-                    ),
-                    "_regenerate": "python scripts/scan_disclosure_asymmetry.py --baseline",
-                    "_reason_codes": REASON_CODES,
-                    "violations": [{**v, "reason": _DERIVED_REASON.get(str(v["token"]), "TODO")} for v in results],
-                },
-                indent=2,
-            )
-        )
-        return 0
+    report = scan(_repo_root() / "src" / "roam" / "commands", vocabulary)
+
     if args.text:
-        for v in results:
-            print(f"{v['module']}::{v['command']}: {v['token']} seen by {v['observed_by']}, blind: {v['blind']}")
-        print(f"\n{len(results)} asymmetries across {len({v['module'] for v in results})} modules")
-        return 0
-    print(json.dumps(results, indent=2))
-    return 0
+        for v in report.violations:
+            print(
+                f"{v['module']}:{v['line']}::{v['command']}: "
+                f"{v['token']} seen by {v['observed_by']}, blind: {v['blind']}"
+            )
+        disclosures = [v for v in report.violations if v["token"] != GATE_SIGNAL]
+        gates = [v for v in report.violations if v["token"] == GATE_SIGNAL]
+        print(
+            f"\n{len(disclosures)} disclosure asymmetries across "
+            f"{len({v['module'] for v in disclosures})} modules; "
+            f"{len(gates)} separately-tested exit-gate reachability differences"
+        )
+        print(report.summary())
+        print(f"skipped {report.files_skipped} file(s) outside the cmd_*.py glob")
+        for entry in report.unanalyzable:
+            print(f"UNANALYZABLE {entry['module']}: {entry['reason']}")
+        if not report.positive_control.ok:
+            print(f"POSITIVE CONTROL BROKEN: {report.positive_control.detail}")
+    else:
+        print(json.dumps(report.as_record(), indent=2))
+
+    if not report.positive_control.ok:
+        return EXIT_SCANNER_BROKEN
+    if report.files_parsed == 0:
+        # Zero files parsed is not zero violations; it is zero coverage.
+        return EXIT_SCANNER_BROKEN
+    if report.files_unanalyzable:
+        # Cannot-analyse is a failure OF THE GATE, not a pass.
+        return EXIT_UNANALYZABLE
+    if report.violations:
+        return EXIT_VIOLATIONS
+    return EXIT_OK
 
 
 if __name__ == "__main__":
