@@ -8,6 +8,8 @@ from collections import OrderedDict
 
 import networkx as nx
 
+from roam.observability import log_swallowed
+
 # Process-wide cache of built graphs, keyed by (resolved db path, kind).
 #
 # KEY DISCIPLINE: the key is the RESOLVED DATABASE PATH -- the identity of
@@ -79,6 +81,15 @@ def _db_stamp(db_path: str) -> tuple:
 
     The ``-wal`` leg covers the window where a WAL-mode commit has landed in
     the sidecar but has not yet been checkpointed into the main header.
+
+    Returns ``None`` when the change counter cannot be read. That is NOT the
+    same as "unchanged": a stamp built from failed reads would be a CONSTANT,
+    so two different database states would share a cache key and the caller
+    would serve a stale graph. An unreadable stamp therefore disables caching
+    for that database rather than pinning it -- the same fail-closed rule this
+    fix exists to enforce, applied to the fix itself. Its absence is also
+    logged, because a stamp that silently stops working looks exactly like a
+    database that never changes.
     """
     counter = None
     size = None
@@ -88,18 +99,26 @@ def _db_stamp(db_path: str) -> tuple:
             size = os.fstat(handle.fileno()).st_size
         if len(header) >= 28:
             counter = header[24:28]
-    except OSError:
-        pass
+    except OSError as exc:
+        log_swallowed("graph.builder:db_stamp:header", exc)
+    if counter is None or size is None:
+        # Cannot prove freshness -> refuse to cache. Never fall back to a
+        # partial stamp; a partial stamp is a collision waiting to happen.
+        return None
     try:
         wal_st = os.stat(db_path + "-wal")
         wal = (wal_st.st_mtime_ns, wal_st.st_size)
-    except OSError:
+    except FileNotFoundError:
+        # No -wal sidecar is the normal rollback-journal case, not an error.
         wal = None
+    except OSError as exc:
+        log_swallowed("graph.builder:db_stamp:wal", exc)
+        return None
     return (counter, size, wal)
 
 
 def _cache_get(db_path: str | None, kind: str, stamp: tuple) -> nx.DiGraph | None:
-    if db_path is None:
+    if db_path is None or stamp is None:
         return None
     key = (db_path, kind)
     entry = _GRAPH_CACHE.get(key)
@@ -115,7 +134,7 @@ def _cache_get(db_path: str | None, kind: str, stamp: tuple) -> nx.DiGraph | Non
 
 
 def _cache_set(db_path: str | None, kind: str, stamp: tuple, G: nx.DiGraph) -> None:
-    if db_path is None:
+    if db_path is None or stamp is None:
         return
     key = (db_path, kind)
     _GRAPH_CACHE[key] = (stamp, G)

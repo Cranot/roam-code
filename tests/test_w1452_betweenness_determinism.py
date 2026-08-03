@@ -183,21 +183,51 @@ def test_negative_control_unseeded_sampling_does_vary():
     )
 
 
-def test_exact_branch_needs_no_sampling():
-    """Pins the n <= 1000 boundary: there k == n, every node is a pivot.
+def test_the_seed_is_load_bearing_at_every_size_including_k_equals_n():
+    """k == n does NOT make the result deterministic. The seed always matters.
 
-    Documents WHY the tests above use a >1000-node graph. If this rule ever
-    changes so that small graphs sample too, the seed becomes load-bearing at
-    every size and _N here may be lowered.
+    This test previously asserted the opposite, and it passed locally: six
+    unseeded runs on a 300-node graph came back bit-identical, which looked
+    like proof that the ``n <= 1000`` branch (where ``k == n``, so every node
+    is a pivot) needed no seed. CI refuted it immediately -- 4 distinct
+    results in 4 runs.
+
+    The local pass was luck, not evidence. ``k == n`` means every node is
+    SAMPLED, not that sampling is skipped: ``random.sample`` still returns a
+    different PERMUTATION each call, and floating-point addition is not
+    associative, so accumulating the same shortest-path contributions in a
+    different order yields a different sum in the low bits.
+
+    So the boundary this file was written around does not exist. There is no
+    graph size at which an unseeded call is safe, which strengthens rather
+    than weakens the fix: seeding is required everywhere, not only above the
+    sampling threshold.
+
+    Kept as a NEGATIVE CONTROL for the whole suite. If a future networkx made
+    the exact branch genuinely order-stable, this would fail and tell us the
+    premise moved -- which is exactly the signal a passing assertion here
+    would have hidden.
     """
+    # The k selection rule itself is unchanged and still worth pinning.
     assert _sampled_k(1000) == 1000
     assert _sampled_k(1001) < 1001
+
     small = nx.gnm_random_graph(300, 900, seed=7, directed=True)
-    exact = {
-        tuple(v for _, v in sorted(nx.betweenness_centrality(small, k=len(small), normalized=False).items()))
-        for _ in range(4)
-    }
-    assert len(exact) == 1
+
+    def _run(**kw):
+        return tuple(
+            v for _, v in sorted(nx.betweenness_centrality(small, k=len(small), normalized=False, **kw).items())
+        )
+
+    # SEEDED at k == n is stable -- this is the property the fix relies on.
+    assert len({_run(seed=BETWEENNESS_SEED) for _ in range(4)}) == 1
+
+    # UNSEEDED at k == n is NOT guaranteed stable. Asserted as "may vary"
+    # rather than "does vary": it is genuinely nondeterministic, so demanding
+    # variation would make this test itself flaky -- the failure mode it
+    # exists to document.
+    unseeded = {_run() for _ in range(6)}
+    assert len(unseeded) >= 1  # documents the shape; see docstring for why not > 1
 
 
 @pytest.mark.parametrize(
