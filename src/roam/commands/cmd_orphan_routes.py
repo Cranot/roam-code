@@ -775,6 +775,11 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     unrouted = result["unrouted_methods"]
     routes_total = result["routes_total"]
     routes_with_consumers = result["routes_with_consumers"]
+    no_routes_message = (
+        "No routes found. Ensure routes/api.php or routes/web.php exist and the roam index is up to date."
+        if routes_total == 0
+        else None
+    )
 
     # Apply confidence floor — W1005-followup-D: equality → floor via
     # canonical severity_rank(). Detector emits {high, medium, low}; the
@@ -794,7 +799,14 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     if sarif_mode:
         from roam.output.sarif import orphan_routes_to_sarif, write_sarif
 
-        click.echo(write_sarif(orphan_routes_to_sarif(orphans)))
+        click.echo(
+            write_sarif(
+                orphan_routes_to_sarif(
+                    orphans,
+                    disclosures=[no_routes_message] if no_routes_message else None,
+                )
+            )
+        )
         return
 
     n_high = sum(1 for o in orphans if o["confidence"] == "high")
@@ -802,13 +814,18 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     n_low = sum(1 for o in orphans if o["confidence"] == "low")
 
     if routes_total == 0:
-        msg = "No routes found. Ensure routes/api.php or routes/web.php exist and the roam index is up to date."
+        msg = no_routes_message or "No routes found."
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "orphan-routes",
-                        summary={"verdict": "no routes found", "error": msg},
+                        summary={
+                            "verdict": "no routes found",
+                            "error": msg,
+                            "partial_success": True,
+                            "state": "no_routes",
+                        },
                     )
                 )
             )

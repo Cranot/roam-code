@@ -26,6 +26,7 @@ from roam.graph.builder import build_symbol_graph
 from roam.output.formatter import (
     ENVELOPE_SCHEMA_VERSION,
     abbrev_kind,
+    echo_text_warnings,
     format_table,
     json_envelope,
     loc,
@@ -1135,6 +1136,7 @@ def diagnose_cmd(ctx, name, depth, batch_input):
 
         # Text output — index-staleness warning lands FIRST so it can't
         # be missed when scanning top-down.
+        echo_text_warnings(list(_w607dn_warnings_out) + list(_w607s_warnings_out) + list(_w607bh_warnings_out))
         if index_status_payload and not index_status_payload.get("fresh"):
             click.echo(f"NOTE: {index_status_payload['hint']}")
             click.echo()

@@ -1509,7 +1509,7 @@ def duplicates(
         # SARIF (CI-format consumers want the SARIF document, not the JSON
         # envelope). Mirrors the W1172 ``cmd_clones`` SARIF wiring.
         if sarif_mode:
-            from roam.output.sarif import duplicates_to_sarif, write_sarif
+            from roam.output.sarif import duplicates_to_sarif, with_sarif_disclosures, write_sarif
 
             sarif_envelope = json_envelope(
                 "duplicates",
@@ -1534,6 +1534,10 @@ def duplicates(
                     "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
                     "runs": [],
                 },
+            )
+            sarif_doc = with_sarif_disclosures(
+                sarif_doc,
+                list(_w607bm_warnings_out) + list(_w607dd_warnings_out),
             )
             click.echo(write_sarif(sarif_doc))
             # W1331: a SARIF document has nowhere to carry these markers,

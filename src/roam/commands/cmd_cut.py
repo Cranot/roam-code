@@ -15,7 +15,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 _MAX_GRAPH_SYMBOLS = 5000
 
@@ -555,6 +555,7 @@ def cut(ctx, between, leak_edges, top_n):
                     click.echo(f"     Suggest: {le.get('suggestion', '')}")
 
         _run_check_ei("format_text_output", _format_text_output, default=None)
+        echo_text_warnings(_w607ei_warnings_out)
         # Marker accumulator handles disclosure on the text path -- the
         # warning rides into ``_w607ei_warnings_out`` even when
         # text-mode output is human-targeted (JSON mode carries the

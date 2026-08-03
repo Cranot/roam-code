@@ -20,7 +20,7 @@ from roam.commands.metrics_history import collect_metrics, get_snapshots
 from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output._severity import severity_rank
-from roam.output.formatter import WarningsOut, json_envelope, to_json
+from roam.output.formatter import WarningsOut, echo_text_empty_corpus, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Alert levels
@@ -1440,6 +1440,7 @@ def alerts(ctx):
                     )
                 )
             else:
+                echo_text_empty_corpus(_empty)
                 click.echo(f"VERDICT: {empty_verdict}")
             return
         # W607-CX: ``get_snapshots`` substrate -- DB-row ingest.

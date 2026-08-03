@@ -55,7 +55,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, format_table, json_envelope, to_json
 from roam.runs.ledger import list_runs, read_run_events, runs_root
 
 # ---------------------------------------------------------------------------
@@ -382,6 +382,10 @@ def agent_score_cmd(ctx, agent, since, top):
 
     partial_success_any = any(r["partial_success_rate"] > 0.0 for r in scored)
 
+    _warnings_out: list[str] = []
+    if scored_truncated:
+        _warnings_out.append(f"truncated to {len(scored)} of {total_scored_full} — pass --limit larger to see more")
+
     if json_mode:
         # W1142-followup-B: cap-hit disclosure. Surface whether the
         # agent's --limit collapsed the scored agent list.
@@ -400,9 +404,6 @@ def agent_score_cmd(ctx, agent, since, top):
             "truncated": scored_truncated,
             "limit": top,
         }
-        _warnings_out: list[str] = []
-        if scored_truncated:
-            _warnings_out.append(f"truncated to {len(scored)} of {total_scored_full} — pass --limit larger to see more")
         _summary = {
             "verdict": verdict,
             "partial_success": partial_success_any or scored_truncated,
@@ -435,6 +436,7 @@ def agent_score_cmd(ctx, agent, since, top):
         return
 
     # ---- Text output --------------------------------------------------
+    echo_text_warnings(_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     rows = []
     for r in scored:

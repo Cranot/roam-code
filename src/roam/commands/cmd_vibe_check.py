@@ -64,7 +64,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, format_table, json_envelope, to_json
 from roam.quality.ai_rot import DEFINITION as AI_ROT_DEFINITION
 
 # W125 — detector version stamp. Bump per the W81 / ROADMAP A6 rules when
@@ -2337,6 +2337,7 @@ def vibe_check(ctx, threshold, persist):
             return
 
         # --- Text output ---
+        echo_text_warnings(_w607bs_warnings_out)
         click.echo(f"VERDICT: {verdict}")
         click.echo()
 

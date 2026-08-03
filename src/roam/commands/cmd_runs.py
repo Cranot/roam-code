@@ -32,7 +32,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, format_table, json_envelope, to_json
 from roam.runs.ledger import (
     VALID_STATUSES,
     end_run,
@@ -147,13 +147,15 @@ def _emit_runs_failure(
     if warnings_out:
         summary["warnings_out"] = list(warnings_out)
     kwargs: dict = {"summary": summary}
-    if warnings_out:
-        kwargs["warnings_out"] = list(warnings_out)
     if extra_kwargs:
         kwargs.update(extra_kwargs)
     if json_mode:
-        click.echo(to_json(json_envelope(command_name, **kwargs)))
+        if warnings_out:
+            click.echo(to_json(json_envelope(command_name, warnings_out=list(warnings_out), **kwargs)))
+        else:
+            click.echo(to_json(json_envelope(command_name, **kwargs)))
         ctx.exit(2)
+    echo_text_warnings(warnings_out)
     click.echo(f"VERDICT: {verdict}")
     ctx.exit(2)
 
@@ -304,6 +306,7 @@ def runs_start(ctx, agent):
         )
         return
 
+    echo_text_warnings(_w607as_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     click.echo(f"  run_id:    {meta.run_id}")
     click.echo(f"  agent:     {meta.agent}")
@@ -687,6 +690,7 @@ def runs_end(ctx, run_id, status, with_pr_bundle_emit):
         )
         return
 
+    echo_text_warnings(_w607as_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     click.echo(f"  run_id:    {meta.run_id}")
     click.echo(f"  agent:     {meta.agent}")
@@ -846,6 +850,10 @@ def runs_list(ctx, agent, since, status, top):
         verdict = f"{total} run{'s' if total != 1 else ''}"
         state = "ok"
 
+    _warnings_out: list[str] = []
+    if metas_truncated:
+        _warnings_out.append(f"truncated to {len(metas)} of {total_metas_full} — pass --limit larger to see more")
+
     if json_mode:
         # W1142-followup-B: cap-hit disclosure on the canonical JSON
         # envelope. ``count``/``total_count``/``truncated``/``limit``
@@ -856,9 +864,6 @@ def runs_list(ctx, agent, since, status, top):
             "truncated": metas_truncated,
             "limit": top,
         }
-        _warnings_out: list[str] = []
-        if metas_truncated:
-            _warnings_out.append(f"truncated to {len(metas)} of {total_metas_full} — pass --limit larger to see more")
         _summary = {
             "verdict": verdict,
             "partial_success": metas_truncated,
@@ -881,6 +886,7 @@ def runs_list(ctx, agent, since, status, top):
         )
         return
 
+    echo_text_warnings(_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     if total == 0:
         return
@@ -1519,6 +1525,7 @@ def runs_verify(ctx, run_id, verify_all):
 
         click.echo(to_json(_envelope))
     else:
+        echo_text_warnings(_w607ct_warnings_out)
         click.echo(f"VERDICT: {verdict}")
         click.echo(f"  total_runs:     {total}")
         click.echo(f"  ok:             {ok}")

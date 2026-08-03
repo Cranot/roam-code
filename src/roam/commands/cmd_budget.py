@@ -16,7 +16,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import WarningsOut, json_envelope, to_json
+from roam.output.formatter import WarningsOut, echo_text_warnings, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Default budget rules (used when no config file exists)
@@ -469,6 +469,7 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
         return
 
     # --- Text output ---
+    echo_text_warnings(warnings_out=_budget_warnings)
     click.echo(f"VERDICT: {verdict}")
     click.echo()
 

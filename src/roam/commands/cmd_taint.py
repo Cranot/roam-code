@@ -943,6 +943,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         from roam.output.sarif import (
             runtime_filter_disclosure,
             taint_to_sarif,
+            with_sarif_disclosures,
             write_sarif,
         )
 
@@ -1002,6 +1003,10 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             runtime_overrides=sarif_overrides or None,
             runtime_notification_overrides=sarif_notif_overrides or None,
             default={},
+        )
+        _sarif_doc = with_sarif_disclosures(
+            _sarif_doc,
+            list(_w607ay_warnings_out) + list(_w607cj_warnings_out),
         )
         _sarif_text = _run_check_ay(
             "write_sarif",

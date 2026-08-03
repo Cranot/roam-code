@@ -40,7 +40,7 @@ from roam.db.findings import (
     known_detector_names,
     list_findings,
 )
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, format_table, json_envelope, to_json
 from roam.output.structured_unknowns import (
     structured_unknown_filter,
     to_summary_payload,
@@ -247,6 +247,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
                     )
                 )
                 return
+            echo_text_warnings(warnings_out)
             click.echo(f"VERDICT: {verdict_unknown}")
             if close_matches:
                 quoted = " or ".join(f"'{m}'" for m in close_matches)
@@ -305,6 +306,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
                     )
                 )
                 return
+            echo_text_warnings(warnings_out)
             click.echo(f"VERDICT: {verdict_not_emitted}")
             click.echo(
                 f"Run `roam {detector}` to populate the registry, then re-run "
@@ -371,6 +373,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
                 )
             )
             return
+        echo_text_warnings(warnings_out)
         click.echo(f"VERDICT: {verdict_empty}")
         return
 
@@ -418,6 +421,7 @@ def findings_list(ctx, detector, subject_kind, subject_id, limit):
 
     # Text mode — cap at 50 rows for readability; --json users get the
     # full ``limit`` set (default 100). Truncation is signalled inline.
+    echo_text_warnings(warnings_out)
     click.echo(f"VERDICT: {verdict}\n")
     table_rows: list[list[str]] = []
     for r in rows[:50]:
@@ -500,6 +504,7 @@ def findings_show(ctx, finding_id_str):
                 )
             )
             ctx.exit(2)
+        echo_text_warnings(warnings_out)
         click.echo(f"VERDICT: {verdict_missing}")
         ctx.exit(2)
 
@@ -531,6 +536,7 @@ def findings_show(ctx, finding_id_str):
         )
         return
 
+    echo_text_warnings(warnings_out)
     click.echo(f"VERDICT: {verdict}")
     click.echo(f"  id:              {record['id']}")
     click.echo(f"  finding_id_str:  {record['finding_id_str']}")
@@ -619,6 +625,7 @@ def findings_count(ctx):
                 )
             )
             return
+        echo_text_warnings(warnings_out)
         click.echo(f"VERDICT: {verdict_empty}")
         return
 
@@ -658,6 +665,7 @@ def findings_count(ctx):
         )
         return
 
+    echo_text_warnings(warnings_out)
     click.echo(f"VERDICT: {verdict}\n")
     table_rows = [[det, str(n)] for det, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
     click.echo(format_table(["Detector", "Findings"], table_rows, budget=0))

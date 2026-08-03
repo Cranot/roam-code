@@ -47,7 +47,7 @@ from roam.constitution.loader import (
     upgrade_constitution,
 )
 from roam.db.connection import find_project_root
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, format_table, json_envelope, to_json
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -811,3 +811,5 @@ def constitution_where(ctx):
         click.echo(to_json(env))
     else:
         click.echo(str(path))
+        if not exists:
+            echo_text_warnings([verdict])

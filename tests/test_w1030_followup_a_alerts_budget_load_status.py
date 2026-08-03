@@ -340,6 +340,26 @@ def test_cmd_budget_malformed_yaml_partial_success(tmp_path: Path) -> None:
     assert warnings_field, f"Malformed budget.yaml MUST emit a warning on warnings_out, got: {warnings_field!r}"
 
 
+def test_cmd_budget_malformed_yaml_is_disclosed_in_text(tmp_path: Path) -> None:
+    """The same degraded run must not become a clean text verdict."""
+    pytest.importorskip("yaml")
+
+    proj = _make_indexed_project(tmp_path, "budget_parse_error_text")
+    _write_budget_yaml(proj, "budgets: { broken\n")
+
+    # Click 8.2 removed ``mix_stderr``; 8.3 always separates result.stdout from
+    # result.stderr, which is exactly what this test needs. Passing the kwarg
+    # raises TypeError on the pinned Click (8.3.3) -- it only survived authoring
+    # because that environment had an older Click.
+    runner = CliRunner()
+    result = invoke_cli(runner, ["budget"], cwd=proj)
+
+    assert result.exit_code == 0, result.output
+    assert "VERDICT: all 6 budgets within limits" in result.stdout
+    assert "# warning:" in result.stderr
+    assert "malformed YAML" in result.stderr
+
+
 # ---------------------------------------------------------------------------
 # Closed-enum coverage: ``config_state`` always one of LOAD_STATUSES
 # ---------------------------------------------------------------------------

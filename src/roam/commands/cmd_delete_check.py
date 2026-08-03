@@ -587,7 +587,7 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         # up to 10 survivors[] entries. The ``--json`` and text paths stay
         # byte-identical to pre-W1192 output (this branch short-circuits
         # before them; nothing above changed shape).
-        from roam.output.sarif import delete_check_to_sarif, write_sarif
+        from roam.output.sarif import delete_check_to_sarif, with_sarif_disclosures, write_sarif
 
         deletions_for_sarif = []
         for d in decorated[:count]:
@@ -611,7 +611,8 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
                     ],
                 }
             )
-        click.echo(write_sarif(delete_check_to_sarif({"command": "delete-check", "deletions": deletions_for_sarif})))
+        sarif_doc = delete_check_to_sarif({"command": "delete-check", "deletions": deletions_for_sarif})
+        click.echo(write_sarif(with_sarif_disclosures(sarif_doc, warnings_out)))
         # W1331: the search engine can fail and floor ``matches`` to [];
         # only the JSON envelope said so, so a Code-Scanning gate read an
         # unrun search as a clean one.

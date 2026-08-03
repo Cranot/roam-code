@@ -519,7 +519,7 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
         # severity tracks the W154 confidence tier (structural ->
         # warning; heuristic -> note).
         if sarif_mode:
-            from roam.output.sarif import dark_matter_to_sarif, write_sarif
+            from roam.output.sarif import dark_matter_to_sarif, with_sarif_disclosures, write_sarif
 
             sarif_findings = [
                 {
@@ -542,6 +542,10 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                 dark_matter_to_sarif,
                 sarif_findings,
                 default={"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": []},
+            )
+            sarif_doc = with_sarif_disclosures(
+                sarif_doc,
+                list(_w607bk_warnings_out) + list(_w607cz_warnings_out),
             )
             click.echo(write_sarif(sarif_doc))
             # W1331: a SARIF document has nowhere to carry these markers,

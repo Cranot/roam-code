@@ -1074,7 +1074,14 @@ def llm_smells(ctx, min_severity, persist):
                 }
                 for rec in filtered_records
             ]
-            click.echo(write_sarif(llm_smells_to_sarif(sarif_findings)))
+            click.echo(
+                write_sarif(
+                    llm_smells_to_sarif(
+                        sarif_findings,
+                        disclosures=[verdict] if no_llm_files else None,
+                    )
+                )
+            )
             return
 
         # JSON output

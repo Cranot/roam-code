@@ -24,7 +24,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.graph.builder import build_file_graph, build_symbol_graph
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
 def _serialise_jsonl(G, output_path: Path) -> int:
@@ -320,4 +320,5 @@ def graph_export(ctx, fmt, scope, output_path) -> None:
             )
         click.echo(to_json(_envelope))
         return
+    echo_text_warnings(_w607do_warnings_out)
     click.echo(f"VERDICT: {verdict}")

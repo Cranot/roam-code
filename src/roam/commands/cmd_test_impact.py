@@ -190,20 +190,17 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
         # W1203: SARIF projection for CI / GitHub Code Scanning. Branches
         # BEFORE json/text so the pre-existing paths stay byte-identical
         # to pre-W1203.
-        from roam.output.sarif import test_impact_to_sarif, write_sarif
+        from roam.output.sarif import test_impact_to_sarif, with_sarif_disclosures, write_sarif
 
-        click.echo(
-            write_sarif(
-                test_impact_to_sarif(
-                    {
-                        "command": "test-impact",
-                        "summary": {"verdict": verdict, "count": len(test_hits)},
-                        "changed_files": files,
-                        "tests": items,
-                    }
-                )
-            )
+        sarif_doc = test_impact_to_sarif(
+            {
+                "command": "test-impact",
+                "summary": {"verdict": verdict, "count": len(test_hits)},
+                "changed_files": files,
+                "tests": items,
+            }
         )
+        click.echo(write_sarif(with_sarif_disclosures(sarif_doc, _cap_warnings_out)))
         echo_text_warnings(_cap_warnings_out)
         return
 

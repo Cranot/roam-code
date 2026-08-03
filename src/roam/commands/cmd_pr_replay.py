@@ -58,7 +58,7 @@ from click.testing import CliRunner
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.exit_codes import EXIT_SUCCESS
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -4933,7 +4933,10 @@ def pr_replay_cmd(
         return
 
     if not output_path:
+        echo_text_warnings(list(_w607ah_warnings_out) + list(_w607ca_warnings_out) + list(_w607dv_warnings_out))
         click.echo(report_md)
+    else:
+        echo_text_warnings(list(_w607ah_warnings_out) + list(_w607ca_warnings_out) + list(_w607dv_warnings_out))
 
     _ = EXIT_SUCCESS
     return

@@ -1301,9 +1301,10 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         # invariant across output formats. The --text / --json paths are
         # byte-identical to pre-W1146 (this branch short-circuits before
         # the legacy branches; nothing above it changed shape).
-        from roam.output.sarif import critique_to_sarif, write_sarif
+        from roam.output.sarif import critique_to_sarif, with_sarif_disclosures, write_sarif
 
         sarif = critique_to_sarif(result["findings"])
+        sarif = with_sarif_disclosures(sarif, _combined_warnings_out)
         click.echo(write_sarif(sarif))
         # W1331: a SARIF document has nowhere to carry these markers, so a
         # gate reads a critique whose risk classifier raised -- and was

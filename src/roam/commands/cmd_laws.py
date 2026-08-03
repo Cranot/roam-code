@@ -579,7 +579,7 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
             # zero-results document rather than a no-such-tool error.
             from roam.output.sarif import laws_to_sarif, write_sarif
 
-            click.echo(write_sarif(laws_to_sarif([])))
+            click.echo(write_sarif(laws_to_sarif([], disclosures=[verdict])))
             return
         if json_mode:
             click.echo(to_json(envelope))
@@ -613,7 +613,7 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
         if sarif_mode:
             from roam.output.sarif import laws_to_sarif, write_sarif
 
-            click.echo(write_sarif(laws_to_sarif([])))
+            click.echo(write_sarif(laws_to_sarif([], disclosures=[verdict])))
             return
         if json_mode:
             click.echo(to_json(envelope))

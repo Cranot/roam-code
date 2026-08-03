@@ -2245,20 +2245,29 @@ def dead(
                 # ``dead_to_sarif`` degrades to an empty result body so
                 # the SARIF emitter keeps producing valid output even
                 # if the projection helper bugs.
-                def _emit_empty_sarif():
-                    from roam.output.sarif import dead_to_sarif, write_sarif
+                def _build_empty_sarif():
+                    from roam.output.sarif import dead_to_sarif
 
-                    sarif = dead_to_sarif([])
-                    click.echo(write_sarif(sarif))
+                    return dead_to_sarif([])
 
-                _run_check_bx("serialize_to_sarif", _emit_empty_sarif, default=None)
+                from roam.output.sarif import with_sarif_disclosures, write_sarif
+
+                sarif = _run_check_bx("serialize_to_sarif", _build_empty_sarif, default={})
+                _empty_state = empty_corpus_state(conn)
+                _sarif_disclosures = list(_w607bx_warnings_out) + list(_w607dl_warnings_out)
+                if _empty_state:
+                    _sarif_disclosures.append(
+                        f"{_empty_state.get('state', 'empty_corpus')}: "
+                        "0 symbols indexed; result is vacuous rather than clean"
+                    )
+                click.echo(write_sarif(with_sarif_disclosures(sarif, _sarif_disclosures)))
                 # W1331: an empty SARIF ``results`` array is what a
                 # Code-Scanning gate reads as PASS. It looks identical
                 # whether the corpus was clean, whether ``_analyze_dead``
                 # raised and was floored to no rows, or whether nothing is
                 # indexed at all -- and only the JSON branch said which.
                 echo_text_warnings(list(_w607bx_warnings_out) + list(_w607dl_warnings_out))
-                echo_text_empty_corpus(empty_corpus_state(conn))
+                echo_text_empty_corpus(_empty_state)
                 return
             if json_mode:
                 summary = {
@@ -2412,8 +2421,8 @@ def dead(
         # --- SARIF output ---
         if sarif_mode:
             # W607-BX: SARIF projection substrate on the populated path.
-            def _emit_populated_sarif():
-                from roam.output.sarif import dead_to_sarif, write_sarif
+            def _build_populated_sarif():
+                from roam.output.sarif import dead_to_sarif
 
                 dead_exports = []
                 for r, action, confidence in all_dead:
@@ -2425,10 +2434,13 @@ def dead(
                             "action": action,
                         }
                     )
-                sarif = dead_to_sarif(dead_exports)
-                click.echo(write_sarif(sarif))
+                return dead_to_sarif(dead_exports)
 
-            _run_check_bx("serialize_to_sarif", _emit_populated_sarif, default=None)
+            from roam.output.sarif import with_sarif_disclosures, write_sarif
+
+            sarif = _run_check_bx("serialize_to_sarif", _build_populated_sarif, default={})
+            _sarif_disclosures = list(_w607bx_warnings_out) + list(_w607dl_warnings_out)
+            click.echo(write_sarif(with_sarif_disclosures(sarif, _sarif_disclosures)))
             # W1331: nothing in a SARIF document carries these markers, so
             # a partially-floored dead scan reaches the gate looking like a
             # complete one.

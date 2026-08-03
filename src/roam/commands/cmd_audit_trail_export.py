@@ -29,7 +29,7 @@ from roam.commands.audit_trail_helpers import (
     INTEGRITY_SUMMARY_SCHEMA,
 )
 from roam.commands.audit_trail_helpers import load_records as _load_records
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 
 _COLUMNS = [
     "timestamp",
@@ -802,6 +802,8 @@ def audit_trail_export_cmd(
     if _combined_warnings_out:
         summary["warnings_out"] = list(_combined_warnings_out)
         summary["partial_success"] = True
+        if not json_mode:
+            echo_text_warnings(_combined_warnings_out)
 
     if json_mode:
         envelope_payload = {"summary": summary, "content": rendered}

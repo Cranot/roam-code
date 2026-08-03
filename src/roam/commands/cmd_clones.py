@@ -582,7 +582,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
         # the SARIF document; the by-file aggregation is a human-readable
         # view that does not project onto SARIF's per-finding model).
         if sarif_mode:
-            from roam.output.sarif import clones_to_sarif, write_sarif
+            from roam.output.sarif import clones_to_sarif, with_sarif_disclosures, write_sarif
 
             cluster_values = [
                 {
@@ -636,12 +636,20 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     "runs": [],
                 },
             )
+            _empty_state = empty_corpus_state(conn) if not clusters else None
+            _sarif_disclosures = list(_w607bq_warnings_out) + list(_w607dc_warnings_out)
+            if _empty_state:
+                _sarif_disclosures.append(
+                    f"{_empty_state.get('state', 'empty_corpus')}: "
+                    "0 symbols indexed; result is vacuous rather than clean"
+                )
+            sarif_doc = with_sarif_disclosures(sarif_doc, _sarif_disclosures)
             click.echo(write_sarif(sarif_doc))
             # W1331: a SARIF document has nowhere to carry these, so a
             # Code-Scanning gate reads a detector that raised -- or a
             # corpus with nothing in it -- as a clean clone scan.
             echo_text_warnings(list(_w607bq_warnings_out) + list(_w607dc_warnings_out))
-            echo_text_empty_corpus(empty_corpus_state(conn) if not clusters else None)
+            echo_text_empty_corpus(_empty_state)
             return
 
         # aggregate clone pairs into (file_a, file_b) coupling.

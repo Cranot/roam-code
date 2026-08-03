@@ -2283,12 +2283,16 @@ def n1_cmd(ctx, confidence_filter, limit, verbose, persist):
             # integration path; now degrades silently to None with a
             # marker, and the function returns early (matches
             # pre-W607-CB semantics that SARIF mode short-circuits).
-            def _emit_sarif():
-                from roam.output.sarif import n1_to_sarif, write_sarif
+            def _build_sarif():
+                from roam.output.sarif import n1_to_sarif
 
-                click.echo(write_sarif(n1_to_sarif(findings)))
+                return n1_to_sarif(findings)
 
-            _run_check_cb("serialize_to_sarif", _emit_sarif, default=None)
+            from roam.output.sarif import with_sarif_disclosures, write_sarif
+
+            sarif = _run_check_cb("serialize_to_sarif", _build_sarif, default={})
+            _sarif_disclosures = list(_w607cb_warnings_out) + list(_w607dq_warnings_out)
+            click.echo(write_sarif(with_sarif_disclosures(sarif, _sarif_disclosures)))
             # W1331: a SARIF document has nowhere to carry these markers,
             # so a Code-Scanning gate reads a floored N+1 detector as a
             # repo with no N+1 patterns.

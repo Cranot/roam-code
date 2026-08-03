@@ -1158,11 +1158,6 @@ REASON_CODES: dict[str, str] = {
         "Fix template: cmd_understand.py -- echo '# warning: <marker>' to "
         "STDERR in the non-JSON tails, which leaves stdout byte-identical."
     ),
-    "json-only-empty-corpus-state": (
-        "empty_corpus_state() distinguishes 'nothing indexed' from 'nothing "
-        "found'; only the JSON branch renders the distinction. The text and "
-        "SARIF branches print the same thing for both."
-    ),
     "sarif-artifact-omits-disclosure": (
         "json and text both disclose the degradation; the SARIF DOCUMENT does "
         "not. A warning printed beside a SARIF file is not in the SARIF file: "

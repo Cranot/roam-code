@@ -27,7 +27,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
 def _name_for(conn, sym_id: int) -> tuple[str, str, str]:
@@ -236,6 +236,10 @@ def recommend(ctx, symbol, limit) -> None:
         )
         return
 
+    if items_truncated:
+        echo_text_warnings(
+            warnings_out=[f"truncated to {len(enriched)} of {total_count_full} — pass --limit larger to see more"]
+        )
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     click.echo(f"{'Score':>6}  {'call':>4}  {'co-ch':>5}  {'clone':>5}  Symbol (file)")

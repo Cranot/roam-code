@@ -14,7 +14,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
 def _resolve_target_files(conn, file_args, staged, root):
@@ -219,6 +219,7 @@ def orchestrate_cmd(ctx, n_agents, file_args, staged):
                     no_match_envelope_kwargs["warnings_out"] = list(_w607ds_warnings_out)
                 click.echo(to_json(json_envelope("orchestrate", **no_match_envelope_kwargs)))
             else:
+                echo_text_warnings(_w607ds_warnings_out)
                 click.echo(f"VERDICT: {msg}")
             return
 
@@ -432,6 +433,7 @@ def orchestrate_cmd(ctx, n_agents, file_args, staged):
             )
 
         _run_check_ds("format_text_output", _format_text_output, default=None)
+        echo_text_warnings(_w607ds_warnings_out)
         # Marker accumulator handles disclosure on the text path -- the
         # warning rides into ``_w607ds_warnings_out`` even when text-mode
         # output is human-targeted (JSON mode carries the structured
