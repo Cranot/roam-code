@@ -186,7 +186,9 @@ def test_analysis_crash_is_recorded_per_file_not_swallowed(
 
     real = disclosure.analyze_command
 
-    def exploding(func, funcs, vocabulary=disclosure.DISCLOSURE_TOKENS):
+    def exploding(func, funcs, vocabulary=disclosure.DISCLOSURE_TOKENS, budget=None):
+        # ``budget`` is the W1459 completeness ledger; scan_file passes it so
+        # a cap that truncates the analysis can taint the file's status.
         raise RuntimeError("synthetic analyzer crash")
 
     monkeypatch.setattr(disclosure, "analyze_command", exploding)
@@ -226,7 +228,11 @@ def test_zero_matches_is_reported_as_a_count_not_as_silence(tmp_path: pathlib.Pa
 
     summary = disclosure.scan(tmp_path).summary()
 
-    assert summary == "checked 1 files, 0 violations, 0 unanalyzable, positive control OK"
+    # W1459 added ``truncated``: the count of files whose ANALYSIS stopped
+    # early. It is printed at zero for the same reason the other two are —
+    # a denominator that appears only when it is non-zero is a denominator
+    # nobody learns to look for.
+    assert summary == "checked 1 files, 0 violations, 0 unanalyzable, 0 truncated, positive control OK"
 
 
 def test_real_command_tree_has_no_silently_unanalyzed_modules() -> None:
@@ -428,7 +434,8 @@ def test_negative_control_clean_tree_reports_clean_and_exits_zero(tmp_path: path
     assert report.files_unanalyzable == 0
     assert report.positive_control.ok, "the sentinel alarm must not fire on a clean tree"
     assert report.ok
-    assert report.summary() == "checked 2 files, 0 violations, 0 unanalyzable, positive control OK"
+    assert report.files_capped == 0, "a clean tree must also be a FULLY ANALYSED tree (W1459)"
+    assert report.summary() == "checked 2 files, 0 violations, 0 unanalyzable, 0 truncated, positive control OK"
 
 
 def test_negative_control_real_repo_scan_exits_cleanly_on_the_denominator() -> None:

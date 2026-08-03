@@ -525,11 +525,25 @@ def _match_pattern_to_finding(line: str, pat: dict, file_path: str, line_num: in
     }
 
 
-def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: str = "all") -> list[dict]:
+def scan_file(
+    file_path: str,
+    patterns: list[dict] | None = None,
+    min_severity: str = "all",
+    read_errors: list[dict] | None = None,
+) -> list[dict]:
     """Scan a single file for secret patterns.
 
     Returns a list of finding dicts with keys:
         file, line, severity, pattern_name, matched_text (masked), remediation
+
+    ``[]`` is TWO-VALUED here and always has been: "this file holds no
+    secrets" and "this file could not be read" produce the identical empty
+    list, because the read failure is swallowed below. Pass ``read_errors``
+    to tell them apart — a list this function appends
+    ``{"file", "error"}`` to when the read fails. Callers that count files
+    MUST pass it: a denominator incremented around a call that can return
+    ``[]`` without reading anything is a count of files certified, not of
+    files examined.
     """
     if patterns is None:
         patterns = _COMPILED_PATTERNS
@@ -570,6 +584,12 @@ def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: 
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_secrets:scan_file", _exc)
+        if read_errors is not None:
+            # Any findings collected before the failure are still returned —
+            # truncation loses matches, it does not invent them — but the
+            # file is reported as unread, because the part that was never
+            # decoded is exactly the part nothing can be claimed about.
+            read_errors.append({"file": file_path, "error": f"{type(_exc).__name__}: {_exc}"})
 
     return findings
 
@@ -619,10 +639,26 @@ def scan_project(
 
     Returns a list of finding dicts sorted by severity (high first),
     then file path, then line number.
+
+    THE DENOMINATOR COUNTS FILES READ, NOT FILES REACHED (W1459)
+    ------------------------------------------------------------
+    ``files_scanned`` used to be incremented BEFORE ``scan_file`` was
+    called, and ``scan_file`` swallows a read failure and returns ``[]``.
+    So every file the scanner could not open still landed in the number the
+    verdict quotes: "No secrets found (N files scanned)" over a set that
+    included files nothing ever decoded. That is the same defect as
+    "roam secrets certified files it never opened", surviving in the
+    COUNTER after it was removed from the verdict.
+
+    Now the loop publishes the whole partition of the candidate list, and
+    every bucket is separately nameable:
+    ``files_listed = files_scanned + files_unreadable + files_unresolved
+    + files_filtered``.
     """
     root = Path(project_root).resolve()
 
     index_backed = False
+    walk_dropped: list[dict] = []
     if use_index:
         try:
             with open_db(readonly=True) as conn:
@@ -630,20 +666,25 @@ def scan_project(
                 file_paths = [row["path"] for row in rows]
             index_backed = True
         except (click.ClickException, sqlite3.DatabaseError):
-            file_paths = _walk_for_files(root)
+            file_paths = _walk_for_files(root, dropped=walk_dropped)
     else:
-        file_paths = _walk_for_files(root)
+        file_paths = _walk_for_files(root, dropped=walk_dropped)
 
     all_findings: list[dict] = []
+    read_errors: list[dict] = []
     files_scanned = 0
     files_unresolved = 0
+    files_filtered = 0
     for rel_path in file_paths:
         if _is_binary(rel_path):
+            files_filtered += 1
             continue
         if _in_skip_dir(rel_path):
+            files_filtered += 1
             continue
         # Suppress test/fixture/docs files unless --include-tests
         if not include_tests and _is_test_or_doc_path(rel_path):
+            files_filtered += 1
             continue
 
         full_path = root / rel_path
@@ -654,8 +695,12 @@ def scan_project(
             files_unresolved += 1
             continue
 
-        files_scanned += 1
-        file_findings = scan_file(str(full_path), min_severity=min_severity)
+        before = len(read_errors)
+        file_findings = scan_file(str(full_path), min_severity=min_severity, read_errors=read_errors)
+        if len(read_errors) == before:
+            # Increment only on a read that actually happened. This line was
+            # above the call; that one position is the whole defect.
+            files_scanned += 1
         # Store relative path in findings for cleaner output
         for f in file_findings:
             f["file"] = rel_path
@@ -666,8 +711,21 @@ def scan_project(
         # from "0 findings because the code is clean". Without this the
         # envelope had no field that could tell the two apart.
         stats["files_scanned"] = files_scanned
+        stats["files_unreadable"] = len(read_errors)
+        stats["read_errors"] = read_errors
         stats["files_unresolved"] = files_unresolved
+        stats["files_filtered"] = files_filtered
         stats["files_listed"] = len(file_paths)
+        # A path the filesystem fallback could not even name is a candidate
+        # that never entered ``files_listed``, so it cannot be recovered from
+        # the partition above — it needs its own number.
+        stats["files_undiscoverable"] = len(walk_dropped)
+        # The index was asked for and could not be used. The fallback walk
+        # covers MORE of the disk than the index would have, so this is not
+        # itself an incomplete scan — but a consumer reading
+        # ``files_unindexed == 0`` deserves to know the zero came from a
+        # different measurement than the one it names.
+        stats["index_fallback"] = bool(use_index and not index_backed)
         # ...and separable again from "0 findings because the newest files
         # were never in the list we scanned". See _count_unindexed.
         stats["files_unindexed"] = _count_unindexed(root, file_paths) if index_backed else 0
@@ -707,8 +765,16 @@ def _count_unindexed(root: Path, indexed_paths: list[str]) -> int | None:
     return len(discovered - known)
 
 
-def _walk_for_files(root: Path) -> list[str]:
-    """Walk the filesystem to find scannable files (fallback)."""
+def _walk_for_files(root: Path, dropped: list[dict] | None = None) -> list[str]:
+    """Walk the filesystem to find scannable files (fallback).
+
+    A path whose relative form cannot be computed (a different drive on
+    Windows, a broken junction) is dropped from the candidate list. Pass
+    ``dropped`` to record those: without it the file leaves no trace in any
+    count, so a scan that never considered it is indistinguishable from one
+    that cleared it — the same silent narrowing this module's counters exist
+    to close, one layer further out.
+    """
     result: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
@@ -716,7 +782,9 @@ def _walk_for_files(root: Path) -> list[str]:
             full = os.path.join(dirpath, fname)
             try:
                 rel = os.path.relpath(full, root).replace("\\", "/")
-            except (ValueError, OSError):
+            except (ValueError, OSError) as exc:
+                if dropped is not None:
+                    dropped.append({"path": full, "error": f"{type(exc).__name__}: {exc}"})
                 continue
             result.append(rel)
     return result
@@ -786,7 +854,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     project_root = find_project_root()
     scan_stats: dict = {}
     findings = scan_project(project_root, min_severity=severity, include_tests=include_tests, stats=scan_stats)
-    # A zero here can mean three very different things. Name which one.
+    # A zero here can mean four very different things. Name which one.
     vacuous_filter = severity_floor_is_vacuous(severity)
     files_scanned = scan_stats.get("files_scanned", 0)
     # A third way a zero can lie: the index predates the files that matter.
@@ -794,7 +862,12 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     # clean answer, so it counts as incomplete rather than as "0 missed".
     files_unindexed = scan_stats.get("files_unindexed", 0)
     unindexed_blind = files_unindexed is None or files_unindexed > 0
-    scan_incomplete = vacuous_filter or files_scanned == 0 or unindexed_blind
+    # A fourth: files that were reached and could not be READ. They used to
+    # be counted in files_scanned, so the run reported them as examined.
+    files_unreadable = scan_stats.get("files_unreadable", 0)
+    files_undiscoverable = scan_stats.get("files_undiscoverable", 0)
+    unread_blind = files_unreadable > 0 or files_undiscoverable > 0
+    scan_incomplete = vacuous_filter or files_scanned == 0 or unindexed_blind or unread_blind
 
     # Compute summary stats. W566 — bucketing delegates to the canonical
     # ``severity_breakdown`` helper. Secrets patterns at module-load
@@ -832,6 +905,16 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             f"{scan_stats.get('files_unresolved', 0)} unresolved under {project_root}). "
             "Run `roam index` and retry."
         )
+    elif total == 0 and unread_blind:
+        # The files were listed and reached; the bytes never arrived. Before
+        # W1459 these were inside ``files_scanned``, so this run printed
+        # "No secrets found (N files scanned)" with the unreadable files
+        # inside N — a clean bill of health for files nothing ever opened.
+        verdict = (
+            f"NOT PROVEN CLEAN: {files_scanned} files read, but {files_unreadable} file(s) "
+            f"could not be read and {files_undiscoverable} could not be named — they were "
+            "NOT scanned and are NOT in the scanned count."
+        )
     elif total == 0 and unindexed_blind:
         # The scan ran, but not over everything on disk. Saying "no secrets
         # found" here would certify files that were never opened.
@@ -859,6 +942,11 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             # Findings are real, but the list is a floor rather than a total.
             extra = "an undetermined number of" if files_unindexed is None else str(files_unindexed)
             verdict += f" — and this is a LOWER BOUND: {extra} unindexed file(s) were not scanned"
+        if unread_blind:
+            verdict += (
+                f" — and a LOWER BOUND again: {files_unreadable} file(s) could not be read, "
+                f"{files_undiscoverable} could not be named"
+            )
 
     # --- SARIF output ---
     if sarif_mode:
@@ -898,7 +986,17 @@ def secrets(ctx, severity, fail_on_found, include_tests):
                 "verdict": wrapped_verdict,
                 "total_findings": total,
                 "files_affected": files_affected,
+                # files_scanned counts files whose bytes were READ. The
+                # remaining buckets are published beside it rather than
+                # folded into it, so no consumer has to guess which
+                # question the one number answers.
                 "files_scanned": files_scanned,
+                "files_unreadable": files_unreadable,
+                "files_unresolved": scan_stats.get("files_unresolved", 0),
+                "files_filtered": scan_stats.get("files_filtered", 0),
+                "files_listed": scan_stats.get("files_listed", 0),
+                "files_undiscoverable": files_undiscoverable,
+                "index_fallback": scan_stats.get("index_fallback", False),
                 "files_unindexed": files_unindexed,
                 "severity_floor": severity.lower(),
                 "severity_floor_vacuous": vacuous_filter,
@@ -967,6 +1065,14 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             click.echo("  Per-pattern guidance:")
             for line in remediation_lines:
                 click.echo(line)
+    elif unread_blind:
+        # The text branch must name the same gap the envelope does; a
+        # disclosure that reaches only --json is the W1331 defect.
+        click.echo(
+            f"  Read {files_scanned} files and found nothing, but {files_unreadable} file(s) "
+            f"could not be read and {files_undiscoverable} could not be named — those were "
+            "never examined, so this is NOT a clean result."
+        )
     elif unindexed_blind:
         # Distinct from the "nothing ran" case below: the scan DID run, it
         # just did not cover everything on disk. Saying otherwise here would

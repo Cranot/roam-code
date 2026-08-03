@@ -90,6 +90,45 @@ not a policy.
 The baseline is a list of ASYMMETRIES, never a list of unreadable files:
 ``files_unanalyzable`` has no baseline and never will, because "I could not
 check this" is not a grandfathered violation, it is a broken gate.
+
+EVERY EARLY EXIT IS PART OF THE CONTRACT (W1459)
+------------------------------------------------
+W1455 covered the OUTERMOST exit — the file this scanner could not read or
+parse. It did not cover the exits INSIDE the analysis, and those had exactly
+the shape W1455 was written to remove: ``_expand`` stopped its callee closure
+at 4000 names, the token walk stopped at depth 12, and the return-value
+fixpoint stopped after 3 rounds. Each of the three abandoned work it had
+already committed to enumerating, and the file it was analysing still came
+back ``CLEAN``. The denominator counted FILES; it did not count COMPLETENESS
+OF THE ANALYSIS, so a partially-examined file was byte-identical to a fully
+examined one — the same equivalence W1455 broke one level up.
+
+The rule that follows, and that the code below is arranged around:
+
+* **Class A — truncation.** An exit that abandons an enumeration already in
+  progress: a cap, a budget, a round limit, a bail-out. Reaching one means
+  this file was PARTIALLY examined. Partial is never clean, so it taints the
+  file's status (``PARTIAL``), is counted per cap in ``cap_hits``, and exits
+  non-zero. Every Class-A exit in this file routes through
+  :class:`AnalysisBudget`; there are no others, and adding one without a
+  ``budget.hit(...)`` beside it reintroduces the defect.
+* **Class B — resolution imprecision.** The analysis models Python
+  approximately and always has: calls are followed ONE MODULE deep, mode
+  predicates are recognised by shape, and callees are resolved BY NAME. These
+  are not early exits; they are the analysis's domain, uniform across every
+  file. Tainting on them would mark all 275 files partial and destroy the
+  signal, so they are REPORTED (``imprecision``) rather than gated — visible
+  as a number, never as an absence.
+
+Measured at HEAD before the caps were made loud: the callee closure peaks at
+293 names against its 4000 limit, the fixpoint converges in 2 rounds of 3,
+and the token walk reaches depth 10 against a limit of 12. None of the three
+was firing, and removing all three changed neither the finding count (68) nor
+the runtime (14.7s uncapped vs 15.1s capped) — so none of them was a time
+budget. The depth cap had two levels of headroom, which is one helper-chain
+refactor from truncating silently; it is gone, replaced by an explicit
+worklist whose termination is guaranteed by the ``visited`` set instead of by
+an arbitrary number.
 """
 
 from __future__ import annotations
@@ -397,6 +436,59 @@ class _Partition:
 
 
 # --------------------------------------------------------------------------
+# The completeness ledger (W1459)
+# --------------------------------------------------------------------------
+
+#: Class-A cap names. One per exit that can abandon an enumeration early.
+CAP_CALLEE_CLOSURE = "callee_closure_limit"
+CAP_RETURN_FIXPOINT = "return_fixpoint_rounds"
+CAP_MODE_WALK = "mode_walk_steps"
+
+#: Ceiling on the transitive callee closure of one module. ``seen`` is a
+#: subset of the module's functions, so this can only bite on a module with
+#: more functions than the limit — the largest in ``src/roam/commands`` has
+#: 296. Kept rather than deleted because a generated module could exceed it,
+#: and a bound that announces itself costs one comparison; what it must never
+#: do again is stop the walk and let the file report clean.
+_EXPAND_LIMIT = 4000
+
+
+@dataclasses.dataclass
+class AnalysisBudget:
+    """What the analysis of ONE file gave up on, and what it approximated.
+
+    ``caps_hit`` is Class A: an enumeration stopped early, so the file was
+    only partially examined and its ``CLEAN`` is not a claim anyone may
+    rely on. ``imprecision`` is Class B: a modelling limit that applies to
+    every file equally and is therefore reported, not gated.
+
+    The distinction is the whole point. Collapsing them would either make
+    every file partial (Class B taints) or restore the silent truncation
+    (Class A does not).
+    """
+
+    caps_hit: dict[str, int] = dataclasses.field(default_factory=dict)
+    imprecision: dict[str, int] = dataclasses.field(default_factory=dict)
+
+    def hit(self, cap: str) -> None:
+        """Record that a Class-A cap stopped an enumeration."""
+        self.caps_hit[cap] = self.caps_hit.get(cap, 0) + 1
+
+    def approximate(self, kind: str, count: int = 1) -> None:
+        """Record a Class-B modelling limit encountered while analysing."""
+        if count:
+            self.imprecision[kind] = self.imprecision.get(kind, 0) + count
+
+    @property
+    def complete(self) -> bool:
+        """True when nothing was truncated — the precondition for ``CLEAN``."""
+        return not self.caps_hit
+
+    def describe(self) -> str:
+        return ", ".join(f"{cap}x{n}" for cap, n in sorted(self.caps_hit.items()))
+
+
+# --------------------------------------------------------------------------
 # Module analysis
 # --------------------------------------------------------------------------
 
@@ -413,6 +505,7 @@ def _matches_token(name: str, token: str) -> bool:
 def _carried_tokens(
     funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
     vocabulary: tuple[str, ...],
+    budget: AnalysisBudget,
 ) -> dict[str, set[str]]:
     """Tokens each in-module function can RETURN to its caller.
 
@@ -425,6 +518,18 @@ def _carried_tokens(
     merely mentions would credit ``_run_check(...)`` — which appends to a
     bucket internally and returns a floored default — as if it handed the
     disclosure back, and that erases most real violations.
+
+    The fixpoint runs TO CONVERGENCE. It used to run ``for _ in range(3)``
+    on the reasoning that "return chains here are 1-2 deep" — true of the
+    modules measured, and silently wrong for the fourth-deep chain nobody
+    had written yet: the loop simply stopped with ``changed`` still true and
+    handed back a closure it knew was unfinished. The bound below is not a
+    bigger guess, it is the convergence proof: each round that changes
+    anything advances the propagation frontier by at least one return-chain
+    edge, and no simple chain is longer than the number of functions, so
+    ``len(funcs) + 1`` rounds cannot be reached without convergence first.
+    Reaching it anyway means the invariant is broken, and that is recorded
+    rather than returned as a result.
     """
     returned: dict[str, set[str]] = {}
     for name, body in funcs.items():
@@ -433,7 +538,7 @@ def _carried_tokens(
             if isinstance(sub, ast.Return) and sub.value is not None:
                 tokens |= _node_tokens(sub.value, vocabulary)
         returned[name] = tokens
-    for _ in range(3):  # shallow fixpoint; return chains here are 1-2 deep
+    for _ in range(max(len(funcs) + 1, 4)):
         changed = False
         for name, body in funcs.items():
             for sub in ast.walk(body):
@@ -444,7 +549,8 @@ def _carried_tokens(
                         returned[name] |= returned[callee]
                         changed = True
         if not changed:
-            break
+            return returned
+    budget.hit(CAP_RETURN_FIXPOINT)
     return returned
 
 
@@ -600,23 +706,67 @@ def _is_command(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
-def _collect_functions(tree: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+#: Class-B: two ``def``s sharing a name in one module. The call graph
+#: resolves callees BY NAME, so the loser is never analysed at that call
+#: site. Reported, not gated — see the Class-A/Class-B note in the module
+#: docstring. Measured at HEAD: 28 shadowed definitions across 11 of 275
+#: modules, which is why tainting on it would be a 4% false-partial rate on
+#: a limit every file shares.
+IMPRECISION_SHADOWED_DEF = "shadowed_definition"
+
+#: Class B also covers the module boundary — the callee closure stops there
+#: by design — and the shape of the mode predicates the partitioner
+#: recognises. Neither gets a key in ``imprecision``: nothing here counts
+#: them, and publishing an unmeasured limit as ``0`` would be the same
+#: fabricated denominator this file exists to remove, one field over. They
+#: are stated in the module docstring, where an unquantified bound belongs.
+
+
+def _collect_functions(
+    tree: ast.Module,
+    budget: AnalysisBudget | None = None,
+) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
     funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    shadowed = 0
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            funcs.setdefault(node.name, node)
+            if node.name in funcs:
+                shadowed += 1
+                continue
+            funcs[node.name] = node
+    if budget is not None:
+        budget.approximate(IMPRECISION_SHADOWED_DEF, shadowed)
     return funcs
 
 
 def _expand(
     seeds: set[str],
     funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
-    limit: int = 4000,
+    budget: AnalysisBudget,
+    limit: int | None = None,
 ) -> set[str]:
-    """Transitive closure of in-module callees reachable from ``seeds``."""
+    """Transitive closure of in-module callees reachable from ``seeds``.
+
+    ``seen`` is a subset of ``funcs``, so ``limit`` bounds nothing a normal
+    module can reach — but when it does bite it drops callees from the
+    closure, which narrows the ``supported`` mode set, which can drop a
+    command below the two-mode threshold and return "no asymmetry here" for
+    a command that was never compared. That silent path is what
+    ``budget.hit`` closes: a truncated closure now taints the file.
+
+    ``limit`` is read from the module global at CALL time rather than bound
+    as a default, so a test can scale the threshold down instead of
+    generating a 4000-function module to reach it. The mechanism under test
+    is "the walk stopped early and the file did not report clean", which
+    does not care what number stopped it.
+    """
+    limit = _EXPAND_LIMIT if limit is None else limit
     seen: set[str] = set()
     stack = [n for n in seeds if n in funcs]
-    while stack and len(seen) < limit:
+    while stack:
+        if len(seen) >= limit:
+            budget.hit(CAP_CALLEE_CLOSURE)
+            break
         name = stack.pop()
         if name in seen:
             continue
@@ -625,9 +775,6 @@ def _expand(
             if callee in funcs and callee not in seen:
                 stack.append(callee)
     return seen
-
-
-_MAX_DEPTH = 12
 
 
 def _collect_tokens(
@@ -639,8 +786,7 @@ def _collect_tokens(
     observed_lines: dict[str, dict[str, set[int]]],
     vocabulary: tuple[str, ...],
     carried: dict[str, set[str]],
-    visited: set[tuple[str, frozenset[str]]],
-    depth: int,
+    budget: AnalysisBudget,
 ) -> None:
     """Attribute disclosure tokens in ``func`` to the modes that can see them.
 
@@ -650,105 +796,127 @@ def _collect_tokens(
     branch can see the variable, and the defect is precisely that only one
     of them routes it to output.
 
-    The walk recurses into in-module callees and re-partitions each one,
-    because a shared emitter that takes ``json_mode`` as a PARAMETER and
-    branches on it internally is a mode dispatcher too — crediting the whole
-    helper to every caller mode is how this asymmetry stays invisible.
+    The walk follows in-module callees and re-partitions each one, because a
+    shared emitter that takes ``json_mode`` as a PARAMETER and branches on it
+    internally is a mode dispatcher too — crediting the whole helper to every
+    caller mode is how this asymmetry stays invisible.
+
+    That walk was recursive with a ``depth > 12`` cut-off, which is why a
+    disclosure routed through a thirteenth helper was invisible AND the file
+    still reported clean. The cut-off is gone rather than raised: ``visited``
+    keys on ``(name, modes)`` and already makes the traversal terminating and
+    complete, so the depth number was only ever guarding the Python stack —
+    and an explicit worklist does not use the stack. The remaining bound is
+    the count of distinct ``(name, modes)`` pairs, which is an upper bound the
+    traversal cannot exceed rather than a budget it might; it is checked
+    anyway, because an invariant that is merely believed is the state this
+    module exists to remove.
     """
-    key = (func.name, frozenset(active))
-    if key in visited or depth > _MAX_DEPTH or not active:
-        return
-    visited.add(key)
+    visited: set[tuple[str, frozenset[str]]] = set()
+    pending: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, frozenset[str]]] = [(func, frozenset(active))]
+    step_bound = len(funcs) * (2 ** len(MODES)) + len(MODES) + 1
+    steps = 0
 
-    part = _Partition()
-    part.walk(func.body, set(active))
+    while pending:
+        current, modes = pending.pop()
+        key = (current.name, modes)
+        if not modes or key in visited:
+            continue
+        steps += 1
+        if steps > step_bound:
+            budget.hit(CAP_MODE_WALK)
+            return
+        visited.add(key)
 
-    owners: dict[int, int] = {}
-    for mode in active:
-        for node in part.regions[mode]:
-            owners[id(node)] = owners.get(id(node), 0) + 1
+        part = _Partition()
+        part.walk(current.body, set(modes))
 
-    # Pass 1 -- local aliases. A name bound to a token-bearing expression
-    # stands in for the token for the rest of this mode's region. Walk into
-    # conditionals as well: verdicts are commonly assigned in
-    # ``if no_data: verdict = "No symbols..."`` and later emitted by every
-    # mode. Treating only top-level Assign nodes made those honest prose
-    # mirrors invisible and produced false positives.
-    aliases: dict[str, dict[str, set[str]]] = {}
-    for mode in active:
-        bound: dict[str, set[str]] = {}
-        for node in part.regions[mode]:
-            assignments = (sub for sub in ast.walk(node) if isinstance(sub, (ast.Assign, ast.AnnAssign, ast.AugAssign)))
-            for assignment in assignments:
-                value = getattr(assignment, "value", None)
-                if value is None:
-                    continue
-                if assignment is node:
-                    tokens = _observed_tokens(value, vocabulary, carried, bound)
-                else:
-                    # Nested aliases are needed for conditional verdict
-                    # prose, but must not turn an ordinary result into a
-                    # disclosure merely because its producer accepted a
-                    # ``warnings_out=...`` accumulator. Only propagate the
-                    # semantic prose family here; explicit warning buckets
-                    # still have to reach an emitter themselves.
-                    tokens = _node_tokens(value, vocabulary) & {"degradation_state"}
-                    for sub in ast.walk(value):
-                        if isinstance(sub, ast.Name):
-                            tokens |= bound.get(sub.id, set()) & {"degradation_state"}
-                if tokens:
-                    for name in _assigned_names(assignment):
-                        bound.setdefault(name, set()).update(tokens)
-        aliases[mode] = bound
+        owners: dict[int, int] = {}
+        for mode in modes:
+            for node in part.regions[mode]:
+                owners[id(node)] = owners.get(id(node), 0) + 1
 
-    callers: dict[str, set[str]] = {}
-    for mode in active:
-        for node in part.regions[mode]:
-            if owners[id(node)] < n_supported or _emits_output(node):
-                node_tokens = _observed_tokens(node, vocabulary, carried, aliases[mode])
-                if (
-                    mode == "sarif"
-                    and {"echo_text_warnings", "echo_text_empty_corpus"} & _called_names(node)
-                    and not _sarif_artifact_call(node)
-                ):
-                    # STDERR alongside a SARIF document is not retained by
-                    # code-scanning consumers. Require the warning to enter
-                    # the SARIF builder (normally as a runtime notification).
-                    node_tokens -= set(vocabulary)
-                observed[mode] |= node_tokens
-                for token in node_tokens:
-                    observed_lines[mode].setdefault(token, set()).add(getattr(node, "lineno", func.lineno))
-            # The gate rule is judged on plain REACHABILITY: an exit in
-            # shared code is symmetric, an exit only one branch can reach
-            # is the py-types defect.
-            if _has_nonzero_exit(node):
-                observed[mode].add(GATE_SIGNAL)
-                observed_lines[mode].setdefault(GATE_SIGNAL, set()).add(getattr(node, "lineno", func.lineno))
-            for name in _called_names(node):
-                if name in funcs and name != func.name:
-                    callers.setdefault(name, set()).add(mode)
+        # Pass 1 -- local aliases. A name bound to a token-bearing expression
+        # stands in for the token for the rest of this mode's region. Walk into
+        # conditionals as well: verdicts are commonly assigned in
+        # ``if no_data: verdict = "No symbols..."`` and later emitted by every
+        # mode. Treating only top-level Assign nodes made those honest prose
+        # mirrors invisible and produced false positives.
+        aliases: dict[str, dict[str, set[str]]] = {}
+        for mode in modes:
+            bound: dict[str, set[str]] = {}
+            for node in part.regions[mode]:
+                assignments = (
+                    sub for sub in ast.walk(node) if isinstance(sub, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+                )
+                for assignment in assignments:
+                    value = getattr(assignment, "value", None)
+                    if value is None:
+                        continue
+                    if assignment is node:
+                        tokens = _observed_tokens(value, vocabulary, carried, bound)
+                    else:
+                        # Nested aliases are needed for conditional verdict
+                        # prose, but must not turn an ordinary result into a
+                        # disclosure merely because its producer accepted a
+                        # ``warnings_out=...`` accumulator. Only propagate the
+                        # semantic prose family here; explicit warning buckets
+                        # still have to reach an emitter themselves.
+                        tokens = _node_tokens(value, vocabulary) & {"degradation_state"}
+                        for sub in ast.walk(value):
+                            if isinstance(sub, ast.Name):
+                                tokens |= bound.get(sub.id, set()) & {"degradation_state"}
+                    if tokens:
+                        for name in _assigned_names(assignment):
+                            bound.setdefault(name, set()).update(tokens)
+            aliases[mode] = bound
 
-    for name, modes in callers.items():
-        _collect_tokens(
-            funcs[name],
-            modes,
-            funcs,
-            n_supported,
-            observed,
-            observed_lines,
-            vocabulary,
-            carried,
-            visited,
-            depth + 1,
-        )
+        callers: dict[str, set[str]] = {}
+        for mode in modes:
+            for node in part.regions[mode]:
+                if owners[id(node)] < n_supported or _emits_output(node):
+                    node_tokens = _observed_tokens(node, vocabulary, carried, aliases[mode])
+                    if (
+                        mode == "sarif"
+                        and {"echo_text_warnings", "echo_text_empty_corpus"} & _called_names(node)
+                        and not _sarif_artifact_call(node)
+                    ):
+                        # STDERR alongside a SARIF document is not retained by
+                        # code-scanning consumers. Require the warning to enter
+                        # the SARIF builder (normally as a runtime notification).
+                        node_tokens -= set(vocabulary)
+                    observed[mode] |= node_tokens
+                    for token in node_tokens:
+                        observed_lines[mode].setdefault(token, set()).add(getattr(node, "lineno", current.lineno))
+                # The gate rule is judged on plain REACHABILITY: an exit in
+                # shared code is symmetric, an exit only one branch can reach
+                # is the py-types defect.
+                if _has_nonzero_exit(node):
+                    observed[mode].add(GATE_SIGNAL)
+                    observed_lines[mode].setdefault(GATE_SIGNAL, set()).add(getattr(node, "lineno", current.lineno))
+                for name in _called_names(node):
+                    if name in funcs and name != current.name:
+                        callers.setdefault(name, set()).add(mode)
+
+        for name, called_by in callers.items():
+            pending.append((funcs[name], frozenset(called_by)))
 
 
 def analyze_command(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
     vocabulary: tuple[str, ...] = DISCLOSURE_TOKENS,
+    budget: AnalysisBudget | None = None,
 ) -> list[dict[str, object]]:
-    """Return the disclosure asymmetries in one click command function."""
+    """Return the disclosure asymmetries in one click command function.
+
+    ``budget`` is where every incomplete enumeration is recorded. Callers
+    that pass one MUST consult it: ``[]`` from a run that hit a cap means
+    "nothing was found in the part that was examined", which is not the same
+    claim as "this command is symmetric" — and ``scan_file`` is what turns
+    that difference into ``PARTIAL`` rather than ``CLEAN``.
+    """
+    budget = budget if budget is not None else AnalysisBudget()
     part = _Partition()
     part.walk(func.body, set(MODES))
 
@@ -756,7 +924,7 @@ def analyze_command(
     # some statement attributed to it emits output AND the mode is either
     # text (always) or actually named by a predicate somewhere.
     named: set[str] = {"text"}
-    for name in _expand({func.name}, funcs) | {func.name}:
+    for name in _expand({func.name}, funcs, budget) | {func.name}:
         for sub in ast.walk(funcs[name]):
             if isinstance(sub, ast.If):
                 mt = _classify_test(sub.test)
@@ -771,11 +939,15 @@ def analyze_command(
         seeds: set[str] = set()
         for node in nodes:
             seeds |= _called_names(node)
-        reachable = _expand(seeds, funcs)
+        reachable = _expand(seeds, funcs, budget)
         if any(_emits_output(n) for n in nodes) or any(_emits_output(funcs[n]) for n in reachable):
             supported.add(mode)
 
     if len(supported) < 2:
+        # Fewer than two output modes: there is no second branch to be
+        # asymmetric WITH, so this is a genuine "nothing to compare", not a
+        # truncation. It is only honest while the closure above was complete,
+        # which is exactly what ``budget`` now records.
         return []
 
     observed: dict[str, set[str]] = {m: set() for m in supported}
@@ -789,9 +961,8 @@ def analyze_command(
         observed,
         observed_lines,
         analysis_vocabulary,
-        _carried_tokens(funcs, analysis_vocabulary),
-        set(),
-        0,
+        _carried_tokens(funcs, analysis_vocabulary, budget),
+        budget,
     )
 
     violations: list[dict[str, object]] = []
@@ -828,19 +999,29 @@ def analyze_command(
 # Three-valued file outcomes (W1455)
 # --------------------------------------------------------------------------
 
-#: A file was read, parsed, analysed, and found symmetric.
+#: A file was read, parsed, analysed IN FULL, and found symmetric.
 CLEAN = "clean"
 #: A file was read, parsed, analysed, and found asymmetric.
 VIOLATION = "violation"
 #: A file could NOT be read, parsed, or analysed. This is the third value the
 #: scanner used to collapse into ``[]`` — i.e. into CLEAN.
 UNANALYZABLE = "unanalyzable"
+#: A file whose analysis STOPPED EARLY — a cap, a budget, a round limit. The
+#: fourth value, and the W1459 one: the file was read and parsed and no
+#: asymmetry was found in the part that was examined, which is not a finding
+#: about the part that was not. Distinct from UNANALYZABLE because the failure
+#: is in the analysis's reach rather than in the file, and distinct from CLEAN
+#: because a partial examination is not a clean bill of health.
+PARTIAL = "partial"
 #: A file the scan deliberately does not cover, recorded WITH a reason so the
 #: coverage hole is a number in the report rather than an absence.
 SKIPPED = "skipped"
 
 EXIT_OK = 0
 EXIT_VIOLATIONS = 1
+#: The tree was not fully analysed: a file could not be read/parsed, OR a
+#: file's analysis was truncated by a cap. Both mean the gate did not cover
+#: what it claims to cover, which is one condition, so it is one exit code.
 EXIT_UNANALYZABLE = 2
 EXIT_SCANNER_BROKEN = 3
 
@@ -865,7 +1046,15 @@ POSITIVE_CONTROL_SILENT_MODULE = "cmd_sentinel_symmetric.py"
 
 @dataclasses.dataclass(frozen=True)
 class FileResult:
-    """The outcome of ONE file. ``status`` is never inferred from emptiness."""
+    """The outcome of ONE file. ``status`` is never inferred from emptiness.
+
+    ``caps_hit`` is carried separately from ``status`` because a file can be
+    BOTH: a truncated analysis that still found an asymmetry reports
+    ``VIOLATION`` (the finding is real — truncation loses findings, it does
+    not invent them) while ``caps_hit`` records that the rest of the file was
+    never reached. Folding the two together would have to pick one, and
+    picking either loses information the consumer needs.
+    """
 
     module: str
     path: str
@@ -873,9 +1062,21 @@ class FileResult:
     violations: list[dict[str, object]] = dataclasses.field(default_factory=list)
     sites: list[dict[str, object]] = dataclasses.field(default_factory=list)
     reason: str | None = None
+    caps_hit: dict[str, int] = dataclasses.field(default_factory=dict)
+    imprecision: dict[str, int] = dataclasses.field(default_factory=dict)
+
+    @property
+    def fully_analysed(self) -> bool:
+        return not self.caps_hit
 
     def as_record(self) -> dict[str, object]:
-        return {"module": self.module, "path": self.path, "status": self.status, "reason": self.reason}
+        return {
+            "module": self.module,
+            "path": self.path,
+            "status": self.status,
+            "reason": self.reason,
+            "caps_hit": dict(self.caps_hit),
+        }
 
 
 @dataclasses.dataclass(frozen=True)
@@ -898,9 +1099,14 @@ class ControlResult:
 class ScanReport:
     """Violations AND the denominator they were counted against.
 
-    ``violations == []`` is only meaningful beside ``files_unanalyzable == 0``
-    and ``positive_control.ok``; consumers must assert all three separately,
-    which is why they are three fields and not one boolean.
+    ``violations == []`` is only meaningful beside ``files_unanalyzable == 0``,
+    ``files_capped == 0`` and ``positive_control.ok``; consumers must assert
+    all four separately, which is why they are four fields and not one boolean.
+
+    ``files_parsed`` is a count of FILES. It is deliberately not the headline
+    number any more, because a file can be parsed and only partly analysed:
+    ``files_capped`` is the completeness of the ANALYSIS, and reporting the
+    first without the second is how a truncated scan came to look total.
     """
 
     violations: list[dict[str, object]]
@@ -912,6 +1118,17 @@ class ScanReport:
     skipped: list[dict[str, object]]
     positive_control: ControlResult
     root: str
+    #: Files whose analysis stopped early and found nothing — status PARTIAL.
+    files_partial: int = 0
+    #: Files whose analysis stopped early AT ALL, including those that still
+    #: produced a violation. Always >= ``files_partial``.
+    files_capped: int = 0
+    #: Per-cap totals across the run: which bound truncated, and how often.
+    cap_hits: dict[str, int] = dataclasses.field(default_factory=dict)
+    #: The truncated files themselves, so the count is never the only evidence.
+    capped: list[dict[str, object]] = dataclasses.field(default_factory=list)
+    #: Class-B modelling limits, reported and NOT gated (see module docstring).
+    imprecision: dict[str, int] = dataclasses.field(default_factory=dict)
 
     @property
     def files_seen(self) -> int:
@@ -919,7 +1136,9 @@ class ScanReport:
 
     @property
     def ok(self) -> bool:
-        return not self.violations and self.files_unanalyzable == 0 and self.positive_control.ok
+        return (
+            not self.violations and self.files_unanalyzable == 0 and self.files_capped == 0 and self.positive_control.ok
+        )
 
     def summary(self) -> str:
         """The disclosure is the COUNT, never the silence."""
@@ -927,6 +1146,7 @@ class ScanReport:
             f"checked {self.files_parsed} files, "
             f"{len(self.violations)} violations, "
             f"{self.files_unanalyzable} unanalyzable, "
+            f"{self.files_capped} truncated, "
             f"positive control {'OK' if self.positive_control.ok else 'BROKEN'}"
         )
 
@@ -936,7 +1156,12 @@ class ScanReport:
             "violations": self.violations,
             "files_parsed": self.files_parsed,
             "files_unanalyzable": self.files_unanalyzable,
+            "files_partial": self.files_partial,
+            "files_capped": self.files_capped,
             "files_skipped": self.files_skipped,
+            "cap_hits": self.cap_hits,
+            "capped": self.capped,
+            "imprecision": self.imprecision,
             "unanalyzable": self.unanalyzable,
             "skipped": self.skipped,
             "positive_control": self.positive_control.as_record(),
@@ -962,18 +1187,24 @@ def scan_file(path: pathlib.Path, vocabulary: tuple[str, ...] = DISCLOSURE_TOKEN
     Every exception is caught PER FILE and recorded as ``UNANALYZABLE`` with
     its reason — the walk keeps going, but the failure is carried into the
     report instead of being swallowed by a bare ``continue``.
+
+    And every CAP is carried the same way. ``CLEAN`` is returned only when
+    the analysis both found nothing and ran to completion; if any bound
+    truncated it, the file is ``PARTIAL`` and names the bound. "No asymmetry
+    in the 12 levels I looked at" is not "no asymmetry".
     """
+    budget = AnalysisBudget()
     tree, reason = _parse_source(path)
     if tree is None:
         return FileResult(module=path.name, path=str(path), status=UNANALYZABLE, reason=reason)
     try:
-        funcs = _collect_functions(tree)
+        funcs = _collect_functions(tree, budget)
         violations: list[dict[str, object]] = []
         sites: list[dict[str, object]] = []
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _is_command(node):
                 sites.append({"module": path.name, "command": node.name, "line": node.lineno})
-                for violation in analyze_command(node, funcs, vocabulary):
+                for violation in analyze_command(node, funcs, vocabulary, budget):
                     violation["module"] = path.name
                     violations.append(violation)
     except Exception as exc:  # noqa: BLE001 — a scanner crash is UNANALYZABLE, not clean
@@ -982,13 +1213,24 @@ def scan_file(path: pathlib.Path, vocabulary: tuple[str, ...] = DISCLOSURE_TOKEN
             path=str(path),
             status=UNANALYZABLE,
             reason=f"analysis failed: {type(exc).__name__}: {exc}",
+            caps_hit=dict(budget.caps_hit),
+            imprecision=dict(budget.imprecision),
         )
+    if violations:
+        status = VIOLATION
+    elif budget.complete:
+        status = CLEAN
+    else:
+        status = PARTIAL
     return FileResult(
         module=path.name,
         path=str(path),
-        status=VIOLATION if violations else CLEAN,
+        status=status,
         violations=violations,
         sites=sites,
+        reason=(f"analysis truncated: {budget.describe()}" if budget.caps_hit else None),
+        caps_hit=dict(budget.caps_hit),
+        imprecision=dict(budget.imprecision),
     )
 
 
@@ -1020,7 +1262,42 @@ def scan_files(commands_dir: pathlib.Path, vocabulary: tuple[str, ...] = DISCLOS
             )
             continue
         results.append(scan_file(path, vocabulary))
+    results.extend(_subdirectory_skips(commands_dir))
     return results
+
+
+def _subdirectory_skips(commands_dir: pathlib.Path) -> list[FileResult]:
+    """Record the modules ONE DIRECTORY DOWN, which ``glob`` never reaches.
+
+    ``glob("*.py")`` is one level deep, so ``commands/pr_analyze/rules.py``
+    was in no bucket at all: not parsed, not unanalyzable, not skipped. A
+    coverage hole with no number beside it is the same shape as a truncated
+    walk that reports clean, so it gets a number. They are SKIPPED rather
+    than UNANALYZABLE because none of them defines a click command today —
+    if one ever does, this count moves and the reason says where to look.
+    """
+    out: list[FileResult] = []
+    try:
+        children = sorted(p for p in commands_dir.iterdir() if p.is_dir())
+    except OSError:
+        return out
+    for child in children:
+        if child.name == "__pycache__":
+            continue
+        try:
+            nested = sorted(child.rglob("*.py"))
+        except OSError:
+            continue
+        for path in nested:
+            out.append(
+                FileResult(
+                    module=f"{child.name}/{path.name}",
+                    path=str(path),
+                    status=SKIPPED,
+                    reason="below the command root; the scan globs one level only",
+                )
+            )
+    return out
 
 
 def _build_report(
@@ -1035,12 +1312,28 @@ def _build_report(
     sites.sort(key=lambda s: (str(s["module"]), int(s["line"])))  # type: ignore[arg-type]
     unanalyzable = [r.as_record() for r in results if r.status == UNANALYZABLE]
     skipped = [r.as_record() for r in results if r.status == SKIPPED]
+    capped = [r.as_record() for r in results if r.caps_hit]
+    cap_hits: dict[str, int] = {}
+    imprecision: dict[str, int] = {}
+    for result in results:
+        for cap, n in result.caps_hit.items():
+            cap_hits[cap] = cap_hits.get(cap, 0) + n
+        for kind, n in result.imprecision.items():
+            imprecision[kind] = imprecision.get(kind, 0) + n
     return ScanReport(
         violations=violations,
         sites=sites,
-        files_parsed=sum(1 for r in results if r.status in (CLEAN, VIOLATION)),
+        # PARTIAL files were read and parsed, so they belong in the parsed
+        # count; what they are NOT is fully analysed, which is why
+        # ``files_capped`` sits beside it rather than inside it.
+        files_parsed=sum(1 for r in results if r.status in (CLEAN, VIOLATION, PARTIAL)),
         files_unanalyzable=len(unanalyzable),
         files_skipped=len(skipped),
+        files_partial=sum(1 for r in results if r.status == PARTIAL),
+        files_capped=len(capped),
+        cap_hits=cap_hits,
+        capped=capped,
+        imprecision=imprecision,
         unanalyzable=unanalyzable,
         skipped=skipped,
         positive_control=control,
@@ -1075,7 +1368,19 @@ def run_positive_control(root: pathlib.Path | None = None) -> ControlResult:
     if broken:
         return ControlResult("broken", f"control fixture unanalyzable: {broken[0].reason}", str(fixture))
 
-    modules = {r.module for r in results if r.status in (CLEAN, VIOLATION)}
+    truncated = [r for r in results if r.caps_hit]
+    if truncated:
+        # A control whose own analysis stopped early cannot certify that the
+        # detector still detects: it proves the detector detects as far as it
+        # looked. That is the claim this whole file exists to refuse.
+        return ControlResult(
+            "broken",
+            f"control fixture analysis was truncated ({truncated[0].reason}) — "
+            "a partially-analysed control proves nothing about the scan",
+            str(fixture),
+        )
+
+    modules = {r.module for r in results if r.status in (CLEAN, VIOLATION, PARTIAL)}
     required = {str(POSITIVE_CONTROL_SENTINEL["module"]), POSITIVE_CONTROL_SILENT_MODULE}
     if not required <= modules:
         return ControlResult(
@@ -1232,10 +1537,17 @@ def _carried_mark(count: int, root: pathlib.Path | None = None) -> tuple[int, st
     The note is carried for the same reason: a regeneration that silently
     dropped the justification would leave the number standing alone, which is
     the state this field exists to prevent.
+
+    A baseline that is PRESENT but unreadable propagates its error instead of
+    falling back to ``count``. Swallowing it here was the same defect a third
+    time: the recorded mark would be replaced by whatever the current tree
+    measures, so an unreadable ratchet file silently raises the ratchet —
+    exactly the laundering this function's docstring promises to prevent.
+    Only a genuinely ABSENT file is a first generation.
     """
     try:
         recorded = json.loads(baseline_path(root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return count, _UNEXPLAINED_MARK
     mark = recorded.get("_high_water_mark")
     note = recorded.get("_high_water_mark_note")
@@ -1284,10 +1596,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also measure raw json_envelope schema-key spelling (semantic partial_success=true is always gated)",
     )
+    parser.add_argument(
+        "--root",
+        default=None,
+        help=(
+            "directory of command modules to scan (default: src/roam/commands). "
+            "Exists so the exit-code contract can be driven end to end over a "
+            "planted tree — a gate whose exit codes are only ever asserted "
+            "against the repository it ships in is a gate nobody has tested."
+        ),
+    )
     args = parser.parse_args(argv)
 
     vocabulary = DISCLOSURE_TOKENS + (SCHEMA_TOKENS if args.include_schema_keys else ())
-    report = scan(_repo_root() / "src" / "roam" / "commands", vocabulary)
+    commands_dir = pathlib.Path(args.root) if args.root else _repo_root() / "src" / "roam" / "commands"
+    report = scan(commands_dir, vocabulary)
 
     if args.baseline:
         # The denominator is checked BEFORE the file is emitted: a baseline
@@ -1304,7 +1627,30 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"UNANALYZABLE {entry['module']}: {entry['reason']}", file=sys.stderr)
             print("REFUSING to emit a baseline from a partially-analysed tree", file=sys.stderr)
             return EXIT_UNANALYZABLE
-        print(json.dumps(build_baseline(report), indent=2))
+        if report.files_capped:
+            # Same refusal, one level in. A baseline built from truncated
+            # analysis records "fixed" for every asymmetry the truncation
+            # hid, and the ratchet then rejects that asymmetry FOREVER as a
+            # new violation the moment the walk reaches it again.
+            for entry in report.capped:
+                print(f"TRUNCATED {entry['module']}: {entry['reason']}", file=sys.stderr)
+            print(
+                f"REFUSING to emit a baseline: {report.files_capped} file(s) were only "
+                f"partially analysed ({report.cap_hits})",
+                file=sys.stderr,
+            )
+            return EXIT_UNANALYZABLE
+        try:
+            payload = build_baseline(report)
+        except (OSError, ValueError) as exc:
+            print(
+                f"REFUSING to emit a baseline: the existing ratchet file could not be read "
+                f"({type(exc).__name__}: {exc}); regenerating over it would replace its "
+                "high-water mark with today's count",
+                file=sys.stderr,
+            )
+            return EXIT_UNANALYZABLE
+        print(json.dumps(payload, indent=2))
         print(report.summary(), file=sys.stderr)
         return EXIT_OK
 
@@ -1322,9 +1668,13 @@ def main(argv: list[str] | None = None) -> int:
             f"{len(gates)} separately-tested exit-gate reachability differences"
         )
         print(report.summary())
-        print(f"skipped {report.files_skipped} file(s) outside the cmd_*.py glob")
+        print(f"skipped {report.files_skipped} file(s) outside the one-level cmd_*.py glob")
+        print(f"analysis caps hit: {report.cap_hits or 'none'}")
+        print(f"modelling limits (reported, not gated): {report.imprecision or 'none'}")
         for entry in report.unanalyzable:
             print(f"UNANALYZABLE {entry['module']}: {entry['reason']}")
+        for entry in report.capped:
+            print(f"TRUNCATED {entry['module']}: {entry['reason']}")
         if not report.positive_control.ok:
             print(f"POSITIVE CONTROL BROKEN: {report.positive_control.detail}")
     else:
@@ -1337,6 +1687,12 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_SCANNER_BROKEN
     if report.files_unanalyzable:
         # Cannot-analyse is a failure OF THE GATE, not a pass.
+        return EXIT_UNANALYZABLE
+    if report.files_capped:
+        # Analysed-in-part is the same failure with a smaller radius: the
+        # gate did not cover what it says it covered. Ranked ABOVE
+        # EXIT_VIOLATIONS because a truncated run's violation list is a
+        # floor, and reporting the floor as the total is the defect.
         return EXIT_UNANALYZABLE
     if report.violations:
         return EXIT_VIOLATIONS
