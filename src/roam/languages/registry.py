@@ -404,6 +404,27 @@ def get_extractor(language: str) -> "LanguageExtractor":
     return _create_extractor(language)
 
 
+@lru_cache(maxsize=None)
+def is_case_insensitive_language(language: str) -> bool:
+    """Whether *language* resolves identifiers case-insensitively.
+
+    W1456: consumers that fold identifier case (today: the relation
+    resolver's case-folded fallback in ``roam.index.relations``) MUST ask
+    here rather than testing for ``.prg`` / ``.scx`` themselves, so a
+    future case-insensitive language is declared in one place — its
+    extractor's ``case_insensitive_identifiers`` — instead of in every
+    consumer.
+
+    Unknown languages are case-sensitive: the conservative answer, since
+    folding case only ever adds edges.
+    """
+    try:
+        extractor = get_extractor(language)
+    except (ValueError, ImportError):
+        return False
+    return bool(getattr(extractor, "case_insensitive_identifiers", False))
+
+
 def get_extractor_for_file(path: str) -> "LanguageExtractor | None":
     """Get an extractor instance for a file based on its extension.
 

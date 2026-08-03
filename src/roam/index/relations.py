@@ -893,6 +893,30 @@ def _prefer_local(target_sym, target_name, source_file, symbols_by_name):
     return target_sym
 
 
+def _source_language_folds_identifier_case(source_file: str) -> bool:
+    """Whether a reference written in *source_file* may match case-insensitively.
+
+    W1456: the answer is a property of the language, declared by its
+    extractor (``LanguageExtractor.case_insensitive_identifiers``) and
+    read back through the registry — not a hardcoded ``.prg`` / ``.scx``
+    test here. Adding the next case-insensitive language must not require
+    editing the resolver.
+    """
+    if not source_file:
+        return False
+    # Imported lazily on purpose: ``roam.languages.registry`` imports
+    # ``roam.index.parser``, and importing anything under ``roam.index``
+    # runs ``roam/index/__init__.py`` -> ``indexer`` -> this module. A
+    # module-level import here closes that cycle and breaks collection
+    # for every consumer that reaches ``roam.languages`` first.
+    from roam.languages.registry import get_language_for_file, is_case_insensitive_language
+
+    language = get_language_for_file(source_file)
+    if language is None:
+        return False
+    return is_case_insensitive_language(language)
+
+
 def _resolve_standard(
     target_name,
     source_file,
@@ -995,8 +1019,16 @@ def _resolve_standard(
             import_map=import_map,
         )
 
-    # 3. Case-insensitive fallback (VFP and other case-insensitive langs)
-    if target_sym is None:
+    # 3. Case-insensitive fallback — ONLY when the SOURCE file's language
+    #    actually folds identifier case (W1456). Steps 1-2 fail for every
+    #    name the repo does not define itself — stdlib, third-party,
+    #    builtins — and an ungated step 3 then binds those names to
+    #    whatever indexed symbol happens to case-fold equal. On roam-code
+    #    a single unresolved ``Path`` produced ~3.4k edges into an
+    #    unrelated ``PATH`` constant in a dev script, which was enough to
+    #    make ``roam impact`` report the same repo-wide blast radius for
+    #    a throwaway constant as for the DB-connection factory.
+    if target_sym is None and _source_language_folds_identifier_case(source_file):
         target_sym = _best_match(
             target_name.lower(),
             source_file,

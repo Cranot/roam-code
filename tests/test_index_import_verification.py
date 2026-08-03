@@ -258,10 +258,19 @@ class TestResolveReferencesVerification:
         subset where the source has NO matching import at all.
 
         This test pins the boundary: when the source does not import
-        ``some_name`` AT ALL, the edge is dropped — even though the
-        target name is similar-looking-but-unimported. (The pure
-        case-insensitive ``time``-vs-``TIME`` slip-through is a known
-        false-negative — see W158 sanity filter belt-and-suspenders.)
+        ``some_name`` AT ALL, no import edge survives — even though the
+        target name is similar-looking-but-unimported.
+
+        W1456 moved this case one layer upstream. The resolver's
+        case-folded fallback now runs only for source files whose
+        language actually folds identifier case (Visual FoxPro), so a
+        ``time`` reference in a **Python** file never reaches ``TIME`` in
+        the first place. The observable guarantee is unchanged (no import
+        edge), but ``dropped_import_edges`` is now 0 rather than 1: that
+        counter means "an edge was emitted, then dropped" (W1260), and
+        there is no longer an edge to drop. Pre-emission rejection is
+        strictly better than emit-then-drop — the phantom never touches
+        the DB and never has to be re-detected downstream.
         """
         project = _build_project(
             tmp_path,
@@ -276,8 +285,10 @@ class TestResolveReferencesVerification:
         symbols_by_name, files_by_path = _build_inputs(symbols)
         refs = [
             {
-                # Resolver case-insensitive lookup hits ``TIME`` even though
-                # source doesn't actually have ``import time``.
+                # Pre-W1456 the resolver's case-insensitive lookup hit
+                # ``TIME`` even though the source has no ``import time``;
+                # the emitted edge was then dropped by the text check.
+                # Post-W1456 the fold never runs for a ``.py`` source.
                 "source_name": "effect",
                 "target_name": "time",
                 "kind": "import",
@@ -294,7 +305,8 @@ class TestResolveReferencesVerification:
             drop_stats=drop_stats,
         )
         assert not any(e["kind"] == "import" for e in edges)
-        assert drop_stats["dropped_import_edges"] == 1
+        # W1456: never emitted, therefore never "dropped" (W1260 semantics).
+        assert drop_stats.get("dropped_import_edges", 0) == 0
 
     def test_relative_import_resolves_and_survives(self, tmp_path):
         """``from .base import X`` resolves to the sibling file's ``X`` and
