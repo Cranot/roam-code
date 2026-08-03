@@ -57,7 +57,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 from roam.review_receipt import (
     DIGEST_SCHEME,
     FINDING_SEVERITIES,
@@ -443,6 +443,17 @@ def review_verify_cmd(phase: str, artifact: str, required: bool, json_mode: bool
 
     passing = result["status"] in ("declared_accepted", "same_family")
 
+    # W1331 — built ONCE, above the branch, so both output paths carry the same
+    # degradation marker. Previously only the JSON envelope said anything
+    # (`partial_success`), so a human reading the text, or a pipeline scraping
+    # it, saw a NON-passing verification exactly as it saw a clean one. Caught
+    # by our own disclosure scanner on a command shipped earlier the same day —
+    # and when the first fix disclosed to text alone, the scanner caught THAT
+    # asymmetry too, which is the whole point of checking both directions.
+    _warnings_out: list[str] = []
+    if not passing:
+        _warnings_out.append(f"review_verify_not_passing:{resolved}:{result['status']}")
+
     if json_mode:
         click.echo(
             to_json(
@@ -457,8 +468,10 @@ def review_verify_cmd(phase: str, artifact: str, required: bool, json_mode: bool
                         "passing": passing,
                         "required": required,
                         "partial_success": not passing,
+                        "warnings_out": _warnings_out,
                     },
                     verification=result,
+                    warnings_out=_warnings_out,
                 )
             )
         )
@@ -469,6 +482,15 @@ def review_verify_cmd(phase: str, artifact: str, required: bool, json_mode: bool
         click.echo(f"reason:   {result['reason']}")
         if result["status"] == "same_family":
             click.echo("note:     passes with a coverage warning (see roam review-accept).")
+        # W1331 — the JSON branch carries `partial_success: not passing`; without
+        # this the text branch had no degradation marker at all, so a human or a
+        # log-scraping pipeline read a NON-passing verification the same way it
+        # read a clean one. Found by our own disclosure scanner, on a command
+        # shipped earlier the same day.
+        #
+        # STDERR, so stdout stays byte-identical and no golden output moves. The
+        # exit code below is the machine signal; this is the human one.
+        echo_text_warnings(_warnings_out)
 
     if required and not passing:
         raise SystemExit(5)

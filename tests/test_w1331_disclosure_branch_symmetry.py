@@ -34,35 +34,42 @@ and recursing into in-module helpers — including shared emitters that take
 two kinds of asymmetry:
 
 1. a *disclosure token* (``warnings_out``, ``empty_corpus_state``,
-   ``truncation_reason``, ``scan_incomplete``) that reaches the output of
-   one supported mode but not another;
+   ``truncation_reason``, ``scan_incomplete``), or the semantic
+   ``degradation_state`` seeded by a ``partial_success`` value that can be true,
+   that reaches the output of one supported mode but not another;
 2. a *non-zero exit* — a CI gate — reachable in one mode but not another.
    Rule 2 is the ``py-types`` defect stated as an invariant, and
    ``test_scanner_catches_the_prefix_py_types_defect`` below pins it
    against the real pre-fix source from git rather than a mock.
 
-``partial_success`` and ``failed_checks`` are deliberately NOT gated: both
-are envelope KEY NAMES rather than computed signals, so a JSON branch
-carries them by construction and a text branch never spells them, and the
-check degenerates into "text is not JSON". ``partial_success`` had 164
-such hits; ``failed_checks`` had two, and running both proved the text
-branch discloses the identical list under a different name (``adversarial``
-appends it to the VERDICT line, ``doctor`` renders one ``[WARN]``/``[FAIL]``
-row per entry). Measure them with ``--include-schema-keys`` for reporting.
+Raw ``partial_success`` and ``failed_checks`` KEY-NAME spelling remains
+reporting-only: text and SARIF legitimately disclose those facts in prose.
+The guard does gate the semantic fact when it sees a potentially true
+``partial_success`` value and accepts equivalent prose such as "degraded",
+"truncated", "no symbols", or a SARIF runtime notification.
 
-RATCHET
--------
-The current tree is not clean, so this is a shrinking baseline, not a
-tripwire: ``tests/data/disclosure_asymmetry_baseline.json``. The test
-fails on a NEW violation *and* on a STALE entry, so the file can only get
-smaller. Every entry names a reason code defined in the same file — an
-allowlist whose entries do not say why is a shrug, not a policy, and
-growing it is a reviewable diff by construction.
+ZERO-BASELINE INVARIANT
+-----------------------
+The scanner enumerates every ``cmd_*.py`` module and every Click command
+function it contains.  Disclosure violations have no allowlist: one live
+site fails this test.  Exit-code parity is tested separately because a
+structured JSON error envelope may intentionally exit zero to survive the
+MCP bridge; that transport rule must never exempt a missing disclosure.
+
+ZERO IS ONLY MEANINGFUL BESIDE ITS DENOMINATOR (W1455)
+------------------------------------------------------
+``violations == []`` is asserted here, but it proves nothing on its own: a
+scanner that parsed nothing reports the same empty list.  So the numerator
+and the denominator are SEPARATE assertions —
+``test_no_disclosure_asymmetry_in_any_enumerated_command`` for the
+violations, ``test_scan_publishes_a_trustworthy_denominator`` for
+``files_parsed`` / ``files_unanalyzable`` / the positive control.  A parse
+regression must fail loudly instead of shrinking the corpus in silence;
+``tests/test_w1455_scanner_fails_closed.py`` pins that behaviour directly.
 """
 
 from __future__ import annotations
 
-import json
 import pathlib
 import subprocess
 import sys
@@ -73,7 +80,6 @@ from tests._helpers.repo_root import repo_root
 
 REPO_ROOT = repo_root()
 SCANNER = REPO_ROOT / "scripts" / "scan_disclosure_asymmetry.py"
-BASELINE = REPO_ROOT / "tests" / "data" / "disclosure_asymmetry_baseline.json"
 COMMANDS = REPO_ROOT / "src" / "roam" / "commands"
 
 _SCRIPTS = str(REPO_ROOT / "scripts")
@@ -83,108 +89,81 @@ if _SCRIPTS not in sys.path:
 import scan_disclosure_asymmetry as scanner  # noqa: E402
 
 
-def _load_baseline() -> dict:
-    return json.loads(BASELINE.read_text(encoding="utf-8"))
-
-
-def _shape(v: dict) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
-    return (
-        scanner.violation_key(v),
-        tuple(v["observed_by"]),
-        tuple(v["blind"]),
-    )
-
-
 @pytest.fixture(scope="module")
-def current() -> list[dict]:
+def current() -> scanner.ScanReport:
     return scanner.scan(COMMANDS)
 
 
 # ---------------------------------------------------------------------------
-# The ratchet
+# The zero-baseline guard
 # ---------------------------------------------------------------------------
 
 
-def test_no_new_disclosure_asymmetry(current: list[dict]) -> None:
-    """A command may not start disclosing in one output branch only.
+def test_no_disclosure_asymmetry_in_any_enumerated_command(current: scanner.ScanReport) -> None:
+    """Every computed degradation signal must reach every supported mode.
 
-    If this fails on a NEW entry, the fix is almost never to append to the
-    baseline. It is to route the signal into the branch that is blind —
+    Exit-code reachability is a separate transport invariant with its own
+    regression below.  This assertion has no command allowlist and no
+    shrinking baseline: a single disclosure violation fails immediately.
+    The established fix is to route the signal into the branch that is blind —
     for ``warnings_out`` the established template is ``cmd_understand.py``:
     echo ``# warning: <marker>`` to STDERR from the non-JSON tails, which
     leaves stdout byte-identical and therefore breaks no golden output.
     """
-    baseline = _load_baseline()
-    known = {_shape(v) for v in baseline["violations"]}
-    new = sorted(_shape(v) for v in current if _shape(v) not in known)
-    assert not new, (
-        f"{len(new)} NEW output-branch disclosure asymmetry(ies).\n"
+    disclosure_violations = [v for v in current.violations if v["token"] != scanner.GATE_SIGNAL]
+    assert not disclosure_violations, (
+        f"{len(disclosure_violations)} output-branch disclosure asymmetry(ies).\n"
         "A signal that says 'this result is degraded' now reaches one output\n"
         "branch and not another, so a consumer of the other branch reads a\n"
         "degraded run as a clean one.\n\n"
-        + "\n".join(f"  {key}: seen by {list(seen)}, BLIND: {list(blind)}" for key, seen, blind in new)
+        + "\n".join(
+            f"  {v['module']}:{v['line']}::{v['command']}::{v['token']}: "
+            f"seen by {v['observed_by']}, BLIND: {v['blind']}"
+            for v in disclosure_violations
+        )
     )
 
 
-def test_baseline_has_no_stale_entries(current: list[dict]) -> None:
-    """A fixed asymmetry must be deleted from the baseline, so it can shrink."""
-    baseline = _load_baseline()
-    live = {_shape(v) for v in current}
-    stale = sorted(_shape(v) for v in baseline["violations"] if _shape(v) not in live)
-    assert not stale, (
-        f"{len(stale)} baseline entry(ies) no longer reproduce — good. Delete them\n"
-        f"from {BASELINE.relative_to(REPO_ROOT)} so the ratchet holds:\n"
-        + "\n".join(f"  {key}: recorded seen={list(seen)} blind={list(blind)}" for key, seen, blind in stale)
-    )
+def test_scan_publishes_a_trustworthy_denominator(current: scanner.ScanReport) -> None:
+    """The zero above is only worth what its denominator is worth.
 
+    Three assertions, deliberately separate from ``violations == []``:
 
-# ---------------------------------------------------------------------------
-# The allowlist is DATA, and exempting a command is a visible act
-# ---------------------------------------------------------------------------
-
-
-def test_every_baseline_entry_names_a_reason() -> None:
-    """No silent exemptions: every entry cites a defined, non-placeholder code."""
-    baseline = _load_baseline()
-    codes = baseline["_reason_codes"]
-    bad: list[str] = []
-    for v in baseline["violations"]:
-        reason = v.get("reason")
-        if not reason or reason == "TODO":
-            bad.append(f"{scanner.violation_key(v)}: reason is {reason!r}")
-        elif reason not in codes:
-            bad.append(f"{scanner.violation_key(v)}: undefined reason code {reason!r}")
-    assert not bad, "Baseline entries without a usable reason:\n" + "\n".join(f"  {b}" for b in bad)
-
-
-def test_reason_codes_are_defined_and_used() -> None:
-    """Codes are documented prose, and a code nobody cites is deleted."""
-    baseline = _load_baseline()
-    codes = baseline["_reason_codes"]
-    assert codes == scanner.REASON_CODES, (
-        "tests/data/disclosure_asymmetry_baseline.json's _reason_codes has drifted "
-        "from scripts/scan_disclosure_asymmetry.py's REASON_CODES. Regenerate with "
-        "`python scripts/scan_disclosure_asymmetry.py --baseline`."
-    )
-    for code, prose in codes.items():
-        assert len(prose) > 80, f"reason code {code!r} does not explain itself"
-    used = {v["reason"] for v in baseline["violations"]}
-    unused = sorted(set(codes) - used)
-    assert not unused, f"Reason codes defined but cited by no entry — delete them: {unused}"
-
-
-def test_baseline_only_ever_shrinks() -> None:
-    """A second, blunt guard: the recorded high-water mark may only fall.
-
-    ``test_no_new_disclosure_asymmetry`` already blocks additions, but it
-    compares SHAPES. This pins the raw count so that swapping one entry for
-    another still shows up as a deliberate edit of a number.
+    * ``files_parsed`` is the whole command surface — zero parsed files is
+      zero COVERAGE, not zero violations;
+    * ``files_unanalyzable == 0`` — before W1455 a single ``def broken(:``
+      made a module return ``[]``, indistinguishable from clean, and dropped
+      it out of the coverage enumeration at the same time;
+    * the positive control fired — otherwise "0 violations" and "the
+      detector stopped working" are the same output.
     """
-    baseline = _load_baseline()
-    assert len(baseline["violations"]) <= baseline["_high_water_mark"], (
-        f"The baseline grew to {len(baseline['violations'])} entries, above the recorded "
-        f"high-water mark of {baseline['_high_water_mark']}. Fix the asymmetry instead; "
-        "if the mark genuinely must move, move it in its own commit and say why."
+    assert current.files_parsed > 0, f"the scan parsed NO command modules at all: {current.summary()}"
+    assert current.files_unanalyzable == 0, (
+        f"{current.files_unanalyzable} command module(s) could not be analysed, so the "
+        "zero-baseline assertion above was measured against a silently shrunken corpus:\n"
+        + "\n".join(f"  {e['module']}: {e['reason']}" for e in current.unanalyzable)
+    )
+    assert current.positive_control.ok, (
+        "the disclosure scanner failed its own positive control, so every verdict it "
+        f"produced in this run is uninterpretable: {current.positive_control.detail}"
+    )
+
+
+def test_enumeration_covers_every_registered_command_module() -> None:
+    """The guard discovers the registry; adding a command needs no test edit."""
+    from roam.cli import _COMMANDS
+
+    report = scanner.enumerate_command_sites(COMMANDS)
+    assert report.files_unanalyzable == 0, (
+        "a module that cannot be parsed vanishes from the enumeration, which is "
+        "exactly how a coverage proof comes to under-report its own coverage:\n"
+        + "\n".join(f"  {e['module']}: {e['reason']}" for e in report.unanalyzable)
+    )
+    scanned_modules = {f"roam.commands.{str(site['module'])[:-3]}" for site in report.sites}
+    registered_modules = {module for module, _attr in _COMMANDS.values()}
+    missing = sorted(registered_modules - scanned_modules)
+    assert not missing, "Registered command modules omitted from disclosure enumeration:\n" + "\n".join(
+        f"  {module}" for module in missing
     )
 
 
@@ -221,14 +200,16 @@ def test_scanner_catches_the_prefix_py_types_defect(tmp_path: pathlib.Path) -> N
         pytest.skip("pre-fix blob unavailable (shallow clone)")
 
     (tmp_path / "cmd_py_types.py").write_text(before.stdout, encoding="utf-8")
-    gates = [v for v in scanner.scan(tmp_path) if v["token"] == scanner.GATE_SIGNAL]
+    gates = [v for v in scanner.scan(tmp_path).violations if v["token"] == scanner.GATE_SIGNAL]
     assert gates, "the scanner did not flag the pre-fix py-types CI-gate asymmetry"
     assert gates[0]["observed_by"] == ["text"]
     assert set(gates[0]["blind"]) == {"json", "sarif"}, (
         "the pre-fix defect is precisely that --json and --sarif could not reach the gate"
     )
 
-    shipped = [v for v in scanner.scan_file(COMMANDS / "cmd_py_types.py") if v["token"] == scanner.GATE_SIGNAL]
+    result = scanner.scan_file(COMMANDS / "cmd_py_types.py")
+    assert result.status != scanner.UNANALYZABLE, f"cmd_py_types.py is unanalyzable: {result.reason}"
+    shipped = [v for v in result.violations if v["token"] == scanner.GATE_SIGNAL]
     assert not shipped, f"cmd_py_types.py regressed the W1320 gate fix: {shipped}"
 
 
@@ -248,11 +229,13 @@ def test_scanner_catches_a_reintroduced_text_blindness(tmp_path: pathlib.Path) -
     )
     assert disclosure in source, "cmd_understand's text-mode disclosure moved; update this test"
 
-    clean = [v for v in scanner.scan_file(COMMANDS / "cmd_understand.py") if v["token"] == "warnings_out"]
+    result = scanner.scan_file(COMMANDS / "cmd_understand.py")
+    assert result.status != scanner.UNANALYZABLE, f"cmd_understand.py is unanalyzable: {result.reason}"
+    clean = [v for v in result.violations if v["token"] == "warnings_out"]
     assert not clean, f"cmd_understand was expected to be symmetric, got {clean}"
 
     (tmp_path / "cmd_understand.py").write_text(source.replace(disclosure, ""), encoding="utf-8")
-    broken = [v for v in scanner.scan(tmp_path) if v["token"] == "warnings_out"]
+    broken = [v for v in scanner.scan(tmp_path).violations if v["token"] == "warnings_out"]
     assert broken, "removing the only text-mode warnings disclosure did NOT trip the lint"
     assert "text" in broken[0]["blind"]
 
@@ -263,8 +246,16 @@ def test_scanner_catches_a_reintroduced_text_blindness(tmp_path: pathlib.Path) -
 
 
 def _analyze(src: str, tmp_path: pathlib.Path, name: str = "cmd_probe.py") -> list[dict]:
+    """Violations for a synthetic module — and never for one that failed to parse.
+
+    The denominator is asserted here rather than in every caller: a probe that
+    silently failed to parse would otherwise satisfy every ``== []`` below.
+    """
     (tmp_path / name).write_text(src, encoding="utf-8")
-    return scanner.scan(tmp_path)
+    report = scanner.scan(tmp_path)
+    assert report.files_unanalyzable == 0, f"probe module did not parse: {report.unanalyzable}"
+    assert report.files_parsed > 0, "probe module was not picked up by the scan glob"
+    return report.violations
 
 
 def test_shared_disclosure_is_not_a_violation(tmp_path: pathlib.Path) -> None:
@@ -305,6 +296,31 @@ def probe(ctx):
     found = _analyze(src, tmp_path)
     assert [v["token"] for v in found] == ["warnings_out"]
     assert found[0]["blind"] == ["text"]
+    assert found[0]["line"] == 10
+
+
+def test_json_only_disclosure_is_blind_in_text_and_sarif(tmp_path: pathlib.Path) -> None:
+    """A supported SARIF branch is part of the same zero-baseline invariant."""
+    src = """
+import click
+
+@click.command()
+@click.pass_context
+def probe(ctx):
+    warnings_out = []
+    json_mode = ctx.obj.get("json")
+    sarif_mode = ctx.obj.get("sarif")
+    if json_mode:
+        click.echo(to_json({"warnings_out": warnings_out}))
+    elif sarif_mode:
+        click.echo(to_sarif([]))
+    else:
+        click.echo("VERDICT: ok")
+"""
+    found = _analyze(src, tmp_path)
+    assert [v["token"] for v in found] == ["warnings_out"]
+    assert found[0]["observed_by"] == ["json"]
+    assert found[0]["blind"] == ["sarif", "text"]
 
 
 def test_appending_in_shared_code_credits_nobody(tmp_path: pathlib.Path) -> None:
@@ -389,8 +405,8 @@ def probe(ctx, ci_mode=True, coverage=0):
     assert not [v for v in _analyze(fixed, tmp_path, "cmd_fixed.py") if v["module"] == "cmd_fixed.py"]
 
 
-def test_partial_success_is_not_gated(tmp_path: pathlib.Path) -> None:
-    """The envelope schema key stays measurable but ungated, on purpose."""
+def test_partial_success_true_is_gated_semantically(tmp_path: pathlib.Path) -> None:
+    """An explicit partial run must not be presented as an unqualified OK."""
     src = """
 import click
 
@@ -403,6 +419,49 @@ def probe(ctx):
         click.echo("VERDICT: ok")
 """
     (tmp_path / "cmd_probe.py").write_text(src, encoding="utf-8")
-    assert scanner.scan(tmp_path) == []
-    opted_in = scanner.scan(tmp_path, scanner.DISCLOSURE_TOKENS + scanner.SCHEMA_TOKENS)
+    found = scanner.scan(tmp_path).violations
+    assert [v["token"] for v in found] == ["degradation_state"]
+    assert found[0]["blind"] == ["text"]
+
+    fixed = src.replace('click.echo("VERDICT: ok")', 'click.echo("VERDICT: degraded — no symbols analyzed")')
+    (tmp_path / "cmd_probe.py").write_text(fixed, encoding="utf-8")
+    assert scanner.scan(tmp_path).violations == []
+
+    # Raw key-name spelling is still available for audits, but it is not
+    # what the semantic guard requires text/SARIF to reproduce.
+    opted_in = scanner.scan(tmp_path, scanner.DISCLOSURE_TOKENS + scanner.SCHEMA_TOKENS).violations
     assert [v["token"] for v in opted_in] == ["partial_success"]
+
+
+@pytest.mark.parametrize(
+    "emitter",
+    [
+        pytest.param("laws_to_sarif", id="laws"),
+        pytest.param("llm_smells_to_sarif", id="llm-smells"),
+        pytest.param("orphan_routes_to_sarif", id="orphan-routes"),
+    ],
+)
+def test_partial_sarif_run_contains_runtime_notification(emitter: str) -> None:
+    """A zero-result SARIF document must say when the producer was degraded."""
+    from roam.output import sarif
+
+    disclosure = "partial result: no analyzable input was available"
+    doc = getattr(sarif, emitter)([], disclosures=[disclosure])
+    invocation = doc["runs"][0]["invocations"][0]
+    notifications = invocation["toolExecutionNotifications"]
+
+    assert invocation["executionSuccessful"] is True
+    assert [note["message"]["text"] for note in notifications] == [disclosure]
+    assert notifications[0]["level"] == "warning"
+
+
+def test_sarif_boundary_adapter_discloses_a_floored_document() -> None:
+    """A projector failure represented by ``{}`` still yields honest SARIF."""
+    from roam.output.sarif import with_sarif_disclosures
+
+    disclosure = "partial result: SARIF projection failed"
+    doc = with_sarif_disclosures({}, [disclosure])
+
+    run = doc["runs"][0]
+    assert run["results"] == []
+    assert run["invocations"][0]["toolExecutionNotifications"][0]["message"]["text"] == disclosure
