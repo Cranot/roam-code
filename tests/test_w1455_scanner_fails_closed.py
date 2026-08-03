@@ -123,13 +123,21 @@ def test_unparseable_module_is_distinguishable_from_a_clean_repo(tmp_path: pathl
 
     Pre-fix both produced ``violations: []`` and were indistinguishable to
     every consumer. Now the DENOMINATOR separates them.
+
+    Both corpora start from the same genuinely symmetric source, so the ONLY
+    difference between them is the appended syntax error. Copying a shipped
+    command module here instead — as this test first did — made the experiment
+    depend on whether that one module happens to be symmetric this week, which
+    is a ratcheted and deliberately moving number (see
+    ``tests/data/disclosure_asymmetry_baseline.json``). A control whose baseline
+    arm can legitimately change is not a control.
     """
     dirty = tmp_path / "dirty"
     clean = tmp_path / "clean"
     dirty.mkdir()
     clean.mkdir()
-    _plant_unparseable(dirty)
-    shutil.copy(COMMANDS / "cmd_delete_check.py", clean / "cmd_delete_check.py")
+    (dirty / "cmd_probe.py").write_text(CLEAN_COMMAND + BROKEN_SUFFIX, encoding="utf-8")
+    (clean / "cmd_probe.py").write_text(CLEAN_COMMAND, encoding="utf-8")
 
     dirty_report = disclosure.scan(dirty)
     clean_report = disclosure.scan(clean)
