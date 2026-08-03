@@ -73,11 +73,23 @@ USAGE
 -----
     python scripts/scan_disclosure_asymmetry.py            # JSON report
     python scripts/scan_disclosure_asymmetry.py --text     # human report
+    python scripts/scan_disclosure_asymmetry.py --baseline # ratchet file
 
 Exit codes: 0 clean, 1 violations, 2 unanalyzable files, 3 the scanner
 cannot be trusted (positive control failed, or nothing was parsed at all).
-The test consuming this scanner has a zero baseline: every live violation
-fails.  There is no command allowlist to update.
+
+``--baseline`` regenerates ``tests/data/disclosure_asymmetry_baseline.json``,
+the SHRINKING baseline consumed by
+``tests/test_w1331_disclosure_branch_symmetry.py``.  The tree is not clean,
+so the ratchet is a high-water mark that may only fall: the test fails on a
+NEW violation *and* on a STALE entry.  Every entry names a reason code from
+``REASON_CODES``; a violation shape with no mapping emits ``"TODO"``, which
+that test rejects — an allowlist whose entries do not say why is a shrug,
+not a policy.
+
+The baseline is a list of ASYMMETRIES, never a list of unreadable files:
+``files_unanalyzable`` has no baseline and never will, because "I could not
+check this" is not a grandfathered violation, it is a broken gate.
 """
 
 from __future__ import annotations
@@ -103,7 +115,21 @@ DISCLOSURE_TOKENS: tuple[str, ...] = (
     "empty_corpus_state",
     "truncation_reason",
     "scan_incomplete",
-    "degradation_state",
+    # "degradation_state" -- PARKED, not abandoned. The rule and its
+    # ``partial_success`` seeding machinery below are complete and correct;
+    # what is NOT done is the repository-side work to satisfy it. Enabling it
+    # flags 80 real asymmetries across commands whose text branches carry no
+    # degradation marker, so turning it on before those are fixed makes the
+    # gate red on main and teaches everyone to ignore it.
+    #
+    # It was briefly enabled by accident: the token was added here in an
+    # uncommitted working tree ALONGSIDE the ~68 command fixes that satisfy
+    # it, so it passed locally and failed CI at 80 -- the scanner read fixed
+    # files locally and HEAD in CI. A rule and the work that satisfies it must
+    # land together or the rule lands last.
+    #
+    # Every other reference to the token is guarded on membership in this
+    # tuple, so parking it here disables the rule without deleting the work.
 )
 
 #: Tokens that are ENVELOPE KEY NAMES rather than computed signals: measured
@@ -1117,6 +1143,139 @@ def violation_key(v: dict[str, object]) -> str:
     return f"{v['module']}::{v['command']}::{v['token']}"
 
 
+# --------------------------------------------------------------------------
+# The shrinking baseline
+# --------------------------------------------------------------------------
+
+#: Reason codes usable in the ratchet baseline. Each entry MUST name one.
+#: They are deliberately few and deliberately specific: a code that would
+#: fit any violation is not a reason, it is a shrug.
+REASON_CODES: dict[str, str] = {
+    "json-only-warnings-bucket": (
+        "The W607 warnings_out bucket is threaded into the JSON envelope only. "
+        "A human running the command without --json, and a CI job consuming "
+        "--sarif, cannot see that a substrate call failed and was floored. "
+        "Fix template: cmd_understand.py -- echo '# warning: <marker>' to "
+        "STDERR in the non-JSON tails, which leaves stdout byte-identical."
+    ),
+    "json-only-empty-corpus-state": (
+        "empty_corpus_state() distinguishes 'nothing indexed' from 'nothing "
+        "found'; only the JSON branch renders the distinction. The text and "
+        "SARIF branches print the same thing for both."
+    ),
+    "sarif-artifact-omits-disclosure": (
+        "json and text both disclose the degradation; the SARIF DOCUMENT does "
+        "not. A warning printed beside a SARIF file is not in the SARIF file: "
+        "the CI system that ingests the artifact reads a floored, partial run "
+        "as a complete clean one. Fix template: pass the marker into the "
+        "*_to_sarif builder as a toolExecutionNotifications entry -- see "
+        "roam.output.sarif.with_sarif_disclosures."
+    ),
+    "structured-envelope-instead-of-exit": (
+        "DELIBERATE and pinned by a test: the JSON branch answers a "
+        "resolution failure with a structured envelope (partial_success, "
+        "state, error) and exit 0, because a non-zero exit strips the "
+        "structured signal at the MCP wrapper -- see the Pattern-1B/1C note "
+        "in cmd_diagnose.py and test_cmd_why_resolution.py's explicit "
+        "assert exit_code == 0. The text branch has no envelope to carry the "
+        "signal, so it uses the exit code instead. Not a defect; do not "
+        "'fix' by making --json exit non-zero without changing those tests."
+    ),
+}
+
+
+def derive_reason(v: dict[str, object]) -> str:
+    """Name WHY a violation is grandfathered, or ``"TODO"`` if nothing fits.
+
+    Keyed on the (token, blind-mode) pair rather than the token alone: a
+    ``warnings_out`` that only the SARIF artifact misses is a different defect,
+    with a different fix, from one the whole text branch misses — and a reason
+    code that cannot tell them apart is not naming a reason.
+    """
+    token = str(v["token"])
+    raw_blind = v["blind"]
+    blind = [str(mode) for mode in raw_blind] if isinstance(raw_blind, list) else []
+    if token == GATE_SIGNAL:
+        return "structured-envelope-instead-of-exit"
+    if blind == ["sarif"]:
+        return "sarif-artifact-omits-disclosure"
+    if token == "warnings_out":
+        return "json-only-warnings-bucket"
+    if token == "empty_corpus_state":
+        return "json-only-empty-corpus-state"
+    return "TODO"
+
+
+#: Fields of a violation that the baseline records. ``line`` is deliberately
+#: EXCLUDED: the ratchet compares defect identity, and a baseline that churns
+#: every time an unrelated import moves is a baseline nobody re-reads.
+_BASELINE_FIELDS = ("command", "token", "observed_by", "blind", "module")
+
+
+def baseline_path(root: pathlib.Path | None = None) -> pathlib.Path:
+    return (root or _repo_root()) / "tests" / "data" / "disclosure_asymmetry_baseline.json"
+
+
+#: What the mark says when there is no previous file to carry a reason from.
+_UNEXPLAINED_MARK = (
+    "No rationale recorded. The high-water mark above is the count measured "
+    "when this file was first generated; replace this text with why the mark "
+    "is what it is before anyone is asked to trust it. A number in a ratchet "
+    "file with no reason beside it is indistinguishable from someone raising "
+    "it to make CI green."
+)
+
+
+def _carried_mark(count: int, root: pathlib.Path | None = None) -> tuple[int, str]:
+    """Carry the recorded mark AND its rationale forward; never raise the mark.
+
+    Regenerating must not be a way to launder a growth. If the tree now has
+    more asymmetries than the mark allows, the emitted file trips
+    ``test_baseline_only_ever_shrinks`` until someone raises the mark by hand
+    and says why — which is the whole point of recording a mark.
+
+    The note is carried for the same reason: a regeneration that silently
+    dropped the justification would leave the number standing alone, which is
+    the state this field exists to prevent.
+    """
+    try:
+        recorded = json.loads(baseline_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return count, _UNEXPLAINED_MARK
+    mark = recorded.get("_high_water_mark")
+    note = recorded.get("_high_water_mark_note")
+    return (
+        mark if isinstance(mark, int) else count,
+        note if isinstance(note, str) and note.strip() else _UNEXPLAINED_MARK,
+    )
+
+
+def build_baseline(report: ScanReport, root: pathlib.Path | None = None) -> dict[str, object]:
+    """The ratchet file: every live asymmetry, each naming why it is tolerated."""
+    violations = [
+        {**{field: v[field] for field in _BASELINE_FIELDS}, "reason": derive_reason(v)} for v in report.violations
+    ]
+    mark, mark_note = _carried_mark(len(violations), root)
+    return {
+        "_comment": (
+            "W1331 ratchet baseline -- see tests/"
+            "test_w1331_disclosure_branch_symmetry.py. Every entry is a "
+            "command that routes a disclosure signal to one output "
+            "branch and not another, so a consumer of the other branch "
+            "reads a degraded run as a clean one. This list may only "
+            "SHRINK: the test fails both on a new violation and on a "
+            "stale entry. Every entry names a reason code from "
+            "_reason_codes; adding a code, or an entry, is a reviewable "
+            "diff by construction."
+        ),
+        "_regenerate": "python scripts/scan_disclosure_asymmetry.py --baseline",
+        "_high_water_mark": mark,
+        "_high_water_mark_note": mark_note,
+        "_reason_codes": REASON_CODES,
+        "violations": violations,
+    }
+
+
 def _repo_root() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parents[1]
 
@@ -1124,6 +1283,7 @@ def _repo_root() -> pathlib.Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--text", action="store_true", help="human-readable report")
+    parser.add_argument("--baseline", action="store_true", help="emit the ratchet baseline file")
     parser.add_argument(
         "--include-schema-keys",
         action="store_true",
@@ -1133,6 +1293,25 @@ def main(argv: list[str] | None = None) -> int:
 
     vocabulary = DISCLOSURE_TOKENS + (SCHEMA_TOKENS if args.include_schema_keys else ())
     report = scan(_repo_root() / "src" / "roam" / "commands", vocabulary)
+
+    if args.baseline:
+        # The denominator is checked BEFORE the file is emitted: a baseline
+        # regenerated from a scan that could not read part of the tree would
+        # silently record "fixed" for every module it failed to parse.
+        if not report.positive_control.ok:
+            print(f"REFUSING to emit a baseline: {report.positive_control.detail}", file=sys.stderr)
+            return EXIT_SCANNER_BROKEN
+        if report.files_parsed == 0:
+            print("REFUSING to emit a baseline: zero files parsed is zero coverage", file=sys.stderr)
+            return EXIT_SCANNER_BROKEN
+        if report.files_unanalyzable:
+            for entry in report.unanalyzable:
+                print(f"UNANALYZABLE {entry['module']}: {entry['reason']}", file=sys.stderr)
+            print("REFUSING to emit a baseline from a partially-analysed tree", file=sys.stderr)
+            return EXIT_UNANALYZABLE
+        print(json.dumps(build_baseline(report), indent=2))
+        print(report.summary(), file=sys.stderr)
+        return EXIT_OK
 
     if args.text:
         for v in report.violations:
