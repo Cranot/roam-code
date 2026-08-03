@@ -19,6 +19,7 @@ from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.output.formatter import (
     abbrev_kind,
+    echo_text_warnings,
     format_table,
     json_envelope,
     loc,
@@ -590,6 +591,7 @@ def closure_cmd(ctx, name, rename, delete_mode):
             click.echo(f"Total: {total_changes} change(s) in {files_affected} file(s)")
 
         _run_check_em("format_text_output", _format_text_output, default=None)
+        echo_text_warnings(_w607em_warnings_out)
         # Marker accumulator handles disclosure on the text path -- the
         # warning rides into ``_w607em_warnings_out`` even when
         # text-mode output is human-targeted (JSON mode carries the

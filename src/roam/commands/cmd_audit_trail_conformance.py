@@ -39,7 +39,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.audit_trail_helpers import load_records as _load_records
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.metric_definitions import CHAIN_COMPLIANCE_SCORE_DEFINITION
 
 EXIT_GATE_FAILURE = 5
@@ -258,6 +258,8 @@ def _checks_to_sarif(
     checks: list[dict],
     audit_trail_path: Path,
     score: int,
+    *,
+    disclosures: list[str] | None = None,
 ) -> dict:
     """Render the 6-check verdict as a SARIF 2.1.0 envelope.
 
@@ -323,6 +325,8 @@ def _checks_to_sarif(
         version="audit-trail-conformance-check",
         rules=rules,
         results=results,
+        emit_runtime_notifications=bool(disclosures),
+        warnings_out=disclosures,
     )
 
 
@@ -886,11 +890,18 @@ def audit_trail_conformance_check_cmd(
     if _combined_warnings_out:
         summary["warnings_out"] = list(_combined_warnings_out)
         summary["partial_success"] = True
+        if not json_mode:
+            echo_text_warnings(_combined_warnings_out)
 
     if sarif:
         from roam.output.sarif import write_sarif
 
-        sarif_doc = _checks_to_sarif(checks, path, score)
+        sarif_doc = _checks_to_sarif(
+            checks,
+            path,
+            score,
+            disclosures=_combined_warnings_out or None,
+        )
         sarif_text = write_sarif(sarif_doc, sarif_output)
         if not sarif_output:
             click.echo(sarif_text)

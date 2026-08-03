@@ -22,6 +22,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.output.formatter import (
     abbrev_kind,
+    echo_text_warnings,
     json_envelope,
     loc,
     resolution_disclosure,
@@ -507,6 +508,7 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                     usage_envelope_kwargs["warnings_out"] = list(_w607cu_warnings_out)
                 click.echo(to_json(json_envelope("invariants", **usage_envelope_kwargs)))
             else:
+                echo_text_warnings(_w607cu_warnings_out)
                 click.echo(verdict)
             raise SystemExit(1)
 
@@ -663,6 +665,7 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
             return
 
         # Text output
+        echo_text_warnings(_w607cu_warnings_out)
         click.echo(f"VERDICT: {verdict}")
         click.echo()
 

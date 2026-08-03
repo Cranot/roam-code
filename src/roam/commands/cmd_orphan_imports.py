@@ -1230,12 +1230,15 @@ def orphan_imports(ctx, lang, persist) -> None:
         # CI integration path; now degrades silently with a marker, and
         # the function returns early (matches pre-W607-CR semantics
         # that SARIF mode short-circuits).
-        def _emit_sarif():
-            from roam.output.sarif import orphan_imports_to_sarif, write_sarif
+        def _build_sarif():
+            from roam.output.sarif import orphan_imports_to_sarif
 
-            click.echo(write_sarif(orphan_imports_to_sarif(all_orphans)))
+            return orphan_imports_to_sarif(all_orphans)
 
-        _run_check_cr("serialize_to_sarif", _emit_sarif, default=None)
+        from roam.output.sarif import with_sarif_disclosures, write_sarif
+
+        sarif = _run_check_cr("serialize_to_sarif", _build_sarif, default={})
+        click.echo(write_sarif(with_sarif_disclosures(sarif, _w607cr_warnings_out)))
         # W1331: a SARIF document has nowhere to carry these markers, so a
         # Code-Scanning gate reads a floored orphan-imports scan as clean.
         echo_text_warnings(_w607cr_warnings_out)

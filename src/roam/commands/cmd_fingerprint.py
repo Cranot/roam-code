@@ -20,7 +20,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, format_table, json_envelope, to_json
 
 # Hard refusal threshold — beyond this, the spectral analysis (Fiedler vector
 # via algebraic_connectivity) runs O(n³) without a sparse-eigensolver hookup
@@ -843,6 +843,8 @@ def fingerprint(ctx, compact, export_path, compare_path, persist):
                 envelope["warnings_out"] = list(_w607dh_warnings_out)
             click.echo(to_json(envelope))
             return
+
+        echo_text_warnings(_w607dh_warnings_out)
 
         # -- Compact output --
         if compact:

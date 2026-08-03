@@ -26,7 +26,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import empty_corpus_state, ensure_index
 from roam.db.connection import batched_in, open_db
-from roam.output.formatter import format_table, json_envelope, loc, to_json
+from roam.output.formatter import echo_text_empty_corpus, format_table, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -644,6 +644,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
                     )
                 )
             else:
+                echo_text_empty_corpus(_empty)
                 click.echo(f"VERDICT: {empty_verdict}")
             return
 

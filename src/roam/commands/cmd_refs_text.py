@@ -50,7 +50,7 @@ from roam.commands.grep_helpers import (
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.evidence._vocabulary import REFERENCE_REMOVAL_VERDICTS
-from roam.output.formatter import json_envelope, loc, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Verdict thresholds
@@ -376,6 +376,7 @@ def refs_text_cmd(
                     )
                 )
             else:
+                echo_text_warnings(warnings_out)
                 click.echo(f"VERDICT: {msg}")
             raise SystemExit(1)
         orphans = build_orphan_set(conn) if reach_set is None else set()
@@ -430,6 +431,7 @@ def refs_text_cmd(
             warnings_out=warnings_out,
         )
         return
+    echo_text_warnings(warnings_out)
     _emit_text(analyses, targets, reachable_from)
 
 
@@ -510,6 +512,7 @@ def _emit_empty(json_mode, targets, budget, engine, *, warnings_out=None):
             )
         )
     else:
+        echo_text_warnings(warnings_out)
         click.echo(f"VERDICT: {len(targets)} string(s) checked, 0 load-bearing")
         for s in targets:
             click.echo(f"--- {s} — SAFE-TO-REMOVE (no references in source code) ---")

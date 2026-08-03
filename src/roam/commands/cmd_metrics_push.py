@@ -37,7 +37,7 @@ from click.testing import CliRunner
 from roam.capability import roam_capability
 from roam.commands.git_helpers import detect_roam_version, git_metadata, utc_timestamp
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import WarningsOut, json_envelope, to_json
+from roam.output.formatter import WarningsOut, echo_text_warnings, json_envelope, to_json
 
 DEFAULT_ENDPOINT = "https://api.roam.cloud/v1/metrics"
 USER_AGENT = "roam-code-metrics-push"
@@ -681,6 +681,7 @@ def metrics_push(
                         click.echo("<payload not JSON-serializable>")
 
             _run_check_di("emit_text_output", _emit_dry_text, default=None)
+            echo_text_warnings(_w607di_warnings_out)
         return
 
     if not token:
@@ -768,6 +769,7 @@ def metrics_push(
                 click.echo(response_text[:200])
 
         _run_check_di("emit_text_output", _emit_text, default=None)
+        echo_text_warnings(_w607di_warnings_out)
 
     # Exit non-zero so CI consumers + shell pipelines see the failure.
     # The JSON envelope already carried ok:false; the text path used to

@@ -29,7 +29,7 @@ from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.git_helpers import git_metadata
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
 def _run_subcommand(args: list[str]) -> dict:
@@ -321,6 +321,7 @@ def dogfood_cmd(
             )
         click.echo(envelope_text)
     else:
+        echo_text_warnings(combined_warnings)
         click.echo(f"VERDICT: {verdict_text}")
         click.echo()
         if health_score is not None:

@@ -18,6 +18,7 @@ from roam.db.connection import open_db
 from roam.db.edge_kinds import CALL_EDGE_KINDS
 from roam.output.formatter import (
     abbrev_kind,
+    echo_text_warnings,
     json_envelope,
     loc,
     resolution_disclosure,
@@ -625,6 +626,7 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
                     no_path_kwargs["warnings_out"] = list(_w607eq_warnings_out)
                 click.echo(to_json(json_envelope("trace", **no_path_kwargs)))
             else:
+                echo_text_warnings(_w607eq_warnings_out)
                 click.echo(f"VERDICT: {no_path_verdict}\n")
                 click.echo(f"No dependency path between '{source}' and '{target}'.")
                 if exhaustive:
@@ -858,6 +860,7 @@ def trace(ctx, source, target, k_paths, max_hops, exhaustive):
             click.echo(f"\nCoupling: {coupling_summary}")
 
         _run_check_eq("format_text_output", _format_text_output, default=None)
+        echo_text_warnings(_w607eq_warnings_out)
 
 
 def _print_path(hops):

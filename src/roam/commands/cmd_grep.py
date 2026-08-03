@@ -58,7 +58,7 @@ from roam.commands.grep_helpers import (
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.index.file_roles import ROLE_SOURCE, ROLE_TEST, classify_file
-from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.formatter import abbrev_kind, echo_text_warnings, json_envelope, loc, to_json
 from roam.output.source_context import read_body_preview, read_source_range
 
 # ---------------------------------------------------------------------------
@@ -890,6 +890,7 @@ def grep_cmd(
         )
         return
 
+    echo_text_warnings(list(warnings_out) + list(_w607bv_warnings_out))
     _emit_text(
         matches,
         groups,
@@ -1185,6 +1186,7 @@ def _emit_empty(json_mode, patterns, budget, engine, filtered=False, *, warnings
             )
         )
     else:
+        echo_text_warnings(warnings_out)
         click.echo(f"VERDICT: no matches for {label}{suffix}")
         click.echo()
         click.echo(f"No matches for {label}{suffix}.")

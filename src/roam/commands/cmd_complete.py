@@ -22,7 +22,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 log = logging.getLogger(__name__)
 
@@ -239,6 +239,7 @@ def complete(ctx, prefix, kind, limit):
         )
         return
 
+    echo_text_warnings(warnings_out)
     click.echo(f"VERDICT: {verdict}")
     for bucket_name, values in payload.items():
         if not values:

@@ -17,7 +17,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 _MAX_GRAPH_SYMBOLS = 10000
 
@@ -162,6 +162,7 @@ def _emit_simulation_error(json_mode: bool, op_name: str, error: str, before: di
             envelope_kwargs["warnings_out"] = list(warnings_out)
         click.echo(to_json(json_envelope("simulate", **envelope_kwargs)))
         return
+    echo_text_warnings(warnings_out)
     click.echo(f"VERDICT: {error}")
 
 
@@ -594,6 +595,7 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
         _emit_simulation_text_output(op_name, op_result, deltas, warnings, verdict)
 
     _run_check_ef("format_text_output", _format_text_output, default=None)
+    echo_text_warnings(_w607ef_warnings_out)
     # Marker accumulator handles disclosure on the text path -- the
     # warning rides into ``_w607ef_warnings_out`` even when text-mode
     # output is human-targeted (JSON mode carries the structured

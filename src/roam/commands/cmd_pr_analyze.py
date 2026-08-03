@@ -80,7 +80,7 @@ from roam.commands.pr_analyze.cache import (
 )
 from roam.commands.resolve import ensure_index
 from roam.observability import log_swallowed
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -2693,9 +2693,11 @@ def pr_analyze_command(
     if json_mode:
         click.echo(to_json(pr_analyze_envelope))
     elif quiet:
+        echo_text_warnings(list(_w607aa_warnings_out) + list(_w607by_warnings_out))
         # CI-friendly mode: 1-line summary + reason if any. No tables, no breakdowns.
         click.echo(f"VERDICT: {verdict} (blast {blast_radius}, ai {ai['score']}, rules {len(rule_violations)})")
     else:
+        echo_text_warnings(list(_w607aa_warnings_out) + list(_w607by_warnings_out))
         click.echo(f"VERDICT: {verdict}")
         click.echo()
         click.echo(f"  blast radius:    {blast_radius}/100")

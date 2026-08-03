@@ -26,7 +26,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root
 from roam.git_utils import worktree_git_env
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 # CP45/CP46 fail-loud sentinels. ``_git_pickaxe`` / ``_diff_polarity`` previously
 # swallowed ``FileNotFoundError`` (git absent) AND non-zero return codes (real
@@ -376,6 +376,7 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
         )
         return
 
+    echo_text_warnings(warnings_out)
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     for p in pats:

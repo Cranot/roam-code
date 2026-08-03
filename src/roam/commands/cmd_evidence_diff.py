@@ -71,7 +71,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.evidence.completeness_compat import compute_completeness
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, format_table, json_envelope, to_json
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -928,6 +928,7 @@ def evidence_diff(ctx, old_path, new_path):
     # Text mode -- W607-CK: surface the final_verdict (carries the
     # aggregation-phase compute_verdict result) so the text rendering
     # stays in lockstep with the JSON envelope summary.verdict.
+    echo_text_warnings(list(_w607ax_warnings_out) + list(_w607ck_warnings_out))
     click.echo(f"VERDICT: {final_verdict}")
     click.echo(f"  old: {old_path}")
     click.echo(f"  new: {new_path}")

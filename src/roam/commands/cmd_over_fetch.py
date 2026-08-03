@@ -1727,16 +1727,20 @@ def over_fetch_cmd(ctx, threshold, limit, leaks_only, persist):
         # integration path; now degrades silently to None with a marker,
         # and the function returns early (matches pre-W607-CE semantics
         # that SARIF mode short-circuits).
-        def _emit_sarif():
-            from roam.output.sarif import over_fetch_to_sarif, write_sarif
+        def _build_sarif():
+            from roam.output.sarif import over_fetch_to_sarif
 
             # Combine model-level + endpoint-level findings into one list
             # so the SARIF projector can branch on the ``state`` field
             # (present on endpoint findings only).
             combined: list[dict] = list(findings) + list(endpoint_findings)
-            click.echo(write_sarif(over_fetch_to_sarif(combined)))
+            return over_fetch_to_sarif(combined)
 
-        _run_check_ce("serialize_to_sarif", _emit_sarif, default=None)
+        from roam.output.sarif import with_sarif_disclosures, write_sarif
+
+        sarif = _run_check_ce("serialize_to_sarif", _build_sarif, default={})
+        _sarif_disclosures = list(_w607ce_warnings_out) + list(_w607dt_warnings_out)
+        click.echo(write_sarif(with_sarif_disclosures(sarif, _sarif_disclosures)))
         # W1331: a SARIF document has nowhere to carry these markers, so a
         # Code-Scanning gate reads a floored over-fetch scan as a repo with
         # no over-fetching.

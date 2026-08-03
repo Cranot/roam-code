@@ -22,7 +22,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Lightweight data collection helpers
@@ -812,3 +812,4 @@ def dashboard(ctx):
             return None
 
         _run_check_dp("format_text", _format_text, default=None)
+        echo_text_warnings(list(_w607o_warnings_out) + list(_w607dp_warnings_out))

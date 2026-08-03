@@ -716,12 +716,13 @@ def math_cmd(
         _all_warnings_out = list(_json_mode_warnings) + list(_suppression_warnings) + list(_filter_warnings)
 
         if sarif_mode:
-            from roam.output.sarif import algo_to_sarif, write_sarif
+            from roam.output.sarif import algo_to_sarif, with_sarif_disclosures, write_sarif
 
             sarif = algo_to_sarif(
                 findings,
                 detector_meta.get("detector_metadata", {}),
             )
+            sarif = with_sarif_disclosures(sarif, _all_warnings_out)
             click.echo(write_sarif(sarif))
             echo_text_warnings(_all_warnings_out)
             return

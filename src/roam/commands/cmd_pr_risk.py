@@ -32,7 +32,14 @@ from roam.commands.changed_files import (
 from roam.commands.cmd_coupling import _compute_surprise
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, WarningsOut, format_table, json_envelope, to_json
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    WarningsOut,
+    echo_text_warnings,
+    format_table,
+    json_envelope,
+    to_json,
+)
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -2014,6 +2021,9 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
             return
 
         # --- Text output ---
+        echo_text_warnings(
+            list(_warnings_out) + list(_w607q_warnings_out) + list(_w607ab_warnings_out) + list(_w607bu_warnings_out)
+        )
         click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"=== PR Risk ({label}) ===\n")
         click.echo(f"Risk Score: {risk}/100 ({level})")

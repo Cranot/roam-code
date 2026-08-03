@@ -1066,9 +1066,10 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
             # flags (HIGH-RISK / hub / spreader) project to SARIF —
             # local-only flags are skipped per the W150 audit.
             if sarif_mode:
-                from roam.output.sarif import fan_to_sarif, write_sarif
+                from roam.output.sarif import fan_to_sarif, with_sarif_disclosures, write_sarif
 
-                click.echo(write_sarif(fan_to_sarif(symbol_items)))
+                sarif_doc = with_sarif_disclosures(fan_to_sarif(symbol_items), _w607x_warnings_out)
+                click.echo(write_sarif(sarif_doc))
                 # W1331: nothing in a SARIF document carries these
                 # markers, so a floored fan scan reaches the gate looking
                 # like a complete one.
@@ -1299,9 +1300,10 @@ def fan(ctx, mode, count, no_framework, include_tooling, include_tests, persist)
             # the ``path`` field (no line — metric applies to the
             # whole file).
             if sarif_mode:
-                from roam.output.sarif import fan_to_sarif, write_sarif
+                from roam.output.sarif import fan_to_sarif, with_sarif_disclosures, write_sarif
 
-                click.echo(write_sarif(fan_to_sarif(file_items)))
+                sarif_doc = with_sarif_disclosures(fan_to_sarif(file_items), _w607x_warnings_out)
+                click.echo(write_sarif(sarif_doc))
                 # W1331: same disclosure on the file-mode SARIF path.
                 echo_text_warnings(_w607x_warnings_out)
                 return

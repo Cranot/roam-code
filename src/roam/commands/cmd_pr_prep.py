@@ -25,7 +25,7 @@ from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -696,6 +696,7 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
         click.echo(to_json(pr_prep_envelope))
         return
 
+    echo_text_warnings(list(_w607ac_warnings_out) + list(_w607cc_warnings_out))
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     click.echo(f"  changed files:    {diff_summary.get('changed_files', '?')}")

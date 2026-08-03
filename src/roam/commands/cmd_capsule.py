@@ -21,7 +21,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 
 # ---------------------------------------------------------------------------
@@ -741,6 +741,7 @@ def capsule(ctx, redact_paths, no_signatures, output):
         return
 
     # Text summary (always shown when --output is used; default mode otherwise)
+    echo_text_warnings(list(_w607bd_warnings_out) + list(_w607dk_warnings_out))
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     click.echo("Topology:")

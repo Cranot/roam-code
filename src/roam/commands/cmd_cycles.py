@@ -24,7 +24,7 @@ from roam.graph.cycles import (
     mark_actionable_cycles,
     mark_shadow_artifacts,
 )
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_empty_corpus, json_envelope, to_json
 
 # A single pathological SCC can carry hundreds of files / thousands of
 # symbols (observed live on roam-code's own graph: a 1531-symbol / 390-file
@@ -122,6 +122,7 @@ def cycles(ctx, min_size, limit, actionable_only):
                     )
                 )
             else:
+                echo_text_empty_corpus(_empty)
                 click.echo(f"VERDICT: {empty_verdict}")
             return
 

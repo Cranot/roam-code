@@ -48,7 +48,7 @@ from click.testing import CliRunner
 
 from roam.commands.resolve import ensure_index
 from roam.exit_codes import EXIT_SUCCESS
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 
 
 def _git_log_in_range(commit_range: str, *, limit: int = 100) -> list[dict]:
@@ -770,6 +770,7 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
         default=None,
     )
     if not commits_with_findings:
+        echo_text_warnings(list(_w607an_warnings_out) + list(_w607cv_warnings_out) + list(_w607dr_warnings_out))
         click.echo("  (no findings surfaced over this range)")
         return
 
@@ -799,3 +800,4 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
         show_n,
         default=None,
     )
+    echo_text_warnings(list(_w607an_warnings_out) + list(_w607cv_warnings_out) + list(_w607dr_warnings_out))

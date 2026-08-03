@@ -29,7 +29,7 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.fleet.adapters import ADAPTERS
 from roam.fleet.manifest import build_fleet_manifest
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
 @roam_capability(
@@ -413,6 +413,7 @@ def fleet_plan_command(ctx, goal, n_agents, adapter, output_path, branch_prefix)
                 click.echo("... (truncated; pass --output to capture full manifest)")
 
     _run_check_eb("format_text_output", _format_text_output, default=None)
+    echo_text_warnings(_w607eb_warnings_out)
     # Marker accumulator handles disclosure on the text path -- the
     # warning rides into ``_w607eb_warnings_out`` even when text-mode
     # output is human-targeted (JSON mode carries the structured

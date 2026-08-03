@@ -39,7 +39,7 @@ from roam.commands.conventions_helper import (
 )
 from roam.commands.resolve import detect_entry_points, ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, json_envelope, to_json
+from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 
 
 def _section_overview(conn):
@@ -1219,6 +1219,7 @@ def describe(ctx, write, force, agent_prompt, out_file):
                 _ap_envelope = _ap_envelope_floor
             click.echo(to_json(_ap_envelope))
         else:
+            echo_text_warnings(list(warnings_out) + list(_w607dg_warnings_out))
             click.echo(f"VERDICT: {_ap_verdict}")
             click.echo()
             click.echo(_format_agent_prompt(data))
@@ -1444,6 +1445,7 @@ def describe(ctx, write, force, agent_prompt, out_file):
         click.echo(to_json(_desc_envelope))
         return
 
+    echo_text_warnings(list(warnings_out) + list(_w607dg_warnings_out))
     click.echo(f"VERDICT: {_desc_verdict}")
     click.echo()
 

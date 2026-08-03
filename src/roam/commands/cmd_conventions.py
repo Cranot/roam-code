@@ -40,6 +40,7 @@ from roam.output.confidence import (
 )
 from roam.output.formatter import (
     abbrev_kind,
+    echo_text_warnings,
     format_table,
     json_envelope,
     loc,
@@ -1209,6 +1210,7 @@ def conventions(ctx, max_outliers, persist):
             return
 
         # ---- Text output ----
+        echo_text_warnings(_w607cw_warnings_out)
         click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"Conventions detected in {project}:\n")
 

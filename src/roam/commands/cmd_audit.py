@@ -45,7 +45,7 @@ from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
 def _capture(args: list[str]) -> dict:
@@ -399,3 +399,4 @@ def audit(ctx, brief) -> None:
         return None
 
     _run_check_dm("format_text", _format_text, default=None)
+    echo_text_warnings(list(_w607p_warnings_out) + list(_w607dm_warnings_out))

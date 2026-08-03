@@ -52,7 +52,14 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, file_not_found_hint
 from roam.db.connection import open_db
 from roam.db.queries import FILE_BY_PATH, FILE_IMPORTED_BY, FILE_IMPORTS
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, strip_list_payloads, to_json
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    echo_text_warnings,
+    format_table,
+    json_envelope,
+    strip_list_payloads,
+    to_json,
+)
 
 
 def _bounded_list_preview(items: list, cap: int) -> tuple[list, bool]:
@@ -510,6 +517,7 @@ def deps(ctx, path, full, multi):
             return
 
         # --- Text output ---
+        echo_text_warnings(list(_w607v_warnings_out) + list(_w607db_warnings_out))
         _fname = frow["path"].split("/")[-1]
         _verdict = f"{_fname}: {len(imports)} imports, {len(imported_by)} importers"
         click.echo(f"VERDICT: {_verdict}\n")

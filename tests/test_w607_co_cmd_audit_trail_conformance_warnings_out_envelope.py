@@ -174,6 +174,39 @@ def test_conformance_happy_path_no_w607co_markers(cli_runner, valid_trail):
         assert not leaked, f"clean conformance must NOT surface {prefix} markers; got {leaked!r}"
 
 
+@pytest.mark.parametrize("mode_args", [[], ["--sarif"]], ids=["text", "sarif"])
+def test_conformance_degradation_is_disclosed_outside_json(
+    monkeypatch,
+    cli_runner,
+    valid_trail,
+    mode_args,
+):
+    """The W607 marker must survive the text and SARIF output branches."""
+    import roam.commands.cmd_audit_trail_conformance as _mod
+    from roam.cli import cli
+
+    def _raise_check(*args, **kwargs):
+        raise RuntimeError("synthetic-output-symmetry-from-W607-AL")
+
+    monkeypatch.setattr(_mod, "_check_chain_integrity", _raise_check)
+    args = [*mode_args, "audit-trail-conformance-check", "--input", str(valid_trail)]
+    result = cli_runner.invoke(cli, args, catch_exceptions=False)
+
+    assert result.exit_code == 0, result.output
+    assert "# warning: audit_trail_conformance_check_chain_integrity_failed:" in result.output
+    if "--sarif" in mode_args:
+        import json
+
+        sarif_start = result.stdout.index("{")
+        sarif = json.loads(result.stdout[sarif_start:])
+        notifications = sarif["runs"][0]["invocations"][0]["toolExecutionNotifications"]
+        assert any(
+            "audit_trail_conformance_check_chain_integrity_failed:" in note["message"]["text"] for note in notifications
+        )
+    else:
+        assert "VERDICT:" in result.output
+
+
 # ---------------------------------------------------------------------------
 # (2) AST-level guard -- the additive ``_run_check_co`` helper is present
 # ---------------------------------------------------------------------------

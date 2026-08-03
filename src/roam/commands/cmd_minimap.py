@@ -25,7 +25,7 @@ from roam.capability import roam_capability
 from roam.commands.conventions_helper import compute_conventions
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Sentinel markers
@@ -741,6 +741,7 @@ def minimap(ctx, update_claude, output_file, init_notes):
                 )
             click.echo(envelope_text)
         else:
+            echo_text_warnings(combined_warnings)
             click.echo(f"{verb}: {target}")
     else:
         # Print to stdout
@@ -789,4 +790,5 @@ def minimap(ctx, update_claude, output_file, init_notes):
                 )
             click.echo(envelope_text)
         else:
+            echo_text_warnings(combined_warnings)
             click.echo(block)

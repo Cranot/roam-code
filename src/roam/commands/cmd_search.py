@@ -20,6 +20,7 @@ from roam.db.connection import batched_in, open_db
 from roam.output.formatter import (
     KIND_ABBREV,
     abbrev_kind,
+    echo_text_warnings,
     format_signature,
     format_table,
     json_envelope,
@@ -992,6 +993,7 @@ def search_cmd(
                     )
                 click.echo(_text)
             else:
+                echo_text_warnings(list(warnings_out) + list(_w607br_warnings_out))
                 click.echo(f"VERDICT: {_no_match_verdict}")
                 click.echo()
                 click.echo(f"No symbols matching '{pattern}'{suffix}")
@@ -1169,6 +1171,7 @@ def search_cmd(
                         click.echo(line)
                 else:
                     click.echo("  (no FTS5 explanation available -- index may use TF-IDF fallback)")
+        echo_text_warnings(list(warnings_out) + list(_w607br_warnings_out))
 
 
 # Keep the LazyGroup import target stable while avoiding a top-level function
