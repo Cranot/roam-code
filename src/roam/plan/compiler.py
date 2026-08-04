@@ -98,6 +98,7 @@ from roam.plan.plan_cache import (
     _apply_generation_sweep,  # noqa: F401 — compatibility re-export
     _index_db_path,
     _persist_sweep_stale_generation,  # noqa: F401 — compatibility re-export
+    _roam_version_stamp,
     _run_roam_persist_ensure_schema,  # noqa: F401 — compatibility re-export
     _run_roam_persist_get,
     _run_roam_persist_is_sensitive,
@@ -9773,7 +9774,10 @@ def _probe_neg_persist_key(label: str, task: str) -> str:
     # differs in case/punctuation/whitespace hashes to a distinct row, so
     # the absent regex trigger is re-run and re-persisted across sessions.
     canon = _canonicalize_task(task or "")
-    return sha256((label + "\x1f" + canon).encode("utf-8", "replace")).hexdigest()[:24]
+    # Version-stamped like the envelope/plan keys: a persisted "this probe
+    # found nothing" verdict from an older roam must not suppress a probe the
+    # upgraded one would now answer.
+    return sha256((label + "\x1f" + _roam_version_stamp() + "\x1f" + canon).encode("utf-8", "replace")).hexdigest()[:24]
 
 
 def _probe_neg_persist_get(label: str, task: str, cwd: str | None) -> bool:
@@ -9867,8 +9871,11 @@ _PROBE_POS_PERSIST_TABLE_INITED: set[str] = set()
 def _probe_pos_persist_key(label: str, task: str, named_paths: list[str]) -> str:
     """Persistent-cache row key for a (label, task, named_paths) positive entry.
     Shared by the per-label getter/putter and the batch reader so the derivation
-    lives in exactly one place."""
-    return sha256(_probe_pos_cache_key(label, task, named_paths).encode("utf-8", "replace")).hexdigest()[:24]
+    lives in exactly one place. Version-stamped: these rows are probe RESULTS,
+    whose shape is set by the tool that produced them, and they outlive an
+    upgrade (24h TTL, and an upgrade never moves the target repo's HEAD)."""
+    raw = _probe_pos_cache_key(label, task, named_paths) + "\x1f" + _roam_version_stamp()
+    return sha256(raw.encode("utf-8", "replace")).hexdigest()[:24]
 
 
 def _probe_pos_persist_ensure_schema(conn) -> None:
@@ -12214,6 +12221,16 @@ def _envelope_cache_key(task: str, repo_head: str | None, cwd: str | None) -> st
     h.update(b"\x00")
     h.update(_compiler_fingerprint().encode("utf-8"))
     h.update(b"\x00")
+    # The INSTALLED TOOL VERSION. The compiler-file mtime above is only a
+    # proxy for it: upgrading roam does not move the target repo's HEAD, and
+    # deployment schemes that normalize file timestamps (Nix/Guix/Bazel
+    # stores, `tar --mtime=`, SOURCE_DATE_EPOCH-pinned image layers) leave the
+    # mtime identical across versions. Measured 2026-08-04 with the real
+    # released wheels: under normalized mtimes, 13.9.0 and 13.10.0 computed
+    # the SAME key and 13.10.0 served 13.9.0's envelope — obligations and
+    # execution contract included — with no surface reporting anything amiss.
+    h.update(_roam_version_stamp().encode("utf-8"))
+    h.update(b"\x00")
     # Edit-context probe flags/caps change envelope OUTPUT; fold them in so a
     # flag toggle is immediately reversible (otherwise the cached envelope is
     # served regardless). Empty in prod (unset) -> key unchanged.
@@ -12571,9 +12588,13 @@ def _plan_persist_key(task: str, cwd: str | None, repo_head: str | None) -> str:
     h.update((repo_head or "").encode("utf-8"))
     # Same compiler-code stamp as the envelope cache — a classifier edit
     # must invalidate persisted PLANS too, or the old `procedure` keeps
-    # being served from here even though the envelope cache busted.
+    # being served from here even though the envelope cache busted. Same
+    # reasoning for the installed-version stamp: an upgrade that reclassifies
+    # a task must not read the previous version's persisted plan back.
     h.update(b"\x00")
     h.update(_compiler_fingerprint().encode("utf-8"))
+    h.update(b"\x00")
+    h.update(_roam_version_stamp().encode("utf-8"))
     return h.hexdigest()[:32]
 
 

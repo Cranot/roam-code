@@ -60,6 +60,48 @@ _LEGACY_PREDICATE_TYPES = (
 STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
 SCHEMA_VERSION = "1"
 
+# ---------------------------------------------------------------------------
+# Graph-builder identity
+# ---------------------------------------------------------------------------
+#
+# A CGA binds two digests to a commit: the symbol merkle root and the edge
+# bundle. Both are derived from the INDEX, not from the source — so they move
+# whenever the graph builder changes, even on a byte-identical tree at a fixed
+# commit. Measured instance: a case-fold fix in the symbol resolver stopped it
+# fabricating ~6,400 import edges; every attestation signed before that fix
+# then failed against a post-fix index at the SAME commit on a CLEAN tree with
+# ``edge_bundle_digest mismatch — edges changed since signing``.
+#
+# That message is true and useless. "Edges changed since signing" is exactly
+# what a verifier prints when someone has altered the evidence, so a tool
+# upgrade and an attack were rendered identically. Only one of those is a
+# security event, and the reader could not tell which they had.
+#
+# ``GRAPH_RESOLVER_VERSION`` is the manually-owned half of the builder
+# identity: bump it whenever the SEMANTICS of symbol or edge construction
+# change in a way that can move the digests on unchanged source — resolver
+# fixes, new edge kinds, changed qualified-name shapes, changed dedup rules.
+# Do NOT bump it for a release that leaves graph construction alone; a
+# needless bump costs real tamper-detection sharpness (see
+# ``_describe_builder_drift`` for why).
+#
+# The automatic half comes from ``index_manifest`` (parser/grammar/extractor/
+# bridge versions + index schema version), which the indexer already stamps
+# per run. That half needs no discipline: an extractor bump is caught even if
+# nobody remembers this constant exists.
+GRAPH_RESOLVER_VERSION = "1"
+
+# Verification states. Deliberately three, not two — see
+# ``verify_cga_statement_state``.
+VERIFY_STATE_VERIFIED = "verified"
+VERIFY_STATE_MISMATCH = "mismatch"
+VERIFY_STATE_BUILDER_DRIFT = "graph_builder_drift"
+
+# Prefix stamped on every reclassified fingerprint error so text-mode
+# consumers (and greps in CI logs) can separate "the toolchain moved" from
+# "the evidence moved".
+_DRIFT_PREFIX = "graph_builder_drift"
+
 # OpenVEX justification strings and status labels advertised by CGA predicates.
 # These match the taint engine's emitted labels without importing that engine.
 OPENVEX_JUSTIFICATIONS: frozenset[str] = frozenset(
@@ -241,6 +283,117 @@ def _edge_bundle_digest(conn) -> tuple[str, int]:
     return _hash_hex(chunks), len(chunks)
 
 
+def _canonical_json_blob(raw: Any) -> Any:
+    """Re-parse a JSON TEXT column so key order can't fake a version change.
+
+    ``index_manifest`` stores component/parser maps as JSON strings. Two runs
+    of the same toolchain can serialise the same map with different key order,
+    which would hash differently and manufacture a phantom builder drift.
+    Parse then re-serialise canonically; fall back to the raw string when the
+    column isn't parseable (older rows, hand-edited DBs).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return raw
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return raw
+
+
+def graph_builder_identity(conn) -> dict[str, Any]:
+    """Identity of the machinery that BUILT the graph the digests cover.
+
+    Two halves, deliberately:
+
+    * ``resolver_version`` — :data:`GRAPH_RESOLVER_VERSION`, hand-owned,
+      covers core resolver semantics that nothing else versions.
+    * ``index_schema_version`` + ``component_digest`` — derived from the
+      newest ``index_manifest`` row, covering the index schema and every
+      parser / grammar / extractor / bridge / detector version the indexer
+      stamped. Free of maintainer discipline.
+
+    Missing or unreadable manifest fields come back as ``None``. ``None``
+    means UNKNOWN, never "equal": :func:`_describe_builder_drift` refuses to
+    declare drift from an unknown, so a wiped manifest can never soften a
+    verdict.
+    """
+    identity: dict[str, Any] = {
+        "resolver_version": GRAPH_RESOLVER_VERSION,
+        "index_schema_version": None,
+        "component_digest": None,
+    }
+    try:
+        row = conn.execute(
+            "SELECT schema_version, parser_versions, grammar_versions, component_versions "
+            "FROM index_manifest ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    except Exception:
+        # No index_manifest table (synthetic/unit DBs) or an unreadable one.
+        # Fail soft to UNKNOWN — which fails CLOSED at comparison time.
+        return identity
+    if not row:
+        return identity
+    try:
+        identity["index_schema_version"] = int(row[0]) if row[0] is not None else None
+    except (TypeError, ValueError):
+        identity["index_schema_version"] = None
+    payload = json.dumps(
+        {
+            "parser_versions": _canonical_json_blob(row[1]),
+            "grammar_versions": _canonical_json_blob(row[2]),
+            "component_versions": _canonical_json_blob(row[3]),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    identity["component_digest"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return identity
+
+
+_IDENTITY_FIELDS = ("resolver_version", "index_schema_version", "component_digest")
+
+
+def _describe_builder_drift(signed: Any, live: dict[str, Any]) -> str | None:
+    """Return a description of the builder change, or ``None`` for "same".
+
+    Security contract — this function is the only thing standing between a
+    tamper verdict and a softer one, so it is written to say ``None``
+    (i.e. "treat as the same builder, use the strict wording") in every
+    ambiguous case:
+
+    * predicate carries no ``graph_builder`` block (every statement signed
+      before this field existed) → ``None``. A missing field cannot buy
+      leniency, so old attestations keep exactly the verdict they had.
+    * a field is absent or ``None`` on EITHER side → that field is not
+      comparable and is skipped. Deleting a field never creates drift.
+    * no field was comparable at all → ``None``.
+
+    Only a field present and populated on BOTH sides, with different values,
+    counts. Note also what drift does NOT do: it never turns a failure into a
+    pass, so the worst an attacker gains by forging this block is a different
+    LABEL on a result that still fails and still exits non-zero — and forging
+    it breaks the cosign signature over the predicate.
+    """
+    if not isinstance(signed, dict):
+        return None
+    changed: list[str] = []
+    for field in _IDENTITY_FIELDS:
+        was, now = signed.get(field), live.get(field)
+        if was is None or now is None:
+            continue
+        if str(was) != str(now):
+            was_s, now_s = str(was), str(now)
+            if field == "component_digest":
+                was_s, now_s = was_s[:12] + "…", now_s[:12] + "…"
+            changed.append(f"{field} {was_s} → {now_s}")
+    if not changed:
+        return None
+    return "; ".join(changed)
+
+
 def _language_summary(conn) -> dict[str, int]:
     rows = conn.execute(
         "SELECT language, COUNT(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY COUNT(*) DESC"
@@ -289,6 +442,12 @@ def build_cga_predicate(
         # signed-while-dirty statement can be re-verified against the same
         # uncommitted state if needed.
         "git_dirty_hash": dirty_hash,
+        # Identity of the graph builder that produced the two digests above.
+        # Without it a verifier cannot tell "roam's resolver was upgraded"
+        # from "someone edited the evidence" — both present as a digest that
+        # moved at a fixed commit on a clean tree. With it, the verifier
+        # reports those as separate states.
+        "graph_builder": graph_builder_identity(conn),
         "languages": languages,
         "tool": {
             "name": "roam-code",
@@ -435,7 +594,12 @@ def _check_graph_fingerprints(
     n_symbols: int,
     n_edges: int,
 ) -> list[str]:
-    """Compare the signed graph fingerprints against the live DB values."""
+    """Compare the signed graph fingerprints against the live DB values.
+
+    Wording here is the TAMPER wording, and it is correct only when the same
+    graph builder produced both sides. Callers that have established builder
+    drift pass the result through :func:`_reclassify_as_builder_drift`.
+    """
     mismatches: list[str] = []
     if predicate.get("merkle_root") != expected_merkle:
         mismatches.append("merkle_root mismatch — symbols changed since signing")
@@ -448,6 +612,104 @@ def _check_graph_fingerprints(
     return mismatches
 
 
+def _reclassify_as_builder_drift(mismatches: list[str], drift_reason: str) -> list[str]:
+    """Re-attribute fingerprint mismatches to a graph-builder change.
+
+    Nothing is dropped and nothing is forgiven — every mismatch still appears,
+    still carries its live-vs-signed numbers, and still fails the verify. The
+    only thing that changes is the CAUSE the message asserts, because
+    "edges changed since signing" is an accusation the verifier is not
+    entitled to make once it knows the builder moved underneath it.
+    """
+    out: list[str] = []
+    for line in mismatches:
+        field, _, detail = line.partition(" mismatch")
+        detail = detail.lstrip(" —:").strip()
+        rendered = f"{_DRIFT_PREFIX}: {field} differs, but the graph builder changed since signing ({drift_reason})"
+        # Keep the concrete numbers from count mismatches; drop the causal
+        # clauses ("symbols changed since signing") that we just disowned.
+        if detail.startswith("got "):
+            rendered += f" — {detail}"
+        out.append(
+            rendered + ". This is toolchain drift, NOT evidence of tampering. Re-emit the attestation at this commit "
+            "with the current toolchain to restore a comparable baseline."
+        )
+    return out
+
+
+def _no_builder_identity_note(predicate: dict[str, Any]) -> list[str]:
+    """Advisory emitted when a fingerprint moved on an identity-less predicate.
+
+    Statements signed before ``graph_builder`` existed carry no builder
+    identity, so the verifier genuinely cannot tell a toolchain upgrade from
+    tampering. It says so rather than implying the stronger of the two. The
+    strict mismatch lines are still present and the verify still fails.
+    """
+    if "graph_builder" in predicate:
+        return []
+    return [
+        "note: this attestation predates graph-builder identity "
+        "(no `graph_builder` in the predicate), so the verifier cannot "
+        "distinguish a roam graph-builder upgrade from tampering. Re-emit at "
+        "this commit with the current toolchain to get that distinction."
+    ]
+
+
+def classify_verification_state(errors: list[str]) -> str:
+    """Map a :func:`verify_cga_statement` error list onto THREE states.
+
+    * :data:`VERIFY_STATE_VERIFIED` — no errors.
+    * :data:`VERIFY_STATE_BUILDER_DRIFT` — every error is a fingerprint
+      difference that :func:`_reclassify_as_builder_drift` attributed to a
+      graph-builder change. The signed digests are no longer comparable, so
+      the verifier can make NO claim about this graph — it can neither
+      confirm it nor accuse anyone of altering it.
+    * :data:`VERIFY_STATE_MISMATCH` — anything else. That includes digests
+      that moved under a FIXED builder (the real tamper signal) and every
+      environmental failure (wrong commit, dirty tree, bad predicate type).
+
+    Why drift is its own state and NOT a pass:
+
+    A version field that let a mismatch through would be a hole you could
+    drive an attack through — claim a version bump, get waved past. So drift
+    is a REFUSAL, not an excuse. ``ok`` stays False, ``roam cga verify``
+    still exits 5, CI still blocks. The only thing that changes is the cause
+    the message asserts.
+
+    Why drift is NOT simply "tampered":
+
+    Because it isn't, and saying so burns the signal. A verifier that cries
+    tamper on every toolchain upgrade trains its readers to ignore it, which
+    costs exactly the alarm you wanted when a real one fires.
+
+    Note the all-or-nothing rule: ONE environmental error and the verdict is
+    MISMATCH again. A builder bump explains digests; it explains nothing
+    about provenance, so it can never launder a wrong commit or a dirty tree.
+    """
+    if not errors:
+        return VERIFY_STATE_VERIFIED
+    if all(e.startswith(_DRIFT_PREFIX + ":") for e in errors):
+        return VERIFY_STATE_BUILDER_DRIFT
+    return VERIFY_STATE_MISMATCH
+
+
+def verify_cga_statement_state(
+    statement: dict[str, Any],
+    conn,
+    *,
+    project_root: Path,
+) -> tuple[str, list[str]]:
+    """Verify *statement* and return ``(state, errors)``.
+
+    Tri-state front door over :func:`verify_cga_statement`, for callers that
+    need to tell a graph-builder upgrade apart from tampering. See
+    :func:`classify_verification_state` for what the states mean and why
+    drift is a refusal rather than a pass.
+    """
+    _ok, errors = verify_cga_statement(statement, conn, project_root=project_root)
+    return classify_verification_state(errors), errors
+
+
 def verify_cga_statement(
     statement: dict[str, Any],
     conn,
@@ -458,6 +720,11 @@ def verify_cga_statement(
 
     Returns ``(ok, errors)``. The list is empty on success; otherwise it
     enumerates every mismatch for the verifier to surface.
+
+    Graph-builder drift is NOT ok here: it returns ``False`` exactly like a
+    mismatch, so no caller can be tricked into accepting a drifted
+    attestation. Callers that want to act on the distinction should use
+    :func:`verify_cga_statement_state` / :func:`classify_verification_state`.
     """
     if not isinstance(statement, dict):
         return False, ["statement is not a JSON object"]
@@ -475,7 +742,23 @@ def verify_cga_statement(
 
     expected_merkle, n_symbols = _symbol_fingerprints(conn)
     expected_edges, n_edges = _edge_bundle_digest(conn)
-    errors.extend(_check_graph_fingerprints(predicate, expected_merkle, expected_edges, n_symbols, n_edges))
+    fingerprint_errors = _check_graph_fingerprints(predicate, expected_merkle, expected_edges, n_symbols, n_edges)
+
+    # Attribution, not absolution: the fingerprint failures below stay
+    # failures either way. ``drift_reason`` only decides which cause the
+    # message is allowed to assert.
+    drift_reason = None
+    if fingerprint_errors:
+        drift_reason = _describe_builder_drift(predicate.get("graph_builder"), graph_builder_identity(conn))
+    if drift_reason:
+        errors.extend(_reclassify_as_builder_drift(fingerprint_errors, drift_reason))
+    else:
+        errors.extend(fingerprint_errors)
+        if fingerprint_errors:
+            errors.extend(_no_builder_identity_note(predicate))
+    # Everything appended past this point is environmental — never
+    # attributable to the graph builder — so it keeps the verdict at
+    # MISMATCH via ``classify_verification_state``'s all-or-nothing rule.
 
     # Subject git_commit_sha1 — the statement claims it was signed against
     # commit X. Refuse if the live tree is at commit Y. Older statements

@@ -73,7 +73,7 @@ USAGE
 -----
     python scripts/scan_disclosure_asymmetry.py            # JSON report
     python scripts/scan_disclosure_asymmetry.py --text     # human report
-    python scripts/scan_disclosure_asymmetry.py --baseline # ratchet file
+    python scripts/scan_disclosure_asymmetry.py --baseline # rewrite the ratchet IN PLACE
 
 Exit codes: 0 clean, 1 violations, 2 unanalyzable files, 3 the scanner
 cannot be trusted (positive control failed, or nothing was parsed at all).
@@ -86,6 +86,38 @@ NEW violation *and* on a STALE entry.  Every entry names a reason code from
 ``REASON_CODES``; a violation shape with no mapping emits ``"TODO"``, which
 that test rejects — an allowlist whose entries do not say why is a shrug,
 not a policy.
+
+THE REGENERATE COMMAND WRITES THE FILE; DO NOT REDIRECT IT (W1460)
+------------------------------------------------------------------
+``--baseline`` used to print the ratchet to STDOUT and the documented
+remediation was::
+
+    python scripts/scan_disclosure_asymmetry.py --baseline > tests/data/disclosure_asymmetry_baseline.json  # W1460-HISTORICAL: the trap. Never run this.
+
+That instruction destroyed the artifact it claimed to regenerate, on every
+single run. The shell opens and TRUNCATES the redirect target before this
+process starts, so by the time ``_carried_mark`` reads the recorded
+high-water mark and its rationale, the file it is reading is zero bytes.
+Measured at 4a358387: exit 2, ``REFUSING to emit a baseline: the existing
+ratchet file could not be read (JSONDecodeError...)``, and a 0-byte ratchet
+left on disk — mark, rationale, all four entries and the reason-code table
+gone, and no way to get them back but ``git checkout``. The command could
+never succeed: deleting the "corrupt" file and re-running fails identically,
+because the redirect recreates it empty every time.
+
+The fix is that ``--baseline`` writes ``baseline_path()`` itself and puts
+NOTHING on stdout, so there is no redirect left to type. Reading earlier
+cannot fix this and never could — the truncation happens in the shell, before
+``main`` is entered — which is why the redirect is removed from the contract
+rather than documented around. The residual case, a crash or a kill partway
+through the write, is closed by writing to a sibling temp file and
+``os.replace``-ing it into place: the ratchet is either the old file or the
+new one, never half of either.
+
+The pre-W1460 refusal was itself a fix, and an incomplete one: it converted
+a SILENT reset of the high-water mark into a LOUD refusal, which stopped the
+mark being laundered but left the file destroyed. A guard that turns silent
+data loss into loud data loss has moved the defect, not removed it.
 
 The baseline is a list of ASYMMETRIES, never a list of unreadable files:
 ``files_unanalyzable`` has no baseline and never will, because "I could not
@@ -137,6 +169,7 @@ import argparse
 import ast
 import dataclasses
 import json
+import os
 import pathlib
 import sys
 
@@ -1456,21 +1489,6 @@ def violation_key(v: dict[str, object]) -> str:
 #: They are deliberately few and deliberately specific: a code that would
 #: fit any violation is not a reason, it is a shrug.
 REASON_CODES: dict[str, str] = {
-    "json-only-warnings-bucket": (
-        "The W607 warnings_out bucket is threaded into the JSON envelope only. "
-        "A human running the command without --json, and a CI job consuming "
-        "--sarif, cannot see that a substrate call failed and was floored. "
-        "Fix template: cmd_understand.py -- echo '# warning: <marker>' to "
-        "STDERR in the non-JSON tails, which leaves stdout byte-identical."
-    ),
-    "sarif-artifact-omits-disclosure": (
-        "json and text both disclose the degradation; the SARIF DOCUMENT does "
-        "not. A warning printed beside a SARIF file is not in the SARIF file: "
-        "the CI system that ingests the artifact reads a floored, partial run "
-        "as a complete clean one. Fix template: pass the marker into the "
-        "*_to_sarif builder as a toolExecutionNotifications entry -- see "
-        "roam.output.sarif.with_sarif_disclosures."
-    ),
     "structured-envelope-instead-of-exit": (
         "DELIBERATE and pinned by a test: the JSON branch answers a "
         "resolution failure with a structured envelope (partial_success, "
@@ -1575,12 +1593,115 @@ def build_baseline(report: ScanReport, root: pathlib.Path | None = None) -> dict
             "_reason_codes; adding a code, or an entry, is a reviewable "
             "diff by construction."
         ),
+        # NO REDIRECT. ``--baseline`` rewrites this file in place and prints
+        # nothing to stdout; ``> tests/data/disclosure_asymmetry_baseline.json``
+        # truncates the file in the shell before the scanner can read the mark
+        # below out of it. See the W1460 note in the module docstring.
         "_regenerate": "python scripts/scan_disclosure_asymmetry.py --baseline",
         "_high_water_mark": mark,
         "_high_water_mark_note": mark_note,
         "_reason_codes": REASON_CODES,
         "violations": violations,
     }
+
+
+def write_baseline(payload: dict[str, object], root: pathlib.Path | None = None) -> pathlib.Path:
+    """Write the ratchet file ATOMICALLY, and return where it went.
+
+    Via a sibling temp file and ``os.replace``, so the ratchet on disk is
+    either the whole old file or the whole new one. A plain ``open(..., "w")``
+    truncates first and would leave a zero-byte ratchet behind on a crash, a
+    full disk, or a kill — the same lost high-water mark the shell redirect
+    used to cause, just by a slower route.
+
+    Sibling rather than ``tempfile.gettempdir()`` because ``os.replace`` is
+    only atomic within a filesystem.
+
+    ``newline="\\n"`` because this file is committed. Text-mode writes on
+    Windows translate to CRLF, which would rewrite all 62 lines of the ratchet
+    on every regeneration from a Windows checkout — a diff nobody reads is a
+    diff nobody reviews, and the ratchet's whole value is that its diff is
+    reviewable.
+    """
+    target = baseline_path(root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
+        os.replace(tmp, target)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    return target
+
+
+def emit_baseline(report: ScanReport, root: pathlib.Path | None = None) -> int:
+    """Regenerate the ratchet file in place; return the process exit code.
+
+    NOTHING is written to stdout. The ratchet used to be printed and the
+    caller told to redirect it over the file, which truncated that file in the
+    shell before this process could read the high-water mark out of it — see
+    the W1460 note in the module docstring. Owning the write is what removes
+    the redirect from the contract; there is no ``--stdout`` escape hatch,
+    because an escape hatch is the trap with an extra step.
+
+    Every refusal below happens BEFORE ``write_baseline`` is called, so a
+    refused regeneration leaves the existing ratchet exactly as it found it.
+    """
+    # The denominator is checked BEFORE the file is emitted: a baseline
+    # regenerated from a scan that could not read part of the tree would
+    # silently record "fixed" for every module it failed to parse.
+    if not report.positive_control.ok:
+        print(f"REFUSING to emit a baseline: {report.positive_control.detail}", file=sys.stderr)
+        return EXIT_SCANNER_BROKEN
+    if report.files_parsed == 0:
+        print("REFUSING to emit a baseline: zero files parsed is zero coverage", file=sys.stderr)
+        return EXIT_SCANNER_BROKEN
+    if report.files_unanalyzable:
+        for entry in report.unanalyzable:
+            print(f"UNANALYZABLE {entry['module']}: {entry['reason']}", file=sys.stderr)
+        print("REFUSING to emit a baseline from a partially-analysed tree", file=sys.stderr)
+        return EXIT_UNANALYZABLE
+    if report.files_capped:
+        # Same refusal, one level in. A baseline built from truncated
+        # analysis records "fixed" for every asymmetry the truncation hid,
+        # and the ratchet then rejects that asymmetry FOREVER as a new
+        # violation the moment the walk reaches it again.
+        for entry in report.capped:
+            print(f"TRUNCATED {entry['module']}: {entry['reason']}", file=sys.stderr)
+        print(
+            f"REFUSING to emit a baseline: {report.files_capped} file(s) were only "
+            f"partially analysed ({report.cap_hits})",
+            file=sys.stderr,
+        )
+        return EXIT_UNANALYZABLE
+    try:
+        payload = build_baseline(report, root)
+    except (OSError, ValueError) as exc:
+        # A ratchet file that is PRESENT but unreadable is not a first
+        # generation. Recovery is named here rather than left as an exercise,
+        # because the historical cause of this state was following the
+        # documented instruction.
+        print(
+            f"REFUSING to emit a baseline: the existing ratchet file could not be read "
+            f"({type(exc).__name__}: {exc}); regenerating over it would replace its "
+            "high-water mark with today's count. Restore it first — "
+            f"git checkout -- {baseline_path(root)} — and re-run WITHOUT a shell "
+            "redirect; --baseline writes the file itself.",
+            file=sys.stderr,
+        )
+        return EXIT_UNANALYZABLE
+    try:
+        target = write_baseline(payload, root)
+    except OSError as exc:
+        print(f"REFUSING to emit a baseline: could not write it ({type(exc).__name__}: {exc})", file=sys.stderr)
+        return EXIT_UNANALYZABLE
+    print(
+        f"wrote {target}: {len(payload['violations'])} entries, high-water mark {payload['_high_water_mark']}",
+        file=sys.stderr,
+    )  # type: ignore[arg-type]
+    print(report.summary(), file=sys.stderr)
+    return EXIT_OK
 
 
 def _repo_root() -> pathlib.Path:
@@ -1590,7 +1711,15 @@ def _repo_root() -> pathlib.Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--text", action="store_true", help="human-readable report")
-    parser.add_argument("--baseline", action="store_true", help="emit the ratchet baseline file")
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help=(
+            "rewrite tests/data/disclosure_asymmetry_baseline.json IN PLACE. "
+            "Do NOT redirect: nothing goes to stdout, and a redirect onto the "
+            "ratchet truncates it before the high-water mark can be read back."
+        ),
+    )
     parser.add_argument(
         "--include-schema-keys",
         action="store_true",
@@ -1613,46 +1742,7 @@ def main(argv: list[str] | None = None) -> int:
     report = scan(commands_dir, vocabulary)
 
     if args.baseline:
-        # The denominator is checked BEFORE the file is emitted: a baseline
-        # regenerated from a scan that could not read part of the tree would
-        # silently record "fixed" for every module it failed to parse.
-        if not report.positive_control.ok:
-            print(f"REFUSING to emit a baseline: {report.positive_control.detail}", file=sys.stderr)
-            return EXIT_SCANNER_BROKEN
-        if report.files_parsed == 0:
-            print("REFUSING to emit a baseline: zero files parsed is zero coverage", file=sys.stderr)
-            return EXIT_SCANNER_BROKEN
-        if report.files_unanalyzable:
-            for entry in report.unanalyzable:
-                print(f"UNANALYZABLE {entry['module']}: {entry['reason']}", file=sys.stderr)
-            print("REFUSING to emit a baseline from a partially-analysed tree", file=sys.stderr)
-            return EXIT_UNANALYZABLE
-        if report.files_capped:
-            # Same refusal, one level in. A baseline built from truncated
-            # analysis records "fixed" for every asymmetry the truncation
-            # hid, and the ratchet then rejects that asymmetry FOREVER as a
-            # new violation the moment the walk reaches it again.
-            for entry in report.capped:
-                print(f"TRUNCATED {entry['module']}: {entry['reason']}", file=sys.stderr)
-            print(
-                f"REFUSING to emit a baseline: {report.files_capped} file(s) were only "
-                f"partially analysed ({report.cap_hits})",
-                file=sys.stderr,
-            )
-            return EXIT_UNANALYZABLE
-        try:
-            payload = build_baseline(report)
-        except (OSError, ValueError) as exc:
-            print(
-                f"REFUSING to emit a baseline: the existing ratchet file could not be read "
-                f"({type(exc).__name__}: {exc}); regenerating over it would replace its "
-                "high-water mark with today's count",
-                file=sys.stderr,
-            )
-            return EXIT_UNANALYZABLE
-        print(json.dumps(payload, indent=2))
-        print(report.summary(), file=sys.stderr)
-        return EXIT_OK
+        return emit_baseline(report)
 
     if args.text:
         for v in report.violations:
