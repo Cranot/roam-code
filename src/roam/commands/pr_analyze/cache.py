@@ -3,17 +3,30 @@
 A cache hit short-circuits the heavy work — pr-prep + AI scoring + rules
 matching — when the inputs that affect the analysis haven't changed.
 Inputs hashed: diff text, rules-file content (mtime-independent), block
-threshold, language override, and the cache schema version.
+threshold, language override, the cache schema version, and the identity of
+the analyzer code that produced the bundle.
 
-The schema version is bumped when the bundle shape changes so older
-cached envelopes don't surface as stale renders.
+That last term is the one this module was missing. ``CACHE_VERSION`` is a
+serialization tag — its own comment scopes it to "when the envelope shape
+changes" — so it says nothing about the LOGIC that derived the values inside
+that shape. Every other term is an input. With no producer term at all, a
+bundle computed by one release was served verbatim to the next under an
+identical key, including ``summary.verdict``, which
+``cmd_pr_analyze._serve_from_cache`` turns into ``sys.exit(EXIT_GATE_BLOCK)``.
+A CI gate could pass or fail a PR on a verdict the running code never
+computed and would not agree with.
+
+See :func:`_analyzer_fingerprint` for what the producer term covers and,
+just as importantly, what it does not.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json as _json
+import os
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +34,86 @@ from roam.output.formatter import WarningsOut
 
 DEFAULT_CACHE_DIR = Path(".roam") / "pr-analyze-cache"
 CACHE_VERSION = 1  # bump when the envelope shape changes
+
+_ANALYZER_FINGERPRINT: str | None = None
+
+
+def _analyzer_fingerprint() -> str:
+    """Identity of the code that computes a pr-analyze bundle.
+
+    Two terms, the same pair the compile-envelope cache settled on after
+    measuring a real cross-version serve (``compiler._envelope_cache_key``):
+
+    * **Module mtimes** — every module in ``roam.commands.pr_analyze`` plus
+      ``cmd_pr_analyze`` itself, discovered via ``pkgutil`` rather than listed,
+      so a module added later is covered without anyone remembering this
+      function exists. This is what moves in an editable/dev tree, where a
+      logic edit does not touch any version metadata.
+    * **Installed version stamp** — reused from ``roam.plan.plan_cache``, not
+      re-implemented. mtimes are not enough on their own: deployment schemes
+      that normalize timestamps (Nix/Guix/Bazel stores, ``tar --mtime=``,
+      SOURCE_DATE_EPOCH-pinned image layers) leave them identical across
+      releases, which is exactly how the compile cache was measured serving
+      13.9.0's envelope to 13.10.0. Forking a second copy of that stamp would
+      make two producers derive their identity two ways, which is the defect
+      class this whole term exists to close.
+
+    What it does NOT cover, stated rather than implied: code reached through
+    this one that lives elsewhere — the rules engine, pr-prep, the scoring
+    model. The rules *file* is content-hashed separately, but a change to the
+    engine that interprets it is not seen here. This term makes the common
+    upgrade safe; it is not a proof of total coverage.
+
+    When NOTHING can be determined — no readable mtime for any module and no
+    version stamp — the fingerprint becomes a per-process token, so the cache
+    misses instead of sharing a key across processes on the strength of an
+    identity nobody established. A miss costs a recomputation; the alternative
+    costs a wrong verdict. Memoized: none of these can change mid-process.
+    """
+    global _ANALYZER_FINGERPRINT
+    if _ANALYZER_FINGERPRINT is not None:
+        return _ANALYZER_FINGERPRINT
+
+    import importlib.util
+    import pkgutil
+
+    import roam.commands.pr_analyze as _pkg
+
+    names = ["roam.commands.cmd_pr_analyze"]
+    names += [f"{_pkg.__name__}.{m.name}" for m in pkgutil.iter_modules(_pkg.__path__)]
+
+    parts: list[str] = []
+    resolved = 0
+    for name in sorted(set(names)):
+        try:
+            spec = importlib.util.find_spec(name)
+            origin = getattr(spec, "origin", None)
+            if not origin:
+                parts.append(f"{name}=?")
+                continue
+            parts.append(f"{name}={int(os.stat(origin).st_mtime)}")
+            resolved += 1
+        except (OSError, ImportError, ValueError, AttributeError):
+            # Unreadable module identity. "?" is a placeholder, NOT an
+            # assertion of sameness — the ``resolved`` counter below decides
+            # whether enough was established to key a shared cache at all.
+            parts.append(f"{name}=?")
+
+    try:
+        from roam.plan.plan_cache import _roam_version_stamp
+
+        version = _roam_version_stamp()
+    except Exception:  # noqa: BLE001 — a cache key must never break the command
+        version = ""
+    parts.append(f"version={version}")
+
+    if resolved == 0 and not version:
+        # Nothing at all is known about the producer. Fail closed to a
+        # per-process key so no two runs can share a cached verdict.
+        parts.append(f"unknown={uuid.uuid4().hex}")
+
+    _ANALYZER_FINGERPRINT = ";".join(parts)
+    return _ANALYZER_FINGERPRINT
 
 
 @dataclass(frozen=True)
@@ -56,10 +149,18 @@ class _CacheKeyInputs:
         )
 
     def digest(self) -> str:
-        """Derive the stable sha256 cache key for these inputs."""
+        """Derive the stable sha256 cache key for these inputs.
+
+        Covers the inputs AND the producer — see :func:`_analyzer_fingerprint`
+        for why the latter is not optional. Without it every term here is
+        something the USER supplied, so upgrading roam left the key fixed and
+        the previous release's verdict was served as the current one's.
+        """
         h = hashlib.sha256()
         h.update(f"v={CACHE_VERSION}\n".encode())
-        h.update(b"diff=")
+        h.update(b"analyzer=")
+        h.update(_analyzer_fingerprint().encode("utf-8"))
+        h.update(b"\ndiff=")
         h.update((self.diff_text or "").encode("utf-8"))
         h.update(b"\nrules=")
         if self.rules_path.exists():
