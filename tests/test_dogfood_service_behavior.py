@@ -22,6 +22,7 @@ dogfood suites (governance / detector / retrieve).
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -35,7 +36,6 @@ from tests._helpers.repo_root import repo_root
 
 REPO_ROOT = repo_root()
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "dogfood_service"
-OPEN_DB_DIFF = FIXTURES / "open_db_signature_change.diff"
 DOCS_DIFF = FIXTURES / "docs_typo.diff"
 
 # ``sys.executable`` is the interpreter pytest is running under — the venv
@@ -80,6 +80,98 @@ def _roam_stdin(stdin: str, *args: str, timeout: int = FAST) -> subprocess.Compl
         timeout=timeout,
         env=env,
     )
+
+
+# ---------------------------------------------------------------------------
+# The high-blast diff — GENERATED from the indexed file, never checked in
+# ---------------------------------------------------------------------------
+#
+# This was a stored fixture (``fixtures/dogfood_service/open_db_signature_
+# change.diff``) whose hunk header froze ``@@ -1077,6 +1077,7 @@``.
+#
+# critique maps a diff to symbols POSITIONALLY: ``find_changed_symbols``
+# intersects each hunk's line window with the indexed ``[line_start,
+# line_end]`` of every symbol in the file. A literal line number in a stored
+# diff is therefore an undeclared dependency on wherever the target symbol
+# happens to sit in a file that everyone edits.
+#
+# It drifted, exactly as that arrangement guarantees. 52f2c069 inserted an
+# 8-line migration entry at connection.py:648 — ~430 lines ABOVE the target
+# and touching nothing it depends on. ``open_db`` moved 1076 -> 1084, the
+# frozen window 1077-1083 stopped intersecting it and landed on
+# ``_commit_and_optimize`` instead, and critique — correctly — scored a
+# low-blast change and exited 0. The gate never regressed; the fixture stopped
+# pointing at the thing under test, and the test could not tell the difference.
+#
+# Generating the diff from the same file content the index was built from
+# makes the hunk correct by construction at any line number, and the guard in
+# ``_generate_open_db_diff`` fails loudly if the target ever stops being the
+# symbol the hunk covers — so a future drift is a named error, not a silent
+# re-aim at some low-blast neighbour.
+
+CONNECTION_PY_REL = "src/roam/db/connection.py"
+
+# ``open_db``'s signature, and the same signature with one parameter inserted.
+# Shared by the --input diff and the floating-commit test so there is one
+# place to update when the real signature changes.
+OPEN_DB_OLD_SIG = "def open_db(\n    readonly: bool = False,\n    project_root: Path | None = None,\n    *,\n"
+OPEN_DB_NEW_SIG = (
+    "def open_db(\n    readonly: bool = False,\n    project_root: Path | None = None,\n"
+    "    strict_validation: bool = False,\n    *,\n"
+)
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
+
+
+def _open_db_signature_change() -> tuple[str, str]:
+    """Return ``(original, modified)`` text of the real ``connection.py``,
+    where *modified* adds a parameter to ``open_db``'s signature.
+
+    Reads the working tree — the same bytes ``roam index`` indexed — so the
+    positions derived from it agree with the index by construction.
+    """
+    original = (REPO_ROOT / CONNECTION_PY_REL).read_text(encoding="utf-8")
+    assert OPEN_DB_OLD_SIG in original, "open_db's signature shape changed — update OPEN_DB_OLD_SIG / OPEN_DB_NEW_SIG"
+    return original, original.replace(OPEN_DB_OLD_SIG, OPEN_DB_NEW_SIG, 1)
+
+
+def _generate_open_db_diff(dest: Path) -> Path:
+    """Write a git-style unified diff of the ``open_db`` signature change.
+
+    Asserts the emitted hunk actually covers ``def open_db(``. That check is
+    what makes a failure downstream mean "the gate stopped blocking a
+    high-blast change" rather than "the diff quietly re-aimed itself".
+    """
+    original, modified = _open_db_signature_change()
+    body = "".join(
+        difflib.unified_diff(
+            original.splitlines(keepends=True),
+            modified.splitlines(keepends=True),
+            fromfile=f"a/{CONNECTION_PY_REL}",
+            tofile=f"b/{CONNECTION_PY_REL}",
+            n=3,
+        )
+    )
+    diff = f"diff --git a/{CONNECTION_PY_REL} b/{CONNECTION_PY_REL}\n{body}"
+
+    hunks = _HUNK_RE.findall(diff)
+    assert len(hunks) == 1, f"expected exactly one hunk, got {len(hunks)}:\n{diff[:600]}"
+    start, length = int(hunks[0][0]), int(hunks[0][1] or 1)
+    open_db_line = modified.splitlines().index("def open_db(") + 1
+    assert start <= open_db_line < start + length, (
+        f"generated hunk covers new-side lines {start}..{start + length - 1} but "
+        f"`def open_db(` is at line {open_db_line} — the diff no longer targets the "
+        "high-blast symbol this suite exists to gate on"
+    )
+
+    dest.write_text(diff, encoding="utf-8")
+    return dest
+
+
+@pytest.fixture(scope="session")
+def open_db_diff(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Session-scoped path to the generated high-blast diff."""
+    return _generate_open_db_diff(tmp_path_factory.mktemp("open_db_diff") / "open_db_signature_change.diff")
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +314,9 @@ def _findings(data: dict) -> list[dict]:
     return data.get("findings") or data.get("data", {}).get("findings", [])
 
 
-def test_critique_blocks_high_blast_change_with_exit_5() -> None:
-    """A signature change to open_db (1125 callers) is HIGH → exit 5."""
-    code, data = _critique_json(OPEN_DB_DIFF)
+def test_critique_blocks_high_blast_change_with_exit_5(open_db_diff: Path) -> None:
+    """A signature change to open_db (900+ callers) is HIGH → exit 5."""
+    code, data = _critique_json(open_db_diff)
     assert code == 5, f"expected gate exit 5, got {code}"
     assert data["summary"].get("risk_level_canonical") == "high"
     msgs = " ".join(str(f.get("message", f.get("detail", ""))) for f in _findings(data))
@@ -239,9 +331,9 @@ def test_critique_passes_safe_docs_change_with_exit_0() -> None:
     assert _findings(data) == [], "safe docs change should produce zero findings"
 
 
-def test_critique_detects_intent_removal_mismatch() -> None:
+def test_critique_detects_intent_removal_mismatch(open_db_diff: Path) -> None:
     """--intent claims a removal but the diff is purely additive → intent finding."""
-    code, data = _critique_json(OPEN_DB_DIFF, "--intent", "remove the legacy validation path")
+    code, data = _critique_json(open_db_diff, "--intent", "remove the legacy validation path")
     intent_findings = [
         f
         for f in _findings(data)
@@ -331,22 +423,15 @@ def test_pr_analyze_commit_range_flags_real_risk(tmp_path: Path) -> None:
 
     Fix: build a floating commit (git commit-tree, no working-tree/index/
     ref mutation) reproducing the SAME high-blast ``open_db`` signature
-    change as ``OPEN_DB_DIFF`` on top of the real indexed HEAD. This stays
+    change as the ``open_db_diff`` fixture on top of the real indexed HEAD.
+    This stays
     deterministic and reliably HIGH via critique's real (indexed) caller
     graph, regardless of what unrelated commits landed most recently.
     """
-    connection_py = REPO_ROOT / "src" / "roam" / "db" / "connection.py"
-    original = connection_py.read_text(encoding="utf-8")
-    old_sig = "def open_db(\n    readonly: bool = False,\n    project_root: Path | None = None,\n    *,\n"
-    new_sig = (
-        "def open_db(\n    readonly: bool = False,\n    project_root: Path | None = None,\n"
-        "    strict_validation: bool = False,\n    *,\n"
-    )
-    assert old_sig in original, "open_db's signature shape changed — update this test's replacement text"
-    modified = original.replace(old_sig, new_sig, 1)
+    _, modified = _open_db_signature_change()
 
     parent, new_sha = _make_floating_commit(
-        "src/roam/db/connection.py",
+        CONNECTION_PY_REL,
         modified,
         tmp_path / "floating_index",
         "test: open_db signature change (floating, unreachable from any branch)",
@@ -387,7 +472,7 @@ def _require_clean_worktree() -> None:
         )
 
 
-def test_pr_analyze_input_diff_agrees_with_critique() -> None:
+def test_pr_analyze_input_diff_agrees_with_critique(open_db_diff: Path) -> None:
     """pr-analyze --input on a high-blast diff must NOT verdict SAFE, and it
     must be non-SAFE for the RIGHT reason.
 
@@ -411,14 +496,14 @@ def test_pr_analyze_input_diff_agrees_with_critique() -> None:
     """
     _require_clean_worktree()
 
-    code, crit = _critique_json(OPEN_DB_DIFF)
+    code, crit = _critique_json(open_db_diff)
     assert code == 5 and crit["summary"].get("risk_level_canonical") == "high", (
         "control precondition failed — critique should flag this diff HIGH"
     )
     control_high = crit["summary"].get("high_severity")
     assert control_high, f"control critique reported no high-severity findings: {crit['summary']!r}"
 
-    proc = _roam("--json", "pr-analyze", "--input", str(OPEN_DB_DIFF))
+    proc = _roam("--json", "pr-analyze", "--input", str(open_db_diff))
     data = json.loads(proc.stdout)
     summary = data["summary"]
     verdict = str(summary.get("verdict", ""))
