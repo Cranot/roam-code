@@ -1097,9 +1097,42 @@ def _deduplicate(alerts):
 
 
 def _build_snap_dicts(snaps_raw) -> list[dict]:
-    """Convert the DB rows (newest-first) into chronological dict list."""
+    """Convert the DB rows (newest-first) into chronological dict list.
+
+    W1460 — the series is TRUNCATED at the metrics-definition boundary: only
+    the newest contiguous run of rows sharing the newest row's
+    ``metrics_version`` is returned. Every downstream consumer of this list
+    reads it as a time series of one quantity — Mann-Kendall monotonicity in
+    ``_check_trends``, a percent change in ``_check_rate_of_change``, a
+    two-row delta in ``_delta_baseline_alerts``. A definition change is a
+    step discontinuity in all three: it looks like a large, perfectly
+    monotonic move and fires exactly the alerts those checks exist to raise.
+    Truncating here fixes all of them at one point, and keeps
+    ``metrics_version`` OUT of the emitted dicts — ``_delta_baseline_alerts``
+    treats every numeric value in the dict as a metric and would otherwise
+    alert on the version number itself.
+    """
+    from roam.commands.metrics_history import LEGACY_METRICS_VERSION
+
+    def _ver(row):
+        try:
+            value = row["metrics_version"]
+        except (KeyError, IndexError, TypeError):
+            return LEGACY_METRICS_VERSION
+        return LEGACY_METRICS_VERSION if value is None else value
+
+    chrono = list(reversed(list(snaps_raw)))
+    if chrono:
+        newest_version = _ver(chrono[-1])
+        keep = 0
+        for row in reversed(chrono):
+            if _ver(row) != newest_version:
+                break
+            keep += 1
+        chrono = chrono[len(chrono) - keep :]
+
     out: list[dict] = []
-    for s in reversed(snaps_raw):
+    for s in chrono:
         out.append(
             {
                 "timestamp": s["timestamp"],

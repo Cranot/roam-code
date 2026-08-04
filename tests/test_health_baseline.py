@@ -25,6 +25,10 @@ from conftest import (
     parse_json_output,
 )
 
+from roam.commands.metrics_history import (
+    SNAPSHOT_METRICS_VERSION as _CURRENT_METRICS_VERSION,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers — seed synthetic snapshot rows
 # ---------------------------------------------------------------------------
@@ -46,8 +50,16 @@ def _seed_snapshot(
     files: int = 3,
     symbols: int = 10,
     edges: int = 5,
+    metrics_version: int | None = _CURRENT_METRICS_VERSION,
 ) -> int:
-    """Insert a snapshot row directly into the DB. Returns the row id."""
+    """Insert a snapshot row directly into the DB. Returns the row id.
+
+    W1460 — rows are stamped with the CURRENT metrics version by default.
+    These tests mean "a usable baseline exists", and since ``roam health
+    --baseline`` now refuses to diff across a metrics-definition boundary,
+    an unstamped row would exercise the mismatch path instead. Pass
+    ``metrics_version=None`` to deliberately seed a pre-version row.
+    """
     from roam.db.connection import open_db
 
     ts = timestamp if timestamp is not None else int(time.time()) - 3600
@@ -57,8 +69,8 @@ def _seed_snapshot(
                (timestamp, tag, source, git_branch, git_commit,
                 files, symbols, edges, cycles, god_components,
                 bottlenecks, dead_exports, layer_violations, health_score,
-                tangle_ratio, avg_complexity, brain_methods)
-               VALUES (?, ?, 'snapshot', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tangle_ratio, avg_complexity, brain_methods, metrics_version)
+               VALUES (?, ?, 'snapshot', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 ts,
                 tag,
@@ -76,6 +88,7 @@ def _seed_snapshot(
                 0.0,
                 0.0,
                 0,
+                metrics_version,
             ),
         )
         conn.commit()
@@ -322,6 +335,9 @@ def test_health_baseline_dead_exports_query_catches_only_sqlite_errors(monkeypat
         "bottlenecks": 0,
         "dead_exports": 2,
         "layer_violations": 0,
+        # W1460: this test is about the dead-export query's error handling,
+        # so the baseline must clear the metrics-version gate to reach it.
+        "metrics_version": _CURRENT_METRICS_VERSION,
     }
     monkeypatch.setattr(cmd_health, "_find_baseline_snapshot", lambda _conn, _ref: baseline)
 

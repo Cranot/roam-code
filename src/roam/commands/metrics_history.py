@@ -27,6 +27,86 @@ from roam.quality.health_score import (
     fetch_average_file_health,
 )
 
+# W1460 — the DEFINITION version of the numbers ``collect_metrics`` returns.
+#
+# BUMP THIS on any change that moves the metrics on an UNCHANGED tree:
+#   * the health-score formula (weights, inputs, caps), OR
+#   * graph construction (edge resolution, cycle detection, betweenness
+#     sampling, any index-time change to what lands in ``edges``).
+#
+# Why both: a stored snapshot is compared against a live ``collect_metrics``
+# by ``roam budget``, ``roam health --baseline``, ``fitness``, ``alerts``,
+# ``forecast``, ``bisect`` and the workspace aggregator. Those comparisons
+# are only meaningful between rows produced by the SAME definition.
+#
+# Version 1 (implicit, NULL in the DB): everything written before this column
+#   existed.
+# Version 2: the three metric-moving fixes released together — health-score
+#   unification (one implementation, was two that disagreed 64 vs 71),
+#   seeded betweenness sampling, and the case-insensitive edge-resolution
+#   guard that removed ~6.5% of edges and split the largest SCC 1484 -> 123.
+#   Cycles go UP under v2 while tangle_ratio goes DOWN: the fabricated edges
+#   had fused unrelated code into one giant SCC, and breaking it yields many
+#   small genuine cycles with far fewer symbols trapped. A v1->v2 delta is
+#   therefore NOT a regression, and must never be reported as one.
+SNAPSHOT_METRICS_VERSION = 2
+
+# Rows written before the column existed carry NULL. Every consumer resolves
+# NULL to this value rather than guessing, so "no stamp" is a definite old
+# version and never accidentally equal to the current one.
+LEGACY_METRICS_VERSION = 1
+
+
+def snapshot_metrics_version(row) -> int:
+    """Read a snapshot row's metrics-definition version.
+
+    Accepts a ``sqlite3.Row``, a dict, or anything supporting ``[]`` /
+    ``.get``. A missing column or a NULL value means the row predates the
+    stamp and is version 1 — never the current version, so a pre-version
+    baseline can never be silently compared against live v2 numbers.
+    """
+    if row is None:
+        return LEGACY_METRICS_VERSION
+    value = None
+    try:
+        if hasattr(row, "get"):
+            value = row.get("metrics_version")
+        else:
+            value = row["metrics_version"]
+    except (KeyError, IndexError, TypeError):
+        value = None
+    if value is None:
+        return LEGACY_METRICS_VERSION
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return LEGACY_METRICS_VERSION
+
+
+def is_current_metrics_version(row) -> bool:
+    """True when *row* was produced by the metrics definition running now."""
+    return snapshot_metrics_version(row) == SNAPSHOT_METRICS_VERSION
+
+
+def snapshots_have_metrics_version(conn) -> bool:
+    """True when the ``snapshots`` table actually carries the stamp column.
+
+    ``open_db(readonly=True)`` deliberately does NOT run ``ensure_schema``,
+    so migrations never apply on a read-only connection. That makes the
+    FIRST post-upgrade run of every read-only consumer — ``budget``,
+    ``forecast``, ``fitness``, ``alerts``, ``bisect``, the workspace
+    aggregator — see the OLD table shape. Naming ``metrics_version`` in a
+    SELECT there raises ``OperationalError: no such column``, i.e. the fix
+    for the incident would itself crash on the exact run it exists to
+    protect. Callers that must name the column probe with this first;
+    callers using ``SELECT *`` need nothing, because
+    ``snapshot_metrics_version`` already resolves a missing key to legacy.
+    """
+    try:
+        return any(row[1] == "metrics_version" for row in conn.execute("PRAGMA table_info(snapshots)"))
+    except sqlite3.Error:
+        return False
+
 
 def _count_layer_violations_for_resilient_snapshots(G):
     """Count optional layer violations without hiding non-layer bugs."""
@@ -273,19 +353,35 @@ def append_snapshot(conn, tag=None, source="snapshot"):
     # reindex) must replace the data point, not append a duplicate row. Without this,
     # all snapshot rows share one commit and the trend commands (forecast / bisect /
     # alerts-trend) run Theil-Sen / Mann-Kendall over identical values = confidently
-    # vacuous output. Keep one row per (git_commit, source); distinct commits accrue.
+    # vacuous output. Keep one row per (git_commit, source, metrics_version).
+    #
+    # W1460 — the dedup is now scoped to the metrics DEFINITION. Two rows at the
+    # same commit written by the SAME definition really are duplicates: same tree,
+    # same code, same numbers. Two rows written by DIFFERENT definitions are not
+    # duplicates at all — they are one tree measured two different ways, and the
+    # older one is the only surviving evidence of what this commit scored under
+    # the previous definition. A plain version-blind DELETE silently destroyed it
+    # on the first post-upgrade reindex, which is the opposite of the "never lose
+    # a data point" property this whole column exists to provide.
+    #
+    # Consequence, handled: a commit can now hold more than one row, so any
+    # single-row lookup keyed on git_commit MUST order deterministically. See
+    # ``roam.graph.diff.find_before_snapshot``, whose bare ``LIMIT 1`` would
+    # otherwise return whichever row SQLite happened to reach first — in practice
+    # the OLDEST, i.e. exactly the stale one.
     if commit:
         conn.execute(
-            "DELETE FROM snapshots WHERE git_commit = ? AND source = ?",
-            (commit, source),
+            "DELETE FROM snapshots WHERE git_commit = ? AND source = ? AND COALESCE(metrics_version, ?) = ?",
+            (commit, source, LEGACY_METRICS_VERSION, SNAPSHOT_METRICS_VERSION),
         )
     conn.execute(
         """INSERT INTO snapshots
            (timestamp, tag, source, git_branch, git_commit,
             files, symbols, edges, cycles, god_components,
             bottlenecks, dead_exports, layer_violations, health_score,
-            tangle_ratio, avg_complexity, brain_methods, spectral_gap)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            tangle_ratio, avg_complexity, brain_methods, spectral_gap,
+            metrics_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             int(time.time()),
             tag,
@@ -305,6 +401,7 @@ def append_snapshot(conn, tag=None, source="snapshot"):
             metrics.get("avg_complexity", 0),
             metrics.get("brain_methods", 0),
             metrics.get("spectral_gap"),
+            SNAPSHOT_METRICS_VERSION,
         ),
     )
     conn.commit()
@@ -314,6 +411,7 @@ def append_snapshot(conn, tag=None, source="snapshot"):
         "source": source,
         "git_branch": branch,
         "git_commit": commit,
+        "metrics_version": SNAPSHOT_METRICS_VERSION,
         **metrics,
     }
 

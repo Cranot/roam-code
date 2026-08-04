@@ -50,8 +50,14 @@ _SCHEMA_PATH = _REPO_ROOT / "src" / "roam" / "db" / "schema.py"
 # migration #61 for a docstring scrub would be noise. The strict
 # "any byte change → bump" workflow in this module's docstring is the
 # default safety net; this entry documents the audited exception.
-_SNAPSHOT_SCHEMA_HASH = "d5558c4ddb515218"
-_SNAPSHOT_USER_VERSION = 18
+# 2026-08-04 — W1460 ``snapshots.metrics_version``. A real DDL change
+# (new column + migration #63), so USER_VERSION moves 18 -> 19 in
+# lockstep. Consumers MUST notice this one: the column is what lets
+# ``budget`` / ``health --baseline`` / ``fitness`` / ``alerts`` /
+# ``forecast`` / ``bisect`` refuse to compare a stored snapshot against
+# live metrics computed under a different definition.
+_SNAPSHOT_SCHEMA_HASH = "1c4630a053eee10d"
+_SNAPSHOT_USER_VERSION = 19
 
 
 def _current_schema_hash() -> str:

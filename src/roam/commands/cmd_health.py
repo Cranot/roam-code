@@ -1173,24 +1173,60 @@ def _emit_baseline_diff(
 
     baseline = _find_baseline_snapshot(conn, baseline_ref)
 
+    # W1460 — a baseline written by a superseded metrics definition is not a
+    # baseline. The WHOLE delta is suppressed, not just the score line: three
+    # metric-moving fixes shipped together, and the surviving columns lie in
+    # both directions. ``cycles`` RISES on an unchanged tree (removing the
+    # fabricated case-fold edges split one 1484-symbol SCC into many small
+    # genuine ones) — a real-looking regression that is not one. Meanwhile
+    # ``god_components`` and ``bottlenecks`` are counts over SQL-LIMIT-capped
+    # lists, so they saturate at the cap and read as phantom IMPROVEMENTS.
+    # Suppressing only ``health_score`` would leave a delta that is wrong in
+    # both directions and looks more credible for having been "corrected".
+    from roam.commands.metrics_history import (
+        SNAPSHOT_METRICS_VERSION,
+        is_current_metrics_version,
+        snapshot_metrics_version,
+    )
+
+    baseline_metrics_version = None
+    if baseline is not None and not is_current_metrics_version(baseline):
+        baseline_metrics_version = snapshot_metrics_version(baseline)
+        baseline = None
+
     if baseline is None:
-        degraded_msg = (
-            f"No baseline snapshot found for ref `{baseline_ref}`. "
-            "Run `roam trends --save` first, or use `--baseline last`."
-        )
+        if baseline_metrics_version is not None:
+            reason = "baseline_metrics_version_mismatch"
+            degraded_msg = (
+                f"Baseline snapshot for ref `{baseline_ref}` was written by metrics "
+                f"version {baseline_metrics_version}; this build emits version "
+                f"{SNAPSHOT_METRICS_VERSION}. The metric definitions changed, so the "
+                "delta would not describe a change to your code. Re-run `roam index` "
+                "to refresh the baseline."
+            )
+        else:
+            reason = "no_baseline_snapshot"
+            degraded_msg = (
+                f"No baseline snapshot found for ref `{baseline_ref}`. "
+                "Run `roam trends --save` first, or use `--baseline last`."
+            )
         if json_mode:
+            summary = {
+                "verdict": "DEGRADED",
+                "reason": reason,
+                "baseline_ref": baseline_ref,
+                "health_score": health_score,
+                # W331: surface the score definition wherever the
+                # score appears in a summary.
+                "health_score_definition": HEALTH_SCORE_DEFINITION,
+                "metrics_version": SNAPSHOT_METRICS_VERSION,
+            }
+            if baseline_metrics_version is not None:
+                summary["baseline_metrics_version"] = baseline_metrics_version
             envelope = json_envelope(
                 "health",
                 budget=token_budget,
-                summary={
-                    "verdict": "DEGRADED",
-                    "reason": "no_baseline_snapshot",
-                    "baseline_ref": baseline_ref,
-                    "health_score": health_score,
-                    # W331: surface the score definition wherever the
-                    # score appears in a summary.
-                    "health_score_definition": HEALTH_SCORE_DEFINITION,
-                },
+                summary=summary,
                 baseline_ref=baseline_ref,
                 message=degraded_msg,
             )

@@ -382,7 +382,12 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
     if not budgets:
         budgets = list(_DEFAULT_BUDGETS)
 
-    from roam.commands.metrics_history import collect_metrics
+    from roam.commands.metrics_history import (
+        SNAPSHOT_METRICS_VERSION,
+        collect_metrics,
+        is_current_metrics_version,
+        snapshot_metrics_version,
+    )
     from roam.graph.diff import find_before_snapshot
 
     with open_db(readonly=True) as conn:
@@ -396,9 +401,29 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
 
     has_before = before_snap is not None
 
+    # W1460 — the baseline must have been produced by the SAME metrics
+    # definition as ``current``, or every rule is comparing two different
+    # units. The three metric-moving fixes released together (health-score
+    # unification, seeded betweenness, case-fold edge guard) made
+    # ``cycles`` rise on an UNCHANGED tree — the fabricated edges had fused
+    # unrelated code into one 1484-symbol SCC, so removing them yields many
+    # small genuine cycles. Ungated, this exits 5 for every user with a
+    # stored snapshot on their first post-upgrade run, on a tree where
+    # nothing changed. A stale-definition baseline is no baseline: SKIP
+    # every rule and exit 0, exactly as when no snapshot exists at all.
+    baseline_version = snapshot_metrics_version(before_snap) if has_before else None
+    stale_baseline = has_before and not is_current_metrics_version(before_snap)
+    skip_reason = "no snapshot available"
+    if stale_baseline:
+        skip_reason = (
+            f"baseline metrics_version {baseline_version} != current "
+            f"{SNAPSHOT_METRICS_VERSION}; the metric definitions changed, so "
+            "this is not a comparison. Re-run `roam index` to refresh the baseline."
+        )
+
     # Evaluate rules
     results = []
-    if has_before:
+    if has_before and not stale_baseline:
         for rule in budgets:
             results.append(_evaluate_rule(rule, before_snap, current))
     else:
@@ -412,7 +437,7 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
                     "after": None,
                     "delta": None,
                     "budget": _budget_str(rule),
-                    "reason": "no snapshot available",
+                    "reason": skip_reason,
                 }
             )
 
@@ -423,7 +448,14 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
     if failed > 0:
         verdict = f"{failed} of {len(results)} budgets exceeded"
     elif skipped == len(results):
-        verdict = "all rules skipped (no snapshot available)"
+        # W1460: distinguish "no baseline" from "baseline in a different unit".
+        # Both skip, but only one is fixed by re-running `roam index`.
+        if stale_baseline:
+            verdict = (
+                f"all rules skipped (baseline metrics_version {baseline_version} != current {SNAPSHOT_METRICS_VERSION})"
+            )
+        else:
+            verdict = "all rules skipped (no snapshot available)"
     else:
         verdict = f"all {passed} budgets within limits"
 
@@ -444,6 +476,16 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
         # wrong_root_type — already accompanied by a warning in
         # ``warnings_out``).
         summary_payload["config_state"] = config_state
+        # W1460: a run that skipped everything because the stored baseline
+        # was written by a superseded metrics definition is a DEGRADED run,
+        # not a clean one. Say so in the envelope rather than letting exit 0
+        # read as "all budgets held".
+        summary_payload["metrics_version"] = SNAPSHOT_METRICS_VERSION
+        if has_before:
+            summary_payload["baseline_metrics_version"] = baseline_version
+        if stale_baseline:
+            summary_payload["reason"] = "baseline_metrics_version_mismatch"
+            summary_payload["partial_success"] = True
         if _budget_warnings:
             summary_payload["warnings_out"] = list(_budget_warnings)
             summary_payload["partial_success"] = True

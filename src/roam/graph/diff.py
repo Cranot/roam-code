@@ -114,7 +114,14 @@ def find_before_snapshot(conn, root: Path, base_ref: str | None = None) -> dict 
         commit_hash = resolve_base_commit(root, base_ref)
         if commit_hash:
             row = conn.execute(
-                "SELECT * FROM snapshots WHERE git_commit = ? LIMIT 1",
+                # W1460: a commit can hold one row per metrics definition
+                # (``append_snapshot`` dedups within a version, not across
+                # them). A bare LIMIT 1 returned whichever row SQLite reached
+                # first — rowid order, i.e. the OLDEST and stalest. Order
+                # newest-first so the caller gets the current-definition row
+                # when one exists, and the version gate only fires when it
+                # genuinely does not.
+                "SELECT * FROM snapshots WHERE git_commit = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
                 (commit_hash,),
             ).fetchone()
             if row:

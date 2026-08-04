@@ -8,6 +8,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+from roam.commands.metrics_history import (
+    LEGACY_METRICS_VERSION,
+    snapshots_have_metrics_version,
+)
 from roam.observability import log_swallowed
 from roam.workspace.db import get_cross_edges
 
@@ -44,15 +48,34 @@ def aggregate_understand(ws_conn: sqlite3.Connection, repo_infos: list[dict[str,
 
 
 def aggregate_health(ws_conn: sqlite3.Connection, repo_infos: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build a unified workspace health report."""
+    """Build a unified workspace health report.
+
+    W1460 — the workspace average is taken over ONE metrics definition. Repos
+    are indexed independently, so an upgrade rolls through a workspace repo by
+    repo; in between, some DBs hold scores under the old definition and some
+    under the new. The pre-fix code averaged them with no version check at
+    all, so the workspace number moved as reindexing progressed and nothing
+    in the output attributed that to anything but the code.
+
+    Rule: keep the NEWEST version present in the workspace and average only
+    those repos. A workspace where nobody has reindexed yet is uniformly
+    legacy and stays fully included — the average is internally consistent,
+    which is the property that matters. Repos left out are counted and named,
+    never silently dropped.
+    """
     repos_health = []
-    scores = []
 
     for info in repo_infos:
-        health = _query_repo_health(info)
-        repos_health.append(health)
-        if health.get("health_score") is not None:
-            scores.append(health["health_score"])
+        repos_health.append(_query_repo_health(info))
+
+    scored = [h for h in repos_health if h.get("health_score") is not None]
+    versions = {h.get("metrics_version") or LEGACY_METRICS_VERSION for h in scored}
+    newest_version = max(versions) if versions else None
+
+    included = [h for h in scored if (h.get("metrics_version") or LEGACY_METRICS_VERSION) == newest_version]
+    excluded = [h for h in scored if h not in included]
+
+    scores = [h["health_score"] for h in included]
 
     cross_edges = get_cross_edges(ws_conn)
     avg_score = sum(scores) / len(scores) if scores else 0
@@ -64,12 +87,19 @@ def aggregate_health(ws_conn: sqlite3.Connection, repo_infos: list[dict[str, Any
     elif len(cross_edges) > 20:
         coupling_verdict = "moderate"
 
-    return {
+    out: dict[str, Any] = {
         "workspace_health": round(avg_score),
         "repos": repos_health,
         "cross_repo_edges": len(cross_edges),
         "coupling_verdict": coupling_verdict,
+        "health_metrics_version": newest_version,
+        "repos_scored": len(included),
     }
+    if excluded:
+        out["metrics_version_mixed"] = True
+        out["partial_success"] = True
+        out["repos_excluded_metrics_version"] = [h["name"] for h in excluded]
+    return out
 
 
 def cross_repo_context(
@@ -348,6 +378,7 @@ def _query_repo_health(info: dict[str, Any]) -> dict[str, Any]:
         "files": 0,
         "symbols": 0,
         "cycles": 0,
+        "metrics_version": None,
     }
 
     if not db_path.exists():
@@ -359,12 +390,32 @@ def _query_repo_health(info: dict[str, Any]) -> dict[str, Any]:
         result["files"] = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         result["symbols"] = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
 
-        # Try to get the latest snapshot health score
+        # Try to get the latest snapshot health score.
+        #
+        # W1460: carry the metrics-definition version alongside the score.
+        # Repos in one workspace are indexed independently, so a partial
+        # upgrade leaves some DBs on the old definition and some on the new —
+        # and ``aggregate_health`` averages them into one workspace number.
+        # A mean over two different definitions of "health" is not a health
+        # score, and nothing about the output said so.
+        #
+        # The column is PROBED, not assumed. A workspace member's DB may not
+        # have been reopened read-write since the upgrade, so it can still
+        # hold the pre-W1460 table shape. Naming the column unconditionally
+        # would raise OperationalError into the handler below and drop that
+        # repo's health_score entirely — turning a version question into
+        # missing data.
+        version_col = "metrics_version" if snapshots_have_metrics_version(conn) else "NULL AS metrics_version"
         try:
-            snap = conn.execute("SELECT health_score, cycles FROM snapshots ORDER BY timestamp DESC LIMIT 1").fetchone()
+            snap = conn.execute(
+                f"SELECT health_score, cycles, {version_col} FROM snapshots ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
             if snap:
                 result["health_score"] = snap["health_score"]
                 result["cycles"] = snap["cycles"] or 0
+                result["metrics_version"] = (
+                    snap["metrics_version"] if snap["metrics_version"] is not None else LEGACY_METRICS_VERSION
+                )
         except sqlite3.OperationalError as exc:
             # Snapshot metadata is optional for partial or older repo DBs; keep the basic counts.
             log_swallowed("workspace.aggregator:query_repo_health.snapshot", exc)
