@@ -23,7 +23,7 @@ from roam.output.formatter import (
     json_envelope,
     to_json,
 )
-from roam.output.sarif import to_sarif, write_sarif
+from roam.output.sarif import to_sarif, with_sarif_disclosures, write_sarif
 
 
 class Dependency(NamedTuple):
@@ -1038,6 +1038,18 @@ def supply_chain(ctx, top):
             deps,
             score,
             default={},
+        )
+        # W1331: attach the markers ONCE, at the command boundary, AFTER the
+        # projector call. The projector deliberately does NOT take a
+        # ``disclosures=``/``warnings_out=`` kwarg: a snapshot passed INTO it
+        # is taken before the call and so cannot carry a marker raised BY the
+        # projection itself, and it cannot rescue the ``default={}`` floor.
+        # ``with_sarif_disclosures`` covers both (it substitutes a valid
+        # zero-result run for a floored ``{}``). Emitting on both halves
+        # duplicated every marker in toolExecutionNotifications[].
+        sarif = with_sarif_disclosures(
+            sarif,
+            list(_w607ak_warnings_out) + list(_w607cd_warnings_out),
         )
         _sarif_text = _run_check_ak("write_sarif", write_sarif, sarif, default="")
         click.echo(_sarif_text)

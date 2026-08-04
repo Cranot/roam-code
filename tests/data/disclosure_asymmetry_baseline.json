@@ -4,8 +4,6 @@
   "_high_water_mark": 68,
   "_high_water_mark_note": "Raised 52 -> 68 when the W1455 scanner rebuild added the SARIF-artifact rule: a disclosure printed as text BESIDE a SARIF document is not disclosure IN the document, so 16 commands that json and text both disclose are blind in the artifact a CI system actually ingests. The 16 are real findings the previous scanner could not see, not a relaxation -- every pre-existing entry still reproduces and none were dropped. The mark may only fall from here.",
   "_reason_codes": {
-    "json-only-warnings-bucket": "The W607 warnings_out bucket is threaded into the JSON envelope only. A human running the command without --json, and a CI job consuming --sarif, cannot see that a substrate call failed and was floored. Fix template: cmd_understand.py -- echo '# warning: <marker>' to STDERR in the non-JSON tails, which leaves stdout byte-identical.",
-    "sarif-artifact-omits-disclosure": "json and text both disclose the degradation; the SARIF DOCUMENT does not. A warning printed beside a SARIF file is not in the SARIF file: the CI system that ingests the artifact reads a floored, partial run as a complete clean one. Fix template: pass the marker into the *_to_sarif builder as a toolExecutionNotifications entry -- see roam.output.sarif.with_sarif_disclosures.",
     "structured-envelope-instead-of-exit": "DELIBERATE and pinned by a test: the JSON branch answers a resolution failure with a structured envelope (partial_success, state, error) and exit 0, because a non-zero exit strips the structured signal at the MCP wrapper -- see the Pattern-1B/1C note in cmd_diagnose.py and test_cmd_why_resolution.py's explicit assert exit_code == 0. The text branch has no envelope to carry the signal, so it uses the exit code instead. Not a defect; do not 'fix' by making --json exit non-zero without changing those tests."
   },
   "violations": [
@@ -20,31 +18,6 @@
       ],
       "module": "cmd_diagnose.py",
       "reason": "structured-envelope-instead-of-exit"
-    },
-    {
-      "command": "migration_plan_cmd",
-      "token": "warnings_out",
-      "observed_by": [
-        "json"
-      ],
-      "blind": [
-        "text"
-      ],
-      "module": "cmd_migration_plan.py",
-      "reason": "json-only-warnings-bucket"
-    },
-    {
-      "command": "supply_chain",
-      "token": "warnings_out",
-      "observed_by": [
-        "json",
-        "text"
-      ],
-      "blind": [
-        "sarif"
-      ],
-      "module": "cmd_supply_chain.py",
-      "reason": "sarif-artifact-omits-disclosure"
     },
     {
       "command": "why",

@@ -43,7 +43,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 
 # ---------------------------------------------------------------------------
@@ -259,21 +259,32 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
 
     verdict = _verdict(plan, skipped)
 
+    # W641-followup-H — canonical W631 risk-LEVEL projection from the
+    # plan's per-step risks. Aggregation is max-tier wins (the worst
+    # step's risk drives the plan's risk). Skipped steps are EXCLUDED
+    # from the aggregation: the canonical bucket reflects what the
+    # plan actually executes, not what was rejected by --max-risk.
+    # Cross-command consumers can compare e.g.
+    # ``risk_rank(summary.risk_level_canonical) >= 3`` to gate on
+    # high-or-worse plans without re-deriving the threshold table.
+    #
+    # W1331 — this call is the SOLE PRODUCER of ``_mp_warnings_out``, so it
+    # MUST stay OUTSIDE the ``if json_mode:`` branch. Hoisting only the
+    # bucket's declaration while leaving the producer behind yields an
+    # inert fix: the text tail's ``echo_text_warnings`` echoes a
+    # guaranteed-empty list, the W1331 scanner goes quiet, and the
+    # disclosure asymmetry survives untouched — a false-clean of the
+    # false-clean detector. Pinned behaviourally (a degraded run must
+    # print a marker on the text path) by
+    # ``tests/test_w1331_migration_plan_text_disclosure.py``.
+    _mp_warnings_out: list[str] = []
+    _mp_step_risks = [s["risk"] for s in plan]
+    _mp_domain_level = _migration_plan_risk_level(
+        _mp_step_risks,
+        warnings_out=_mp_warnings_out,
+    )
+
     if json_mode:
-        # W641-followup-H — canonical W631 risk-LEVEL projection from the
-        # plan's per-step risks. Aggregation is max-tier wins (the worst
-        # step's risk drives the plan's risk). Skipped steps are EXCLUDED
-        # from the aggregation: the canonical bucket reflects what the
-        # plan actually executes, not what was rejected by --max-risk.
-        # Cross-command consumers can compare e.g.
-        # ``risk_rank(summary.risk_level_canonical) >= 3`` to gate on
-        # high-or-worse plans without re-deriving the threshold table.
-        _mp_warnings_out: list[str] = []
-        _mp_step_risks = [s["risk"] for s in plan]
-        _mp_domain_level = _migration_plan_risk_level(
-            _mp_step_risks,
-            warnings_out=_mp_warnings_out,
-        )
         risk_level_canonical = normalize_risk_level(_mp_domain_level) or "low"
         risk_rank_int = risk_rank(risk_level_canonical)
 
@@ -355,6 +366,7 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
         )
         return
 
+    echo_text_warnings(_mp_warnings_out)
     click.echo(f"VERDICT: {verdict}")
     click.echo("")
     click.echo(f"  {len(plan)} steps in plan, {len(skipped)} skipped (above max-risk={max_risk})")
