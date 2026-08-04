@@ -142,11 +142,21 @@ fi
 STAGED_PY="$(git diff --cached --name-only --diff-filter=ACM -- '*.py' | tr '\n' ' ')"
 # POSIX: `${VAR// /}` is a BASH pattern substitution, and this script is
 # `#!/bin/sh`. Under dash -- /bin/sh on Debian, Ubuntu and every Linux CI
-# runner and build lane we use -- it aborts the hook with "Bad substitution"
-# BEFORE any check runs, so every commit fails and none of the gates below
-# ever execute. It was invisible here because git-bash makes /bin/sh bash on
-# Windows, so the construct works on the machine this was written on and
-# nowhere else.
+# runner and build lane we use -- it fails with "Bad substitution" and the
+# hook exits 2, so every commit is refused.
+#
+# MEASURED, because the first version of this comment got the mechanism
+# wrong and the error is easy to mis-read: dash PARSES the construct
+# happily (`dash -n` on the broken hook exits 0). It fails at EXPANSION
+# time, i.e. when control actually reaches this line. So the gates ABOVE
+# it -- leak scan, readme counts, surface counts, changelog, internal
+# index -- all run and print their normal success output first, and only
+# the ruff gate here and anything below it is skipped. That is why this
+# read as a late-stage glitch rather than as "this script is not sh": the
+# hook looks like it is working right up until it dies.
+#
+# It was invisible here because git-bash makes /bin/sh bash on Windows, so
+# the construct works on the machine this was written on and nowhere else.
 # The unquoted expansion word-splits on IFS and `echo` rejoins with single
 # spaces, so a value of only whitespace collapses to empty -- the same test,
 # in a form `sh` actually has.
