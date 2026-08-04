@@ -3,19 +3,32 @@
 `.githooks/pre-commit` contained `${STAGED_PY// /}` — a BASH pattern
 substitution — under a `#!/bin/sh` shebang. On dash, which is `/bin/sh` on
 Debian, Ubuntu, and effectively every Linux CI runner and build lane this
-project uses, that is a parse error:
+project uses, that fails and the hook exits 2, so every commit is refused:
 
     $ dash -c 'V="a.py "; if [ -n "${V// /}" ]; then echo RUNS; fi'
     dash: 1: Bad substitution
 
-It aborts the hook BEFORE any check runs, so every commit fails on Linux and
-none of the gates below it ever execute.
+MEASURED, because the first version of this docstring got it wrong twice.
+
+It is NOT a parse error: `dash -n` on the broken hook exits 0. dash parses
+the construct happily and fails at EXPANSION time, when control reaches the
+line. So it does NOT abort "before any check runs" — every gate ABOVE it
+executes and prints its normal success output, and only that gate and the
+ones below are skipped. That is what made it hard to read: the hook looks
+like it is working right up until it dies.
+
+Both errors pointed the same way — they made the failure sound earlier and
+more total than it was — which is worth noticing, because a wrong mechanism
+that still predicts "commits fail" survives exactly as long as nobody needs
+the mechanism for anything.
 
 It survived because of WHERE it was written. On Windows, git-bash makes
 `/bin/sh` bash, so the construct works perfectly on the author's machine and
-nowhere else. A runtime test cannot catch this here either — running `sh -n`
-on this host invokes bash, which parses it happily. So the guard has to be a
-STATIC scan for constructs `sh` does not have, which is what this file does.
+nowhere else. And a parse check cannot catch it on ANY host — `sh -n` exits 0
+under dash (it is not a parse error) and invokes bash here (which has the
+construct). Only real execution under dash, or a static scan, detects it. So
+the guard is a STATIC scan for constructs `sh` does not have, which is what
+this file does.
 
 That is the general lesson worth pinning: a portability bug cannot be caught
 by executing on the platform that lacks the problem.
@@ -92,7 +105,11 @@ def test_githooks_directory_exists() -> None:
 
 @pytest.mark.parametrize("hook", _hook_files(), ids=lambda p: p.name)
 def test_sh_hooks_contain_no_bash_only_syntax(hook: Path) -> None:
-    """A `#!/bin/sh` script must parse under a real POSIX shell."""
+    """A `#!/bin/sh` script must RUN under a real POSIX shell.
+
+    Not "parse": dash parses these constructs and fails when it expands
+    them, so a parse check passes on a hook that cannot run.
+    """
     shebang = _shebang(hook)
     if "bash" in shebang:
         pytest.skip(f"{hook.name} declares bash explicitly: {shebang}")
@@ -104,8 +121,10 @@ def test_sh_hooks_contain_no_bash_only_syntax(hook: Path) -> None:
     assert not hits, (
         f"{hook.name} declares `{shebang}` but uses bash-only syntax: "
         + "; ".join(f"{frag!r} ({what})" for frag, what in hits)
-        + ". On dash (/bin/sh on Debian/Ubuntu and our Linux lanes) this is a parse "
-        "error that aborts the hook before any check runs."
+        + ". On dash (/bin/sh on Debian/Ubuntu and our Linux lanes) this fails at "
+        "EXPANSION time -- dash parses it, then dies with `Bad substitution` when "
+        "control reaches the line, so the gates above it run and print normally and "
+        "everything from there down is skipped. `sh -n` will NOT catch this."
     )
 
 
