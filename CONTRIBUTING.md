@@ -427,17 +427,54 @@ CI lints generated reports AND commit messages / docs for over-claim wording:
 
 ## Version + release cadence
 
-Single source of truth: `pyproject.toml` → `version`. Everything else
-(`server.json`, `mcp-server-card.json` x2, README badge, `llms-install`
-counts) syncs from it via `scripts/sync_surface_counts.py`.
+Single source of truth: `pyproject.toml` → `version`. Two scripts propagate
+it, and between them they cover every **derived** occurrence:
+
+| Script                             | Owns                                                                                                                                                              |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/sync_surface_counts.py`   | Release **pins** — `roam-code==X`, `Cranot/roam-code@vX`, `action.yml`'s `version` input default, `server.json` (server + PyPI package pin), `docs/COMMANDS.md`, `docs/ci-integration.md`, the shipped CI templates, `templates/examples/`, landing-page version stamps. Plus all surface counts. |
+| `dev/build_readme_counts.py`       | The `mcp-server-card.json` family (bundled + 3 public mirrors) and the marker-protected count blocks in README / CLAUDE / AGENTS / llms-install.                     |
+
+Both run in dry-run/check mode as CI gates, so a derived occurrence that
+disagrees with `pyproject.toml` fails the build; `--write` fixes them.
+
+Not every version literal is derived, and a find-replace across the repo is
+wrong. Three other classes exist and each is deliberate:
+
+- **Historical** — a record of what was measured or built at a past version:
+  `CHANGELOG.md` and its rendered `changelog.html`, `benchmarks/cross-repo-l1/`,
+  `templates/audit-report/sample-redacted.md`, and the narrative comments in
+  `roam/plan/compiler.py`, `roam/plan/plan_cache.py`, `roam/verdict.py`.
+  Rewriting one falsifies a result. Never sync these.
+- **Deliberately lagging** — `.github/workflows/roam.yml` consumes this repo's
+  *own published* action, so it can only pin a tag/SHA that already exists. It
+  moves in a follow-up commit **after** the release tag is pushed.
+- **Fixture / illustrative** — arbitrary version values in test fixtures and
+  PEP 440 grammar examples. They carry no pin shape and nothing syncs them.
+
+The exemption registry with a reason per entry is
+`scripts/sync_surface_counts.py::_VERSION_PIN_EXEMPT`; the gate and both
+controls are pinned by `tests/test_w1501_release_version_pins.py`.
 
 **Workflow:**
 
 1. Every PR / direct push lands under `[Unreleased]` in `CHANGELOG.md`.
-2. A *release* is a deliberate event — bump `pyproject.toml`, rename
-   `[Unreleased]` → `[X.Y] - YYYY-MM-DD`, add a fresh empty
-   `[Unreleased]` block, publish to PyPI.
-3. Aim for **weekly to bi-weekly** releases. Patches (`X.Y.Z`) for
+2. A *release* is a deliberate event:
+   1. bump `pyproject.toml`;
+   2. rename `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`, add a fresh empty
+      `[Unreleased]` block;
+   3. run `python scripts/sync_surface_counts.py --write` and
+      `python dev/build_readme_counts.py` — this is the whole mechanical
+      propagation, and re-running them in check mode must then be clean;
+   4. run `python scripts/build_changelog_html.py` to re-render
+      `changelog.html` from the new `CHANGELOG.md` section (authoring the
+      section is the one genuinely manual step);
+   5. `uv lock` so `uv.lock`'s own `roam-code` row follows — CI's
+      `uv sync --locked` fails otherwise;
+   6. tag and publish to PyPI.
+3. **After** the tag exists, bump `.github/workflows/roam.yml` to the new
+   release SHA in a follow-up commit. It cannot be done before.
+4. Aim for **weekly to bi-weekly** releases. Patches (`X.Y.Z`) for
    hotfixes only. Don't bump version per commit.
 
 **SemVer interpretation here:**
@@ -450,18 +487,24 @@ counts) syncs from it via `scripts/sync_surface_counts.py`.
 
 ## Doc-hygiene gates (automatic)
 
-CI runs four scripts on every push. If your change fails a gate, fix
-the underlying drift; don't bypass it.
+The `doc-hygiene` job in `.github/workflows/roam-ci.yml` runs six gates on
+every push. If your change fails one, fix the underlying drift; don't bypass
+it.
 
 1. `tests/test_no_internal_language.py` — fails on internal-session
    shorthand (phase numbering, sales-positioning words, day-job
    customer names, etc.).
 2. `scripts/sync_surface_counts.py` — fails if README / llms-install /
-   landing pages quote stale command / MCP-tool / language counts.
-3. `scripts/build_changelog_html.py` — fails if the rendered
+   landing pages quote stale command / MCP-tool / language counts, or if any
+   derived **release pin** disagrees with `pyproject.toml` (see above).
+3. `dev/build_readme_counts.py --check` — fails if a marker-protected count
+   block or the `mcp-server-card.json` family has drifted.
+4. `scripts/build_changelog_html.py` — fails if the rendered
    `changelog.html` drifts from `CHANGELOG.md`.
-4. `scripts/linkcheck.py` — fails if any internal landing-page link or
-   anchor 404s.
+5. `scripts/linkcheck.py --strict` — fails if any internal landing-page link
+   or anchor 404s.
+6. `scripts/strip_metadata.py` — fails if a tracked PDF / PNG / SVG carries
+   identifying metadata.
 
 ### Drift-guard discipline
 
