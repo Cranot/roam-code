@@ -71,7 +71,13 @@ import sys
 
 import pytest
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+# W572/W588 -- ask git for the canonical toplevel rather than walking
+# parents[], which lands on the worktree root under nested dispatch and
+# would point this suite at a scanner that is not the one under test.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _helpers.repo_root import repo_root  # noqa: E402
+
+REPO_ROOT = repo_root()
 SCANNER = REPO_ROOT / "scripts" / "scan_disclosure_asymmetry.py"
 FIXTURE_SRC = REPO_ROOT / "tests" / "fixtures" / "scanner_positive_controls" / "disclosure"
 
