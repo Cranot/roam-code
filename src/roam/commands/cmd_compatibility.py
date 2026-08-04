@@ -98,6 +98,22 @@ SNAPSHOT_SCHEMA_VERSION = "1.0.0"
 # downstream consumer (docs gen, contract tests, release notes, the
 # marketing/landscape surfaces) already depends on. Removing a key here is
 # a breaking change for those consumers.
+#: Closed enumeration of how much of the current surface this comparison
+#: could actually evaluate. Mirrors the ``_TRUNCATION_REASONS`` /
+#: ``_RESOLUTION_KINDS`` idiom in ``roam.output.formatter``: a bare
+#: ``partial_success`` is ambiguous, so the state is named directly.
+#:
+#:   ``complete``  every entry of the current surface is recorded by the
+#:                 baseline, so a removal of ANY of them would be caught.
+#:   ``partial``   the baseline does not record some of the current
+#:                 surface. Findings are still sound, but absence of
+#:                 findings is NOT evidence of absence: the unrecorded
+#:                 entries were never evaluated and their later removal
+#:                 would go unreported.
+#:
+#: ``partial`` MUST imply ``summary.partial_success: true``.
+_SURFACE_COVERAGE_KINDS: frozenset[str] = frozenset({"complete", "partial"})
+
 _CANONICAL_ENVELOPE_KEYS: tuple[str, ...] = (
     "command_count",
     "canonical_count",
@@ -206,11 +222,29 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
       changed_presets.
 
     The ``breaking`` count counts entries that would BREAK an existing
-    consumer (removed commands without alias, removed flags, removed
-    envelope fields, removed MCP tools). Added entries are never
-    breaking. A graceful rename (command removed from canonical names
-    BUT an alias from old->new now exists in ``deprecated_aliases``) is
-    surfaced under ``renamed_commands`` and is NOT counted as breaking.
+    consumer. It is the sum of FIVE terms, and the fifth is the one
+    readers miss:
+
+      ``removed_commands``         a command is gone with no alias
+      ``removed_flags``            a flag is gone from a live command
+      ``removed_envelope_fields``  a canonical summary key is gone
+      ``removed_mcp_tools``        an MCP tool name is gone
+      ``preset_shrinks``           an MCP preset exposes FEWER tools
+                                   than the baseline recorded
+
+    Enumerate all five whenever this list is touched. With only the four
+    ``removed_*`` terms written down, a real result of ``breaking=1``
+    with every ``removed_*`` list empty reads as a contradiction, and the
+    reader has to re-derive the tally to find ``preset_shrinks``. That
+    exact case is live on this repository: ``core`` went 57 -> 17 tools,
+    which is a genuine break for any consumer gated on that preset and
+    is what makes the next release major rather than minor.
+
+    Added entries are never breaking. A graceful rename (command removed
+    from canonical names BUT an alias from old->new now exists in
+    ``deprecated_aliases``) is surfaced under ``renamed_commands`` and is
+    NOT counted as breaking. Preset count INCREASES are not breaking
+    either; only shrinkage is.
 
     ``coverage_gap_count`` is the orthogonal axis: how much of the
     CURRENT surface the baseline fails to record, i.e. how much of this
@@ -721,7 +755,18 @@ def compatibility(
                     summary={
                         "verdict": verdict,
                         "level": level,
-                        "partial_success": breaking > 0,
+                        # partial_success discloses an INCOMPLETE RESULT,
+                        # not findings. It was wired to ``breaking > 0``,
+                        # which is a different claim and wrong both ways:
+                        # a clean run over a baseline missing 110 entries
+                        # asserted completeness (the false clean this whole
+                        # gate exists to prevent), while a complete run
+                        # that correctly found a regression reported itself
+                        # degraded. Findings live in ``breaking``; the
+                        # blind spot lives here.
+                        "partial_success": coverage_gap > 0,
+                        "surface_coverage": ("partial" if coverage_gap > 0 else "complete"),
+                        "unevaluated_surface_entries": coverage_gap,
                         "removed": removed_n,
                         "renamed": renamed_n,
                         "added": added_n,
@@ -781,7 +826,11 @@ def compatibility(
             click.echo("changed presets:")
             for e in diff["changed_presets"]:
                 click.echo(f"  - {e['preset']}: {e['baseline_count']} -> {e['current_count']}")
-        if require_coverage and coverage_gap and not breaking:
+        # Disclosed whenever there IS a blind spot, not only when a flag
+        # asked about it. The text surface carries the same obligation as
+        # the envelope: a reader must not take "no removals found" for
+        # "nothing was removed" when part of the surface was never looked at.
+        if coverage_gap:
             click.echo("")
             subject = "entry is" if coverage_gap == 1 else "entries are"
             possessive = "its" if coverage_gap == 1 else "their"
