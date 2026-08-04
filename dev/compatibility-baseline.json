@@ -43,7 +43,7 @@
         "--staged",
         "target"
       ],
-      "function": "affected_tests",
+      "function": "affected_tests_cmd",
       "module": "roam.commands.cmd_affected_tests"
     },
     "agent-context": {
@@ -63,8 +63,23 @@
         "--profile",
         "--write"
       ],
-      "function": "agent_export",
+      "function": "agent_export_cmd",
       "module": "roam.commands.cmd_agent_export"
+    },
+    "agent-opt": {
+      "flags": [
+        "--confidence",
+        "--exclude",
+        "--list-detectors",
+        "--list-tasks",
+        "--only",
+        "--persist",
+        "--profile",
+        "--scope",
+        "--top"
+      ],
+      "function": "agent_opt_cmd",
+      "module": "roam.commands.cmd_agent_opt"
     },
     "agent-plan": {
       "flags": [
@@ -85,6 +100,7 @@
     },
     "agents-md": {
       "flags": [
+        "--attribution",
         "--out",
         "--refresh",
         "--top-danger",
@@ -124,8 +140,10 @@
         "--include-tests",
         "--list-detectors",
         "--list-frameworks",
+        "--list-tasks",
         "--max-per-task",
         "--only",
+        "--path",
         "--profile",
         "--since",
         "--task",
@@ -206,6 +224,17 @@
       "function": "ask",
       "module": "roam.commands.cmd_ask"
     },
+    "at": {
+      "flags": [
+        "--callers",
+        "--context",
+        "--max-lines",
+        "--whole-symbol",
+        "location"
+      ],
+      "function": "at",
+      "module": "roam.commands.cmd_at"
+    },
     "attest": {
       "flags": [
         "--format",
@@ -214,7 +243,7 @@
         "--staged",
         "commit_range"
       ],
-      "function": "attest",
+      "function": "attest_cmd",
       "module": "roam.commands.cmd_attest"
     },
     "audit": {
@@ -232,7 +261,7 @@
         "--retention-days",
         "--sarif-output"
       ],
-      "function": "audit_trail_conformance_check",
+      "function": "audit_trail_conformance_check_cmd",
       "module": "roam.commands.cmd_audit_trail_conformance"
     },
     "audit-trail-export": {
@@ -247,7 +276,7 @@
         "--until",
         "--verdict"
       ],
-      "function": "audit_trail_export",
+      "function": "audit_trail_export_cmd",
       "module": "roam.commands.cmd_audit_trail_export"
     },
     "audit-trail-verify": {
@@ -262,6 +291,7 @@
     "auth-gaps": {
       "flags": [
         "--controllers-only",
+        "--include-tests",
         "--limit",
         "--min-confidence",
         "--persist",
@@ -276,8 +306,25 @@
         "--limit-per-query",
         "queries"
       ],
-      "function": "batch_search",
+      "function": "batch_search_cmd",
       "module": "roam.commands.cmd_batch_search"
+    },
+    "bench-compile": {
+      "flags": [
+        "--conditions",
+        "--ground-truth",
+        "--judge",
+        "--model",
+        "--out-dir",
+        "--reuse-vanilla",
+        "--runs",
+        "--tasks-file",
+        "--timeout",
+        "--workers",
+        "task"
+      ],
+      "function": "bench_compile",
+      "module": "roam.commands.cmd_bench"
     },
     "bisect": {
       "flags": [
@@ -288,6 +335,15 @@
       ],
       "function": "bisect",
       "module": "roam.commands.cmd_bisect"
+    },
+    "blame-reviewers": {
+      "flags": [
+        "--staged",
+        "--top",
+        "commit_range"
+      ],
+      "function": "blame_reviewers",
+      "module": "roam.commands.cmd_blame_reviewers"
     },
     "boundary": {
       "flags": [
@@ -341,6 +397,29 @@
       "function": "bus_factor",
       "module": "roam.commands.cmd_bus_factor"
     },
+    "calc-golden": {
+      "flags": [],
+      "function": "calc_golden",
+      "module": "roam.commands.cmd_calc_golden"
+    },
+    "calc-inventory": {
+      "flags": [
+        "--divergence",
+        "--fail-on-divergence",
+        "--money",
+        "--round-funcs",
+        "path"
+      ],
+      "function": "calc_inventory",
+      "module": "roam.commands.cmd_calc_inventory"
+    },
+    "calc-probe": {
+      "flags": [
+        "paths"
+      ],
+      "function": "calc_probe",
+      "module": "roam.commands.cmd_calc_probe"
+    },
     "capabilities": {
       "flags": [
         "--ai-safe-only",
@@ -378,7 +457,7 @@
         "--since",
         "--suggest"
       ],
-      "function": "changelog",
+      "function": "changelog_command",
       "module": "roam.commands.cmd_changelog"
     },
     "check-rules": {
@@ -390,7 +469,7 @@
         "--rule",
         "--severity"
       ],
-      "function": "check_rules",
+      "function": "check_rules_command",
       "module": "roam.commands.cmd_check_rules"
     },
     "churn": {
@@ -459,6 +538,16 @@
       "function": "codeowners",
       "module": "roam.commands.cmd_codeowners"
     },
+    "commands": {
+      "flags": [
+        "--kind",
+        "--safe-only",
+        "--scope",
+        "--top"
+      ],
+      "function": "commands_cmd",
+      "module": "roam.commands.cmd_commands"
+    },
     "compare": {
       "flags": [
         "--threshold",
@@ -471,13 +560,72 @@
     },
     "compatibility": {
       "flags": [
+        "--accept-removals",
         "--baseline",
         "--ci",
         "--current",
+        "--require-coverage",
         "--write-baseline"
       ],
       "function": "compatibility",
       "module": "roam.commands.cmd_compatibility"
+    },
+    "compile": {
+      "flags": [
+        "--artifact",
+        "--brief",
+        "--checklist",
+        "--emit-proof-stub",
+        "--explain",
+        "--model-tier",
+        "--probes",
+        "--profile",
+        "--route",
+        "task"
+      ],
+      "function": "compile_",
+      "module": "roam.commands.cmd_compile"
+    },
+    "compile-cache": {
+      "flags": [],
+      "function": "compile_cache",
+      "module": "roam.commands.cmd_compile_cache"
+    },
+    "compile-daemon": {
+      "flags": [],
+      "function": "compile_daemon",
+      "module": "roam.commands.cmd_compile_daemon"
+    },
+    "compile-stats": {
+      "flags": [
+        "--by-mode",
+        "--by-procedure",
+        "--include-bench",
+        "--root",
+        "--schema",
+        "--slow-probes",
+        "--split-unknown-cohort",
+        "--top-misses"
+      ],
+      "function": "compile_stats",
+      "module": "roam.commands.cmd_compile_stats"
+    },
+    "compiler-corpus": {
+      "flags": [
+        "--corpus",
+        "--limit",
+        "--root"
+      ],
+      "function": "compiler_corpus",
+      "module": "roam.commands.cmd_compiler_corpus"
+    },
+    "compiler-health": {
+      "flags": [
+        "--emit-guard-findings",
+        "--root"
+      ],
+      "function": "compiler_health",
+      "module": "roam.commands.cmd_compiler_health"
     },
     "complete": {
       "flags": [
@@ -496,6 +644,7 @@
         "--no-framework",
         "--no-imports",
         "--persist",
+        "--suggest",
         "--threshold",
         "--top",
         "target"
@@ -604,6 +753,22 @@
       "function": "cut",
       "module": "roam.commands.cmd_cut"
     },
+    "cycle-break": {
+      "flags": [
+        "--json"
+      ],
+      "function": "cycle_break",
+      "module": "roam.commands.cmd_cycle_break"
+    },
+    "cycles": {
+      "flags": [
+        "--actionable-only",
+        "--limit",
+        "--min-size"
+      ],
+      "function": "cycles",
+      "module": "roam.commands.cmd_cycles"
+    },
     "dark-matter": {
       "flags": [
         "--category",
@@ -639,6 +804,7 @@
         "--decay",
         "--effort",
         "--extinction",
+        "--no-decay",
         "--persist",
         "--reachable-only",
         "--sort-by-age",
@@ -675,6 +841,7 @@
     "deps": {
       "flags": [
         "--full",
+        "--multi",
         "path"
       ],
       "function": "deps",
@@ -705,8 +872,18 @@
         "--depth",
         "name"
       ],
-      "function": "diagnose",
+      "function": "diagnose_cmd",
       "module": "roam.commands.cmd_diagnose"
+    },
+    "dict-consistency": {
+      "flags": [
+        "--check-consistency",
+        "--contains",
+        "--prefix",
+        "path"
+      ],
+      "function": "dict_consistency",
+      "module": "roam.commands.cmd_dict_consistency"
     },
     "diff": {
       "flags": [
@@ -750,6 +927,15 @@
       "function": "disambiguate",
       "module": "roam.commands.cmd_disambiguate"
     },
+    "dispatch-trace": {
+      "flags": [
+        "--counterfactual",
+        "--root",
+        "prompt"
+      ],
+      "function": "dispatch_trace",
+      "module": "roam.commands.cmd_dispatch_trace"
+    },
     "doc-staleness": {
       "flags": [
         "--days",
@@ -769,6 +955,14 @@
       "function": "docs_coverage",
       "module": "roam.commands.cmd_docs_coverage"
     },
+    "docs-index": {
+      "flags": [
+        "--ci",
+        "--dir"
+      ],
+      "function": "docs_index",
+      "module": "roam.commands.cmd_docs_index"
+    },
     "doctor": {
       "flags": [
         "--persist",
@@ -784,7 +978,7 @@
         "--pr-analyze",
         "--rules"
       ],
-      "function": "dogfood",
+      "function": "dogfood_cmd",
       "module": "roam.commands.cmd_dogfood"
     },
     "dogfood-aggregate": {
@@ -853,6 +1047,19 @@
       "function": "entry_points",
       "module": "roam.commands.cmd_entry_points"
     },
+    "envelope-diff": {
+      "flags": [
+        "--baseline",
+        "--from-cache",
+        "--regression",
+        "--root",
+        "--update-baseline",
+        "a",
+        "b"
+      ],
+      "function": "envelope_diff",
+      "module": "roam.commands.cmd_envelope_diff"
+    },
     "eval-retrieve": {
       "flags": [
         "--emit-format",
@@ -912,6 +1119,7 @@
     },
     "fan": {
       "flags": [
+        "--include-tests",
         "--include-tooling",
         "--no-framework",
         "--persist",
@@ -1023,12 +1231,15 @@
       "flags": [
         "--blame",
         "--co-occur",
+        "--context",
         "--exclude",
         "--fixed-string",
         "--glob",
         "--group-by",
         "--heat",
         "--ignore-case",
+        "--max-packet-lines",
+        "--max-packets",
         "--missing-pattern",
         "--no-bridges",
         "--no-clones",
@@ -1039,6 +1250,7 @@
         "--source-only",
         "--test-only",
         "--unreachable",
+        "--whole-symbol",
         "--word",
         "-n",
         "positional"
@@ -1052,6 +1264,79 @@
       ],
       "function": "guard",
       "module": "roam.commands.cmd_guard"
+    },
+    "guard-clean": {
+      "flags": [
+        "--dry-run",
+        "--keep"
+      ],
+      "function": "guard_clean",
+      "module": "roam.commands.cmd_guard_clean"
+    },
+    "guard-diff": {
+      "flags": [
+        "--branch",
+        "--by-file",
+        "--from-log",
+        "bundle_a",
+        "bundle_b"
+      ],
+      "function": "guard_diff",
+      "module": "roam.commands.cmd_guard_diff"
+    },
+    "guard-doctor": {
+      "flags": [
+        "--rules"
+      ],
+      "function": "guard_doctor",
+      "module": "roam.commands.cmd_guard_doctor"
+    },
+    "guard-history": {
+      "flags": [
+        "--branch",
+        "--limit",
+        "--rebuild",
+        "--source",
+        "--verdict"
+      ],
+      "function": "guard_history",
+      "module": "roam.commands.cmd_guard_history"
+    },
+    "guard-init": {
+      "flags": [
+        "--force",
+        "--with-rules-stub"
+      ],
+      "function": "guard_init",
+      "module": "roam.commands.cmd_guard_init"
+    },
+    "guard-pr": {
+      "flags": [
+        "--bundle",
+        "--ci",
+        "--details-url",
+        "--dry-run",
+        "--format",
+        "--gh-name",
+        "--gh-repo",
+        "--gh-sha",
+        "--init-if-missing",
+        "--init-intent",
+        "--mode",
+        "--output",
+        "--policy-profile",
+        "--post-check",
+        "--rules",
+        "--skip-collect",
+        "--strict"
+      ],
+      "function": "guard_pr",
+      "module": "roam.commands.cmd_guard_pr"
+    },
+    "guard-rules": {
+      "flags": [],
+      "function": "guard_rules_group",
+      "module": "roam.commands.cmd_guard_rules"
     },
     "health": {
       "flags": [
@@ -1079,6 +1364,7 @@
         "--path",
         "--polarity",
         "--regex",
+        "--regexp",
         "--since",
         "--until",
         "-n",
@@ -1127,13 +1413,14 @@
         "--timeout",
         "name"
       ],
-      "function": "impact",
+      "function": "impact_cmd",
       "module": "roam.commands.cmd_impact"
     },
     "index": {
       "flags": [
         "--force",
         "--quiet",
+        "--rebuild",
         "--verbose"
       ],
       "function": "index",
@@ -1173,7 +1460,7 @@
         "--zipkin",
         "trace_file"
       ],
-      "function": "ingest_trace",
+      "function": "ingest_trace_cmd",
       "module": "roam.commands.cmd_ingest_trace"
     },
     "init": {
@@ -1247,6 +1534,16 @@
       "function": "lsp",
       "module": "roam.commands.cmd_lsp"
     },
+    "magic-numbers": {
+      "flags": [
+        "--cluster",
+        "--include-trivial",
+        "--threshold",
+        "path"
+      ],
+      "function": "magic_numbers",
+      "module": "roam.commands.cmd_magic_numbers"
+    },
     "map": {
       "flags": [
         "--budget",
@@ -1266,8 +1563,10 @@
         "--include-tests",
         "--list-detectors",
         "--list-frameworks",
+        "--list-tasks",
         "--max-per-task",
         "--only",
+        "--path",
         "--profile",
         "--since",
         "--task",
@@ -1385,7 +1684,7 @@
     },
     "mutate": {
       "flags": [],
-      "function": "mutate",
+      "function": "mutate_cmd",
       "module": "roam.commands.cmd_mutate"
     },
     "n1": {
@@ -1403,6 +1702,22 @@
       "function": "next_cmd",
       "module": "roam.commands.cmd_next"
     },
+    "observability-opt": {
+      "flags": [
+        "--confidence",
+        "--exclude",
+        "--language",
+        "--list-detectors",
+        "--list-tasks",
+        "--max-files",
+        "--only",
+        "--persist",
+        "--profile",
+        "--top"
+      ],
+      "function": "observability_opt_cmd",
+      "module": "roam.commands.cmd_observability_opt"
+    },
     "onboard": {
       "flags": [
         "--agent",
@@ -1411,7 +1726,7 @@
         "--skeleton",
         "--tour"
       ],
-      "function": "understand",
+      "function": "understand_cmd",
       "module": "roam.commands.cmd_understand"
     },
     "oracle": {
@@ -1590,12 +1905,14 @@
         "--range",
         "--staged"
       ],
-      "function": "pr_diff",
+      "function": "pr_diff_cmd",
       "module": "roam.commands.cmd_pr_diff"
     },
     "pr-prep": {
       "flags": [
         "--high-callers",
+        "--input",
+        "--staged",
         "commit_range"
       ],
       "function": "pr_prep",
@@ -1613,6 +1930,7 @@
         "--output",
         "--pdf",
         "--range",
+        "--rehearsal",
         "--tier",
         "--track-engagement"
       ],
@@ -1626,7 +1944,7 @@
         "--staged",
         "commit_range"
       ],
-      "function": "pr_risk",
+      "function": "pr_risk_cmd",
       "module": "roam.commands.cmd_pr_risk"
     },
     "pre-commit": {
@@ -1644,6 +1962,28 @@
       ],
       "function": "preflight",
       "module": "roam.commands.cmd_preflight"
+    },
+    "profile-import": {
+      "flags": [
+        "--json",
+        "--top",
+        "profile_file"
+      ],
+      "function": "profile_import",
+      "module": "roam.commands.cmd_profile_import"
+    },
+    "proof-bundle": {
+      "flags": [
+        "--bundle",
+        "--format",
+        "--mode",
+        "--output",
+        "--policy-profile",
+        "--strict",
+        "--validate"
+      ],
+      "function": "proof_bundle",
+      "module": "roam.commands.cmd_proof_bundle"
     },
     "py-modern": {
       "flags": [
@@ -1674,6 +2014,16 @@
       "function": "pytest_fixtures",
       "module": "roam.commands.cmd_pytest_fixtures"
     },
+    "reachability-triage": {
+      "flags": [
+        "--gate-on-new-reachable",
+        "--json",
+        "--range",
+        "--write-baseline"
+      ],
+      "function": "reachability_triage_cmd",
+      "module": "roam.commands.cmd_reachability_triage"
+    },
     "recipes": {
       "flags": [],
       "function": "recipes",
@@ -1703,6 +2053,7 @@
         "--per-match-detail",
         "--reachable-from",
         "--regex",
+        "--regexp",
         "--with-bridges",
         "--with-clones",
         "strings"
@@ -1754,6 +2105,7 @@
         "--budget",
         "--dry-run",
         "--k",
+        "--repair-intent",
         "--rerank",
         "--scope",
         "--seed-file",
@@ -1762,6 +2114,39 @@
       ],
       "function": "retrieve",
       "module": "roam.commands.cmd_retrieve"
+    },
+    "review-accept": {
+      "flags": [
+        "--artifact",
+        "--builder-family",
+        "--decision",
+        "--finding",
+        "--json",
+        "--phase",
+        "--reviewer-family",
+        "--reviewer-model"
+      ],
+      "function": "review_accept_cmd",
+      "module": "roam.commands.cmd_review"
+    },
+    "review-request": {
+      "flags": [
+        "--artifact",
+        "--json",
+        "--phase"
+      ],
+      "function": "review_request_cmd",
+      "module": "roam.commands.cmd_review"
+    },
+    "review-verify": {
+      "flags": [
+        "--artifact",
+        "--json",
+        "--phase",
+        "--required"
+      ],
+      "function": "review_verify_cmd",
+      "module": "roam.commands.cmd_review"
     },
     "risk": {
       "flags": [
@@ -1786,6 +2171,16 @@
       "function": "rules",
       "module": "roam.commands.cmd_rules"
     },
+    "rules-suggest": {
+      "flags": [
+        "--force",
+        "--range",
+        "--tier",
+        "--write"
+      ],
+      "function": "rules_suggest",
+      "module": "roam.commands.cmd_rules_suggest"
+    },
     "rules-validate": {
       "flags": [
         "--against",
@@ -1795,7 +2190,7 @@
         "--strict",
         "rules_path"
       ],
-      "function": "rules_validate",
+      "function": "rules_validate_cmd",
       "module": "roam.commands.cmd_rules_validate"
     },
     "runs": {
@@ -1818,6 +2213,28 @@
       "function": "safe_zones",
       "module": "roam.commands.cmd_safe_zones"
     },
+    "savings": {
+      "flags": [
+        "--aggregate",
+        "--root",
+        "--schema"
+      ],
+      "function": "savings",
+      "module": "roam.commands.cmd_savings"
+    },
+    "savings-backfill": {
+      "flags": [
+        "--all-projects",
+        "--dry-run",
+        "--max-files",
+        "--root",
+        "--since",
+        "--source",
+        "--transcripts-dir"
+      ],
+      "function": "savings_backfill",
+      "module": "roam.commands.cmd_savings_backfill"
+    },
     "sbom": {
       "flags": [
         "--aibom",
@@ -1825,7 +2242,7 @@
         "--no-reachability",
         "--output"
       ],
-      "function": "sbom",
+      "function": "sbom_cmd",
       "module": "roam.commands.cmd_sbom"
     },
     "schema": {
@@ -1876,6 +2293,18 @@
       ],
       "function": "semantic_diff",
       "module": "roam.commands.cmd_semantic_diff"
+    },
+    "service-report": {
+      "flags": [
+        "--client",
+        "--output",
+        "--pdf",
+        "--range",
+        "--track-engagement",
+        "--type"
+      ],
+      "function": "service_report_cmd",
+      "module": "roam.commands.cmd_service_report"
     },
     "side-effects": {
       "flags": [
@@ -2059,6 +2488,11 @@
       "function": "surface",
       "module": "roam.commands.cmd_surface"
     },
+    "surface-gaps": {
+      "flags": [],
+      "function": "surface_gaps",
+      "module": "roam.commands.cmd_surface_gaps"
+    },
     "symbol": {
       "flags": [
         "--full",
@@ -2084,7 +2518,7 @@
         "--rules-dir",
         "--rules-pack"
       ],
-      "function": "taint",
+      "function": "taint_command",
       "module": "roam.commands.cmd_taint"
     },
     "telemetry": {
@@ -2101,7 +2535,7 @@
         "--severity",
         "files"
       ],
-      "function": "test_gaps",
+      "function": "test_gaps_cmd",
       "module": "roam.commands.cmd_test_gaps"
     },
     "test-hermeticity": {
@@ -2234,7 +2668,7 @@
         "--skeleton",
         "--tour"
       ],
-      "function": "understand",
+      "function": "understand_cmd",
       "module": "roam.commands.cmd_understand"
     },
     "uses": {
@@ -2245,11 +2679,49 @@
       "function": "uses",
       "module": "roam.commands.cmd_uses"
     },
+    "verdict": {
+      "flags": [
+        "--bundle",
+        "--strict"
+      ],
+      "function": "verdict",
+      "module": "roam.commands.cmd_verdict"
+    },
+    "verification-contract": {
+      "flags": [
+        "--files",
+        "--files-from",
+        "--mode",
+        "--policy-profile",
+        "--risk-level",
+        "--risk-path",
+        "--risk-reason",
+        "--rules"
+      ],
+      "function": "verification_contract",
+      "module": "roam.commands.cmd_verification_contract"
+    },
     "verify": {
       "flags": [
+        "--auto",
+        "--baseline-write",
         "--changed",
+        "--changed-lines",
+        "--checks",
+        "--deep",
+        "--diff-only",
+        "--file-remaining",
         "--fix-suggestions",
+        "--new-only",
+        "--off",
+        "--on",
+        "--out",
+        "--persist",
+        "--report",
+        "--severity",
+        "--summary",
         "--threshold",
+        "--verbose",
         "files"
       ],
       "function": "verify",
@@ -2258,6 +2730,7 @@
     "verify-imports": {
       "flags": [
         "--file",
+        "--include-docs",
         "--path"
       ],
       "function": "verify_imports_cmd",
@@ -2290,6 +2763,11 @@
       ],
       "function": "visualize",
       "module": "roam.commands.cmd_visualize"
+    },
+    "vue-emits": {
+      "flags": [],
+      "function": "vue_emits",
+      "module": "roam.commands.cmd_vue_emits"
     },
     "vuln-map": {
       "flags": [
@@ -2437,13 +2915,14 @@
     "verdict"
   ],
   "mcp_preset_counts": {
-    "architecture": 71,
-    "compliance": 13,
-    "core": 57,
-    "debug": 69,
-    "full": 224,
-    "refactor": 70,
-    "review": 70
+    "architecture": 74,
+    "compile-curated": 9,
+    "compliance": 14,
+    "core": 17,
+    "debug": 72,
+    "full": 244,
+    "refactor": 73,
+    "review": 73
   },
   "mcp_tools": [
     "roam_adrs",
@@ -2453,6 +2932,7 @@
     "roam_affected_tests",
     "roam_agent_context",
     "roam_agent_export",
+    "roam_agent_opt",
     "roam_agent_plan",
     "roam_agent_score",
     "roam_ai_ratio",
@@ -2466,6 +2946,7 @@
     "roam_architecture_drift",
     "roam_article_12_check",
     "roam_ask",
+    "roam_at",
     "roam_attest",
     "roam_audit",
     "roam_audit_trail_conformance_check",
@@ -2475,6 +2956,7 @@
     "roam_batch_get",
     "roam_batch_search",
     "roam_bisect_blame",
+    "roam_boundary",
     "roam_breaking_changes",
     "roam_brief",
     "roam_budget_check",
@@ -2491,7 +2973,10 @@
     "roam_closure",
     "roam_clusters",
     "roam_codeowners",
+    "roam_commands",
     "roam_compare",
+    "roam_compatibility",
+    "roam_compile",
     "roam_complete",
     "roam_complexity_report",
     "roam_congestion",
@@ -2502,6 +2987,7 @@
     "roam_critique",
     "roam_cut",
     "roam_cut_analysis",
+    "roam_cycles",
     "roam_dark_matter",
     "roam_dashboard",
     "roam_dead_code",
@@ -2547,6 +3033,7 @@
     "roam_for_refactor",
     "roam_for_security_review",
     "roam_forecast",
+    "roam_full_coupling",
     "roam_generate_plan",
     "roam_get_annotations",
     "roam_get_invariants",
@@ -2554,6 +3041,12 @@
     "roam_graph_stats",
     "roam_grep",
     "roam_guard",
+    "roam_guard_clean",
+    "roam_guard_diff",
+    "roam_guard_doctor",
+    "roam_guard_history",
+    "roam_guard_pr",
+    "roam_guard_rules",
     "roam_health",
     "roam_history_grep",
     "roam_hotspots",
@@ -2577,6 +3070,7 @@
     "roam_mutate",
     "roam_n1",
     "roam_next",
+    "roam_observability_opt",
     "roam_onboard",
     "roam_oracle_batch",
     "roam_oracle_is_clone_of",
@@ -2603,9 +3097,11 @@
     "roam_pr_risk",
     "roam_preflight",
     "roam_prepare_change",
+    "roam_proof_bundle",
     "roam_py_modern",
     "roam_py_types",
     "roam_pytest_fixtures",
+    "roam_reachability_triage",
     "roam_recommend",
     "roam_refs_text",
     "roam_reindex",
@@ -2644,6 +3140,7 @@
     "roam_taint",
     "roam_taint_classify",
     "roam_test_gaps",
+    "roam_test_hermeticity",
     "roam_test_impact",
     "roam_test_map",
     "roam_test_pyramid",
@@ -2656,6 +3153,8 @@
     "roam_understand",
     "roam_uses",
     "roam_validate_plan",
+    "roam_verdict",
+    "roam_verification_contract",
     "roam_verify",
     "roam_verify_imports",
     "roam_vibe_check",

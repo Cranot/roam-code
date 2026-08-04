@@ -14,10 +14,13 @@ Scope (intentionally MVP):
   * Captures a snapshot of the current build via ``_build_snapshot()`` and
     compares it to a baseline JSON file (default
     ``dev/compatibility-baseline.json``).
-  * Closed-enum verdict categories: ``no regressions`` / ``surface drift`` /
-    ``breaking changes``.
+  * Closed-enum verdict categories: ``no regressions`` / ``surface
+    additions`` / ``surface drift`` / ``baseline stale`` / ``breaking
+    changes``.
   * ``--ci`` exits 5 (EXIT_GATE_FAILURE) on any entry classified
     ``breaking``.
+  * ``--require-coverage`` additionally exits 5 when the baseline no
+    longer records the whole current surface (see below).
   * Detection is structural ONLY: name presence, flag presence, MCP-tool
     presence, preset count. Behavior-regression detection is explicitly
     out of scope (a much larger problem).
@@ -25,6 +28,40 @@ Scope (intentionally MVP):
 The baseline is captured by running the command itself with
 ``--write-baseline``; commit the resulting snapshot so future runs gate
 against the last-known-good surface.
+
+WHY A STALE BASELINE IS A DEFECT AND NOT A COSMETIC LAG
+------------------------------------------------------
+
+Removal detection is set subtraction: ``baseline_names - current_names``.
+An entry the baseline never recorded therefore cannot be reported as
+removed. A command added in release N and deleted in release N+1 against
+an un-refreshed baseline is invisible in BOTH releases -- once as a
+never-recorded addition, once as a removal of something the baseline
+does not know about -- and the breaking change ships with a green gate.
+The reach of the gate is exactly the size of the baseline, so every
+unrecorded addition is permanently lost coverage rather than deferred
+work.
+
+``--require-coverage`` closes that by requiring the baseline to record
+the current surface exactly, which couples each surface change to a
+baseline refresh in the same commit. It is a hard failure, not a
+warning: this gate spent its whole life un-run, and the observable cost
+of that was 43 commands, 38 flags and 20 MCP tools outside the
+baseline's reach with nothing red anywhere.
+
+WHY ``--write-baseline`` REFUSES TO ERASE COVERAGE
+--------------------------------------------------
+
+Regenerating a baseline is unconditional capture: whatever the build
+currently exposes becomes the new last-known-good. Run after an
+accidental deletion -- which is precisely when a red gate makes someone
+reach for it -- that blesses the deletion permanently, because the next
+run compares against a baseline that no longer contains the deleted
+entry. ``--write-baseline`` therefore diffs the existing baseline
+against the fresh snapshot first and refuses to write when the write
+would drop entries, unless ``--accept-removals`` says so deliberately.
+Graceful renames (old name present in ``deprecated_aliases``, pointing
+at a live command) are not drops and never trip the refusal.
 
 Output formats: text (default), ``--json``. SARIF is deliberately NOT
 emitted because compatibility outputs are repo-scoped surface-contract
@@ -174,6 +211,14 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     breaking. A graceful rename (command removed from canonical names
     BUT an alias from old->new now exists in ``deprecated_aliases``) is
     surfaced under ``renamed_commands`` and is NOT counted as breaking.
+
+    ``coverage_gap_count`` is the orthogonal axis: how much of the
+    CURRENT surface the baseline fails to record, i.e. how much of this
+    comparison is structurally blind. It counts every addition plus
+    every preset whose recorded count no longer matches, because each
+    such entry is one the ``baseline - current`` subtraction above can
+    never report as removed later. It is NOT a breakage today; it is the
+    measure of breakages that would go unseen tomorrow.
     """
     base_cmds = baseline.get("commands", {}) or {}
     cur_cmds = current.get("commands", {}) or {}
@@ -257,6 +302,14 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
         + len(preset_shrinks)
     )
 
+    # Blind spot, not breakage: every entry the baseline does not record.
+    # A changed preset count counts on EITHER side -- a shrink is already
+    # breaking, and a growth means the recorded count is no longer the
+    # shipped one, so the next shrink is measured from a stale floor.
+    coverage_gap = (
+        len(added) + len(added_flags) + len(added_envelope_fields) + len(added_mcp_tools) + len(changed_presets)
+    )
+
     return {
         "removed_commands": removed_commands,
         "added_commands": added,
@@ -269,21 +322,34 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
         "added_mcp_tools": added_mcp_tools,
         "changed_presets": changed_presets,
         "breaking_count": breaking,
+        "coverage_gap_count": coverage_gap,
         "preset_shrinks": preset_shrinks,
     }
 
 
-def _verdict_for(diff: dict[str, Any]) -> tuple[str, str]:
+def _verdict_for(diff: dict[str, Any], require_coverage: bool = False) -> tuple[str, str]:
     """Return ``(verdict, level)`` matching the diff.
 
     Closed-enum verdicts:
       ``no regressions``       -> no removed/breaking entries, no additions.
       ``surface additions``    -> only additions; no breaking entries.
       ``surface drift``        -> mixed adds + non-breaking renames.
+      ``baseline stale``       -> the baseline does not record the whole
+                                  current surface, and the caller asked
+                                  (``require_coverage``) for it to.
       ``breaking changes``     -> at least one breaking entry.
+
+    ``require_coverage`` is a parameter rather than a fixed rule because
+    the same delta means different things to different callers: to a
+    release note "43 commands were added" is information, to a gate that
+    must stay able to see removals it is a blocker. The verdict and its
+    level track the caller's contract so the envelope never reports
+    ``info`` while the process exits non-zero.
     """
     if diff["breaking_count"] > 0:
         return ("breaking changes", "blocker")
+    if require_coverage and diff["coverage_gap_count"] > 0:
+        return ("baseline stale", "blocker")
     any_added = bool(
         diff["added_commands"] or diff["added_flags"] or diff["added_envelope_fields"] or diff["added_mcp_tools"]
     )
@@ -293,6 +359,65 @@ def _verdict_for(diff: dict[str, Any]) -> tuple[str, str]:
     if any_added:
         return ("surface additions", "info")
     return ("no regressions", "info")
+
+
+def _erasures(existing_path: Path, fresh: dict[str, Any]) -> dict[str, Any] | None:
+    """Return what overwriting ``existing_path`` with ``fresh`` would erase.
+
+    ``None`` means the write is safe: either no baseline is being
+    replaced, or the fresh snapshot still records everything the old one
+    did. A dict means the write would drop removal-detection coverage,
+    and carries the same closed-enum removal categories ``_diff``
+    produces so the refusal can name every entry rather than assert that
+    some exist.
+
+    The safety question is exactly the gate's own question with the
+    arguments swapped -- "does the new snapshot still contain what the
+    old one promised" -- so it delegates to :func:`_diff` instead of
+    re-deriving set subtraction. That inheritance is load-bearing: a
+    graceful rename is not a drop under ``_diff`` (the old name resolves
+    through ``deprecated_aliases``), so a deprecation cycle regenerates
+    its baseline without an override, while a true deletion cannot.
+
+    An existing baseline that will not parse returns a refusal too. The
+    write cannot be shown to preserve coverage, and silently proceeding
+    would convert an unreadable file into a blessed one.
+    """
+    if not existing_path.exists():
+        return None
+    try:
+        existing = json.loads(existing_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"unreadable_baseline": str(exc)}
+    if not isinstance(existing, dict):
+        return {"unreadable_baseline": f"expected a JSON object, found {type(existing).__name__}"}
+
+    delta = _diff(existing, fresh)
+    if delta["breaking_count"] == 0:
+        return None
+    return {
+        "removed_commands": delta["removed_commands"],
+        "removed_flags": delta["removed_flags"],
+        "removed_envelope_fields": delta["removed_envelope_fields"],
+        "removed_mcp_tools": delta["removed_mcp_tools"],
+        "preset_shrinks": delta["preset_shrinks"],
+        "erased_count": delta["breaking_count"],
+    }
+
+
+def _erasure_lines(erasures: dict[str, Any]) -> list[str]:
+    """Render one human line per entry a refused write would have erased."""
+    if "unreadable_baseline" in erasures:
+        return [f"existing baseline is unreadable: {erasures['unreadable_baseline']}"]
+    lines = [f"command {name}" for name in erasures["removed_commands"]]
+    lines += [f"flag {entry['command']} {entry['flag']}" for entry in erasures["removed_flags"]]
+    lines += [f"envelope field surface.summary.{name}" for name in erasures["removed_envelope_fields"]]
+    lines += [f"MCP tool {name}" for name in erasures["removed_mcp_tools"]]
+    lines += [
+        f"preset {entry['preset']} shrinks {entry['baseline_count']} -> {entry['current_count']}"
+        for entry in erasures["preset_shrinks"]
+    ]
+    return lines
 
 
 def _default_baseline_path() -> Path:
@@ -347,10 +472,24 @@ def _default_baseline_path() -> Path:
     help="Write a fresh snapshot to this path and exit (no diff).",
 )
 @click.option(
+    "--accept-removals",
+    "accept_removals",
+    is_flag=True,
+    default=False,
+    help="Permit --write-baseline to drop entries the existing baseline records.",
+)
+@click.option(
     "--ci",
     is_flag=True,
     default=False,
     help="Exit 5 (EXIT_GATE_FAILURE) if any breaking entries are detected.",
+)
+@click.option(
+    "--require-coverage",
+    "require_coverage",
+    is_flag=True,
+    default=False,
+    help="Exit 5 (EXIT_GATE_FAILURE) if the baseline does not record the whole current surface.",
 )
 @click.pass_context
 def compatibility(
@@ -358,7 +497,9 @@ def compatibility(
     baseline_path: Path | None,
     current_path: Path | None,
     write_baseline: Path | None,
+    accept_removals: bool,
     ci: bool,
+    require_coverage: bool,
 ):
     """Detect outbound surface regressions vs a baseline snapshot.
 
@@ -368,6 +509,7 @@ def compatibility(
       roam compatibility --baseline old.json          # explicit baseline
       roam compatibility --write-baseline cur.json    # capture a fresh baseline
       roam compatibility --ci                         # exit 5 on breaking changes
+      roam compatibility --ci --require-coverage      # also exit 5 on a stale baseline
 
     Detection scope (MVP, closed-enum):
       - removed/renamed/added commands
@@ -376,6 +518,10 @@ def compatibility(
       - removed/added MCP tools
       - MCP preset count changes (preset shrinkage = breaking)
 
+    Detection REACH is the baseline: nothing the baseline never recorded
+    can be reported as removed later. --require-coverage gates on that
+    reach, so a surface change and its baseline refresh land together.
+
     Out of scope: semantic-behavior regressions (a much larger problem).
     """
     json_mode = bool(ctx.obj and ctx.obj.get("json"))
@@ -383,10 +529,70 @@ def compatibility(
     # Write-baseline path: capture + exit (no diff).
     if write_baseline is not None:
         snapshot = _build_snapshot()
+
+        # Ratchet guard. Regeneration is the remedy this command prints
+        # when the gate goes red, so it is reached most often in exactly
+        # the state where blessing the current surface is wrong.
+        erasures = None if accept_removals else _erasures(write_baseline, snapshot)
+        if erasures is not None:
+            lines = _erasure_lines(erasures)
+            remedy = f"roam compatibility --write-baseline {write_baseline} --accept-removals"
+            noun = "entry" if len(lines) == 1 else "entries"
+            subject = "that entry" if len(lines) == 1 else "those entries"
+            msg = (
+                f"refusing to write: the fresh snapshot drops {len(lines)} {noun} the existing "
+                f"baseline records; writing it would make the removal of {subject} "
+                "permanently undetectable"
+            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "compatibility",
+                            summary={
+                                "verdict": "baseline write refused",
+                                "level": "blocker",
+                                "partial_success": False,
+                                "erased": len(lines),
+                                "path": str(write_baseline),
+                            },
+                            error_code="GATE_FAILURE",
+                            error=msg,
+                            hint=(
+                                "restore the removed surface, or re-run with --accept-removals "
+                                "to record the removal deliberately"
+                            ),
+                            next_command=remedy,
+                            would_erase=lines,
+                            agent_contract={
+                                "facts": [
+                                    f"{len(lines)} entries would be erased",
+                                    f"baseline path {write_baseline}",
+                                ],
+                                "next_commands": [remedy],
+                            },
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: baseline write refused - {msg}", err=True)
+                for line in lines:
+                    click.echo(f"  - {line}", err=True)
+                click.echo("", err=True)
+                click.echo(f"  restore the surface, or record the removal deliberately: {remedy}", err=True)
+            ctx.exit(EXIT_GATE_FAILURE)
+
         write_baseline.parent.mkdir(parents=True, exist_ok=True)
+        # newline="" disables the platform newline translation that would
+        # otherwise make a Windows-authored baseline differ byte-for-byte
+        # from a Linux-authored one. This artifact is committed and diffed
+        # by reviewers; the OS of whoever refreshed it must not show up in
+        # the diff. (.gitattributes normalizes on commit, but the working
+        # copy churn and the "CRLF will be replaced" warning are real.)
         write_baseline.write_text(
             json.dumps(snapshot, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
+            newline="",
         )
         if json_mode:
             click.echo(
@@ -450,7 +656,9 @@ def compatibility(
             )
         else:
             click.echo(f"VERDICT: baseline missing - {msg}", err=True)
-        if ci:
+        # No baseline is total coverage loss, not a partial one: nothing
+        # at all can be reported as removed. Both gates fail on it.
+        if ci or require_coverage:
             ctx.exit(EXIT_GATE_FAILURE)
         return
 
@@ -463,9 +671,11 @@ def compatibility(
         current = json.loads(current_path.read_text(encoding="utf-8"))
 
     diff = _diff(baseline, current)
-    verdict, level = _verdict_for(diff)
+    verdict, level = _verdict_for(diff, require_coverage=require_coverage)
 
     breaking = diff["breaking_count"]
+    coverage_gap = diff["coverage_gap_count"]
+    refresh_remedy = f"roam compatibility --write-baseline {baseline_path}"
     removed_n = (
         len(diff["removed_commands"])
         + len(diff["removed_flags"])
@@ -490,13 +700,20 @@ def compatibility(
             f"{len(diff['added_commands'])} added commands",
             f"{len(diff['added_mcp_tools'])} added MCP tools",
             f"{breaking} breaking entries",
+            f"{coverage_gap} entries outside baseline coverage",
         ]
         next_commands: list[str] = []
         if breaking:
             next_commands.append(
                 "# inspect breaking entries, then either restore the surface or roll the baseline forward"
             )
-            next_commands.append(f"roam compatibility --write-baseline {baseline_path}")
+            # Named WITH the override it now needs. The bare form refuses
+            # to erase what the baseline records, so printing it alone
+            # would advertise a command that cannot run here.
+            next_commands.append(f"{refresh_remedy} --accept-removals")
+        elif coverage_gap:
+            next_commands.append("# the baseline no longer records the whole shipped surface")
+            next_commands.append(refresh_remedy)
         click.echo(
             to_json(
                 json_envelope(
@@ -509,6 +726,7 @@ def compatibility(
                         "renamed": renamed_n,
                         "added": added_n,
                         "breaking": breaking,
+                        "coverage_gap": coverage_gap,
                     },
                     removed_commands=diff["removed_commands"],
                     added_commands=diff["added_commands"],
@@ -529,7 +747,10 @@ def compatibility(
             )
         )
     else:
-        click.echo(f"VERDICT: {verdict}  (removed={removed_n} renamed={renamed_n} added={added_n} breaking={breaking})")
+        click.echo(
+            f"VERDICT: {verdict}  (removed={removed_n} renamed={renamed_n} added={added_n} "
+            f"breaking={breaking} coverage_gap={coverage_gap})"
+        )
         if diff["removed_commands"]:
             click.echo("")
             click.echo("removed commands:")
@@ -560,6 +781,17 @@ def compatibility(
             click.echo("changed presets:")
             for e in diff["changed_presets"]:
                 click.echo(f"  - {e['preset']}: {e['baseline_count']} -> {e['current_count']}")
+        if require_coverage and coverage_gap and not breaking:
+            click.echo("")
+            subject = "entry is" if coverage_gap == 1 else "entries are"
+            possessive = "its" if coverage_gap == 1 else "their"
+            click.echo(
+                f"{coverage_gap} {subject} outside the baseline's reach; "
+                f"{possessive} later removal would go undetected."
+            )
+            click.echo(f"  refresh the baseline in the same commit as the surface change: {refresh_remedy}")
 
     if ci and breaking > 0:
+        ctx.exit(EXIT_GATE_FAILURE)
+    if require_coverage and coverage_gap > 0:
         ctx.exit(EXIT_GATE_FAILURE)

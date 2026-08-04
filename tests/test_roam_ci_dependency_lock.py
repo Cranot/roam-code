@@ -42,9 +42,12 @@ def test_every_remote_action_is_commit_pinned_and_uv_is_version_pinned() -> None
             continue
         assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", ref), ref
 
-    assert text.count(f"astral-sh/setup-uv@{UV_ACTION_SHA}") == 6
-    assert text.count(f'version: "{UV_VERSION}"') == 6
-    assert text.count(UV_RUNTIME_GUARD) == 6
+    # One per independently materialized environment: test, dependency-audit,
+    # test-no-optional-deps, lint, doc-hygiene, compatibility, wheel-smoke.
+    # The `compatibility` job (W1491) took this from 6 to 7.
+    assert text.count(f"astral-sh/setup-uv@{UV_ACTION_SHA}") == 7
+    assert text.count(f'version: "{UV_VERSION}"') == 7
+    assert text.count(UV_RUNTIME_GUARD) == 7
     assert "$(uv --version)" not in text
     assert "astral-sh/setup-uv@v" not in text
 
@@ -91,7 +94,7 @@ def test_every_ci_environment_comes_from_uv_lock() -> None:
     assert not [
         line for line in executable_lines if re.search(r"\bpip\s+install\b", line) and "uv pip install" not in line
     ]
-    assert text.count("uv sync --locked --no-default-groups") >= 6
+    assert text.count("uv sync --locked --no-default-groups") >= 7
     assert 'UV_LOCKED: "1"' in text
     assert 'UV_PYTHON_DOWNLOADS: "never"' in text
     assert "uv export \\" in text
@@ -104,7 +107,9 @@ def test_ci_runner_platform_is_pinned_to_the_locked_wheel_abi() -> None:
     text = _workflow()
 
     assert "ubuntu-latest" not in text
-    assert text.count("runs-on: ubuntu-24.04") == 7
+    # One per job: the seven above plus self-analysis. W1491 added
+    # `compatibility`, taking this from 7 to 8.
+    assert text.count("runs-on: ubuntu-24.04") == 8
 
 
 def test_fallback_lane_stays_minimal_and_locked() -> None:
