@@ -91,11 +91,40 @@ SCHEMA_VERSION = "1"
 # nobody remembers this constant exists.
 GRAPH_RESOLVER_VERSION = "1"
 
-# Verification states. Deliberately three, not two — see
+# Verification states. Deliberately four, not two — see
 # ``verify_cga_statement_state``.
 VERIFY_STATE_VERIFIED = "verified"
 VERIFY_STATE_MISMATCH = "mismatch"
 VERIFY_STATE_BUILDER_DRIFT = "graph_builder_drift"
+VERIFY_STATE_UNVERIFIABLE = "unverifiable"
+
+# Third value for ``git_dirty_hash``, alongside ``None`` (tree is clean) and a
+# sha256 hex digest (tree is dirty): the probe could not run at all — no git
+# binary, not a repo, ``git status`` non-zero, or the call timed out.
+#
+# Before this existed, all three collapsed onto ``None``, so "I could not
+# determine the tree state" was indistinguishable from "I checked, it is
+# clean". That single overload produced a defect in BOTH directions:
+#
+#   * verify, predicate signed dirty + probe unavailable → the verifier
+#     asserted "the live working tree is clean now" and returned MISMATCH,
+#     i.e. it raised a tamper-shaped alarm out of an answer it did not have;
+#   * verify, predicate signed clean + probe unavailable → ``None == None``
+#     compared equal and the statement came back VERIFIED, so a CGA could
+#     certify a clean tree on a box where the tree was never inspected;
+#   * emit, probe unavailable → the ``--allow-dirty`` gate saw ``None``,
+#     read it as clean, and signed a predicate asserting a clean tree.
+#
+# The literal is the same "unknown" sentinel this module already uses for an
+# undeterminable subject SHA (see ``build_cga_statement`` and the
+# ``subject_sha != "unknown"`` guard in ``verify_cga_statement``), and it can
+# never collide with a real value: a dirty tree always hashes to 64 hex chars.
+DIRTY_HASH_UNKNOWN = "unknown"
+
+# Prefix stamped on every error that reports a MISSING answer rather than a
+# WRONG one, so ``classify_verification_state`` can route it to
+# :data:`VERIFY_STATE_UNVERIFIABLE` instead of accusing anyone of tampering.
+_UNKNOWN_PREFIX = "environment_unknown"
 
 # Prefix stamped on every reclassified fingerprint error so text-mode
 # consumers (and greps in CI logs) can separate "the toolchain moved" from
@@ -136,9 +165,23 @@ def _git_commit_sha(root: Path) -> str | None:
 
 
 def _git_dirty_hash(root: Path) -> str | None:
-    """SHA-256 of ``git status --porcelain`` output, or None when clean
-    or non-git. Lets the predicate carry "tree was clean at sign time"
-    as a verifiable property rather than an assumption.
+    """Tri-state probe of the working tree, for the predicate's dirty binding.
+
+    Returns exactly one of:
+
+    * ``None`` — ``git status --porcelain`` ran and reported nothing. The
+      tree is CLEAN, and that is an observation, not an assumption.
+    * a 64-char sha256 hex digest — the tree is DIRTY, and this digest
+      pins which uncommitted state it was.
+    * :data:`DIRTY_HASH_UNKNOWN` — the probe could not run. No git binary,
+      not a repository, ``git status`` exited non-zero, or it timed out.
+
+    The third value is the whole point. It used to be ``None`` as well, which
+    made "not inspected" indistinguishable from "inspected and clean" for
+    every downstream reader — see :data:`DIRTY_HASH_UNKNOWN` for the three
+    concrete failures that overload produced. Callers must treat
+    :data:`DIRTY_HASH_UNKNOWN` as an absence of evidence and fail closed on
+    it; they must never let it satisfy a clean check.
     """
     try:
         proc = subprocess.run(
@@ -151,13 +194,15 @@ def _git_dirty_hash(root: Path) -> str | None:
             errors="replace",
         )
     except (subprocess.TimeoutExpired, OSError):
-        # Intentionally fail soft: missing git / inaccessible repo / timeout means no dirty-tree attestation.
-        return None
+        # Missing git / inaccessible repo / timeout. Soft on the CALL — it
+        # does not raise — but not soft on the ANSWER: we learned nothing
+        # about the tree, and saying "clean" here would be a fabrication.
+        return DIRTY_HASH_UNKNOWN
     if proc.returncode != 0:
-        return None
+        return DIRTY_HASH_UNKNOWN
     out = proc.stdout
     if not out.strip():
-        return None  # clean
+        return None  # observed clean
     return hashlib.sha256(out.encode("utf-8", "replace")).hexdigest()
 
 
@@ -435,12 +480,15 @@ def build_cga_predicate(
         "edge_bundle_digest": edges_digest,
         "symbol_count": n_symbols,
         "edge_count": n_edges,
-        # Working-tree state at sign time. ``None`` means "clean" — anything
-        # else is a sha256 of ``git status --porcelain``. The verifier
-        # re-derives the live value and refuses on mismatch, so a CGA that
-        # asserts clean cannot quietly be produced on a dirty tree, and a
-        # signed-while-dirty statement can be re-verified against the same
-        # uncommitted state if needed.
+        # Working-tree state at sign time, tri-valued exactly as
+        # ``_git_dirty_hash`` returns it: ``None`` = observed clean, a sha256
+        # of ``git status --porcelain`` = dirty and pinned to that state,
+        # ``DIRTY_HASH_UNKNOWN`` = the probe could not run and this statement
+        # therefore asserts NOTHING about the tree. The verifier re-derives
+        # the live value and refuses on mismatch, so a CGA that asserts clean
+        # cannot quietly be produced on a dirty tree; and because the unknown
+        # is carried explicitly rather than flattened to ``None``, it cannot
+        # quietly be produced on an uninspected one either.
         "git_dirty_hash": dirty_hash,
         # Identity of the graph builder that produced the two digests above.
         # Without it a verifier cannot tell "roam's resolver was upgraded"
@@ -579,7 +627,40 @@ def _extract_subject_sha(subject_list: Any) -> str | None:
 
 
 def _describe_dirty_hash_mismatch(predicate_dirty: Any, live_dirty: Any) -> str | None:
-    """Return a human-readable mismatch reason, or None when they match."""
+    """Return a human-readable mismatch reason, or None when they match.
+
+    An :data:`DIRTY_HASH_UNKNOWN` on either side is tested BEFORE equality,
+    and both orderings matter:
+
+    * Before equality, because two unknowns are not a match. ``"unknown" ==
+      "unknown"`` is two absent answers agreeing about nothing, and letting
+      that fall through would hand back ``None`` — the "they match" reply —
+      and verify the statement on the strength of a question nobody answered.
+    * At all, because the alternative is worse than useless: with the live
+      side unknown, the old code reached the ``predicate_dirty is not None and
+      live_dirty is None`` branch and reported "the live working tree is clean
+      now" — a positive factual claim about a tree it had failed to inspect,
+      rendered in the wording reserved for evidence that moved.
+
+    So an unknown returns an :data:`_UNKNOWN_PREFIX` error instead: still an
+    error, so the verify still fails, but classified as an answer we do not
+    have rather than an accusation we are not entitled to make.
+    """
+    if DIRTY_HASH_UNKNOWN in (predicate_dirty, live_dirty):
+        if predicate_dirty == DIRTY_HASH_UNKNOWN and live_dirty == DIRTY_HASH_UNKNOWN:
+            side = "neither the signer nor this verifier was able to run"
+        elif predicate_dirty == DIRTY_HASH_UNKNOWN:
+            side = "the signer was unable to run"
+        else:
+            side = "this verifier was unable to run"
+        return (
+            f"{_UNKNOWN_PREFIX}: git_dirty_hash could not be established — "
+            f"{side} `git status --porcelain` (no git binary, not a "
+            "repository, non-zero exit, or timeout), so the working tree was "
+            "never inspected. This is NOT evidence of tampering and NOT a "
+            "clean tree; it is an absent answer, and the verify fails closed "
+            "on it. Re-run where git is available to get a real comparison."
+        )
     if predicate_dirty == live_dirty:
         return None
     if predicate_dirty is None and live_dirty is not None:
@@ -666,7 +747,7 @@ def _no_builder_identity_note(predicate: dict[str, Any]) -> list[str]:
 
 
 def classify_verification_state(errors: list[str]) -> str:
-    """Map a :func:`verify_cga_statement` error list onto THREE states.
+    """Map a :func:`verify_cga_statement` error list onto FOUR states.
 
     * :data:`VERIFY_STATE_VERIFIED` — no errors.
     * :data:`VERIFY_STATE_BUILDER_DRIFT` — every error is a fingerprint
@@ -674,9 +755,26 @@ def classify_verification_state(errors: list[str]) -> str:
       graph-builder change. The signed digests are no longer comparable, so
       the verifier can make NO claim about this graph — it can neither
       confirm it nor accuse anyone of altering it.
+    * :data:`VERIFY_STATE_UNVERIFIABLE` — no error is a definite discrepancy
+      and at least one is an :data:`_UNKNOWN_PREFIX` absence: a probe the
+      verifier needed could not be run, so a property went unchecked.
     * :data:`VERIFY_STATE_MISMATCH` — anything else. That includes digests
       that moved under a FIXED builder (the real tamper signal) and every
       environmental failure (wrong commit, dirty tree, bad predicate type).
+
+    Why UNVERIFIABLE is its own state and not folded into either neighbour:
+
+    Folding it into VERIFIED is the fail-open half of the bug this state was
+    added to close — it would certify a property nobody measured. Folding it
+    into MISMATCH is the fail-closed half, and no less wrong: MISMATCH is the
+    tamper channel, and spending it on "my CI image has no git" is how a
+    tamper alarm gets trained out of its reader. The distinction UNVERIFIABLE
+    draws is the one the verifier can actually support — it knows it did not
+    look, and it says exactly that.
+
+    MISMATCH keeps its priority over both softer states: a single definite
+    discrepancy re-asserts it no matter how many unknowns sit beside it, so an
+    unknown can never launder a wrong commit or a real digest move.
 
     Why drift is its own state and NOT a pass:
 
@@ -700,6 +798,11 @@ def classify_verification_state(errors: list[str]) -> str:
         return VERIFY_STATE_VERIFIED
     if all(e.startswith(_DRIFT_PREFIX + ":") for e in errors):
         return VERIFY_STATE_BUILDER_DRIFT
+    # Drift and unknown are both "cannot claim" errors, so a mix of the two
+    # still supports no accusation. Report the weaker, more honest of the two.
+    soft = (_DRIFT_PREFIX + ":", _UNKNOWN_PREFIX + ":")
+    if all(e.startswith(soft) for e in errors):
+        return VERIFY_STATE_UNVERIFIABLE
     return VERIFY_STATE_MISMATCH
 
 
@@ -711,10 +814,10 @@ def verify_cga_statement_state(
 ) -> tuple[str, list[str]]:
     """Verify *statement* and return ``(state, errors)``.
 
-    Tri-state front door over :func:`verify_cga_statement`, for callers that
-    need to tell a graph-builder upgrade apart from tampering. See
-    :func:`classify_verification_state` for what the states mean and why
-    drift is a refusal rather than a pass.
+    Front door over :func:`verify_cga_statement`, for callers that need to
+    tell a graph-builder upgrade — or a probe that could not run — apart from
+    tampering. See :func:`classify_verification_state` for what the states
+    mean and why neither soft state is a pass.
     """
     _ok, errors = verify_cga_statement(statement, conn, project_root=project_root)
     return classify_verification_state(errors), errors

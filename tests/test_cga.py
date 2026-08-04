@@ -165,9 +165,14 @@ class TestStatementStructure:
 
 class TestVerification:
     def test_fresh_statement_verifies_clean(self, tmp_path):
+        # A real, committed repo — not a bare tmp_path. Pre-W1462 the bare
+        # directory passed because "git could not look" and "the tree is
+        # clean" were the same ``None``; a test named "verifies clean" has to
+        # run against a tree that is actually clean to mean anything.
+        root = _make_project(tmp_path, {"seed.py": "SEED = 1\n"})
         conn = _make_in_memory_db()
-        stmt = build_cga_statement(conn, project_root=tmp_path)
-        ok, errors = verify_cga_statement(stmt, conn, project_root=tmp_path)
+        stmt = build_cga_statement(conn, project_root=root)
+        ok, errors = verify_cga_statement(stmt, conn, project_root=root)
         assert ok, errors
         assert errors == []
 
@@ -283,12 +288,16 @@ class TestVerification:
         """
         from roam.attest.cga import _LEGACY_PREDICATE_TYPES
 
+        # Clean committed repo so the only thing under test is the IRI — see
+        # ``test_fresh_statement_verifies_clean`` for why a bare tmp_path no
+        # longer stands in for a clean tree.
+        root = _make_project(tmp_path, {"seed.py": "SEED = 1\n"})
         conn = _make_in_memory_db()
-        stmt = build_cga_statement(conn, project_root=tmp_path)
+        stmt = build_cga_statement(conn, project_root=root)
         # Spoof an old-style emit by swapping the predicate type back
         # to the legacy ``.dev`` IRI.
         stmt["predicateType"] = _LEGACY_PREDICATE_TYPES[0]
-        ok, errors = verify_cga_statement(stmt, conn, project_root=tmp_path)
+        ok, errors = verify_cga_statement(stmt, conn, project_root=root)
         assert ok, f"legacy IRI should verify, got errors: {errors}"
 
     def test_predicate_type_now_uses_owned_domain(self, tmp_path):
