@@ -253,6 +253,32 @@ def _evaluate_rule(rule: dict, before: dict, after: dict) -> dict:
     b_val = before.get(metric)
     a_val = after.get(metric)
 
+    # W1461 — a gate cannot certify a value it did not compute.
+    #
+    # ``collect_metrics`` floors every graph-derived metric to its BEST
+    # possible value when the symbol graph cannot be built (cycles 0,
+    # tangle_ratio 0.0, layer_violations 0 -> a near-perfect health_score).
+    # The shipped default rule "Health score floor" reads health_score, so a
+    # broken index used to PASS the gate silently. Absent measurement is
+    # UNKNOWN, never EQUAL: fail the rule, and name why, so exit 5 is
+    # actionable rather than mysterious. Applies to both call sites of this
+    # function (``roam budget`` and ``roam attest``'s budget evidence).
+    degraded = set(before.get("degraded_metrics") or ()) | set(after.get("degraded_metrics") or ())
+    if metric in degraded:
+        return {
+            "name": name,
+            "metric": metric,
+            "status": "FAIL",
+            "before": b_val,
+            "after": a_val,
+            "delta": None,
+            "budget": _budget_str(rule),
+            "reason": (
+                f"metric '{metric}' could not be measured (symbol graph unavailable); "
+                "a gate cannot certify a value it did not compute — re-run `roam index`"
+            ),
+        }
+
     if b_val is None or a_val is None:
         return {
             "name": name,

@@ -316,24 +316,36 @@ def _resolve_scannable_test_path(file_path: str, project_root: Path | None = Non
     return candidate
 
 
-def _scan_test_file(file_path: str, project_root: Path | None = None) -> list[dict]:
-    """Return one finding dict per non-hermetic call site in the file.
+# Closed-enum reasons a test file's hermeticity could not be determined.
+# A file that was never parsed is UNKNOWN — never "hermetic".
+_SKIP_UNRESOLVABLE = "unresolvable_path"
+_SKIP_UNREADABLE = "unreadable"
+_SKIP_SYNTAX_ERROR = "syntax_error"
 
-    Returns ``[]`` when the file can't be parsed, is suppressed in full,
-    or contains no non-hermetic calls. The caller filters / persists.
+
+def _scan_test_file_ex(file_path: str, project_root: Path | None = None) -> tuple[list[dict], str | None]:
+    """Return ``(findings, skip_reason)`` for one test file.
+
+    ``skip_reason`` is ``None`` **only** when the file was actually read and
+    parsed — i.e. when an empty ``findings`` list genuinely means "clean".
+    A non-``None`` reason (closed enum, ``_SKIP_*``) means the file was never
+    analyzed and its hermeticity is UNKNOWN. Callers that publish a verdict,
+    a rate, or an exit code MUST NOT fold a skipped file into the hermetic
+    count: an unparseable file would otherwise be arithmetically identical to
+    one that parsed clean.
     """
     scan_path = _resolve_scannable_test_path(file_path, project_root)
     if scan_path is None:
-        return []
+        return [], _SKIP_UNRESOLVABLE
     try:
         with open(scan_path, encoding="utf-8", errors="replace") as f:
             source = f.read()
     except OSError:
-        return []
+        return [], _SKIP_UNREADABLE
     try:
         tree = ast.parse(source, filename=file_path)
     except SyntaxError:
-        return []
+        return [], _SKIP_SYNTAX_ERROR
 
     suppress = _collect_suppression_signals(tree)
     findings: list[dict] = []
@@ -369,7 +381,18 @@ def _scan_test_file(file_path: str, project_root: Path | None = None) -> list[di
                 }
             )
 
-    return findings
+    return findings, None
+
+
+def _scan_test_file(file_path: str, project_root: Path | None = None) -> list[dict]:
+    """Findings-only view of :func:`_scan_test_file_ex`.
+
+    Convenience for callers that consume findings and nothing else. It cannot
+    distinguish "parsed clean" from "never parsed" — any caller that turns the
+    result into a verdict, a rate, or an exit code must use
+    :func:`_scan_test_file_ex` and honour ``skip_reason``.
+    """
+    return _scan_test_file_ex(file_path, project_root)[0]
 
 
 def _is_test_infrastructure(path: str) -> bool:
@@ -499,6 +522,7 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
     findings: list[dict] = []
     total_test_files = 0
     non_hermetic_files: set[str] = set()
+    skipped_files: list[dict] = []
 
     with open_db(readonly=not persist) as conn:
         rows = conn.execute(
@@ -509,7 +533,13 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
         total_test_files = len(test_files)
 
         for path in test_files:
-            file_findings = _scan_test_file(path, project_root=project_root)
+            file_findings, skip_reason = _scan_test_file_ex(path, project_root=project_root)
+            if skip_reason is not None:
+                # Never parsed => hermeticity UNKNOWN. Withhold it from the
+                # hermetic count instead of letting the subtraction below
+                # silently credit it as clean.
+                skipped_files.append({"file": path, "reason": skip_reason})
+                continue
             if file_findings:
                 non_hermetic_files.add(path)
                 findings.extend(file_findings)
@@ -527,9 +557,21 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
 
                 log_swallowed("cmd_test_hermeticity:emit_findings", _exc)
 
+    # Only files that were actually parsed may enter the hermetic arithmetic.
+    # ``total_test_files`` counts what the INDEX saw (tree-sitter parses files
+    # that ``ast.parse`` rejects); ``scanned`` counts what this detector read.
+    skipped = len(skipped_files)
+    scanned = max(0, total_test_files - skipped)
     non_hermetic = len(non_hermetic_files)
-    hermetic = max(0, total_test_files - non_hermetic)
-    hermeticity_rate = round(100.0 * hermetic / total_test_files, 1) if total_test_files else 100.0
+    hermetic = max(0, scanned - non_hermetic)
+    if scanned:
+        hermeticity_rate: float | None = round(100.0 * hermetic / scanned, 1)
+    elif total_test_files:
+        # Test files exist but none could be parsed — the rate is UNKNOWN,
+        # and UNKNOWN must not render as 100.0.
+        hermeticity_rate = None
+    else:
+        hermeticity_rate = 100.0
 
     # W805: empty-corpus disclosure (Pattern 2 silent-fallback fix).
     # When no Python test files are indexed the check did not actually
@@ -538,14 +580,22 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
     # distinguish "all tests hermetic" (real success) from "no tests
     # analyzed" (degraded/missing input). Mirrors W834 / W836.
     empty_corpus = total_test_files == 0
+    # Same disclosure obligation one step further in: files WERE indexed but
+    # none of them reached the parser.
+    all_skipped = scanned == 0 and total_test_files > 0
+    skip_note = f", {skipped} skipped (unparseable/unreadable — hermeticity UNKNOWN)" if skipped else ""
     if empty_corpus:
         verdict = "no Python test files indexed"
+    elif all_skipped:
+        verdict = (
+            f"nothing scanned — all {skipped} indexed test file{'s' if skipped != 1 else ''} unparseable/unreadable"
+        )
     elif not findings:
-        verdict = f"all {total_test_files} test files are hermetic"
+        verdict = f"all {scanned} test files are hermetic{skip_note}"
     else:
         verdict = (
             f"{len(findings)} non-hermetic findings across {non_hermetic} test files "
-            f"({hermeticity_rate}% hermetic of {total_test_files} tests)"
+            f"({hermeticity_rate}% hermetic of {scanned} tests){skip_note}"
         )
 
     # Closed-enum kind counts for the envelope (also useful in text mode).
@@ -564,6 +614,26 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
         if empty_corpus:
             _summary["partial_success"] = True
             _summary["state"] = "no_tests_indexed"
+        _facts = [
+            f"{scanned} Python test files scanned",
+            f"{len(findings)} non-hermetic findings",
+            f"{non_hermetic} non-hermetic test files",
+        ]
+        _risks: list[str] = []
+        _extra: dict[str, Any] = {}
+        if skipped:
+            # Degraded-path-only keys: the healthy envelope (skipped == 0)
+            # stays byte-identical to the pre-fix shape.
+            _summary["partial_success"] = True
+            _summary["state"] = "no_tests_scanned" if all_skipped else "partial_scan"
+            _summary["scanned"] = scanned
+            _summary["skipped"] = skipped
+            _extra["skipped_files"] = skipped_files
+            _facts.append(f"{skipped} indexed test files NOT scanned (hermeticity unknown)")
+            _risks.append(
+                f"{skipped} test file(s) could not be parsed; their hermeticity is UNKNOWN, "
+                "not clean — this result does not cover them"
+            )
         click.echo(
             to_json(
                 json_envelope(
@@ -572,21 +642,21 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
                     findings=findings,
                     kind_counts=kind_counts,
                     detector_version=_TEST_HERMETICITY_DETECTOR_VERSION,
+                    **_extra,
                     agent_contract={
-                        "facts": [
-                            f"{total_test_files} Python test files scanned",
-                            f"{len(findings)} non-hermetic findings",
-                            f"{non_hermetic} non-hermetic test files",
-                        ],
+                        "facts": _facts,
                         "next_commands": [
                             "roam findings list --detector test-hermeticity",
                             "# review each finding; wrap external deps in monkeypatch / responses / freezegun",
                         ],
+                        "risks": _risks,
                     },
                 )
             )
         )
-        if ci_mode and findings:
+        # Fail closed: a file the detector could not read is not evidence of
+        # hermeticity, so the gate must not pass on it.
+        if ci_mode and (findings or skipped_files):
             ctx.exit(5)
         return
 
@@ -603,5 +673,14 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
         if len(findings) > 50:
             click.echo(f"  ... {len(findings) - 50} more")
 
-    if ci_mode and findings:
+    if skipped_files:
+        click.echo()
+        click.echo(f"NOT SCANNED ({skipped} — hermeticity UNKNOWN, not clean):")
+        for s in skipped_files[:20]:
+            click.echo(f"  [{s['reason']:17s}] {s['file']}")
+        if skipped > 20:
+            click.echo(f"  ... {skipped - 20} more")
+
+    # Fail closed: an unread file is not evidence of hermeticity.
+    if ci_mode and (findings or skipped_files):
         ctx.exit(5)

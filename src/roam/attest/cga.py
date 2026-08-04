@@ -542,10 +542,20 @@ def build_cga_statement(
     predicate_type = PREDICATE_TYPE
     if include_aibom:
         try:
-            from roam.security.aibom_extension import build_aibom_block
+            from roam.security.aibom_extension import (
+                aibom_block_incomplete_reason,
+                build_aibom_block,
+            )
 
-            predicate["aibom"] = build_aibom_block(project_root, conn)
+            block = build_aibom_block(project_root, conn)
+            predicate["aibom"] = block
             predicate_type = PREDICATE_TYPE_AIBOM
+            # A block that could not compute one of its symbol bindings is
+            # still emitted, but it must not be signed as a complete AIBOM
+            # without the same disclosure an outright failure would get.
+            reason = aibom_block_incomplete_reason(block)
+            if reason:
+                predicate["aibom_error"] = reason
         except Exception as exc:
             predicate["aibom_error"] = str(exc)
     return {

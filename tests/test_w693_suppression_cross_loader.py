@@ -77,6 +77,13 @@ _SUPPRESSION_LOADERS: tuple[tuple[str, str, str], ...] = (
     # W723 typed wrapper around _load_suppressions — same on-disk file, typed view
     # (canonical dict shape only; legacy list/envelope shapes are NOT projected).
     ("roam.output.sarif", "_load_suppressions_typed", ".roam/suppressions.json"),
+    # The `roam suppress` WRITER's own read-before-write loader — same on-disk
+    # file. Unlike the read-only loaders above it returns ``(entries, error)``
+    # rather than collapsing failures to an empty view, because its result is
+    # written straight back: an unreadable store that read as `{}` rewrote the
+    # file with only the new entry and destroyed the audit ledger. UNKNOWN must
+    # stay distinguishable from EMPTY here. See test_suppress_store_unreadable.
+    ("roam.commands.cmd_suppress", "_load_suppression_store", ".roam/suppressions.json"),
 )
 
 # Files that the enumerated loaders consume. The drift-guard ignores the

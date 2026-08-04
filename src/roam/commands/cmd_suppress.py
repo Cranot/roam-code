@@ -63,6 +63,82 @@ def _load_findings_from_envelope_path(path: str) -> list[dict]:
     return []
 
 
+def _load_suppression_store(path: Path) -> tuple[dict, str | None]:
+    """Load the finding-id-keyed suppression store — UNKNOWN never reads as EMPTY.
+
+    Returns ``(entries, error)``. *error* is ``None`` only when the store's
+    contents are KNOWN: either the file is absent (legitimately empty) or it
+    parsed to a JSON object. A store that EXISTS but cannot be read, does not
+    parse, or has a non-object root resolves to UNKNOWN — the caller must fail
+    closed instead of treating an unreadable audit ledger as "no suppressions".
+
+    Before this split the loader collapsed every failure to ``{}``, which had
+    two measured harms: ``--list`` published ``VERDICT: 0 suppression(s)`` over
+    a store that visibly held entries, and — because ``current`` is written
+    straight back — a single add/remove REWROTE the store from that empty view,
+    destroying every prior suppression together with its audit rationale and
+    timestamps while reporting success. This is the same data-loss shape that
+    :func:`roam.commands.suppression.save_suppression` already learned to
+    refuse (see its append-only comment); the mirror is deliberate.
+    """
+    if not path.exists():
+        return {}, None
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        # UnicodeDecodeError is a ValueError, not an OSError — a store
+        # corrupted with binary bytes would otherwise escape as a traceback.
+        return {}, f"could not be read ({exc.__class__.__name__}: {exc})"
+    try:
+        parsed = _json.loads(raw)
+    except _json.JSONDecodeError as exc:
+        return {}, f"is not valid JSON (line {exc.lineno}, column {exc.colno}: {exc.msg})"
+    if not isinstance(parsed, dict):
+        return {}, f"has a JSON {type(parsed).__name__} at its root, but must be an object mapping finding_id -> entry"
+    return parsed, None
+
+
+def _abort_unreadable_store(path: Path, error: str, *, json_mode: bool) -> None:
+    """Fail closed on an UNKNOWN suppression store — never publish or overwrite it.
+
+    Emits an actionable terminal verdict and exits non-zero. Every caller
+    reaches this BEFORE any ``write_text``, so the on-disk audit ledger is
+    left byte-for-byte intact for a human to repair.
+    """
+    verdict = f"UNKNOWN — suppression store {error}"
+    hint = (
+        f"Refusing to read or rewrite {path} — doing so would report 0 suppressions "
+        f"and destroy any entries it holds. Repair the JSON, or move the file aside "
+        f"to start a new store. Nothing was modified."
+    )
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "suppress",
+                    summary={
+                        "verdict": verdict,
+                        "state": "unreadable_store",
+                        "partial_success": False,
+                        "count": None,
+                        "path": str(path),
+                    },
+                    status="error",
+                    isError=True,
+                    error_code="SUPPRESSION_STORE_UNREADABLE",
+                    error=verdict,
+                    hint=hint,
+                    suppressions=None,
+                )
+            )
+        )
+    else:
+        click.echo(f"VERDICT: {verdict}")
+        click.echo(f"  path: {path}")
+        click.echo(f"  {hint}")
+    raise SystemExit(2)
+
+
 def _filter_findings(findings: list[dict], filter_expr: str | None) -> list[dict]:
     """Apply a single ``key=value`` filter (D7 keeps it intentionally tiny)."""
     if not filter_expr:
@@ -169,16 +245,12 @@ def suppress(
     path = Path(input_path) if input_path else DEFAULT_SUPPRESSIONS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Load existing
-    if path.exists():
-        try:
-            current: dict = _json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(current, dict):
-                current = {}
-        except (OSError, _json.JSONDecodeError):
-            current = {}
-    else:
-        current = {}
+    # Load existing. An absent store is legitimately empty; an unreadable one
+    # is UNKNOWN and must not be published as 0 or silently overwritten — every
+    # path below either reports len(current) as a total or writes current back.
+    current, store_error = _load_suppression_store(path)
+    if store_error is not None:
+        _abort_unreadable_store(path, store_error, json_mode=json_mode)
 
     if list_only:
         summary = {

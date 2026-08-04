@@ -250,43 +250,102 @@ def _file_has_hr_risk_identifier(source: str) -> bool | None:
     return False
 
 
+_HR_SCAN_FILE_CAP = 200
+
+
 def _classify_high_risk_likelihood(project_root: Path) -> dict:
-    """Item 6 — heuristic: does the codebase look like an AI-tool that influences HR decisions?"""
+    """Item 6 — heuristic: does the codebase look like an AI-tool that influences HR decisions?
+
+    Absence of evidence is NOT evidence of absence. "No HR identifiers
+    matched" only supports a NOT-high-risk verdict when every candidate
+    file was actually read and parsed. Three things can silently shrink
+    the scan below the real candidate set — the ``_HR_SCAN_FILE_CAP``
+    truncation, an unparseable file (``_file_has_hr_risk_identifier``
+    returns ``None``), and an unreadable one (``OSError``) — and each
+    can only drag ``hits`` DOWN, never up. Reporting the surviving
+    sample as if it were the total would let a repo assert "NOT
+    high-risk across 200 files scanned" while the HR code sits in the
+    251st file, or "across 0 files scanned" because the one HR file had
+    a syntax error. So the shortfall is counted, disclosed on the item,
+    and — when it could have hidden the only hit — resolves to an
+    explicit INCONCLUSIVE that fails closed (``passed: False``) instead
+    of to a clean pass.
+    """
     # Deterministic sampling: sort candidates by repo-relative path BEFORE
-    # capping at 200, so the same 200 files are scanned on every run
-    # instead of whatever order the filesystem happens to yield. The
-    # canonical `is_test` detector (path-pattern based, not a substring
-    # check) excludes real test directories/files without also excluding
+    # capping, so the same files are scanned on every run instead of
+    # whatever order the filesystem happens to yield. The canonical
+    # `is_test` detector (path-pattern based, not a substring check)
+    # excludes real test directories/files without also excluding
     # "latest.py" or a checkout under a path containing "test".
     candidates = sorted(p for p in project_root.rglob("*.py") if not _is_test_path(str(p.relative_to(project_root))))
+    files_total = len(candidates)
     hits = 0
     sample = 0
-    for path in candidates[:200]:
+    unparseable = 0
+    unreadable = 0
+    for path in candidates[:_HR_SCAN_FILE_CAP]:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
+            unreadable += 1
             continue
         risky = _file_has_hr_risk_identifier(text)
         if risky is None:
-            continue  # unparseable — not a sample we can classify either way
+            unparseable += 1  # unparseable — not a sample we can classify either way
+            continue
         sample += 1
         if risky:
             hits += 1
+
+    over_cap = max(0, files_total - _HR_SCAN_FILE_CAP)
+    gaps: list[str] = []
+    if over_cap:
+        gaps.append(f"{over_cap} file(s) beyond the {_HR_SCAN_FILE_CAP}-file scan cap")
+    if unparseable:
+        gaps.append(f"{unparseable} file(s) that could not be parsed")
+    if unreadable:
+        gaps.append(f"{unreadable} file(s) that could not be read")
+    incomplete_reason = ("not scanned: " + ", ".join(gaps)) if gaps else None
+
     is_high_risk = hits > 0
+    if is_high_risk:
+        # A positive match is sound whatever the coverage — an unscanned
+        # file can only add hits, never retract one.
+        passed = False
+        evidence = f"REVIEW — {hits} file(s) reference HR/employment workflows; consult counsel"
+        fix = "Engage DPO immediately; this codebase MAY be high-risk under Annex III"
+    elif incomplete_reason:
+        passed = False
+        evidence = (
+            f"INCONCLUSIVE — no HR/employment identifiers in the {sample} file(s) actually "
+            f"scanned, but {incomplete_reason} (of {files_total} candidate .py file(s)), so "
+            "a NOT-high-risk verdict is not supported by this scan"
+        )
+        fix = (
+            "Classify the unscanned files before relying on this item: fix any unparseable "
+            "file, then re-run; for a repo larger than the scan cap, review the remaining "
+            "files manually and record the conclusion in compliance/eu-ai-act-assessment.md"
+        )
+    else:
+        passed = True
+        evidence = f"NOT high-risk — no HR/employment keywords matched across {sample} files scanned"
+        fix = "Document the non-applicability in compliance/eu-ai-act-assessment.md"
+
     return {
         "item": "High-risk classification likelihood (Annex III)",
         "article": "Annex III (high-risk system definitions)",
-        "passed": not is_high_risk,
-        "evidence": (
-            f"NOT high-risk — no HR/employment keywords matched across {sample} files scanned"
-            if not is_high_risk
-            else f"REVIEW — {hits} file(s) reference HR/employment workflows; consult counsel"
-        ),
-        "fix": (
-            "Document the non-applicability in compliance/eu-ai-act-assessment.md"
-            if not is_high_risk
-            else "Engage DPO immediately; this codebase MAY be high-risk under Annex III"
-        ),
+        "passed": passed,
+        "evidence": evidence,
+        "fix": fix,
+        # Coverage of the scan travels WITH the verdict — a consumer must
+        # never have to infer "scanned == all" from the verdict alone.
+        "files_total": files_total,
+        "files_scanned": sample,
+        "files_unparseable": unparseable,
+        "files_unreadable": unreadable,
+        "files_unscanned_over_cap": over_cap,
+        "scan_coverage_complete": incomplete_reason is None,
+        "scan_incomplete_reason": incomplete_reason,
     }
 
 
@@ -499,6 +558,13 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
         # events). Both publish `compliance_kind` +
         # `compliance_kind_definition` for unambiguous downstream use.
         gov_score = round(100 * passed / total) if total else 0
+        # The high-risk item is the one check whose verdict rests on a
+        # scan that can come up short. Lift its coverage shortfall to the
+        # summary — same shape as `pdf_skipped_reason` below — and set the
+        # canonical `partial_success` flag, so a consumer reading only
+        # `summary` still sees that the classification was degraded.
+        hr_item = next((r for r in results if "high-risk" in r["item"].lower()), {})
+        hr_incomplete_reason = hr_item.get("scan_incomplete_reason")
         click.echo(
             to_json(
                 json_envelope(
@@ -524,10 +590,12 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
                             "scores per-record chain integrity. Reference: "
                             "EU AI Act Article 12 (event logging)."
                         ),
-                        "high_risk_classification": next(
-                            (r["evidence"] for r in results if "high-risk" in r["item"].lower()),
-                            "unknown",
-                        ),
+                        "high_risk_classification": hr_item.get("evidence", "unknown"),
+                        "high_risk_scan_coverage_complete": hr_item.get("scan_coverage_complete"),
+                        "high_risk_scan_incomplete_reason": hr_incomplete_reason,
+                        "high_risk_files_total": hr_item.get("files_total"),
+                        "high_risk_files_scanned": hr_item.get("files_scanned"),
+                        "partial_success": hr_incomplete_reason is not None,
                         "output_path": output_path,
                         "pdf_path": pdf_path if pdf_written else None,
                         "pdf_skipped_reason": ("reportlab not installed" if (pdf_path and not pdf_written) else None),

@@ -920,13 +920,18 @@ runs:
         # bucket (has a frontend consumer — not an orphan) is filtered
         # upstream so SARIF consumers never see non-actionable rows.
         # W1229: verify-imports added — per-import hallucination-
-        # firewall projection. Two closed-enum rules:
+        # firewall projection. Three closed-enum rules:
         # invalid-import (defaultLevel warning — unresolved with FTS5
-        # fuzzy-match candidates, likely typo / rename) and
+        # fuzzy-match candidates, likely typo / rename),
         # hallucination-import (defaultLevel error — unresolved with
         # no candidates, the imported name genuinely doesn't exist in
         # the indexed symbol table, the canonical LLM-hallucination
-        # signal). The error band is deliberate — verify-imports is
+        # signal), and unverifiable-file (defaultLevel warning — a file
+        # the scan was asked to check could not be read, so its imports
+        # were never examined; without this rule a stale index turns
+        # every hidden unresolved import into a zero-result document
+        # and this gate goes green on a scan that never ran).
+        # The error band is deliberate — verify-imports is
         # the only one of the W12xx dead-code detectors that escalates
         # to error because a hallucinated import is unrecoverable
         # (no remediation path through fuzzy match) and gates CI

@@ -25,11 +25,16 @@ candidate — and projects onto two closed-enum rule ids:
   canonical LLM-hallucination signal. This is the only verify-imports
   rule that escalates to ``error`` so a CI gate keyed off
   ``level: error`` blocks only on irrecoverable imports.
+- ``unverifiable-file`` (defaultLevel ``warning``): a file the scan was
+  asked to check could not be read, so its imports were never examined
+  at all. This is not a verdict about an import — it is the disclosure
+  that no verdict exists, and it exists so a zero-result document can
+  never be produced by a scan that silently skipped part of its input.
 
 Mirrors the closed-enum test design from ``test_cmd_flag_dead_sarif.py``
 (W1226) and ``test_cmd_orphan_routes_sarif.py`` (W1227), adapted for the
 per-import anchor (file:line of the import statement) and the
-two-rule warning / error split.
+warning / error / unverifiable split.
 """
 
 from __future__ import annotations
@@ -54,10 +59,10 @@ def test_empty_findings_produce_valid_sarif_with_zero_results() -> None:
     assert "runs" in doc and len(doc["runs"]) == 1
     run = doc["runs"][0]
     assert run["results"] == []
-    # The rule catalogue is always present (closed enum: 2 rules).
+    # The rule catalogue is always present (closed enum: 3 rules).
     rules = run["tool"]["driver"]["rules"]
     rule_ids = {r["id"] for r in rules}
-    assert rule_ids == {"invalid-import", "hallucination-import"}
+    assert rule_ids == {"invalid-import", "hallucination-import", "unverifiable-file"}
     # Closed-enum default-level verification — the SARIF severity
     # contract is encoded in the rule descriptor itself so consumers
     # can introspect it without firing a finding. The SARIF schema
@@ -71,6 +76,15 @@ def test_empty_findings_produce_valid_sarif_with_zero_results() -> None:
     # genuinely isn't in the indexed graph has no remediation path
     # through fuzzy match).
     assert by_id["hallucination-import"]["defaultConfiguration"]["level"] == "error"
+    # unverifiable-file is the ABSENCE of an import verdict rather than a
+    # verdict: the producer was asked to check a file and could not read it,
+    # so its imports were never examined. Without this rule a stale index
+    # turns every hidden unresolved import into a zero-result document and
+    # the code-scanning gate goes green on a scan that never ran. It sits in
+    # the ``warning`` band because the condition is recoverable by
+    # re-indexing, preserving the invariant that hallucination-import is the
+    # only rule escalating to ``error``.
+    assert by_id["unverifiable-file"]["defaultConfiguration"]["level"] == "warning"
 
 
 def test_classification_bands_map_to_warning_and_error() -> None:

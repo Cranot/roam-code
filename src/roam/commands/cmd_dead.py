@@ -930,6 +930,9 @@ def _referenced_sibling_counts(conn, file_ids):
     return counts
 
 
+from roam.commands.dead_public_surface import UNVERIFIABLE_PREFIX as _PUBLIC_SURFACE_UNVERIFIABLE
+
+
 def _jsonable_dead_meta(meta):
     out = dict(meta)
     out["production_files"] = sorted(out.get("production_files", set()))
@@ -946,6 +949,9 @@ def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
     public_surface_reason = cmeta.get("public_surface_reason")
     if public_surface_reason:
         test_clause = f"; used by {test_consumers} test consumer(s)" if test_consumers else ""
+        if public_surface_reason.startswith(f"{_PUBLIC_SURFACE_UNVERIFIABLE}:"):
+            # Absent evidence resolves to UNKNOWN, never to "not public".
+            return f"public-surface status UNKNOWN ({public_surface_reason}){test_clause}"
         return (
             f"external-facing public surface ({public_surface_reason}); no internal production consumers{test_clause}"
         )
@@ -1047,10 +1053,16 @@ def _find_transitively_alive(conn, rows, imported_production_files, importers_of
     return transitively_alive
 
 
-def _analyze_dead(conn):
+def _analyze_dead(conn, disclosures: list[str] | None = None):
     """Run the full dead code analysis.
 
     Returns (high, low, imported_files, consumer_meta, file_import_meta, sibling_meta).
+
+    *disclosures* is an optional out-list. Public-surface evidence that could
+    not be parsed (a broken ``__init__.py``, a malformed ``pyproject.toml``) is
+    appended as a ``dead_public_surface_unreadable:<path>`` marker so the caller
+    can flip ``partial_success``; the affected candidates are simultaneously
+    downgraded SAFE -> REVIEW by the ``unverifiable:`` reason.
 
     ``dead`` means "no production consumers" rather than "no consumers
     anywhere". Test-only consumers are preserved as metadata so output can
@@ -1061,10 +1073,13 @@ def _analyze_dead(conn):
         return [], [], set(), {}, {}, {}
 
     consumer_meta = _dead_consumer_meta(conn, [r["id"] for r in rows])
-    from roam.commands.dead_public_surface import public_surface_reasons
+    from roam.commands.dead_public_surface import public_surface_evidence
 
-    for symbol_id, reason in public_surface_reasons(rows, find_project_root()).items():
+    _ps_reasons, _ps_unreadable = public_surface_evidence(rows, find_project_root())
+    for symbol_id, reason in _ps_reasons.items():
         consumer_meta[symbol_id]["public_surface_reason"] = reason
+    if disclosures is not None:
+        disclosures.extend(f"dead_public_surface_unreadable:{source}" for source in _ps_unreadable)
     rows = [r for r in rows if consumer_meta.get(r["id"], {}).get("production_consumers", 0) == 0]
     if not rows:
         return [], [], set(), consumer_meta, {}, {}
@@ -2161,6 +2176,7 @@ def dead(
             "analyze_dead",
             _analyze_dead,
             conn,
+            _w607bx_warnings_out,
             default=([], [], set(), {}, {}, {}),
         )
         high, low, imported_files, consumer_meta, file_import_meta, sibling_meta = (

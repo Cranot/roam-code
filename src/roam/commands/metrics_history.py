@@ -56,6 +56,27 @@ SNAPSHOT_METRICS_VERSION = 2
 # version and never accidentally equal to the current one.
 LEGACY_METRICS_VERSION = 1
 
+# W1461 — the metrics DERIVED FROM the symbol graph, i.e. the ones that are
+# unmeasurable when ``build_symbol_graph`` raises.
+#
+# The failure mode this names: a failed graph build floors THREE penalty
+# inputs to their BEST possible values at once — ``cycles`` to 0, an empty
+# SCC list to ``tangle_ratio`` 0.0, and ``G = None`` to ``layer_violations``
+# 0 — so ``compute_health_score`` returns a near-perfect number. Measured on
+# a 3-symbol fixture holding one real import cycle: health_score 9 -> 85
+# (+76); on this repository's own index, 64 -> 71. The inflation SCALES WITH
+# HOW TANGLED THE CODE ACTUALLY IS, i.e. the floor helps most exactly where
+# the code is worst, and the resulting dict was byte-identical in shape to an
+# honest one, so no consumer could tell.
+#
+# "Could not be measured" is NOT "measured clean". Every value listed here is
+# reported alongside an explicit ``degraded_metrics`` disclosure, is never
+# persisted into ``snapshots`` (the row would be permanently indistinguishable
+# from a genuinely healthy measurement — the table has no column able to
+# record that the graph build failed), and is never allowed to satisfy a
+# budget rule (``cmd_budget._evaluate_rule``).
+GRAPH_DERIVED_METRICS = ("cycles", "tangle_ratio", "layer_violations", "health_score")
+
 
 def snapshot_metrics_version(row) -> int:
     """Read a snapshot row's metrics-definition version.
@@ -156,6 +177,11 @@ def collect_metrics(conn):
     # score (an earlier revision re-ran find_cycles at each of those sites —
     # 3x SCC per collect_metrics call, pure waste on big graphs).
     cycle_list: list = []
+    # W1461 — names of metrics whose value below is a FLOOR rather than a
+    # measurement. Empty on every healthy run; the disclosure sibling that
+    # was missing when this handler was the only one in the module without a
+    # ``log_swallowed`` call.
+    degraded_metrics: list[str] = []
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import find_cycles
@@ -163,9 +189,17 @@ def collect_metrics(conn):
         G = build_symbol_graph(conn)
         cycle_list = find_cycles(G)
         cycles = len(cycle_list)
-    except (ImportError, sqlite3.Error):
+    except (ImportError, sqlite3.Error) as _exc:
+        # W1461 — the graph is unavailable, so cycles / tangle_ratio /
+        # layer_violations / health_score below are all floors. Say so
+        # explicitly rather than emitting a dict that is indistinguishable
+        # from a clean measurement. See GRAPH_DERIVED_METRICS.
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history:symbol_graph", _exc)
         cycles = 0
         G = None
+        degraded_metrics = list(GRAPH_DERIVED_METRICS)
 
     # God components (same query + thresholds as cmd_health.py)
     degree_rows = conn.execute(TOP_BY_DEGREE, (_GOD_COMPONENT_LIST_LIMIT,)).fetchall()
@@ -298,6 +332,9 @@ def collect_metrics(conn):
         "avg_complexity": avg_complexity,
         "brain_methods": brain_methods,
         "spectral_gap": spectral_gap_val,
+        # W1461 — [] on a healthy run; the names in GRAPH_DERIVED_METRICS
+        # when the symbol graph could not be built.
+        "degraded_metrics": degraded_metrics,
     }
 
 
@@ -348,6 +385,33 @@ def append_snapshot(conn, tag=None, source="snapshot"):
     root = find_project_root()
     metrics = collect_metrics(conn)
     branch, commit = _git_info(root)
+
+    # W1461 — a measurement that could not be TAKEN is never written down.
+    #
+    # ``snapshots`` has no column able to record "the graph build failed"
+    # (checked: PRAGMA table_info holds no status/partial/degraded field), so
+    # a floored row is PERMANENTLY indistinguishable from a genuinely healthy
+    # one. Storing it is worse than storing nothing twice over: the degraded
+    # run silently passes the health gate, and then the next HONEST run reads
+    # as a large regression against the fabricated baseline and fails the gate
+    # spuriously. Refusing the write keeps the history honest — the previous
+    # real baseline stays the baseline.
+    if metrics.get("degraded_metrics"):
+        from roam.observability import log_swallowed
+
+        log_swallowed(
+            "metrics_history:snapshot_refused",
+            RuntimeError("unmeasured metrics: " + ", ".join(metrics["degraded_metrics"])),
+        )
+        return {
+            "tag": tag,
+            "source": source,
+            "git_branch": branch,
+            "git_commit": commit,
+            "metrics_version": SNAPSHOT_METRICS_VERSION,
+            **metrics,
+            "stored": False,
+        }
 
     # Dedup by commit: re-indexing the same commit (e.g. a no-op / comment-only
     # reindex) must replace the data point, not append a duplicate row. Without this,
@@ -413,6 +477,7 @@ def append_snapshot(conn, tag=None, source="snapshot"):
         "git_commit": commit,
         "metrics_version": SNAPSHOT_METRICS_VERSION,
         **metrics,
+        "stored": True,
     }
 
 

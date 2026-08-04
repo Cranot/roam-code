@@ -769,7 +769,10 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
     # AIBOM extension (CycloneDX 1.7 only) — bind AI-authored commits to
     # indexed symbols. Required for EU AI Act Art. 50 disclosure.
     if aibom and fmt.lower() == "cyclonedx" and sbom_data is not None:
-        from roam.security.aibom_extension import build_aibom_block
+        from roam.security.aibom_extension import (
+            aibom_block_incomplete_reason,
+            build_aibom_block,
+        )
 
         def _build_aibom_block(_project_root):
             ensure_index()
@@ -784,6 +787,12 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
         )
         if aibom_block is not None:
             sbom_data["aibom"] = aibom_block
+            # A block that built but could not compute a symbol binding is a
+            # partial result, not a clean one — same warnings_out channel a
+            # raise would have used, so summary.partial_success flips too.
+            _aibom_gap = aibom_block_incomplete_reason(aibom_block)
+            if _aibom_gap:
+                _w607am_warnings_out.append(f"sbom_build_aibom_block_partial:{_aibom_gap}")
         else:
             # Preserve pre-W607-AM error disclosure on the SBOM artifact
             # (in addition to the W607-AM marker on warnings_out) so SBOM
