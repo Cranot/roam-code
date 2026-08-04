@@ -20,6 +20,26 @@ PIN_SCRIPT = ROOT / "dev" / "pin_github_actions.sh"
 CI_DOC = ROOT / "docs" / "ci-integration.md"
 GITHUB_GUARD_TEMPLATE = ROOT / "templates" / "examples" / "roam-guard-pr.github-actions.yml"
 
+
+def _pyproject_version() -> str:
+    """The release version these surfaces are DERIVED from (W1501).
+
+    ``action.yml``'s ``version`` input default and the matching row in
+    ``docs/ci-integration.md`` decide what every downstream consumer installs.
+    They were previously asserted against a hardcoded literal, so a release
+    that bumped ``pyproject.toml`` alone left the action installing the
+    PREVIOUS version and these assertions agreed with the mistake. Reading
+    pyproject turns them into the invariant they were meant to be.
+    ``scripts/sync_surface_counts.py`` keeps the files themselves in sync.
+    """
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    assert match, "pyproject.toml has no [project] version"
+    return match.group(1)
+
+
+ROAM_VERSION = _pyproject_version()
+
 SETUP_PYTHON_REF = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
 CACHE_REF = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
 CODEQL_REF = "github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57"
@@ -166,7 +186,7 @@ def test_validator_is_the_single_raw_input_boundary() -> None:
 
 def test_safe_defaults_are_exact_and_mutable_latest_is_explicit() -> None:
     action = _action()
-    assert action["inputs"]["version"]["default"] == "13.10.0"
+    assert action["inputs"]["version"]["default"] == ROAM_VERSION
     assert action["inputs"]["allow-latest"]["default"] == "false"
 
     installer = _step(name="Install roam-code")
@@ -191,7 +211,7 @@ def test_safe_defaults_are_exact_and_mutable_latest_is_explicit() -> None:
     assert "||" not in installer["run"]
 
     docs = CI_DOC.read_text(encoding="utf-8")
-    assert "| `version` | `13.10.0` |" in docs
+    assert f"| `version` | `{ROAM_VERSION}` |" in docs
     assert "| `allow-latest` | `false` |" in docs
     assert "transitive dependencies still follow" in docs
     assert "`uv.lock`" in docs

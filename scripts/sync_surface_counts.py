@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
-"""Sync surface counts (commands / MCP tools / languages) across docs.
+"""Sync surface counts (commands / MCP tools / languages) AND the release
+version across every doc / template / registry surface that quotes them.
 
-Single source of truth: ``roam.surface_counts.collect_surface_counts()``.
-This script reads the live counts and rewrites every doc-surface that
-quotes them: server.json, the mcp-server-card family (see note below),
+Two independent passes with two different sources of truth:
+
+1. **Surface counts** — ``roam.surface_counts.collect_surface_counts()``.
+2. **Release version** — ``pyproject.toml -> version`` (W1501). Sweeps every
+   TRACKED file for release-pin shapes (``roam-code==X``,
+   ``Cranot/roam-code@vX``, the composite action's ``version`` input) plus a
+   handful of structurally-anchored sites (``action.yml`` input default,
+   ``server.json`` package pin, generated doc headers). Historical records and
+   the deliberately-lagging self-pin are exempt by explicit registry — see
+   ``_VERSION_PIN_EXEMPT``.
+
+For the count pass, this script reads the live counts and rewrites every
+doc-surface that quotes them: server.json, the mcp-server-card family (below),
 the Cloudflare-served landing-page HTML / llms.txt / docs pages, the
 Claude Code skill, the in-repo CI integration doc, AND the **free-form
 (non-marker) count phrases** in README.md / CLAUDE.md / AGENTS.md /
@@ -87,6 +98,254 @@ def _live_languages() -> int:
     from roam.languages.registry import get_supported_languages
 
     return len(get_supported_languages())
+
+
+# ---------------------------------------------------------------------------
+# W1501 — release-version pins
+# ---------------------------------------------------------------------------
+#
+# CONTRIBUTING has claimed since v11 that ``pyproject.toml -> version`` is the
+# single source of truth and that "everything else syncs from it via
+# scripts/sync_surface_counts.py". That was false for the VERSION: this script
+# only ever synced surface COUNTS. Every release-pin literal — the PyPI pin in
+# the shipped CI templates, the ``Cranot/roam-code@vX.Y.Z`` action refs, the
+# composite action's own ``version`` input default, the MCP registry package
+# pin in ``server.json`` — had to be remembered by hand, and a release that
+# bumped only ``pyproject.toml`` would ship an action whose DEFAULT installs
+# the PREVIOUS version. The claim survived because nothing ever failed on it.
+#
+# Three classes of occurrence exist and only the first may be rewritten:
+#
+#   derived     — must always equal pyproject. Everything the patterns below
+#                 match, minus the exemptions.
+#   historical  — records what was measured / built / shipped at a past
+#                 version. Rewriting one falsifies a record, which is strictly
+#                 worse than a stale string. See ``_VERSION_PIN_EXEMPT``.
+#   lagging     — cannot legally equal pyproject yet (a tag that does not
+#                 exist until the release publishes). Also ``_VERSION_PIN_EXEMPT``.
+#
+# The patterns are SHAPE-anchored, not value-anchored: they match
+# ``roam-code==<v>`` / ``Cranot/roam-code@v<v>`` and friends rather than the
+# current literal. That is what lets a new file be covered the day it lands
+# instead of the day someone remembers to register it — and it is why prose
+# that merely names a version ("measured against the shipped 13.10.0 binary")
+# is never touched: it carries no pin shape.
+
+_PIN_VERSION = r"\d+\.\d+(?:\.\d+)?"
+
+# path (repo-relative, posix) -> why this file's pin shape must NOT be synced.
+# A stale key is itself drift: ``tests/test_w1501_release_version_pins.py``
+# fails if any path here has stopped existing.
+_VERSION_PIN_EXEMPT: dict[str, str] = {
+    # Deliberately lagging: this repo consumes its OWN published action, so it
+    # can only point at a tag/SHA that already exists. It moves in a follow-up
+    # commit AFTER the release tag is pushed, never before.
+    ".github/workflows/roam.yml": (
+        "deliberately lags one release — pins the published action at the "
+        "previous release SHA, which cannot be the version being cut"
+    ),
+    # Historical: a dated sample deliverable generated from a real run at
+    # 12.25. Re-stamping it would claim the sample was produced by a version
+    # that never saw it.
+    "templates/audit-report/sample-redacted.md": (
+        "dated sample audit (2026-05-05) recording a real run at roam-code "
+        "12.25 — a recorded measurement, not a live install instruction"
+    ),
+    # Fixture: this module's negative control is a set of DELIBERATELY stale
+    # pins. Syncing them would silently convert the proof that the gate fails
+    # into a tautology that can only pass — the precise failure mode the whole
+    # module exists to rule out. Any future module that builds synthetic pin
+    # fixtures belongs here for the same reason.
+    "tests/test_w1501_release_version_pins.py": (
+        "negative-control fixtures are intentionally stale pins; syncing them "
+        "would disarm the proof that this gate can fail"
+    ),
+}
+
+
+def _pyproject_version() -> str:
+    """The one true version. Hard-fails rather than guessing."""
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if m is None:
+        raise SystemExit("pyproject.toml has no [project] version — cannot sync release pins")
+    return m.group(1)
+
+
+def _sweep_pin_patterns(version: str) -> list[tuple[re.Pattern, str]]:
+    """Pin shapes swept across EVERY tracked text file."""
+    return [
+        # `pip install "roam-code==X"`, `roam-code[mcp]==X`.
+        (re.compile(rf"(roam-code(?:\[[a-z0-9,._-]+\])?==){_PIN_VERSION}"), rf"\g<1>{version}"),
+        # `uses: Cranot/roam-code@vX` — the published composite action.
+        (re.compile(rf"(Cranot/roam-code@v){_PIN_VERSION}"), rf"\g<1>{version}"),
+        # The action's `version:` INPUT, anchored to a roam-code `uses:` line
+        # within the same `with:` block. Anchoring is load-bearing: a bare
+        # `^\s*version:` would also rewrite setup-uv's pinned `0.11.29` and
+        # CircleCI's `version: 2.1`, neither of which is a roam version.
+        (
+            re.compile(rf"(Cranot/roam-code@[^\s\n]+\n(?:[^\n]*\n){{0,8}}?[ \t]*version:[ \t]*['\"]){_PIN_VERSION}"),
+            rf"\g<1>{version}",
+        ),
+        # The post-install equality check the shipped roam-guard templates run
+        # (`raise SystemExit(0 if actual == 'X' else 1)`). It must agree with
+        # the pin above it or the template fails closed on every run.
+        (re.compile(rf"(actual == ['\"]){_PIN_VERSION}"), rf"\g<1>{version}"),
+    ]
+
+
+def _structural_pin_patterns(version: str) -> dict[str, list[tuple[re.Pattern, str]]]:
+    """Version sites with no reusable shape — anchored per file, not swept.
+
+    These are the surfaces that misreport the running version to a machine
+    (registry metadata, action input defaults) or to a reader (generated doc
+    headers). Each pattern is anchored on surrounding structure so it can only
+    ever match the one intended field.
+    """
+    return {
+        # THE release-breaking one: the composite action's default install
+        # target. A release that misses this ships an action that installs the
+        # previous version to every downstream consumer.
+        "action.yml": [
+            (
+                re.compile(rf"(^  version:\n(?:^ {{4}}[^\n]*\n){{0,6}}?^    default: '){_PIN_VERSION}", re.M),
+                rf"\g<1>{version}",
+            ),
+        ],
+        # MCP registry: top-level server version AND the PyPI package pin the
+        # registry actually installs. Only the former had a guard
+        # (tests/test_doc_consistency.py::test_server_json_matches_pyproject);
+        # the package pin — the field that decides what a client downloads —
+        # had none.
+        "server.json": [
+            (re.compile(rf'(^    "version": "){_PIN_VERSION}', re.M), rf"\g<1>{version}"),
+            (
+                re.compile(rf'("identifier": "roam-code",\s*\n\s*"version": "){_PIN_VERSION}'),
+                rf"\g<1>{version}",
+            ),
+        ],
+        # Generated index header. `tests/test_commands_doc_synced.py`
+        # deliberately canonicalizes this token away (the generator reads
+        # INSTALLED metadata, which differs per dev environment), so nothing
+        # pinned it to the repo's own version. Syncing it from pyproject here
+        # makes it deterministic instead of environment-dependent.
+        "docs/COMMANDS.md": [
+            (re.compile(rf"(· roam v){_PIN_VERSION}"), rf"\g<1>{version}"),
+        ],
+        # The documented default for the action input above; they must agree.
+        "docs/ci-integration.md": [
+            (re.compile(rf"(\| `version` \| `){_PIN_VERSION}"), rf"\g<1>{version}"),
+        ],
+        # Landing-page prose that states the CURRENT surface's version. The
+        # existing sweep in tests/test_doc_consistency.py only recognises
+        # `softwareVersion` and `current: vX`, so these two phrasings were
+        # unguarded.
+        "templates/distribution/landing-page/docs/agent-contract.html": [
+            (re.compile(rf"(\(v){_PIN_VERSION}(?=\))"), rf"\g<1>{version}"),
+        ],
+        "templates/distribution/landing-page/docs/integration-tutorials.html": [
+            (re.compile(rf"(Surface scale on v){_PIN_VERSION}"), rf"\g<1>{version}"),
+        ],
+        # The three landing-page fields that tests/test_doc_consistency.py
+        # already FAILS on when they lag — they were gated but never
+        # autofixed, so every release re-did them by hand. Same patterns the
+        # scrapers in that module use, so gate and fixer cannot disagree.
+        "templates/distribution/landing-page/index.html": [
+            (re.compile(rf'("softwareVersion"\s*:\s*"v?){_PIN_VERSION}'), rf"\g<1>{version}"),
+        ],
+        "templates/distribution/landing-page/status.html": [
+            (re.compile(rf"(current:\s*v){_PIN_VERSION}"), rf"\g<1>{version}"),
+        ],
+        "templates/distribution/landing-page/docs/canonical-demo.html": [
+            (
+                re.compile(rf'("name"\s*:\s*"roam"\s*,\s*"version"\s*:\s*"){_PIN_VERSION}'),
+                rf"\g<1>{version}",
+            ),
+        ],
+    }
+
+
+def _tracked_files() -> list[str]:
+    """Repo-relative posix paths of every tracked file.
+
+    Hard-fails when git is unavailable. A silent fallback here would turn the
+    coverage half of this gate into a no-op that still prints "in sync" — the
+    same shape of unfalsifiable guarantee this whole function exists to close.
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "ls-files", "-z"],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(
+            "release-pin sweep needs `git ls-files` to enumerate tracked files; "
+            f"git exited {proc.returncode}: {proc.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    return [p for p in proc.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+
+
+def _trim_pin_context(match_text: str, limit: int = 64) -> str:
+    """Collapse a (possibly multi-line) match to its version-bearing tail.
+
+    The anchored patterns can span a `uses:` line plus a `with:` block; echoing
+    the whole match buries the one thing the reader needs — which version is
+    wrong. Keep the tail, which always ends at the version literal.
+    """
+    flat = " ".join(match_text.split())
+    return flat if len(flat) <= limit else "..." + flat[-limit:]
+
+
+def release_pin_drift(version: str, *, write: bool = False) -> list[str]:
+    """Every release-version pin that disagrees with ``version``.
+
+    Returns one ``"<path>: '<before>' -> '<after>'"`` line per drifted site.
+    With ``write=True`` the files are rewritten in place and the same list is
+    returned (so the caller can report what it fixed).
+    """
+    sweep = _sweep_pin_patterns(version)
+    structural = _structural_pin_patterns(version)
+    drift: list[str] = []
+
+    for rel in _tracked_files():
+        if rel in _VERSION_PIN_EXEMPT:
+            continue
+        path = REPO_ROOT / rel
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        # Every pin shape contains "roam"; the structural sites all live in
+        # files that do too. Cheap pre-filter so the sweep stays sub-second
+        # over a few thousand tracked files.
+        if b"roam" not in data:
+            continue
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+
+        original = text
+        for pat, repl in sweep + structural.get(rel, []):
+            out: list[str] = []
+            last = 0
+            for m in pat.finditer(text):
+                replaced = m.expand(repl)
+                if replaced != m.group(0):
+                    line_no = text.count("\n", 0, m.end()) + 1
+                    drift.append(f"{rel}:{line_no}: {_trim_pin_context(m.group(0))} -> {_trim_pin_context(replaced)}")
+                out.append(text[last : m.start()])
+                out.append(replaced)
+                last = m.end()
+            out.append(text[last:])
+            text = "".join(out)
+
+        if write and text != original:
+            path.write_text(text, encoding="utf-8", newline="")
+
+    return drift
 
 
 # Each entry is one of:
@@ -527,6 +786,7 @@ def main() -> int:
     ap.add_argument("--write", action="store_true", help="Rewrite files in place (default: dry-run)")
     args = ap.parse_args()
 
+    version = _pyproject_version()
     counts = _live_counts()
     langs = _live_languages()
     # ``with aliases`` reuses live alias_names from surface_counts rather than
@@ -536,6 +796,7 @@ def main() -> int:
     with_aliases = counts["canonical"] + counts["alias_names"]
     print(f"Live surface: {counts['commands']} commands ({counts['canonical']} canonical, {with_aliases} with aliases)")
     print(f"               {counts['mcp_tools']} MCP tools, {langs} languages")
+    print(f"Release version (pyproject.toml): {version}")
     print()
 
     build_replacements(counts, langs)
@@ -574,9 +835,20 @@ def main() -> int:
             path.write_text(text, encoding="utf-8")
             print(f"  -> wrote {rel}")
 
+    # W1501 — release-version pins. Separate pass from the count REPLACEMENTS
+    # above: the pin sweep walks every TRACKED file (so a new surface is
+    # covered the day it lands), while the count machinery is an explicit
+    # per-file registry whose overlap with dev/build_readme_counts.py is
+    # pinned by tests/test_count_drift_no_overlap.py.
+    pin_drift = release_pin_drift(version, write=args.write)
+    for line in pin_drift:
+        print(f"  {line}")
+    drift_found += len(pin_drift)
+
     print()
     if drift_found == 0:
         print("All surface counts in sync.")
+        print(f"All release-version pins match pyproject {version}.")
         return 0
     if args.write:
         print(f"Synced {drift_found} pattern(s).")
