@@ -376,10 +376,17 @@ class TestForecastSpectral:
             import time as _time
 
             base_ts = int(_time.time())
+            # W1460: stamp the synthetic rows with the CURRENT metrics version.
+            # ``_spectral_gap_series`` truncates at a metrics-definition
+            # boundary, and the fixture's indexed rows already carry the
+            # current stamp — leaving these NULL would split the series and
+            # leave a 1-point history, which is the point of that guard.
+            from roam.commands.metrics_history import SNAPSHOT_METRICS_VERSION
+
             while len(ids) < len(declining):
                 cur = conn.execute(
-                    "INSERT INTO snapshots (timestamp, source) VALUES (?, ?)",
-                    (base_ts + len(ids), "test"),
+                    "INSERT INTO snapshots (timestamp, source, metrics_version) VALUES (?, ?, ?)",
+                    (base_ts + len(ids), "test", SNAPSHOT_METRICS_VERSION),
                 )
                 ids.append(cur.lastrowid)
             for snap_id, gap in zip(ids[-len(declining) :], declining):

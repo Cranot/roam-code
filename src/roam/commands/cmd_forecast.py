@@ -86,22 +86,69 @@ def _classify_status(current, slope, horizon, metric_cfg):
     return "trending"
 
 
+def _snapshot_version_boundary(rows):
+    """Trim *rows* (oldest-first) to the newest run of one metrics version.
+
+    W1460 — returns ``(kept_rows, dropped_count, kept_version)``. Rows written
+    before the ``metrics_version`` column existed read as version 1, so a
+    fully-legacy history is homogeneous and nothing is dropped.
+    """
+    from roam.commands.metrics_history import LEGACY_METRICS_VERSION
+
+    def _ver(row):
+        try:
+            value = row["metrics_version"]
+        except (KeyError, IndexError, TypeError):
+            return LEGACY_METRICS_VERSION
+        return LEGACY_METRICS_VERSION if value is None else value
+
+    rows = list(rows)
+    if not rows:
+        return rows, 0, None
+    newest_version = _ver(rows[-1])
+    keep = 0
+    for row in reversed(rows):
+        if _ver(row) != newest_version:
+            break
+        keep += 1
+    return rows[len(rows) - keep :], len(rows) - keep, newest_version
+
+
 def _aggregate_forecasts(conn, horizon):
     """Compute Theil-Sen trend + forecast for each snapshot metric.
 
-    Returns a list of dicts, one per tracked metric.  Skips metrics that
-    have fewer than 4 non-None values (Theil-Sen requires n >= 4).
+    Returns ``(results, n_rows, dropped)`` — one dict per tracked metric,
+    the number of usable snapshot rows, and how many rows were discarded at
+    the metrics-version boundary.  Skips metrics that have fewer than 4
+    non-None values (Theil-Sen requires n >= 4).
+
+    W1460 — the series is truncated at the metrics-definition boundary before
+    any fitting. Theil-Sen is robust to OUTLIERS, not to a step change in the
+    definition of the quantity: a definition shift moves every point after it
+    by roughly the same amount, so the median of pairwise slopes tracks the
+    step instead of rejecting it. Silently fitting across the boundary
+    projects a jump that already happened as a trend that is still happening,
+    which is precisely the "N snapshots to structural failure" number a user
+    is meant to act on. The drop count is returned so the truncation is
+    DISCLOSED rather than quietly shortening the history.
     """
+    from roam.commands.metrics_history import snapshots_have_metrics_version
     from roam.graph.anomaly import theil_sen_slope
 
+    # Probed, not assumed: read-only opens skip migrations, so the first
+    # post-upgrade `roam forecast` still sees the pre-W1460 table shape.
+    version_col = "metrics_version" if snapshots_have_metrics_version(conn) else "NULL AS metrics_version"
     rows = conn.execute(
         "SELECT timestamp, health_score, avg_complexity, cycles, "
-        "       god_components, bottlenecks, dead_exports, brain_methods "
+        "       god_components, bottlenecks, dead_exports, brain_methods, "
+        f"      {version_col} "
         "FROM snapshots ORDER BY timestamp ASC"
     ).fetchall()
 
+    rows, dropped, _kept_version = _snapshot_version_boundary(rows)
+
     if len(rows) < 3:
-        return [], len(rows)
+        return [], len(rows), dropped
 
     results = []
     for metric, cfg in _THRESHOLDS.items():
@@ -143,7 +190,7 @@ def _aggregate_forecasts(conn, horizon):
             }
         )
 
-    return results, len(rows)
+    return results, len(rows), dropped
 
 
 def _at_risk_symbols(conn, symbol_filter, min_slope, limit=20):
@@ -236,14 +283,31 @@ def _spectral_gap_series(conn):
     writer (one gap per health snapshot). NULL rows — legacy snapshots
     written before the column landed — are skipped so a partial-history
     series is honest rather than zero-padded.
+
+    W1460 — additionally truncated at the metrics-definition boundary.
+    ``spectral_gap`` is the algebraic connectivity of the file graph, so it
+    moves directly with edge construction: the case-fold guard removed ~6.5%
+    of edges, which shifts the gap for reasons that have nothing to do with
+    the code. ``forecast_spectral_decay`` runs Theil-Sen over this series to
+    produce "<N> snapshots to structural failure" — a step change there does
+    not merely add noise, it invents a deadline. Returns
+    ``(series, dropped_count)``.
     """
+    from roam.commands.metrics_history import snapshots_have_metrics_version
+
+    # Probed, not assumed — see ``_aggregate_forecasts``. The pre-existing
+    # ``except OperationalError`` below covers a missing ``snapshots`` table
+    # entirely; it must NOT be the thing that hides a missing stamp column,
+    # because that would silently discard the whole gap series.
+    version_col = "metrics_version" if snapshots_have_metrics_version(conn) else "NULL AS metrics_version"
     try:
         rows = conn.execute(
-            "SELECT spectral_gap FROM snapshots WHERE spectral_gap IS NOT NULL ORDER BY timestamp ASC"
+            f"SELECT spectral_gap, {version_col} FROM snapshots WHERE spectral_gap IS NOT NULL ORDER BY timestamp ASC"
         ).fetchall()
     except sqlite3.OperationalError:
-        return []
-    return [float(r[0]) for r in rows]
+        return [], 0
+    rows, dropped, _kept = _snapshot_version_boundary(rows)
+    return [float(r[0]) for r in rows], dropped
 
 
 def _spectral_forecast_block(conn, horizon):
@@ -276,7 +340,7 @@ def _spectral_forecast_block(conn, horizon):
     # Project the persisted historical gap series. Append the live current
     # gap so the most-recent point reflects the freshly-built graph even
     # before the current run's snapshot row is written.
-    series = _spectral_gap_series(conn)
+    series, series_dropped = _spectral_gap_series(conn)
     if not series:
         series = [inst.spectral_gap]
     elif series[-1] != inst.spectral_gap:
@@ -293,6 +357,10 @@ def _spectral_forecast_block(conn, horizon):
         "alert_wording": decay_alert_wording(fc),
         "compute_degraded": compute_degraded,
         "topology_decay_rate_definition": _TOPOLOGY_DECAY_RATE_DEFINITION,
+        # W1460: a shortened series must SAY it was shortened. Without this
+        # the block reports "insufficient_history" or a confident slope over
+        # a silently truncated window and looks identical to a young repo.
+        "snapshots_dropped_metrics_version": series_dropped,
     }
     return inst, fc, block, compute_degraded
 
@@ -359,7 +427,7 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        agg_trends, n_snapshots = _aggregate_forecasts(conn, horizon)
+        agg_trends, n_snapshots, snapshots_dropped = _aggregate_forecasts(conn, horizon)
 
         # Apply alert-only filter on aggregate trends
         if alert_only:
@@ -410,7 +478,17 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
     # Build verdict
     parts = []
     if n_snapshots < 3:
-        parts.append("insufficient snapshot history for aggregate trends")
+        # W1460: name the CAUSE when the history is short because it was
+        # truncated at a metrics-definition boundary. "insufficient history"
+        # on a repo with months of snapshots is otherwise inexplicable.
+        if snapshots_dropped:
+            parts.append(
+                f"insufficient snapshot history for aggregate trends "
+                f"({snapshots_dropped} older snapshot(s) excluded: written by a "
+                f"superseded metrics definition)"
+            )
+        else:
+            parts.append("insufficient snapshot history for aggregate trends")
     elif metrics_trending:
         parts.append(
             f"{metrics_trending} metric{'s' if metrics_trending != 1 else ''} "
@@ -474,6 +552,15 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
         if empty_corpus:
             _summary["partial_success"] = True
             _summary["state"] = "no_data"
+        # W1460: the forecast was fitted over a SHORTER series than the DB
+        # holds. That is a degraded run — disclose it rather than let a
+        # confident slope over a truncated window read as a full-history fit.
+        if snapshots_dropped:
+            from roam.commands.metrics_history import SNAPSHOT_METRICS_VERSION
+
+            _summary["snapshots_dropped_metrics_version"] = snapshots_dropped
+            _summary["metrics_version"] = SNAPSHOT_METRICS_VERSION
+            _summary["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(

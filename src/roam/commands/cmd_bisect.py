@@ -43,13 +43,37 @@ def _compute_deltas(snapshots, metric):
 
     snapshots is ordered newest-first, so snapshots[0] is the most recent
     and snapshots[-1] is the oldest.
+
+    Returns ``(deltas, straddling_pairs)``.
+
+    W1460 — a consecutive pair whose two rows were written by DIFFERENT
+    metrics definitions is skipped, and the count is returned so the command
+    discloses it. This command's entire output is "which commit did this",
+    so attributing a definition change to the commit that happens to sit at
+    the boundary is the single most misleading thing it can do — and it is
+    the LARGEST delta in the history, so it sorts to rank 1 by construction.
+    ``_HIGHER_IS_BETTER["edges"] = True`` makes it worse: the case-fold guard
+    removed ~6.5% of the edges, all of them fabricated, and a shrinking
+    edge count reads as "degraded". Every user upgrading would have been
+    told the fix was their worst regression.
     """
+    from roam.commands.metrics_history import LEGACY_METRICS_VERSION
+
+    def _ver(snap):
+        value = snap.get("metrics_version")
+        return LEGACY_METRICS_VERSION if value is None else value
+
     deltas = []
+    straddling_pairs = 0
     higher_is_better = _HIGHER_IS_BETTER.get(metric, False)
 
     for i in range(1, len(snapshots)):
         prev = snapshots[i]  # older (snapshots are newest-first)
         curr = snapshots[i - 1]  # newer
+
+        if _ver(prev) != _ver(curr):
+            straddling_pairs += 1
+            continue
 
         prev_val = prev.get(metric)
         curr_val = curr.get(metric)
@@ -84,7 +108,7 @@ def _compute_deltas(snapshots, metric):
             }
         )
 
-    return deltas
+    return deltas, straddling_pairs
 
 
 @roam_capability(
@@ -171,7 +195,7 @@ def bisect(ctx, metric, threshold, top_n, direction):
                 click.echo(f"VERDICT: {verdict}")
             return
 
-        deltas = _compute_deltas(snapshots, metric)
+        deltas, straddling_pairs = _compute_deltas(snapshots, metric)
 
         # Filter by direction
         if direction == "degraded":
@@ -198,6 +222,13 @@ def bisect(ctx, metric, threshold, top_n, direction):
             commit_info = f" (commit {worst['git_commit']})" if worst["git_commit"] else ""
             verdict = f"{len(deltas)} snapshots with {direction} {metric}, worst: {worst['delta']:+.1f}{commit_info}"
 
+        # W1460: blame that skipped a transition must say which transition it
+        # skipped, or the history silently has a hole where the upgrade was.
+        if straddling_pairs:
+            verdict += (
+                f"; {straddling_pairs} snapshot transition(s) excluded (metrics definition changed, not the code)"
+            )
+
         if json_mode:
             click.echo(
                 to_json(
@@ -209,6 +240,14 @@ def bisect(ctx, metric, threshold, top_n, direction):
                             "snapshots": len(snapshots),
                             "deltas_found": len(deltas),
                             "direction_filter": direction,
+                            **(
+                                {
+                                    "transitions_skipped_metrics_version": straddling_pairs,
+                                    "partial_success": True,
+                                }
+                                if straddling_pairs
+                                else {}
+                            ),
                         },
                         deltas=deltas,
                         metric_range={

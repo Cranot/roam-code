@@ -608,10 +608,35 @@ def _check_trend_rule(rule, conn) -> list[dict]:
         ]
 
     # Fetch recent snapshots (need at least 2 to compute a trend)
+    #
+    # W1460 — a trend is only a trend within ONE metrics definition. Rows
+    # written by a superseded definition measure a different thing, and
+    # averaging them into ``prev_avg`` manufactures a step change that reads
+    # as gradual degradation. Read the stamp alongside the metric and keep
+    # only the rows that share the NEWEST row's version; the rest are history
+    # in different units.
+    #
+    # The column is probed, not assumed: read-only opens skip migrations, so
+    # the first post-upgrade `roam fitness` still sees the pre-W1460 table.
+    from roam.commands.metrics_history import (
+        LEGACY_METRICS_VERSION,
+        snapshots_have_metrics_version,
+    )
+
+    has_version = snapshots_have_metrics_version(conn)
+    version_col = "metrics_version" if has_version else "NULL"
     rows = conn.execute(
-        f"SELECT {metric} FROM snapshots ORDER BY timestamp DESC LIMIT ?",
+        f"SELECT {metric}, {version_col} FROM snapshots ORDER BY timestamp DESC LIMIT ?",
         (window + 1,),
     ).fetchall()
+
+    if rows:
+
+        def _ver(row):
+            return row[1] if row[1] is not None else LEGACY_METRICS_VERSION
+
+        newest_version = _ver(rows[0])
+        rows = [r for r in rows if _ver(r) == newest_version]
 
     if len(rows) < 2:
         return []  # Not enough history to judge

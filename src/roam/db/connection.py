@@ -648,6 +648,14 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
             "ON vulnerabilities(COALESCE(cve_id, ''), package_name, source)"
         ),
     ),
+    # W1460 — stamp each snapshot with the metrics DEFINITION that produced
+    # it. Three metric-moving fixes landed together (health-score
+    # unification, betweenness seeding, case-fold edge guard); without this
+    # column every consumer that diffs a stored row against a live
+    # ``collect_metrics`` reads the definition change as a code regression.
+    # ``roam budget`` exited 5 on an unchanged tree. Existing rows stay
+    # NULL and are read as version 1.
+    (63, "snapshots.metrics_version", _alter("snapshots", "metrics_version", "INTEGER")),
 ]
 
 
@@ -706,7 +714,7 @@ def ensure_schema(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None)
 # The CI check tests/test_user_version_discipline.py enforces this by
 # snapshotting a hash of schema.py; if the hash drifts, the test
 # requires USER_VERSION to drift too (lockstep updates).
-USER_VERSION = 18
+USER_VERSION = 19
 
 # Derived from the ledger so adding/removing a migration auto-updates
 # the count without a manual touch. The pin test in

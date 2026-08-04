@@ -657,15 +657,15 @@ def test_w97_user_version_substrate_untouched() -> None:
     modify the constant, the schema, or the migration ordering. This
     test pins both invariants.
     """
-    # (a) USER_VERSION constant at the canonical contract value (18 since
-    # the B8 snapshots.spectral_gap column landed). W603 itself does not
+    # (a) USER_VERSION constant at the canonical contract value (19 since
+    # the W1460 snapshots.metrics_version column landed). W603 itself does not
     # touch this constant — the pin guards against a W603-scope edit
     # silently moving it. Bump in lockstep with a real schema change.
     from roam.db.connection import USER_VERSION
 
-    assert USER_VERSION == 18, (
+    assert USER_VERSION == 19, (
         f"W97 USER_VERSION substrate invariant: USER_VERSION must "
-        f"stay at the canonical contract value (18); got {USER_VERSION}. "
+        f"stay at the canonical contract value (19); got {USER_VERSION}. "
         f"If you bumped USER_VERSION in this wave, audit which schema "
         f"change required it and update tests/test_user_version_discipline.py."
     )

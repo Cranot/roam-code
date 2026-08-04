@@ -256,7 +256,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
     tangle_ratio REAL,
     avg_complexity REAL,
     brain_methods INTEGER,
-    spectral_gap REAL
+    spectral_gap REAL,
+    -- W1460: which DEFINITION of these numbers produced this row. Bumped by
+    -- ``SNAPSHOT_METRICS_VERSION`` on any change to the health-score formula
+    -- OR to graph construction. Rows written before the column existed read
+    -- NULL and are treated as version 1 by every consumer. Comparing two rows
+    -- of different versions is not a regression signal, it is a unit error.
+    metrics_version INTEGER
 );
 
 -- Runtime trace statistics: ingested from OpenTelemetry/Jaeger/Zipkin/generic traces
