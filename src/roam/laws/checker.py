@@ -109,9 +109,10 @@ def get_diff_text_status(
         if not diff_file:
             return "", "--diff-source file given without --diff-file"
         try:
-            return Path(diff_file).read_text(encoding="utf-8", errors="replace"), None
+            raw = Path(diff_file).read_bytes()
         except (OSError, ValueError) as exc:
             return "", f"could not read --diff-file {diff_file!r}: {type(exc).__name__}"
+        return _decode_diff_file(raw, diff_file)
 
     cmd = ["git", "diff", "--unified=3"]
     if diff_source == "staged":
@@ -143,6 +144,81 @@ def get_diff_text_status(
         reason = detail[0] if detail else f"exit {result.returncode}"
         return "", f"`{' '.join(cmd)}` failed: {reason}"
     return result.stdout or "", None
+
+
+# The three line kinds that establish a FILE or HUNK context. Added/context
+# lines are deliberately excluded: ``_handle_added_line`` can only attribute a
+# ``+`` line to a file some earlier structural line opened, so a text full of
+# stray ``+`` lines and nothing else parses to zero files. "Contains a line the
+# parser can hang content on" is the property that makes a diff a diff.
+_STRUCTURAL_DIFF_KINDS = frozenset({"diff_git", "plus_plus", "hunk"})
+
+
+def _has_diff_structure(text: str) -> bool:
+    """True when :func:`parse_added` can recognise at least one file or hunk."""
+    return any(_classify_diff_line(line)[0] in _STRUCTURAL_DIFF_KINDS for line in text.splitlines())
+
+
+def _decode_diff_file(raw: bytes, diff_file: str) -> tuple[str, Optional[str]]:
+    """Decode ``--diff-file`` bytes, or report that they are not a diff.
+
+    Pre-fix this was a bare ``read_text(encoding="utf-8", errors="replace")``,
+    which produced a defect with the same shape as the four this function's
+    caller already documents — "we could not look" reported as "we looked and
+    it was fine" — but reached it by a route that guard cannot see.
+
+    A UTF-16LE diff (what PowerShell 5.1's ``git diff > x.patch`` writes, on
+    the platform this repo is developed on) decodes under UTF-8 to a BOM
+    replacement character followed by the real text interleaved with NULs.
+    Measured on the pre-fix code, same diff, both encodings::
+
+        utf-8  -> 1 file parsed, 6 added lines, error=None
+        utf-16 -> 0 files parsed, 0 added lines, error=None
+
+    Every line of the mangled text classifies as ``other``, so no file is ever
+    opened and no law sees a single added symbol. The result is
+    ``VERDICT: 0 violations (0 blockers, ...)`` and exit 0 from
+    ``laws check --strict`` — a gate reporting a clean pass over a diff it
+    never read. The caller's fail-closed guard does not fire, because it keys
+    on ``not diff_text.strip()`` and this text is not empty: it is full of
+    U+FFFD and NULs, which are not whitespace.
+
+    Two things are fixed here, in order:
+
+    1. **Read it properly.** ``decode_views`` is the repo's existing hardened
+       set of readings (W1333/W1460, BOM dispatch + NUL-stripped + byte-
+       transparent). A genuine UTF-16 diff decodes exactly and the laws then
+       evaluate it correctly, which is better than any refusal.
+    2. **Refuse what we still cannot read.** If no reading yields diff
+       structure, the bytes are returned as an ERROR rather than as text. That
+       routes into the caller's existing "DIFF UNAVAILABLE — no laws were
+       evaluated" path, which sets ``partial_success`` and exits
+       ``EXIT_GATE_FAILURE`` under ``--strict``.
+
+    Note what (2) covers beyond encodings: a wrong file passed to
+    ``--diff-file``, a truncated download, a context-format diff the parser
+    does not speak. Every one of those used to report a clean gate. The bug is
+    not really "UTF-16 is unsupported" — it is that recognising nothing was
+    indistinguishable from finding nothing.
+
+    An empty (or whitespace-only) file is NOT an error: an empty diff is a
+    real, well-formed answer meaning "no changes", and the caller reports it
+    as such with ``diff_error=None``.
+    """
+    if not raw.strip():
+        return "", None
+    from roam.security.text_views import decode_views
+
+    for view in decode_views(raw):
+        if _has_diff_structure(view):
+            return view, None
+    return "", (
+        f"--diff-file {diff_file!r} is not readable as a unified diff — no "
+        "decoding of its bytes (UTF-8, BOM-directed UTF-16/UTF-32, "
+        "NUL-stripped, byte-transparent) contains a `diff --git`, `+++ b/` or "
+        "`@@` line. The file is non-empty, so this is not an empty diff; it is "
+        "content this gate could not parse, and no law was evaluated against it."
+    )
 
 
 def get_diff_text(
