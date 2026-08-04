@@ -1540,40 +1540,58 @@ def _handle_save(ctx, cmd_name, json_mode, tag):
         result = append_snapshot(conn, tag=tag, source="snapshot")
 
     _tag_str = f" [{tag}]" if tag else ""
-    verdict = (
-        f"snapshot saved{_tag_str}: health={result['health_score']}, "
-        f"{result['files']} files, {result['symbols']} symbols"
-    )
+    # W1461 — ``append_snapshot`` refuses to persist a measurement it could
+    # not take. Report the refusal instead of claiming a save that did not
+    # happen and quoting a floored health score as a fact.
+    _stored = result.get("stored", True)
+    _unmeasured = ", ".join(result.get("degraded_metrics") or ())
+    if _stored:
+        verdict = (
+            f"snapshot saved{_tag_str}: health={result['health_score']}, "
+            f"{result['files']} files, {result['symbols']} symbols"
+        )
+    else:
+        verdict = f"snapshot NOT saved{_tag_str}: symbol graph unavailable, so {_unmeasured} could not be measured"
 
     if json_mode:
+        summary = {
+            "verdict": verdict,
+            "health_score": result["health_score"] if _stored else None,
+            "tag": tag,
+            "mode": "save",
+        }
+        if not _stored:
+            summary["partial_success"] = True
+            summary["reason"] = "symbol_graph_unavailable"
         click.echo(
             to_json(
                 json_envelope(
                     cmd_name,
-                    summary={
-                        "verdict": verdict,
-                        "health_score": result["health_score"],
-                        "tag": tag,
-                        "mode": "save",
-                    },
+                    summary=summary,
                     budget=token_budget,
                     mode="save",
                     **result,
                 )
             )
         )
-    else:
+        return
+    if not _stored:
         click.echo(f"VERDICT: {verdict}\n")
-        click.echo(f"Snapshot saved{_tag_str}")
-        click.echo(f"  Health: {result['health_score']}/100")
-        click.echo(f"  Files: {result['files']}  Symbols: {result['symbols']}  Edges: {result['edges']}")
-        click.echo(
-            f"  Cycles: {result['cycles']}  God: {result['god_components']}  "
-            f"Bottlenecks: {result['bottlenecks']}  Dead: {result['dead_exports']}  "
-            f"Violations: {result['layer_violations']}"
-        )
-        if result.get("git_branch"):
-            click.echo(f"  Branch: {result['git_branch']}  Commit: {result.get('git_commit', '?')}")
+        click.echo("No snapshot was written — the previous baseline is unchanged.")
+        click.echo(f"  Unmeasured: {_unmeasured}")
+        click.echo("  Fix: re-run `roam index`.")
+        return
+    click.echo(f"VERDICT: {verdict}\n")
+    click.echo(f"Snapshot saved{_tag_str}")
+    click.echo(f"  Health: {result['health_score']}/100")
+    click.echo(f"  Files: {result['files']}  Symbols: {result['symbols']}  Edges: {result['edges']}")
+    click.echo(
+        f"  Cycles: {result['cycles']}  God: {result['god_components']}  "
+        f"Bottlenecks: {result['bottlenecks']}  Dead: {result['dead_exports']}  "
+        f"Violations: {result['layer_violations']}"
+    )
+    if result.get("git_branch"):
+        click.echo(f"  Branch: {result['git_branch']}  Commit: {result.get('git_commit', '?')}")
 
 
 def _handle_compare(ctx, cmd_name, json_mode, since_tag):

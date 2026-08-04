@@ -89,3 +89,106 @@ def test_package_json_entry_export_is_external_facing(project_factory, cli_runne
     assert findings["publicApi"]["action"] == "REVIEW"
     assert "external-facing" in findings["publicApi"]["reason"]
     assert "internalHelper" not in findings
+
+
+# ---------------------------------------------------------------------------
+# W-PSU -- unreadable public-surface evidence must resolve to UNKNOWN, never to
+# "not public". A barrel or manifest that does not parse produces exactly the
+# same "no re-export reason" as one that genuinely re-exports nothing; without
+# a guard the SAFE bucket publishes a "graph proof" over evidence never read.
+# ---------------------------------------------------------------------------
+
+
+def _warnings(data: dict) -> list[str]:
+    return list(data.get("warnings_out") or data.get("summary", {}).get("warnings_out") or [])
+
+
+def test_unparseable_barrel_downgrades_safe_to_review_and_discloses(project_factory, cli_runner):
+    project = project_factory(
+        {
+            "src/acme/__init__.py": (
+                'from .api import public_api\n\n__all__ = ["public_api"]\n\ndef broken(:\n    pass\n'
+            ),
+            "src/acme/api.py": 'def public_api():\n    return "public"\n',
+        }
+    )
+
+    result = invoke_cli(cli_runner, ["--detail", "dead", "--all"], cwd=project, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    findings = _dead_results(data)
+
+    assert "public_api" in findings, json.dumps(data, indent=2)
+    # Pre-fix this was SAFE/high: the re-export was unread, not absent.
+    assert findings["public_api"]["action"] == "REVIEW", json.dumps(data, indent=2)
+    assert "UNKNOWN" in findings["public_api"]["reason"]
+    assert data["summary"]["safe"] == 0
+    assert data["summary"]["partial_success"] is True
+    assert any("dead_public_surface_unreadable" in w for w in _warnings(data)), _warnings(data)
+
+
+def test_unparseable_pyproject_downgrades_declared_entry_point(project_factory, cli_runner):
+    project = project_factory(
+        {
+            "pyproject.toml": (
+                '[project]\nname = "acme"\nversion = "1.0.0"\n\n'
+                '[project.scripts]\nacme = "acme.cli:main"\nthis is not toml ===\n'
+            ),
+            "src/acme/cli.py": "def main():\n    return 0\n",
+        }
+    )
+
+    result = invoke_cli(cli_runner, ["--detail", "dead", "--all"], cwd=project, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    findings = _dead_results(data)
+
+    assert "main" in findings, json.dumps(data, indent=2)
+    assert findings["main"]["action"] == "REVIEW", json.dumps(data, indent=2)
+    assert data["summary"]["partial_success"] is True
+    assert any("pyproject.toml" in w for w in _warnings(data)), _warnings(data)
+
+
+def test_unreadable_barrel_radius_stops_at_its_own_package(project_factory, cli_runner):
+    """Negative control: the guard must not blanket-downgrade everything.
+
+    A fix that simply routes every candidate to REVIEW (or that flips
+    ``partial_success`` on every run) fails this test. Only ``alpha``'s subtree
+    is unknowable; ``beta``'s internal helper still has readable evidence and
+    must stay SAFE.
+    """
+    project = project_factory(
+        {
+            "src/alpha/__init__.py": "from .api import alpha_api\n\ndef broken(:\n    pass\n",
+            "src/alpha/api.py": "def alpha_api():\n    return 1\n",
+            "src/beta/__init__.py": "",
+            "src/beta/api.py": "def beta_internal():\n    return 2\n",
+        }
+    )
+
+    result = invoke_cli(cli_runner, ["--detail", "dead", "--all"], cwd=project, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    findings = _dead_results(data)
+
+    assert findings["alpha_api"]["action"] == "REVIEW", json.dumps(data, indent=2)
+    assert findings["beta_internal"]["action"] == "SAFE", json.dumps(data, indent=2)
+    assert data["summary"]["safe"] >= 1
+
+
+def test_readable_evidence_keeps_a_clean_partial_success(project_factory, cli_runner):
+    """Negative control: healthy input must not acquire the disclosure."""
+    project = project_factory(
+        {
+            "src/acme/__init__.py": ('from .api import public_api\n\n__all__ = ["public_api"]\n'),
+            "src/acme/api.py": ("def public_api():\n    return 1\n\n\ndef internal_helper():\n    return 2\n"),
+        }
+    )
+
+    result = invoke_cli(cli_runner, ["--detail", "dead", "--all"], cwd=project, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+
+    assert not [w for w in _warnings(data) if "public_surface_unreadable" in w]
+    assert data["summary"]["partial_success"] is False
+    assert _dead_results(data)["internal_helper"]["action"] == "SAFE"

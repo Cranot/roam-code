@@ -1129,14 +1129,31 @@ def _scan_file_imports(
     lang_by_path: dict[str, str | None] | None = None,
     file_index: _FilePathIndex | None = None,
     declared_deps: frozenset[str] | None = None,
+    unreadable: set[str] | None = None,
 ) -> list[dict]:
     """Scan a source file for import statements and validate each one.
 
     Returns a list of import dicts with keys:
         file, line, name, status (resolved/unresolved), suggestions
+
+    ``unreadable`` is an optional out-parameter. An empty return value is
+    AMBIGUOUS on its own: it means either "this file genuinely declares no
+    imports" (clean) or "this file could not be read at all" (UNKNOWN). The
+    caller cannot tell those apart from ``[]``, and defaulting the second to
+    the first is a fail-open -- an unresolved import inside an unreadable
+    file silently leaves the numerator and the verdict flips to a clean
+    PASS. When a set is supplied, every file whose scan was degraded by an
+    I/O failure records its own path here so the caller can disclose the
+    UNKNOWN instead of inheriting a clean answer it never computed.
     """
     full_path = os.path.join(project_root, file_path)
     if not os.path.isfile(full_path):
+        # Indexed but absent from disk (stale index, moved/deleted file, a
+        # ``--path`` filter naming a file that isn't there). The promised
+        # check did NOT run -- record the UNKNOWN rather than returning the
+        # same ``[]`` that a genuinely import-free file returns.
+        if unreadable is not None:
+            unreadable.add(file_path)
         return []
 
     language = _get_file_language(conn, file_path, lang_by_path=lang_by_path)
@@ -1226,6 +1243,12 @@ def _scan_file_imports(
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_verify_imports:source_scan", _exc)
+        # The read aborted part-way: ``results`` holds the imports seen
+        # BEFORE the failure, and the rest of the file was never examined.
+        # A partial scan cannot certify the file clean, so it is an UNKNOWN
+        # exactly like the missing-file case above.
+        if unreadable is not None:
+            unreadable.add(file_path)
 
     return results
 
@@ -1254,7 +1277,14 @@ def verify_imports_for_connection(
 
     Returns
     -------
-    dict with keys: imports (list), total, resolved, unresolved, files_checked
+    dict with keys: imports (list), total, resolved, unresolved,
+    files_checked, files_in_scope, files_unreadable
+
+    ``files_checked`` counts files that YIELDED imports -- it is a numerator,
+    never the population. ``files_in_scope`` is the population actually asked
+    for, and ``files_unreadable`` names the files inside it whose scan could
+    not run. A caller that reports only ``files_checked`` publishes a cap as
+    if it were a total and cannot distinguish "clean" from "never looked".
     """
     # 1. Determine which files to check
     if file_filter:
@@ -1305,6 +1335,7 @@ def verify_imports_for_connection(
     # 2. Scan each file
     all_imports: list[dict] = []
     files_checked: set[str] = set()
+    files_unreadable: set[str] = set()
 
     for fp in file_paths:
         file_imports = _scan_file_imports(
@@ -1316,6 +1347,7 @@ def verify_imports_for_connection(
             lang_by_path=lang_by_path,
             file_index=file_index,
             declared_deps=declared_deps,
+            unreadable=files_unreadable,
         )
         if file_imports:
             files_checked.add(fp)
@@ -1382,12 +1414,19 @@ def verify_imports_for_connection(
     resolved = sum(1 for i in all_imports if i["status"] == "resolved")
     unresolved = total - resolved
 
+    # Deliberately NOT subtracting ``files_checked``: a file whose source
+    # could not be read but which still contributed imports via the DB edge
+    # pass was verified against index edges recorded at index time, not
+    # against what is on disk now. That is strictly weaker evidence, so it
+    # stays disclosed rather than being promoted to "checked".
     return {
         "imports": all_imports,
         "total": total,
         "resolved": resolved,
         "unresolved": unresolved,
         "files_checked": len(files_checked),
+        "files_in_scope": len(file_paths),
+        "files_unreadable": sorted(files_unreadable),
     }
 
 
@@ -1452,7 +1491,8 @@ def verify_imports_cmd(ctx, file_path, include_docs):
 
         # --- SARIF output (W1229) ------------------------------------------
         # SARIF surfaces the closed-enum classification rule catalogue
-        # (invalid-import / hallucination-import) even on a clean scan so
+        # (invalid-import / hallucination-import / unverifiable-file) even
+        # on a clean scan so
         # CI consumers see the rule vocabulary regardless of whether any
         # import fired. ``resolved`` rows are filtered upstream by
         # ``verify_imports_to_sarif`` (not actionable). Language is
@@ -1465,6 +1505,22 @@ def verify_imports_cmd(ctx, file_path, include_docs):
             from roam.output.sarif import verify_imports_to_sarif, write_sarif
 
             sarif_findings: list[dict] = []
+            # Files the scan was asked to check but could not read are
+            # emitted as their own ``unverifiable-file`` rows. Without them
+            # a stale index turns every hidden unresolved import into zero
+            # SARIF results and a code-scanning gate goes green on a scan
+            # that never ran.
+            for missing in result.get("files_unreadable", []):
+                sarif_findings.append(
+                    {
+                        "file": missing,
+                        "line": None,
+                        "name": missing,
+                        "status": "unverifiable",
+                        "language": _get_file_language(conn, missing) or "",
+                        "suggestions": [],
+                    }
+                )
             for i in result["imports"]:
                 if i.get("status") != "unresolved":
                     continue
@@ -1487,9 +1543,32 @@ def verify_imports_cmd(ctx, file_path, include_docs):
     resolved = result["resolved"]
     unresolved = result["unresolved"]
     files_checked = result["files_checked"]
+    files_in_scope = result.get("files_in_scope", files_checked)
+    unverifiable_files = list(result.get("files_unreadable", []))
+    unverifiable = len(unverifiable_files)
 
-    # Build verdict
-    if total == 0:
+    # Build verdict.
+    #
+    # ``unverifiable > 0`` means the scan was asked to check files it could
+    # not read, so their imports were never examined. Any unresolved import
+    # inside them is missing from ``unresolved``, which makes a "0 unresolved"
+    # reading an assertion the command did not earn. The clean verdicts are
+    # therefore gated on ``unverifiable == 0``: absent evidence resolves to
+    # UNKNOWN, not to PASS.
+    stale_hint = "index may be stale — run `roam index`"
+    if unverifiable:
+        if unresolved:
+            verdict = (
+                f"{unresolved} unresolved imports out of {total} in {files_checked} files; "
+                f"{unverifiable} of {files_in_scope} files UNVERIFIABLE (unreadable; {stale_hint})"
+            )
+        else:
+            verdict = (
+                f"UNKNOWN: no unresolved imports among {total} checked, but "
+                f"{unverifiable} of {files_in_scope} files could not be read — "
+                f"their imports were never verified ({stale_hint})"
+            )
+    elif total == 0:
         verdict = "No imports found to verify"
     elif unresolved == 0:
         verdict = f"All {total} imports resolved across {files_checked} files"
@@ -1511,17 +1590,27 @@ def verify_imports_cmd(ctx, file_path, include_docs):
                 rec["suggestions"] = i["suggestions"]
             import_records.append(rec)
 
+        summary = {
+            "verdict": verdict,
+            "total_imports": total,
+            "resolved": resolved,
+            "unresolved": unresolved,
+            "files_checked": files_checked,
+            # The population the scan was asked about, published alongside
+            # the numerator so a consumer can see the shortfall directly
+            # instead of reading ``files_checked`` as if it were the total.
+            "files_in_scope": files_in_scope,
+            "files_unverifiable": unverifiable,
+            "partial_success": bool(unverifiable),
+        }
+        payload: dict = {"imports": import_records}
+        if unverifiable:
+            payload["unverifiable_files"] = unverifiable_files
         envelope = json_envelope(
             "verify-imports",
-            summary={
-                "verdict": verdict,
-                "total_imports": total,
-                "resolved": resolved,
-                "unresolved": unresolved,
-                "files_checked": files_checked,
-            },
+            summary=summary,
             budget=token_budget,
-            imports=import_records,
+            **payload,
         )
         click.echo(to_json(envelope))
         return
@@ -1550,8 +1639,20 @@ def verify_imports_cmd(ctx, file_path, include_docs):
         click.echo()
         click.echo("  Tip: Run `roam search <name>` for more details on a symbol.")
         click.echo("       If recently added, run `roam index` to refresh.")
-    else:
+    elif not unverifiable:
+        # Only claim success when nothing was left unexamined.
         if total > 0:
             click.echo(f"  All {total} imports verified successfully.")
         else:
             click.echo("  No import statements found in indexed files.")
+
+    if unverifiable:
+        click.echo()
+        click.echo(f"  UNVERIFIABLE: {unverifiable} of {files_in_scope} files could not be read.")
+        click.echo("  Their imports were NOT checked — this run cannot certify them clean.")
+        for missing in unverifiable_files[:10]:
+            click.echo(f"    - {missing}")
+        if unverifiable > 10:
+            click.echo(f"    ... and {unverifiable - 10} more")
+        click.echo()
+        click.echo("  Fix: run `roam index` to refresh the index, then re-run.")

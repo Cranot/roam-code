@@ -155,7 +155,16 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                 with open_db() as wconn:
                     snap = append_snapshot(wconn, source="index")
                 if not json_mode and not quiet:
-                    click.echo(f"  Health: {snap['health_score']}/100 (snapshot saved)")
+                    # W1461 — never print "snapshot saved" for a snapshot
+                    # ``append_snapshot`` refused to write, and never print a
+                    # health score that is a floor rather than a measurement.
+                    if snap.get("stored", True):
+                        click.echo(f"  Health: {snap['health_score']}/100 (snapshot saved)")
+                    else:
+                        click.echo(
+                            "  Health: UNKNOWN (symbol graph unavailable; no snapshot saved — "
+                            f"unmeasured: {', '.join(snap.get('degraded_metrics') or ())})"
+                        )
             except Exception as _exc:  # noqa: BLE001 — defensive
                 # Don't fail indexing if snapshot fails
                 from roam.observability import log_swallowed

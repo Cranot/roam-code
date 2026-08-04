@@ -4633,7 +4633,7 @@ def _check_test_hermeticity(target_paths, root):
     if not changed:
         return {"score": 100, "violations": []}
     try:
-        from roam.commands.cmd_test_hermeticity import _scan_test_file
+        from roam.commands.cmd_test_hermeticity import _scan_test_file_ex
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.test_hermeticity.import", exc)
         return _verify_check_incomplete(
@@ -4642,8 +4642,14 @@ def _check_test_hermeticity(target_paths, root):
             advisory=True,
         )
     violations = []
+    unscanned: list[str] = []
     for rel in changed:
-        hits = _scan_test_file(rel, root) or []
+        hits, skip_reason = _scan_test_file_ex(rel, root)
+        if skip_reason is not None:
+            # Never parsed => no evidence either way. Zero hits here is
+            # absence of measurement, not a clean result.
+            unscanned.append(f"{rel} ({skip_reason})")
+            continue
         for h in hits:
             violations.append(
                 {
@@ -4655,7 +4661,19 @@ def _check_test_hermeticity(target_paths, root):
                     "fix": "Mock / freeze the non-hermetic dependency (time, network, randomness, env)",
                 }
             )
-    return {"score": 100 if not violations else 85, "violations": violations}
+    if unscanned and len(unscanned) == len(changed):
+        # Every changed test file was unreadable/unparseable: the check ran but
+        # measured nothing. Report INCOMPLETE rather than a 100 it never earned.
+        return _verify_check_incomplete(
+            _VERIFY_HERMETICITY_CATEGORY,
+            "test-hermeticity could not scan: " + ", ".join(sorted(unscanned)),
+            advisory=True,
+        )
+    result = {"score": 100 if not violations else 85, "violations": violations}
+    if unscanned:
+        result["partial_success"] = True
+        result["unscanned_files"] = sorted(unscanned)
+    return result
 
 
 # ---------------------------------------------------------------------------

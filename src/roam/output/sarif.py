@@ -6375,7 +6375,7 @@ def _verify_imports_kind_level(kind: str) -> str:
     label = (kind or "").lower()
     if label == "hallucination-import":
         return "error"
-    if label == "invalid-import":
+    if label in ("invalid-import", "unverifiable-file"):
         return "warning"
     return "note"
 
@@ -6408,6 +6408,14 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
       code. This is the only verify-imports rule that escalates to
       ``error`` so a CI gate keyed off ``level: error`` blocks only on
       irrecoverable imports.
+    - ``unverifiable-file`` (defaultLevel ``warning``): a file the scan
+      was asked to check could not be read, so its imports were never
+      examined. This is not a verdict about an import — it is the
+      disclosure that no verdict exists. Without it, a stale index
+      makes every unresolved import inside an unreadable file vanish
+      from the numerator and the document goes out with zero results,
+      which a code-scanning gate reads as clean. Recoverable by
+      re-indexing, hence ``warning`` rather than ``error``.
 
     Per-finding anchor: ``file`` + ``line`` (the import statement
     site). The message body surfaces the language, the imported name,
@@ -6423,9 +6431,11 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
     Constraint 8).
 
     Empty / clean envelopes produce a valid SARIF document with zero
-    results — the rule catalogue is always emitted (closed enum of 2
+    results — the rule catalogue is always emitted (closed enum of 3
     rules) so consumers can introspect the rule vocabulary even on a
-    clean run without any unresolved imports.
+    clean run without any unresolved imports. A zero-result document is
+    only trustworthy because ``unverifiable-file`` guarantees that the
+    scan examined everything it was asked to.
 
     Mirrors the closed-enum design from :func:`orphan_imports_to_sarif`
     (W1218) and :func:`flag_dead_to_sarif` (W1226) — three detectors
@@ -6454,6 +6464,16 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
             help_uri=_HELP_BASE + "verify-imports",
             default_level="error",
         ),
+        _rule_entry(
+            id="unverifiable-file",
+            short_desc=(
+                "A file the scan was asked to check could not be read — "
+                "its imports were never examined, so a zero-finding run "
+                "cannot be read as clean; refresh the index and re-run"
+            ),
+            help_uri=_HELP_BASE + "verify-imports",
+            default_level="warning",
+        ),
     ]
 
     results: list[dict] = []
@@ -6471,7 +6491,7 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
             continue
 
         status = (f.get("status") or "").lower()
-        if status != "unresolved":
+        if status not in ("unresolved", "unverifiable"):
             # ``resolved`` carries no actionable signal; unknown
             # ``status`` labels drop per closed-enum discipline
             # (LAW 8 / CLAUDE.md Constraint 8).
@@ -6493,10 +6513,15 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
             suggestions_raw = []
         suggestions: list[str] = [str(s) for s in suggestions_raw if s]
 
-        # Classification: FTS5 found candidates -> invalid-import
-        # (typo / rename signal); no candidates -> hallucination-import
-        # (the name genuinely isn't in the index).
-        kind = "invalid-import" if suggestions else "hallucination-import"
+        # Classification: ``unverifiable`` is not an import verdict at all —
+        # it is the absence of one, and it must not be silently folded into
+        # a zero-result (clean) document. FTS5 found candidates ->
+        # invalid-import (typo / rename signal); no candidates ->
+        # hallucination-import (the name genuinely isn't in the index).
+        if status == "unverifiable":
+            kind = "unverifiable-file"
+        else:
+            kind = "invalid-import" if suggestions else "hallucination-import"
 
         language = f.get("language") or ""
         # The producer envelope doesn't always stamp ``language`` on
@@ -6511,11 +6536,15 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
         # joined suggestions list. Order matches the producer-side
         # text output so SARIF consumers and JSON consumers see a
         # parallel triage path.
-        rationale = (
-            "no nearby symbol in the indexed table — hallucinated import"
-            if kind == "hallucination-import"
-            else "did-you-mean candidates available in the indexed table"
-        )
+        if kind == "unverifiable-file":
+            rationale = (
+                "file is in the index but could not be read — its imports "
+                "were never checked; refresh the index and re-run"
+            )
+        elif kind == "hallucination-import":
+            rationale = "no nearby symbol in the indexed table — hallucinated import"
+        else:
+            rationale = "did-you-mean candidates available in the indexed table"
         message = f"{lang_prefix}{name} ({kind}): {rationale}"
         if suggestions:
             message += f" — suggestions: {', '.join(suggestions)}"

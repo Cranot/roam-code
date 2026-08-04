@@ -193,7 +193,9 @@ def build_aibom_block(repo_root: Path, conn) -> dict:
 
         {
           "version": "0.1",
-          "summary": {"ai_commits_total": N, "ai_components_total": M},
+          "summary": {"ai_commits_total": N, "ai_components_total": M,
+                       "symbol_binding_complete": true,
+                       "partial_success": false},
           "ai-components": [
             {"type": "ai-component", "name": "...", "email": "...",
              "manufacturer": "Anthropic|OpenAI|...",
@@ -201,13 +203,27 @@ def build_aibom_block(repo_root: Path, conn) -> dict:
                           "files": [...], "symbol_count": K}}
           ]
         }
+
+    ``symbol_count`` is an honest integer or ``None``. ``None`` means the
+    count could NOT be computed (the index was locked, missing or corrupt),
+    and it is NOT the same statement as ``0`` ("this contributor touched no
+    indexed symbols") — an auditor reading a signed AIBOM must be able to
+    tell "no AI-authored symbols" apart from "we could not look". Every
+    unavailable count also raises ``summary.partial_success`` and appends a
+    ``symbol_binding_errors`` entry, so a consumer that only reads the
+    summary still sees the gap.
     """
     ai_commits = mine_ai_commits(repo_root)
     if not ai_commits:
         return {
             "version": AIBOM_EXTENSION_VERSION,
             "ai-components": [],
-            "summary": {"ai_commits_total": 0, "ai_components_total": 0},
+            "summary": {
+                "ai_commits_total": 0,
+                "ai_components_total": 0,
+                "symbol_binding_complete": True,
+                "partial_success": False,
+            },
         }
 
     by_committer: dict[str, dict] = {}
@@ -246,9 +262,13 @@ def build_aibom_block(repo_root: Path, conn) -> dict:
                 entry["binding"]["files"].add(path)
 
     out_components: list[dict] = []
+    binding_errors: list[dict] = []
     for email, entry in by_committer.items():
         files = _select_bounded_disclosure_files(entry["binding"]["files"])
-        symbol_count = 0
+        # UNKNOWN until a query answers. A contributor with no files has a
+        # provable zero; a contributor whose count we never ran does not.
+        symbol_count: int | None = 0 if not files else None
+        count_error: str | None = None
         if files and conn is not None:
             placeholders = ",".join("?" * len(files))
             try:
@@ -257,28 +277,68 @@ def build_aibom_block(repo_root: Path, conn) -> dict:
                     files,
                 ).fetchone()
                 symbol_count = int(row[0]) if row else 0
-            except sqlite3.Error:
-                symbol_count = 0
+            except sqlite3.Error as exc:
+                # NOT `= 0`: a count that could not be computed is not a
+                # count of zero, and this block is cosign-signed.
+                symbol_count = None
+                count_error = f"{type(exc).__name__}: {exc}"
+        elif files:
+            count_error = "no index connection"
+
+        binding = {
+            "commits": entry["binding"]["commits"][:50],
+            "commit_count": len(entry["binding"]["commits"]),
+            "files": files,
+            "symbol_count": symbol_count,
+        }
+        if symbol_count is None:
+            reason = count_error or "symbol count unavailable"
+            binding["symbol_count_status"] = "unavailable"
+            binding["symbol_count_error"] = reason
+            binding_errors.append({"email": email, "reason": reason})
         out_components.append(
             {
                 "type": "ai-component",
                 "name": entry["name"],
                 "email": email,
                 "manufacturer": entry["manufacturer"],
-                "binding": {
-                    "commits": entry["binding"]["commits"][:50],
-                    "commit_count": len(entry["binding"]["commits"]),
-                    "files": files,
-                    "symbol_count": symbol_count,
-                },
+                "binding": binding,
             }
         )
 
-    return {
+    summary = {
+        "ai_commits_total": len(ai_commits),
+        "ai_components_total": len(out_components),
+        "symbol_binding_complete": not binding_errors,
+        "partial_success": bool(binding_errors),
+    }
+    block = {
         "version": AIBOM_EXTENSION_VERSION,
         "ai-components": out_components,
-        "summary": {
-            "ai_commits_total": len(ai_commits),
-            "ai_components_total": len(out_components),
-        },
+        "summary": summary,
     }
+    if binding_errors:
+        block["symbol_binding_errors"] = binding_errors
+    return block
+
+
+def aibom_block_incomplete_reason(block: dict) -> str | None:
+    """Return a human-readable reason when ``block`` is not a complete AIBOM.
+
+    Returns ``None`` for a block whose every symbol binding was actually
+    computed. Callers that publish the block under a "this is an AIBOM"
+    predicate type use this to attach their own disclosure sibling instead
+    of signing an understated claim silently.
+    """
+    if not isinstance(block, dict):
+        return "aibom block missing"
+    summary = block.get("summary")
+    if not isinstance(summary, dict) or "symbol_binding_complete" not in summary:
+        return "aibom block does not disclose symbol-binding completeness"
+    if summary.get("symbol_binding_complete") is True:
+        return None
+    errors = block.get("symbol_binding_errors") or []
+    detail = "; ".join(f"{e.get('email')}: {e.get('reason')}" for e in errors if isinstance(e, dict))
+    return (
+        f"symbol binding incomplete ({len(errors)} component(s)): {detail}" if detail else "symbol binding incomplete"
+    )
