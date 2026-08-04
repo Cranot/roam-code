@@ -30,13 +30,17 @@ suite, on every interpreter, is that the mechanism behaves.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 import re
+import textwrap
 from pathlib import Path
 
 import yaml
 from click.testing import CliRunner
 
+import roam.commands.cmd_compatibility as compat_cmd
 from roam.cli import cli
 from roam.commands.cmd_compatibility import _build_snapshot, _diff, _verdict_for
 from roam.exit_codes import EXIT_GATE_FAILURE
@@ -295,3 +299,140 @@ def test_w1493_written_baselines_are_byte_identical_across_platforms(tmp_path) -
     runner = CliRunner()
     assert runner.invoke(cli, ["compatibility", "--write-baseline", str(baseline)]).exit_code == 0
     assert b"\r" not in baseline.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# W1494 -- partial_success discloses the BLIND SPOT, not the findings
+# ---------------------------------------------------------------------------
+#
+# In this codebase ``partial_success`` means "the result is incomplete
+# relative to what was requested" -- the W1327 / Pattern-2c semantic that
+# ``roam cycles`` violated by dropping its payload at the token budget and
+# still reporting ``partial_success: false``. This command wired the field to
+# ``breaking > 0``, which is a different claim ("problems were found") and is
+# wrong in both directions. Measured on this repo at HEAD against the
+# v13.10.0-era baseline, before the fix:
+#
+#   breaking=0 coverage_gap=110 -> partial_success False   <- false clean
+#   breaking=1 coverage_gap=0   -> partial_success True    <- false degraded
+#
+# The first is the serious one, and it lives inside a gate that is now
+# blocking in CI: the envelope asserted a complete result over 110 surface
+# entries that were never evaluated.
+
+
+def _summary(baseline: Path, *args: str) -> dict:
+    result = CliRunner().invoke(cli, ["--json", "compatibility", "--baseline", str(baseline), *args])
+    return json.loads(result.output)["summary"]
+
+
+def test_w1494_partial_success_is_true_when_surface_went_unevaluated(tmp_path) -> None:
+    """NEGATIVE CONTROL for the false-clean direction: fails pre-fix.
+
+    A baseline missing a shipped command cannot report that command's later
+    removal. The run is therefore incomplete, and the envelope must say so
+    even though nothing breaking was found.
+    """
+    snapshot = _build_snapshot()
+    del snapshot["commands"][sorted(snapshot["commands"])[0]]
+    summary = _summary(_write(tmp_path / "baseline.json", snapshot))
+
+    assert summary["breaking"] == 0, summary
+    assert summary["coverage_gap"] >= 1, summary
+    assert summary["partial_success"] is True, (
+        f"the envelope asserted a COMPLETE result while surface entries went unevaluated: {summary}"
+    )
+
+
+def test_w1494_partial_success_is_false_when_a_complete_run_finds_a_regression(tmp_path) -> None:
+    """NEGATIVE CONTROL for the false-degraded direction: fails pre-fix.
+
+    Finding a breaking change is a successful, complete run. Degradation and
+    findings are different claims and must not share one flag.
+    """
+    snapshot = _build_snapshot()
+    snapshot["commands"]["_w1494_removed_command"] = {"module": "x", "function": "y", "flags": []}
+    summary = _summary(_write(tmp_path / "baseline.json", snapshot))
+
+    assert summary["breaking"] >= 1, summary
+    assert summary["coverage_gap"] == 0, summary
+    assert summary["partial_success"] is False, (
+        f"a complete analysis that found a real regression reported itself degraded: {summary}"
+    )
+
+
+def test_w1494_surface_coverage_names_the_state_without_inference(tmp_path) -> None:
+    """``partial_success`` alone cannot distinguish "checked everything and it
+    was clean" from "checked what I could see". The closed-enum
+    ``surface_coverage`` field names it directly, the same way
+    ``truncation_reason`` disambiguates ``truncated``."""
+    complete = _summary(_write(tmp_path / "complete.json", _build_snapshot()))
+    assert complete["surface_coverage"] == "complete", complete
+    assert complete["partial_success"] is False, complete
+    assert complete["coverage_gap"] == 0, complete
+
+    snapshot = _build_snapshot()
+    del snapshot["commands"][sorted(snapshot["commands"])[0]]
+    partial = _summary(_write(tmp_path / "partial.json", snapshot))
+    assert partial["surface_coverage"] == "partial", partial
+    assert partial["unevaluated_surface_entries"] == partial["coverage_gap"], partial
+
+
+def test_w1494_surface_coverage_is_a_closed_enum_that_implies_partial_success(tmp_path) -> None:
+    """``partial`` must never appear without ``partial_success: true``, and the
+    enum must not drift -- the invariant ``_TRUNCATION_REASONS`` holds for
+    ``truncated``."""
+    assert compat_cmd._SURFACE_COVERAGE_KINDS == frozenset({"complete", "partial"})
+
+    for mutate in (lambda s: None, lambda s: s["commands"].pop(sorted(s["commands"])[0])):
+        snapshot = _build_snapshot()
+        mutate(snapshot)
+        summary = _summary(_write(tmp_path / "probe.json", snapshot))
+        assert summary["surface_coverage"] in compat_cmd._SURFACE_COVERAGE_KINDS, summary
+        assert (summary["surface_coverage"] == "partial") is (summary["partial_success"] is True), summary
+
+
+# ---------------------------------------------------------------------------
+# W1495 -- the documented breaking tally matches the computed one
+# ---------------------------------------------------------------------------
+
+
+def test_w1495_diff_docstring_names_every_breaking_contributor() -> None:
+    """NEGATIVE CONTROL: fails pre-fix, where the docstring listed four of the
+    five contributors and omitted preset shrinkage.
+
+    That omission is not cosmetic. On this repo all four removed-* lists are
+    empty and ``breaking`` is 1, which reads as a contradiction until the
+    reader finds the undocumented fifth term -- and that single number is what
+    makes the next release a major one, because ``core`` dropped 57 -> 17 MCP
+    tools. Derived from the AST rather than hardcoded, so adding a sixth term
+    without documenting it fails here too.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_diff)))
+    function = tree.body[0]
+    assert isinstance(function, ast.FunctionDef)
+
+    summands: list[str] = []
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "breaking" for t in node.targets):
+            continue
+        for call in ast.walk(node.value):
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "len"
+                and call.args
+                and isinstance(call.args[0], ast.Name)
+            ):
+                summands.append(call.args[0].id)
+
+    assert len(summands) == 5, summands
+    docstring = ast.get_docstring(function) or ""
+    undocumented = [name for name in summands if name not in docstring]
+    assert not undocumented, (
+        f"`_diff` adds {undocumented} to the breaking tally without naming them in its "
+        f"docstring. A reader seeing breaking=1 with every removed-* list empty has no "
+        f"way to find the term responsible."
+    )
