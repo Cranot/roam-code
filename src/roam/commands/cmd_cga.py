@@ -328,12 +328,34 @@ def cga_emit(
     # SHA — emitting on uncommitted state produces a misleading receipt.
     # --allow-dirty opts in (still records the dirty-hash in the predicate).
     if not allow_dirty:
-        from roam.attest.cga import _git_dirty_hash
+        from roam.attest.cga import DIRTY_HASH_UNKNOWN, _git_dirty_hash
 
-        dirty = _run_check_af("git_dirty_hash", _git_dirty_hash, project_root, default=None)
+        # ``default=DIRTY_HASH_UNKNOWN``, not ``None``: if the probe itself
+        # raises, we learned nothing about the tree, and the gate below must
+        # not read that silence as a clean bill of health.
+        dirty = _run_check_af("git_dirty_hash", _git_dirty_hash, project_root, default=DIRTY_HASH_UNKNOWN)
         if dirty is not None:
             from roam.output.errors import DIRTY_TREE, structured_usage_error
 
+            # Two distinct refusals behind one code. DIRTY_TREE names what the
+            # gate enforces — "this tree is not certified clean" — and both
+            # causes fail it, but they are not the same fact and do not have
+            # the same remedy, so the message says which one fired. Reporting
+            # the unknown as "you have uncommitted changes" would send the
+            # operator to `git stash` for a problem that is really a missing
+            # git binary; reporting it as clean, which is what this gate did
+            # before ``_git_dirty_hash`` grew its third value, would sign a
+            # predicate asserting a clean tree nobody had looked at.
+            if dirty == DIRTY_HASH_UNKNOWN:
+                raise structured_usage_error(
+                    DIRTY_TREE,
+                    "could not determine whether the working tree is clean — "
+                    "`git status --porcelain` did not run (no git binary, not a "
+                    "repository, non-zero exit, or timeout). Refusing to emit a "
+                    "CGA that would assert a clean tree on an unverified one. "
+                    "Re-run where git is available, or pass --allow-dirty to "
+                    "record the unknown tree state in the predicate explicitly.",
+                )
             raise structured_usage_error(
                 DIRTY_TREE,
                 "working tree has uncommitted changes — refusing to emit a CGA "

@@ -41,6 +41,7 @@ from roam.attest.cga import (
     verify_cga_statement,
     verify_cga_statement_state,
 )
+from tests.conftest import make_src_project
 
 _MANIFEST_DDL = """
 CREATE TABLE index_manifest (
@@ -122,9 +123,18 @@ def _drop_an_edge(conn):
 
 @pytest.fixture
 def root(tmp_path):
-    """A non-git directory: keeps commit-SHA / dirty-tree checks out of the way
-    so these tests isolate the graph-fingerprint verdict."""
-    return tmp_path
+    """A clean, committed git repo: keeps commit-SHA / dirty-tree checks out of
+    the way so these tests isolate the graph-fingerprint verdict.
+
+    This used to be a bare ``tmp_path`` with no repo in it, which achieved the
+    same thing for the wrong reason: ``_git_dirty_hash`` returned ``None`` both
+    for "I looked, the tree is clean" and for "I could not look", so a
+    directory git had never heard of read as clean. W1462 split those apart, so
+    "out of the way" now has to be earned with a tree that is genuinely clean
+    rather than merely unobserved — which is also what these tests meant all
+    along. The graph-fingerprint verdict under test is unaffected either way.
+    """
+    return make_src_project(tmp_path, {"seed.py": "SEED = 1\n"})
 
 
 def _errs(errors):
