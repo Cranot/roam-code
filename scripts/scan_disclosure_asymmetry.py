@@ -123,6 +123,32 @@ The baseline is a list of ASYMMETRIES, never a list of unreadable files:
 ``files_unanalyzable`` has no baseline and never will, because "I could not
 check this" is not a grandfathered violation, it is a broken gate.
 
+A MARK THAT CANNOT BE READ IS NOT A MARK OF ZERO (W1471)
+---------------------------------------------------------
+W1460 closed the file-level route to a laundered ceiling: an ABSENT ratchet
+is a first generation, anything PRESENT-but-unreadable is a refusal. It left
+the FIELD-level route open. ``_carried_mark`` tested the recorded mark with a
+bare ``isinstance(mark, int)`` and fell back to the current count on every
+way of failing it, so a ratchet that parsed perfectly well but whose
+``_high_water_mark`` was missing — or spelled ``"68"``, ``68.0`` or ``null``
+— silently reset the ceiling to today's count and exited 0. Measured at
+8288593e against a planted repo: mark 99 in, mark 1 out, no diagnostic.
+
+Worse than the zero-byte case it followed, on two counts. The zero-byte file
+REFUSED; this one succeeded. And the *rationale* was carried forward
+untouched, so the emitted file paired today's count with the prose written to
+justify a much larger number — a ratchet that reads as reviewed. The reviewer
+sees a plausible file; the ceiling is gone.
+
+So the mark and its note are now validated, not merely sniffed, and refused
+together: only a genuinely absent FILE is a first generation, and a present
+one must carry a non-negative integer mark AND a non-empty reason. ``bool``
+is rejected explicitly (``isinstance(True, int)`` is true, and a mark of
+``True`` pins the ratchet at one entry). Substituting ``_UNEXPLAINED_MARK``
+for a dropped note would have laundered it past
+``test_a_raised_high_water_mark_says_why``, whose floor is a length check
+that the placeholder clears.
+
 EVERY EARLY EXIT IS PART OF THE CONTRACT (W1459)
 ------------------------------------------------
 W1455 covered the OUTERMOST exit — the file this scanner could not read or
@@ -1562,17 +1588,48 @@ def _carried_mark(count: int, root: pathlib.Path | None = None) -> tuple[int, st
     measures, so an unreadable ratchet file silently raises the ratchet —
     exactly the laundering this function's docstring promises to prevent.
     Only a genuinely ABSENT file is a first generation.
+
+    A PRESENT and PARSEABLE file whose mark is missing or not a usable
+    integer is the same laundering by a fourth route (W1471). ``isinstance``
+    was the whole check, and every way of failing it fell back to ``count``:
+    deleting the ``_high_water_mark`` key, or writing it as ``"68"``, ``68.0``
+    or ``null``, silently reset the ceiling to today's count at exit 0 — while
+    the *rationale* was carried forward intact, so the emitted file read as a
+    mark of 2 explained by the prose for 68. That is strictly worse than the
+    zero-byte file W1460 closed: that one at least refused. ``bool`` is
+    rejected explicitly because ``isinstance(True, int)`` is true in Python,
+    and a mark of ``True`` compares as 1 in ``test_baseline_only_ever_shrinks``
+    — a ratchet pinned at one entry by a typo.
+
+    The mark and its rationale are refused TOGETHER. A number carried forward
+    without the reason beside it is the exact state ``_high_water_mark_note``
+    exists to prevent, and ``_UNEXPLAINED_MARK`` is long enough to satisfy
+    ``test_a_raised_high_water_mark_says_why``'s length floor — so silently
+    substituting it would launder a dropped justification past the guard
+    written to catch it.
+
+    :raises ValueError: if the file is present and parseable but carries no
+        usable mark or no rationale. ``emit_baseline`` turns that into a
+        refusal that leaves the existing ratchet exactly as it found it.
     """
     try:
         recorded = json.loads(baseline_path(root).read_text(encoding="utf-8"))
     except FileNotFoundError:
         return count, _UNEXPLAINED_MARK
+    if not isinstance(recorded, dict):
+        raise ValueError(f"the ratchet file is a JSON {type(recorded).__name__}, not an object")
     mark = recorded.get("_high_water_mark")
     note = recorded.get("_high_water_mark_note")
-    return (
-        mark if isinstance(mark, int) else count,
-        note if isinstance(note, str) and note.strip() else _UNEXPLAINED_MARK,
-    )
+    if isinstance(mark, bool) or not isinstance(mark, int) or mark < 0:
+        raise ValueError(
+            f"the ratchet file carries no usable _high_water_mark (got {mark!r}); it must be a non-negative integer"
+        )
+    if not isinstance(note, str) or not note.strip():
+        raise ValueError(
+            f"the ratchet file records a _high_water_mark of {mark} with no "
+            f"_high_water_mark_note (got {note!r}) to say why it is what it is"
+        )
+    return mark, note
 
 
 def build_baseline(report: ScanReport, root: pathlib.Path | None = None) -> dict[str, object]:
@@ -1678,12 +1735,14 @@ def emit_baseline(report: ScanReport, root: pathlib.Path | None = None) -> int:
     try:
         payload = build_baseline(report, root)
     except (OSError, ValueError) as exc:
-        # A ratchet file that is PRESENT but unreadable is not a first
-        # generation. Recovery is named here rather than left as an exercise,
-        # because the historical cause of this state was following the
-        # documented instruction.
+        # A ratchet file that is PRESENT but unreadable — or readable but
+        # carrying no usable mark (W1471) — is not a first generation.
+        # Recovery is named here rather than left as an exercise, because the
+        # historical cause of this state was following the documented
+        # instruction.
         print(
-            f"REFUSING to emit a baseline: the existing ratchet file could not be read "
+            f"REFUSING to emit a baseline: the existing ratchet file could not be read, "
+            f"or carries no usable high-water mark "
             f"({type(exc).__name__}: {exc}); regenerating over it would replace its "
             "high-water mark with today's count. Restore it first — "
             f"git checkout -- {baseline_path(root)} — and re-run WITHOUT a shell "
