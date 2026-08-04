@@ -18,6 +18,11 @@ def _text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
+def _release(version: str) -> tuple[int, ...]:
+    """Numeric release segments of a locked version, for ordering comparisons."""
+    return tuple(int(part) for part in re.findall(r"\d+", version.split("+")[0]))
+
+
 def _job(text: str, name: str, next_name: str | None) -> str:
     start = text.index(f"  {name}:\n")
     end = len(text) if next_name is None else text.index(f"  {next_name}:\n", start)
@@ -301,8 +306,16 @@ def test_python_release_toolchain_is_exactly_versioned_and_hash_locked() -> None
     } <= locked_names
     assert headers.count(("pypi-attestations", "0.0.29")) == 1
     assert "# pypi-attestations==0.0.29" in lock
-    assert "# Resolution cutoff: 2026-07-22T00:00:00Z" in lock
+    assert "# Resolution cutoff: 2026-07-17T00:00:00Z" in lock
     assert "x86_64-manylinux_2_34" in lock
+    # PYSEC-2026-3552 / CVE-2026-69247: the PKCS#7 EnvelopedData Bleichenbacher
+    # oracle spans cryptography 44.0.0 through 49.x. pyopenssl 26.3.0 and older
+    # pin cryptography<50, so the signing environment cannot take the fix
+    # without both moving; guard the floor structurally so a future
+    # regeneration cannot quietly walk either one back.
+    locked = dict(headers)
+    assert _release(locked["cryptography"]) >= (50, 0, 0), locked["cryptography"]
+    assert _release(locked["pyopenssl"]) >= (26, 4, 0), locked["pyopenssl"]
     blocks = re.split(r"(?m)(?=^[a-z0-9][a-z0-9._-]*==)", lock)
     package_blocks = [block for block in blocks if re.match(r"^[a-z0-9][a-z0-9._-]*==", block)]
     assert len(package_blocks) == len(headers)
