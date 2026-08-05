@@ -115,6 +115,23 @@ jobs:
               raise SystemExit(f"dogfood execution degraded: {failed}")
           PY
 
+      # The retrieval numbers in bench/retrieve/{README,SUBMISSION}.md are
+      # public claims that open with "run this command". They went stale for
+      # three minor versions -- README published 0.503 recall@20 while the
+      # retriever actually delivered 0.914 -- because nothing re-derived them.
+      # This step is that missing re-derivation. It runs here rather than in a
+      # new workflow because `Index repo` above already builds a FULL index on
+      # a fresh checkout, which is the only state the numbers are valid against
+      # (an incrementally-maintained index scores ~13 points lower on the same
+      # commit; see SUBMISSION.md 'Known defects').
+      - name: Verify published retrieval numbers
+        run: |
+          set -euo pipefail
+          .venv/bin/roam --json eval-retrieve \
+            --tasks bench/retrieve/roam_self.jsonl > eval-retrieve.json
+          .venv/bin/python bench/retrieve/check_published_recall.py \
+            --eval-json eval-retrieve.json
+
       - name: Render PR comment (pr-analyze on PR diff)
         if: github.event_name == 'pull_request'
         env:
@@ -162,5 +179,6 @@ jobs:
             dogfood.json
             pr-analyze.json
             pr-comment.md
+            eval-retrieve.json
           if-no-files-found: error
           retention-days: 30
