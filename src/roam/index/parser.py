@@ -461,6 +461,20 @@ def scan_template_references(
     return refs
 
 
+def reset_parse_errors() -> None:
+    """Zero the counters at the start of an index run.
+
+    ``parse_errors`` is module state, so without this it accumulates for the
+    life of the process. That was harmless while it only fed a log line, but
+    the corpus verdict now reads it to decide an exit code, and a stale count
+    from an earlier run in the same process would refuse a perfectly good
+    index. In-process callers (the test suite's CliRunner, the MCP server)
+    are exactly where that happens; a one-shot CLI process never noticed.
+    """
+    for key in parse_errors:
+        parse_errors[key] = 0
+
+
 def get_parse_error_count() -> int:
     """Return the total number of files this process failed to parse.
 
