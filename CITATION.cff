@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use roam-code in academic work or in a published audit, please cite it as below."
+title: "roam-code: local codebase intelligence and change-safety gates for AI coding agents"
+abstract: >-
+  roam-code pre-indexes a repository's symbols, call graph, dependencies,
+  architecture layers, and git history into a local SQLite database across 28
+  languages, then exposes that graph to AI coding agents over a CLI and an MCP
+  server. It adds pre-merge change-safety gates (blast radius, reference
+  breakage, taint reachability, convention drift) and emits tamper-evident
+  ChangeEvidence packets recording what was actually checked. Analysis is local
+  by default and requires no API keys.
+type: software
+authors:
+  - name: "Cranot"
+    alias: "Cranot"
+    website: "https://github.com/Cranot"
+repository-code: "https://github.com/Cranot/roam-code"
+url: "https://roam-code.com/"
+license: Apache-2.0
+version: 13.10.0
+keywords:
+  - codebase-intelligence
+  - static-analysis
+  - call-graph
+  - model-context-protocol
+  - ai-agents
+  - software-supply-chain

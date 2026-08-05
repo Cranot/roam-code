@@ -9,8 +9,9 @@ Two independent passes with two different sources of truth:
    TRACKED file for release-pin shapes (``roam-code==X``,
    ``Cranot/roam-code@vX``, the composite action's ``version`` input) plus a
    handful of structurally-anchored sites (``action.yml`` input default,
-   ``server.json`` package pin, generated doc headers). Historical records and
-   the deliberately-lagging self-pin are exempt by explicit registry — see
+   ``server.json`` package pin, ``.claude-plugin/plugin.json`` manifest
+   version, generated doc headers). Historical records and the
+   deliberately-lagging self-pin are exempt by explicit registry — see
    ``_VERSION_PIN_EXEMPT``.
 
 For the count pass, this script reads the live counts and rewrites every
@@ -211,6 +212,33 @@ def _structural_pin_patterns(version: str) -> dict[str, list[tuple[re.Pattern, s
                 re.compile(rf"(^  version:\n(?:^ {{4}}[^\n]*\n){{0,6}}?^    default: '){_PIN_VERSION}", re.M),
                 rf"\g<1>{version}",
             ),
+        ],
+        # Claude Code plugin marketplace manifest. ``version`` here is not
+        # cosmetic: the docs make it the update trigger — "Setting this pins
+        # the plugin to that version string, so users only receive updates
+        # when you bump it." A stale literal therefore means every installed
+        # plugin keeps serving the OLD manifest (including its mcpServers
+        # block) no matter how many releases ship. It sat at 13.6.1 across
+        # four releases because nothing swept it: the value carries no pin
+        # shape, and the file is not in the count registry either. Same
+        # anchored-JSON-key treatment as server.json below.
+        ".claude-plugin/plugin.json": [
+            (re.compile(rf'(^    "version": "){_PIN_VERSION}', re.M), rf"\g<1>{version}"),
+        ],
+        # Citation metadata. Both state the version a citer would reference, so
+        # a stale literal here mis-attributes published work to a release that
+        # never contained the cited behaviour. Registered the day the files
+        # landed rather than the day someone notices — the exact gap that let
+        # plugin.json sit four releases behind.
+        #
+        # ``^version:`` cannot collide with CITATION.cff's ``cff-version:``
+        # (that line does not start with ``version``), and the codemeta key is
+        # anchored to its four-space indent like the two JSON manifests above.
+        "CITATION.cff": [
+            (re.compile(rf"(^version: ){_PIN_VERSION}", re.M), rf"\g<1>{version}"),
+        ],
+        "codemeta.json": [
+            (re.compile(rf'(^    "version": "){_PIN_VERSION}', re.M), rf"\g<1>{version}"),
         ],
         # MCP registry: top-level server version AND the PyPI package pin the
         # registry actually installs. Only the former had a guard
