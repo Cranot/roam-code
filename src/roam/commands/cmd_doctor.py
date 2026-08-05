@@ -34,7 +34,7 @@ from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 # being actionable to anyone but the local developer. The detector
 # version stamp lets a consumer spot rows produced under an older
 # blocking-vs-advisory partition; bump it when the partition shifts.
-DOCTOR_DETECTOR_VERSION: str = "1.0.0"
+DOCTOR_DETECTOR_VERSION: str = "1.1.0"  # W1510 added "Search index sync" (advisory)
 
 # Mapping check name -> env.<sub-kind> for the registry finding_id_str.
 # Names that don't fit a specific kind default to ``env.blocking``.
@@ -837,7 +837,7 @@ def _check_search_index_sync(db_path_str: str | None) -> dict:
             f"symbol_fts is out of sync: {state['missing_from_fts']} symbols "
             f"({pct:.1f}%) are unreachable by lexical search and "
             f"{state['orphan_fts_rows']} orphan FTS rows hold pre-edit text — "
-            f"run `roam index --rebuild` to repair"
+            f"run `roam index --force` to repair"
         ),
         "_fts_sync": state,
     }
@@ -2481,6 +2481,13 @@ _ADVISORY_CHECK_NAMES = frozenset(
         "Plugin discovery",  # plugins are optional
         "Index exists",  # auto-created on first command
         "Index freshness",  # stale index is still functional
+        "Search index sync",  # W1510 — symbol_fts not covering symbols degrades
+        #   lexical recall but roam still answers; same "degraded, not broken"
+        #   shape as "Index freshness" above, and the repair is a known one-line
+        #   `roam index --force`. Blocking would exit 2 for every user whose
+        #   index predates the light-reindex fix — teaching them to ignore
+        #   doctor, which is the failure mode this check exists to prevent.
+        #   `--strict` still gates it in CI.
         "Index manifest",  # drift hints — informational
         "Index manifest history",  # cross-run drift — informational
         "Index step manifest",  # per-sub-step failures — informational

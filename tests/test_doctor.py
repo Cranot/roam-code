@@ -187,7 +187,10 @@ class TestDoctorCheckCoverage:
         # "Dependency versions" (installed package versions vs pyproject.toml
         # specifiers) and "Installed version" (installed dist metadata
         # version vs pyproject.toml's declared version) — total 29.
-        assert data["summary"]["total"] == 29
+        # W1510 added the FTS-sync advisory ("Search index sync": symbols the
+        # lexical index cannot reach, plus orphan FTS rows still holding
+        # pre-edit text after a light reindex) — total 30.
+        assert data["summary"]["total"] == 30
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()

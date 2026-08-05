@@ -1774,6 +1774,14 @@ class Indexer:
                 the graph structure is correct. Use for a fast post-edit
                 reindex (e.g. `roam verify`) where only symbols/edges are read.
         """
+        # Parse-error counters are module state and the corpus verdict reads
+        # them to decide an exit code. Zero them per run, or an in-process
+        # caller (test suite, MCP server) inherits the previous run's count
+        # and refuses an index that is actually fine.
+        from roam.index.parser import reset_parse_errors
+
+        reset_parse_errors()
+
         global _quiet_mode
         self._quiet = quiet
         self._progress_bar = progress_bar
