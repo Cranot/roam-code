@@ -352,37 +352,89 @@ def init(ctx, root, yes, with_ci, since, full_history):
 
         log_swallowed("cmd_init:health_summary", _exc)
 
-    # 6. Output
-    _files = health_summary.get("files", 0)
-    _symbols = health_summary.get("symbols", 0)
-    _edges = health_summary.get("edges", 0)
-    _verdict = f"initialized: {_files} files, {_symbols} symbols, {_edges} edges"
+    # 5b. W1502 — the three-valued corpus verdict. ``init`` used to print
+    # "Roam is ready: N files, 0 symbols, 0 edges" and exit 0 for at least
+    # six structurally different situations, four of them broken. That is
+    # an ABSENT measurement rendered as a definite success value, in the
+    # first command a new user runs. ``corpus_state.classify`` is the one
+    # boundary that distinguishes "indexed", "legitimately nothing to
+    # index" and "indexing failed"; ``index`` and ``doctor`` call the same
+    # function so the vocabulary cannot drift between them.
+    #
+    # A classifier that itself fails is a refusal, never a benign default.
+    from roam.index.corpus_state import (
+        STATE_FAILED,
+        STATE_INDEXED,
+        CorpusVerdict,
+        classify_project,
+    )
+
+    try:
+        corpus = classify_project(project_root)
+    except Exception as _exc:  # noqa: BLE001 — unknown state is a refusal
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_init:corpus_state", _exc)
+        corpus = CorpusVerdict(
+            state=STATE_FAILED,
+            reason="index_unreadable",
+            detail=(
+                f"indexing failed: the index could not be inspected after the build ({type(_exc).__name__}: {_exc})"
+            ),
+            remediation="Run `roam doctor` to diagnose the install.",
+        )
+
+    # 6. Output. Counts come from the corpus verdict so the banner, the
+    # JSON envelope and the exit code can never disagree about what was
+    # actually indexed.
+    _files = corpus.files
+    _symbols = corpus.symbols
+    _edges = corpus.edges
+    if corpus.state == STATE_INDEXED:
+        _verdict = f"initialized: {_files} files, {_symbols} symbols, {_edges} edges"
+    else:
+        # ``detail`` already opens with "no indexable content:" or
+        # "indexing failed:" — the two zeros must not read alike.
+        _verdict = corpus.detail
     # Compact warning codes for the JSON summary — full structured
     # entries live in the top-level ``warnings`` field so JSON consumers
     # can branch on the code without parsing the message string.
     warning_codes = [w["code"] for w in warnings]
+
+    summary = {
+        "verdict": _verdict,
+        "created": created,
+        "skipped": skipped,
+        "had_index": had_index,
+        "health_score": health_summary.get("health_score"),
+        "warnings": warning_codes,
+        "state": corpus.state,
+    }
+    if corpus.state != STATE_INDEXED:
+        summary["reason"] = corpus.reason
+        summary["partial_success"] = True
+    if corpus.state == STATE_FAILED:
+        summary["resolution"] = "unresolved"
 
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "init",
-                    summary={
-                        "verdict": _verdict,
-                        "created": created,
-                        "skipped": skipped,
-                        "had_index": had_index,
-                        "health_score": health_summary.get("health_score"),
-                        "warnings": warning_codes,
-                    },
+                    summary=summary,
                     created=created,
                     skipped=skipped,
                     had_index=had_index,
                     health=health_summary,
+                    corpus=corpus.as_dict(),
                     warnings=warnings,
                 )
             )
         )
+        if corpus.state == STATE_FAILED:
+            from roam.exit_codes import EXIT_ERROR
+
+            ctx.exit(EXIT_ERROR)
         return
 
     # Text output — compact welcome banner per audit R10. Older banner
@@ -395,11 +447,6 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # so the welcome banner contradicted `roam health` run seconds later in the
     # same shell. Point the user at `roam health` for the canonical number;
     # keep the snapshots/baseline pipeline's metric alone so history is stable.
-    welcome = _WELCOME.format(
-        files=health_summary.get("files", 0),
-        symbols=health_summary.get("symbols", 0),
-        edges=health_summary.get("edges", 0),
-    )
     click.echo(f"VERDICT: {_verdict}\n")
 
     # Warnings go BEFORE the welcome banner so the user sees them
@@ -411,7 +458,19 @@ def init(ctx, root, yes, with_ci, since, full_history):
     if warnings:
         click.echo("", err=True)
 
-    click.echo(welcome)
+    if corpus.state == STATE_INDEXED:
+        click.echo(
+            _WELCOME.format(
+                files=_files,
+                symbols=_symbols,
+                edges=_edges,
+            )
+        )
+    else:
+        # No "Roam is ready" banner over an index that can answer nothing.
+        # The disclosure block names which zero this is and what caused it.
+        for line in corpus.text_lines()[1:]:
+            click.echo(line)
 
     if created:
         click.echo("\nCreated:")
@@ -423,3 +482,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # on disk unless the user explicitly asks via `--with-ci=...`.
     if with_ci_norm == "none":
         click.echo("\nTo generate CI integration: roam ci-setup")
+
+    if corpus.state == STATE_FAILED:
+        from roam.exit_codes import EXIT_ERROR
+
+        ctx.exit(EXIT_ERROR)

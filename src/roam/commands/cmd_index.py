@@ -89,7 +89,9 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
     )
     elapsed = time.monotonic() - t0
 
-    # Show summary stats
+    # Show summary stats. ``index_failed`` carries the W1502 refusal past the
+    # reporting branches so there is exactly one non-zero exit at the bottom.
+    index_failed = False
     if db_exists():
         with open_db(readonly=True) as conn:
             file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
@@ -116,19 +118,59 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
             ).fetchone()[0]
             coverage = (parsed_ok * 100 / parseable_count) if parseable_count else 0
 
-            _index_verdict = f"indexed {file_count} files, {sym_count} symbols, {edge_count} edges"
+            # W1502 — the three-valued corpus verdict, shared with ``init``
+            # and ``doctor``. ``index`` already computed ``coverage`` here and
+            # then threw it away, printing "Parse coverage: 0%" as a line of
+            # decoration under a success verdict. The classifier turns that
+            # same measurement into an exit code.
+            from roam.db.connection import find_project_root
+            from roam.index.corpus_state import (
+                STATE_FAILED,
+                STATE_INDEXED,
+                CorpusVerdict,
+                classify,
+            )
+
+            try:
+                corpus = classify(conn, find_project_root("."))
+            except Exception as _exc:  # noqa: BLE001 — unknown state is a refusal
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_index:corpus_state", _exc)
+                corpus = CorpusVerdict(
+                    state=STATE_FAILED,
+                    reason="index_unreadable",
+                    detail=(
+                        "indexing failed: the index could not be inspected after the "
+                        f"build ({type(_exc).__name__}: {_exc})"
+                    ),
+                    remediation="Run `roam doctor` to diagnose the install.",
+                )
+
+            index_failed = corpus.state == STATE_FAILED
+            if corpus.state == STATE_INDEXED:
+                _index_verdict = f"indexed {file_count} files, {sym_count} symbols, {edge_count} edges"
+            else:
+                _index_verdict = corpus.detail
 
             if json_mode:
+                _summary = {
+                    "verdict": _index_verdict,
+                    "files": file_count,
+                    "symbols": sym_count,
+                    "edges": edge_count,
+                    "state": corpus.state,
+                }
+                if corpus.state != STATE_INDEXED:
+                    _summary["reason"] = corpus.reason
+                    _summary["partial_success"] = True
+                if corpus.state == STATE_FAILED:
+                    _summary["resolution"] = "unresolved"
                 click.echo(
                     to_json(
                         json_envelope(
                             "index",
-                            summary={
-                                "verdict": _index_verdict,
-                                "files": file_count,
-                                "symbols": sym_count,
-                                "edges": edge_count,
-                            },
+                            summary=_summary,
                             elapsed_s=round(elapsed, 1),
                             files=file_count,
                             symbols=sym_count,
@@ -136,6 +178,7 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                             languages={r["language"]: r["cnt"] for r in lang_rows[:8]},
                             avg_symbols_per_file=round(avg_sym, 1),
                             parse_coverage_pct=round(coverage, 0),
+                            corpus=corpus.as_dict(),
                         )
                     )
                 )
@@ -147,6 +190,8 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                 click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
                 click.echo(f"  Languages: {lang_str}")
                 click.echo(f"  Avg symbols/file: {avg_sym:.1f}  Parse coverage: {coverage:.0f}%")
+                for line in corpus.text_lines()[1:]:
+                    click.echo(line)
 
             # Auto-snapshot after every index for trend tracking
             try:
@@ -175,7 +220,12 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
         # but the DB isn't visible (race with cloud-sync, write to a different
         # location, etc.) emit a structured envelope so MCP wrappers and
         # piped consumers don't crash on json.loads("").
-        _index_verdict = "indexer ran but no index database is visible"
+        #
+        # W1502 — this is a refusal, not a partial success with exit 0: the
+        # index does not exist, so every downstream command would read an
+        # absent measurement as a clean result.
+        index_failed = True
+        _index_verdict = "indexing failed: the indexer ran but no index database is visible"
         if json_mode:
             click.echo(
                 to_json(
@@ -196,6 +246,11 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
             click.echo(f"VERDICT: {_index_verdict}")
             click.echo(f"  Completed in {elapsed:.1f}s")
             click.echo("  Hint: check ROAM_DB_DIR / cloud-sync; run `roam doctor` for a diagnostic dump.")
+
+    if index_failed:
+        from roam.exit_codes import EXIT_ERROR
+
+        ctx.exit(EXIT_ERROR)
 
 
 index = run_index_command
