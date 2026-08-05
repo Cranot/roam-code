@@ -276,6 +276,24 @@ def build_fts_index(
         _build_vector_signals(conn, project_root, "no_fts5")
         return
 
+    _deleted, inserted = _sync_fts_rowids(conn, force=force)
+    if not inserted:
+        # Sync was already complete — vector signals + ONNX still need rebuild
+        # because those are authoritative-no-diff stores.
+        _build_vector_signals(conn, project_root, "no_diff")
+        return
+
+    # Keep vector signals available even when FTS5 exists (hybrid #54).
+    _build_vector_signals(conn, project_root, "fts5", exc_types=(Exception,))
+
+
+def _sync_fts_rowids(conn: sqlite3.Connection, *, force: bool = False) -> tuple[int, int]:
+    """Bring ``symbol_fts``'s rowid set into lockstep with ``symbols``.
+
+    Returns ``(deleted, inserted)``. Pure FTS5 work — no TF-IDF, no ONNX.
+    Callers that only need lexical search correct (the light reindex path)
+    use this directly; ``build_fts_index`` wraps it with the vector signals.
+    """
     # The symbol_fts schema now includes a ``docstring`` column (audit B8); the
     # ensure_schema migration drops the old table and recreates it the first
     # time this runs after the upgrade.
@@ -287,7 +305,9 @@ def build_fts_index(
     fts_rowids: set[int] = {r[0] for r in conn.execute("SELECT rowid FROM symbol_fts").fetchall()}
     sym_rowids: set[int] = {r[0] for r in conn.execute("SELECT id FROM symbols").fetchall()}
 
-    # 1) DELETE rowids that left the symbols table (file removals, renames).
+    # 1) DELETE rowids that left the symbols table (file removals, renames,
+    #    and every in-place edit — an edited file's symbols are CASCADE-deleted
+    #    and re-inserted under fresh AUTOINCREMENT ids).
     stale = fts_rowids - sym_rowids
     if stale:
         _delete_stale_fts_rows(conn, stale)
@@ -295,10 +315,7 @@ def build_fts_index(
     # 2) INSERT rowids that exist in symbols but not in FTS5 (new + modified).
     fresh = sym_rowids - fts_rowids
     if not fresh:
-        # Sync was already complete — vector signals + ONNX still need rebuild
-        # because those are authoritative-no-diff stores.
-        _build_vector_signals(conn, project_root, "no_diff")
-        return
+        return len(stale), 0
 
     from roam.db.connection import batched_in
 
@@ -319,9 +336,78 @@ def build_fts_index(
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         records,
     )
+    return len(stale), len(records)
 
-    # Keep vector signals available even when FTS5 exists (hybrid #54).
-    _build_vector_signals(conn, project_root, "fts5", exc_types=(Exception,))
+
+def sync_fts_rowids(conn: sqlite3.Connection) -> dict:
+    """FTS5-only incremental sync for the light reindex path (W1510).
+
+    ``Indexer.run(light=True)`` skips phase 7 because the TF-IDF/ONNX
+    rebuild is O(repo). But skipping the whole phase also skipped the
+    FTS5 rowid diff, and an edited file's symbols are CASCADE-deleted and
+    re-inserted under NEW ids — so the new ids had no FTS row (invisible
+    to lexical search) while the old rowids lingered as orphans. On the
+    roam-code index that reached 11.4% of symbols unreachable by search.
+
+    This is the cheap half of phase 7: measured on a 45,574-symbol index,
+    163 ms for a no-op sync and 774 ms to repair a 9,186-row divergence,
+    against the ~113 s of effects/taint work the light path exists to skip.
+
+    Returns ``{"synced", "reason", "deleted", "inserted"}``.
+    """
+    if not fts5_available(conn):
+        return {"synced": False, "reason": "fts5_unavailable", "deleted": 0, "inserted": 0}
+    try:
+        deleted, inserted = _sync_fts_rowids(conn)
+    except sqlite3.Error as exc:
+        return {
+            "synced": False,
+            "reason": f"{type(exc).__name__}: {exc}",
+            "deleted": 0,
+            "inserted": 0,
+        }
+    return {"synced": True, "reason": None, "deleted": deleted, "inserted": inserted}
+
+
+def fts_sync_state(conn: sqlite3.Connection) -> dict:
+    """Verify that ``symbol_fts`` actually covers ``symbols`` (W1510).
+
+    The disclosure primitive. Row COUNTS are NOT a sufficient signal: an
+    in-place edit keeps the count constant while replacing every rowid, so
+    a corrupted index can present ``COUNT(symbols) == COUNT(symbol_fts)``
+    with zero overlap. This compares the rowid SETS.
+
+    Returns a dict with ``verified`` (was the comparison actually made) and
+    ``in_sync`` (``None`` when unverified — an absent measurement reads as
+    UNKNOWN, never as healthy).
+    """
+    unknown = {
+        "verified": False,
+        "in_sync": None,
+        "symbols": None,
+        "fts_rows": None,
+        "missing_from_fts": None,
+        "orphan_fts_rows": None,
+        "reason": "fts5_unavailable",
+    }
+    if not fts5_available(conn):
+        return unknown
+    try:
+        fts_rowids = {r[0] for r in conn.execute("SELECT rowid FROM symbol_fts").fetchall()}
+        sym_rowids = {r[0] for r in conn.execute("SELECT id FROM symbols").fetchall()}
+    except sqlite3.Error as exc:
+        return {**unknown, "reason": f"{type(exc).__name__}: {exc}"}
+    missing = sym_rowids - fts_rowids
+    orphan = fts_rowids - sym_rowids
+    return {
+        "verified": True,
+        "in_sync": not missing and not orphan,
+        "symbols": len(sym_rowids),
+        "fts_rows": len(fts_rowids),
+        "missing_from_fts": len(missing),
+        "orphan_fts_rows": len(orphan),
+        "reason": None,
+    }
 
 
 # ---------------------------------------------------------------------------

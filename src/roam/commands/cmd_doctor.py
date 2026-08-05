@@ -780,6 +780,69 @@ def _check_index_freshness(db_path_str: str | None) -> dict:
     }
 
 
+def _check_search_index_sync(db_path_str: str | None) -> dict:
+    """Does ``symbol_fts`` actually cover ``symbols``? (W1510)
+
+    A desynchronised FTS index reports no error — it just returns worse
+    results, because the search JOIN silently drops any symbol without an
+    FTS row. Row COUNTS cannot detect it: an in-place edit CASCADE-deletes
+    and re-inserts a file's symbols under new ids, keeping the count
+    identical while replacing every rowid. This compares the rowid sets.
+
+    Unverifiable (no index, no FTS5, unreadable DB) reads as ``no_data``,
+    never as a pass on the merits.
+    """
+    name = "Search index sync"
+    if db_path_str is None or not Path(db_path_str).exists():
+        return {
+            "name": name,
+            "passed": True,
+            "detail": "index does not exist — FTS coverage UNKNOWN (run `roam init`)",
+            "_state": "no_data",
+        }
+    try:
+        from roam.db.connection import open_db
+        from roam.search.index_embeddings import fts_sync_state
+
+        with open_db(readonly=True) as conn:
+            state = fts_sync_state(conn)
+    except Exception as exc:  # noqa: BLE001 — a doctor check must never crash the run
+        return {
+            "name": name,
+            "passed": True,
+            "detail": f"could not verify FTS coverage: {type(exc).__name__}: {exc}",
+            "_state": "no_data",
+        }
+
+    if not state["verified"]:
+        return {
+            "name": name,
+            "passed": True,
+            "detail": f"FTS coverage UNKNOWN ({state['reason']}) — lexical search may be degraded",
+            "_state": "no_data",
+        }
+    if state["in_sync"]:
+        return {
+            "name": name,
+            "passed": True,
+            "detail": f"{state['symbols']} symbols fully covered by symbol_fts",
+            "_fts_sync": state,
+        }
+    total = state["symbols"] or 1
+    pct = 100.0 * state["missing_from_fts"] / total
+    return {
+        "name": name,
+        "passed": False,
+        "detail": (
+            f"symbol_fts is out of sync: {state['missing_from_fts']} symbols "
+            f"({pct:.1f}%) are unreachable by lexical search and "
+            f"{state['orphan_fts_rows']} orphan FTS rows hold pre-edit text — "
+            f"run `roam index --rebuild` to repair"
+        ),
+        "_fts_sync": state,
+    }
+
+
 def _check_sqlite(db_path_str: str | None) -> dict:
     """SQLite can open and query the index DB."""
     if db_path_str is None:
@@ -1075,6 +1138,32 @@ def _check_corpus_content() -> dict:
         # Pattern 2: always-emit. Empty corpus is a real signal — disclose
         # it, do not silently pass. Advisory failure keeps this from
         # blocking CI for legitimately empty repos.
+        #
+        # W1502 — but "empty" was two-valued and could not tell a docs-only
+        # repo from an indexer that understood nothing. Both rendered as the
+        # same advisory line, so `roam doctor` could not confirm or refute
+        # the very failure it was being run to diagnose. Delegate to the
+        # shared classifier that ``init`` and ``index`` use, so the three
+        # commands cannot drift apart on what a zero means.
+        try:
+            from roam.index.corpus_state import STATE_FAILED, classify_project
+
+            verdict = classify_project()
+            return {
+                "name": "Corpus content",
+                "passed": False,
+                "detail": f"{verdict.state}: {verdict.detail}"
+                + (f" — {verdict.remediation}" if verdict.remediation else ""),
+                "_state": "empty",
+                "_corpus_state": verdict.state,
+                "_corpus_reason": verdict.reason,
+                "_blocking": verdict.state == STATE_FAILED,
+                "_symbol_count": 0,
+            }
+        except Exception as exc:  # noqa: BLE001 — fall back to the flat disclosure
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_doctor:corpus_state", exc)
         return {
             "name": "Corpus content",
             "passed": False,
@@ -2566,6 +2655,7 @@ def doctor(ctx, strict, persist):
     db_path_str = index_check.get("_db_path") if index_check else None
     _run_check("index_freshness", _check_index_freshness, db_path_str)
     _run_check("sqlite", _check_sqlite, db_path_str)
+    _run_check("search_index_sync", _check_search_index_sync, db_path_str)
     _run_check("index_manifest", _check_index_manifest)
     _run_check("index_manifest_history", _check_index_manifest_history)
     _run_check("index_step_failures", _check_index_step_failures)
