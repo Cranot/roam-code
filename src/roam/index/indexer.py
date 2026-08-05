@@ -2811,7 +2811,18 @@ class Indexer:
         """Light reindex tail. Phases 1-2 already refreshed symbols + edges, so the
         graph STRUCTURE is correct; light skips the O(repo) metric phases the caller
         (e.g. `roam verify`) never reads — graph_metrics, git, effects/taint (~113s
-        on roam-code), health/load, search (~150s full → ~6s light on one edit).
+        on roam-code), health/load, and the vector half of search.
+
+        W1510 — the FTS5 rowid sync is NOT skippable. Phase 1 CASCADE-deletes an
+        edited file's symbols and re-inserts them under fresh AUTOINCREMENT ids, so
+        skipping the whole search phase left the new ids with no ``symbol_fts`` row
+        (invisible to lexical search, because the search JOIN drops rows whose rowid
+        has no symbol) while the old rowids lingered as orphans holding pre-edit
+        text. That silently cost ~13 points of recall@20 on a long-lived index and
+        row COUNTS could not detect it — an in-place edit keeps the count constant.
+        The FTS-only diff is cheap (163 ms no-op / 774 ms repair on 45k symbols)
+        against the ~113 s this path exists to skip, so light now pays it. The
+        TF-IDF/ONNX vectors remain deferred and are recorded as skipped.
 
         The processed files now carry their REAL hash/mtime, so a later incremental
         `roam index` would see them as unchanged and never recompute the skipped
@@ -2822,11 +2833,46 @@ class Indexer:
         forces it past the fast-path into the (poisoned) hash comparison.
         """
         self._phase5_cache.clear()
+        self._sync_light_fts(conn)
         if files_to_process:
             conn.executemany(
                 "UPDATE files SET hash = 'roam-light-pending', mtime = 0 WHERE path = ?",
                 [(p,) for p in files_to_process],
             )
+
+    def _sync_light_fts(self, conn) -> None:
+        """Keep lexical search correct across a light reindex (W1510).
+
+        Records ``search_indexes`` as ``ok:fts_only`` (vectors deferred) or as a
+        failure/skip, so ``roam doctor`` and any consumer reading the manifest can
+        tell a light-refreshed index from a fully-built one instead of inferring
+        health from silence.
+        """
+        t0 = time.perf_counter()
+        try:
+            from roam.search.index_embeddings import sync_fts_rowids
+
+            result = sync_fts_rowids(conn)
+        except Exception as exc:  # noqa: BLE001 — never fail a light reindex on search
+            log_swallowed("index.indexer:light_fts_sync", exc)
+            self._record_step(
+                "search_indexes",
+                f"failed:{type(exc).__name__}",
+                error=str(exc),
+                duration_ms=(time.perf_counter() - t0) * 1000.0,
+            )
+            return
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        if not result["synced"]:
+            self._record_step(
+                "search_indexes",
+                f"skipped:{result['reason']}",
+                duration_ms=elapsed_ms,
+            )
+            return
+        self._phase_timer.record_phase("search_indexes", elapsed_ms / 1000.0)
+        self._record_step("search_indexes", "ok:fts_only", duration_ms=elapsed_ms)
+        self._record_step("search_vectors", "skipped:light_reindex")
 
     def _do_run(self, force: bool, verbose: bool = False, include_excluded: bool = False, light: bool = False):
         t0 = time.monotonic()
