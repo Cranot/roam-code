@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import pytest
 
+from scripts import sync_surface_counts as sync
 from tests.conftest import (
     assert_json_envelope,
     git_init,
     invoke_cli,
     parse_json_output,
 )
+
+# The release version the generated-CI assertions below are DERIVED from
+# (W1501). ``roam init --with-ci=github`` emits the action ref and its
+# ``version:`` input from a template that ``scripts/sync_surface_counts.py``
+# rewrites on every bump; a frozen literal here would either agree with a
+# template that never got bumped, or fail the release that did bump it.
+# Neither outcome is a defect this test can actually see.
+ROAM_VERSION = sync._pyproject_version()
 
 # ---------------------------------------------------------------------------
 # Fixture: a git-init'd project that has NOT been indexed yet.
@@ -188,8 +197,8 @@ class TestInitSideEffects:
         assert "runs-on: ubuntu-24.04" in content
         assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in content
         assert "persist-credentials: false" in content
-        assert "Cranot/roam-code@v14.0.0" in content
-        assert 'version: "13.10.0"' in content
+        assert f"Cranot/roam-code@v{ROAM_VERSION}" in content
+        assert f'version: "{ROAM_VERSION}"' in content
         assert "@main" not in content
         assert "ubuntu-latest" not in content
         assert "pip install" not in content

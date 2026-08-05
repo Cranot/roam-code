@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from scripts import sync_surface_counts as sync
 from tests._helpers.repo_root import repo_root
 
 REPO_ROOT = repo_root()
@@ -68,7 +69,19 @@ def test_ci_template_family_inventory_is_closed() -> None:
     assert _read("__init__.py").strip() == '"""CI/CD pipeline templates for roam-code integration."""'
 
 
-def test_every_install_is_exactly_roam_code_13_10_0() -> None:
+def test_every_install_is_exactly_the_released_version() -> None:
+    """Every bundled template pins the EXACT version being shipped.
+
+    Derived from ``pyproject.toml`` rather than a frozen literal (W1501). A
+    hardcoded number here reads as a guard but is the opposite of one: it
+    agrees with a template that never got bumped, so the release ships
+    templates installing the PREVIOUS wheel while this test stays green --
+    and conversely, a correct release turns the guard red for no defect.
+    ``scripts/sync_surface_counts.py`` rewrites the templates; this proves
+    it ran, at whatever version the release actually is.
+    """
+    version = sync._pyproject_version()
+    exact = re.compile(rf"roam-code(?:\[mcp\])?=={re.escape(version)}(?:[\"']|$)")
     install_pattern = re.compile(r"(?m)^.*(?:python -m )?pip install[^\n]*roam-code[^\n]*$")
 
     for name in sorted(TEMPLATE_FILES):
@@ -76,9 +89,7 @@ def test_every_install_is_exactly_roam_code_13_10_0() -> None:
         installs = install_pattern.findall(text)
         assert installs, f"{name} does not install roam-code"
         for install in installs:
-            assert re.search(r"roam-code(?:\[mcp\])?==13\.10\.0(?:[\"']|$)", install), (
-                f"{name} has a non-exact roam-code install: {install.strip()}"
-            )
+            assert exact.search(install), f"{name} does not install exactly roam-code=={version}: {install.strip()}"
         assert "pip install --upgrade pip" not in text
         assert "pip install roam-code" not in text
 
