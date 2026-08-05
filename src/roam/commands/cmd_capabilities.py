@@ -171,9 +171,10 @@ def _populate_registry() -> None:
 
     W420: source the module list from
     :func:`roam.surface_counts.cli_commands` (AST-parsed) rather than the
-    runtime ``roam.cli._COMMANDS`` dict. Plugin discovery mutates the
-    runtime dict in-place (see ``_ensure_plugin_commands_loaded`` at
-    ``cli.py:678``); importing plugin modules here would fire their
+    runtime ``roam.cli._COMMANDS`` dict. Plugin commands are kept out of
+    that literal entirely now (they live in ``roam.cli._PLUGIN_COMMANDS``),
+    and the AST source remains the right one regardless: importing plugin
+    modules here would fire their
     ``@roam_capability`` decorators and change the ``summary.count``,
     ``verdict``, and ``capabilities[]`` envelope fields consumed by the
     Roam Review GitHub App, MCP server, and doc generators. The AST

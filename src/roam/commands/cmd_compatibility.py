@@ -136,13 +136,13 @@ def _build_snapshot() -> dict[str, Any]:
     import is deliberately avoided here for the same reason
     ``cmd_surface._build_surface()`` avoids it (fragile on fresh installs).
 
-    W420 cascade: command names come from the AST source of truth (not the
-    runtime ``roam.cli._COMMANDS`` dict mutated by plugin discovery). The
-    compatibility baseline must reflect the shipped surface
-    (``pip install roam-code``); plugin commands surface separately via
-    ``roam plugins list``. ``_DEPRECATED_COMMANDS`` and ``_CATEGORIES`` are
-    plugin-stable (not mutated by ``_ensure_plugin_commands_loaded``) so
-    runtime reads are safe.
+    W420 cascade: command names come from the AST source of truth rather
+    than a runtime dict read. The compatibility baseline must reflect the
+    shipped surface (``pip install roam-code``); plugin commands surface
+    separately via ``roam plugins list``. Plugin discovery no longer
+    merges into ``roam.cli._COMMANDS`` (discovered commands land in
+    ``_PLUGIN_COMMANDS``), so ``_COMMANDS``, ``_DEPRECATED_COMMANDS`` and
+    ``_CATEGORIES`` are all plugin-stable and runtime reads are safe.
     """
     from roam.cli import _CATEGORIES, _DEPRECATED_COMMANDS
     from roam.surface_counts import cli_commands as _cli_commands_ast

@@ -72,11 +72,13 @@ def _build_surface() -> dict:
     W420: command headlines (``command_count`` / ``canonical_count`` /
     ``category_count``) are sourced from the AST-parsed ``_COMMANDS``
     dict via :func:`roam.surface_counts.cli_commands`, NOT from the
-    runtime ``roam.cli._COMMANDS`` dict. Plugin discovery mutates the
-    runtime dict in-place (see ``_ensure_plugin_commands_loaded`` at
-    ``cli.py:678``); reading runtime state here caused the headline to
-    bounce between 241 and 242 depending on whether a sibling Click
-    invocation in the same process tripped plugin loading first. The
+    runtime ``roam.cli._COMMANDS`` dict. Plugin discovery used to merge
+    into that dict in place (``_ensure_plugin_commands_loaded``), which
+    made this headline bounce between 241 and 242 depending on whether a
+    sibling Click invocation in the same process tripped plugin loading
+    first. Discovered commands now land in ``roam.cli._PLUGIN_COMMANDS``
+    and the shipped literal no longer moves, but the AST source stays
+    the right one to read here: it needs no import and cannot drift. The
     AST source is env-independent and matches the W1290 discipline
     already applied to ``mcp_tool_count``. Plugin commands surface at
     runtime via ``roam plugins list``.

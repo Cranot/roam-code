@@ -765,6 +765,28 @@ _CATEGORIES = {
 
 _PLUGIN_COMMANDS_LOADED = False
 
+# Plugin-registered commands live HERE, never inside ``_COMMANDS``.
+#
+# ``_ensure_plugin_commands_loaded`` used to merge discovered plugin commands
+# into the ``_COMMANDS`` literal in place. That silently redefined the dict
+# from "the command surface this build ships" to "the surface this process
+# happens to have discovered so far" — a one-way, process-wide mutation with
+# no reset, whose value depends on whether some earlier Click invocation
+# tripped discovery. It has produced the same defect twice:
+#
+#   W420  — ``roam surface``'s command_count bounced between 241 and 242
+#           depending on invocation order (flaky under xdist workers).
+#   W1331 — the disclosure-enumeration gate saw a plugin module that has no
+#           file under ``src/roam/commands`` and therefore cannot be scanned.
+#
+# Both were patched downstream, at the consumer, by re-reading the AST literal
+# instead of the runtime dict — which left the trap armed for the next
+# consumer. Separating the maps fixes it at the source: ``_COMMANDS`` is the
+# shipped surface and no longer moves at runtime, ``_PLUGIN_COMMANDS`` is the
+# discovered overlay, and ``_effective_commands()`` is the union for the few
+# callers that genuinely mean "everything invokable right now".
+_PLUGIN_COMMANDS: dict[str, tuple[str, str]] = {}
+
 
 # Experimental commands are intentionally kept out of the static _COMMANDS
 # literal so default command counts, help, surface, and command-contract sweeps
@@ -796,8 +818,7 @@ def _experimental_command_target(cmd_name: str) -> tuple[str, str] | None:
 
 
 def _available_command_names() -> list[str]:
-    _ensure_plugin_commands_loaded()
-    names = set(_COMMANDS)
+    names = set(_effective_commands())
     for name in _EXPERIMENTAL_COMMANDS:
         if _experimental_command_target(name) is not None:
             names.add(name)
@@ -808,13 +829,17 @@ def _command_target(cmd_name: str) -> tuple[str, str] | None:
     if cmd_name in _COMMANDS:
         return _COMMANDS[cmd_name]
     _ensure_plugin_commands_loaded()
-    if cmd_name in _COMMANDS:
-        return _COMMANDS[cmd_name]
+    if cmd_name in _PLUGIN_COMMANDS:
+        return _PLUGIN_COMMANDS[cmd_name]
     return _experimental_command_target(cmd_name)
 
 
 def _ensure_plugin_commands_loaded() -> None:
-    """Merge discovered plugin commands into the CLI command map once."""
+    """Record discovered plugin commands in the plugin overlay once.
+
+    Writes to ``_PLUGIN_COMMANDS``, never to ``_COMMANDS`` — see the comment
+    on ``_PLUGIN_COMMANDS`` for why the shipped literal is off limits.
+    """
     global _PLUGIN_COMMANDS_LOADED
     if _PLUGIN_COMMANDS_LOADED:
         return
@@ -826,7 +851,7 @@ def _ensure_plugin_commands_loaded() -> None:
         for cmd_name, target in get_plugin_commands().items():
             if cmd_name in _COMMANDS:
                 continue
-            _COMMANDS[cmd_name] = target
+            _PLUGIN_COMMANDS[cmd_name] = target
     except Exception:  # noqa: BLE001 — plugin loading must never break core CLI behavior (ROAM_DEBUG re-raises)
         # Per-plugin discovery errors are already recorded on the registry
         # (visible via `roam plugins doctor`); this catch only guards the
@@ -834,6 +859,33 @@ def _ensure_plugin_commands_loaded() -> None:
         if os.environ.get("ROAM_DEBUG"):
             raise
         return
+
+
+def _effective_commands() -> dict[str, tuple[str, str]]:
+    """Every command invokable in THIS process: shipped plus discovered plugins.
+
+    Use this only where the runtime surface is what you mean — command
+    resolution, help listings, doctor's import sweep. Anything reporting what
+    this build *ships* (counts, baselines, compatibility snapshots, coverage
+    and disclosure gates) must read ``_COMMANDS``, which is plugin-invariant.
+    """
+    _ensure_plugin_commands_loaded()
+    if not _PLUGIN_COMMANDS:
+        return dict(_COMMANDS)
+    # Shipped names win: a plugin must never shadow a first-party command.
+    return {**_PLUGIN_COMMANDS, **_COMMANDS}
+
+
+def _reset_plugin_commands_for_tests() -> None:
+    """Drop discovered plugin commands and re-arm discovery (test-only).
+
+    The partner of ``roam.plugins._reset_plugin_state_for_tests``: the plugin
+    registry is the source and this overlay is the sink, so clearing only one
+    of the two lets the other repopulate it on the next lookup.
+    """
+    global _PLUGIN_COMMANDS_LOADED
+    _PLUGIN_COMMANDS.clear()
+    _PLUGIN_COMMANDS_LOADED = False
 
 
 def _emit_deprecation_notice_for_args(args: list[str]) -> None:
@@ -1148,7 +1200,10 @@ class LazyGroup(click.Group):
             ("roam doctor", "diagnose your install"),
             ("roam tour", "5-minute guided walkthrough"),
             ("roam mcp-setup <editor>", "wire roam into your AI agent"),
-            ("roam --help-all", f"every command ({len(_COMMANDS)} total)"),
+            # Counts what ``--help-all`` will actually print (shipped + plugin
+            # + enabled experimental), not the shipped literal — the blurb is
+            # advertising that command's output, so the two must agree.
+            ("roam --help-all", f"every command ({len(_available_command_names())} total)"),
         ]
         for cmd, blurb in common:
             formatter.write(f"  {cmd:30s} {blurb}\n")
