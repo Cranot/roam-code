@@ -370,7 +370,14 @@ def init(ctx, root, yes, with_ci, since, full_history):
     )
 
     try:
-        corpus = classify_project(project_root)
+        # ``init`` just ran the index in this process, so the parser's error
+        # counters are a measurement, not a guess. They are what separates
+        # "every file parsed and declares nothing" (a docs-shaped or
+        # import-only tree — legitimately zero) from "no grammar was
+        # installed" (a broken index that must refuse).
+        from roam.index.parser import get_parse_error_count
+
+        corpus = classify_project(project_root, parse_errors=get_parse_error_count())
     except Exception as _exc:  # noqa: BLE001 — unknown state is a refusal
         from roam.observability import log_swallowed
 

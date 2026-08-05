@@ -211,3 +211,57 @@ def test_doctor_distinguishes_broken_zero_from_legitimate_zero(tmp_path):
     assert "indexing_failed" in broken_out or "indexing failed" in broken_out.lower(), broken_out
     assert "no_indexable_content" in docs_out or "no indexable content" in docs_out.lower(), docs_out
     assert broken_out != docs_out, "doctor reports both zeros identically"
+
+
+# ---------------------------------------------------------------------------
+# (c) THE THIRD ZERO — source that parses cleanly and declares nothing
+# ---------------------------------------------------------------------------
+
+
+def test_import_only_package_is_a_legitimate_zero_not_a_refusal(tmp_path):
+    """Files roam supports, zero symbols, and nothing is wrong.
+
+    An empty ``__init__.py`` beside an import-only module is ordinary
+    Python. Both parse perfectly; neither declares a symbol. The first
+    cut of this refusal keyed on "supported files and no symbols", which
+    made this tree indistinguishable from a missing grammar and refused
+    it -- breaking two pre-existing orphan-import tests built on exactly
+    this shape.
+
+    The separating measurement is the parser's error count, not the
+    symbol count. Nothing here is broken, so ``init`` must exit 0 -- and
+    must still SAY the corpus holds no symbols rather than printing a
+    bare success banner.
+    """
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(tmp_path, "pkg/consumer.py", "import os\nimport sys\n")
+    git_init(tmp_path)
+
+    out, code = roam("--json", "init", "--yes", cwd=tmp_path)
+
+    assert code == 0, f"a clean import-only tree was refused:\n{out}"
+    payload = json.loads(out[out.index("{") : out.rindex("}") + 1])
+    summary = payload["summary"]
+    assert summary["state"] == "no_indexable_content", summary
+    assert summary["reason"] == "files_define_no_symbols", summary
+    assert "indexing failed" not in out.lower(), out
+
+
+def test_syntactically_broken_file_still_refuses_after_the_carve_out(tmp_path):
+    """The negative control for the test above.
+
+    tree-sitter is error-tolerant: it does not raise on garbage, it
+    returns a tree with ERROR nodes. So "the parser did not raise" is NOT
+    evidence the file was understood, and the carve-out must not key on
+    it. If this ever goes green alongside a passing legitimate-zero test,
+    the discriminator has collapsed back into "0 symbols == fine".
+    """
+    _write(tmp_path, "pkg/__init__.py", "")
+    _write(tmp_path, "pkg/broken.py", "def (((( ###\n  !!!! unbalanced\n")
+    git_init(tmp_path)
+
+    out, code = roam("--json", "init", "--yes", cwd=tmp_path)
+
+    assert code != 0, f"a tree of unparseable source exited 0:\n{out}"
+    payload = json.loads(out[out.index("{") : out.rindex("}") + 1])
+    assert payload["summary"]["state"] == "indexing_failed", payload["summary"]

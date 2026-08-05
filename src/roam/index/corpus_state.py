@@ -56,6 +56,7 @@ REASON_EMPTY_TREE = "empty_tree"
 REASON_NO_SOURCE_FILES = "no_source_files"
 REASON_ALL_SOURCE_FILTERED = "all_source_filtered"
 REASON_PARSERS_EXTRACTED_NOTHING = "parsers_extracted_nothing"
+REASON_FILES_DEFINE_NO_SYMBOLS = "files_define_no_symbols"
 REASON_DISCOVERED_FILES_NOT_INDEXED = "discovered_files_not_indexed"
 REASON_INDEX_UNREADABLE = "index_unreadable"
 
@@ -276,12 +277,29 @@ def _census_disk(root: Path) -> _Census:
     return census
 
 
-def classify(conn: sqlite3.Connection, project_root: Path | str | None = None) -> CorpusVerdict:
+def classify(
+    conn: sqlite3.Connection,
+    project_root: Path | str | None = None,
+    parse_errors: int | None = None,
+) -> CorpusVerdict:
     """Return the three-valued verdict for the index behind ``conn``.
 
     ``project_root`` is only consulted on the zero-symbol path, to explain
     *why* nothing was indexed. Pass it whenever it is known; without it the
     verdict is still correct, just less specific about the cause.
+
+    ``parse_errors`` is the number of files the indexer failed to parse, and
+    is the only thing that separates the two zero-symbol cases that look
+    identical in the database:
+
+    * a file that parsed cleanly and simply declares nothing (an empty
+      ``__init__.py``, a module that is only imports) — a legitimate zero;
+    * a file whose grammar is missing or that the parser rejected — a
+      failure that would make every downstream query vacuously clean.
+
+    Pass it only when this process did the indexing. ``None`` means the
+    measurement is absent, and an absent measurement stays a refusal rather
+    than decaying into the benign answer.
     """
     counts = _counts(conn)
     if counts is None:
@@ -312,9 +330,37 @@ def classify(conn: sqlite3.Connection, project_root: Path | str | None = None) -
     # ---- zero symbols. Which of the two zeros is this? --------------------
 
     if parseable > 0:
-        # Roam claimed it understands these languages and then extracted
-        # nothing from a single one of them. Never a legitimate result:
-        # every symbol-, call-graph- and dependency-based command would now
+        if parse_errors == 0:
+            # Measured: every file was read and parsed without a single
+            # failure, and still declares nothing. That is a real property
+            # of the tree, not a broken index — a package of empty
+            # ``__init__.py`` files and import-only modules reaches here.
+            # Exit 0, but say so: a caller must not read this as "indexed".
+            return CorpusVerdict(
+                state=STATE_NO_CONTENT,
+                files=files,
+                symbols=symbols,
+                edges=edges,
+                parseable_files=parseable,
+                parsed_files=parsed,
+                reason=REASON_FILES_DEFINE_NO_SYMBOLS,
+                detail=(
+                    f"no indexable content: {parseable} file(s) in languages roam "
+                    f"supports parsed without error, and none of them declares a "
+                    f"symbol (only imports, constants, comments or empty modules). "
+                    f"Symbol and call-graph queries will be legitimately empty."
+                ),
+                remediation=(
+                    "Nothing to fix if this repo really has no definitions. If you "
+                    "expected symbols here, check that the files you care about are "
+                    "not excluded by .gitignore / .roamignore."
+                ),
+            )
+
+        # Either parsing genuinely failed, or nobody measured it. Roam
+        # claimed it understands these languages and then extracted nothing
+        # from a single one of them. Never a legitimate result: every
+        # symbol-, call-graph- and dependency-based command would now
         # return a vacuously clean answer.
         return CorpusVerdict(
             state=STATE_FAILED,
@@ -412,8 +458,15 @@ def classify(conn: sqlite3.Connection, project_root: Path | str | None = None) -
     )
 
 
-def classify_project(project_root: Path | str | None = None) -> CorpusVerdict:
-    """``classify`` for callers that do not already hold a connection."""
+def classify_project(
+    project_root: Path | str | None = None,
+    parse_errors: int | None = None,
+) -> CorpusVerdict:
+    """``classify`` for callers that do not already hold a connection.
+
+    See ``classify`` for ``parse_errors``; pass it only from the process
+    that built the index, and leave it ``None`` everywhere else.
+    """
     from roam.db.connection import db_exists, find_project_root, open_db
 
     root = Path(project_root).resolve() if project_root is not None else find_project_root(".")
@@ -425,4 +478,4 @@ def classify_project(project_root: Path | str | None = None) -> CorpusVerdict:
             remediation="Check ROAM_DB_DIR / disk permissions, then run `roam index --force`.",
         )
     with open_db(readonly=True, project_root=root) as conn:
-        return classify(conn, root)
+        return classify(conn, root, parse_errors=parse_errors)

@@ -132,7 +132,14 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
             )
 
             try:
-                corpus = classify(conn, find_project_root("."))
+                # This process just did the indexing, so the parser's error
+                # counters are a real measurement rather than an assumption.
+                # Without it a package of import-only modules — which parses
+                # perfectly and declares nothing — is indistinguishable from
+                # a missing grammar, and gets refused as a failed index.
+                from roam.index.parser import get_parse_error_count
+
+                corpus = classify(conn, find_project_root("."), parse_errors=get_parse_error_count())
             except Exception as _exc:  # noqa: BLE001 — unknown state is a refusal
                 from roam.observability import log_swallowed
 
