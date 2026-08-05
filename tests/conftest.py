@@ -207,6 +207,46 @@ def _clear_graph_cache_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _clear_plugin_registration_between_tests():
+    """Undo plugin registration a test leaves behind.
+
+    Plugin discovery is process-global and latched. A test that installs a
+    fake plugin and then invokes the CLI leaves that plugin registered for
+    every later test on the same worker, because ``monkeypatch`` restores
+    only the env var and ``sys.path`` — not the registry the plugin was
+    loaded into. Serial runs hid it: the next plugin test in the same file
+    happened to reset the state on the way in. Under xdist the polluter and
+    that accidental resetter land on different workers, so the residue
+    survives and the next test to read the command surface fails.
+
+    Both layers have to go. The plugin registry is the source and
+    ``roam.cli._PLUGIN_COMMANDS`` is the sink, so clearing only the sink
+    leaves the still-warm registry able to refill it on the next lookup.
+
+    Gated on residue and reads ``sys.modules`` instead of importing, so a
+    test that never touched plugins pays two dict lookups. A clean install
+    registers no plugins, so the reset costs nothing in normal runs either.
+    """
+    yield
+
+    cli_mod = sys.modules.get("roam.cli")
+    registry_mod = sys.modules.get("roam.plugins.registry")
+    state = getattr(registry_mod, "_STATE", None) if registry_mod else None
+
+    dirty = bool(cli_mod is not None and getattr(cli_mod, "_PLUGIN_COMMANDS", None)) or bool(
+        state is not None and state.plugins
+    )
+    if not dirty:
+        return
+
+    plugins_mod = sys.modules.get("roam.plugins")
+    if plugins_mod is not None:
+        plugins_mod._reset_plugin_state_for_tests()
+    if cli_mod is not None:
+        cli_mod._reset_plugin_commands_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _disable_shallow_git_history_for_marked_tests(request, monkeypatch):
     """W984: tests marked ``@pytest.mark.git_history`` get ``ROAM_GIT_SINCE=0``.
 

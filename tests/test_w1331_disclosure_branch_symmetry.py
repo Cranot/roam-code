@@ -284,10 +284,8 @@ def test_baseline_records_no_unanalyzable_files() -> None:
         assert v["token"] != scanner.UNANALYZABLE, f"{scanner.violation_key(v)} baselines a parse failure"
 
 
-def test_enumeration_covers_every_registered_command_module() -> None:
-    """The guard discovers the registry; adding a command needs no test edit."""
-    from roam.cli import _COMMANDS
-
+def _assert_enumeration_covers(registry: dict[str, tuple[str, str]]) -> None:
+    """Assert the scan reached the module behind every command in *registry*."""
     report = scanner.enumerate_command_sites(COMMANDS)
     assert report.files_unanalyzable == 0, (
         "a module that cannot be parsed vanishes from the enumeration, which is "
@@ -295,11 +293,52 @@ def test_enumeration_covers_every_registered_command_module() -> None:
         + "\n".join(f"  {e['module']}: {e['reason']}" for e in report.unanalyzable)
     )
     scanned_modules = {f"roam.commands.{str(site['module'])[:-3]}" for site in report.sites}
-    registered_modules = {module for module, _attr in _COMMANDS.values()}
+    registered_modules = {module for module, _attr in registry.values()}
     missing = sorted(registered_modules - scanned_modules)
     assert not missing, "Registered command modules omitted from disclosure enumeration:\n" + "\n".join(
         f"  {module}" for module in missing
     )
+
+
+def test_enumeration_covers_every_registered_command_module() -> None:
+    """The guard discovers the registry; adding a command needs no test edit.
+
+    The denominator is ``_COMMANDS``: the command map this build SHIPS. That
+    is the set the scanner can actually reach, because it enumerates files
+    under ``src/roam/commands``. Plugin commands are not in this repository
+    at all, so the assertion is unsatisfiable for them by construction rather
+    than merely inconvenient — and they now land in ``_PLUGIN_COMMANDS``
+    instead of being merged into the shipped literal, so no environment (a
+    test's fake plugin, or a user's real one) can put a module here that the
+    scan had no way to see.
+
+    That is a provenance rule, not a name filter: nothing is excluded by
+    being called "test" or "plugin", and the exemption list is empty. A
+    first-party command registered in ``_COMMANDS`` that escapes the scan
+    still fails — see the negative control below.
+    """
+    from roam.cli import _COMMANDS
+
+    _assert_enumeration_covers(_COMMANDS)
+
+
+def test_enumeration_gate_fails_when_a_shipped_command_escapes_the_scan() -> None:
+    """The guarantee survives: plant an escaping command, the gate must fire.
+
+    A gate that stopped failing would be worse than no gate, and narrowing
+    the denominator to the shipped map is exactly the kind of change that can
+    quietly do that. So plant what the gate exists to catch — a first-party
+    command registered against a module with no file under
+    ``src/roam/commands`` (the shape you get by parking a command in a
+    sibling package) — and assert the real assertion body still rejects it.
+    """
+    from roam.cli import _COMMANDS
+
+    escaped = dict(_COMMANDS)
+    escaped["ghost"] = ("roam.experimental.cmd_ghost", "ghost_cmd")
+
+    with pytest.raises(AssertionError, match=r"roam\.experimental\.cmd_ghost"):
+        _assert_enumeration_covers(escaped)
 
 
 # ---------------------------------------------------------------------------

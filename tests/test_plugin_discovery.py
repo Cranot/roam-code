@@ -84,6 +84,47 @@ def test_plugin_command_discovery_via_env(monkeypatch, tmp_path):
     assert "hello-plugin" in cli_mod.cli.list_commands(None)
 
 
+def test_plugin_commands_do_not_mutate_the_shipped_command_map(monkeypatch, tmp_path):
+    """A plugin extends the runtime surface without touching the shipped one.
+
+    ``roam.cli._COMMANDS`` is the command map this build ships, and a lot of
+    the repo treats it as exactly that: the surface and compatibility
+    baselines, the budget-coverage and capability-decoration gates, and the
+    W1331 disclosure enumeration, which can only scan files that exist under
+    ``src/roam/commands``. Merging discovered plugin entries into it made
+    every one of those answers depend on whether something earlier in the
+    process had tripped plugin discovery. Two of them reached CI as flakes
+    (W420's bouncing command_count, W1331's unscannable module), and both
+    were patched at the consumer, which left the trap set for the next one.
+
+    So the invariant is pinned at the source: discovery populates the
+    ``_PLUGIN_COMMANDS`` overlay, the shipped literal does not move, and the
+    plugin command is still fully invokable.
+    """
+    module_name = _write_test_plugin(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv("ROAM_PLUGIN_MODULES", module_name)
+
+    cli_mod = _reset_plugin_runtime()
+    shipped_before = dict(cli_mod._COMMANDS)
+
+    result = CliRunner().invoke(cli_mod.cli, ["hello-plugin"], catch_exceptions=False)
+    assert result.exit_code == 0
+
+    assert cli_mod._COMMANDS == shipped_before, "plugin discovery mutated the shipped command map"
+    assert "hello-plugin" not in cli_mod._COMMANDS
+
+    # Every shipped command resolves to a module the disclosure scanner can
+    # actually reach. This is the W1331 denominator stated at its source.
+    foreign = sorted({m for m, _attr in cli_mod._COMMANDS.values() if not m.startswith("roam.commands.")})
+    assert not foreign, f"shipped commands registered outside roam.commands: {foreign}"
+
+    # ...and the plugin is still a real command, not merely recorded.
+    assert cli_mod._PLUGIN_COMMANDS["hello-plugin"] == (module_name, "hello_plugin")
+    assert cli_mod._command_target("hello-plugin") == (module_name, "hello_plugin")
+    assert "hello-plugin" in cli_mod.cli.list_commands(None)
+
+
 def test_plugin_detector_discovery_via_env(monkeypatch, tmp_path):
     module_name = _write_test_plugin(tmp_path)
     monkeypatch.syspath_prepend(str(tmp_path))

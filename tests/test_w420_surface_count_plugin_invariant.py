@@ -6,12 +6,18 @@ Why this regression test exists
 ``src/roam/commands/cmd_surface.py::_build_surface()`` historically read
 ``roam.cli._COMMANDS`` at runtime to compute the ``command_count`` /
 ``canonical_count`` / ``category_count`` headlines. Plugin discovery
-(``_ensure_plugin_commands_loaded`` at ``cli.py:678``) mutates that dict
-in-place the first time the Click group is walked. Result: the headline
-bounced between 241 (no plugins loaded yet) and 242 (plugin discovery
-fired in the same process) depending on which sibling Click invocation
-ran first. Under pytest-xdist's load-balanced workers this surfaced as
-flaky CI.
+(``_ensure_plugin_commands_loaded``) merged into that dict in-place the
+first time the Click group was walked. Result: the headline bounced
+between 241 (no plugins loaded yet) and 242 (plugin discovery fired in
+the same process) depending on which sibling Click invocation ran first.
+Under pytest-xdist's load-balanced workers this surfaced as flaky CI.
+
+The in-place merge has since been removed at the source — discovered
+commands land in ``roam.cli._PLUGIN_COMMANDS`` and the shipped literal
+no longer moves — after the same defect resurfaced at a fourth consumer
+(W1331's disclosure enumeration saw a plugin module that has no file
+under ``src/roam/commands``). This guard stays: it pins the headline
+contract independently of how plugin state happens to be stored.
 
 The W420 fix switches ``_build_surface()`` to read the AST source of
 truth via :func:`roam.surface_counts.cli_commands`, matching the W1290

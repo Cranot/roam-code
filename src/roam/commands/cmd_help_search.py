@@ -18,7 +18,7 @@ import re
 import click
 
 from roam.capability import roam_capability
-from roam.cli import _COMMANDS, _ensure_plugin_commands_loaded, _short_help_via_ast
+from roam.cli import _effective_commands, _short_help_via_ast
 from roam.output.formatter import json_envelope, to_json
 
 
@@ -94,9 +94,10 @@ def help_search(ctx, query, limit) -> None:
 
         raise structured_usage_error(EMPTY_INPUT, "query cannot be empty")
 
-    _ensure_plugin_commands_loaded()
     matches: list[dict] = []
-    for cmd_name in sorted(_COMMANDS):
+    # Searching the runtime surface is deliberate: an installed plugin's
+    # command should be findable via `roam help-search`.
+    for cmd_name in sorted(_effective_commands()):
         help_text = _short_help_via_ast(cmd_name) or ""
         s = _score(q, cmd_name, help_text)
         if s <= 0:

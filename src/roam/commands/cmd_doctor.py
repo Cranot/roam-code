@@ -837,7 +837,9 @@ def _check_command_registry() -> dict:
         import importlib
 
         cli_mod = importlib.import_module("roam.cli")
-        _COMMANDS = cli_mod._COMMANDS
+        # Effective surface, not the shipped literal: a plugin command that
+        # fails to import is exactly the breakage doctor exists to report.
+        _COMMANDS = cli_mod._effective_commands()
     except Exception as exc:
         return {
             "name": "CLI command registry",
