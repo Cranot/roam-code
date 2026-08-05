@@ -87,7 +87,7 @@ jobs:
           persist-credentials: false
 
       # Resolve v13.10.0 after release and pin its reviewed 40-character SHA.
-      - uses: Cranot/roam-code@v13.10.0
+      - uses: Cranot/roam-code@v14.0.0
         with:
           commands: 'health check-rules pr-risk'
           sarif: 'true'

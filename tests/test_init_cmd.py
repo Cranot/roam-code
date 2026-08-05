@@ -188,7 +188,7 @@ class TestInitSideEffects:
         assert "runs-on: ubuntu-24.04" in content
         assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in content
         assert "persist-credentials: false" in content
-        assert "Cranot/roam-code@v13.10.0" in content
+        assert "Cranot/roam-code@v14.0.0" in content
         assert 'version: "13.10.0"' in content
         assert "@main" not in content
         assert "ubuntu-latest" not in content

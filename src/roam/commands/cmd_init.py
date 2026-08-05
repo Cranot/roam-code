@@ -69,9 +69,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Resolve v13.10.0 after release and pin its reviewed 40-character SHA.
-      - uses: Cranot/roam-code@v13.10.0
+      - uses: Cranot/roam-code@v14.0.0
         with:
-          version: "13.10.0"
+          version: "14.0.0"
           commands: "fitness pr-risk"
           python-version: "3.12"
 """

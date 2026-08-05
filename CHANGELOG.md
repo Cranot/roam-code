@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [14.0.0] — 2026-08-05
+
 ### Added
 - **`roam review-request` / `roam review-accept` / `roam review-verify` — a cross-family review verdict becomes a verified artifact a runner outside the agent can hold, instead of a claim the agent makes about itself.** `review-request` emits the brief to hand a different-family reviewer; it carries the criteria and the artifact and deliberately NOT the author's rationale, because a reviewer given the defence tends to grade the defence. `review-accept` records the outcome as a receipt bound to the artifact's RAW bytes — raw, because the normalisation an earlier version applied first was non-injective, and two different artifacts that normalise alike could share a receipt. `review-verify` re-derives the verdict from the artifact's CURRENT bytes, so a receipt stops applying the moment the plan or the diff it reviewed changes underneath it. `roam.review_receipt.verify_receipt` is the only producer of a review result the verdict gate will read; there is no path that accepts an asserted status. New modules: `src/roam/commands/cmd_review.py` and `src/roam/review_receipt.py`.
 - **`roam verdict` gained a SECOND blocking axis — and it stays off for every bundle that predates it.** Until now a verdict blocked on evidence: a required check that did not run, or one that ran without being recorded as passing. It now also blocks on an unfulfilled cross-family REVIEW obligation, through `_collect_review_obligation_blockers` in `src/roam/verdict.py`, emitting `plan_critique_not_run`, `done_verdict_not_run` or `review_receipt_missing`. The legacy-safety property is structural rather than a flag, which is the part worth checking before you upgrade: the gate is ACTIVE only when the work itself declared obligations — the envelope's own `orchestration_contract`, which the caller cannot waive by passing nothing — or when the caller opted in explicitly by passing review evidence. Work that declares no obligations and whose caller passes nothing keeps its legacy verdict, and that is every proof-bundle path that shipped before this gate existed; in practice the axis activates for bundles produced by the new `roam compile` and for nothing else. The remedy is the three commands above, in order: `roam review-request`, then `roam review-accept`, then `roam review-verify`. The gate's own docstring records the limit it does not close — the contract reaches it through the same bundle the agent authors, so an agent that strips the contract from its own bundle escapes it. That is the general shape of self-reported evidence and is not closable inside a local library; it needs a component outside the agent's write authority, such as CI recomputing the contract from the envelope. Naming it in the docstring keeps the gate from reading as stronger than it is.
@@ -9479,7 +9481,8 @@ isn't an artifact of self-bench.
 - Incremental indexing via mtime + hash change detection
 - Git integration: churn, blame, co-change analysis
 
-[Unreleased]: https://github.com/Cranot/roam-code/compare/v13.10.0...HEAD
+[Unreleased]: https://github.com/Cranot/roam-code/compare/v14.0.0...HEAD
+[14.0.0]: https://github.com/Cranot/roam-code/compare/v13.10.0...v14.0.0
 [13.10.0]: https://github.com/Cranot/roam-code/compare/v13.9.0...v13.10.0
 [13.9.0]: https://github.com/Cranot/roam-code/compare/v13.8.0...v13.9.0
 [13.8.0]: https://github.com/Cranot/roam-code/compare/v11.1.3...v13.8.0
