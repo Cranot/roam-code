@@ -276,8 +276,8 @@ def build_fts_index(
         _build_vector_signals(conn, project_root, "no_fts5")
         return
 
-    _deleted, inserted = _sync_fts_rowids(conn, force=force)
-    if not inserted:
+    _deleted, fresh_count, _inserted = _sync_fts_rowids(conn, force=force)
+    if not fresh_count:
         # Sync was already complete — vector signals + ONNX still need rebuild
         # because those are authoritative-no-diff stores.
         _build_vector_signals(conn, project_root, "no_diff")
@@ -287,12 +287,19 @@ def build_fts_index(
     _build_vector_signals(conn, project_root, "fts5", exc_types=(Exception,))
 
 
-def _sync_fts_rowids(conn: sqlite3.Connection, *, force: bool = False) -> tuple[int, int]:
+def _sync_fts_rowids(conn: sqlite3.Connection, *, force: bool = False) -> tuple[int, int, int]:
     """Bring ``symbol_fts``'s rowid set into lockstep with ``symbols``.
 
-    Returns ``(deleted, inserted)``. Pure FTS5 work — no TF-IDF, no ONNX.
-    Callers that only need lexical search correct (the light reindex path)
-    use this directly; ``build_fts_index`` wraps it with the vector signals.
+    Returns ``(deleted, fresh_count, inserted)``. Pure FTS5 work — no TF-IDF,
+    no ONNX. Callers that only need lexical search correct (the light reindex
+    path) use this directly; ``build_fts_index`` wraps it with vector signals.
+
+    ``fresh_count`` is the number of symbol ids that lacked an FTS row;
+    ``inserted`` is the number of rows actually written, which is smaller when
+    a symbol's ``file_id`` has no surviving ``files`` row and so fails the
+    JOIN. The two are reported separately because ``build_fts_index`` decides
+    whether to rebuild vector signals from the FORMER (preserving its
+    pre-refactor branch), while callers reporting work done want the latter.
     """
     # The symbol_fts schema now includes a ``docstring`` column (audit B8); the
     # ensure_schema migration drops the old table and recreates it the first
@@ -315,7 +322,7 @@ def _sync_fts_rowids(conn: sqlite3.Connection, *, force: bool = False) -> tuple[
     # 2) INSERT rowids that exist in symbols but not in FTS5 (new + modified).
     fresh = sym_rowids - fts_rowids
     if not fresh:
-        return len(stale), 0
+        return len(stale), 0, 0
 
     from roam.db.connection import batched_in
 
@@ -336,7 +343,7 @@ def _sync_fts_rowids(conn: sqlite3.Connection, *, force: bool = False) -> tuple[
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         records,
     )
-    return len(stale), len(records)
+    return len(stale), len(fresh), len(records)
 
 
 def sync_fts_rowids(conn: sqlite3.Connection) -> dict:
@@ -358,7 +365,7 @@ def sync_fts_rowids(conn: sqlite3.Connection) -> dict:
     if not fts5_available(conn):
         return {"synced": False, "reason": "fts5_unavailable", "deleted": 0, "inserted": 0}
     try:
-        deleted, inserted = _sync_fts_rowids(conn)
+        deleted, _fresh_count, inserted = _sync_fts_rowids(conn)
     except sqlite3.Error as exc:
         return {
             "synced": False,
