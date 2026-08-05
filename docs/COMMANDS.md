@@ -251,7 +251,7 @@
 | `trace` | stable | ✓ | — |
 | `uses` | stable | ✓ | refs |
 
-## Reports & CI (30)
+## Reports & CI (31)
 
 | Command | Maturity | MCP | Aliases |
 |---------|----------|-----|---------|
@@ -269,6 +269,7 @@
 | `coverage-gaps` | stable | ✓ | — |
 | `dev-profile` | stable | ✓ | — |
 | `drift` | stable | ✓ | — |
+| `ignore-drift` | stable | — | — |
 | `migration-safety` | stable | ✓ | — |
 | `orphan-routes` | stable | ✓ | — |
 | `owner` | stable | ✓ | — |

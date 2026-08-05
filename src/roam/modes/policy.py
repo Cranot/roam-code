@@ -290,6 +290,10 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "safe-zones",
         "schema",
         "secrets",
+        # ignore-drift shells out to `git ls-files` / `git check-ignore`, both
+        # pure reads, and never touches the index it reports on — the fix it
+        # prints (`git rm --cached`) is left for the operator to run.
+        "ignore-drift",
         "semantic-diff",
         "side-effects",
         "simulate-departure",
