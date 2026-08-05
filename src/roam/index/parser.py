@@ -127,7 +127,7 @@ GRAMMAR_ALIASES = {
 REGEX_ONLY_LANGUAGES = frozenset({"foxpro", "yaml", "hcl"})
 
 # Track parse error stats
-parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}
+parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0, "syntax_error": 0}
 
 
 def _plugin_language_extensions() -> dict[str, str]:
@@ -330,6 +330,17 @@ def parse_file(path: Path, language: str | None = None):
         log.warning("Parse error in %s: parser returned no tree", path)
         return None, None, None
 
+    # tree-sitter is error-tolerant: it does not raise on malformed source,
+    # it returns a tree with ERROR nodes in it. So neither branch above sees
+    # a file of pure garbage — it "parses" and simply yields no symbols,
+    # which is indistinguishable from a genuinely empty module unless the
+    # error nodes are counted here.
+    try:
+        if tree.root_node.has_error:
+            parse_errors["syntax_error"] += 1
+    except AttributeError:  # pragma: no cover - older tree-sitter bindings
+        pass
+
     return tree, source, language
 
 
@@ -450,6 +461,28 @@ def scan_template_references(
     return refs
 
 
+def get_parse_error_count() -> int:
+    """Return the total number of files this process failed to parse.
+
+    Sums every failure mode: unreadable bytes, a grammar that rejected the
+    file, and a language with no grammar installed. A caller that has just
+    run an index can use a zero here to distinguish "every file parsed and
+    simply defines no symbols" from "the parsers understood nothing" —
+    two situations that are otherwise identical in the database, because
+    both leave the ``symbols`` table empty.
+
+    Only meaningful in the process that did the indexing; the counters are
+    module state, not persisted. A caller that did not index must treat the
+    number as unknown rather than as zero.
+    """
+    return int(
+        parse_errors["unreadable"]
+        + parse_errors["parse_error"]
+        + parse_errors["no_grammar"]
+        + parse_errors["syntax_error"]
+    )
+
+
 def get_parse_error_summary() -> str:
     """Return a summary of parse errors for logging."""
     parts = []
@@ -459,4 +492,6 @@ def get_parse_error_summary() -> str:
         parts.append(f"{parse_errors['parse_error']} parse errors")
     if parse_errors["no_grammar"]:
         parts.append(f"{parse_errors['no_grammar']} no grammar")
+    if parse_errors["syntax_error"]:
+        parts.append(f"{parse_errors['syntax_error']} with syntax errors")
     return ", ".join(parts) if parts else ""
