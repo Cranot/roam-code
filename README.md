@@ -568,8 +568,18 @@ Core preset tools: `roam_alerts`, `roam_ask`, `roam_batch_search`, `roam_couplin
 The full 244-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md).
 <!-- END auto-count:readme-mcp-tool-list-link -->
 
+<!-- MCP Registry ownership token. The registry scans the PUBLISHED PyPI
+     long_description (this file) for the literal string below to bind the
+     package to the server name in server.json. Keep it byte-identical to
+     server.json -> name; tests/test_distribution_manifests.py pins that. -->
+<!-- mcp-name: io.github.cranot/roam-code -->
+
 <details>
 <summary><strong>MCP client setup (Claude Code / Claude Desktop / Cursor / VS Code)</strong></summary>
+
+**Prerequisite for every client below:** Python 3.10+ and `pip install "roam-code[mcp]"`.
+Each config launches the `roam` binary from your `PATH`; if roam is not installed the
+server exits with `command not found` before it can report anything more useful.
 
 **Claude Code:** `claude mcp add roam-code -- roam mcp`, or add to `.mcp.json`:
 
@@ -582,6 +592,12 @@ The full 244-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mc
 **Cursor** — add the same `mcpServers` block to `.cursor/mcp.json`.
 
 **VS Code + Copilot** — add to `.vscode/mcp.json` under a `servers` key with `"type": "stdio"`.
+
+**Which preset ships where.** The Claude Code plugin (`.claude-plugin/plugin.json`) pins
+`ROAM_MCP_PRESET=core` — a consumer wants a tight prompt surface. This repo's own
+`.mcp.json` pins `full` on purpose: agents working *on* roam-code dogfood the entire
+244-tool surface. The two files name the same server and disagree deliberately; the split
+is pinned by `tests/test_distribution_manifests.py` so neither drifts into the other.
 
 </details>
 
