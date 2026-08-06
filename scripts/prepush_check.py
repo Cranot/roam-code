@@ -512,7 +512,21 @@ def _print_summary(results: list[GateResult], tier: str = "FAST") -> bool:
                 "[prepush]     - scripts/test-exec-bits.sh + shellcheck   (lint job)\n"
                 "[prepush]     - scripts/strip_metadata.py               (doc-hygiene; needs pypdf)\n"
                 "[prepush]     - roam compatibility --ci / --require-coverage\n"
-                "[prepush]     - roam secrets --fail-on-found + roam ignore-drift --fail-on-found\n"
+                # Narrowed 2026-08-07. This bullet used to read "roam secrets
+                # --fail-on-found + roam ignore-drift --fail-on-found", which was
+                # false about its own gate: `_run_leak_gate` runs BOTH
+                # `scan_internal_language.py --all` and
+                # `roam ignore-drift --fail-on-found`, and main() calls it
+                # unconditionally BEFORE any tier branching — so 2 of
+                # secret-scan.yml's 3 steps run in FAST, FULL and RELEASE alike
+                # (measured: `roam ignore-drift --fail-on-found: PASS (0.4s)` in a
+                # live FAST run). Only the `roam secrets` step is genuinely
+                # unproven here. A note that disclaims a gate the push path just
+                # ran is worse than no note: it invites a CI round to re-prove
+                # what is already proven.
+                # tests/test_prepush_gate_wired.py derives both sides of this
+                # claim from the source, so the class cannot come back.
+                "[prepush]     - roam secrets --fail-on-found   (secret-scan; its other 2 of 3 steps DO run here)\n"
                 "[prepush]     - dependency-audit / test-no-optional-deps / wheel-smoke jobs\n"
                 "[prepush]   Green here does not prove those lanes are green."
             )
