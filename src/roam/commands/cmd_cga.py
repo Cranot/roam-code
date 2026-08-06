@@ -373,9 +373,13 @@ def cga_emit(
     # truth; this is the second consumer).
     _w489_a_violations: list[dict] = []
     _w489_a_total_rules = 0
+    _r3_bare_name_entries = 0
     if include_taint:
         from roam.security.taint_engine import run_taint
-        from roam.security.taint_rules_lint import capture_qualified_only_lint
+        from roam.security.taint_rules_lint import (
+            capture_qualified_only_lint,
+            count_bare_name_entries,
+        )
 
         # W643: route the default rules-dir through ``cmd_taint``'s
         # importlib.resources-aware helper so wheel installs resolve the
@@ -390,6 +394,11 @@ def cga_emit(
         # the loaded rules — advisory disclosure, never gates execution.
         rules, _w489_a_violations = capture_qualified_only_lint(rules_path)
         _w489_a_total_rules = len(rules)
+        # R3: unconditional bare-entry count, stamped next to
+        # ``qualified_only_violations`` because that key only counts
+        # rules that set ``qualified_only: true`` (3 of the shipped 22)
+        # and so reads as a corpus-wide all-clear it never was.
+        _r3_bare_name_entries = count_bare_name_entries(rules)
 
     with open_db(readonly=True) as conn:
         if include_taint:
@@ -611,6 +620,7 @@ def cga_emit(
             _w489_a_summary["rules_lint"] = {
                 "qualified_only_violations": len(_w489_a_violations),
                 "total_rules": _w489_a_total_rules,
+                "bare_name_entries": _r3_bare_name_entries,
             }
             if _w489_a_violations:
                 _w489_a_envelope_extra["qualified_only_violations"] = _w489_a_violations

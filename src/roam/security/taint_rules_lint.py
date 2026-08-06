@@ -42,6 +42,38 @@ _KIND_SINGULAR_TO_PLURAL = {
 }
 
 
+def count_bare_name_entries(rules: list[Any]) -> int:
+    """Count dot-less source/sink/sanitizer entries across ALL *rules*.
+
+    R3 — why this exists as a SEPARATE counter from
+    :func:`capture_qualified_only_lint`.
+
+    ``qualified_only_violations`` counts bare entries **only in rules
+    that set ``qualified_only: true``**, because
+    ``taint_engine.load_rules`` only calls
+    ``_warn_bare_entries_under_qualified_only`` under that flag, and the
+    capture below only records a warning whose text contains
+    ``qualified_only=true``. In the shipped 22-rule pack exactly 3 rules
+    set the flag, so the stamped ``qualified_only_violations: 0`` means
+    "no rule disabled its own bare names" — while a consumer reads it as
+    "no rule has bare names". That is the exact inversion: the corpus is
+    full of bare tokens (``eval``, ``system``, ``run``, ``execute``) and
+    those bare tokens are what the text scanner matches on.
+
+    This counter is unconditional: every rule, every kind, flag or no
+    flag. A consumer reading ``bare_name_entries`` is reading something
+    true. It counts ENTRIES, not matches — it is a property of the rule
+    pack, not of the corpus being scanned.
+    """
+    total = 0
+    for rule in rules:
+        for kind in ("sources", "sinks", "sanitizers"):
+            for entry in getattr(rule, kind, ()) or ():
+                if entry and "." not in str(entry):
+                    total += 1
+    return total
+
+
 def capture_qualified_only_lint(
     rules_path: Path,
 ) -> tuple[list[Any], list[dict]]:

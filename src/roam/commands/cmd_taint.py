@@ -45,7 +45,7 @@ from roam.security.taint_engine import (
     run_taint,
     vex_justification_for,
 )
-from roam.security.taint_rules_lint import capture_qualified_only_lint
+from roam.security.taint_rules_lint import capture_qualified_only_lint, count_bare_name_entries
 
 # W122: taint is the fifth detector migrating onto the central findings
 # registry (after `clones` W95, `dead` W99, `complexity` W102, `n1`
@@ -108,12 +108,52 @@ def _taint_confidence_tier(finding_dump: dict) -> str:
     Sanitizer presence does NOT downgrade the registry tier — a
     sanitized flow is still a proven dataflow; the OpenVEX layer cites
     the sanitizer separately via ``inline_mitigations_already_exist``.
+
+    R3 makes the tier key off the engine's own ``evidence`` field rather
+    than re-deriving the shape from the edges table: only ``dataflow``
+    (the engine walked a real edge path) earns ``static_analysis``.
+    ``flow_shape`` is kept as the fallback for pre-R3 dump dicts.
     """
     from roam.db.findings import CONFIDENCE_STATIC_ANALYSIS, CONFIDENCE_STRUCTURAL
 
+    evidence = finding_dump.get("evidence")
+    if evidence is not None:
+        return CONFIDENCE_STATIC_ANALYSIS if evidence == "dataflow" else CONFIDENCE_STRUCTURAL
     if finding_dump.get("flow_shape") == "co_call":
         return CONFIDENCE_STRUCTURAL
     return CONFIDENCE_STATIC_ANALYSIS
+
+
+def _public_symbol(symbol: dict | None) -> dict:
+    """Strip engine-private keys before a symbol descriptor is published.
+
+    R3: the engine's text-scan anchors carry ``_enclosing_id`` /
+    ``_text_anchor`` join keys. 463 of 894 findings shipped
+    ``_enclosing_id`` straight into the public JSON envelope. Underscore
+    keys are internal by convention; nothing outside the engine should
+    have to know they exist.
+    """
+    if not symbol:
+        return {}
+    return {k: v for k, v in symbol.items() if not k.startswith("_")}
+
+
+def _anchor_symbol_id(symbol: dict | None) -> int | None:
+    """Registry join key for a symbol descriptor.
+
+    R3 removed the fabricated ``id`` from text-scan anchors (it was the
+    ENCLOSING function's id masquerading as the source's, and as the
+    sink's). The registry still needs a subject row, so fall back to the
+    ``enclosing_id`` those descriptors now carry explicitly — the same
+    integer as before, no longer mislabelled. Without this fallback the
+    ``--persist`` path would silently drop every co-occurrence finding.
+    """
+    if not symbol:
+        return None
+    value = symbol.get("id")
+    if value is None:
+        value = symbol.get("enclosing_id")
+    return int(value) if value is not None else None
 
 
 def _existing_forward_pairs_for_path_shape(conn, pairs: list[tuple[int, int]]) -> set[tuple[int, int]]:
@@ -190,11 +230,11 @@ def _build_emit_entries(conn, findings, findings_dump: list[dict]) -> list[dict]
     out: list[dict] = []
     for taint_finding, dump in zip(findings, findings_dump):
         path_syms = taint_finding.path_symbols or []
-        path_ids = [int(p["id"]) for p in path_syms if p.get("id") is not None]
+        path_ids = [i for i in (_anchor_symbol_id(p) for p in path_syms) if i is not None]
         source_sym = taint_finding.source_symbol or {}
         sink_sym = taint_finding.sink_symbol or {}
-        source_id = source_sym.get("id")
-        sink_id = sink_sym.get("id")
+        source_id = _anchor_symbol_id(source_sym)
+        sink_id = _anchor_symbol_id(sink_sym)
         flow_shape = _classify_flow_shape(conn, path_ids, taint_finding.path_truncated)
         entry = dict(dump)
         entry["flow_shape"] = flow_shape
@@ -255,6 +295,10 @@ def _emit_taint_findings(conn, findings_dump: list[dict], source_version: str) -
             # rather than dropping the row.
             "owasp_top10": f.get("owasp_top10", ""),
             "flow_shape": f.get("flow_shape"),
+            # R3: what the finding rests on. "dataflow" = a walked edge
+            # path; "co_occurrence" = co-location only, nothing computed.
+            "evidence": f.get("evidence"),
+            "evidence_detail": f.get("evidence_detail"),
             "source": {
                 "name": src.get("name"),
                 "file": src.get("file"),
@@ -272,10 +316,15 @@ def _emit_taint_findings(conn, findings_dump: list[dict], source_version: str) -
             "vex_justification": f.get("vex_justification"),
         }
         sanitized_suffix = " (sanitized)" if f.get("sanitizer_in_path") else ""
+        # R3: only say "hop(s)" when hops were actually walked. A
+        # co-occurrence finding has no hop count, and printing the
+        # synthesised triple's length was the whole defect.
+        _path_length = f.get("path_length")
+        _hops = f"{_path_length} hop(s)" if _path_length is not None else "no dataflow path computed"
         claim = (
             f"Taint flow [{rule_id}] {src.get('name')} -> {sink.get('name')} at "
             f"{sink.get('file')}:{sink.get('line')} ({f.get('flow_shape')}, "
-            f"{f.get('path_length')} hop(s)){sanitized_suffix}"
+            f"{_hops}){sanitized_suffix}"
         )
         emit_finding(
             conn,
@@ -304,11 +353,37 @@ def _emit_taint_findings(conn, findings_dump: list[dict], source_version: str) -
 #            on the path (sanitiser presence downgrades — the
 #            attestation layer can still cite the finding as mitigated).
 #   low    — anything else / inferred indirect paths.
+#
+# R3 — the ladder below only applies to findings the engine actually
+# proved a dataflow path for. Everything else short-circuits to "low"
+# with a reason that states what was and was not computed: before R3,
+# 890 of 894 findings on this repo were rendered "direct source→sink
+# reach, no sanitiser; path_length=3" when no dataflow had been computed
+# at all and the "3" was a literal constant.
+_CO_OCCURRENCE_REASONS = {
+    "text_scan_same_function": ("source and sink co-occur in the same enclosing function"),
+    "intraprocedural_co_call": ("source and sink are both called by one common enclosing function"),
+    "bfs_path_text_anchors": (
+        "call path connects the enclosing functions that contain the source and sink tokens, "
+        "not the source and sink themselves"
+    ),
+    "unspecified": "the engine recorded no evidence class for this finding",
+}
+_NO_DATAFLOW_SUFFIX = "; no dataflow path was computed"
+
+
 def _taint_classify(finding: dict) -> tuple[str, str]:
     """Map a taint finding to a (confidence, reason) tuple."""
     severity = (finding.get("severity") or "").lower()
     sanitized = bool(finding.get("sanitizer_in_path"))
     path_length = finding.get("path_length", 0) or 0
+    # R3: absent ``evidence`` is UNKNOWN, not "dataflow" — a caller that
+    # hands us a pre-R3 dict must not be upgraded to a reach claim.
+    evidence = finding.get("evidence") or "co_occurrence"
+    if evidence != "dataflow":
+        detail = finding.get("evidence_detail") or "unspecified"
+        reason = _CO_OCCURRENCE_REASONS.get(detail, _CO_OCCURRENCE_REASONS["unspecified"])
+        return "low", reason + _NO_DATAFLOW_SUFFIX
     if severity == "error" and not sanitized:
         return "high", f"direct source→sink reach, no sanitiser; path_length={path_length}"
     if severity == "error" and sanitized:
@@ -589,6 +664,17 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         default=([], []),
     )
     _w489_a_total_rules = len(rules)
+    # R3: unconditional bare-entry count over every loaded rule. Stamped
+    # NEXT TO qualified_only_violations because that number is scoped to
+    # the 3-of-22 rules that set qualified_only and reads as a corpus-wide
+    # all-clear it never was. See
+    # ``taint_rules_lint.count_bare_name_entries``.
+    _r3_bare_name_entries = _run_check_ay(
+        "count_bare_name_entries",
+        count_bare_name_entries,
+        rules,
+        default=None,
+    )
     # W1061-followup: capture the pre-filter rule-id set so the SARIF emit
     # branch below can disclose which rules ``--rule`` / ``--rules-pack``
     # disabled at runtime. The post-filter ``rules`` list no longer
@@ -617,6 +703,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 "rules_lint": {
                     "qualified_only_violations": len(_w489_a_violations),
                     "total_rules": _w489_a_total_rules,
+                    "bare_name_entries": _r3_bare_name_entries,
                 },
             }
             if _w489_a_violations:
@@ -695,6 +782,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                     "rules_lint": {
                         "qualified_only_violations": len(_w489_a_violations),
                         "total_rules": _w489_a_total_rules,
+                        "bare_name_entries": _r3_bare_name_entries,
                     },
                 }
                 if _w489_a_violations:
@@ -781,6 +869,9 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         )
         _rules_zero_anchors = _anchor_stats.get("rules_zero_anchors", 0)
         _zero_anchor_rule_ids = _anchor_stats.get("zero_anchor_rule_ids", [])
+        # R3: identical (rule, source location, sink location) claims the
+        # engine collapsed. Disclosed rather than silently absorbed.
+        _duplicate_findings_dropped = _anchor_stats.get("duplicate_findings_dropped", 0)
 
         # W607-CJ -- score_classify boundary. Wraps the per-flow severity
         # classification + the 0-100 risk_score computation + the
@@ -798,11 +889,24 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             _high = sum(1 for f in _findings if f.severity == "error")
             _med = sum(1 for f in _findings if f.severity == "warning")
             _san = sum(1 for f in _findings if f.sanitizer_in_path)
+            # R3: the risk score is the headline number a human or a gate
+            # reads. Only findings the engine PROVED a dataflow path for
+            # may move it — a co-occurrence finding has no computed flow
+            # to be risky about, and feeding 890 of them in is what
+            # pinned this repo's score at a signed, saturated 100.
+            # ``high_count`` / ``medium_count`` deliberately still count
+            # every finding: the ``--ci`` gate keys off ``high_count``
+            # and must not be quietly relaxed here.
+            _flow = [f for f in _findings if getattr(f, "evidence", "co_occurrence") == "dataflow"]
+            _co_occurrence = len(_findings) - len(_flow)
+            _flow_high = sum(1 for f in _flow if f.severity == "error")
+            _flow_med = sum(1 for f in _flow if f.severity == "warning")
+            _flow_san = sum(1 for f in _flow if f.sanitizer_in_path)
             # ``error`` weighs 5×; ``warning`` 1×; sanitized findings
             # count for half (mitigated, not eliminated). The score
             # saturates at 100 for >20 effective points so a clean repo
             # lands at 0 and any non-trivial risk is visible.
-            _raw = max(0, (_high * 5) + _med - (_san * 2))
+            _raw = max(0, (_flow_high * 5) + _flow_med - (_flow_san * 2))
             _score = min(100, int(round(_raw / 20.0 * 100)))
             _dump = [
                 {
@@ -810,9 +914,17 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                     "severity": f.severity,
                     "cwe": f.cwe,
                     "owasp_top10": f.owasp_top10,
-                    "source": f.source_symbol,
-                    "sink": f.sink_symbol,
-                    "path_length": len(f.path_symbols),
+                    "source": _public_symbol(f.source_symbol),
+                    "sink": _public_symbol(f.sink_symbol),
+                    "evidence": getattr(f, "evidence", "co_occurrence"),
+                    "evidence_detail": getattr(f, "evidence_detail", "unspecified"),
+                    # R3: a hop count only exists when hops were walked.
+                    # ``len(path_symbols)`` on a co-occurrence finding is
+                    # the length of a synthesised triple and was rendered
+                    # as "path_length=3" on 891 of 894 findings.
+                    "path_length": (
+                        len(f.path_symbols) if getattr(f, "evidence", "co_occurrence") == "dataflow" else None
+                    ),
                     "path": [
                         {"name": p.get("name"), "file": p.get("file"), "line": p.get("line")} for p in f.path_symbols
                     ],
@@ -826,6 +938,8 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 "medium_count": _med,
                 "sanitized_count": _san,
                 "risk_score": _score,
+                "dataflow_count": len(_flow),
+                "co_occurrence_count": _co_occurrence,
                 "findings_dump": _dump,
             }
 
@@ -838,6 +952,8 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 "medium_count": 0,
                 "sanitized_count": 0,
                 "risk_score": 0,
+                "dataflow_count": 0,
+                "co_occurrence_count": 0,
                 "findings_dump": [],
             },
         )
@@ -845,6 +961,8 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         medium_count = _score_dict["medium_count"]
         sanitized_count = _score_dict["sanitized_count"]
         risk_score = _score_dict["risk_score"]
+        dataflow_count = _score_dict["dataflow_count"]
+        co_occurrence_count = _score_dict["co_occurrence_count"]
 
         # W607-CJ -- compute_verdict boundary. Wraps the verdict-string
         # assembly so a downstream f-string refactor (e.g. a non-int
@@ -1118,6 +1236,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             "rules_lint": {
                 "qualified_only_violations": len(_w489_a_violations),
                 "total_rules": _w489_a_total_rules,
+                "bare_name_entries": _r3_bare_name_entries,
             },
             # W1330: "instrument counted nothing" vs "clean" (task #285 /
             # AP-206-213). anchor_coverage is always present (symmetric
@@ -1130,7 +1249,24 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 "rules_evaluated": len(rules),
                 "rules_zero_anchors": _rules_zero_anchors,
             },
+            # R3: what the risk_score above is actually computed from.
+            # ``risk_score`` counts ONLY findings the engine proved a
+            # dataflow path for; ``errors`` / ``warnings`` above still
+            # count every finding, so the two numbers legitimately
+            # disagree and a consumer must be able to see why.
+            "evidence_mix": {
+                "dataflow": dataflow_count,
+                "co_occurrence": co_occurrence_count,
+                "risk_score_counts": "dataflow only",
+                "duplicate_findings_dropped": _duplicate_findings_dropped,
+            },
         }
+        if co_occurrence_count:
+            _w489_a_summary["warnings_out"] = list(_w489_a_summary.get("warnings_out") or []) + [
+                f"{co_occurrence_count} of {co_occurrence_count + dataflow_count} finding(s) rest on "
+                f"co-occurrence only -- no dataflow path was computed for them; they are excluded "
+                f"from risk_score and reported at confidence=low"
+            ]
         if _w489_a_violations:
             _w489_a_summary["partial_success"] = True
             _w489_a_summary["warnings_out"] = [
@@ -1230,7 +1366,12 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         sink = f["sink"]
         click.echo(f"  src: {src.get('name')} at {src.get('file')}:{src.get('line')}")
         click.echo(f"  sink: {sink.get('name')} at {sink.get('file')}:{sink.get('line')}")
-        click.echo(f"  path: {f['path_length']} hop(s)")
+        # R3: the human branch must not print a hop count for a finding
+        # that has no path either.
+        if f.get("path_length") is not None:
+            click.echo(f"  path: {f['path_length']} hop(s)")
+        else:
+            click.echo(f"  evidence: {f.get('evidence_detail') or 'unspecified'} -- no dataflow path computed")
         if f["sanitizer_in_path"]:
             click.echo(f"  sanitized: yes  (VEX: {f['vex_justification']})")
         click.echo()
