@@ -542,6 +542,34 @@ def _count_omitted(data: dict, result: dict, preserved: set) -> int:
     return total
 
 
+def _emitted_counts(data: dict, result: dict, preserved: set) -> dict[str, int]:
+    """Per-key ``{payload_key: items actually emitted}`` for every shortened list.
+
+    ``summary`` is preserved verbatim through truncation, so its own counts keep
+    describing the FULL result while the payload beside them has been cut. On
+    this repo ``roam --budget 0 taint --json`` shipped ``summary.findings: 894``
+    next to a 10-item ``findings`` list, with nothing in the envelope tying the
+    two numbers together; an agent that reads the count off the summary is
+    reasoning about 884 findings it never received. ``omitted_low_importance_nodes``
+    is a single cross-key total and cannot answer "how many of THIS list did I
+    get".
+
+    A key dropped entirely by :func:`_drop_fields_to_budget` is reported as 0
+    rather than omitted, because its absence otherwise reads as "there were
+    none" instead of "they were withheld". Keys that survived intact are left
+    out -- this block only ever discloses loss.
+    """
+    emitted: dict[str, int] = {}
+    for key, orig in data.items():
+        if key in preserved or not isinstance(orig, list):
+            continue
+        kept = result.get(key)
+        kept_n = len(kept) if isinstance(kept, list) else 0
+        if kept_n < len(orig):
+            emitted[key] = kept_n
+    return emitted
+
+
 # -- Truncation-reason disclosure (Task #57) ---------------------------
 #
 # ``summary.truncated: true`` is set by two INDEPENDENT mechanisms in this
@@ -585,7 +613,12 @@ _TRUNCATION_REASONS: frozenset[str] = frozenset({"budget", "detail_mode"})
 
 
 def _annotate_truncation(
-    result: dict, budget: int, full_json: str, total_omitted: int, importance_sorted: bool
+    result: dict,
+    budget: int,
+    full_json: str,
+    total_omitted: int,
+    importance_sorted: bool,
+    emitted_counts: dict[str, int] | None = None,
 ) -> None:
     """Stamp truncation metadata onto result[\"summary\"].
 
@@ -624,6 +657,11 @@ def _annotate_truncation(
         s["omitted_low_importance_nodes"] = total_omitted
     if importance_sorted:
         s["kept_highest_importance"] = True
+    # Per-key emitted counts: the summary's own counts describe the full
+    # result, so without this a truncated envelope reports a count it did not
+    # emit. See :func:`_emitted_counts`.
+    if emitted_counts:
+        s["emitted_counts"] = emitted_counts
 
 
 def budget_truncate_json(data: dict, budget: int) -> dict:
@@ -640,7 +678,10 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
       only the top N items until the result fits.  Lists without a
       recognised importance key fall back to positional truncation.
     - Annotates summary with ``truncated=True``, ``budget_tokens``,
-      ``omitted_low_importance_nodes``, and ``kept_highest_importance``.
+      ``omitted_low_importance_nodes``, ``kept_highest_importance``, and
+      ``emitted_counts`` (per-key "how many items you actually received",
+      so the summary's own full-result counts cannot be mistaken for the
+      truncated payload's size -- see :func:`_emitted_counts`).
 
     If *budget* is 0 or the serialized dict already fits, returns
     *data* unchanged.
@@ -650,7 +691,10 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
     data:
         A dict produced by :func:`json_envelope`.
     budget:
-        Maximum output tokens (0 = unlimited).
+        Maximum output tokens. Non-positive returns *data* unchanged. Note
+        that the CLI's ``--budget 0`` is handled a level up, in
+        :func:`_apply_envelope_budget`, which must distinguish an explicit
+        "no cap" from an unset budget before ever reaching here.
     """
     if budget <= 0:
         return data
@@ -710,9 +754,45 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
     _cap_lists_to_budget(result, preserved, char_limit)
     _drop_fields_to_budget(result, preserved, char_limit)
     total_omitted = _count_omitted(data, result, preserved)
-    _annotate_truncation(result, budget, full_json, total_omitted, importance_sorted)
+    _annotate_truncation(
+        result,
+        budget,
+        full_json,
+        total_omitted,
+        importance_sorted,
+        _emitted_counts(data, result, preserved),
+    )
 
     return result
+
+
+def _explicit_uncap_requested() -> bool:
+    """True when the user typed a global ``--budget 0`` on THIS invocation.
+
+    ``--budget`` used click ``default=0``, so "typed 0" and "typed nothing"
+    were the same integer by the time they reached
+    :func:`_apply_envelope_budget`, and the Pattern-6 default cap silently won
+    over the user's explicit "unlimited". Measured cost on this repo:
+    ``roam --budget 0 taint --json`` emitted 10 of 894 findings under
+    ``truncated: true`` while ``roam taint --sarif`` emitted all 894.
+
+    The value cannot carry the distinction, so ``cli()`` records
+    ``budget_explicit`` alongside it and this reads the pair. Requiring the
+    effective ``budget`` to still be 0 keeps ``--agent --budget 0`` (which
+    rewrites the budget to 500 before it reaches the context) on the capped
+    path. Outside a click context -- the MCP server, direct function calls --
+    there is no explicit request and the default cap stands.
+    """
+    try:
+        import click
+
+        ctx = click.get_current_context(silent=True)
+        if ctx and isinstance(ctx.obj, dict):
+            return bool(ctx.obj.get("budget_explicit")) and ctx.obj.get("budget") == 0
+    except (ImportError, RuntimeError):
+        # Same narrowing rationale as _compact_mode_enabled below (W677).
+        pass
+    return False
 
 
 def _compact_mode_enabled() -> bool:
@@ -857,6 +937,11 @@ _AGENT_CONTRACT_FACT_SKIP_KEYS = frozenset(
         "full_output_tokens",
         "omitted_low_importance_nodes",
         "kept_highest_importance",
+        # Per-key emitted counts (see _emitted_counts). Today the contract is
+        # built before truncation stamps this, so it cannot reach the facts
+        # list; listed with its siblings so a future reordering does not turn
+        # truncation bookkeeping into an analytical claim.
+        "emitted_counts",
         "detail_available",
         # Paging plumbing (W1142 --limit cap-disclosure). These mirror
         # the analytical ``total`` / ``count`` keys for cap-hit reporting;
@@ -1547,6 +1632,16 @@ def _stamp_response_meta(out: dict, command: str) -> None:
 def _apply_envelope_budget(out: dict, budget: int) -> dict:
     if budget > 0:
         return budget_truncate_json(out, budget)
+
+    # An explicitly-typed global ``--budget 0`` means "no cap at all" -- the
+    # promise the flag's help text has always made. It cannot be recognised
+    # from *budget* alone: ``json_envelope``'s own signature default is 0 and
+    # 127 command call sites fall back to ``0`` when ``ctx.obj`` is absent,
+    # every one of them meaning "nothing was asked for, apply the default
+    # cap". Explicitness therefore travels beside the value in the click
+    # context; see ``_explicit_uncap_requested``.
+    if budget == 0 and _explicit_uncap_requested():
+        return out
 
     if out.get("command") in _DEFAULT_BUDGET_EXEMPT_COMMANDS:
         return out
