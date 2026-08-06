@@ -1269,7 +1269,15 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             ]
         if _w489_a_violations:
             _w489_a_summary["partial_success"] = True
-            _w489_a_summary["warnings_out"] = [
+            # R3: read-then-append, matching every other branch in this
+            # block. A bare ``=`` here replaced the list outright, and
+            # the entry immediately above it is the co-occurrence
+            # disclosure -- the one warning that carries the honest
+            # reading of the findings this envelope ships. Any run with
+            # both a lint violation and a co-occurrence finding sent the
+            # consumer the lint warning and silently dropped the other.
+            _lint_existing_wo = list(_w489_a_summary.get("warnings_out") or [])
+            _w489_a_summary["warnings_out"] = _lint_existing_wo + [
                 f"qualified_only lint flagged {len(_w489_a_violations)} bare-name violations"
             ]
             envelope_kwargs["qualified_only_violations"] = _w489_a_violations
