@@ -1405,6 +1405,13 @@
       "function": "idempotency_cmd",
       "module": "roam.commands.cmd_idempotency"
     },
+    "ignore-drift": {
+      "flags": [
+        "--fail-on-found"
+      ],
+      "function": "ignore_drift",
+      "module": "roam.commands.cmd_ignore_drift"
+    },
     "impact": {
       "flags": [
         "--depth",
