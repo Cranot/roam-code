@@ -183,7 +183,6 @@
     "api-changes": {
       "flags": [
         "--base",
-        "--changed",
         "--severity"
       ],
       "function": "api_changes",
@@ -380,8 +379,7 @@
         "--config",
         "--explain",
         "--init",
-        "--range",
-        "--staged"
+        "--range"
       ],
       "function": "budget",
       "module": "roam.commands.cmd_budget"
@@ -577,7 +575,6 @@
         "--checklist",
         "--emit-proof-stub",
         "--explain",
-        "--model-tier",
         "--probes",
         "--profile",
         "--route",
