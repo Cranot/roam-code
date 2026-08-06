@@ -163,6 +163,17 @@ def test_w1511_genuine_test_conventions_still_classify_as_tests(path: str) -> No
 # Direction 3 — the fix is strictly NARROWING. It may never invent a new
 # positive, only remove wrong ones. This is what makes the change safe to
 # land across every suppression call site at once.
+#
+# W1512 NOTE. The original form of this test iterated
+# ``COLLISION_PATHS + GENUINE_TEST_PATHS`` — the same hand-written list the two
+# directions above use — and was therefore structurally incapable of finding
+# the defect it was supposed to guard: ``_TEST_DIR_CAMEL`` was anchored with
+# ``$`` instead of ``\Z``, so ``"MyTest\n"`` matched, and no entry in a
+# hand-written path list carries a trailing newline. The generative half now
+# lives in ``test_w1512_test_dir_segment_qualifier.py`` (200,000 seeded inputs
+# over three strata, one of which is specifically control-suffixed tokens).
+# What remains here is the narrowing property itself, which is a claim about
+# these paths and is still worth pinning on them.
 # ---------------------------------------------------------------------------
 
 
