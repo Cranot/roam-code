@@ -1222,7 +1222,7 @@ class LazyGroup(click.Group):
             ("--agent", "agent mode (JSON + compact + 500-token budget)"),
             ("--detail", "show full detailed output instead of compact summary"),
             ("--sarif", f"SARIF 2.1.0 output (supported by: {', '.join(_SARIF_CONSUMERS)})"),
-            ("--budget N", "max output tokens (0 = unlimited)"),
+            ("--budget N", "max output tokens (0 = no cap; omit = 20000-token default cap)"),
             ("--select EXPR", "project JSON with .field, [N], or [START:END] (repeatable)"),
             ("--include-excluded", "include files normally excluded by .roamignore"),
             ("--override-mode", "bypass mode-based command blocking (logs to audit trail)"),
@@ -2010,7 +2010,7 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
         ("--agent", "agent mode (JSON + compact + 500-token budget)"),
         ("--detail", "show full detailed output instead of compact summary"),
         ("--sarif", f"SARIF 2.1.0 output (supported by: {', '.join(_SARIF_CONSUMERS)})"),
-        ("--budget N", "max output tokens (0 = unlimited)"),
+        ("--budget N", "max output tokens (0 = no cap; omit = 20000-token default cap)"),
         ("--select EXPR", "project JSON with .field, [N], or [START:END] (repeatable)"),
         ("--include-excluded", "include files normally excluded by .roamignore"),
         ("--override-mode", "bypass mode-based command blocking (logs to audit trail)"),
@@ -2044,6 +2044,7 @@ def _populate_cli_context(
     include_excluded: bool,
     detail: bool,
     override_mode: bool,
+    budget_explicit: bool = False,
 ) -> None:
     ctx.ensure_object(dict)
     ctx.obj["json"] = json_mode
@@ -2051,6 +2052,11 @@ def _populate_cli_context(
     ctx.obj["agent"] = agent
     ctx.obj["sarif"] = sarif_mode
     ctx.obj["budget"] = budget
+    # Did the user actually TYPE --budget? `budget` alone cannot say: 0 is both
+    # "user asked for no cap" and "flag omitted", and the second reading is what
+    # every internal caller means. Read by
+    # `roam.output.formatter._explicit_uncap_requested`.
+    ctx.obj["budget_explicit"] = budget_explicit
     ctx.obj["select"] = select_exprs
     ctx.obj["include_excluded"] = include_excluded
     ctx.obj["detail"] = detail
@@ -2217,7 +2223,12 @@ def _install_local_telemetry(ctx: click.Context) -> None:
     is_flag=True,
     help=f"Output in SARIF 2.1.0 format. Supported by: {', '.join(_SARIF_CONSUMERS)}.",
 )
-@click.option("--budget", type=int, default=0, help="Max output tokens (0=unlimited)")
+@click.option(
+    "--budget",
+    type=int,
+    default=None,
+    help="Max output tokens (0 = no cap; omit for the 20000-token default cap)",
+)
 @click.option(
     "--select",
     "select_exprs",
@@ -2279,6 +2290,14 @@ def cli(
     if select_exprs:
         json_mode = True
 
+    # `--budget` is `default=None` purely so an explicitly-typed 0 stays
+    # distinguishable from "flag omitted"; every downstream consumer still
+    # receives an int, and 0 remains the "nothing was asked for" value the
+    # 127 `ctx.obj.get("budget", 0)` call sites expect.
+    budget_explicit = budget is not None
+    if budget is None:
+        budget = 0
+
     json_mode, compact, budget = _apply_agent_mode(agent, json_mode, compact, budget)
     _populate_cli_context(
         ctx,
@@ -2287,6 +2306,7 @@ def cli(
         agent=agent,
         sarif_mode=sarif_mode,
         budget=budget,
+        budget_explicit=budget_explicit,
         select_exprs=select_exprs,
         include_excluded=include_excluded,
         detail=detail,
