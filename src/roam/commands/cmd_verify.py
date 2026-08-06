@@ -5039,11 +5039,28 @@ def _emit_empty_verify(json_mode: bool, threshold: int, summary_mode: bool = Fal
     if json_mode:
         click.echo(to_json(envelope))
         return
+    # The human lines must not narrate a verification that never happened.
+    # ``checks_run`` is ``[]`` and ``files_checked`` is 0 here, so "all checks
+    # passed" is false on its face and "score 100/100" reads as a measured
+    # quality score -- the ``fabricated_success`` shape this module legislates
+    # against at :2127, :3982, :4915 and :6874.
+    #
+    # The envelope numbers above deliberately do NOT move with this text.
+    # ``compile verify`` shells ``roam --json verify`` and validates the result
+    # against a pinned no-changes contract (compile-code
+    # src/compile_code/cli.py:3228 ``_validate_verify_protocol``) that requires
+    # ``summary.score == 100`` -- cli.py:3275 ``_plain_int`` rejects ``None``
+    # outright -- plus ``categories[*].score == 100`` (cli.py:3329) and the full
+    # category set (cli.py:3310). Nulling the score or dropping ``categories``
+    # makes that gate exit EXIT_TOOLCHAIN on every clean tree. The three
+    # machine-readable not-run discriminators the contract already mandates
+    # (``state: "no_changes"``, ``files_checked: 0``, ``checks_run: []``) are
+    # what keeps this PASS distinguishable to a JSON consumer.
     if summary_mode:
         click.echo("VERIFY SUMMARY: 0 findings across 0 files")
-        click.echo("  OK -- all checks passed")
+        click.echo("  0 checks run -- nothing to verify")
         return
-    click.echo("VERDICT: PASS (score 100/100) -- no changed files")
+    click.echo("VERDICT: PASS (nothing to verify) -- 0 files checked, 0 checks run")
 
 
 def _emit_verify_discovery_failure(
