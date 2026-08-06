@@ -225,6 +225,114 @@ def test_hook_still_delegates_the_whole_tree_scan() -> None:
     )
 
 
+def _release_note_bullets(tree: ast.Module) -> list[str]:
+    """Return the bullet lines of the RELEASE 'NOT run by any tier' note.
+
+    The note is written as adjacent string literals inside one ``print(...)``,
+    which Python concatenates at parse time into a single ``ast.Constant`` — so
+    locating it is a search for that one constant, not a reconstruction.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "NOT run by any tier" in node.value:
+            bullets = []
+            for line in node.value.splitlines():
+                stripped = line.strip().removeprefix("[prepush]").strip()
+                if stripped.startswith("- "):
+                    bullets.append(stripped[2:].strip())
+            return bullets
+    raise AssertionError(
+        "Could not find the RELEASE uncovered-lanes note in prepush_check.py "
+        "(_print_summary). It must contain the phrase 'NOT run by any tier'."
+    )
+
+
+def _unconditional_gate_labels(tree: ast.Module) -> dict[str, str]:
+    """Map every gate label that runs in EVERY tier to the method that runs it.
+
+    ``main()`` calls a handful of ``runner.<method>()`` gates before any tier
+    branching; those run in FAST, FULL and RELEASE alike. Only statements that
+    are direct children of ``main``'s body count — anything nested under
+    ``if full:`` / ``if release:`` is tier-conditional and is skipped.
+    """
+    main_fn = next(
+        (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main"),
+        None,
+    )
+    assert main_fn is not None, "scripts/prepush_check.py must define main()."
+
+    unconditional_methods = [
+        stmt.value.func.attr
+        for stmt in main_fn.body
+        if isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and isinstance(stmt.value.func, ast.Attribute)
+        and isinstance(stmt.value.func.value, ast.Name)
+        and stmt.value.func.value.id == "runner"
+    ]
+    assert unconditional_methods, (
+        "Found no unconditional `runner.<gate>()` calls in main(); the AST shape "
+        "this guard reads has changed and the guard is now blind."
+    )
+
+    labels: dict[str, str] = {}
+    for method in unconditional_methods:
+        fn = next(
+            (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == method),
+            None,
+        )
+        if fn is None:
+            continue
+        for call in ast.walk(fn):
+            if (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "_run"
+                and call.args
+                and isinstance(call.args[0], ast.Constant)
+                and isinstance(call.args[0].value, str)
+            ):
+                labels.setdefault(call.args[0].value, method)
+    return labels
+
+
+def test_release_note_never_disclaims_a_gate_it_actually_runs() -> None:
+    """The tier's own coverage note must not name a gate that runs in every tier.
+
+    The RELEASE summary prints a list of CI lanes that "are NOT run by any tier
+    and stay unproven here". That note exists to stop an operator over-reading
+    green — so a FALSE entry in it is worse than no note at all: it tells the
+    reader a gate is unproven when the push path just proved it, and invites
+    someone to spend a CI round re-proving it.
+
+    Measured 2026-08-07: the note listed `roam ignore-drift --fail-on-found`,
+    which `_run_leak_gate` registers and `main()` runs unconditionally, before
+    any tier branching — a live FAST run printed
+    `[prepush] roam ignore-drift --fail-on-found: PASS (0.4s)`.
+
+    This guard makes the CLASS un-reintroducible: it derives BOTH sides from
+    the source (the gate labels that actually run in every tier, and the
+    bullets of the note) instead of pinning either literal, so adding a new
+    unconditional gate whose name is also disclaimed fails here rather than in
+    a reader's head.
+    """
+    tree = _parse_script()
+    bullets = _release_note_bullets(tree)
+    assert bullets, "The RELEASE uncovered-lanes note lists no lanes; its bullet shape has changed."
+
+    labels = _unconditional_gate_labels(tree)
+    liars = [(label, method, bullet) for label, method in labels.items() for bullet in bullets if label in bullet]
+    assert not liars, (
+        "scripts/prepush_check.py's RELEASE note claims a gate is NOT run by any "
+        "tier, but main() runs it unconditionally in every tier:\n"
+        + "\n".join(
+            f"  - {label!r} is registered by {method}() but disclaimed in the bullet {bullet!r}"
+            for label, method, bullet in liars
+        )
+        + "\nFix the NOTE to match reality — narrow or drop the bullet. Do NOT "
+        "delete the gate to make the sentence true."
+    )
+
+
 def test_every_bundled_guard_file_exists() -> None:
     """No bundled guard may reference a renamed/deleted test file."""
     tree = _parse_script()
