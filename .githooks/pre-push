@@ -149,9 +149,11 @@ fi
 # --- B. Structural-gate bundle (FAST tier) ----------------------------------
 # For a release-prep / doc-heavy push, run the FULL tier manually:
 #   python scripts/prepush_check.py --full
-# BEFORE TAGGING A RELEASE, run the RELEASE tier — it runs what CI runs
-# (FULL + doc-consistency + linkcheck + commit-msg leak scan). Green there
-# means CI will be green (the 13.8.0 tag took 8 CI rounds for skipping it):
+# BEFORE TAGGING A RELEASE, run the RELEASE tier — it runs CI's test, ruff
+# and doc-hygiene surface (FULL + doc-consistency + linkcheck + commit-msg
+# leak scan), the surface the 13.8.0 tag took 8 CI rounds for skipping. It
+# does NOT run every CI lane — it prints the uncovered ones on success, so
+# read that note rather than treating green as "CI will be green":
 #   python scripts/prepush_check.py --release
 cleanup_updates
 trap - EXIT HUP INT TERM
