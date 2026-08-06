@@ -178,6 +178,16 @@ FAST_PYTEST_GUARDS: tuple[str, ...] = (
     "test_workflow_dependency_lock_policy.py",
     "test_publish_provenance_workflow.py",
     "test_composite_action_security.py",
+    # 2026-08-06: a @click.option the command body never reads is a flag the
+    # user passes and we silently discard. scripts/audit_dead_cli_flags.py had
+    # existed for that class since the `deps --full` bug, but was advisory by
+    # its own docstring and had NO caller here, in .github/workflows/ or in
+    # .githooks/ -- so it read as coverage and blocked nothing, and eight more
+    # dead flags accumulated behind it. This guard runs the auditor with
+    # --fail-on-found and pins its CI wiring, so neither half can quietly go
+    # decorative again. Pure AST scan of src/roam/commands + a YAML read; no
+    # index dependency.
+    "test_dead_cli_flags_gate.py",
 )
 
 # FULL-tier additions (heavy doc-hygiene + extra-axis guards). Per the memo,

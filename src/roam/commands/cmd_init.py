@@ -159,7 +159,18 @@ def _is_inside_git_repo(project_root) -> bool:
 )
 @click.command("init")
 @click.option("--root", default=".", help="Project root")
-@click.option("--yes", is_flag=True, help="Non-interactive, accept defaults")
+# ACCEPTED NO-OP, on purpose. `roam init` has never prompted (no click.confirm
+# / click.prompt / input() anywhere in this module), so there is nothing for
+# --yes to suppress. It is kept because scripts, CI recipes and the MCP
+# `roam_init` wrapper all pass the conventional `--yes`, and removing it would
+# break them to no benefit. Registered in scripts/dead_cli_flags_allowlist.txt
+# so the dead-flag gate knows this one is deliberate rather than forgotten;
+# delete the allowlist entry the day init grows a prompt.
+@click.option(
+    "--yes",
+    is_flag=True,
+    help="Accepted for scripting convenience. `roam init` is already fully non-interactive, so this changes nothing.",
+)
 @click.option(
     "--with-ci",
     "with_ci",
@@ -212,8 +223,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
 
     \b
     Examples:
-      roam init                      # interactive bootstrap
-      roam init --yes                # accept all defaults
+      roam init                      # bootstrap (never prompts)
+      roam init --yes                # identical; --yes is accepted, not needed
       roam init --with-ci=github     # also drop a starter Actions workflow
 
     See also ``doctor`` (validates the index after init), ``mcp-setup``

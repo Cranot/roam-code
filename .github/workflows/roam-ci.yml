@@ -328,6 +328,15 @@ jobs:
       - name: Ruff lint
         run: .venv/bin/ruff check src/ tests/
 
+      # Dead CLI flags: a @click.option the command body never reads is a flag
+      # the user passes and we silently discard (the 2026-06-07 `deps --full`
+      # bug). This auditor existed but was advisory-only with no caller, so
+      # eight more had accumulated behind it by 2026-08-06. --fail-on-found
+      # makes it a gate; deliberate no-ops live in
+      # scripts/dead_cli_flags_allowlist.txt with a written reason.
+      - name: Dead CLI flag gate
+        run: .venv/bin/python scripts/audit_dead_cli_flags.py --fail-on-found
+
   # -- Doc hygiene: anti-drift gates ---------------------------------------
   # Gates that catch the most common doc-rot patterns:
   #   - test_no_internal_language.py — fail if any tracked file matches a

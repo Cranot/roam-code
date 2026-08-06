@@ -357,13 +357,20 @@ def _budget_str(rule: dict) -> str:
     requires_index=True,
 )
 @click.command("budget")
+# ``--staged`` was removed on 2026-08-06. It advertised "Analyse staged
+# changes only" but no code path ever read it: this command compares two
+# WHOLE-TREE metric snapshots (``collect_metrics(conn)`` over the whole index
+# vs ``find_before_snapshot``), and there is no staged-scoped metric to
+# collect. So `roam budget --staged` silently scored the entire working tree
+# while claiming to be scoped — a gate lying about its own scope. Rejecting
+# the flag outright is the honest behaviour; re-add it only together with a
+# real staged-content metric collector.
 @click.option("--init", "do_init", is_flag=True, help="Generate default .roam/budget.yaml.")
-@click.option("--staged", is_flag=True, help="Analyse staged changes only.")
 @click.option("--range", "commit_range", default=None, help="Git range, e.g. main..HEAD.")
 @click.option("--explain", is_flag=True, help="Show reasoning per rule.")
 @click.option("--config", "config_path", default=None, help="Custom budget config path.")
 @click.pass_context
-def budget(ctx, do_init, staged, commit_range, explain, config_path):
+def budget(ctx, do_init, commit_range, explain, config_path):
     """Check pending changes against architectural budgets.
 
     Unlike ``debt`` (which ranks files by accumulated technical debt),
@@ -373,6 +380,9 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
     Evaluates metric deltas against budget rules defined in
     .roam/budget.yaml (or defaults). Exit code 1 if any budget
     is exceeded, making it suitable as a CI gate.
+
+    Scope is always the WHOLE indexed tree compared against the stored
+    baseline snapshot; there is no per-file or staged-only scoping.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()

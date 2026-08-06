@@ -701,14 +701,16 @@ def _format_change_text(change: dict) -> str:
         "canonical tokens project onto the SemVer tier order."
     ),
 )
-@click.option(
-    "--changed",
-    "changed_only",
-    is_flag=True,
-    help="Only analyze files changed in git diff.",
-)
+# ``--changed`` was removed on 2026-08-06. It promised "Only analyze files
+# changed in git diff", but no code path ever read it AND that narrowing is
+# already unconditional: the body's only file source is
+# ``_git_changed_files(root, base)`` (``git diff --name-only <base>``), so the
+# command has never analysed anything else. The flag could therefore only ever
+# be a no-op, or -- if re-scoped to the uncommitted diff -- SILENTLY SHRINK a
+# gate that callers run with ``--severity breaking``. Rejecting it loudly beats
+# both.
 @click.pass_context
-def api_changes_cmd(ctx, base, severity, changed_only):
+def api_changes_cmd(ctx, base, severity):
     """Detect breaking and non-breaking API changes vs a git ref.
 
     Unlike ``breaking`` (which flags removed and renamed exports) and
@@ -725,6 +727,9 @@ def api_changes_cmd(ctx, base, severity, changed_only):
     (``critical/error/high -> breaking``, ``medium -> warning``,
     ``low/note -> info``). Emit-side ``severity`` field stays SemVer
     for back-compat with downstream consumers.
+
+    Scope is always ``git diff --name-only <base>`` — there is no wider or
+    narrower mode.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

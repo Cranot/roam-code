@@ -1,0 +1,24 @@
+# Allowlist for scripts/audit_dead_cli_flags.py --fail-on-found
+#
+# One entry per line:  <file>::<function>::<param>   # why this one is fine
+#
+# Two, and only two, reasons ever justify an entry:
+#
+#   1. FALSE POSITIVE. The auditor is an AST Name-usage heuristic, so a param
+#      that is genuinely read through ``**kwargs`` forwarding, ``ctx.params``,
+#      ``locals()``, or a rebound name in a nested closure looks unused to it
+#      and is not.
+#   2. DELIBERATE ACCEPTED NO-OP. The flag really does nothing, we know it
+#      does nothing, the help string SAYS it does nothing, and it is kept only
+#      so existing callers keep parsing. (`roam init --yes` is the archetype.)
+#
+# "I did not have time to wire it" is NOT a reason. That is the exact class
+# this gate exists to catch: on 2026-08-06 eight flags had accumulated in
+# exactly that way, silently accepted and silently discarded, because the
+# auditor printed a report and exited 0.
+#
+# A STALE entry (one that no longer matches any finding) also FAILS the gate.
+# That is deliberate: an allowlist nobody has to maintain rots into a second
+# blind spot, and then the exemption outlives the reason for it.
+
+cmd_init.py::init::yes   # accepted no-op: init never prompts (no click.confirm/prompt/input in the module); kept because scripts, CI recipes and the MCP roam_init wrapper all pass it. Delete this line the day init grows a prompt.

@@ -618,13 +618,17 @@ def _emit_text_compile(
     help="Artifact shape. 'auto' uses the ArtifactSelector policy (recommended). "
     "'contract' = facts envelope + R10 per-procedure answer-shape template.",
 )
-@click.option(
-    "--model-tier",
-    type=click.Choice(["weak", "capable", "auto"]),
-    default="auto",
-    help="Model tier hint. Capable models prefer 'facts'; weak models prefer 'full'. "
-    "Empirically locked 2026-05-28: facts dominates on Opus 4.8.",
-)
+# ``--model-tier`` was removed on 2026-08-06. No code path ever read it: the
+# artifact selector (``roam.plan.compiler.select_artifact``) keys ONLY on
+# procedure + classifier_confidence, and there is no model-tier concept
+# anywhere in the plan layer. Measured before removal: all three choices
+# produced byte-identical output. Its help string also asserted a dated
+# empirical result ("Empirically locked 2026-05-28: facts dominates on Opus
+# 4.8") for a knob that changed nothing -- a claim the code did not carry.
+# Wiring it instead was rejected: the documented "capable -> facts" mapping
+# would have FORCED the plain facts envelope and so downgraded the `auto`
+# path's richer ``l1_probe`` envelope (``compile_for_artifact``). Pass
+# ``--artifact`` to choose an envelope shape explicitly.
 @click.option(
     "--route",
     is_flag=True,
@@ -706,7 +710,6 @@ def compile_(
     ctx: click.Context,
     task: str,
     artifact: str,
-    model_tier: str,
     route: bool,
     profile: str | None,
     brief: bool,

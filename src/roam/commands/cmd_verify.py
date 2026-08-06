@@ -47,6 +47,7 @@ from roam.commands.cmd_conventions import (
 from roam.commands.conventions_helper import CONVENTION_NEUTRAL_FILE_ROLES, has_excluded_prefix
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output.errors import structured_usage_error
 from roam.output.formatter import json_envelope, loc, to_json
 from roam.runs.helpers import auto_log
 
@@ -6647,7 +6648,9 @@ def _dispatch_verify_command(
     "--changed",
     is_flag=True,
     default=False,
-    help="Use git diff to get changed files (default if no files given)",
+    help="Use git diff to get changed files. This is already the default when "
+    "no FILES are given, so the flag only ever confirms it — passing it "
+    "TOGETHER with explicit FILES is rejected rather than silently ignored.",
 )
 @click.option(
     "--threshold",
@@ -6823,13 +6826,30 @@ def verify(
     Checks naming, import patterns, error handling, duplicate logic,
     and syntax integrity against established codebase patterns.
 
-    If no files are specified, defaults to git-changed files.
+    If no files are specified, defaults to git-changed files. ``--changed``
+    names that same default explicitly; combining it with explicit FILES is a
+    usage error.
 
     Unlike ``conventions`` (which reports codebase-wide style patterns) and
     ``smells`` (which detects structural anti-patterns from DB queries), this
     command runs pre-commit checks on changed files: naming, imports, error
     handling, duplicates, and syntax.
     """
+    # ``--changed`` used to be accepted and then dropped on the floor: the
+    # parameter was never referenced, never forwarded to
+    # ``_dispatch_verify_command``, and so `roam verify FILE --changed`
+    # silently scoped a GATE to FILE while the operator had asked for the
+    # git diff. With no FILES the flag agrees with the default, so it is a
+    # no-op there; with FILES the two scopes contradict each other and there
+    # is no safe silent winner (honouring the flag discards the operator's
+    # explicit path, ignoring it discards their explicit flag). Refuse.
+    if changed and files:
+        raise structured_usage_error(
+            "INVALID_OPTIONS",
+            "--changed scopes verify to the git diff, but explicit FILES were also given. "
+            "Pass `roam verify --changed` for the git diff, or `roam verify FILE...` for "
+            "those paths — not both.",
+        )
     json_mode, token_budget, root = _verify_runtime_context(ctx)
     _dispatch_verify_command(
         ctx,
