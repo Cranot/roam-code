@@ -261,6 +261,15 @@ def mutate_cmd(ctx):
 @click.pass_context
 def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
     """Move a symbol to a different file."""
+    # ``--dry-run`` used to be declared, bound, and never read: the write
+    # decision was recomputed from ``--apply`` alone, so
+    # ``--apply --dry-run`` wrote to disk while the user asked for a
+    # preview. Ambiguous intent on an irreversible operation is refused,
+    # not silently resolved.
+    if apply_changes and dry_run:
+        raise click.UsageError("--apply and --dry-run are mutually exclusive")
+    dry_run = dry_run or not apply_changes
+
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -303,7 +312,7 @@ def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
             conn,
             resolved_symbol,
             target_file,
-            dry_run=(not apply_changes),
+            dry_run=dry_run,
             default=empty_result_floor,
             warnings_out=_w607eg_warnings_out,
         )
@@ -453,12 +462,18 @@ def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
 @click.pass_context
 def mutate_rename(ctx, symbol, new_name, apply_changes, dry_run):
     """Rename a symbol across the codebase."""
+    # See ``mutate_move``: ``--apply --dry-run`` is ambiguous intent on an
+    # irreversible operation and is refused rather than silently resolved.
+    if apply_changes and dry_run:
+        raise click.UsageError("--apply and --dry-run are mutually exclusive")
+    dry_run = dry_run or not apply_changes
+
     ensure_index()
 
     from roam.refactor.transforms import rename_symbol
 
     with open_db(readonly=True) as conn:
-        result = rename_symbol(conn, symbol, new_name, dry_run=(not apply_changes))
+        result = rename_symbol(conn, symbol, new_name, dry_run=dry_run)
 
     n_files = len(result.get("files_modified", []))
     verdict = f"rename {result.get('symbol', symbol)} -> {new_name} -- {n_files} files modified, 0 conflicts"
