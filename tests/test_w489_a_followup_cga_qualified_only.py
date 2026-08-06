@@ -248,9 +248,14 @@ def test_w489_a_followup_mirror_parity_with_taint_envelope_shape(cga_project, tm
     assert set(cga_summary["rules_lint"].keys()) == {
         "qualified_only_violations",
         "total_rules",
+        # R3: unconditional bare-entry count. Stamped on BOTH envelopes,
+        # so parity is preserved; it is listed here (rather than the set
+        # being loosened) because this assertion is the drift guard.
+        "bare_name_entries",
     }
     assert isinstance(cga_summary["rules_lint"]["qualified_only_violations"], int)
     assert isinstance(cga_summary["rules_lint"]["total_rules"], int)
+    assert isinstance(cga_summary["rules_lint"]["bare_name_entries"], int)
     assert cga_summary.get("partial_success") is True
     assert isinstance(cga_summary.get("warnings_out"), list)
     assert "qualified_only_violations" in cga_envelope

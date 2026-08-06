@@ -539,7 +539,14 @@ def _taint_finding_to_claim(finding) -> dict[str, Any]:
         "evidence": {
             "source": dict(getattr(finding, "source_symbol", {}) or {}),
             "sink": dict(getattr(finding, "sink_symbol", {}) or {}),
+            # R3: ``path_length`` stays an int for every claim so existing
+            # attestation verifiers keep a stable type, but it is only a
+            # HOP COUNT when ``evidence_class`` is ``dataflow``. For a
+            # co-occurrence finding it is the length of a synthesised
+            # triple and means nothing — read ``evidence_class`` first.
             "path_length": len(getattr(finding, "path_symbols", []) or []),
+            "evidence_class": getattr(finding, "evidence", "co_occurrence"),
+            "evidence_detail": getattr(finding, "evidence_detail", "unspecified"),
             "sanitizer_in_path": is_sanitized,
         },
     }

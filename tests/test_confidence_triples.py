@@ -848,14 +848,33 @@ class TestPilotCommandTaint:
     def test_taint_classifier_high_unsanitised(self):
         from roam.commands.cmd_taint import _taint_classify
 
-        conf, reason = _taint_classify({"severity": "error", "sanitizer_in_path": False, "path_length": 4})
+        # R3: the severity ladder only applies once the engine has
+        # PROVEN a dataflow path. ``evidence`` is what says so.
+        conf, reason = _taint_classify(
+            {"severity": "error", "sanitizer_in_path": False, "path_length": 4, "evidence": "dataflow"}
+        )
         assert conf == "high"
         assert "no sanit" in reason.lower() or "direct" in reason.lower()
+
+    def test_taint_classifier_without_evidence_is_low(self):
+        """R3: an absent evidence class is UNKNOWN, not "dataflow".
+
+        Pre-R3 this dict classified as ``high`` with the reason "direct
+        source→sink reach" — which is how 890 co-occurrence findings on
+        the roam-code corpus were published as proven reaches.
+        """
+        from roam.commands.cmd_taint import _taint_classify
+
+        conf, reason = _taint_classify({"severity": "error", "sanitizer_in_path": False, "path_length": 4})
+        assert conf == "low"
+        assert "no dataflow path was computed" in reason
 
     def test_taint_classifier_medium_sanitised(self):
         from roam.commands.cmd_taint import _taint_classify
 
-        conf, _r = _taint_classify({"severity": "error", "sanitizer_in_path": True, "path_length": 3})
+        conf, _r = _taint_classify(
+            {"severity": "error", "sanitizer_in_path": True, "path_length": 3, "evidence": "dataflow"}
+        )
         assert conf == "medium"
 
     def test_taint_classifier_low_unknown(self):

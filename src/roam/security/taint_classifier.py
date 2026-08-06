@@ -103,8 +103,19 @@ def _build_user_prompt(finding: dict[str, Any]) -> str:
     severity = finding.get("severity") or "warning"
     src = finding.get("source_symbol") or {}
     snk = finding.get("sink_symbol") or {}
-    path_syms = finding.get("path_symbols") or []
+    path_syms = finding.get("path_symbols") or finding.get("path") or []
     sanitizer = finding.get("sanitizer_in_path", False)
+    # R3: tell the model whether the "Path" below was WALKED or merely
+    # synthesised from co-occurrence. Absent evidence is UNKNOWN, and an
+    # unknown must not be narrated to the model as a proven flow.
+    evidence = finding.get("evidence")
+    if evidence == "dataflow":
+        evidence_line = "Evidence: a directed call/reference path was computed from source to sink.\n"
+    else:
+        evidence_line = (
+            "Evidence: NO dataflow path was computed. Source and sink were only observed to "
+            "co-occur; the hops listed below are context, not a proven flow.\n"
+        )
 
     path_lines = []
     for i, sym in enumerate(path_syms):
@@ -118,7 +129,8 @@ def _build_user_prompt(finding: dict[str, Any]) -> str:
 
     return (
         f"Taint finding from rule={rule_id} (CWE={cwe}, severity={severity}).\n"
-        f"Sanitizer on path: {sanitizer}.\n\n"
+        + evidence_line
+        + f"Sanitizer on path: {sanitizer}.\n\n"
         f"Source: {src.get('qualified_name') or src.get('name') or '?'}\n"
         f"Sink:   {snk.get('qualified_name') or snk.get('name') or '?'}\n\n"
         f"Path:\n"

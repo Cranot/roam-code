@@ -121,6 +121,31 @@ class TaintFinding:
     # SARIF taint_to_sarif) don't have to re-resolve the rule. Empty
     # when the rule did not declare an owasp_top10 mapping.
     owasp_top10: str = ""
+    # R3 — what this finding actually rests on. The engine emits from
+    # three constructors with wildly different strength, and before R3
+    # nothing on the finding said which one produced it, so the
+    # presentation layer rendered every one of them as "direct
+    # source->sink reach". Exactly two values are legal:
+    #
+    #   "dataflow"       — :func:`_bfs_path` returned a directed
+    #                      call/reference edge path from the source
+    #                      SYMBOL to the sink SYMBOL. ``path_symbols``
+    #                      is a real hop list and its length is a real
+    #                      hop count.
+    #   "co_occurrence"  — NO dataflow was computed. The finding rests
+    #                      on co-location only. ``path_symbols`` is a
+    #                      synthesised triple, NOT a path, and its
+    #                      length carries no information.
+    #
+    # DEFAULT IS THE NON-CLAIMING VALUE ON PURPOSE: a construction site
+    # that forgets to set this under-claims rather than fabricating a
+    # dataflow proof.
+    evidence: str = "co_occurrence"
+    # The exact constructor, for consumers that need to tell the
+    # co-occurrence flavours apart. One of ``bfs_path``,
+    # ``intraprocedural_co_call``, ``text_scan_same_function``,
+    # ``bfs_path_text_anchors``, or ``unspecified``.
+    evidence_detail: str = "unspecified"
 
 
 # ---------------------------------------------------------------------------
@@ -569,14 +594,58 @@ def _intraprocedural_co_calls(
             enclosing_targets.setdefault(int(r[0]), set()).add(int(r[1]))
 
     out: list[tuple[int, int, int, bool]] = []
-    for enclosing, targets in enclosing_targets.items():
-        if not (targets & source_ids) or not (targets & sink_ids):
+    for enclosing, targets in sorted(enclosing_targets.items()):
+        pair = _first_distinct_source_sink(targets & source_ids, targets & sink_ids)
+        if pair is None:
             continue
-        src_id = next(iter(targets & source_ids))
-        sink_id = next(iter(targets & sink_ids))
+        src_id, sink_id = pair
         has_sanitizer = bool(targets & sanitizer_ids)
         out.append((enclosing, src_id, sink_id, has_sanitizer))
     return out
+
+
+def _first_distinct_source_sink(src_ids: set[int], sink_ids: set[int]) -> tuple[int, int] | None:
+    """Pick a (source, sink) pair of DISTINCT symbols, or ``None``.
+
+    R3: the previous ``next(iter(...))`` on each set independently could
+    return the SAME id for both ends whenever a symbol was in both sets —
+    which happens routinely once text-scan anchors are unioned in, because
+    every text anchor's id is its ENCLOSING function, so a function
+    containing both a source token and a sink token lands in both sets.
+    Measured on this repo before the fix: 146 findings whose source
+    descriptor was byte-identical to their sink descriptor (e.g.
+    ``subprocess.run`` at ``tests/conftest.py:571`` reported as both ends).
+
+    One symbol is not a flow. When no distinct pair exists we return
+    ``None`` and the caller drops the tuple — the genuine signal for that
+    function is already carried by the same-function co-occurrence
+    finding. Iteration is over sorted ids so the choice is deterministic
+    rather than set-ordering-dependent.
+    """
+    if not src_ids or not sink_ids:
+        return None
+    sorted_sinks = sorted(sink_ids)
+    for src_id in sorted(src_ids):
+        for sink_id in sorted_sinks:
+            if src_id != sink_id:
+                return src_id, sink_id
+    return None
+
+
+def _public_endpoint(symbol: dict) -> dict:
+    """Normalise one finding endpoint / hop for publication.
+
+    R3: text-scan anchors reach the BFS and co-call constructors through
+    the unioned anchor lists, carrying the enclosing function's ``id`` as
+    if it were the source's (or the sink's) own symbol id. Route every
+    endpoint through the same projection the text-scan constructor uses
+    so no consumer — envelope, registry, or attestation — is handed an
+    id that belongs to a different symbol than the one named beside it.
+    Real indexed symbols pass through with only private keys removed.
+    """
+    if symbol.get("_text_anchor"):
+        return _public_text_anchor(symbol)
+    return {k: v for k, v in symbol.items() if not k.startswith("_")}
 
 
 def _collect_findings_for_rule_isolation(
@@ -621,20 +690,28 @@ def _collect_findings_for_rule_isolation(
                     "line": r[3],
                     "file": r[4],
                 }
+        co_call_path = [
+            _public_endpoint(sym_meta.get(src_id, {"id": src_id})),
+            _public_endpoint(sym_meta.get(enclosing, {"id": enclosing})),
+            _public_endpoint(sym_meta.get(sink_id, {"id": sink_id})),
+        ]
         findings.append(
             TaintFinding(
                 rule_id=rule.rule_id,
                 severity=rule.severity,
                 cwe=rule.cwe,
-                source_symbol=sym_meta.get(src_id, {"id": src_id}),
-                sink_symbol=sym_meta.get(sink_id, {"id": sink_id}),
-                path_symbols=[
-                    sym_meta.get(src_id, {"id": src_id}),
-                    sym_meta.get(enclosing, {"id": enclosing}),
-                    sym_meta.get(sink_id, {"id": sink_id}),
-                ],
+                source_symbol=co_call_path[0],
+                sink_symbol=co_call_path[-1],
+                path_symbols=co_call_path,
                 sanitizer_in_path=has_sanitizer,
                 owasp_top10=rule.owasp_top10,
+                # R3: this triple is SYNTHESISED from "one function calls
+                # both", not walked. No edge connects src -> enclosing ->
+                # sink in that direction (the edges run the other way), so
+                # its length is not a hop count and must never be rendered
+                # as one.
+                evidence="co_occurrence",
+                evidence_detail="intraprocedural_co_call",
             )
         )
 
@@ -668,6 +745,14 @@ def _collect_findings_for_rule_isolation(
             }
 
     path_symbols = [sym_meta.get(pid, {"id": pid}) for pid in path_ids]
+    # R3: this IS a walked edge path — but only when both endpoints are
+    # real indexed symbols. A text-scan anchor's ``id`` is its ENCLOSING
+    # function, not the source/sink token itself, so a BFS between two
+    # such anchors proves a call chain between two functions that merely
+    # CONTAIN the tokens. That is co-location one level out, not
+    # source-to-sink dataflow.
+    endpoints_are_text_anchors = bool(path_symbols[0].get("_text_anchor")) or bool(path_symbols[-1].get("_text_anchor"))
+    path_symbols = [_public_endpoint(p) for p in path_symbols]
     findings.append(
         TaintFinding(
             rule_id=rule.rule_id,
@@ -679,6 +764,8 @@ def _collect_findings_for_rule_isolation(
             sanitizer_in_path=has_sanitizer,
             path_truncated=path_truncated,
             owasp_top10=rule.owasp_top10,
+            evidence="co_occurrence" if endpoints_are_text_anchors else "dataflow",
+            evidence_detail=("bfs_path_text_anchors" if endpoints_are_text_anchors else "bfs_path"),
         )
     )
     return findings
@@ -755,12 +842,63 @@ def run_taint(
             )
         )
 
+    deduped, duplicates_dropped = _dedupe_findings(findings)
+
     if anchor_stats is not None:
         anchor_stats["rules_evaluated"] = len(rules)
         anchor_stats["rules_zero_anchors"] = len(zero_anchor_rule_ids)
         anchor_stats["zero_anchor_rule_ids"] = zero_anchor_rule_ids
+        anchor_stats["duplicate_findings_dropped"] = duplicates_dropped
 
-    return findings
+    return deduped
+
+
+def _finding_identity(finding: TaintFinding) -> tuple:
+    """The (rule, source location, sink location) a finding actually claims."""
+    src = finding.source_symbol or {}
+    sink = finding.sink_symbol or {}
+    return (
+        finding.rule_id,
+        src.get("file"),
+        src.get("line"),
+        src.get("qualified_name") or src.get("name"),
+        sink.get("file"),
+        sink.get("line"),
+        sink.get("qualified_name") or sink.get("name"),
+    )
+
+
+def _dedupe_findings(findings: list[TaintFinding]) -> tuple[list[TaintFinding], int]:
+    """Collapse findings that make the identical claim. Returns ``(kept, dropped)``.
+
+    R3: ``_intraprocedural_co_calls`` emits one tuple per *enclosing
+    caller*, so a single (rule, source location, sink location) claim was
+    re-emitted once for every function that happened to call both
+    endpoints. Measured on this repo before the fix: 217 surplus
+    emissions, the worst single claim emitted 24 times — each one
+    counted again in ``findings``, in the confidence distribution, and in
+    the risk score. Same claim, same file, same two lines: one finding.
+
+    First occurrence wins EXCEPT that a later ``dataflow`` finding
+    upgrades an earlier ``co_occurrence`` one for the same claim —
+    collapsing duplicates must never discard the stronger evidence, which
+    it otherwise would, because the text-scan co-occurrence findings are
+    appended before the BFS pass runs.
+    """
+    index_by_identity: dict[tuple, int] = {}
+    kept: list[TaintFinding] = []
+    dropped = 0
+    for finding in findings:
+        identity = _finding_identity(finding)
+        existing = index_by_identity.get(identity)
+        if existing is None:
+            index_by_identity[identity] = len(kept)
+            kept.append(finding)
+            continue
+        dropped += 1
+        if finding.evidence == "dataflow" and kept[existing].evidence != "dataflow":
+            kept[existing] = finding
+    return kept, dropped
 
 
 # ---------------------------------------------------------------------------
@@ -1047,7 +1185,29 @@ def _hit_to_anchor(hit: tuple[str, int], enclosing: dict | None, path: str) -> d
         "line": line,
         "file": path,
         "_enclosing_id": enclosing["id"],
+        # R3: ``id`` above is the ENCLOSING function, not this token —
+        # the token has no ``symbols`` row at all. Mark the anchor so
+        # downstream constructors can tell a real symbol endpoint from a
+        # text proxy and refuse to call the latter a dataflow endpoint.
+        "_text_anchor": True,
     }
+
+
+def _public_text_anchor(anchor: dict) -> dict:
+    """Project a text-scan anchor to its PUBLIC descriptor.
+
+    R3: ``anchor["id"]`` is the enclosing function's symbol id, reused as
+    a join key so the hit slots into the graph machinery. Emitting it as
+    the ``id`` of the source (and again as the ``id`` of the sink) made
+    894 findings claim ONE symbol as BOTH ends of a path — 576 of them
+    measurably so on this repo before the fix. A regex hit on
+    ``request.args`` is not a symbol and has no symbol id; the honest
+    fields are its location plus the enclosing symbol it sits inside.
+    """
+    out = {k: v for k, v in anchor.items() if not k.startswith("_") and k != "id"}
+    out["enclosing_id"] = anchor.get("_enclosing_id")
+    out["anchor_kind"] = "text_scan"
+    return out
 
 
 def _text_scan_rule_anchors(
@@ -1124,8 +1284,8 @@ def _text_scan_rule_anchors(
                     "line": enclosing_sym.get("line_start"),
                     "file": path,
                 }
-                source_symbol = {k: v for k, v in src_anchor.items() if k != "_enclosing_id"}
-                sink_symbol = {k: v for k, v in sink_anchor.items() if k != "_enclosing_id"}
+                source_symbol = _public_text_anchor(src_anchor)
+                sink_symbol = _public_text_anchor(sink_anchor)
                 co_findings.append(
                     TaintFinding(
                         rule_id=rule.rule_id,
@@ -1136,6 +1296,11 @@ def _text_scan_rule_anchors(
                         path_symbols=[source_symbol, enclosing_dict, sink_symbol],
                         sanitizer_in_path=eid in sanitized_enclosing_ids,
                         owasp_top10=rule.owasp_top10,
+                        # R3: nothing was walked here. Two regexes matched
+                        # inside one function body. The triple below is a
+                        # literal three-element list, not a path.
+                        evidence="co_occurrence",
+                        evidence_detail="text_scan_same_function",
                     )
                 )
 
