@@ -385,6 +385,31 @@ class GateRunner:
             [sys.executable, "scripts/scan_internal_language.py", "--all"],
             fix_hint="remove the flagged internal-language term (see scripts/internal_language_patterns.py)",
         )
+        # Tracked-but-ignored gate. Sibling of the scan above and the same
+        # failure shape: a file everyone believes is excluded, publishing on
+        # every push. The difference is that this one's natural audit --
+        # `git ls-files | xargs git check-ignore` -- returns zero hits ALWAYS,
+        # because check-ignore skips indexed paths without `--no-index`. So the
+        # class survives being "audited clean": measured 2026-08-05, the naive
+        # form found 0 in three repos while the correct form found 43 in one
+        # (incl. a 2.6 MB personal corpus) and 27 in another (incl. a
+        # CREDENTIALS.md tracked since 2025-09-17 under a rule naming it).
+        #
+        # ~0.5s on this repo (4959 tracked files, median of three runs), no
+        # index build, no network. It is index-free by design, so it costs the
+        # same on a cold clone. This repo measures CLEAN today -- the gate was
+        # wired only after confirming that, so it blocks no existing push.
+        #
+        # --fail-on-found exits 5 on UNANALYZABLE as well as on VIOLATION: a
+        # gate that cannot measure must not report success.
+        self._run(
+            "roam ignore-drift --fail-on-found",
+            [sys.executable, "-m", "roam", "ignore-drift", "--fail-on-found"],
+            fix_hint=(
+                "a tracked file matches a .gitignore rule; untrack it with "
+                "`git rm --cached <path>` (the file stays on disk)"
+            ),
+        )
 
     def _run_count_scripts(self) -> None:
         # Cheap (~2s) backstop for --no-verify commit-time bypasses; the
