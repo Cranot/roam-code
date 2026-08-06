@@ -12426,7 +12426,7 @@ def effects(symbol: str = "", path: str = "", effect_type: str = "", root: str =
     name="roam_budget_check",
     description="Check changes against architectural budgets (cycles, health floor, complexity).",
 )
-def budget_check(config: str = "", staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
+def budget_check(config: str = "", commit_range: str = "", root: str = ".") -> dict:
     """Check pending changes against architectural budgets.
 
     WHEN TO USE: Call this as a CI gate or before merging to verify
@@ -12438,10 +12438,13 @@ def budget_check(config: str = "", staged: bool = False, commit_range: str = "",
     ----------
     config:
         Path to custom budget YAML config.
-    staged:
-        If True, analyse only staged changes.
     commit_range:
         Git range like ``main..HEAD`` for branch comparison.
+
+    Scope is always the whole indexed tree vs the stored baseline
+    snapshot. The former ``staged`` parameter was removed on 2026-08-06:
+    it forwarded ``--staged``, which the CLI accepted and discarded, so a
+    caller asking for staged-only scoring silently got a whole-tree score.
 
     Returns: verdict, per-rule pass/fail results, and whether a
     baseline snapshot was available.
@@ -12449,8 +12452,6 @@ def budget_check(config: str = "", staged: bool = False, commit_range: str = "",
     args = ["budget"]
     if config:
         args.extend(["--config", config])
-    if staged:
-        args.append("--staged")
     if commit_range:
         args.extend(["--range", commit_range])
     return _run_roam(args, root)
@@ -19570,7 +19571,6 @@ def roam_workflow(
 def roam_compile(
     task: str,
     artifact: str = "auto",
-    model_tier: str = "auto",
     brief: bool = False,
     explain: bool = False,
     route: bool = False,
@@ -19591,10 +19591,11 @@ def roam_compile(
         src/roam/cli.py" or "Refactor the auth module").
     artifact:
         "auto" (default), "facts", "lean", "full", or "contract".
-        "auto" uses the ArtifactSelector policy.
-    model_tier:
-        "auto" (default), "weak", or "capable". Capable models prefer
-        "facts"; weak models prefer "full".
+        "auto" uses the ArtifactSelector policy. This is the only
+        envelope-shape control: the former ``model_tier`` parameter was
+        removed on 2026-08-06 because the CLI flag it forwarded was
+        accepted and discarded (all three values produced byte-identical
+        output).
     brief:
         Emit the W22 brief envelope (~125-160 chars: procedure +
         classifier_confidence + first-command hint only). For agents that
@@ -19621,7 +19622,7 @@ def roam_compile(
     """
     args = ["compile", task]
     # Mode flags are mutually exclusive with each other but compose with the
-    # base artifact / model_tier args. CLI handles precedence.
+    # base artifact arg. CLI handles precedence.
     if explain:
         args.append("--explain")
     elif brief:
@@ -19631,7 +19632,7 @@ def roam_compile(
         if profile:
             args.extend(["--profile", profile])
     else:
-        args.extend(["--artifact", artifact, "--model-tier", model_tier])
+        args.extend(["--artifact", artifact])
     result = _run_roam(args, root)
     # W34e (E9): brief mode is meant to return a tiny shape — the CLI
     # already does that, but the MCP wrapper wraps it in an envelope.

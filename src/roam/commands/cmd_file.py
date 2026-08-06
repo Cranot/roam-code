@@ -24,6 +24,11 @@ from roam.output.formatter import abbrev_kind, format_signature, json_envelope, 
 # Helpers
 # ---------------------------------------------------------------------------
 
+# How many imports/importers the text renderer shows before it truncates with
+# a ``(+N)`` marker. ``--full`` lifts the cap entirely. JSON output is never
+# truncated, so this is a text-mode display constant only.
+_DEPS_PREVIEW = 8
+
 
 def _resolve_file(conn, path):
     """Resolve a file path to its DB row, or None."""
@@ -134,10 +139,14 @@ def _skeleton_to_json(frow, symbols, kind_counts, parent_ids):
     }
 
 
-def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
+def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None, full=False):
     """Render a single file skeleton as text lines.
 
     If *header* is provided, use it instead of the default file header.
+
+    *full* disables the dependency-list truncation. Without it the
+    imports/importers lines are capped at :data:`_DEPS_PREVIEW` entries with a
+    ``(+N)`` marker — which is exactly what ``--full`` exists to switch off.
     """
     lines = []
 
@@ -154,6 +163,12 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
         lines.append(f"{frow['path']}  ({meta})")
     lines.append("")
 
+    def _dep_line(label: str, paths: list[str]) -> str:
+        if full or len(paths) <= _DEPS_PREVIEW:
+            return f"{label} ({len(paths)}): {', '.join(paths)}"
+        shown = ", ".join(paths[:_DEPS_PREVIEW])
+        return f"{label} ({len(paths)}): {shown} (+{len(paths) - _DEPS_PREVIEW})"
+
     def _append_deps(out):
         imports = frow.get("imports") or []
         importers = frow.get("importers") or []
@@ -161,13 +176,9 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
             return
         out.append("")
         if imports:
-            shown = ", ".join(imports[:8])
-            more = f" (+{len(imports) - 8})" if len(imports) > 8 else ""
-            out.append(f"imports ({len(imports)}): {shown}{more}")
+            out.append(_dep_line("imports", imports))
         if importers:
-            shown = ", ".join(importers[:8])
-            more = f" (+{len(importers) - 8})" if len(importers) > 8 else ""
-            out.append(f"importers ({len(importers)}): {shown}{more}")
+            out.append(_dep_line("importers", importers))
 
     if not symbols:
         lines.append("  (no symbols)")
@@ -225,7 +236,11 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
 )
 @click.command("file")
 @click.argument("paths", nargs=-1)
-@click.option("--full", is_flag=True, help="Show all results without truncation")
+@click.option(
+    "--full",
+    is_flag=True,
+    help=f"Show the complete imports/importers lists instead of the first {_DEPS_PREVIEW} plus a (+N) marker.",
+)
 @click.option(
     "--changed",
     is_flag=True,
@@ -381,7 +396,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             _file_verdict_txt = f"{_fname_txt}: {len(symbols)} symbols ({_kind_str_txt}), {frow['line_count']} LOC"
             click.echo(f"VERDICT: {_file_verdict_txt}")
             click.echo()
-            text_lines = _render_skeleton_text(frow, symbols, kind_counts, parent_ids)
+            text_lines = _render_skeleton_text(frow, symbols, kind_counts, parent_ids, full=full)
             click.echo("\n".join(text_lines))
             return
 
@@ -444,6 +459,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                 kind_counts,
                 parent_ids,
                 header=header,
+                full=full,
             )
             click.echo("\n".join(text_lines))
             first = False
