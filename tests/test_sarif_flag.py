@@ -328,6 +328,164 @@ class TestSarifSeverityMapping:
         assert doc["runs"][0]["results"][0]["level"] == "warning"
 
 
+class TestR3TaintSarifEvidenceHonesty:
+    """R3: SARIF must not publish the claim the JSON envelope disclaims.
+
+    ``roam --json taint`` reports every co-occurrence finding at
+    ``confidence: low`` with ``reason: "source and sink co-occur in the
+    same enclosing function; no dataflow path was computed"``,
+    ``evidence: "co_occurrence"``, ``path_length: null`` and a
+    ``risk_score`` that excludes it. ``roam --sarif taint`` on the SAME
+    index emitted the SAME finding as ``level: "error"``, message
+    ``"Tainted flow: environ -> run"``, and a three-step ``codeFlows``
+    threadFlow — a codeFlow IS the assertion that those hops were
+    walked, and for a co-occurrence finding the hop list is a
+    synthesised triple (``cmd_taint`` builds ``path`` from
+    ``f.path_symbols`` for every finding, dataflow or not).
+
+    SARIF is the machine-read surface a Code Scanning gate consumes, so
+    it is the surface where a fabricated flow does the most damage.
+    """
+
+    @staticmethod
+    def _finding(evidence: str | None) -> dict:
+        """The live co-occurrence shape, minus the evidence key when None.
+
+        Mirrors ``cmd_taint``'s ``findings_dump`` entry for the dogfood
+        finding at ``cmd_bench.py`` (environ@78 -> run@79): a synthesised
+        three-hop ``path`` with ``path_length: None``.
+        """
+        f = {
+            "rule_id": "python-command-injection",
+            "severity": "error",
+            "cwe": "CWE-78",
+            "owasp_top10": "A03:2021_Injection",
+            "source": {"name": "environ", "file": "b.py", "line": 78},
+            "sink": {"name": "run", "file": "b.py", "line": 79},
+            "evidence_detail": "text_scan_same_function",
+            "path_length": None,
+            "path": [
+                {"name": "environ", "file": "b.py", "line": 78},
+                {"name": "_compile_envelope", "file": "b.py", "line": 70},
+                {"name": "run", "file": "b.py", "line": 79},
+            ],
+            "sanitizer_in_path": False,
+            "vex_justification": None,
+        }
+        if evidence is not None:
+            f["evidence"] = evidence
+        return f
+
+    def test_co_occurrence_finding_is_not_published_as_an_error(self):
+        """``evidence: co_occurrence`` must not surface as ``level: error``.
+
+        ``error`` is the level a Code Scanning gate fails a build on. A
+        finding the analyzer itself scores at ``risk_score`` 0 and
+        ``confidence: low`` has not earned it.
+        """
+        from roam.output.sarif import taint_to_sarif
+
+        doc = taint_to_sarif([self._finding("co_occurrence")])
+        result = doc["runs"][0]["results"][0]
+        assert result["level"] != "error", (
+            f"a co-occurrence finding must not publish at level=error; got {result['level']!r}"
+        )
+
+    def test_co_occurrence_finding_emits_no_codeflow(self):
+        """No ``codeFlows`` for a path that was never walked.
+
+        The three ``path`` entries are synthesised — source, enclosing
+        symbol, sink — not traversed edges. Projecting them into a
+        threadFlow tells the consumer roam followed taint through them.
+        """
+        from roam.output.sarif import taint_to_sarif
+
+        doc = taint_to_sarif([self._finding("co_occurrence")])
+        result = doc["runs"][0]["results"][0]
+        assert "codeFlows" not in result, (
+            f"co-occurrence finding must not assert a walked path; got {result.get('codeFlows')!r}"
+        )
+
+    def test_co_occurrence_message_does_not_assert_a_flow(self):
+        """The message must read as a co-occurrence, not as a flow."""
+        from roam.output.sarif import taint_to_sarif
+
+        doc = taint_to_sarif([self._finding("co_occurrence")])
+        text = doc["runs"][0]["results"][0]["message"]["text"]
+        assert not text.startswith("Tainted flow:"), f"message asserts a flow that was never computed; got {text!r}"
+        assert "co-occurrence" in text.lower(), f"message must name the basis it actually rests on; got {text!r}"
+
+    def test_co_occurrence_result_carries_the_evidence_basis(self):
+        """``properties`` exposes the basis so a consumer can triage it."""
+        from roam.output.sarif import taint_to_sarif
+
+        doc = taint_to_sarif([self._finding("co_occurrence")])
+        props = doc["runs"][0]["results"][0]["properties"]
+        assert props["evidence"] == "co_occurrence"
+        assert props["evidence_detail"] == "text_scan_same_function"
+        assert props["path_length"] is None
+
+    def test_dataflow_finding_keeps_error_message_and_codeflow(self):
+        """The downgrade is CONDITIONAL — a proved flow is untouched.
+
+        This repo produces ZERO ``evidence: dataflow`` findings today
+        (``evidence_mix`` = ``{dataflow: 0, co_occurrence: 637}``), so a
+        blanket downgrade would regress the real taint surface
+        invisibly. This synthetic case is the only thing standing
+        between the fix and that regression.
+        """
+        from roam.output.sarif import taint_to_sarif
+
+        finding = self._finding("dataflow")
+        finding["path_length"] = 3
+        doc = taint_to_sarif([finding])
+        result = doc["runs"][0]["results"][0]
+        assert result["level"] == "error"
+        assert result["message"]["text"] == "Tainted flow: environ → run"
+        assert "codeFlows" in result
+        flow_locations = result["codeFlows"][0]["threadFlows"][0]["locations"]
+        assert len(flow_locations) == 3
+        # No evidence properties bolted onto the proved path — the
+        # dataflow branch stays byte-identical to pre-R3 output.
+        assert "evidence" not in result["properties"]
+
+    def test_absent_evidence_key_is_left_untouched(self):
+        """An ABSENT ``evidence`` key is UNKNOWN and changes nothing.
+
+        Deliberate and load-bearing. ``cmd_taint`` stamps ``evidence``
+        on every entry of ``findings_dump``
+        (``getattr(f, "evidence", "co_occurrence")``), so 637 of 637
+        live findings take the disclosed branch. A caller that omits the
+        key has supplied no measurement, and manufacturing a
+        co-occurrence disclaimer out of a missing field would be the
+        same defect in the opposite direction. This test pins the choice
+        so it stays a decision rather than an accident.
+        """
+        from roam.output.sarif import taint_to_sarif
+
+        doc = taint_to_sarif([self._finding(None)])
+        result = doc["runs"][0]["results"][0]
+        assert result["level"] == "error"
+        assert result["message"]["text"] == "Tainted flow: environ → run"
+        assert "codeFlows" in result
+
+    def test_sanitized_co_occurrence_keeps_its_note_downgrade(self):
+        """A sanitized co-occurrence finding stays at ``note``.
+
+        ``note`` is already below ``warning``; the R3 downgrade must not
+        promote a remediated finding back up the scale.
+        """
+        from roam.output.sarif import taint_to_sarif
+
+        finding = self._finding("co_occurrence")
+        finding["sanitizer_in_path"] = True
+        finding["vex_justification"] = "vulnerable_code_not_in_execute_path"
+        doc = taint_to_sarif([finding])
+        result = doc["runs"][0]["results"][0]
+        assert result["level"] == "note"
+        assert "codeFlows" not in result
+
+
 class TestW1062DashboardFilterTags:
     """W1062: SARIF ``result.properties.tags[]`` plumbing.
 

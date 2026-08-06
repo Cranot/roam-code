@@ -1764,6 +1764,15 @@ def taint_to_sarif(
     Each finding dict is the per-finding shape that ``cmd_taint`` builds
     via its ``findings_dump`` list.
 
+    R3 — a finding whose ``evidence`` is present and not ``"dataflow"``
+    is one the analyser itself declined to claim a path for. It is
+    published without a ``codeFlows`` entry, with a message that names
+    the basis rather than asserting a traversal, never at
+    ``level: "error"``, and with ``properties.evidence`` /
+    ``evidence_detail`` / ``path_length`` so a Code Scanning consumer
+    sees what the finding rests on. ``evidence == "dataflow"`` and an
+    absent ``evidence`` key both keep the pre-R3 output byte-identical.
+
     W1061-followup — *runtime_overrides* carries pre-built SARIF
     ``configurationOverride`` dicts (§3.51) when the caller (typically
     ``cmd_taint``) applied a rule-id-level runtime filter that disabled
@@ -1787,6 +1796,30 @@ def taint_to_sarif(
         # Sanitized findings are downgraded to note so they don't
         # break a CI gate that fails on warnings/errors.
         level = "note" if sanitized else _to_level(severity)
+
+        # R3: SARIF must not publish the claim the JSON envelope
+        # disclaims. ``roam --json taint`` reports a co-occurrence
+        # finding at confidence=low with reason "source and sink
+        # co-occur in the same enclosing function; no dataflow path was
+        # computed", path_length=null, and excludes it from risk_score.
+        # The same finding used to leave here as level=error with a
+        # "Tainted flow: X -> Y" message and a codeFlow — and a codeFlow
+        # IS the assertion that those hops were walked. They were not:
+        # ``cmd_taint`` fills ``path`` from ``f.path_symbols`` for every
+        # finding, so a co-occurrence entry carries a SYNTHESISED
+        # source/enclosing/sink triple.
+        #
+        # Keyed off ``evidence``, never off ``confidence``/``reason`` —
+        # those are added downstream by ``wrap_findings`` and are absent
+        # from the ``findings_dump`` dicts this function receives.
+        #
+        # An ABSENT ``evidence`` key is UNKNOWN, and UNKNOWN changes
+        # nothing here: ``cmd_taint`` stamps the field on every entry it
+        # builds, so every finding roam actually emits takes an informed
+        # branch, and inventing a disclaimer out of a missing field
+        # would be the same fabrication pointed the other way.
+        evidence = f.get("evidence")
+        disclaimed = evidence is not None and evidence != "dataflow"
 
         # W453 + W1062: build the per-finding tags list once and reuse
         # it on both the rule (first time we see it) and the result.
@@ -1841,7 +1874,23 @@ def taint_to_sarif(
         src = f.get("source") or {}
         sink_name = sink.get("name") or "<sink>"
         src_name = src.get("name") or "<source>"
-        msg_parts = [f"Tainted flow: {src_name} → {sink_name}"]
+        if disclaimed:
+            # R3: names the basis instead of asserting a traversal. The
+            # ``evidence`` value carries the analyser's own word for it
+            # ("co_occurrence" today) so a future evidence kind reads
+            # correctly here without another edit.
+            basis = str(evidence).replace("_", "-")
+            msg_parts = [
+                f"Possible tainted flow ({basis} only; no dataflow path was computed): {src_name} → {sink_name}"
+            ]
+            # A disclaimed finding must not fail a Code Scanning gate
+            # keyed on level=error. ``note`` (already applied when a
+            # sanitizer is in the path) is below ``warning`` and is left
+            # alone — the downgrade never promotes a remediated finding.
+            if level == "error":
+                level = "warning"
+        else:
+            msg_parts = [f"Tainted flow: {src_name} → {sink_name}"]
         if sanitized:
             vex = f.get("vex_justification")
             msg_parts.append(f"(sanitized; OpenVEX: {vex})" if vex else "(sanitized)")
@@ -1851,15 +1900,28 @@ def taint_to_sarif(
         # Viewer render these as filter chips. Always present
         # ("security", "taint" at minimum); CWE / OWASP appended when
         # the rule declares them.
+        # R3: on a disclaimed finding, publish the basis a triage user
+        # needs to judge it — the same three fields the JSON envelope
+        # already ships. ``properties`` is the SARIF §3.27.17 bag Code
+        # Scanning surfaces verbatim, so no schema change is involved.
+        props: dict = {"tags": list(tags)}
+        if disclaimed:
+            props["evidence"] = evidence
+            props["evidence_detail"] = f.get("evidence_detail")
+            props["path_length"] = f.get("path_length")
         result = _result_entry(
             rule_id=rule_id,
             severity=level,
             locations=locations,
             message=" ".join(msg_parts),
             level_mapper=lambda s: s,
-            properties={"tags": list(tags)},
+            properties=props,
         )
-        if thread_locations:
+        # R3: a codeFlow is the assertion that these hops were walked.
+        # A disclaimed finding has no walked hops to describe, so the
+        # whole key is suppressed rather than emitted empty — an empty
+        # threadFlow would still read as "we looked and found nothing".
+        if thread_locations and not disclaimed:
             result["codeFlows"] = [{"threadFlows": [{"locations": thread_locations}]}]
         results.append(result)
 
