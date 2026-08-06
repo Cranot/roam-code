@@ -73,9 +73,30 @@ trap cleanup_updates EXIT HUP INT TERM
 chmod 600 "$UPDATES_FILE"
 cat >"$UPDATES_FILE"
 
+# Prefer the repo's own virtualenv over whatever `python` PATH happens to
+# resolve to. A pre-push gate exists to predict CI, and it can only do that
+# if it runs the interpreter the project is installed into. Measured
+# 2026-08-06 on a dev box where PATH-`python` was a global 3.14: the gate
+# reported 7 test errors that do not exist under the project's 3.12, i.e. it
+# failed the push over an environment nothing ships. requires-python is
+# currently unbounded (">=3.10") while CI runs 3.10-3.13, so "some Python on
+# PATH" is not a defensible stand-in for "the Python this project uses".
+# An explicit PYTHON= still wins, and a repo with no venv falls through to
+# the previous PATH search unchanged.
+if [ -z "${PYTHON:-}" ]; then
+    for _venv_py in \
+        "$REPO_ROOT/.venv/Scripts/python.exe" \
+        "$REPO_ROOT/.venv/bin/python"; do
+        if [ -x "$_venv_py" ]; then
+            PYTHON="$_venv_py"
+            break
+        fi
+    done
+fi
+
 PY_BIN="${PYTHON:-python}"
 PY_ARG=""
-if ! command -v "$PY_BIN" >/dev/null 2>&1; then
+if ! command -v "$PY_BIN" >/dev/null 2>&1 && [ ! -x "$PY_BIN" ]; then
     if command -v py >/dev/null 2>&1; then
         PY_BIN=py
         PY_ARG=-3
