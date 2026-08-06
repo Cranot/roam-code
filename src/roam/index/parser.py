@@ -338,8 +338,15 @@ def parse_file(path: Path, language: str | None = None):
     try:
         if tree.root_node.has_error:
             parse_errors["syntax_error"] += 1
-    except AttributeError:  # pragma: no cover - older tree-sitter bindings
-        pass
+    except AttributeError as exc:  # pragma: no cover - older tree-sitter bindings
+        # Not silent: this counter decides whether a zero-symbol index is a
+        # legitimate empty tree or a broken one. A binding without
+        # ``has_error`` makes every file look clean, which downgrades a
+        # refusal into a false success -- exactly the failure this counter
+        # exists to prevent. Say so rather than swallowing it.
+        from roam.observability import log_swallowed
+
+        log_swallowed("index.parser:has_error_unavailable", exc)
 
     return tree, source, language
 
