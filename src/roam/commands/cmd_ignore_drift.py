@@ -323,10 +323,14 @@ def ignore_drift(ctx: click.Context, fail_on_found: bool) -> None:
     verdict = _build_verdict(report)
     status = report["status"]
     violations = report["violations"]
-    incomplete = status == "unanalyzable"
+    # Named for the canonical disclosure token, not shortened: the
+    # json and text branches must spell this signal the same way, or a
+    # reader (and the W1331 scanner) cannot tell the text branch
+    # discloses it at all.
+    scan_incomplete = status == "unanalyzable"
 
     facts = [verdict]
-    if not incomplete:
+    if not scan_incomplete:
         facts.append(f"{report['tracked_files']} tracked paths scanned")
         facts.append(f"{len(violations)} tracked files flagged as ignored")
         facts.append(f"{report['negation_excluded']} candidate paths excluded as negation rules")
@@ -347,15 +351,15 @@ def ignore_drift(ctx: click.Context, fail_on_found: bool) -> None:
                 "per_path_confirmed": report["per_path_confirmed"],
                 "git_root": report["git_root"],
                 "unanalyzable_reason": report["reason"],
-                "scan_incomplete": incomplete,
-                "partial_success": incomplete,
+                "scan_incomplete": scan_incomplete,
+                "partial_success": scan_incomplete,
                 "remediation": _REMEDIATION_NOTE,
             },
             budget=token_budget,
             findings=violations,
         )
         click.echo(to_json(envelope))
-        if fail_on_found and (violations or incomplete):
+        if fail_on_found and (violations or scan_incomplete):
             from roam.exit_codes import GateFailureError
 
             raise GateFailureError(verdict)
@@ -363,7 +367,7 @@ def ignore_drift(ctx: click.Context, fail_on_found: bool) -> None:
 
     click.echo(f"VERDICT: {verdict}")
     click.echo()
-    if incomplete:
+    if scan_incomplete:
         click.echo("  Nothing was measured, so nothing is proven clean.")
         click.echo("  Run this inside a git worktree with `git` on PATH and retry.")
         return
