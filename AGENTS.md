@@ -690,8 +690,12 @@ bundles):
 1. **Any push that precedes a tag runs `python scripts/prepush_check.py
    --release` first.** The release tier = FULL gates + the ENTIRE test suite
    (`-m "not slow"`, exactly CI's surface) + commit-message leak scan +
-   doc-consistency + landing-page linkcheck (~15-25 min). Green here means
-   CI will be green; a tag never points at an unverified commit.
+   doc-consistency + landing-page `linkcheck --strict` (~15-25 min). That is
+   CI's test, ruff and doc-hygiene surface — not every CI lane. The tier
+   prints the uncovered lanes (exec-bits, shellcheck, strip_metadata,
+   `roam compatibility`, secret-scan, dependency-audit, no-optional-deps,
+   wheel-smoke) on success; read that note instead of treating green as
+   "CI will be green". A tag never points at an unverified commit.
 2. Routine development pushes keep the FAST tier (the pre-push hook), but a
    batch of waves accumulated across sessions counts as release-sized —
    run `--release` before pushing the batch.

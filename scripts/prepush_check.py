@@ -487,6 +487,25 @@ def _print_summary(results: list[GateResult], tier: str = "FAST") -> bool:
                 "[prepush]   the test suite, so it does NOT prove CI will be green.\n"
                 "[prepush]   Before a tag: python scripts/prepush_check.py --release"
             )
+        else:
+            # Same honesty rule as the branch above, applied to the tier that
+            # most invites over-reading. RELEASE covers CI's test + ruff +
+            # doc-hygiene surface, and that is genuinely most of the
+            # fix-forward mass — but "green here means CI will be green" was
+            # measurably false: no tier runs these lanes, so a red one of
+            # them stays invisible until after the push.
+            # Enumerated against .github/workflows/ on 2026-08-06; re-check
+            # this list when a CI lane is added.
+            print(
+                "[prepush] NOTE: RELEASE covers CI's test, ruff and doc-hygiene surface.\n"
+                "[prepush]   These CI lanes are NOT run by any tier and stay unproven here:\n"
+                "[prepush]     - scripts/test-exec-bits.sh + shellcheck   (lint job)\n"
+                "[prepush]     - scripts/strip_metadata.py               (doc-hygiene; needs pypdf)\n"
+                "[prepush]     - roam compatibility --ci / --require-coverage\n"
+                "[prepush]     - roam secrets --fail-on-found + roam ignore-drift --fail-on-found\n"
+                "[prepush]     - dependency-audit / test-no-optional-deps / wheel-smoke jobs\n"
+                "[prepush]   Green here does not prove those lanes are green."
+            )
     print("=" * 64)
     return not failures
 
@@ -502,8 +521,10 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "RELEASE tier: FULL + the ENTIRE test suite (-m 'not slow', "
             "what CI runs) + commit-message scan + doc-consistency + "
-            "landing-page linkcheck. Run before ANY push that precedes a "
-            "tag — green here means CI will be green. ~15-25 min."
+            "landing-page linkcheck --strict. Run before ANY push that "
+            "precedes a tag. Covers CI's test, lint(ruff) and doc-hygiene "
+            "surface; it does NOT run every CI lane (see the RELEASE note "
+            "printed on success). ~15-25 min."
         ),
     )
     parser.add_argument(
@@ -550,9 +571,19 @@ def main(argv: list[str] | None = None) -> int:
             [sys.executable, "-m", "pytest", "tests/test_doc_consistency.py", "-q", "-n", "0"],
             fix_hint="version/count literals drifted — run the sync scripts and fix the named spots",
         )
+        # `--strict` is load-bearing, not decoration. `_render_report` ends
+        # `return 1 if strict else 0` (scripts/linkcheck.py:151), so the
+        # flagless form PRINTS every dead link and then exits 0 — and this
+        # runner records PASS on returncode == 0 (`_run`, above). From the
+        # tier's first commit (2b60ff3a) until 2026-08-06 this gate therefore
+        # could not fail, against both its own design memo and
+        # CONTRIBUTING.md:504, which specify the `--strict` form. It
+        # went unnoticed because a clean tree exits 0 either way; measured with
+        # one injected dead link, flagless exited 0 and `--strict` exited 1.
+        # tests/test_linkcheck_gate.py AST-pins the flag into this argv.
         runner._run(
             "landing-page linkcheck",
-            [sys.executable, "scripts/linkcheck.py"],
+            [sys.executable, "scripts/linkcheck.py", "--strict"],
             fix_hint="fix the dead anchor/link named above",
         )
         # Mirror CI's index pre-build before fanning out across workers.
