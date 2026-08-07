@@ -188,6 +188,17 @@ FAST_PYTEST_GUARDS: tuple[str, ...] = (
     # decorative again. Pure AST scan of src/roam/commands + a YAML read; no
     # index dependency.
     "test_dead_cli_flags_gate.py",
+    # 2026-08-07: the guard on THIS file was not run by this file. Its own
+    # module docstring says it "runs in the FAST bundle itself" -- measured, a
+    # collect-only over this tuple returned 0 node ids from it. So every
+    # contract it pins (the bundle membership above, the once-and-only-once
+    # whole-tree leak scan, and the RELEASE note not disclaiming a gate that
+    # runs in every tier) was enforced by CI AFTER the push and by nothing
+    # before it -- while the docstring read as local coverage. The file it
+    # guards is this one, so a change here is exactly when it should run.
+    # Pure AST parse of a single script, no subprocess and no index: 10 tests
+    # in 0.70s serial, and it folds into the existing worker pool.
+    "test_prepush_gate_wired.py",
 )
 
 # FULL-tier additions (heavy doc-hygiene + extra-axis guards). Per the memo,
