@@ -2928,251 +2928,1431 @@
     "refactor": 73,
     "review": 73
   },
-  "mcp_tools": [
-    "roam_adrs",
-    "roam_adversarial",
-    "roam_adversarial_review",
-    "roam_affected",
-    "roam_affected_tests",
-    "roam_agent_context",
-    "roam_agent_export",
-    "roam_agent_opt",
-    "roam_agent_plan",
-    "roam_agent_score",
-    "roam_ai_ratio",
-    "roam_ai_readiness",
-    "roam_alerts",
-    "roam_algo",
-    "roam_annotate_symbol",
-    "roam_api",
-    "roam_api_changes",
-    "roam_api_drift",
-    "roam_architecture_drift",
-    "roam_article_12_check",
-    "roam_ask",
-    "roam_at",
-    "roam_attest",
-    "roam_audit",
-    "roam_audit_trail_conformance_check",
-    "roam_audit_trail_export",
-    "roam_audit_trail_verify",
-    "roam_auth_gaps",
-    "roam_batch_get",
-    "roam_batch_search",
-    "roam_bisect_blame",
-    "roam_boundary",
-    "roam_breaking_changes",
-    "roam_brief",
-    "roam_budget_check",
-    "roam_bus_factor",
-    "roam_capsule_export",
-    "roam_catalog",
-    "roam_causal_graph",
-    "roam_cga_emit",
-    "roam_cga_verify",
-    "roam_changelog",
-    "roam_check_rules",
-    "roam_clean",
-    "roam_clones",
-    "roam_closure",
-    "roam_clusters",
-    "roam_codeowners",
-    "roam_commands",
-    "roam_compare",
-    "roam_compatibility",
-    "roam_compile",
-    "roam_complete",
-    "roam_complexity_report",
-    "roam_congestion",
-    "roam_context",
-    "roam_conventions",
-    "roam_coupling",
-    "roam_coverage_gaps",
-    "roam_critique",
-    "roam_cut",
-    "roam_cut_analysis",
-    "roam_cycles",
-    "roam_dark_matter",
-    "roam_dashboard",
-    "roam_dead_code",
-    "roam_debt",
-    "roam_delete_check",
-    "roam_deps",
-    "roam_describe",
-    "roam_dev_profile",
-    "roam_diagnose",
-    "roam_diagnose_issue",
-    "roam_diff",
-    "roam_disambiguate",
-    "roam_doc_intent",
-    "roam_doc_staleness",
-    "roam_docs_coverage",
-    "roam_doctor",
-    "roam_dogfood",
-    "roam_dogfood_aggregate",
-    "roam_drift",
-    "roam_duplicates",
-    "roam_effects",
-    "roam_endpoints",
-    "roam_entry_points",
-    "roam_eval_retrieve",
-    "roam_evidence_diff",
-    "roam_evidence_doctor",
-    "roam_evidence_oscal",
-    "roam_expand_toolset",
-    "roam_explore",
-    "roam_fan",
-    "roam_fetch_handle",
-    "roam_file_info",
-    "roam_findings_count",
-    "roam_findings_list",
-    "roam_findings_show",
-    "roam_fingerprint",
-    "roam_fitness",
-    "roam_flag_dead",
-    "roam_fleet_plan",
-    "roam_fn_coupling",
-    "roam_for_bug_fix",
-    "roam_for_new_feature",
-    "roam_for_refactor",
-    "roam_for_security_review",
-    "roam_forecast",
-    "roam_full_coupling",
-    "roam_generate_plan",
-    "roam_get_annotations",
-    "roam_get_invariants",
-    "roam_graph_diff",
-    "roam_graph_stats",
-    "roam_grep",
-    "roam_guard",
-    "roam_guard_clean",
-    "roam_guard_diff",
-    "roam_guard_doctor",
-    "roam_guard_history",
-    "roam_guard_pr",
-    "roam_guard_rules",
-    "roam_health",
-    "roam_history_grep",
-    "roam_hotspots",
-    "roam_hover",
-    "roam_idempotency",
-    "roam_impact",
-    "roam_ingest_trace",
-    "roam_init",
-    "roam_intent",
-    "roam_invariants",
-    "roam_layers",
-    "roam_llm_smells",
-    "roam_map",
-    "roam_metrics",
-    "roam_metrics_push",
-    "roam_migration_plan",
-    "roam_migration_safety",
-    "roam_minimap",
-    "roam_missing_index",
-    "roam_module",
-    "roam_mutate",
-    "roam_n1",
-    "roam_next",
-    "roam_observability_opt",
-    "roam_onboard",
-    "roam_oracle_batch",
-    "roam_oracle_is_clone_of",
-    "roam_oracle_is_reachable_from_entry",
-    "roam_oracle_is_test_only",
-    "roam_oracle_route_exists",
-    "roam_oracle_symbol_exists",
-    "roam_oracle_test_only",
-    "roam_orchestrate",
-    "roam_orphan_imports",
-    "roam_orphan_routes",
-    "roam_over_fetch",
-    "roam_owner",
-    "roam_partition",
-    "roam_path_coverage",
-    "roam_patterns",
-    "roam_plan",
-    "roam_plan_refactor",
-    "roam_postmortem",
-    "roam_pr_analyze",
-    "roam_pr_comment_render",
-    "roam_pr_diff",
-    "roam_pr_prep",
-    "roam_pr_risk",
-    "roam_preflight",
-    "roam_prepare_change",
-    "roam_proof_bundle",
-    "roam_py_modern",
-    "roam_py_types",
-    "roam_pytest_fixtures",
-    "roam_reachability_triage",
-    "roam_recommend",
-    "roam_refs_text",
-    "roam_reindex",
-    "roam_relate",
-    "roam_repo_map",
-    "roam_report",
-    "roam_reset",
-    "roam_retrieve",
-    "roam_review_change",
-    "roam_risk",
-    "roam_rules_check",
-    "roam_rules_validate",
-    "roam_runtime_hotspots",
-    "roam_safe_delete",
-    "roam_safe_zones",
-    "roam_sbom",
-    "roam_search_semantic",
-    "roam_search_symbol",
-    "roam_secrets",
-    "roam_semantic_diff",
-    "roam_session_metrics",
-    "roam_side_effects",
-    "roam_simulate",
-    "roam_simulate_departure",
-    "roam_sketch",
-    "roam_smells",
-    "roam_spectral",
-    "roam_split",
-    "roam_stale_refs",
-    "roam_stats",
-    "roam_suggest_refactoring",
-    "roam_suggest_reviewers",
-    "roam_supply_chain",
-    "roam_symbol",
-    "roam_syntax_check",
-    "roam_taint",
-    "roam_taint_classify",
-    "roam_test_gaps",
-    "roam_test_hermeticity",
-    "roam_test_impact",
-    "roam_test_map",
-    "roam_test_pyramid",
-    "roam_test_scaffold",
-    "roam_timeline",
-    "roam_tour",
-    "roam_trace",
-    "roam_trends",
-    "roam_tx_boundaries",
-    "roam_understand",
-    "roam_uses",
-    "roam_validate_plan",
-    "roam_verdict",
-    "roam_verification_contract",
-    "roam_verify",
-    "roam_verify_imports",
-    "roam_vibe_check",
-    "roam_visualize",
-    "roam_vuln_map",
-    "roam_vuln_reach",
-    "roam_weather",
-    "roam_why",
-    "roam_why_fail",
-    "roam_why_slow",
-    "roam_workflow",
-    "roam_ws_context",
-    "roam_ws_understand",
-    "roam_x_lang"
-  ],
-  "schema_version": "1.0.0"
+  "mcp_tools": {
+    "roam_adrs": [
+      "filter_status",
+      "limit",
+      "root"
+    ],
+    "roam_adversarial": [
+      "commit_range",
+      "compress_mode",
+      "fail_on_critical",
+      "output_format",
+      "root",
+      "severity",
+      "staged",
+      "summarize"
+    ],
+    "roam_adversarial_review": [
+      "commit_range",
+      "root",
+      "severity",
+      "staged"
+    ],
+    "roam_affected": [
+      "base",
+      "changed",
+      "depth",
+      "root"
+    ],
+    "roam_affected_tests": [
+      "root",
+      "staged",
+      "symbol"
+    ],
+    "roam_agent_context": [
+      "agent_id",
+      "agents",
+      "root"
+    ],
+    "roam_agent_export": [
+      "format",
+      "root"
+    ],
+    "roam_agent_opt": [
+      "confidence",
+      "only",
+      "profile",
+      "root",
+      "scope"
+    ],
+    "roam_agent_plan": [
+      "agents",
+      "output_format",
+      "root"
+    ],
+    "roam_agent_score": [
+      "agent",
+      "root",
+      "since",
+      "top"
+    ],
+    "roam_ai_ratio": [
+      "root",
+      "since"
+    ],
+    "roam_ai_readiness": [
+      "root",
+      "threshold"
+    ],
+    "roam_alerts": [
+      "root"
+    ],
+    "roam_algo": [
+      "confidence",
+      "root",
+      "task"
+    ],
+    "roam_annotate_symbol": [
+      "author",
+      "content",
+      "expires",
+      "root",
+      "symbol",
+      "tag"
+    ],
+    "roam_api": [
+      "limit",
+      "root",
+      "scope"
+    ],
+    "roam_api_changes": [
+      "base",
+      "root",
+      "severity"
+    ],
+    "roam_api_drift": [
+      "confidence",
+      "model",
+      "root"
+    ],
+    "roam_architecture_drift": [
+      "root",
+      "top",
+      "window"
+    ],
+    "roam_article_12_check": [
+      "root"
+    ],
+    "roam_ask": [
+      "explain",
+      "list_recipes",
+      "query",
+      "recipe",
+      "root"
+    ],
+    "roam_at": [
+      "callers",
+      "context",
+      "location",
+      "root"
+    ],
+    "roam_attest": [
+      "commit_range",
+      "output_format",
+      "root",
+      "sign",
+      "staged"
+    ],
+    "roam_audit": [
+      "brief",
+      "root"
+    ],
+    "roam_audit_trail_conformance_check": [
+      "input_path",
+      "retention_days",
+      "root"
+    ],
+    "roam_audit_trail_export": [
+      "fmt",
+      "input_path",
+      "root",
+      "since",
+      "until",
+      "verdict_filter"
+    ],
+    "roam_audit_trail_verify": [
+      "input_path",
+      "root"
+    ],
+    "roam_auth_gaps": [
+      "controllers_only",
+      "min_confidence",
+      "root",
+      "routes_only"
+    ],
+    "roam_batch_get": [
+      "root",
+      "symbols"
+    ],
+    "roam_batch_search": [
+      "include_paths",
+      "limit_per_query",
+      "queries",
+      "root"
+    ],
+    "roam_bisect_blame": [
+      "direction",
+      "metric",
+      "root",
+      "threshold",
+      "top_n"
+    ],
+    "roam_boundary": [
+      "base_ref",
+      "changed_range",
+      "persist",
+      "root"
+    ],
+    "roam_breaking_changes": [
+      "root",
+      "target"
+    ],
+    "roam_brief": [
+      "no_highlights",
+      "no_mode",
+      "no_next",
+      "no_pr_bundle",
+      "no_runs",
+      "root",
+      "top_runs"
+    ],
+    "roam_budget_check": [
+      "commit_range",
+      "config",
+      "root"
+    ],
+    "roam_bus_factor": [
+      "brain_methods",
+      "force_team_mode",
+      "limit",
+      "root",
+      "stale_months"
+    ],
+    "roam_capsule_export": [
+      "no_signatures",
+      "redact_paths",
+      "root"
+    ],
+    "roam_catalog": [
+      "root"
+    ],
+    "roam_causal_graph": [
+      "kind",
+      "root",
+      "symbol",
+      "top"
+    ],
+    "roam_cga_emit": [
+      "aibom",
+      "include_taint",
+      "key",
+      "keyless",
+      "root",
+      "sign"
+    ],
+    "roam_cga_verify": [
+      "cosign_bundle",
+      "cosign_key",
+      "input_path",
+      "no_cosign",
+      "root"
+    ],
+    "roam_changelog": [
+      "root",
+      "since",
+      "suggest"
+    ],
+    "roam_check_rules": [
+      "config",
+      "root",
+      "rule",
+      "severity"
+    ],
+    "roam_clean": [
+      "root"
+    ],
+    "roam_clones": [
+      "min_lines",
+      "root",
+      "scope",
+      "threshold",
+      "top"
+    ],
+    "roam_closure": [
+      "delete",
+      "rename",
+      "root",
+      "symbol"
+    ],
+    "roam_clusters": [
+      "mermaid",
+      "min_size",
+      "root",
+      "strong",
+      "weak"
+    ],
+    "roam_codeowners": [
+      "owner",
+      "root",
+      "unowned"
+    ],
+    "roam_commands": [
+      "kind",
+      "root",
+      "safe_only",
+      "scope"
+    ],
+    "roam_compare": [
+      "baseline_path",
+      "root",
+      "target_path",
+      "threshold",
+      "top"
+    ],
+    "roam_compatibility": [
+      "baseline",
+      "ci_mode",
+      "current",
+      "root"
+    ],
+    "roam_compile": [
+      "artifact",
+      "brief",
+      "explain",
+      "profile",
+      "root",
+      "route",
+      "task"
+    ],
+    "roam_complete": [
+      "kind",
+      "limit",
+      "prefix",
+      "root"
+    ],
+    "roam_complexity_report": [
+      "root",
+      "threshold"
+    ],
+    "roam_congestion": [
+      "limit",
+      "min_authors",
+      "root",
+      "window"
+    ],
+    "roam_context": [
+      "recent_symbols",
+      "root",
+      "session_hint",
+      "symbol",
+      "task"
+    ],
+    "roam_conventions": [
+      "max_outliers",
+      "root"
+    ],
+    "roam_coupling": [
+      "against",
+      "count",
+      "min_cochanges",
+      "min_strength",
+      "root",
+      "staged"
+    ],
+    "roam_coverage_gaps": [
+      "auto_detect",
+      "entry_pattern",
+      "gate",
+      "gate_pattern",
+      "input_path",
+      "max_depth",
+      "preset",
+      "root",
+      "scope"
+    ],
+    "roam_critique": [
+      "diff_text",
+      "high_callers",
+      "intent",
+      "root"
+    ],
+    "roam_cut": [
+      "between",
+      "leak_edges",
+      "root",
+      "top"
+    ],
+    "roam_cut_analysis": [
+      "between_a",
+      "between_b",
+      "leak_edges",
+      "root",
+      "top_n"
+    ],
+    "roam_cycles": [
+      "actionable_only",
+      "limit",
+      "min_size",
+      "root"
+    ],
+    "roam_dark_matter": [
+      "min_cochanges",
+      "min_npmi",
+      "root"
+    ],
+    "roam_dashboard": [
+      "root"
+    ],
+    "roam_dead_code": [
+      "root"
+    ],
+    "roam_debt": [
+      "by_kind",
+      "limit",
+      "roi",
+      "root",
+      "threshold"
+    ],
+    "roam_delete_check": [
+      "base_ref",
+      "ci",
+      "commit_range",
+      "count",
+      "include_line_deletions",
+      "reachable_from",
+      "root",
+      "source"
+    ],
+    "roam_deps": [
+      "full",
+      "multi",
+      "path",
+      "root"
+    ],
+    "roam_describe": [
+      "agent_prompt",
+      "root"
+    ],
+    "roam_dev_profile": [
+      "author",
+      "days",
+      "limit",
+      "root"
+    ],
+    "roam_diagnose": [
+      "depth",
+      "root",
+      "symbol"
+    ],
+    "roam_diagnose_issue": [
+      "budget",
+      "depth",
+      "root",
+      "symbol"
+    ],
+    "roam_diff": [
+      "commit_range",
+      "root",
+      "staged"
+    ],
+    "roam_disambiguate": [
+      "limit",
+      "root",
+      "symbol"
+    ],
+    "roam_doc_intent": [
+      "doc",
+      "drift",
+      "root",
+      "symbol",
+      "top_n",
+      "undocumented"
+    ],
+    "roam_doc_staleness": [
+      "days",
+      "include_prose_drift",
+      "limit",
+      "root"
+    ],
+    "roam_docs_coverage": [
+      "days",
+      "limit",
+      "root",
+      "threshold"
+    ],
+    "roam_doctor": [
+      "root"
+    ],
+    "roam_dogfood": [
+      "audit",
+      "audit_trail_on",
+      "input_path",
+      "pr_analyze_on",
+      "root"
+    ],
+    "roam_dogfood_aggregate": [
+      "finding_type",
+      "limit",
+      "path",
+      "root",
+      "severity",
+      "show_all",
+      "since",
+      "top"
+    ],
+    "roam_drift": [
+      "root",
+      "threshold"
+    ],
+    "roam_duplicates": [
+      "max_pairs",
+      "min_lines",
+      "root",
+      "sample",
+      "scope",
+      "threshold"
+    ],
+    "roam_effects": [
+      "effect_type",
+      "path",
+      "root",
+      "symbol"
+    ],
+    "roam_endpoints": [
+      "framework",
+      "group_by",
+      "method",
+      "root"
+    ],
+    "roam_entry_points": [
+      "limit",
+      "protocol",
+      "root"
+    ],
+    "roam_eval_retrieve": [
+      "input_path",
+      "min_recall_at_20",
+      "quick",
+      "rerank",
+      "root",
+      "sweep"
+    ],
+    "roam_evidence_diff": [
+      "new_path",
+      "old_path",
+      "root"
+    ],
+    "roam_evidence_doctor": [
+      "packet_path",
+      "root"
+    ],
+    "roam_evidence_oscal": [
+      "control_map",
+      "evidence_path",
+      "import_ap_ref",
+      "kind",
+      "output_path",
+      "root",
+      "title"
+    ],
+    "roam_expand_toolset": [
+      "preset"
+    ],
+    "roam_explore": [
+      "budget",
+      "recent_symbols",
+      "root",
+      "session_hint",
+      "summarize",
+      "symbol"
+    ],
+    "roam_fan": [
+      "count",
+      "include_tooling",
+      "mode",
+      "no_framework",
+      "persist",
+      "root"
+    ],
+    "roam_fetch_handle": [
+      "handle",
+      "jq",
+      "limit",
+      "offset",
+      "root",
+      "section"
+    ],
+    "roam_file_info": [
+      "path",
+      "root"
+    ],
+    "roam_findings_count": [
+      "root"
+    ],
+    "roam_findings_list": [
+      "detector",
+      "limit",
+      "root",
+      "subject_id",
+      "subject_kind"
+    ],
+    "roam_findings_show": [
+      "finding_id_str",
+      "root"
+    ],
+    "roam_fingerprint": [
+      "compact",
+      "compare_path",
+      "export_path",
+      "root"
+    ],
+    "roam_fitness": [
+      "explain",
+      "input_path",
+      "root",
+      "rule"
+    ],
+    "roam_flag_dead": [
+      "include_tests",
+      "input_path",
+      "root"
+    ],
+    "roam_fleet_plan": [
+      "adapter",
+      "branch_prefix",
+      "goal",
+      "n_agents",
+      "root"
+    ],
+    "roam_fn_coupling": [
+      "include_connected",
+      "include_tests",
+      "limit",
+      "max_files_per_commit",
+      "max_symbols_per_file",
+      "min_count",
+      "root",
+      "since"
+    ],
+    "roam_for_bug_fix": [
+      "root",
+      "symbol"
+    ],
+    "roam_for_new_feature": [
+      "area",
+      "root"
+    ],
+    "roam_for_refactor": [
+      "root",
+      "symbol"
+    ],
+    "roam_for_security_review": [
+      "root",
+      "symbol"
+    ],
+    "roam_forecast": [
+      "alert_only",
+      "horizon",
+      "root",
+      "symbol"
+    ],
+    "roam_full_coupling": [
+      "path",
+      "root",
+      "top_n"
+    ],
+    "roam_generate_plan": [
+      "depth",
+      "path",
+      "root",
+      "staged",
+      "symbol",
+      "task"
+    ],
+    "roam_get_annotations": [
+      "root",
+      "since",
+      "symbol",
+      "tag"
+    ],
+    "roam_get_invariants": [
+      "breaking_risk",
+      "public_api",
+      "root",
+      "symbol",
+      "top_n"
+    ],
+    "roam_graph_diff": [
+      "base",
+      "head",
+      "root",
+      "save_snapshot",
+      "top"
+    ],
+    "roam_graph_stats": [
+      "root",
+      "scope"
+    ],
+    "roam_grep": [
+      "case_insensitive",
+      "co_occur",
+      "context_lines",
+      "count",
+      "exclude",
+      "fixed",
+      "globs",
+      "group_by",
+      "max_packet_lines",
+      "max_packets",
+      "missing_pattern",
+      "no_bridges",
+      "no_clones",
+      "pattern",
+      "patterns",
+      "rank_by",
+      "reachable_from",
+      "root",
+      "source_only",
+      "test_only",
+      "unreachable",
+      "whole_symbol",
+      "with_blame",
+      "with_heat",
+      "word_boundary"
+    ],
+    "roam_guard": [
+      "root",
+      "symbol"
+    ],
+    "roam_guard_clean": [
+      "dry_run",
+      "keep",
+      "root"
+    ],
+    "roam_guard_diff": [
+      "branch",
+      "bundle_a",
+      "bundle_b",
+      "by_file",
+      "from_log",
+      "root"
+    ],
+    "roam_guard_doctor": [
+      "root"
+    ],
+    "roam_guard_history": [
+      "branch",
+      "limit",
+      "root",
+      "source",
+      "verdict"
+    ],
+    "roam_guard_pr": [
+      "bundle",
+      "ci",
+      "dry_run",
+      "fmt",
+      "init_if_missing",
+      "init_intent",
+      "mode",
+      "output",
+      "policy_profile",
+      "root",
+      "rules",
+      "skip_collect",
+      "strict"
+    ],
+    "roam_guard_rules": [
+      "bundle",
+      "from_bundle",
+      "path",
+      "root",
+      "rules",
+      "subcommand"
+    ],
+    "roam_health": [
+      "root",
+      "summarize"
+    ],
+    "roam_history_grep": [
+      "case_insensitive",
+      "fixed",
+      "limit",
+      "paths",
+      "pattern",
+      "patterns",
+      "polarity",
+      "root",
+      "since",
+      "until"
+    ],
+    "roam_hotspots": [
+      "danger",
+      "discrepancy",
+      "root",
+      "runtime",
+      "security"
+    ],
+    "roam_hover": [
+      "root",
+      "symbol"
+    ],
+    "roam_idempotency": [
+      "kind",
+      "root",
+      "symbol",
+      "top"
+    ],
+    "roam_impact": [
+      "root",
+      "symbol"
+    ],
+    "roam_ingest_trace": [
+      "format",
+      "root",
+      "trace_file"
+    ],
+    "roam_init": [
+      "root",
+      "yes"
+    ],
+    "roam_intent": [
+      "drift",
+      "path",
+      "root",
+      "symbol",
+      "top",
+      "undocumented"
+    ],
+    "roam_invariants": [
+      "breaking_risk",
+      "public_api",
+      "root",
+      "symbol",
+      "top"
+    ],
+    "roam_layers": [
+      "mermaid",
+      "root"
+    ],
+    "roam_llm_smells": [
+      "min_severity",
+      "root"
+    ],
+    "roam_map": [
+      "budget",
+      "count",
+      "depth",
+      "full",
+      "path",
+      "root"
+    ],
+    "roam_metrics": [
+      "root",
+      "symbol"
+    ],
+    "roam_metrics_push": [
+      "anonymize",
+      "dry_run",
+      "endpoint",
+      "include_hotspots",
+      "repo",
+      "root",
+      "token"
+    ],
+    "roam_migration_plan": [
+      "input_path",
+      "max_risk",
+      "moves",
+      "root"
+    ],
+    "roam_migration_safety": [
+      "include_archive",
+      "limit",
+      "root"
+    ],
+    "roam_minimap": [
+      "root"
+    ],
+    "roam_missing_index": [
+      "confidence",
+      "root",
+      "table"
+    ],
+    "roam_module": [
+      "path",
+      "root"
+    ],
+    "roam_mutate": [
+      "apply",
+      "args",
+      "from_symbol",
+      "lines",
+      "new_name",
+      "operation",
+      "root",
+      "symbol",
+      "target_file",
+      "to_symbol"
+    ],
+    "roam_n1": [
+      "confidence",
+      "root",
+      "verbose"
+    ],
+    "roam_next": [
+      "root"
+    ],
+    "roam_observability_opt": [
+      "confidence",
+      "language",
+      "max_files",
+      "only",
+      "profile",
+      "root"
+    ],
+    "roam_onboard": [
+      "detail",
+      "root"
+    ],
+    "roam_oracle_batch": [
+      "items",
+      "root"
+    ],
+    "roam_oracle_is_clone_of": [
+      "root",
+      "symbol"
+    ],
+    "roam_oracle_is_reachable_from_entry": [
+      "max_hops",
+      "root",
+      "symbol"
+    ],
+    "roam_oracle_is_test_only": [
+      "root",
+      "symbol"
+    ],
+    "roam_oracle_route_exists": [
+      "root",
+      "route_path"
+    ],
+    "roam_oracle_symbol_exists": [
+      "root",
+      "symbol"
+    ],
+    "roam_oracle_test_only": [
+      "root",
+      "symbol"
+    ],
+    "roam_orchestrate": [
+      "files",
+      "n_agents",
+      "root",
+      "staged"
+    ],
+    "roam_orphan_imports": [
+      "lang",
+      "root"
+    ],
+    "roam_orphan_routes": [
+      "confidence",
+      "limit",
+      "root"
+    ],
+    "roam_over_fetch": [
+      "confidence",
+      "root",
+      "threshold"
+    ],
+    "roam_owner": [
+      "path",
+      "root"
+    ],
+    "roam_partition": [
+      "n_agents",
+      "output_format",
+      "root"
+    ],
+    "roam_path_coverage": [
+      "from_pattern",
+      "max_depth",
+      "root",
+      "to_pattern"
+    ],
+    "roam_patterns": [
+      "pattern",
+      "root",
+      "strict_factory"
+    ],
+    "roam_plan": [
+      "depth",
+      "path",
+      "root",
+      "staged",
+      "symbol",
+      "task"
+    ],
+    "roam_plan_refactor": [
+      "max_steps",
+      "operation",
+      "root",
+      "symbol",
+      "target_file"
+    ],
+    "roam_postmortem": [
+      "commit_range",
+      "limit",
+      "root",
+      "show"
+    ],
+    "roam_pr_analyze": [
+      "audit_trail",
+      "block_threshold",
+      "commit_range",
+      "diff_path",
+      "explain",
+      "input_path",
+      "intent",
+      "language",
+      "root",
+      "staged",
+      "with_reviewers"
+    ],
+    "roam_pr_comment_render": [
+      "include_links",
+      "input_path",
+      "root",
+      "style"
+    ],
+    "roam_pr_diff": [
+      "commit_range",
+      "root",
+      "staged"
+    ],
+    "roam_pr_prep": [
+      "commit_range",
+      "high_callers",
+      "root"
+    ],
+    "roam_pr_risk": [
+      "root",
+      "staged"
+    ],
+    "roam_preflight": [
+      "root",
+      "staged",
+      "symbol"
+    ],
+    "roam_prepare_change": [
+      "budget",
+      "recent_symbols",
+      "root",
+      "session_hint",
+      "staged",
+      "symbol"
+    ],
+    "roam_proof_bundle": [
+      "bundle",
+      "fmt",
+      "mode",
+      "policy_profile",
+      "root",
+      "strict",
+      "validate"
+    ],
+    "roam_py_modern": [
+      "detail",
+      "root"
+    ],
+    "roam_py_types": [
+      "detail",
+      "include_tests",
+      "root"
+    ],
+    "roam_pytest_fixtures": [
+      "max_depth",
+      "root",
+      "symbol"
+    ],
+    "roam_reachability_triage": [
+      "commit_range",
+      "root"
+    ],
+    "roam_recommend": [
+      "limit",
+      "root",
+      "symbol"
+    ],
+    "roam_refs_text": [
+      "case_insensitive",
+      "fixed",
+      "globs",
+      "per_match_detail",
+      "reachable_from",
+      "root",
+      "strings",
+      "with_bridges",
+      "with_clones"
+    ],
+    "roam_reindex": [
+      "confirm_force",
+      "force",
+      "root",
+      "verbose"
+    ],
+    "roam_relate": [
+      "depth",
+      "files",
+      "root",
+      "symbols"
+    ],
+    "roam_repo_map": [
+      "budget",
+      "root",
+      "summarize"
+    ],
+    "roam_report": [
+      "config_path",
+      "list_presets",
+      "markdown",
+      "preset",
+      "root",
+      "strict"
+    ],
+    "roam_reset": [
+      "force",
+      "root"
+    ],
+    "roam_retrieve": [
+      "budget",
+      "dry_run",
+      "k",
+      "rerank",
+      "root",
+      "seed_files",
+      "task"
+    ],
+    "roam_review_change": [
+      "budget",
+      "commit_range",
+      "root",
+      "staged"
+    ],
+    "roam_risk": [
+      "domain",
+      "explain",
+      "include_tests",
+      "root",
+      "show_suppressed",
+      "top"
+    ],
+    "roam_rules_check": [
+      "ci",
+      "root",
+      "rules_dir"
+    ],
+    "roam_rules_validate": [
+      "against",
+      "input_path",
+      "root",
+      "strict"
+    ],
+    "roam_runtime_hotspots": [
+      "discrepancy",
+      "root",
+      "runtime_sort"
+    ],
+    "roam_safe_delete": [
+      "root",
+      "symbol"
+    ],
+    "roam_safe_zones": [
+      "depth",
+      "root",
+      "symbol"
+    ],
+    "roam_sbom": [
+      "aibom",
+      "fmt",
+      "root"
+    ],
+    "roam_search_semantic": [
+      "query",
+      "root",
+      "threshold",
+      "top"
+    ],
+    "roam_search_symbol": [
+      "query",
+      "root"
+    ],
+    "roam_secrets": [
+      "root",
+      "severity"
+    ],
+    "roam_semantic_diff": [
+      "base",
+      "root"
+    ],
+    "roam_session_metrics": [
+      "root"
+    ],
+    "roam_side_effects": [
+      "kind",
+      "root",
+      "symbol",
+      "top"
+    ],
+    "roam_simulate": [
+      "file_a",
+      "file_b",
+      "operation",
+      "root",
+      "symbol",
+      "target_file"
+    ],
+    "roam_simulate_departure": [
+      "developer",
+      "root"
+    ],
+    "roam_sketch": [
+      "directory",
+      "full",
+      "root"
+    ],
+    "roam_smells": [
+      "include_tooling",
+      "min_severity",
+      "path",
+      "root"
+    ],
+    "roam_spectral": [
+      "compare",
+      "depth",
+      "gap_only",
+      "k",
+      "root"
+    ],
+    "roam_split": [
+      "min_group",
+      "path",
+      "root"
+    ],
+    "roam_stale_refs": [
+      "by_file",
+      "check_absolute_routes",
+      "diff",
+      "enrich_with_llm",
+      "fix",
+      "ignore",
+      "ignore_target",
+      "kind",
+      "limit",
+      "no_anchors",
+      "rename_hint",
+      "root",
+      "sort_by"
+    ],
+    "roam_stats": [
+      "days",
+      "root"
+    ],
+    "roam_suggest_refactoring": [
+      "limit",
+      "min_score",
+      "root"
+    ],
+    "roam_suggest_reviewers": [
+      "changed",
+      "exclude",
+      "root",
+      "top"
+    ],
+    "roam_supply_chain": [
+      "root",
+      "top"
+    ],
+    "roam_symbol": [
+      "full",
+      "root",
+      "symbol"
+    ],
+    "roam_syntax_check": [
+      "changed",
+      "paths",
+      "root"
+    ],
+    "roam_taint": [
+      "ci",
+      "root",
+      "rule",
+      "rules_dir",
+      "rules_pack"
+    ],
+    "roam_taint_classify": [
+      "root",
+      "rule",
+      "rules_dir",
+      "skip_sanitized"
+    ],
+    "roam_test_gaps": [
+      "changed",
+      "files",
+      "root",
+      "severity"
+    ],
+    "roam_test_hermeticity": [
+      "ci_mode",
+      "persist",
+      "root"
+    ],
+    "roam_test_impact": [
+      "commit_range",
+      "max_hops",
+      "root"
+    ],
+    "roam_test_map": [
+      "root",
+      "symbol"
+    ],
+    "roam_test_pyramid": [
+      "root"
+    ],
+    "roam_test_scaffold": [
+      "framework",
+      "root",
+      "symbol",
+      "write"
+    ],
+    "roam_timeline": [
+      "limit",
+      "root",
+      "symbol"
+    ],
+    "roam_tour": [
+      "root"
+    ],
+    "roam_trace": [
+      "root",
+      "source",
+      "symbol"
+    ],
+    "roam_trends": [
+      "days",
+      "metric",
+      "record",
+      "root"
+    ],
+    "roam_tx_boundaries": [
+      "classification",
+      "root",
+      "symbol",
+      "top"
+    ],
+    "roam_understand": [
+      "root",
+      "summarize"
+    ],
+    "roam_uses": [
+      "full",
+      "root",
+      "symbol"
+    ],
+    "roam_validate_plan": [
+      "operations",
+      "plan_json",
+      "root"
+    ],
+    "roam_verdict": [
+      "bundle",
+      "mode",
+      "policy_profile",
+      "root"
+    ],
+    "roam_verification_contract": [
+      "bundle",
+      "mode",
+      "policy_profile",
+      "root",
+      "rules"
+    ],
+    "roam_verify": [
+      "root",
+      "threshold"
+    ],
+    "roam_verify_imports": [
+      "file",
+      "root"
+    ],
+    "roam_vibe_check": [
+      "root",
+      "threshold"
+    ],
+    "roam_visualize": [
+      "depth",
+      "direction",
+      "file_level",
+      "focus",
+      "format",
+      "limit",
+      "no_clusters",
+      "root"
+    ],
+    "roam_vuln_map": [
+      "generic",
+      "npm_audit",
+      "osv",
+      "pip_audit",
+      "root",
+      "trivy"
+    ],
+    "roam_vuln_reach": [
+      "cve",
+      "from_entry",
+      "root"
+    ],
+    "roam_weather": [
+      "count",
+      "root"
+    ],
+    "roam_why": [
+      "root",
+      "symbols"
+    ],
+    "roam_why_fail": [
+      "days",
+      "limit",
+      "max_hops",
+      "root",
+      "symbol"
+    ],
+    "roam_why_slow": [
+      "base",
+      "changed",
+      "min_calls",
+      "root",
+      "top"
+    ],
+    "roam_workflow": [
+      "list_recipes",
+      "next_after",
+      "query",
+      "recipe_name",
+      "root"
+    ],
+    "roam_ws_context": [
+      "root",
+      "symbol"
+    ],
+    "roam_ws_understand": [
+      "root"
+    ],
+    "roam_x_lang": [
+      "root",
+      "scope"
+    ]
+  },
+  "schema_version": "1.1.0"
 }

@@ -11600,9 +11600,12 @@ def test_hermeticity_tool(
     description=(
         "Detect outbound surface regressions vs a baseline snapshot. "
         "Closed-enum verdicts: no regressions / surface additions / "
-        "surface drift / breaking changes. Compares commands, flags, "
-        "envelope summary fields, MCP tools, and preset counts. Capture "
-        "the baseline via CLI: roam compatibility --write-baseline PATH."
+        "surface drift / baseline stale / breaking changes. Compares "
+        "commands, flags, envelope summary fields, MCP tools, MCP tool "
+        "parameters, and preset counts; does NOT compare parameter types, "
+        "defaults, tool descriptions, command categories or runtime "
+        "behavior. Capture the baseline via CLI: roam compatibility "
+        "--write-baseline PATH."
     ),
     read_only=True,
     destructive=False,
@@ -11641,7 +11644,12 @@ def compatibility_tool(
 
     Returns: closed-enum verdict, per-category counts (removed_commands,
     removed_flags, removed_envelope_fields, removed_mcp_tools,
-    changed_presets), full per-category lists.
+    removed_mcp_tool_params, changed_presets), full per-category lists,
+    and the ``covered_dimensions`` / ``uncovered_dimensions`` scope of the
+    coverage verdict. Read that scope before treating ``no regressions``
+    as "nothing regressed": the gate is structural and does not evaluate
+    parameter types, defaults, tool descriptions, command categories or
+    runtime behavior.
     """
     args: list[str] = ["compatibility"]
     if baseline:

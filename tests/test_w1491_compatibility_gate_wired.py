@@ -42,7 +42,13 @@ from click.testing import CliRunner
 
 import roam.commands.cmd_compatibility as compat_cmd
 from roam.cli import cli
-from roam.commands.cmd_compatibility import _build_snapshot, _diff, _verdict_for
+from roam.commands.cmd_compatibility import (
+    _COVERED_DIMENSIONS,
+    _UNCOVERED_DIMENSIONS,
+    _build_snapshot,
+    _diff,
+    _verdict_for,
+)
 from roam.exit_codes import EXIT_GATE_FAILURE
 from tests._helpers.repo_root import repo_root
 
@@ -397,6 +403,19 @@ def test_w1494_surface_coverage_is_a_closed_enum_that_implies_partial_success(tm
 # ---------------------------------------------------------------------------
 
 
+#: Spelled-out arity words the ``_diff`` docstring may use for its
+#: breaking tally. Indexed by the number of summands the AST actually
+#: finds, so the prose count is checked against the computed one.
+_ARITY_WORDS: dict[int, str] = {
+    3: "THREE",
+    4: "FOUR",
+    5: "FIVE",
+    6: "SIX",
+    7: "SEVEN",
+    8: "EIGHT",
+}
+
+
 def test_w1495_diff_docstring_names_every_breaking_contributor() -> None:
     """NEGATIVE CONTROL: fails pre-fix, where the docstring listed four of the
     five contributors and omitted preset shrinkage.
@@ -405,8 +424,18 @@ def test_w1495_diff_docstring_names_every_breaking_contributor() -> None:
     empty and ``breaking`` is 1, which reads as a contradiction until the
     reader finds the undocumented fifth term -- and that single number is what
     makes the next release a major one, because ``core`` dropped 57 -> 17 MCP
-    tools. Derived from the AST rather than hardcoded, so adding a sixth term
+    tools. Derived from the AST rather than hardcoded, so adding a seventh term
     without documenting it fails here too.
+
+    The tally is SIX terms since ``removed_mcp_tool_params`` landed: the
+    baseline records MCP tool parameters, so a removed parameter is a break
+    the same way a removed flag is. That term is why commit 67a09fd1's two
+    removed MCP wrapper parameters would not pass the gate again.
+
+    The arity assertion below compares the docstring's spelled-out count
+    against the computed one rather than trusting either. A prose "FIVE"
+    left standing over six summands is the same defect class this whole
+    file exists for -- a sentence asserting a number nothing measures.
     """
     tree = ast.parse(textwrap.dedent(inspect.getsource(_diff)))
     function = tree.body[0]
@@ -428,7 +457,11 @@ def test_w1495_diff_docstring_names_every_breaking_contributor() -> None:
             ):
                 summands.append(call.args[0].id)
 
-    assert len(summands) == 5, summands
+    assert summands, (
+        "no `len(...)` summands were extracted from `_diff`'s breaking tally. "
+        "The assignment shape this guard reads has changed and the guard is now blind."
+    )
+    assert len(summands) == 6, summands
     docstring = ast.get_docstring(function) or ""
     undocumented = [name for name in summands if name not in docstring]
     assert not undocumented, (
@@ -436,3 +469,125 @@ def test_w1495_diff_docstring_names_every_breaking_contributor() -> None:
         f"docstring. A reader seeing breaking=1 with every removed-* list empty has no "
         f"way to find the term responsible."
     )
+    word = _ARITY_WORDS[len(summands)]
+    assert f"sum of {word} terms" in docstring, (
+        f"`_diff` sums {len(summands)} terms but its docstring does not say "
+        f"'sum of {word} terms'. The prose count and the computed count must "
+        f"not be allowed to drift apart."
+    )
+
+
+# ---------------------------------------------------------------------------
+# W1496 -- the coverage claim is scoped to the dimensions it measures
+# ---------------------------------------------------------------------------
+#
+# ``surface_coverage: complete`` sat next to ``unevaluated_surface_entries: 0``
+# over a baseline that recorded MCP tools as bare names. ``coverage_gap`` sums
+# additions across the dimensions the SNAPSHOT collects, so a dimension the
+# snapshot never collects contributes 0 by construction -- the completeness
+# claim was unfalsifiable rather than merely unmeasured, which is why commit
+# 67a09fd1's two removed MCP wrapper parameters passed the gate in the same
+# run that its three removed CLI flags failed it.
+#
+# The repair is two-sided and both sides are asserted here: the measurement
+# was WIDENED to record parameters, and the residual claim was NARROWED to
+# name the dimensions it covers. A dimension may appear in the "covered" list
+# only if perturbing it moves the verdict, and a dimension listed as NOT
+# covered must provably not move it -- otherwise both lists are prose.
+
+
+def _breaking_probe(mutate) -> dict:
+    """Return ``_diff(mutated_baseline, live)`` for a one-dimension mutation."""
+    baseline = _build_snapshot()
+    mutate(baseline)
+    return _diff(baseline, _build_snapshot())
+
+
+def _drop_first_flag(snapshot: dict) -> None:
+    name = sorted(snapshot["commands"])[0]
+    snapshot["commands"][name]["flags"] = sorted({*snapshot["commands"][name]["flags"], "--_w1496_gone"})
+
+
+def _add_tool_param(snapshot: dict) -> None:
+    tool = sorted(snapshot["mcp_tools"])[0]
+    snapshot["mcp_tools"][tool] = sorted({*snapshot["mcp_tools"][tool], "_w1496_gone"})
+
+
+def _shrink_a_preset(snapshot: dict) -> None:
+    preset = sorted(snapshot["mcp_preset_counts"])[0]
+    snapshot["mcp_preset_counts"][preset] = snapshot["mcp_preset_counts"][preset] + 1
+
+
+#: One perturbation per claimed-covered dimension. Each must produce at
+#: least one breaking entry, which is what "this dimension is covered"
+#: means operationally.
+_DIMENSION_PROBES = {
+    "cli_commands": lambda s: s["commands"].__setitem__("_w1496_gone", {"module": "x", "function": "y", "flags": []}),
+    "cli_flags": _drop_first_flag,
+    "envelope_summary_keys": lambda s: s["envelope_summary_keys"].append("_w1496_gone"),
+    "mcp_tools": lambda s: s["mcp_tools"].__setitem__("roam__w1496_gone", []),
+    "mcp_tool_parameters": _add_tool_param,
+    "mcp_preset_counts": _shrink_a_preset,
+}
+
+
+def test_w1496_every_covered_dimension_moves_the_verdict() -> None:
+    """A dimension in ``_COVERED_DIMENSIONS`` that nothing reads would make
+    the published coverage claim an overstatement again. Perturb each one
+    and require a breaking entry."""
+    assert set(_DIMENSION_PROBES) == set(_COVERED_DIMENSIONS), set(_DIMENSION_PROBES).symmetric_difference(
+        _COVERED_DIMENSIONS
+    )
+    unmeasured = [name for name, probe in _DIMENSION_PROBES.items() if _breaking_probe(probe)["breaking_count"] == 0]
+    assert not unmeasured, (
+        f"the envelope publishes {unmeasured} as covered dimensions, but perturbing them "
+        f"produces no breaking entry. A covered dimension that cannot go red is the same "
+        f"claim-without-a-measurement this gate exists to prevent."
+    )
+
+
+def test_w1496_an_uncovered_dimension_provably_goes_unread() -> None:
+    """``cli_categories`` is RECORDED by the snapshot and never diffed, which
+    is the most misleading of the two ways to be uncovered. Assert it is
+    genuinely unread rather than trusting the constant."""
+    assert "cli_categories" in _UNCOVERED_DIMENSIONS
+
+    def drop_a_category(snapshot: dict) -> None:
+        snapshot["categories"] = [*snapshot["categories"], "_w1496_category_gone"]
+
+    delta = _breaking_probe(drop_a_category)
+    assert delta["breaking_count"] == 0, delta
+    assert delta["coverage_gap_count"] == 0, delta
+
+
+def test_w1496_the_two_dimension_lists_are_disjoint_and_populated() -> None:
+    """A name in both lists, or an empty list, would let the envelope claim
+    and disclaim the same surface."""
+    assert _COVERED_DIMENSIONS, _COVERED_DIMENSIONS
+    assert _UNCOVERED_DIMENSIONS, _UNCOVERED_DIMENSIONS
+    assert not set(_COVERED_DIMENSIONS) & set(_UNCOVERED_DIMENSIONS)
+    assert len(set(_COVERED_DIMENSIONS)) == len(_COVERED_DIMENSIONS)
+    assert len(set(_UNCOVERED_DIMENSIONS)) == len(_UNCOVERED_DIMENSIONS)
+
+
+def test_w1496_a_clean_verdict_still_names_what_it_did_not_evaluate(tmp_path) -> None:
+    """The disclosure has to travel with the CLEAN result, not only the red
+    one. ``no regressions`` printed alone is what a reader turns into
+    "nothing regressed"; the uncovered dimensions are the correction, so
+    they must be on the surface that reader is looking at."""
+    baseline = _write(tmp_path / "baseline.json", _build_snapshot())
+
+    text = CliRunner().invoke(cli, ["compatibility", "--baseline", str(baseline)])
+    assert text.exit_code == 0, text.output
+    assert "no regressions" in text.output
+    for dimension in _UNCOVERED_DIMENSIONS:
+        assert dimension in text.output, (dimension, text.output)
+
+    payload = json.loads(CliRunner().invoke(cli, ["--json", "compatibility", "--baseline", str(baseline)]).output)
+    assert payload["summary"]["surface_coverage"] == "complete"
+    assert payload["summary"]["surface_coverage_scope"] == "covered_dimensions"
+    assert payload["covered_dimensions"] == list(_COVERED_DIMENSIONS)
+    assert payload["uncovered_dimensions"] == list(_UNCOVERED_DIMENSIONS)
+    facts = " | ".join(payload["agent_contract"]["facts"])
+    for dimension in _UNCOVERED_DIMENSIONS:
+        assert dimension in facts, (dimension, facts)
