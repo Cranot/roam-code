@@ -496,6 +496,56 @@ class GateRunner:
         )
 
 
+# The CI lanes the RELEASE note disclaims, as DATA rather than as one
+# concatenated string literal.
+#
+# Each entry is ``(probe, text)``. ``probe`` is matched as a substring against
+# the NAMES of the gates this run actually recorded; a bullet whose probe
+# matches is not printed as unproven, because it was proven. That makes the
+# note self-correcting per tier and removes an entire class by construction:
+# a lane wired into the push path and left in this list can no longer be
+# disclaimed, whatever syntax wires it.
+#
+# It replaces a source-parsing guard that read `main()` for the gates it runs.
+# That guard read 7 of the 8 gates a live FAST run records, and its reach was
+# bounded by syntax it could recognise: a keyword-argument call, an aliased
+# receiver, a starred argv, a non-literal label (which is what makes the 8th
+# gate invisible — `run_pytest_bundle` builds its label with an f-string), a
+# module-level helper, or an inline `results.append(...)` all evaded it. Worse,
+# a correctly-shaped gate placed under `if release:` evaded it too, and no
+# widening of a reader fixes that, because the defect there is in the predicate
+# rather than in the parsing. `runner.results` already holds the answer exactly,
+# at the moment the note is printed. See tests/test_prepush_gate_wired.py.
+_RELEASE_UNPROVEN_LANES: tuple[tuple[str, str], ...] = (
+    ("test-exec-bits", "scripts/test-exec-bits.sh + shellcheck   (lint job)"),
+    ("strip_metadata", "scripts/strip_metadata.py               (doc-hygiene; needs pypdf)"),
+    ("roam compatibility", "roam compatibility --ci / --require-coverage"),
+    ("roam secrets", "roam secrets --fail-on-found   (secret-scan; its other 2 of 3 steps DO run here)"),
+    ("dependency-audit", "dependency-audit / test-no-optional-deps / wheel-smoke jobs"),
+)
+
+
+def _release_note_lines(results: list[GateResult]) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split the disclaimed-lane list against what this run actually ran.
+
+    Returns ``(unproven, proven)`` where ``proven`` pairs each suppressed
+    bullet with the gate name that disproved it. The caller prints the
+    correction rather than silently shortening the list: an operator who has
+    read this note before should see WHY it changed, and a suppression with no
+    visible cause is indistinguishable from a bullet someone deleted.
+    """
+    ran = [r.name for r in results]
+    unproven: list[str] = []
+    proven: list[tuple[str, str]] = []
+    for probe, text in _RELEASE_UNPROVEN_LANES:
+        match = next((name for name in ran if probe in name), None)
+        if match is None:
+            unproven.append(text)
+        else:
+            proven.append((text, match))
+    return unproven, proven
+
+
 def _print_summary(results: list[GateResult], tier: str = "FAST") -> bool:
     total = sum(r.seconds for r in results)
     failures = [r for r in results if not r.passed]
@@ -533,31 +583,28 @@ def _print_summary(results: list[GateResult], tier: str = "FAST") -> bool:
             # measurably false: no tier runs these lanes, so a red one of
             # them stays invisible until after the push.
             # Enumerated against .github/workflows/ on 2026-08-06; re-check
-            # this list when a CI lane is added.
-            print(
-                "[prepush] NOTE: RELEASE covers CI's test, ruff and doc-hygiene surface.\n"
-                "[prepush]   These CI lanes are NOT run by any tier and stay unproven here:\n"
-                "[prepush]     - scripts/test-exec-bits.sh + shellcheck   (lint job)\n"
-                "[prepush]     - scripts/strip_metadata.py               (doc-hygiene; needs pypdf)\n"
-                "[prepush]     - roam compatibility --ci / --require-coverage\n"
-                # Narrowed 2026-08-07. This bullet used to read "roam secrets
-                # --fail-on-found + roam ignore-drift --fail-on-found", which was
-                # false about its own gate: `_run_leak_gate` runs BOTH
-                # `scan_internal_language.py --all` and
-                # `roam ignore-drift --fail-on-found`, and main() calls it
-                # unconditionally BEFORE any tier branching — so 2 of
-                # secret-scan.yml's 3 steps run in FAST, FULL and RELEASE alike
-                # (measured: `roam ignore-drift --fail-on-found: PASS (0.4s)` in a
-                # live FAST run). Only the `roam secrets` step is genuinely
-                # unproven here. A note that disclaims a gate the push path just
-                # ran is worse than no note: it invites a CI round to re-prove
-                # what is already proven.
-                # tests/test_prepush_gate_wired.py derives both sides of this
-                # claim from the source, so the class cannot come back.
-                "[prepush]     - roam secrets --fail-on-found   (secret-scan; its other 2 of 3 steps DO run here)\n"
-                "[prepush]     - dependency-audit / test-no-optional-deps / wheel-smoke jobs\n"
-                "[prepush]   Green here does not prove those lanes are green."
-            )
+            # this list when a CI lane is added. The list is _RELEASE_UNPROVEN_LANES
+            # and it is FILTERED against `results` below, so a lane that was
+            # wired into the push path corrects itself here instead of being
+            # disclaimed by a stale literal. Narrowed 2026-08-07: the
+            # `roam secrets` bullet used to also name
+            # `roam ignore-drift --fail-on-found`, which `_run_leak_gate` runs
+            # unconditionally before any tier branching — 2 of secret-scan.yml's
+            # 3 steps run in every tier. That instance is now unrepeatable
+            # rather than merely corrected.
+            unproven, proven = _release_note_lines(results)
+            print("[prepush] NOTE: RELEASE covers CI's test, ruff and doc-hygiene surface.")
+            if unproven:
+                print("[prepush]   These CI lanes are NOT run by any tier and stay unproven here:")
+                for bullet in unproven:
+                    print(f"[prepush]     - {bullet}")
+                print("[prepush]   Green here does not prove those lanes are green.")
+            else:
+                print("[prepush]   Every lane this note tracks ran in this tier.")
+            for bullet, gate_name in proven:
+                # Printed, not dropped. A shorter list with no stated cause
+                # reads as an edit; this reads as a measurement.
+                print(f"[prepush]   (no longer unproven: {bullet} — ran as {gate_name!r})")
     print("=" * 64)
     return not failures
 
