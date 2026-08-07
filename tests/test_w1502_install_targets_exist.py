@@ -43,6 +43,9 @@ import pytest
 
 from scripts import check_install_targets as gate
 from scripts import sync_surface_counts as sync
+from tests._helpers.repo_root import repo_root
+
+ROOT = repo_root()
 
 # ---------------------------------------------------------------------------
 # The exit-code contract
@@ -229,7 +232,7 @@ def test_gate_runs_on_the_push_path_and_in_ci() -> None:
     is offline and sub-second, so it belongs where the lie is created: the
     push path and ordinary CI.
     """
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
     prepush = (root / "scripts" / "prepush_check.py").read_text(encoding="utf-8")
     ci = (root / ".github" / "workflows" / "roam-ci.yml").read_text(encoding="utf-8")
     assert "check_install_targets.py" in prepush, "the pre-push gate does not run the install-target check"
@@ -243,7 +246,7 @@ def test_gate_is_offline_and_fast() -> None:
     ever grew a default network call this would either hang or fail in an
     offline environment, which is where contributors actually run pre-push.
     """
-    root = Path(__file__).resolve().parents[1]
+    root = ROOT
     proc = subprocess.run(
         [sys.executable, str(root / "scripts" / "check_install_targets.py"), "--json"],
         cwd=root,

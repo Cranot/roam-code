@@ -691,13 +691,15 @@ bundles):
    --release` first.** The release tier = FULL gates + the ENTIRE test suite
    (`-m "not slow"`, exactly CI's surface) + commit-message leak scan +
    doc-consistency + landing-page `linkcheck --strict` (~15-25 min). That is
-   CI's test, ruff and doc-hygiene surface — not every CI lane. The tier
-   prints the uncovered lanes (exec-bits, shellcheck, strip_metadata,
-   `roam compatibility`, secret-scan — only its `roam secrets --fail-on-found`
-   step, since the leak-catalogue and tracked-but-ignored steps run in every
-   tier — dependency-audit, no-optional-deps, wheel-smoke) on success; read
-   that note instead of treating green as "CI will be green". A tag never
-   points at an unverified commit.
+   CI's test, ruff and doc-hygiene surface — not every CI lane. **Read the
+   note the tier prints on success; do not read a list from here.** The
+   uncovered lanes are `_RELEASE_UNPROVEN_LANES` in `scripts/prepush_check.py`,
+   and the printed note is FILTERED against the gates that run actually
+   recorded — so a lane wired into the push path drops off it automatically.
+   A restated copy in this file cannot do that and would go stale in the one
+   direction that costs a CI round: disclaiming work the push already proved.
+   Green there still does not mean "CI will be green". A tag never points at
+   an unverified commit.
 2. Routine development pushes keep the FAST tier (the pre-push hook), but a
    batch of waves accumulated across sessions counts as release-sized —
    run `--release` before pushing the batch.
