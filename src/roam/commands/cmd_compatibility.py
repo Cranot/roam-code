@@ -7,7 +7,8 @@ that users / agents / CI depend on:
 
   * CLI:     a command renamed or removed; a flag removed.
   * JSON:    a top-level envelope field removed; a closed-enum value removed.
-  * MCP:     a tool renamed; a tool parameter removed; a preset changed.
+  * MCP:     a tool renamed; a tool parameter removed; a preset changed
+             in size OR in membership.
 
 Scope (intentionally MVP):
 
@@ -22,7 +23,8 @@ Scope (intentionally MVP):
   * ``--require-coverage`` additionally exits 5 when the baseline no
     longer records the whole current surface (see below).
   * Detection is structural ONLY: name presence, flag presence, MCP-tool
-    presence, MCP-tool-parameter presence, preset count.
+    presence, MCP-tool-parameter presence, preset count and preset
+    membership.
     Behavior-regression detection is explicitly out of scope (a much
     larger problem).
 
@@ -102,6 +104,44 @@ fails on — never as "this tool has no parameters", which would read an
 absent measurement as a benign definite value and reproduce the exact
 defect one schema version later.
 
+PRESET MEMBERSHIP: THE SAME DEFECT ONE DIMENSION OVER (schema 1.2.0)
+--------------------------------------------------------------------
+
+``mcp_preset_counts`` was covered and preset MEMBERSHIP was in neither
+list, which is the harder failure to notice: the snapshot recorded a
+number, the number was diffed, and the claim over "presets" read as
+complete. A count is a lossy projection of a set. Swapping one real
+member of ``_CORE_TOOLS`` for another real tool — ``roam_taint`` for
+``roam_complexity_report``, 17 tools before and 17 after — produced a
+BYTE-IDENTICAL snapshot, ``no regressions  removed=0 breaking=0
+coverage_gap=0``, ``surface_coverage: complete``,
+``unevaluated_surface_entries: 0`` and exit 0, while every MCP client on
+the core preset lost a tool. That is exactly the 67a09fd1 shape, one
+schema version later.
+
+The measurement was WIDENED rather than the claim narrowed, because the
+gate already asserts preset coverage and already treats preset shrinkage
+as breaking: a swap breaks the same consumer as a shrink, with the same
+severity, so declaring membership "not evaluated" would have kept a
+covered dimension that could not see its own headline failure. Snapshots
+record ``mcp_preset_members`` (schema 1.2.0) and a removed member is a
+breaking entry naming the tool and the preset.
+
+The count term is now the FALLBACK for presets whose membership one side
+did not record. When both sides record it, the individual removed members
+carry the break and the count delta is derivable from them, so counting
+both would tally one real break twice.
+
+``commands[].module`` / ``commands[].function`` went the other way. They
+are recorded and never diffed — the second inclusion rule for
+:data:`_UNCOVERED_DIMENSIONS` — but they are not outbound surface: a
+consumer invokes ``roam health``, not
+``roam.commands.cmd_health:health``, so a module move breaks nobody and
+gating it would turn every internal refactor red. The honest repair there
+is disclosure, so ``cli_command_implementation_targets`` is named in
+:data:`_UNCOVERED_DIMENSIONS` and asserted unread by
+``tests/test_w1491_compatibility_gate_wired.py``.
+
 Output formats: text (default), ``--json``. SARIF is deliberately NOT
 emitted because compatibility outputs are repo-scoped surface-contract
 deltas (CLI / JSON / MCP name additions and removals) — not
@@ -129,7 +169,7 @@ from roam.output.formatter import json_envelope, to_json
 # baseline shape (added/removed top-level keys, restructured per-command
 # fields). The comparator falls back to "best-effort" against older
 # snapshots and surfaces a partial_success=true verdict noting the drift.
-SNAPSHOT_SCHEMA_VERSION = "1.1.0"
+SNAPSHOT_SCHEMA_VERSION = "1.2.0"
 
 #: The surface dimensions this comparison actually reads out of a
 #: snapshot and diffs. ``surface_coverage`` is a claim about THESE and
@@ -142,6 +182,7 @@ _COVERED_DIMENSIONS: tuple[str, ...] = (
     "mcp_tools",
     "mcp_tool_parameters",
     "mcp_preset_counts",
+    "mcp_preset_membership",
 )
 
 #: Surface a consumer can depend on that this gate does NOT evaluate.
@@ -149,11 +190,20 @@ _COVERED_DIMENSIONS: tuple[str, ...] = (
 #: ``partial_success`` is published next to the findings: absence of a
 #: finding in an unread dimension is not evidence of absence. Entries
 #: here are either not recorded by ``_build_snapshot`` at all, or
-#: recorded and never diffed (``cli_categories``), and each one is
-#: asserted unread by ``tests/test_cmd_compatibility.py`` rather than
+#: recorded and never diffed (``cli_categories``,
+#: ``cli_command_implementation_targets``), and each one is asserted
+#: unread by ``tests/test_w1491_compatibility_gate_wired.py`` rather than
 #: merely asserted in prose.
+#:
+#: A dimension belongs here only when its removal genuinely breaks no
+#: consumer. ``cli_command_implementation_targets`` (``commands[].module``
+#: / ``commands[].function``) qualifies: callers invoke ``roam health``,
+#: not the module path behind it. Preset MEMBERSHIP did NOT qualify and
+#: was moved into :data:`_COVERED_DIMENSIONS` instead — see the module
+#: docstring.
 _UNCOVERED_DIMENSIONS: tuple[str, ...] = (
     "cli_categories",
+    "cli_command_implementation_targets",
     "cli_flag_types_and_defaults",
     "mcp_tool_parameter_types_and_defaults",
     "mcp_tool_descriptions",
@@ -220,7 +270,7 @@ def _build_snapshot() -> dict[str, Any]:
     """
     from roam.cli import _CATEGORIES, _DEPRECATED_COMMANDS
     from roam.surface_counts import cli_commands as _cli_commands_ast
-    from roam.surface_counts import mcp_preset_counts, mcp_tool_params
+    from roam.surface_counts import mcp_preset_counts, mcp_preset_members, mcp_tool_params
 
     _commands = _cli_commands_ast()
 
@@ -245,7 +295,11 @@ def _build_snapshot() -> dict[str, Any]:
     # disagree about which tools exist; ``mcp_tool_params`` keeps
     # ``mcp_tool_names``' fail-loud duplicate check.
     mcp_tools = {name: sorted(params) for name, params in sorted(mcp_tool_params().items())}
+    # Counts AND members, both projections of the same ``_PRESETS``
+    # resolution in ``surface_counts``, so the two cannot disagree about
+    # what a preset holds. The count alone cannot see a 1-for-1 swap.
     mcp_presets = dict(mcp_preset_counts())
+    mcp_preset_member_map = {name: sorted(members) for name, members in sorted(mcp_preset_members().items())}
 
     return {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
@@ -253,6 +307,7 @@ def _build_snapshot() -> dict[str, Any]:
         "deprecated_aliases": deprecated,
         "mcp_tools": mcp_tools,
         "mcp_preset_counts": mcp_presets,
+        "mcp_preset_members": mcp_preset_member_map,
         "categories": list(_CATEGORIES.keys()),
         "envelope_summary_keys": list(_CANONICAL_ENVELOPE_KEYS),
     }
@@ -317,6 +372,28 @@ def _mcp_tools_of(snapshot: dict[str, Any]) -> tuple[set[str], dict[str, set[str
     return {name for name in raw if isinstance(name, str)}, {}
 
 
+def _preset_members_of(snapshot: dict[str, Any]) -> dict[str, set[str]]:
+    """Return ``{preset: {tool, ...}}`` for the presets a snapshot RECORDED.
+
+    A preset absent from the returned map is UNRECORDED, which is a
+    different fact from "recorded as empty" -- exactly the distinction
+    :func:`_mcp_tools_of` keeps for parameters. Collapsing the two would
+    let a pre-1.2.0 baseline (schemas 1.0.0 / 1.1.0, which have no
+    ``mcp_preset_members`` key at all) read as "every preset was empty and
+    every current member is an addition", turning an absent measurement
+    into a definite one and republishing the false clean this dimension
+    was widened to close.
+    """
+    raw = snapshot.get("mcp_preset_members")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        name: {tool for tool in value if isinstance(tool, str)}
+        for name, value in raw.items()
+        if isinstance(name, str) and isinstance(value, (list, tuple, set))
+    }
+
+
 def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     """Compute the structural diff between two snapshots.
 
@@ -327,10 +404,12 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
       removed_mcp_tools, added_mcp_tools,
       removed_mcp_tool_params, added_mcp_tool_params,
       unrecorded_mcp_tool_params,
+      removed_preset_members, added_preset_members,
+      unrecorded_preset_members,
       changed_presets.
 
     The ``breaking`` count counts entries that would BREAK an existing
-    consumer. It is the sum of SIX terms, and the last two are the ones
+    consumer. It is the sum of SEVEN terms, and the last two are the ones
     readers miss:
 
       ``removed_commands``          a command is gone with no alias
@@ -339,10 +418,13 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
       ``removed_mcp_tools``         an MCP tool name is gone
       ``removed_mcp_tool_params``   a live MCP tool no longer accepts a
                                     parameter the baseline recorded
+      ``removed_preset_members``    an MCP preset no longer contains a
+                                    tool the baseline recorded in it
       ``preset_shrinks``            an MCP preset exposes FEWER tools
-                                    than the baseline recorded
+                                    than the baseline recorded, and this
+                                    comparison could not read its members
 
-    Enumerate all six whenever this list is touched. With only the
+    Enumerate all seven whenever this list is touched. With only the
     ``removed_*`` command/flag/field/tool terms written down, a real
     result of ``breaking=1`` with those lists empty reads as a
     contradiction, and the reader has to re-derive the tally to find
@@ -350,6 +432,24 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     ``core`` went 57 -> 17 tools, which is a genuine break for any
     consumer gated on that preset and is what makes the next release
     major rather than minor.
+
+    ``removed_preset_members`` and ``preset_shrinks`` are mutually
+    exclusive by construction and that is deliberate. A count is a lossy
+    projection of a membership: when BOTH snapshots record members, every
+    real removal is named individually and the count delta is derivable
+    from those names, so adding the count term as well would tally one
+    break twice. When either side did not record members -- a pre-1.2.0
+    baseline -- the count is the only evidence there is, and it carries
+    the break alone. ``removed_preset_members`` is the term the
+    ``roam_taint`` -> ``roam_complexity_report`` swap needed and did not
+    have: ``core`` stayed at 17, the snapshot was byte-identical, and the
+    gate published ``no regressions`` while every MCP client on that
+    preset lost a tool.
+
+    ``unrecorded_preset_members`` mirrors ``unrecorded_mcp_tool_params``:
+    a preset present in both snapshots whose membership at least one side
+    never recorded. Counted into ``coverage_gap`` so the run reports
+    itself blind, never read as "this preset is empty".
 
     ``removed_mcp_tool_params`` is the term commit 67a09fd1 needed and
     did not have: it removed ``staged`` from ``roam_budget_check`` and
@@ -461,16 +561,56 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
         if b != c:
             changed_presets.append({"preset": preset, "baseline_count": b, "current_count": c})
 
+    # Per-preset MEMBERSHIP diff, mirroring the per-tool parameter diff.
+    # Only presets both snapshots know about; a preset whose members
+    # either side did not record is reported as unrecorded rather than
+    # compared against an assumed-empty set.
+    #
+    # Scoped to tools that EXIST in both snapshots, the same way the flag
+    # diff is scoped to commands in both and the parameter diff to tools in
+    # both. Deleting a tool outright drops it from every preset that held
+    # it, so without this scoping one deletion would tally as one
+    # ``removed_mcp_tools`` plus up to six ``removed_preset_members`` --
+    # counting one break seven times, which is the arithmetic version of
+    # the over-claim this gate exists to prevent. A tool moved OUT of a
+    # preset while still registered is the case this dimension is for, and
+    # it survives the scoping intact.
+    base_preset_members = _preset_members_of(baseline)
+    cur_preset_members = _preset_members_of(current)
+    surviving_tools = base_mcp & cur_mcp
+    removed_preset_members: list[dict[str, str]] = []
+    added_preset_members: list[dict[str, str]] = []
+    unrecorded_preset_members: list[str] = []
+    comparable_presets: set[str] = set()
+    for preset in sorted(set(base_presets) & set(cur_presets)):
+        if preset not in base_preset_members or preset not in cur_preset_members:
+            unrecorded_preset_members.append(preset)
+            continue
+        comparable_presets.add(preset)
+        base_members = base_preset_members[preset] & surviving_tools
+        cur_members = cur_preset_members[preset] & surviving_tools
+        for tool in sorted(base_members - cur_members):
+            removed_preset_members.append({"preset": preset, "tool": tool})
+        for tool in sorted(cur_members - base_members):
+            added_preset_members.append({"preset": preset, "tool": tool})
+
     # Tally breaking entries. Added items + renames are NOT breaking.
     # Preset count drops ARE breaking (fewer tools in a preset breaks
     # consumers gated on that preset); preset count INCREASES are not.
+    #
+    # Restricted to presets whose membership this comparison could NOT
+    # read. Where it could, ``removed_preset_members`` already names every
+    # missing tool and the count delta is a projection of those names;
+    # counting both would report one break twice.
     preset_shrinks = [
         e
         for e in changed_presets
-        if (e["baseline_count"] is not None)
+        if e["preset"] not in comparable_presets
+        and (e["baseline_count"] is not None)
         and (e["current_count"] is not None)
         and (e["current_count"] < e["baseline_count"])
     ]
+    count_only_changed_presets = [e for e in changed_presets if e["preset"] not in comparable_presets]
 
     breaking = (
         len(removed_commands)
@@ -478,6 +618,7 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
         + len(removed_envelope_fields)
         + len(removed_mcp_tools)
         + len(removed_mcp_tool_params)
+        + len(removed_preset_members)
         + len(preset_shrinks)
     )
 
@@ -495,7 +636,11 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
         + len(added_mcp_tools)
         + len(added_mcp_tool_params)
         + len(unrecorded_mcp_tool_params)
-        + len(changed_presets)
+        + len(added_preset_members)
+        + len(unrecorded_preset_members)
+        # Same exclusivity rule as ``preset_shrinks``: a comparable
+        # preset's count delta is already accounted for member by member.
+        + len(count_only_changed_presets)
     )
 
     return {
@@ -511,6 +656,9 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
         "removed_mcp_tool_params": removed_mcp_tool_params,
         "added_mcp_tool_params": added_mcp_tool_params,
         "unrecorded_mcp_tool_params": unrecorded_mcp_tool_params,
+        "removed_preset_members": removed_preset_members,
+        "added_preset_members": added_preset_members,
+        "unrecorded_preset_members": unrecorded_preset_members,
         "changed_presets": changed_presets,
         "breaking_count": breaking,
         "coverage_gap_count": coverage_gap,
@@ -547,13 +695,19 @@ def _verdict_for(diff: dict[str, Any], require_coverage: bool = False) -> tuple[
         or diff["added_envelope_fields"]
         or diff["added_mcp_tools"]
         or diff["added_mcp_tool_params"]
+        or diff["added_preset_members"]
     )
     # A dimension one side never recorded is drift between the baseline
     # and the build, not a clean comparison. Without this the verdict
     # line could read the flat "no regressions" while ``coverage_gap``
     # counted hundreds of unevaluated tools -- the same false clean this
     # command's ``partial_success`` wiring was fixed for.
-    any_drift = bool(diff["renamed_commands"] or diff["changed_presets"] or diff["unrecorded_mcp_tool_params"])
+    any_drift = bool(
+        diff["renamed_commands"]
+        or diff["changed_presets"]
+        or diff["unrecorded_mcp_tool_params"]
+        or diff["unrecorded_preset_members"]
+    )
     if any_drift:
         return ("surface drift", "warning")
     if any_added:
@@ -601,6 +755,7 @@ def _erasures(existing_path: Path, fresh: dict[str, Any]) -> dict[str, Any] | No
         "removed_envelope_fields": delta["removed_envelope_fields"],
         "removed_mcp_tools": delta["removed_mcp_tools"],
         "removed_mcp_tool_params": delta["removed_mcp_tool_params"],
+        "removed_preset_members": delta["removed_preset_members"],
         "preset_shrinks": delta["preset_shrinks"],
         "erased_count": delta["breaking_count"],
     }
@@ -617,6 +772,7 @@ def _erasure_lines(erasures: dict[str, Any]) -> list[str]:
     lines += [
         f"MCP tool parameter {entry['tool']}({entry['parameter']})" for entry in erasures["removed_mcp_tool_params"]
     ]
+    lines += [f"MCP preset member {entry['preset']}/{entry['tool']}" for entry in erasures["removed_preset_members"]]
     lines += [
         f"preset {entry['preset']} shrinks {entry['baseline_count']} -> {entry['current_count']}"
         for entry in erasures["preset_shrinks"]
@@ -721,7 +877,10 @@ def compatibility(
       - removed/added top-level envelope summary fields (canonical witness)
       - removed/added MCP tools
       - removed/added per-tool MCP parameters
-      - MCP preset count changes (preset shrinkage = breaking)
+      - removed/added per-preset MCP tools (a removed member = breaking,
+        including a 1-for-1 swap that leaves the count unchanged)
+      - MCP preset count changes on a baseline that records no membership
+        (preset shrinkage = breaking)
 
     Detection REACH is the baseline: nothing the baseline never recorded
     can be reported as removed later. --require-coverage gates on that
@@ -896,6 +1055,7 @@ def compatibility(
         + len(diff["removed_envelope_fields"])
         + len(diff["removed_mcp_tools"])
         + len(diff["removed_mcp_tool_params"])
+        + len(diff["removed_preset_members"])
     )
     renamed_n = len(diff["renamed_commands"])
     added_n = (
@@ -904,6 +1064,7 @@ def compatibility(
         + len(diff["added_envelope_fields"])
         + len(diff["added_mcp_tools"])
         + len(diff["added_mcp_tool_params"])
+        + len(diff["added_preset_members"])
     )
 
     if json_mode:
@@ -918,9 +1079,11 @@ def compatibility(
             f"{len(diff['removed_envelope_fields'])} removed envelope fields",
             f"{len(diff['removed_mcp_tools'])} removed MCP tools",
             f"{len(diff['removed_mcp_tool_params'])} removed MCP tool parameters",
+            f"{len(diff['removed_preset_members'])} removed MCP preset tools",
             f"{len(diff['added_commands'])} added commands",
             f"{len(diff['added_mcp_tools'])} added MCP tools",
             f"{len(diff['unrecorded_mcp_tool_params'])} MCP tools whose parameters the baseline does not record",
+            f"{len(diff['unrecorded_preset_members'])} unevaluated MCP presets",
             f"{breaking} breaking entries",
             f"{coverage_gap} entries outside baseline coverage",
             f"{len(_COVERED_DIMENSIONS)} surface dimensions evaluated: {', '.join(_COVERED_DIMENSIONS)}",
@@ -987,6 +1150,9 @@ def compatibility(
                     removed_mcp_tool_params=diff["removed_mcp_tool_params"],
                     added_mcp_tool_params=diff["added_mcp_tool_params"],
                     unrecorded_mcp_tool_params=diff["unrecorded_mcp_tool_params"],
+                    removed_preset_members=diff["removed_preset_members"],
+                    added_preset_members=diff["added_preset_members"],
+                    unrecorded_preset_members=diff["unrecorded_preset_members"],
                     changed_presets=diff["changed_presets"],
                     covered_dimensions=list(_COVERED_DIMENSIONS),
                     uncovered_dimensions=list(_UNCOVERED_DIMENSIONS),
@@ -1033,6 +1199,19 @@ def compatibility(
             click.echo("removed MCP tool parameters:")
             for e in diff["removed_mcp_tool_params"]:
                 click.echo(f"  - {e['tool']}({e['parameter']})")
+        if diff["removed_preset_members"]:
+            click.echo("")
+            click.echo("removed MCP preset members:")
+            for e in diff["removed_preset_members"]:
+                click.echo(f"  - {e['preset']} no longer contains {e['tool']}")
+        if diff["unrecorded_preset_members"]:
+            click.echo("")
+            click.echo(
+                f"{len(diff['unrecorded_preset_members'])} MCP presets have membership this comparison "
+                f"could not evaluate (one side's snapshot predates schema {SNAPSHOT_SCHEMA_VERSION}):"
+            )
+            for p in diff["unrecorded_preset_members"]:
+                click.echo(f"  - {p}")
         if diff["unrecorded_mcp_tool_params"]:
             click.echo("")
             unrecorded = diff["unrecorded_mcp_tool_params"]
