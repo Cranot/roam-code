@@ -249,6 +249,9 @@ _MEASUREMENT_SUFFIXES: frozenset[str] = frozenset(
         "mb",
         # W1280 — mirror formatter.measurement_suffixes addition.
         "cohesion",
+        # R4 — mirror formatter.measurement_suffixes addition. `threshold`
+        # names a gate setting, not a count of findings.
+        "threshold",
     }
 )
 
@@ -656,3 +659,49 @@ def test_is_concrete_anchored_helper_pure_unit():
     # FAIL: empty.
     assert not _is_concrete_anchored("")
     assert not _is_concrete_anchored("   ")
+
+
+def test_threshold_reads_as_a_measurement_name_not_a_finding_count():
+    """``{"threshold": 70}`` humanised to ``"70 threshold findings"``.
+
+    ``threshold`` names a measurement, not a count noun, so rule 4's generic
+    ``"findings"`` anchor turns a gate setting into a finding count: an agent
+    reading ``"70 threshold findings"`` reads 70 findings. Measured across the
+    tree, 40 ``"threshold":`` summary entries in 14 command modules emit it.
+    """
+    from roam.output.formatter import _humanize_summary_fact
+
+    assert _humanize_summary_fact("threshold", 70) == "threshold 70"
+
+
+def _formatter_measurement_suffixes() -> frozenset[str]:
+    """AST-read ``formatter.measurement_suffixes`` -- deliberately not imported.
+
+    It is a local inside ``_humanize_summary_fact``, so there is no object to
+    import; reading the source is also what keeps this a real parity check
+    rather than two names for one object.
+    """
+    tree = ast.parse((_SRC_DIR / "roam" / "output" / "formatter.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "measurement_suffixes" for t in node.targets
+        ):
+            return frozenset(e.value for e in node.value.elts if isinstance(e, ast.Constant))
+    raise AssertionError("formatter.measurement_suffixes not found -- the parity guard has gone blind")
+
+
+def test_measurement_suffixes_parity_across_all_three_mirrors():
+    """Third mirror. ``test_agent_opt.test_anchor_parity_with_law4_lint`` already
+    pins ``agent_opt._MEASUREMENT_SUFFIXES == test_law4_lint._MEASUREMENT_SUFFIXES``,
+    but nothing covered ``formatter.measurement_suffixes`` -- the list that
+    actually decides how a fact is rendered. Adding a suffix to the humaniser
+    without adding it here makes the lint reject the string the humaniser just
+    produced (and vice versa: the lint accepts a form nothing emits).
+    """
+    formatter_suffixes = _formatter_measurement_suffixes()
+
+    assert formatter_suffixes == _MEASUREMENT_SUFFIXES, (
+        "measurement-suffix mirrors drifted: "
+        f"only in formatter.py={sorted(formatter_suffixes - _MEASUREMENT_SUFFIXES)}, "
+        f"only in test_law4_lint.py={sorted(_MEASUREMENT_SUFFIXES - formatter_suffixes)}"
+    )

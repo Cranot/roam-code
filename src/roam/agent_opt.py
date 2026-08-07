@@ -736,6 +736,10 @@ _MEASUREMENT_SUFFIXES = frozenset(
         "ratio",
         "score",
         "size",
+        # Mirror formatter.measurement_suffixes: `threshold` names a gate
+        # setting, so "threshold 70" is the anchored form and the detector
+        # must not flag it as a weak fact.
+        "threshold",
         "total",
     }
 )

@@ -5031,6 +5031,42 @@ def _empty_verify_envelope(threshold: int) -> dict:
             "verification": {"score": 100, "violations": [], "available": True},
         },
         violations=[],
+        # The agent-facing block is the one the MCP tool ``roam_verify``
+        # returns verbatim (mcp_server.py shells ``roam --json verify
+        # --changed`` and post-processes nothing), so it is what the primary
+        # consumer actually reads. Auto-derivation walks ``summary`` and
+        # produced ``["PASS", "score 100", "70 threshold findings",
+        # "0 files checked", "violation count 0"]`` -- a verdict and a quality
+        # score asserted for zero files and zero checks. That is the same
+        # ``fabricated_success`` shape the human text above was fixed for; the
+        # human line was made honest and this one was not.
+        #
+        # Passing ``agent_contract=`` here rides ``json_envelope``'s
+        # ``**payload`` into ``_add_agent_contract`` ->
+        # ``_merge_agent_contract`` (output/formatter.py): explicit keys win
+        # outright and auto-derived ones fill the gaps, so ``next_commands``
+        # and ``confidence`` survive and no shared derivation changes.
+        #
+        # ``summary`` is deliberately NOT touched. compile-code's
+        # ``_require_known_shape(summary, allowed=_VERIFY_SUMMARY_KEYS)``
+        # (src/compile_code/cli.py:2463) is a CLOSED key set -- any new summary
+        # key raises ``ValueError("summary_schema")`` and exits EXIT_TOOLCHAIN
+        # on every clean tree. ``agent_contract`` is only required to be a dict
+        # (cli.py:3257) and nothing inspects ``facts``.
+        agent_contract={
+            "facts": [
+                f"NOT VERIFIED: 0 of {len(_ALL_CHECKS)} checks ran",
+                "0 files checked",
+                "state no_changes: no file was read and no check ran",
+                f"threshold {threshold} was never applied to any file",
+                "score 100 is the not-run default, not a measured result",
+            ],
+            "risks": [
+                "verdict PASS here means nothing was checked, not that checks passed",
+                "the 100s are pinned defaults required by the compile verify contract; "
+                "reading them as quality evidence would treat an unrun gate as a green one",
+            ],
+        },
     )
 
 
