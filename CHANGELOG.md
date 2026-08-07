@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet. Everything previously staged here shipped inside the 14.0.0 section below, which is where a tag cut at this commit would put it._
+_Nothing yet._
 
 ## [14.0.0] — 2026-08-07
 
-> **Not yet tagged or published.** The date above is the date this section was completed, not a release date; PyPI's latest is 13.10.0 until the `v14.0.0` tag is cut. Every install instruction in this repository therefore still pins 13.10.0 on purpose — see `scripts/check_install_targets.py`, which fails the push if any of them names a version that does not exist. `docs/COMMANDS.md` documents the 14.0.0 surface, so commands listed there that do not exist in 13.10.0 are not installable until the tag is cut; that resolves itself on release and is stated here rather than left to be discovered.
+> **Install pins in this repository follow the PUBLISHED wheel, not the tag.** Every install instruction here — 46 of them, enforced by `scripts/sync_surface_counts.py` and `scripts/check_install_targets.py` — named 13.10.0 when this section was tagged, because a pin may never name a version that cannot be fetched. They move to 14.0.0 via `python scripts/sync_surface_counts.py --write` **after the 14.0.0 wheel is live on PyPI**, not at tag time: `_published_version()` reads the LOCAL tag list, so running it at tag time would put 46 pins on `main` that 404 at the consumer — verbatim the defect `check_install_targets.py` was added in this release to prevent. Verify the move with `python scripts/check_install_targets.py --network`, which is the only form that asks PyPI; the offline default is satisfied by a local tag alone.
 >
-> **Three things must change when the tag is cut, and only the first is obvious.** (1) Update the date above to the tag date. (2) Change the two link definitions at the foot of this file: `[14.0.0]` currently points at `compare/v13.10.0...HEAD`, which is correct only while HEAD *is* the release — after the tag it must become `compare/v13.10.0...v14.0.0`, and `[Unreleased]` must become `compare/v14.0.0...HEAD`, or the released section's diff link tracks `main` forever. (3) Run `python scripts/sync_surface_counts.py --write`, which moves every install pin from 13.10.0 to 14.0.0 once the tag exists — the pins follow the release rather than leading it, so this step is not optional and is not automatic.
+> **Two consequences of that ordering are permanent in the v14.0.0 artifacts, and are stated here rather than left to be discovered.** (1) The composite action **as it exists at the v14.0.0 tag** declares 13.10.0 as the default of its `version` input, because the pin bump lands on `main` after the tag and can never reach a tag that already exists. Referencing the action at that tag without setting `version:` therefore installs 13.10.0, not this release; set that input explicitly if you need 14.0.0 from that ref. (2) `roam ci-setup` run from the 14.0.0 wheel emits pipelines whose install line names 13.10.0, for the same reason and with the same remedy — edit the emitted pin, or re-run `ci-setup` from a later release. The wheel is built once from the tagged commit, so no post-tag repository edit can change what it emits.
+>
+> Neither sentence above may be written using a literal pin form: `scripts/sync_surface_counts.py` scans this file, and a pin-shaped literal here is rewritten by the very sweep this note describes. That is why this paragraph names versions in prose only.
 
 ### Added
 - **`roam ignore-drift` — the standard audit for tracked-but-ignored files reports clean, always, and this is the form that does not.** Every repo that ever added a `.gitignore` rule retroactively holds files git still tracks under a rule that claims to exclude them; gitignore governs what git picks up, never what it already holds. The natural audit — `git ls-files | xargs git check-ignore` — returns zero hits in every repository, because `git check-ignore` silently skips paths that are in the index unless `--no-index` is passed. It reports CLEAN on exactly the defect it is hunting. Measured across three repositories on 2026-08-05: the naive form found 0 in every one; the `--no-index` form found 43 tracked-but-ignored files in one (42 of them under a single directory, including a 2.6 MB corpus) and 27 in another (including a credentials file tracked since 2025-09-17 under a rule naming it). Both had been "audited clean" before. The command ships with `--fail-on-found`, and it does not ship alone: it runs in `scripts/prepush_check.py` beside the two sibling leak gates and in the CI secret-scan workflow, so a `--no-verify` bypass or a push from a clone without hooks still hits it. A detector nothing invokes is a script someone has to remember to run, which is the same posture as not having it.
@@ -39,9 +41,12 @@ discovered on upgrade. `roam api-changes --changed`, `roam budget --staged` and
 click `UsageError` and **exit 2** — `Error: No such option: --changed`,
 `Error: No such option: --staged Did you mean --range?`,
 `Error: No such option: --model-tier` — on a command line that worked before.
-Nothing was renamed, no MCP tool disappeared, and no MCP preset narrowed:
-`roam compatibility --json` against `dev/compatibility-baseline.json` reports
-`removed=3`. Their MCP mirrors went with them
+Nothing was renamed, no MCP tool disappeared, and no MCP preset narrowed.
+Against the PRE-REFRESH baseline `roam compatibility --json` reported
+`removed=3` and exit 5; `dev/compatibility-baseline.json` was refreshed as part
+of this release (see below), so the same command run on this tree now reports
+`removed=0` and `verdict: no regressions`. Do not read that zero as "nothing was
+removed" — read it as "the baseline has caught up". Their MCP mirrors went with them
 (`roam_budget_check(staged)`, `roam_compile(model_tier)`), which is recorded
 under Fixed below because the gate could not see that half at all.
 
@@ -54,7 +59,7 @@ tools/params/presets — and names what it does not evaluate on every run:
 `cli_flag_types_and_defaults`, `mcp_tool_parameter_types_and_defaults`,
 `mcp_tool_descriptions`, `runtime_behavior`. A flag COMBINATION that is newly
 rejected removes no flag, so it is invisible to a flag-removal diff by
-construction; `removed=3` is true and proves nothing about completeness. Citing
+construction; that `removed=3` was true and proved nothing about completeness. Citing
 a gate's silence as evidence of absence is this release's own headline defect,
 and it had been reproduced inside the notes describing it. **Treat every
 enumeration in this section as a lower bound established by targeted
@@ -89,11 +94,21 @@ code is 0 in both. JSON mode is unchanged — `--json` still emits
 only consumers that grep the human text are affected. **Remedy:** read
 `injection_advice`, or use `--json`, which was always the stable surface.
 
-**One additive envelope key.** Truncated envelopes now carry
-`summary.emitted_counts` (`{collection: count}`), so a consumer can tell how
-much of each collection survived the budget rather than inferring it from
-length. Additive, so nothing breaks; recorded because an agent-facing schema
-addition that appears in no changelog is a surface nobody can plan against.
+**Additive envelope keys — and nothing removed.** Truncated envelopes now
+carry `summary.emitted_counts` (`{collection: count}`), so a consumer can tell
+how much of each collection survived the budget rather than inferring it from
+length. That is the one worth planning against, and it is not the only one: a
+sweep of every command that takes no required argument (210 of them) run under
+`--json` at 13.10.0 and again here found **33 further additive `summary` keys
+and 10 additive top-level keys** — among them `secrets`' fail-closed
+disclosure counters, `compatibility`'s covered/uncovered dimension blocks,
+`health`'s `god_component_thresholds`, `init`/`index`'s `corpus` and `state`,
+`taint`'s `evidence_mix`, and `budget`'s `metrics_version`. The same sweep
+found **zero** envelope keys removed at any level — no `summary` key, no
+top-level key, no `agent_contract` key — and no schema string changed except
+`roam schema`'s own payload version (`1.1.0` -> `1.2.0`). Additive, so nothing
+breaks; recorded because an agent-facing schema addition that appears in no
+changelog is a surface nobody can plan against.
 
 **Each of the three was a no-op, which is why removal beats repair — measured,
 not asserted, because the measurement is the entire basis for not reverting.**
@@ -226,6 +241,7 @@ Three of these carry a real upgrade hazard, and each has a short remedy.
 - **The publish workflow's GitHub Release job had never once executed end to end, and hid four independent defects behind each other.** PyPI publication and evidence signing were green throughout; every failure was downstream of them, which is why the gap survived. In order of discovery: `actions/download-artifact` resolving by `artifact-ids` nests the payload under a directory named after the artifact, so four `path:` values pointed one level above the files their consumers opened; `cosign sign-blob --output-certificate` writes **base64-encoded** PEM, which `cosign verify-blob` decodes transparently but `openssl x509` cannot read — the sibling `.sig` was already decoded in the same loop and the certificate never was; `GET /releases/tags/{tag}` does not resolve **draft** releases (a draft carries no tag ref yet, hence its `untagged-*` URL), so the state fetch returned 404 again immediately after creating the draft and the tag assertion ran against the stale 404 body, making the whole create → upload → publish branch unreachable; and `download_release_assets` opened with `mkdir -m 0700` on a directory every caller had already created with `mktemp -d`, which under `set -e` killed the job one step after the assets had been uploaded. Each fix was verified against the real artifacts the previous failure left behind rather than by re-running and hoping: the evidence certificates verify `Verified OK` for both subjects from the downloaded bytes, and all six assets download by tag from a draft release. The certificate decode falls back to the file as-is, so a cosign that emits bare PEM keeps verifying; more than one draft for a tag is now a hard error rather than a guess.
 
 ### Changed
+- **The `.roam/responses/` side-car store is now bounded, indexed, and discloses its own truncation.** It was an unbounded write-only cache — measured at 29,456 JSON files / 762,725,362 bytes on one real store — with no prune, evict, retention or cap anywhere in the write path, and both readers (`roam next` and `roam pr-bundle`) called `iterdir()` + `stat()` across every file on every invocation to consume a single newest envelope. `roam next` is meant to be fast and was O(n) in a corpus that only grows; the read path measured 988 ms -> ~308 ms steady state. Two things changed that a consumer can observe. (a) A new on-disk artifact, `.roam/response-index.sqlite3`, which both readers now consult instead of walking the store; it is a rebuildable cache, not a source of truth. (b) A **256 KB cap on the persisted payload** (`_DEFAULT_RESPONSE_STORE_MAX_BYTES` in `src/roam/output/formatter.py`, overridable via `ROAM_RESPONSE_STORE_MAX_BYTES`), applied because the bytes live in a handful of commands rather than in the file count — `dead` alone was 40% of all bytes in 0.5% of the files, and the cap reclaims 63.4% of the corpus across 0.99% of it. Truncation is never silent: it goes through `budget_truncate_json`, preserves the envelope and contract blocks, and stamps `summary.response_store` (`{payload_truncated, max_bytes, original_bytes, stored_bytes}`) plus the canonical partial-success disclosure. **The command's own stdout envelope is unchanged** — only the persisted side-car copy is capped, and the write path runs at all only when `ROAM_RUN_ID` is set or `.roam/pr-bundles/` holds a `.json`. A consumer that reads `.roam/responses/` directly and does not check `summary.response_store` can now receive a truncated payload where it previously received the whole one; that is the one behaviour to plan against.
 - **Author identity is reconciled through a `.mailmap` instead of a history rewrite.** Six identities across the history are one person, accumulated across machines and git configs; `git shortlog`, `git blame`, `git log --use-mailmap` and GitHub's contributor graph now agree on 2,028 commits without touching published history. Outside contributors and the three automation identities are deliberately left distinct — two of them share an address with a human identity, so the entries touching that address match on name as well as email, since an email-only rule would have swallowed them.
 
 ## [13.10.0] — 2026-07-28
@@ -9646,8 +9662,8 @@ isn't an artifact of self-bench.
 - Incremental indexing via mtime + hash change detection
 - Git integration: churn, blame, co-change analysis
 
-[Unreleased]: https://github.com/Cranot/roam-code/compare/v13.10.0...HEAD
-[14.0.0]: https://github.com/Cranot/roam-code/compare/v13.10.0...HEAD
+[Unreleased]: https://github.com/Cranot/roam-code/compare/v14.0.0...HEAD
+[14.0.0]: https://github.com/Cranot/roam-code/compare/v13.10.0...v14.0.0
 [13.10.0]: https://github.com/Cranot/roam-code/compare/v13.9.0...v13.10.0
 [13.9.0]: https://github.com/Cranot/roam-code/compare/v13.8.0...v13.9.0
 [13.8.0]: https://github.com/Cranot/roam-code/compare/v11.1.3...v13.8.0
