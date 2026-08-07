@@ -1042,6 +1042,14 @@ def _humanize_summary_fact(key: str, value: int | float) -> str:
         # key so the humanizer renders "cohesion 1.0" instead of the
         # double-noun "1.0 cohesion findings" (LAW 4 anchoring).
         "cohesion",
+        # `threshold` NAMES a gate setting, it is not a count noun. Without
+        # this entry rule 4 renders `{"threshold": 70}` as "70 threshold
+        # findings", which reads as 70 findings. Measured blast radius: 40
+        # `"threshold":` summary entries across 14 command modules, all of
+        # which were emitting that garble. MIRRORS: agent_opt._MEASUREMENT_
+        # SUFFIXES and tests/test_law4_lint._MEASUREMENT_SUFFIXES -- pinned
+        # equal by test_measurement_suffixes_parity_across_all_three_mirrors.
+        "threshold",
     )
     if last_token in measurement_suffixes or label.endswith("_id"):
         return f"{label} {value}"

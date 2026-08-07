@@ -15,7 +15,32 @@ from __future__ import annotations
 
 import json
 
-from roam.commands.cmd_verify import _emit_empty_verify, _empty_verify_envelope
+from roam.commands.cmd_verify import _ALL_CHECKS, _emit_empty_verify, _empty_verify_envelope
+
+# The nine keys ``_empty_verify_envelope`` may emit under ``summary``. Pinned as
+# a literal because compile-code's ``_require_known_shape(summary,
+# allowed=_VERIFY_SUMMARY_KEYS)`` (src/compile_code/cli.py:2463) is a CLOSED key
+# set: an unknown key raises ``ValueError("summary_schema")`` and exits
+# EXIT_TOOLCHAIN on every clean tree. Read at compile-code cli.py:2463 --
+# all nine below are members, so this envelope is accepted today.
+_EMPTY_VERIFY_SUMMARY_KEYS = frozenset(
+    {
+        "verdict",
+        "score",
+        "threshold",
+        "files_checked",
+        "violation_count",
+        "state",
+        "checks_run",
+        "verification_complete",
+        "partial_success",
+    }
+)
+
+# Substrings that state, in the agent-facing block, that nothing ran. At least
+# one must appear; the list exists so rewording a fact does not silently drop
+# the disclosure.
+_NOT_RUN_MARKERS = ("not verified", "no check ran", "never applied", "not-run default")
 
 
 def _summary_text(capsys) -> str:
@@ -82,3 +107,70 @@ def test_wire_score_is_pinned_by_compile_code():
         assert type(category["score"]) is int, name
     # JSON mode is unchanged by the text fix.
     assert json.loads(json.dumps(envelope))["summary"]["verdict"] == "PASS"
+
+
+def test_agent_contract_facts_do_not_assert_a_verification_that_never_ran():
+    """The AGENT-facing block is the one the MCP tool returns verbatim.
+
+    ``roam_verify`` (src/roam/mcp_server.py) shells ``roam --json verify
+    --changed`` and returns the envelope with no post-processing of
+    ``agent_contract``, so these five strings are what the primary consumer
+    reads. Auto-derivation turned ``summary`` into ``["PASS", "score 100", ...]``
+    -- a verdict and a quality score for zero files and zero checks, which is
+    the same ``fabricated_success`` shape the human text was fixed for.
+    """
+    facts = _empty_verify_envelope(70)["agent_contract"]["facts"]
+
+    assert "PASS" not in facts, f"agent_contract asserts a bare PASS having run no checks; got {facts!r}"
+    assert "score 100" not in facts, f"agent_contract advertises an unqualified score; got {facts!r}"
+
+    joined = " ".join(facts).lower()
+    assert any(marker in joined for marker in _NOT_RUN_MARKERS), (
+        f"agent_contract must state that nothing ran; got {facts!r}"
+    )
+    # A fact may still report the wire score (it is pinned, see below) but only
+    # while carrying its disclaimer in the SAME fact -- an agent reading one
+    # line must not be able to take "score 100" as a measurement.
+    for fact in facts:
+        if "score 100" in fact:
+            assert "not-run default" in fact, f"score fact lacks its disclaimer: {fact!r}"
+
+
+def test_agent_contract_names_the_checks_that_did_not_run():
+    """``0 of N checks`` must track ``_ALL_CHECKS``, not a hardcoded N.
+
+    Measured: ``len(_ALL_CHECKS)`` is 35 today. A literal in the fact string
+    would quietly become a false count the next time a check is registered.
+    """
+    facts = _empty_verify_envelope(70)["agent_contract"]["facts"]
+
+    assert any(f"0 of {len(_ALL_CHECKS)} checks" in fact for fact in facts), (
+        f"agent_contract must count the checks it skipped; got {facts!r}"
+    )
+
+
+def test_explicit_facts_do_not_drop_the_auto_derived_contract_keys():
+    """``_merge_agent_contract`` fills gaps; passing facts must not empty it.
+
+    ``next_commands`` and ``confidence`` come from the auto-derivation and are
+    what an agent uses to decide the next call. ``risks`` was ``[]`` -- an empty
+    risk list beside a PASS reads as "nothing to worry about".
+    """
+    contract = _empty_verify_envelope(70)["agent_contract"]
+
+    assert set(contract) >= {"facts", "risks", "next_commands", "confidence"}, (
+        f"agent_contract lost an auto-derived key; got {sorted(contract)}"
+    )
+    assert contract["risks"], "empty risks beside a not-run PASS reads as 'no concerns'"
+
+
+def test_summary_key_set_is_untouched_by_the_agent_contract_fix():
+    """compile-code's allowed-key set is CLOSED; adding a summary key breaks it.
+
+    This is the control on the fix, not a defect probe: it is green before and
+    after. ``_require_known_shape(summary, allowed=_VERIFY_SUMMARY_KEYS)``
+    (compile-code cli.py:2463) rejects an unknown key with
+    ``ValueError("summary_schema")``, so the disclosure had to land in
+    ``agent_contract`` -- which cli.py:3257 only requires to be a dict.
+    """
+    assert set(_empty_verify_envelope(70)["summary"]) == _EMPTY_VERIFY_SUMMARY_KEYS
