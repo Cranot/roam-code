@@ -51,10 +51,12 @@ pipeline {
         stage('Setup') {
             steps {
                 sh '''
+                    set -eu
                     python3 -m venv .venv-roam
-                    . .venv-roam/bin/activate
-                    pip install --quiet roam-code
-                    roam --version
+                    .venv-roam/bin/python -I -m pip --isolated --disable-pip-version-check install \
+                        --no-input --no-cache-dir --only-binary=:all: 'roam-code==13.10.0'
+                    .venv-roam/bin/python -I -m pip check
+                    .venv-roam/bin/python -I -c "from importlib.metadata import version; actual = version('roam-code'); print(f'roam-code {actual}'); raise SystemExit(0 if actual == '13.10.0' else 1)"
                 '''
             }
         }

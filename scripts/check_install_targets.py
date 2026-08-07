@@ -12,31 +12,50 @@ The one check that could have noticed
 after the thing it was meant to prevent had already shipped.
 
 This gate runs on the push path instead, and it is offline by default: a
-``v<version>`` tag in this repository is what ``Cranot/roam-code@v<version>``
-resolves against, so tag existence is checkable with no network at all, in
-milliseconds. ``--pypi`` additionally confirms the wheel is on PyPI, which the
-tag cannot prove (a tag can exist while the publish job failed).
+``v<version>`` tag is what ``Cranot/roam-code@v<version>`` resolves against,
+so tag existence is checkable with no network at all, in milliseconds.
+
+**What the offline check does and does not prove.** It reads the LOCAL tag
+list. A tag that exists locally and has never been pushed satisfies it while
+every consumer's ``Cranot/roam-code@v<version>`` still resolves to nothing —
+which is a live hazard on the release path, where the tag is created locally
+first. ``--remote`` closes that half by asking GitHub for the ref; ``--pypi``
+closes the wheel half, which no tag can prove (a tag can exist while the
+publish job failed). ``--network`` is both. The default is stated this way
+rather than implied because "the local tag list agrees" is a weaker claim than
+"a consumer can fetch this", and only the second one is what an install
+instruction promises.
 
 FAIL-CLOSED, which is the entire point of the design:
 
     exit 0  OK       every install target named in the tree exists
     exit 1  FAIL     a target does not exist -- naming it is an instruction
                      that cannot be followed
-    exit 2  UNKNOWN  the gate could not determine whether a target exists
-                     (no git, no tags, PyPI unreachable, an HTTP error that
-                     is not a clean 404). It REFUSES. It does not pass.
+    exit 2  UNKNOWN  the gate could not determine whether a target exists.
+                     It REFUSES. It does not pass.
 
-The UNKNOWN path is not a formality. "The registry was unreachable, so assume
-the version is fine" is precisely the defect class this repository keeps
-closing elsewhere, and shipping it inside the guard against that class would
-be the worst possible place to put it. An absent measurement is UNKNOWN, never
-a benign default.
+Every not-knowing path returns 2, and the list is longer than it first looks:
+git unusable; an EMPTY tag list (a shallow clone has none, and "no tags" is
+not "no releases"); a tracked file that would not open; a sweep that matched
+nothing; a shipped CI template carrying an UNPINNED install, whose target is
+therefore whatever is latest at run time; a registry that did not answer; a
+registry answer that is not the registry's own JSON for the version asked
+about. That last one matters more than its size suggests — an intercepting
+proxy answers 200, so "the HTTP status was 2xx" is not evidence that PyPI
+said anything.
+
+"The registry was unreachable, so assume the version is fine" is precisely the
+defect class this repository keeps closing elsewhere, and shipping it inside
+the guard against that class would be the worst possible place to put it. An
+absent measurement is UNKNOWN, never a benign default.
 
 Usage::
 
-    python scripts/check_install_targets.py           # offline: tags only
-    python scripts/check_install_targets.py --pypi    # also confirm on PyPI
-    python scripts/check_install_targets.py --json    # machine-readable
+    python scripts/check_install_targets.py            # offline: local tags
+    python scripts/check_install_targets.py --pypi     # + the wheel on PyPI
+    python scripts/check_install_targets.py --remote   # + the tag on GitHub
+    python scripts/check_install_targets.py --network  # both of the above
+    python scripts/check_install_targets.py --json     # machine-readable
 """
 
 from __future__ import annotations
@@ -45,6 +64,7 @@ import argparse
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -57,6 +77,10 @@ FAIL = 1
 UNKNOWN = 2
 
 PYPI_URL = "https://pypi.org/pypi/roam-code/{version}/json"
+GITHUB_REF_URL = "https://api.github.com/repos/Cranot/roam-code/git/ref/tags/v{version}"
+
+_USER_AGENT = "roam-code-install-target-gate"
+_MAX_BODY = 4 * 1024 * 1024
 
 
 class Unknown(Exception):
@@ -68,85 +92,213 @@ class Unknown(Exception):
     """
 
 
+class _Absent(Exception):
+    """A clean 404 — the ONLY outcome that is evidence a thing is not there."""
+
+
 def _tag_set() -> set[str]:
-    """Release tags in this repository, or ``Unknown`` if they cannot be read."""
+    """Release tags in this repository, or ``Unknown`` if they cannot be read.
+
+    An EMPTY list is a not-knowing path, not a clean one. ``git tag --list``
+    exits 0 with no output in a shallow clone — the single most common way a
+    stranger gets this repository, and the default of every CI checkout that
+    does not set ``fetch-depth: 0``. Letting the empty set flow into the
+    membership test below marks EVERY pinned version missing and reports FAIL:
+    a false assertion of absence manufactured from missing data, which is the
+    same defect as the false assertion of presence, pointed the other way.
+    """
     try:
-        return set(sync.release_tags())
+        tags = set(sync.release_tags())
     except SystemExit as exc:  # release_tags hard-fails when git is unusable
         raise Unknown(str(exc)) from exc
+    if not tags:
+        raise Unknown(
+            "this repository has no `v*` release tags, so no install target can be "
+            "resolved against it. That is almost always a shallow or tagless clone "
+            "rather than a project with no releases -- run `git fetch --tags` (or "
+            "check out with `fetch-depth: 0`) and re-run. Refusing rather than "
+            "reporting every pin missing, which would be an assertion of absence "
+            "built out of missing data"
+        )
+    return tags
+
+
+def _fetch_json(url: str, *, what: str) -> dict:
+    """Parsed JSON from ``url``; ``_Absent`` on a clean 404; else ``Unknown``.
+
+    Deliberately NOT "the status was 2xx". A captive portal, a corporate MITM
+    proxy with a trusted root, or any other intermediary answers 200 with its
+    own page, and ``urllib``'s default opener honours ``https_proxy`` from the
+    environment — so 2xx-means-yes turns the exact situation this gate exists
+    for ("the registry could not be reached") into "the version exists". Four
+    things must all hold before an answer counts as the registry's answer:
+    the status is exactly 200, the final URL is still the host we asked, the
+    content type is JSON, and the body parses. Anything else is UNKNOWN.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            status = resp.status
+            final_url = resp.geturl()
+            content_type = resp.headers.get_content_type()
+            body = resp.read(_MAX_BODY)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise _Absent(f"{what}: 404") from exc
+        raise Unknown(f"{what}: HTTP {exc.code}; existence not determined") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise Unknown(f"{what}: unreachable ({exc}); existence not determined") from exc
+
+    if status != 200:
+        raise Unknown(f"{what}: HTTP {status} is not an answer this gate reads as data")
+    asked_host = urllib.parse.urlsplit(url).netloc
+    answered_host = urllib.parse.urlsplit(final_url).netloc
+    if answered_host != asked_host:
+        raise Unknown(
+            f"{what}: asked {asked_host} and was answered by {answered_host}; "
+            "an intermediary answered, so the registry did not"
+        )
+    if content_type != "application/json":
+        raise Unknown(
+            f"{what}: answered with content-type {content_type!r}, not application/json; "
+            "that is an intermediary's page, not the registry's record"
+        )
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise Unknown(f"{what}: answered 200 with a body that is not JSON ({exc})") from exc
+    if not isinstance(data, dict):
+        raise Unknown(f"{what}: answered 200 with JSON that is a {type(data).__name__}, not an object")
+    return data
 
 
 def _pypi_has(version: str) -> bool:
-    """True/False if PyPI answered; ``Unknown`` if it could not be asked.
+    """True/False if PyPI answered about THIS version; ``Unknown`` otherwise.
 
-    Only a clean 404 counts as "not published". Every other outcome -- a 5xx,
-    a timeout, a proxy interception, a DNS failure -- means the question was
-    not answered, and an unanswered question is UNKNOWN.
+    The payload is checked against the version asked for. A 200 carrying some
+    other release is an answer to a different question, and reading it as yes
+    is how a cached or rewritten response certifies a version that was never
+    published.
     """
-    url = PYPI_URL.format(version=version)
-    req = urllib.request.Request(url, headers={"User-Agent": "roam-code-install-target-gate"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return 200 <= resp.status < 300
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return False
-        raise Unknown(f"PyPI returned HTTP {exc.code} for {version}; existence not determined") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise Unknown(f"PyPI unreachable while checking {version}: {exc}") from exc
+        data = _fetch_json(PYPI_URL.format(version=version), what=f"PyPI roam-code {version}")
+    except _Absent:
+        return False
+    reported = (data.get("info") or {}).get("version")
+    if reported != version:
+        raise Unknown(
+            f"PyPI roam-code {version}: the 200 response describes {reported!r} instead; "
+            "that is an answer about a different version, not about this one"
+        )
+    return True
 
 
-def check(*, check_pypi: bool) -> tuple[int, dict]:
-    """Return ``(exit_code, report)``."""
-    report: dict = {"checked_pypi": check_pypi}
+def _remote_tag_has(version: str) -> bool:
+    """Whether ``v<version>`` exists on the GitHub remote; ``Unknown`` if unasked.
 
-    sites = sync.install_pin_sites()
+    The local tag list cannot see this. ``git tag v14.0.0`` followed by a sync
+    and this gate passes offline while every consumer's action ref still
+    resolves to nothing, because the tag was never pushed — and that sequence
+    is exactly the release path.
+    """
+    try:
+        data = _fetch_json(GITHUB_REF_URL.format(version=version), what=f"GitHub tag v{version}")
+    except _Absent:
+        return False
+    ref = data.get("ref")
+    if ref != f"refs/tags/v{version}":
+        raise Unknown(
+            f"GitHub tag v{version}: the 200 response describes ref {ref!r}; "
+            "that is not the ref this pin resolves against"
+        )
+    return True
+
+
+def _unpinned_shipped_surfaces(sites: list[tuple[str, int, str]]) -> list[str]:
+    """Shipped CI templates that carry NO install pin the sweep can see.
+
+    A pin scanner can only check pins that exist. A template whose install
+    line reads ``pip install roam-code`` produces no site at all, so it is
+    absent from the report, absent from the count, and reported OK by a gate
+    that never evaluated it. Its install target is "whatever is latest when
+    this runs", which is not a target this gate — or anyone — can check.
+    """
+    with_pins = {rel for rel, _, _ in sites}
+    return [rel for rel in sync.shipped_install_surfaces() if rel not in with_pins]
+
+
+def check(*, check_pypi: bool, check_remote: bool) -> tuple[int, dict]:
+    """Return ``(exit_code, report)``.
+
+    Both network switches are required keywords. A defaulted one reads as
+    "off" at a call site that forgot it, which silently downgrades the claim
+    from "a consumer can fetch this" to "the local tag list agrees" — the
+    weakening this module exists to make impossible.
+    """
+    report: dict = {"checked_pypi": check_pypi, "checked_remote": check_remote}
+
+    sites, scan = sync.install_pin_scan()
     report["install_pin_sites"] = len(sites)
+    report["scan"] = scan
     versions = sorted({v for _, _, v in sites})
     report["versions"] = versions
+
+    def _refuse(reason: str) -> tuple[int, dict]:
+        report["status"] = "UNKNOWN"
+        report["reason"] = reason
+        return UNKNOWN, report
+
+    if scan["unreadable"]:
+        return _refuse(
+            f"{scan['unreadable']} tracked file(s) could not be read, so any install "
+            "instruction they carry was never seen; an unread file is not an empty one"
+        )
 
     if not sites:
         # A sweep that found nothing is far more likely to be a broken sweep
         # than a tree with no install instructions -- this repository ships
-        # seven CI templates that each carry one. Treating an empty result as
+        # CI templates that each carry one. Treating an empty result as
         # "all clear" is how a gate becomes a no-op that still prints OK.
-        report["status"] = "UNKNOWN"
-        report["reason"] = (
+        return _refuse(
             "no install pins found in the tracked tree; the sweep is expected to "
             "match the shipped CI templates, so an empty result reads as a broken "
             "scanner rather than a clean tree"
         )
-        return UNKNOWN, report
+
+    unpinned = _unpinned_shipped_surfaces(sites)
+    report["unpinned_shipped_surfaces"] = unpinned
+    if unpinned:
+        return _refuse(
+            "shipped CI template(s) install roam-code without pinning a version, so "
+            "the target they name is whatever is latest at run time and cannot be "
+            "checked: " + ", ".join(unpinned)
+        )
 
     try:
         tags = _tag_set()
     except Unknown as exc:
-        report["status"] = "UNKNOWN"
-        report["reason"] = str(exc)
-        return UNKNOWN, report
+        return _refuse(str(exc))
 
     missing_tag = [v for v in versions if f"v{v}" not in tags]
     report["missing_tag"] = missing_tag
 
     missing_pypi: list[str] = []
-    if check_pypi:
-        for v in versions:
-            try:
-                if not _pypi_has(v):
-                    missing_pypi.append(v)
-            except Unknown as exc:
-                report["status"] = "UNKNOWN"
-                report["reason"] = str(exc)
-                return UNKNOWN, report
+    missing_remote: list[str] = []
+    for v in versions:
+        try:
+            if check_pypi and not _pypi_has(v):
+                missing_pypi.append(v)
+            if check_remote and not _remote_tag_has(v):
+                missing_remote.append(v)
+        except Unknown as exc:
+            return _refuse(str(exc))
     report["missing_pypi"] = missing_pypi
+    report["missing_remote"] = missing_remote
 
-    if missing_tag or missing_pypi:
+    if missing_tag or missing_pypi or missing_remote:
         report["status"] = "FAIL"
-        report["offending_sites"] = [
-            {"path": rel, "line": line, "version": v}
-            for rel, line, v in sites
-            if v in set(missing_tag) | set(missing_pypi)
-        ]
+        gone = set(missing_tag) | set(missing_pypi) | set(missing_remote)
+        report["offending_sites"] = [{"path": rel, "line": line, "version": v} for rel, line, v in sites if v in gone]
         return FAIL, report
 
     report["status"] = "OK"
@@ -171,6 +323,11 @@ def _print_human(code: int, report: dict) -> None:
         )
         for v in report.get("missing_tag", []):
             print(f"  no tag v{v} in this repository -> `Cranot/roam-code@v{v}` cannot resolve", file=sys.stderr)
+        for v in report.get("missing_remote", []):
+            print(
+                f"  no tag v{v} on the GitHub remote -> consumers cannot resolve it even if it exists locally",
+                file=sys.stderr,
+            )
         for v in report.get("missing_pypi", []):
             print(f"  roam-code=={v} is not on PyPI -> `pip install` fails at the consumer", file=sys.stderr)
         print("  sites:", file=sys.stderr)
@@ -184,8 +341,24 @@ def _print_human(code: int, report: dict) -> None:
             file=sys.stderr,
         )
         return
-    scope = "tag + PyPI" if report["checked_pypi"] else "tag (offline; use --pypi to also confirm the wheel)"
+    scopes = ["local tag"]
+    if report["checked_remote"]:
+        scopes.append("GitHub remote tag")
+    if report["checked_pypi"]:
+        scopes.append("PyPI")
+    scope = " + ".join(scopes)
+    if not (report["checked_pypi"] and report["checked_remote"]):
+        scope += "; use --network for the rest"
+    scan = report.get("scan", {})
     print(f"OK: {report['install_pin_sites']} install pin(s) name {versions}, which exists [{scope}].")
+    if scan:
+        # The denominator. "44 pins are fine" says nothing about the files the
+        # sweep declined to read, and every number below was a silent skip.
+        print(
+            f"  scanned {scan['scanned']} of {scan['tracked']} tracked files "
+            f"(skipped: {scan['no_pin_token']} with no `roam` token, {scan['exempt']} exempt, "
+            f"{scan['unreadable']} unreadable; {scan['non_utf8']} decoded with replacement)"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -195,10 +368,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="also confirm each pinned version is on PyPI (needs network; UNKNOWN if unreachable)",
     )
+    ap.add_argument(
+        "--remote",
+        action="store_true",
+        help="also confirm each pinned tag exists on the GitHub REMOTE, which the local tag list cannot show",
+    )
+    ap.add_argument("--network", action="store_true", help="shorthand for --pypi --remote")
     ap.add_argument("--json", action="store_true", help="emit the report as JSON on stdout")
     args = ap.parse_args(argv)
 
-    code, report = check(check_pypi=args.pypi)
+    code, report = check(
+        check_pypi=args.pypi or args.network,
+        check_remote=args.remote or args.network,
+    )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
