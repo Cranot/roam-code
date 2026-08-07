@@ -6,6 +6,11 @@
 //
 // Required environment / credentials:
 //   * Jenkins agent must have Python 3.10+ + pip
+//   * A Secret Text credential holding the webhook trigger token, with ID
+//     `roam-guard-webhook-token`. Generate a random value, store it in Jenkins,
+//     and use the SAME value in the webhook URL your forge posts to. The
+//     Generic Webhook Trigger plugin treats this token as the shared secret
+//     authenticating the invocation, so it must never be written into this file.
 //   * (Optional) GITHUB_TOKEN credential bound as `github-token` to POST
 //     a GitHub Check Run; omit for verdict-only mode.
 //
@@ -25,7 +30,13 @@ pipeline {
                 [key: 'HEAD_SHA',  value: '$.pull_request.head.sha']
             ],
             causeString: 'Roam Guard triggered by PR #$PR_NUMBER',
-            token: 'roam-guard',
+            // The trigger token IS the shared secret in the webhook URL
+            // (/generic-webhook-trigger/invoke?token=...). Anyone who can read
+            // this file can fire your builds, so it is read from a Jenkins
+            // credential rather than written here. Removing it entirely is NOT
+            // the fix -- a GenericTrigger with neither `token` nor
+            // `tokenCredentialId` accepts UNAUTHENTICATED invocations.
+            tokenCredentialId: 'roam-guard-webhook-token',
             printContributedVariables: true
         )
     }

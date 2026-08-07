@@ -72,15 +72,20 @@ def test_ci_template_family_inventory_is_closed() -> None:
 def test_every_install_is_exactly_the_released_version() -> None:
     """Every bundled template pins the EXACT version being shipped.
 
-    Derived from ``pyproject.toml`` rather than a frozen literal (W1501). A
-    hardcoded number here reads as a guard but is the opposite of one: it
-    agrees with a template that never got bumped, so the release ships
-    templates installing the PREVIOUS wheel while this test stays green --
-    and conversely, a correct release turns the guard red for no defect.
-    ``scripts/sync_surface_counts.py`` rewrites the templates; this proves
-    it ran, at whatever version the release actually is.
+    Derived rather than frozen (W1501). A hardcoded number here reads as a
+    guard but is the opposite of one: it agrees with a template that never
+    got bumped, so the release ships templates installing the PREVIOUS wheel
+    while this test stays green.
+
+    The source is the last PUBLISHED release, not ``pyproject.toml``. This
+    test's own name says "the released version" and it measured the DECLARED
+    one -- the two diverge for the entire bump-to-release window, and every
+    one of these templates ships into a user's repository, where a pin for an
+    unpublished version is a hard `pip install` failure at their CI runtime.
+    ``scripts/sync_surface_counts.py`` rewrites the templates; this proves it
+    ran, at whatever version is actually installable.
     """
-    version = sync._pyproject_version()
+    version = sync._published_version()
     exact = re.compile(rf"roam-code(?:\[mcp\])?=={re.escape(version)}(?:[\"']|$)")
     install_pattern = re.compile(r"(?m)^.*(?:python -m )?pip install[^\n]*roam-code[^\n]*$")
 
