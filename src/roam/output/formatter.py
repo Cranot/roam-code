@@ -789,9 +789,16 @@ def _explicit_uncap_requested() -> bool:
         ctx = click.get_current_context(silent=True)
         if ctx and isinstance(ctx.obj, dict):
             return bool(ctx.obj.get("budget_explicit")) and ctx.obj.get("budget") == 0
-    except (ImportError, RuntimeError):
-        # Same narrowing rationale as _compact_mode_enabled below (W677).
-        pass
+    except (ImportError, RuntimeError) as exc:
+        # Same narrowing rationale as _compact_mode_enabled below (W677): both
+        # causes mean "no click context here", which is the ordinary state for
+        # the MCP server and direct function calls, so the default cap standing
+        # is correct rather than a degradation. It is still reported, because a
+        # swallowed ImportError here would silently cap an explicitly uncapped
+        # request and the caller would read the truncated payload as complete.
+        from roam.observability import log_swallowed
+
+        log_swallowed("output.formatter:budget_explicit_zero", exc)
     return False
 
 
