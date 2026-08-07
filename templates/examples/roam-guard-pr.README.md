@@ -36,6 +36,14 @@ Five drop-in templates ship; pick the one matching your CI provider:
 | CircleCI | `roam-guard-pr.circleci.yml` → `.circleci/config.yml` |
 | Jenkins | `roam-guard-pr.jenkinsfile` → `Jenkinsfile` (declarative pipeline) |
 
+**Not all five are hardened to the same level, and the table alone would imply
+they are.** All five now install an exact pinned release, wheel-only, and
+assert the installed version after the fact. The four YAML templates go
+further — digest-pinned OCI image, `python -I` throughout, an explicit `PATH`
+boundary, and a reserved-path check before creating the venv — and the Jenkins
+template does not. Prefer a YAML provider if your threat model includes a
+compromised build image or a hostile workspace.
+
 ### GitHub Actions example
 
 Copy `roam-guard-pr.github-actions.yml` to `.github/workflows/roam-guard.yml`.

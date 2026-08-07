@@ -451,6 +451,86 @@ def _structural_pin_patterns(version: str, published: str) -> dict[str, list[tup
     return merged
 
 
+def shipped_install_surfaces() -> list[str]:
+    """Tracked files this repository SHIPS for someone else to EXECUTE.
+
+    Not every file that mentions an install is one of these. ``README.md``
+    deliberately teaches ``pip install "roam-code[mcp]"`` — unpinned, latest,
+    correct for a human trying the tool. A CI template is the opposite: it is
+    handed to a consumer to run unattended, and an unpinned install there is a
+    build whose behaviour changes without anyone editing it.
+
+    The distinction matters to ``scripts/check_install_targets.py`` because a
+    file in this set that carries NO pin is invisible to a pin scanner — there
+    is no site to check, so the gate reports OK about a file it never
+    evaluated. Enumerating the set is what makes "zero pins found here" a
+    detectable state rather than an absent one.
+
+    Path-scoped on purpose, and by directory rather than by name, so a new
+    template is covered the day it lands rather than the day someone
+    remembers to register it.
+    """
+    out: list[str] = []
+    for rel in _tracked_files():
+        if rel in _VERSION_PIN_EXEMPT:
+            continue
+        if rel.startswith("src/roam/templates/ci/") and not rel.endswith((".py", ".pyc")):
+            out.append(rel)
+        elif rel.startswith("templates/examples/roam-guard-pr.") and not rel.endswith(".README.md"):
+            out.append(rel)
+    return sorted(out)
+
+
+def install_pin_scan() -> tuple[list[tuple[str, int, str]], dict[str, int]]:
+    """``(sites, stats)`` — the INSTALL-class pins AND what the sweep skipped.
+
+    ``sites`` is the answer; ``stats`` is the denominator. A gate that reports
+    "44 pins, all fine" without saying how many files it declined to read is
+    publishing a numerator alone, and every one of the skips below was a
+    silent ``continue`` whose count nothing carried. ``unreadable`` in
+    particular is a not-knowing path: a tracked file that will not open may
+    hold an install instruction the sweep never saw, so the caller must be
+    able to refuse on it rather than infer zero.
+
+    A file whose bytes are not valid UTF-8 is decoded WITH REPLACEMENT rather
+    than skipped. Skipping it hid any ASCII pin it carried; replacement keeps
+    every ASCII byte — which is all a pin is made of — while the undecodable
+    bytes become U+FFFD and match nothing.
+    """
+    # The patterns are independent of the version passed in; only the
+    # replacement strings use it. The sentinel makes that explicit rather than
+    # implying the argument is meaningful here.
+    sentinel = "0.0.0"
+    sweep = [pat for pat, _ in _install_sweep_patterns(sentinel)]
+    structural = {rel: [pat for pat, _ in pats] for rel, pats in _install_structural_patterns(sentinel).items()}
+
+    stats = {"tracked": 0, "exempt": 0, "no_pin_token": 0, "non_utf8": 0, "unreadable": 0, "scanned": 0}
+    sites: list[tuple[str, int, str]] = []
+    for rel in _tracked_files():
+        stats["tracked"] += 1
+        if rel in _VERSION_PIN_EXEMPT:
+            stats["exempt"] += 1
+            continue
+        try:
+            data = (REPO_ROOT / rel).read_bytes()
+        except OSError:
+            stats["unreadable"] += 1
+            continue
+        if b"roam" not in data:
+            stats["no_pin_token"] += 1
+            continue
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            stats["non_utf8"] += 1
+            text = data.decode("utf-8", "replace")
+        stats["scanned"] += 1
+        for pat in sweep + structural.get(rel, []):
+            for m in pat.finditer(text):
+                sites.append((rel, text.count("\n", 0, m.end()) + 1, m.group("ver")))
+    return sites, stats
+
+
 def install_pin_sites() -> list[tuple[str, int, str]]:
     """Every INSTALL-class pin in the tree, as ``(path, line, version)``.
 
@@ -460,33 +540,10 @@ def install_pin_sites() -> list[tuple[str, int, str]]:
     cannot drift out of agreement with what ``--write`` actually rewrites.
 
     Deliberately says nothing about whether those versions EXIST — that is the
-    caller's question, and it is the one this repository had no gate for.
+    caller's question, and it is the one this repository had no gate for. Use
+    :func:`install_pin_scan` when the skips matter too.
     """
-    # The patterns are independent of the version passed in; only the
-    # replacement strings use it. The sentinel makes that explicit rather than
-    # implying the argument is meaningful here.
-    sentinel = "0.0.0"
-    sweep = [pat for pat, _ in _install_sweep_patterns(sentinel)]
-    structural = {rel: [pat for pat, _ in pats] for rel, pats in _install_structural_patterns(sentinel).items()}
-
-    sites: list[tuple[str, int, str]] = []
-    for rel in _tracked_files():
-        if rel in _VERSION_PIN_EXEMPT:
-            continue
-        try:
-            data = (REPO_ROOT / rel).read_bytes()
-        except OSError:
-            continue
-        if b"roam" not in data:
-            continue
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-        for pat in sweep + structural.get(rel, []):
-            for m in pat.finditer(text):
-                sites.append((rel, text.count("\n", 0, m.end()) + 1, m.group("ver")))
-    return sites
+    return install_pin_scan()[0]
 
 
 def _trim_pin_context(match_text: str, limit: int = 64) -> str:
@@ -534,6 +591,12 @@ def release_pin_drift(version: str, published: str, *, write: bool = False) -> l
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
+            # The REWRITER must skip: it writes the file back, and writing a
+            # replacement-decoded copy would destroy the undecodable bytes.
+            # The SCANNER (``install_pin_scan``) deliberately does not skip,
+            # so a pin hiding in such a file is still SEEN even though it is
+            # not auto-fixable. That asymmetry is on purpose — detect, then
+            # tell a human — and it is why the scanner counts ``non_utf8``.
             continue
 
         original = text

@@ -453,8 +453,10 @@ class GateRunner:
             fix_hint=(
                 "an install instruction names a version with no v<version> tag; "
                 "run `python scripts/sync_surface_counts.py --write` to pin install "
-                "sites to the last published release (exit 2 means UNKNOWN — the "
-                "gate could not reach the tag list and refused rather than passing)"
+                "sites to the last published release. Exit 2 means UNKNOWN — read "
+                "the printed reason first: if this clone has no tags (a shallow "
+                "clone has none), run `git fetch --tags` and re-run, because the "
+                "sync script refuses under that same condition and cannot fix it"
             ),
         )
         self._run(
