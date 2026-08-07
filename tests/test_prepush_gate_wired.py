@@ -60,6 +60,13 @@ _EXPECTED_FAST_GUARDS = frozenset(
         "test_workflow_dependency_lock_policy.py",
         "test_publish_provenance_workflow.py",
         "test_composite_action_security.py",
+        # 2026-08-07: this file, pinning its own membership. Its docstring
+        # claimed it "runs in the FAST bundle itself"; measured, a collect-only
+        # over FAST_PYTEST_GUARDS returned 0 node ids from it, so every
+        # contract it pins was enforced only by CI, after the push. A guard on
+        # the pre-push script that the pre-push script does not run is a claim
+        # of local coverage that does not exist.
+        "test_prepush_gate_wired.py",
     }
 )
 
