@@ -26,6 +26,21 @@ import click
 from roam.capability import roam_capability
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
+# How old ``.git/index.lock`` must be before it is called stale.
+#
+# git holds this lock for the duration of an index write -- milliseconds in the
+# ordinary case. Anything still holding it after a minute is not writing, it is
+# abandoned. The threshold is deliberately generous because the two errors cost
+# very different amounts: an abandoned lock is PERMANENT, so reporting it one
+# run later costs nothing, while a live lock reported as stale costs a failed
+# run every single time any tooling touches git in parallel.
+#
+# Measured 2026-08-07: `roam doctor` reported "stale ... (0 min old)" under
+# pytest-xdist, exited 2 on that one blocking check, took a CI lane red on 1 of
+# 4 Python versions at the same commit, and blocked a release. Three of four
+# lanes passed the identical tree.
+_INDEX_LOCK_STALE_SECONDS = 60.0
+
 # W156 — doctor is the first detector migrating an "environment" namespace
 # onto the central findings registry (after clones / dead / complexity).
 # HYBRID model: only BLOCKING check failures persist; advisory failures
@@ -339,20 +354,34 @@ def _check_git_repo_health() -> dict:
     if rc_dir == 0 and git_dir:
         lock = Path(git_dir) / "index.lock"
         if lock.exists():
-            # The lock's presence is the finding; its age is only flavour, so a
-            # failed stat must not suppress the report (W607-BE: no silent
-            # ``except: pass`` — an unreadable lock is still a blocking lock).
+            # AGE is the finding, not presence. git holds index.lock for the
+            # duration of every normal index write, so a lock created moments
+            # ago is a LIVE writer. Reporting it as "a git process was killed
+            # mid-write" asserts a cause that was never measured -- presence
+            # was measured, death was inferred.
+            #
+            # An UNREADABLE age still reports (W607-BE, unchanged): a failed
+            # stat cannot prove the lock is live, and a lock that cannot be
+            # shown live is treated as blocking.
             try:
-                age = f"{max(0, int((time.time() - lock.stat().st_mtime) / 60))} min old"
+                age_seconds: float | None = time.time() - lock.stat().st_mtime
             except OSError as exc:
                 from roam.observability import log_swallowed
 
                 log_swallowed("doctor:git_repo_health:index_lock_stat", exc)
-                age = "age unknown"
-            problems.append(
-                f"stale {lock} present ({age}) -- a git process was killed mid-write "
-                "and all future writes will fail until it is removed"
-            )
+                age_seconds = None
+            if age_seconds is None:
+                problems.append(
+                    f"{lock} present and its age could not be read -- a live writer cannot be "
+                    "distinguished from a lock left by a killed process, so it is reported "
+                    "rather than assumed benign"
+                )
+            elif age_seconds >= _INDEX_LOCK_STALE_SECONDS:
+                problems.append(
+                    f"stale {lock} present ({max(0, int(age_seconds / 60))} min old) -- a git "
+                    "process was killed mid-write and all future writes will fail until it "
+                    "is removed"
+                )
 
     # --- detached HEAD holding unreachable commits -------------------------
     rc_sym, _ = _git("symbolic-ref", "-q", "HEAD")
