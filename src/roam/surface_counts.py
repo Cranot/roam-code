@@ -493,15 +493,26 @@ def _eval_set_expr(node: ast.expr, env: dict[str, set[str]]) -> set[str]:
     raise ValueError(f"unsupported expression in _PRESETS: {ast.dump(node)}")
 
 
-def mcp_preset_counts() -> dict[str, int]:
-    """Return ``{preset_name: tool_count}`` parsed from ``_PRESETS`` in mcp_server.py.
+def _resolved_preset_members() -> dict[str, set[str]]:
+    """Return ``{preset_name: {tool_name, ...}}`` parsed from ``_PRESETS``.
+
+    The single resolution of ``_PRESETS``. Both :func:`mcp_preset_members`
+    and :func:`mcp_preset_counts` are projections of THIS, so the two
+    dimensions cannot disagree about what a preset contains -- the same
+    reason :func:`mcp_tool_params` reads the traversal
+    :func:`mcp_tool_names` uses instead of walking the file a second time.
+
+    A count is a lossy projection of a membership: ``core`` staying at 17
+    while one tool is swapped for another is invisible to the count and
+    obvious to the set. Resolving members and then measuring them keeps
+    the count honest by construction rather than by convention.
 
     AST-only; no runtime import of ``roam.mcp_server`` (which transitively
     requires every command module and is fragile on fresh installs). The
     ``full`` preset is the empty-set sentinel meaning "no filter / all
-    tools" — we resolve it to the actual total so consumers don't see a
-    misleading 0. Closed enumeration (CLAUDE.md Constraint 8): the keys
-    are exactly the literal keys of ``_PRESETS``.
+    tools" — it resolves to every decorated tool so consumers don't see a
+    misleading empty set. Closed enumeration (AGENTS.md Constraint 8): the
+    keys are exactly the literal keys of ``_PRESETS``.
     """
     mcp_path = _package_file("mcp_server.py")
     module = _load_ast(mcp_path)
@@ -516,7 +527,6 @@ def mcp_preset_counts() -> dict[str, int]:
 
     # Build the static name environment the preset values reference.
     decorated_tools = set(_decorated_tool_names_from_loaded_mcp_ast(module))
-    total = len(decorated_tools)
     always_registered = {"roam_expand_toolset"}
     if not always_registered.issubset(decorated_tools):
         raise ValueError("always-registered MCP meta-tool is not declared with @_tool")
@@ -524,34 +534,56 @@ def mcp_preset_counts() -> dict[str, int]:
         "_CORE_TOOLS": set(core_tools),
         "_WORKFLOW_TOOLS": set(workflow_tools),
     }
-    return _preset_counts_with_full_sentinel(
+    return _preset_members_with_full_sentinel(
         presets_dict,
         env,
-        total,
+        decorated_tools,
         always_registered=always_registered,
     )
 
 
-def _preset_counts_with_full_sentinel(
+def mcp_preset_members() -> dict[str, list[str]]:
+    """Return ``{preset_name: [tool_name, ...]}`` parsed from ``_PRESETS``.
+
+    The membership dimension behind :func:`mcp_preset_counts`. Recorded by
+    ``roam compatibility``'s snapshot because a preset's COUNT cannot see a
+    swap: exchanging one real tool for another leaves 17 at 17, produces a
+    byte-identical snapshot, and every MCP client on that preset silently
+    loses a tool while the gate publishes ``no regressions``.
+    """
+    return {name: sorted(members) for name, members in sorted(_resolved_preset_members().items())}
+
+
+def mcp_preset_counts() -> dict[str, int]:
+    """Return ``{preset_name: tool_count}`` parsed from ``_PRESETS`` in mcp_server.py.
+
+    A measurement of :func:`_resolved_preset_members`, never an independent
+    traversal. Preserves ``_PRESETS`` literal key order for the consumers
+    that render it as a table.
+    """
+    return {name: len(members) for name, members in _resolved_preset_members().items()}
+
+
+def _preset_members_with_full_sentinel(
     presets_dict: ast.Dict,
     env: dict[str, set[str]],
-    total: int,
+    all_tools: set[str],
     *,
     always_registered: set[str] | None = None,
-) -> dict[str, int]:
-    """Resolve preset sizes while conserving the runtime ``full`` sentinel."""
+) -> dict[str, set[str]]:
+    """Resolve preset membership while conserving the runtime ``full`` sentinel."""
     always_registered = set(always_registered or ())
-    counts: dict[str, int] = {}
+    members: dict[str, set[str]] = {}
     for key_node, value_node in zip(presets_dict.keys, presets_dict.values):
         if not (isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)):
             raise ValueError(f"non-string key in _PRESETS: {ast.dump(key_node)}")
         name = key_node.value
-        members = _eval_set_expr(value_node, env)
+        resolved = _eval_set_expr(value_node, env)
         # `full` is the empty-set "no filter / all tools" sentinel — match
         # the runtime resolution in mcp_server / cmd_surface so consumers
-        # see the actual total, not 0.
-        counts[name] = len(members | always_registered) if members else total
-    return counts
+        # see the actual surface, not an empty one.
+        members[name] = (resolved | always_registered) if resolved else set(all_tools)
+    return members
 
 
 def mcp_surface_counts() -> dict:

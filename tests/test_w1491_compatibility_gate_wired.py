@@ -427,10 +427,12 @@ def test_w1495_diff_docstring_names_every_breaking_contributor() -> None:
     tools. Derived from the AST rather than hardcoded, so adding a seventh term
     without documenting it fails here too.
 
-    The tally is SIX terms since ``removed_mcp_tool_params`` landed: the
-    baseline records MCP tool parameters, so a removed parameter is a break
-    the same way a removed flag is. That term is why commit 67a09fd1's two
-    removed MCP wrapper parameters would not pass the gate again.
+    The tally is SEVEN terms since ``removed_preset_members`` landed: the
+    baseline records MCP tool parameters AND per-preset membership, so a
+    removed parameter and a removed preset member are breaks the same way a
+    removed flag is. Those two terms are why commit 67a09fd1's two removed
+    MCP wrapper parameters, and a 1-for-1 swap inside ``_CORE_TOOLS`` that
+    leaves the preset count at 17, would not pass the gate again.
 
     The arity assertion below compares the docstring's spelled-out count
     against the computed one rather than trusting either. A prose "FIVE"
@@ -461,7 +463,7 @@ def test_w1495_diff_docstring_names_every_breaking_contributor() -> None:
         "no `len(...)` summands were extracted from `_diff`'s breaking tally. "
         "The assignment shape this guard reads has changed and the guard is now blind."
     )
-    assert len(summands) == 6, summands
+    assert len(summands) == 7, summands
     docstring = ast.get_docstring(function) or ""
     undocumented = [name for name in summands if name not in docstring]
     assert not undocumented, (
@@ -514,8 +516,37 @@ def _add_tool_param(snapshot: dict) -> None:
 
 
 def _shrink_a_preset(snapshot: dict) -> None:
+    """Raise a baseline preset count so the live build reads as a shrink.
+
+    Also DROPS that preset's recorded membership, because the count term is
+    the fallback for exactly that case. When both snapshots record members
+    the individual removed members carry the break and the count delta is a
+    projection of them, so ``_diff`` deliberately does not count both --
+    tallying one real break twice is the arithmetic version of the
+    over-claim this file exists to prevent. A pre-1.2.0 baseline is where
+    the count is the only evidence there is, and this probe is that
+    baseline.
+    """
     preset = sorted(snapshot["mcp_preset_counts"])[0]
     snapshot["mcp_preset_counts"][preset] = snapshot["mcp_preset_counts"][preset] + 1
+    snapshot.get("mcp_preset_members", {}).pop(preset, None)
+
+
+def _swap_a_preset_member(snapshot: dict) -> None:
+    """Exchange one recorded member of a baseline preset for another real tool.
+
+    The reproduction shape. ``_breaking_probe`` mutates the BASELINE, so
+    the tool swapped IN is the one the live build reads as removed -- and
+    it has to be a genuinely registered tool, because the membership diff
+    is scoped to tools present in both snapshots. Swapping rather than
+    adding leaves the recorded COUNT identical on both sides, which is what
+    keeps every other dimension blind: pre-fix this produced a
+    byte-identical snapshot and ``breaking=0``.
+    """
+    preset = "core" if "core" in snapshot["mcp_preset_members"] else sorted(snapshot["mcp_preset_members"])[0]
+    members = sorted(snapshot["mcp_preset_members"][preset])
+    outsider = sorted(set(snapshot["mcp_tools"]) - set(members))[0]
+    snapshot["mcp_preset_members"][preset] = sorted([*members[1:], outsider])
 
 
 #: One perturbation per claimed-covered dimension. Each must produce at
@@ -528,6 +559,7 @@ _DIMENSION_PROBES = {
     "mcp_tools": lambda s: s["mcp_tools"].__setitem__("roam__w1496_gone", []),
     "mcp_tool_parameters": _add_tool_param,
     "mcp_preset_counts": _shrink_a_preset,
+    "mcp_preset_membership": _swap_a_preset_member,
 }
 
 
@@ -558,6 +590,123 @@ def test_w1496_an_uncovered_dimension_provably_goes_unread() -> None:
     delta = _breaking_probe(drop_a_category)
     assert delta["breaking_count"] == 0, delta
     assert delta["coverage_gap_count"] == 0, delta
+
+
+def test_w1496_implementation_targets_provably_go_unread() -> None:
+    """``commands[].module`` / ``commands[].function`` are RECORDED by the
+    snapshot and never diffed -- the same misleading shape as
+    ``cli_categories``, and the reason they now appear in
+    ``_UNCOVERED_DIMENSIONS`` instead of nowhere at all.
+
+    They stay uncovered on purpose rather than by omission: a consumer
+    invokes ``roam health``, not ``roam.commands.cmd_health:health``, so
+    moving a command between modules breaks nobody and gating it would turn
+    every internal refactor red. Disclosure is the honest repair; assert the
+    unreadness so the constant is a measurement, not prose."""
+    assert "cli_command_implementation_targets" in _UNCOVERED_DIMENSIONS
+
+    def repoint_a_command(snapshot: dict) -> None:
+        name = sorted(snapshot["commands"])[0]
+        snapshot["commands"][name]["module"] = "roam.commands.cmd_w1496_moved"
+        snapshot["commands"][name]["function"] = "w1496_renamed"
+
+    delta = _breaking_probe(repoint_a_command)
+    assert delta["breaking_count"] == 0, delta
+    assert delta["coverage_gap_count"] == 0, delta
+
+
+def test_w1496_preset_membership_swap_is_breaking_end_to_end(tmp_path) -> None:
+    """NEGATIVE CONTROL for the reproduction, driven through the CLI.
+
+    Pre-fix, swapping one real member of ``_CORE_TOOLS`` for another real
+    tool produced a BYTE-IDENTICAL snapshot and the gate published
+    ``no regressions``, ``breaking=0``, ``coverage_gap=0``,
+    ``surface_coverage: complete`` and exit 0, while every MCP client on
+    the core preset lost a tool. Post-fix the same swap is a breaking entry
+    that names the preset and the tool, and ``--ci`` exits 5."""
+    baseline_snapshot = _build_snapshot()
+    baseline = _write(tmp_path / "baseline.json", baseline_snapshot)
+
+    swapped = json.loads(json.dumps(baseline_snapshot))
+    core = sorted(swapped["mcp_preset_members"]["core"])
+    dropped = core[0]
+    # A REAL registered tool, exactly as the reproduction did: both names
+    # exist in ``mcp_tools`` on both sides, so no other dimension can see
+    # this. A synthetic name would leave ``roam_taint`` -> nothing, which
+    # the tool-name dimension could have caught on its own.
+    swapped_in = sorted(set(swapped["mcp_tools"]) - set(core))[0]
+    swapped["mcp_preset_members"]["core"] = sorted([*core[1:], swapped_in])
+    # The count is deliberately left untouched -- that is the whole point.
+    assert swapped["mcp_preset_counts"]["core"] == baseline_snapshot["mcp_preset_counts"]["core"]
+    assert len(swapped["mcp_preset_members"]["core"]) == len(core)
+    current = _write(tmp_path / "current.json", swapped)
+
+    result = CliRunner().invoke(
+        cli,
+        ["--json", "compatibility", "--baseline", str(baseline), "--current", str(current), "--ci"],
+    )
+    assert result.exit_code == 5, result.output
+    payload = json.loads(result.output)
+    assert payload["summary"]["verdict"] == "breaking changes", payload["summary"]
+    assert payload["summary"]["breaking"] == 1, payload["summary"]
+    assert payload["removed_preset_members"] == [{"preset": "core", "tool": dropped}], payload["removed_preset_members"]
+    assert payload["changed_presets"] == [], payload["changed_presets"]
+
+
+def test_w1496_a_deleted_tool_is_tallied_once_not_once_per_preset(tmp_path) -> None:
+    """Deleting a tool outright drops it from every preset that held it.
+
+    ``removed_mcp_tools`` already carries that break, so the membership
+    dimension is scoped to tools present in BOTH snapshots -- the same
+    scoping the flag diff applies to commands and the parameter diff
+    applies to tools. Without it one deletion would read as ``breaking=7``
+    (one tool + six presets) and the number would stop meaning "consumers
+    broken"."""
+    baseline_snapshot = _build_snapshot()
+    baseline = _write(tmp_path / "baseline.json", baseline_snapshot)
+
+    deleted = sorted(baseline_snapshot["mcp_preset_members"]["core"])[0]
+    holders = [p for p, m in baseline_snapshot["mcp_preset_members"].items() if deleted in m]
+    assert len(holders) > 1, holders
+
+    current = json.loads(json.dumps(baseline_snapshot))
+    del current["mcp_tools"][deleted]
+    for preset in holders:
+        current["mcp_preset_members"][preset] = [t for t in current["mcp_preset_members"][preset] if t != deleted]
+        current["mcp_preset_counts"][preset] -= 1
+    current_path = _write(tmp_path / "current.json", current)
+
+    result = CliRunner().invoke(
+        cli,
+        ["--json", "compatibility", "--baseline", str(baseline), "--current", str(current_path), "--ci"],
+    )
+    assert result.exit_code == EXIT_GATE_FAILURE, result.output
+    payload = json.loads(result.output)
+    assert payload["removed_mcp_tools"] == [deleted], payload["removed_mcp_tools"]
+    assert payload["removed_preset_members"] == [], payload["removed_preset_members"]
+    assert payload["summary"]["breaking"] == 1, payload["summary"]
+
+
+def test_w1496_a_pre_membership_baseline_reports_itself_blind(tmp_path) -> None:
+    """A baseline written before schema 1.2.0 records preset COUNTS and no
+    membership. That must read as UNRECORDED -- a coverage gap
+    ``--require-coverage`` fails on -- and never as "every preset was
+    empty", which would turn an absent measurement into 244 phantom
+    additions and a green ``no regressions`` on the next real removal."""
+    baseline_snapshot = _build_snapshot()
+    presets = sorted(baseline_snapshot["mcp_preset_members"])
+    del baseline_snapshot["mcp_preset_members"]
+    baseline_snapshot["schema_version"] = "1.1.0"
+    baseline = _write(tmp_path / "baseline.json", baseline_snapshot)
+
+    result = CliRunner().invoke(cli, ["--json", "compatibility", "--baseline", str(baseline), "--require-coverage"])
+    assert result.exit_code == 5, result.output
+    payload = json.loads(result.output)
+    assert payload["unrecorded_preset_members"] == presets, payload["unrecorded_preset_members"]
+    assert payload["added_preset_members"] == [], payload["added_preset_members"]
+    assert payload["summary"]["breaking"] == 0, payload["summary"]
+    assert payload["summary"]["surface_coverage"] == "partial", payload["summary"]
+    assert payload["summary"]["partial_success"] is True, payload["summary"]
 
 
 def test_w1496_the_two_dimension_lists_are_disjoint_and_populated() -> None:
