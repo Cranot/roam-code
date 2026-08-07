@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from scripts import sync_surface_counts as sync
 from tests._helpers.repo_root import repo_root
 
 ROOT = repo_root()
@@ -21,24 +22,23 @@ CI_DOC = ROOT / "docs" / "ci-integration.md"
 GITHUB_GUARD_TEMPLATE = ROOT / "templates" / "examples" / "roam-guard-pr.github-actions.yml"
 
 
-def _pyproject_version() -> str:
-    """The release version these surfaces are DERIVED from (W1501).
+def _published_version() -> str:
+    """The last PUBLISHED release these surfaces are DERIVED from (W1501).
 
     ``action.yml``'s ``version`` input default and the matching row in
-    ``docs/ci-integration.md`` decide what every downstream consumer installs.
-    They were previously asserted against a hardcoded literal, so a release
-    that bumped ``pyproject.toml`` alone left the action installing the
-    PREVIOUS version and these assertions agreed with the mistake. Reading
-    pyproject turns them into the invariant they were meant to be.
-    ``scripts/sync_surface_counts.py`` keeps the files themselves in sync.
+    ``docs/ci-integration.md`` decide what every downstream consumer
+    INSTALLS. They were asserted against ``pyproject.toml`` -- the DECLARED
+    version -- which is a different question and, for the whole window
+    between a bump and its release, a different answer. Under that assertion
+    the tree was green while ``action.yml`` defaulted to a version that
+    returned 404 from PyPI. An install target must name something that
+    exists, so it tracks the highest ``v*`` tag; identity metadata still
+    tracks pyproject. ``scripts/sync_surface_counts.py`` owns both.
     """
-    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    assert match, "pyproject.toml has no [project] version"
-    return match.group(1)
+    return sync._published_version()
 
 
-ROAM_VERSION = _pyproject_version()
+ROAM_VERSION = _published_version()
 
 SETUP_PYTHON_REF = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
 CACHE_REF = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
@@ -297,8 +297,8 @@ def test_ci_guide_examples_avoid_mutable_dependency_and_runner_defaults() -> Non
 
     assert "runs-on: ubuntu-latest" not in docs
     assert "Cranot/roam-code@main" not in docs
-    assert 'pip install --disable-pip-version-check "roam-code==14.0.0"' in docs
-    assert "Cranot/roam-code@v14.0.0" in docs
+    assert 'pip install --disable-pip-version-check "roam-code==13.10.0"' in docs
+    assert "Cranot/roam-code@v13.10.0" in docs
     assert "replace the tag with its reviewed 40-character SHA" in docs
     for ref in (
         "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
@@ -311,7 +311,7 @@ def test_ci_guide_examples_avoid_mutable_dependency_and_runner_defaults() -> Non
     assert action_refs
     for ref in action_refs:
         if ref.startswith("Cranot/roam-code@"):
-            assert ref == "Cranot/roam-code@v14.0.0"
+            assert ref == "Cranot/roam-code@v13.10.0"
         else:
             assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", ref), ref
 
@@ -322,7 +322,7 @@ def test_github_guard_template_has_closed_verdict_and_required_evidence() -> Non
     steps = payload["jobs"]["roam-guard"]["steps"]
 
     assert payload["jobs"]["roam-guard"]["runs-on"] == "ubuntu-24.04"
-    assert "'roam-code==14.0.0'" in text
+    assert "'roam-code==13.10.0'" in text
     assert "python -I -m venv .roam-guard-venv" in text
     assert 'case "${status}" in' in text
     assert "0|4|5" in text

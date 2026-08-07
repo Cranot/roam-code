@@ -68,10 +68,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Resolve v13.10.0 after release and pin its reviewed 40-character SHA.
-      - uses: Cranot/roam-code@v14.0.0
+      # The tag below is the last PUBLISHED release, kept there by
+      # scripts/sync_surface_counts.py (install-pin class). Do not hand-edit
+      # it to the declared version: a ref that is not yet tagged fails this
+      # workflow in the USER'S repository with 'Unable to resolve action'.
+      # Harden further by resolving the tag to its reviewed 40-character SHA.
+      - uses: Cranot/roam-code@v13.10.0
         with:
-          version: "14.0.0"
+          version: "13.10.0"
           commands: "fitness pr-risk"
           python-version: "3.12"
 """

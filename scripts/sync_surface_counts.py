@@ -5,14 +5,16 @@ version across every doc / template / registry surface that quotes them.
 Two independent passes with two different sources of truth:
 
 1. **Surface counts** — ``roam.surface_counts.collect_surface_counts()``.
-2. **Release version** — ``pyproject.toml -> version`` (W1501). Sweeps every
-   TRACKED file for release-pin shapes (``roam-code==X``,
-   ``Cranot/roam-code@vX``, the composite action's ``version`` input) plus a
-   handful of structurally-anchored sites (``action.yml`` input default,
-   ``server.json`` package pin, ``.claude-plugin/plugin.json`` manifest
-   version, generated doc headers). Historical records and the
-   deliberately-lagging self-pin are exempt by explicit registry — see
-   ``_VERSION_PIN_EXEMPT``.
+2. **Release version** (W1501) — TWO sources, because version literals are
+   not one class. ``identity`` literals (what this artifact calls itself:
+   ``CITATION.cff``, ``codemeta.json``, the plugin manifest, generated doc
+   headers) sync from ``pyproject.toml -> version``. ``install`` literals
+   (what a reader or a machine is told to FETCH: ``roam-code==X``,
+   ``Cranot/roam-code@vX``, the composite action's ``version`` input and
+   default, ``server.json``'s package pin) sync from the last PUBLISHED
+   release — the highest ``v*`` tag — because a version that is not published
+   cannot be installed. Historical records are exempt by explicit registry;
+   see ``_VERSION_PIN_EXEMPT`` and the class taxonomy below it.
 
 For the count pass, this script reads the live counts and rewrites every
 doc-surface that quotes them: server.json, the mcp-server-card family (below),
@@ -115,15 +117,38 @@ def _live_languages() -> int:
 # bumped only ``pyproject.toml`` would ship an action whose DEFAULT installs
 # the PREVIOUS version. The claim survived because nothing ever failed on it.
 #
-# Three classes of occurrence exist and only the first may be rewritten:
+# FOUR classes of occurrence exist, and the first two have OPPOSITE truth
+# conditions. Conflating them is what made public ``main`` ship install
+# instructions for a version that did not exist:
 #
-#   derived     — must always equal pyproject. Everything the patterns below
-#                 match, minus the exemptions.
+#   identity    — a literal that DESCRIBES this artifact (``CITATION.cff``,
+#                 ``codemeta.json``, the plugin manifest version, the
+#                 generated ``docs/COMMANDS.md`` header). Must equal
+#                 ``pyproject.toml -> version``. Correct the moment the bump
+#                 lands, because the tree at that commit really is that
+#                 version.
+#   install     — a literal that INSTRUCTS a reader or a machine to FETCH
+#                 something (``roam-code==X``, ``roam-code[mcp]==X``,
+#                 ``Cranot/roam-code@vX``, the composite action's ``version``
+#                 input and its default, the roam-guard templates'
+#                 ``actual == 'X'`` post-install assertion, ``server.json``'s
+#                 ``packages[].version``). Must equal the last PUBLISHED
+#                 release — never the declared one. A version that has not
+#                 been published cannot be installed, so syncing this class
+#                 at BUMP time guarantees every install instruction on main
+#                 is a lie for the whole bump-to-release window.
 #   historical  — records what was measured / built / shipped at a past
 #                 version. Rewriting one falsifies a record, which is strictly
 #                 worse than a stale string. See ``_VERSION_PIN_EXEMPT``.
-#   lagging     — cannot legally equal pyproject yet (a tag that does not
-#                 exist until the release publishes). Also ``_VERSION_PIN_EXEMPT``.
+#   lagging     — cannot legally equal EITHER source yet. Also
+#                 ``_VERSION_PIN_EXEMPT``.
+#
+# ``install`` pins therefore move when the RELEASE moves, not when the bump
+# lands: ``_published_version()`` reads the highest ``v*`` tag in this
+# repository and hard-fails rather than guessing. Whether the version those
+# pins name can actually be fetched is a separate question this script does
+# not answer — ``scripts/check_install_targets.py`` is the gate for that, and
+# it fails closed when it cannot reach the tag list.
 #
 # The patterns are SHAPE-anchored, not value-anchored: they match
 # ``roam-code==<v>`` / ``Cranot/roam-code@v<v>`` and friends rather than the
@@ -132,19 +157,26 @@ def _live_languages() -> int:
 # that merely names a version ("measured against the shipped 13.10.0 binary")
 # is never touched: it carries no pin shape.
 
-_PIN_VERSION = r"\d+\.\d+(?:\.\d+)?"
+# Named group so ONE pattern list serves both the rewriter here and the
+# scanner in ``scripts/check_install_targets.py``. Two lists would be two
+# things to keep in agreement, and the gate that checks install targets exist
+# must read exactly the sites this script rewrites — not a copy of them.
+# No single pattern below may use this twice (duplicate group name).
+_PIN_VERSION = r"(?P<ver>\d+\.\d+(?:\.\d+)?)"
 
 # path (repo-relative, posix) -> why this file's pin shape must NOT be synced.
 # A stale key is itself drift: ``tests/test_w1501_release_version_pins.py``
 # fails if any path here has stopped existing.
 _VERSION_PIN_EXEMPT: dict[str, str] = {
-    # Deliberately lagging: this repo consumes its OWN published action, so it
-    # can only point at a tag/SHA that already exists. It moves in a follow-up
-    # commit AFTER the release tag is pushed, never before.
-    ".github/workflows/roam.yml": (
-        "deliberately lags one release — pins the published action at the "
-        "previous release SHA, which cannot be the version being cut"
-    ),
+    # NOTE: ``.github/workflows/roam.yml`` used to be exempt here, on the
+    # grounds that this repo consumes its OWN published action and so "cannot
+    # be the version being cut". That was the correct OBSERVATION filed as the
+    # wrong FIX: the same is true of every install pin in the tree, and
+    # exempting the one file that got it right left the ~50 that got it wrong
+    # force-synced forward. It is no longer exempt — under the ``install``
+    # class it is now correct by construction, and it is the shape the rest of
+    # the tree follows rather than the exception to it.
+    #
     # Historical: a dated sample deliverable generated from a real run at
     # 12.25. Re-stamping it would claim the sample was produced by a version
     # that never saw it.
@@ -173,8 +205,68 @@ def _pyproject_version() -> str:
     return m.group(1)
 
 
-def _sweep_pin_patterns(version: str) -> list[tuple[re.Pattern, str]]:
-    """Pin shapes swept across EVERY tracked text file."""
+_RELEASE_TAG = re.compile(r"^v(\d+)\.(\d+)(?:\.(\d+))?$")
+
+
+def release_tags() -> list[str]:
+    """Every final-release ``vX.Y[.Z]`` tag in this repository.
+
+    Hard-fails when git cannot answer. An unreachable tag list rendered as
+    "no tags, assume pyproject" is precisely the defect this whole module
+    exists to close: it would turn the install class silently back into the
+    declared version, i.e. back into shipping a pin for a release that does
+    not exist. UNKNOWN refuses; it never defaults.
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "tag", "--list", "v*"],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(
+            "release-pin sweep needs `git tag --list` to learn which release is "
+            "PUBLISHED; the install-pin class cannot be resolved without it. "
+            f"git exited {proc.returncode}: {proc.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    out = proc.stdout.decode("utf-8", "surrogateescape")
+    return [t for t in (line.strip() for line in out.splitlines()) if _RELEASE_TAG.fullmatch(t)]
+
+
+def _published_version() -> str:
+    """The last PUBLISHED release — the highest final-release ``v*`` tag.
+
+    This is the source of truth for the ``install`` pin class. The tag is used
+    rather than PyPI deliberately: it is offline, deterministic, and it is the
+    exact ref a ``Cranot/roam-code@vX`` pin resolves against. The residual is
+    stated rather than implied — a tag can exist while the publish workflow
+    failed, so the tag proves the GitHub half of an install instruction and
+    only implies the PyPI half. ``scripts/check_install_targets.py --pypi``
+    closes the other half when a network is available, and reports UNKNOWN
+    (not OK) when it is not.
+    """
+    tags = release_tags()
+    if not tags:
+        raise SystemExit(
+            "no final-release `v*` tag exists in this repository, so the last "
+            "PUBLISHED release is UNKNOWN and install pins cannot be resolved. "
+            "Refusing rather than falling back to the declared version — that "
+            "fallback is the defect this class split removes. If this is a "
+            "shallow clone, fetch tags (`git fetch --tags`, or checkout with "
+            "fetch-depth: 0)."
+        )
+    return max(tags, key=lambda t: tuple(int(p or 0) for p in _RELEASE_TAG.fullmatch(t).groups()))[1:]
+
+
+def _install_sweep_patterns(published: str) -> list[tuple[re.Pattern, str]]:
+    """INSTALL-class pin shapes swept across EVERY tracked text file.
+
+    Every one of these tells a reader or a machine to FETCH something, so all
+    of them take ``published`` — the last released version — and never the
+    declared one.
+    """
+    version = published
     return [
         # `pip install "roam-code==X"`, `roam-code[mcp]==X`.
         (re.compile(rf"(roam-code(?:\[[a-z0-9,._-]+\])?==){_PIN_VERSION}"), rf"\g<1>{version}"),
@@ -195,25 +287,34 @@ def _sweep_pin_patterns(version: str) -> list[tuple[re.Pattern, str]]:
     ]
 
 
-def _structural_pin_patterns(version: str) -> dict[str, list[tuple[re.Pattern, str]]]:
+def _structural_pin_patterns(version: str, published: str) -> dict[str, list[tuple[re.Pattern, str]]]:
     """Version sites with no reusable shape — anchored per file, not swept.
 
     These are the surfaces that misreport the running version to a machine
     (registry metadata, action input defaults) or to a reader (generated doc
     headers). Each pattern is anchored on surrounding structure so it can only
     ever match the one intended field.
+
+    Two arguments, because these sites are NOT one class. ``version`` is the
+    declared version and drives the ``identity`` sites (what this artifact
+    calls itself); ``published`` is the last released version and drives the
+    ``install`` sites (what a consumer is told to fetch). Each entry below
+    says which it uses and why.
     """
     return {
-        # THE release-breaking one: the composite action's default install
-        # target. A release that misses this ships an action that installs the
-        # previous version to every downstream consumer.
+        # INSTALL. THE release-breaking one: the composite action's default
+        # install target. Before the class split this was synced forward at
+        # bump time, which shipped `pip install "roam-code==<unpublished>"` to
+        # every consumer pinning `@main` — a hard install failure. It now
+        # names the last published release, which is the only version the
+        # unguarded `pip install` at the bottom of action.yml can resolve.
         "action.yml": [
             (
                 re.compile(rf"(^  version:\n(?:^ {{4}}[^\n]*\n){{0,6}}?^    default: '){_PIN_VERSION}", re.M),
-                rf"\g<1>{version}",
+                rf"\g<1>{published}",
             ),
         ],
-        # Claude Code plugin marketplace manifest. ``version`` here is not
+        # IDENTITY. Claude Code plugin marketplace manifest. ``version`` here is not
         # cosmetic: the docs make it the update trigger — "Setting this pins
         # the plugin to that version string, so users only receive updates
         # when you bump it." A stale literal therefore means every installed
@@ -225,7 +326,7 @@ def _structural_pin_patterns(version: str) -> dict[str, list[tuple[re.Pattern, s
         ".claude-plugin/plugin.json": [
             (re.compile(rf'(^    "version": "){_PIN_VERSION}', re.M), rf"\g<1>{version}"),
         ],
-        # Citation metadata. Both state the version a citer would reference, so
+        # IDENTITY. Citation metadata. Both state the version a citer would reference, so
         # a stale literal here mis-attributes published work to a release that
         # never contained the cited behaviour. Registered the day the files
         # landed rather than the day someone notices — the exact gap that let
@@ -240,16 +341,18 @@ def _structural_pin_patterns(version: str) -> dict[str, list[tuple[re.Pattern, s
         "codemeta.json": [
             (re.compile(rf'(^    "version": "){_PIN_VERSION}', re.M), rf"\g<1>{version}"),
         ],
-        # MCP registry: top-level server version AND the PyPI package pin the
-        # registry actually installs. Only the former had a guard
-        # (tests/test_doc_consistency.py::test_server_json_matches_pyproject);
-        # the package pin — the field that decides what a client downloads —
-        # had none.
+        # MCP registry — ONE FILE, BOTH CLASSES, and the split matters here
+        # more than anywhere else. The top-level ``version`` is IDENTITY: it
+        # is what this server calls itself, so it tracks pyproject. The
+        # ``packages[].version`` under ``identifier: roam-code`` is INSTALL:
+        # it is the PyPI pin a registry client actually downloads, so it
+        # tracks the published release. Syncing both forward at bump time told
+        # every registry consumer to fetch a wheel that does not exist.
         "server.json": [
             (re.compile(rf'(^    "version": "){_PIN_VERSION}', re.M), rf"\g<1>{version}"),
             (
                 re.compile(rf'("identifier": "roam-code",\s*\n\s*"version": "){_PIN_VERSION}'),
-                rf"\g<1>{version}",
+                rf"\g<1>{published}",
             ),
         ],
         # Generated index header. `tests/test_commands_doc_synced.py`
@@ -260,9 +363,11 @@ def _structural_pin_patterns(version: str) -> dict[str, list[tuple[re.Pattern, s
         "docs/COMMANDS.md": [
             (re.compile(rf"(· roam v){_PIN_VERSION}"), rf"\g<1>{version}"),
         ],
-        # The documented default for the action input above; they must agree.
+        # INSTALL. The documented default for the action input above; they
+        # must agree, so it takes the same source. A reader who copies this
+        # table into their own `with:` block is issuing a fetch.
         "docs/ci-integration.md": [
-            (re.compile(rf"(\| `version` \| `){_PIN_VERSION}"), rf"\g<1>{version}"),
+            (re.compile(rf"(\| `version` \| `){_PIN_VERSION}"), rf"\g<1>{published}"),
         ],
         # Landing-page prose that states the CURRENT surface's version. The
         # existing sweep in tests/test_doc_consistency.py only recognises
@@ -326,15 +431,22 @@ def _trim_pin_context(match_text: str, limit: int = 64) -> str:
     return flat if len(flat) <= limit else "..." + flat[-limit:]
 
 
-def release_pin_drift(version: str, *, write: bool = False) -> list[str]:
-    """Every release-version pin that disagrees with ``version``.
+def release_pin_drift(version: str, published: str, *, write: bool = False) -> list[str]:
+    """Every release-version pin that disagrees with its class's source.
+
+    ``version`` is the DECLARED version (``pyproject.toml``) and governs the
+    ``identity`` class; ``published`` is the last RELEASED version and governs
+    the ``install`` class. Both are required positionally on purpose: a
+    defaulted ``published`` would silently restore the single-source
+    behaviour that made main ship unresolvable install instructions, and it
+    would do so at exactly the call site that forgot to pass it.
 
     Returns one ``"<path>: '<before>' -> '<after>'"`` line per drifted site.
     With ``write=True`` the files are rewritten in place and the same list is
     returned (so the caller can report what it fixed).
     """
-    sweep = _sweep_pin_patterns(version)
-    structural = _structural_pin_patterns(version)
+    sweep = _install_sweep_patterns(published)
+    structural = _structural_pin_patterns(version, published)
     drift: list[str] = []
 
     for rel in _tracked_files():
@@ -815,6 +927,7 @@ def main() -> int:
     args = ap.parse_args()
 
     version = _pyproject_version()
+    published = _published_version()
     counts = _live_counts()
     langs = _live_languages()
     # ``with aliases`` reuses live alias_names from surface_counts rather than
@@ -824,7 +937,10 @@ def main() -> int:
     with_aliases = counts["canonical"] + counts["alias_names"]
     print(f"Live surface: {counts['commands']} commands ({counts['canonical']} canonical, {with_aliases} with aliases)")
     print(f"               {counts['mcp_tools']} MCP tools, {langs} languages")
-    print(f"Release version (pyproject.toml): {version}")
+    print(f"Declared version (pyproject.toml): {version}   -> identity pins")
+    print(f"Published release (highest v* tag): {published}   -> install pins")
+    if version != published:
+        print(f"  bump-to-release window is OPEN: install pins stay at {published} until v{version} is tagged")
     print()
 
     build_replacements(counts, langs)
@@ -868,7 +984,7 @@ def main() -> int:
     # covered the day it lands), while the count machinery is an explicit
     # per-file registry whose overlap with dev/build_readme_counts.py is
     # pinned by tests/test_count_drift_no_overlap.py.
-    pin_drift = release_pin_drift(version, write=args.write)
+    pin_drift = release_pin_drift(version, published, write=args.write)
     for line in pin_drift:
         print(f"  {line}")
     drift_found += len(pin_drift)
@@ -876,7 +992,7 @@ def main() -> int:
     print()
     if drift_found == 0:
         print("All surface counts in sync.")
-        print(f"All release-version pins match pyproject {version}.")
+        print(f"All identity pins match pyproject {version}; all install pins match published {published}.")
         return 0
     if args.write:
         print(f"Synced {drift_found} pattern(s).")

@@ -1,4 +1,4 @@
-"""W1501 — every release-version pin agrees with ``pyproject.toml``.
+"""W1501 — every release-version pin agrees with its CLASS's source.
 
 CONTRIBUTING claimed since v11 that ``pyproject.toml -> version`` was the
 single source of truth and that "everything else syncs from it via
@@ -10,16 +10,50 @@ so every downstream consumer of the composite action installs the version
 BEFORE the one just released, and ``server.json`` tells the MCP registry to
 fetch the same stale wheel.
 
-This module pins the mechanism that closes it. Three things are asserted:
+The first fix made pyproject the single source for ALL of them, which closed
+that defect and opened its mirror image. ``pyproject.toml`` is the DECLARED
+version; a version is only installable once it is PUBLISHED. Syncing install
+instructions forward at BUMP time therefore guaranteed that public ``main``
+advertised a version nobody could fetch, for the entire bump-to-release
+window — measured at 33 commits and counting when 14.0.0 was declared against
+a latest-published 13.10.0, with ``pip install "roam-code==14.0.0"`` returning
+404 and ``Cranot/roam-code@v14.0.0`` resolving to no ref. The gate was green
+throughout, because it was asking whether the pins agreed with pyproject
+rather than whether what they named existed.
+
+So there are two sources, not one:
+
+* **identity** literals (``CITATION.cff``, ``codemeta.json``, the plugin
+  manifest, ``server.json``'s own version, generated doc headers) describe
+  the artifact this commit IS -> ``pyproject.toml``;
+* **install** literals (``roam-code==X``, ``Cranot/roam-code@vX``, the
+  action's ``version`` input and default, ``server.json``'s
+  ``packages[].version``, the roam-guard ``actual == 'X'`` assertion) instruct
+  a fetch -> the last PUBLISHED release, i.e. the highest ``v*`` tag.
+
+This module pins the mechanism. Five things are asserted:
 
 * **positive control** — the real tree has no pin drift;
 * **negative control** — the gate REPORTS drift when a derived pin disagrees,
   proven against a synthetic tree rather than asserted. A gate never shown to
   fail is indistinguishable from one that does not work, which is exactly how
   the CONTRIBUTING claim survived;
+* **the class split** — with declared and published DELIBERATELY different,
+  install pins land on published and identity pins land on declared. Every
+  other test in this file passes the two versions equal, which is the steady
+  state after a release and cannot tell the two sources apart;
+* **fail-closed** — an empty or unreachable tag list makes the published
+  version UNKNOWN, and UNKNOWN refuses rather than falling back to declared.
+  A fallback there would restore the whole defect in exactly the place it is
+  least visible: a shallow clone or a fresh fork;
 * **false-positive controls** — version-shaped literals that are NOT roam
   release pins (a CircleCI config version, a pinned third-party action
   version, prose naming a past release) must survive the sweep untouched.
+
+What this module does NOT check: whether the version an install pin names can
+actually be FETCHED. The tag proves the GitHub half only, and it proves it for
+this repository's own tag list rather than for PyPI.
+``scripts/check_install_targets.py`` is the gate for that question.
 
 Also pinned here: the *classification* itself. The ``13.10.0`` occurrences in
 ``roam/plan/compiler.py`` and ``roam/plan/plan_cache.py`` are prose in
@@ -62,16 +96,18 @@ def test_pyproject_version_is_readable_and_release_shaped() -> None:
 
 
 def test_tracked_tree_has_no_release_pin_drift() -> None:
-    """Every derived pin in the checkout equals ``pyproject.toml``.
+    """Every pin in the checkout equals the source its CLASS is derived from.
 
-    This is the gate CI enforces via the ``Surface-count drift gate`` step
-    (``.venv/bin/python scripts/sync_surface_counts.py``); asserting it here
-    too means a stale pin fails the ordinary test run as well, not only the
-    doc-hygiene job.
+    Identity pins equal ``pyproject.toml``; install pins equal the last
+    published release. This is the gate CI enforces via the ``Surface-count
+    drift gate`` step (``.venv/bin/python scripts/sync_surface_counts.py``);
+    asserting it here too means a stale pin fails the ordinary test run as
+    well, not only the doc-hygiene job.
     """
     version = sync._pyproject_version()
-    drift = sync.release_pin_drift(version)
-    assert drift == [], "release-version pins disagree with pyproject:\n  " + "\n  ".join(drift)
+    published = sync._published_version()
+    drift = sync.release_pin_drift(version, published)
+    assert drift == [], "release-version pins disagree with their class source:\n  " + "\n  ".join(drift)
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +171,7 @@ def test_gate_reports_every_stale_derived_pin(fake_tree) -> None:
             "server.json": _STALE_SERVER_JSON,
         }
     )
-    drift = sync.release_pin_drift("14.0.0")
+    drift = sync.release_pin_drift("14.0.0", "14.0.0")
     reported = {line.split(":", 1)[0] for line in drift}
     assert reported == {
         "src/roam/templates/ci/gitlab-ci.yml",
@@ -148,6 +184,122 @@ def test_gate_reports_every_stale_derived_pin(fake_tree) -> None:
     # in the report, not just the human-readable docs.
     assert any("action.yml" in line and "13.9.0" in line and "14.0.0" in line for line in drift), drift
     assert sum(1 for line in drift if line.startswith("server.json")) == 2, drift
+
+
+# ---------------------------------------------------------------------------
+# The class split — install pins vs identity pins
+# ---------------------------------------------------------------------------
+#
+# These are the assertions that make the two classes distinguishable. Every
+# test above passes ``version == published``, which is the steady state after
+# a release and therefore cannot tell the two sources apart. The whole defect
+# lived in the window where they DIFFER.
+
+
+# The literal "roam" is load-bearing in these fixtures, not decoration: the
+# sweep pre-filters on it to stay sub-second over a few thousand tracked files,
+# so a fixture without it is skipped and the assertion silently measures
+# nothing. Both real files contain it.
+_IDENTITY_CITATION = "cff-version: 1.2.0\ntitle: roam-code\nversion: 13.9.0\n"
+_IDENTITY_PLUGIN = '{\n    "name": "roam",\n    "version": "13.9.0"\n}\n'
+
+
+def test_install_pins_take_published_and_identity_pins_take_declared(fake_tree) -> None:
+    """The bump-to-release window, reproduced: declared 14.0.0, published 13.10.0.
+
+    This is the exact state public ``main`` was in. Before the split, every
+    site below was rewritten to 14.0.0 and the gate printed "in sync" — while
+    ``pip install "roam-code==14.0.0"`` returned 404 from PyPI and
+    ``Cranot/roam-code@v14.0.0`` resolved to no ref at all. Both halves are
+    asserted here: install literals must land on the PUBLISHED release, and
+    identity literals must still land on the DECLARED one. Asserting only the
+    first would let a fix that froze the whole tree at 13.10.0 pass.
+    """
+    tree = fake_tree(
+        {
+            # install class
+            "src/roam/templates/ci/gitlab-ci.yml": _STALE_TEMPLATE,
+            "action.yml": _STALE_ACTION,
+            "server.json": _STALE_SERVER_JSON,
+            "templates/examples/roam-guard-pr.github-actions.yml": (
+                "pip install \"roam-code==13.9.0\"\nraise SystemExit(0 if actual == '13.9.0' else 1)\n"
+            ),
+            "docs/ci-integration.md": _STALE_WORKFLOW + "| `version` | `13.9.0` |\n",
+            # identity class
+            "CITATION.cff": _IDENTITY_CITATION,
+            ".claude-plugin/plugin.json": _IDENTITY_PLUGIN,
+        }
+    )
+    assert sync.release_pin_drift("14.0.0", "13.10.0", write=True) != []
+    assert sync.release_pin_drift("14.0.0", "13.10.0") == [], "the rewrite must converge in one pass"
+
+    def body(rel: str) -> str:
+        return (tree / rel).read_text(encoding="utf-8")
+
+    # INSTALL — every one of these instructs a fetch, so it names the release
+    # that exists, not the one that was declared.
+    assert '"roam-code==13.10.0"' in body("src/roam/templates/ci/gitlab-ci.yml")
+    assert "default: '13.10.0'" in body("action.yml")
+    assert body("server.json").count('"13.10.0"') == 1, "only packages[].version is install-class"
+    assert body("server.json").count('"14.0.0"') == 1, "server.json's own version is identity-class"
+    guard = body("templates/examples/roam-guard-pr.github-actions.yml")
+    assert '"roam-code==13.10.0"' in guard
+    assert "actual == '13.10.0'" in guard, "the post-install assertion must agree with the pin above it"
+    doc = body("docs/ci-integration.md")
+    assert "Cranot/roam-code@v13.10.0" in doc
+    assert "version: '13.10.0'" in doc
+    assert "| `version` | `13.10.0` |" in doc
+    assert "14.0.0" not in doc, "no install instruction may name an unpublished version"
+
+    # IDENTITY — these describe the artifact this commit IS, so they move at
+    # bump time. Freezing them would be the mirror-image defect.
+    assert "version: 14.0.0" in body("CITATION.cff")
+    assert '"version": "14.0.0"' in body(".claude-plugin/plugin.json")
+
+
+def test_published_version_refuses_when_no_release_tag_exists(monkeypatch) -> None:
+    """UNKNOWN refuses; it never falls back to the declared version.
+
+    A fallback here would silently restore the whole defect — and would do so
+    exactly where it is least visible, in a shallow clone or a fresh fork
+    where the tag list is empty rather than wrong.
+    """
+    monkeypatch.setattr(sync, "release_tags", lambda: [])
+    with pytest.raises(SystemExit) as exc:
+        sync._published_version()
+    assert "UNKNOWN" in str(exc.value)
+    assert "fetch-depth" in str(exc.value), "the message must say how to make the tag list reachable"
+
+
+def test_release_tags_refuses_when_git_is_unreachable(monkeypatch) -> None:
+    """An unreachable tag list is not an empty tag list, and neither is OK."""
+    import subprocess
+
+    def _fail(*_a, **_kw):
+        return subprocess.CompletedProcess([], returncode=128, stdout=b"", stderr=b"not a git repository")
+
+    monkeypatch.setattr(subprocess, "run", _fail)
+    with pytest.raises(SystemExit) as exc:
+        sync.release_tags()
+    assert "git" in str(exc.value)
+
+
+def test_release_tags_ignores_non_release_tags(monkeypatch) -> None:
+    """Pre-releases and vanity tags must not be mistaken for a publish.
+
+    ``_published_version`` picks the MAXIMUM, so a stray ``v99-wip`` tag would
+    otherwise become the install target for the entire tree.
+    """
+    import subprocess
+
+    out = b"v13.9.0\nv13.10.0\nv14.0.0rc1\nv99-wip\nvnext\n"
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_a, **_kw: subprocess.CompletedProcess([], returncode=0, stdout=out, stderr=b""),
+    )
+    assert sync.release_tags() == ["v13.9.0", "v13.10.0"]
+    assert sync._published_version() == "13.10.0", "13.10.0 > 13.9.0 numerically, not lexically"
 
 
 def test_write_mode_repairs_every_reported_site(fake_tree) -> None:
@@ -163,8 +315,8 @@ def test_write_mode_repairs_every_reported_site(fake_tree) -> None:
             "server.json": _STALE_SERVER_JSON,
         }
     )
-    assert sync.release_pin_drift("14.0.0", write=True) != []
-    assert sync.release_pin_drift("14.0.0") == []
+    assert sync.release_pin_drift("14.0.0", "14.0.0", write=True) != []
+    assert sync.release_pin_drift("14.0.0", "14.0.0") == []
     assert '"roam-code==14.0.0"' in (tree / "src/roam/templates/ci/gitlab-ci.yml").read_text(encoding="utf-8")
     assert "default: '14.0.0'" in (tree / "action.yml").read_text(encoding="utf-8")
     assert (tree / "server.json").read_text(encoding="utf-8").count('"14.0.0"') == 2
@@ -175,7 +327,7 @@ def test_exempt_paths_are_not_rewritten(fake_tree) -> None:
     exempt = sorted(sync._VERSION_PIN_EXEMPT)
     assert exempt, "the exemption registry must not be empty — see the module docstring"
     tree = fake_tree({rel: _STALE_TEMPLATE + _STALE_WORKFLOW for rel in exempt})
-    assert sync.release_pin_drift("14.0.0", write=True) == []
+    assert sync.release_pin_drift("14.0.0", "14.0.0", write=True) == []
     for rel in exempt:
         assert "13.9.0" in (tree / rel).read_text(encoding="utf-8")
 
@@ -210,7 +362,7 @@ _NOT_A_ROAM_PIN = {
 @pytest.mark.parametrize("rel", sorted(_NOT_A_ROAM_PIN))
 def test_non_pin_version_literals_are_never_rewritten(fake_tree, rel: str) -> None:
     tree = fake_tree({rel: _NOT_A_ROAM_PIN[rel]})
-    assert sync.release_pin_drift("14.0.0", write=True) == [], rel
+    assert sync.release_pin_drift("14.0.0", "14.0.0", write=True) == [], rel
     assert (tree / rel).read_text(encoding="utf-8") == _NOT_A_ROAM_PIN[rel]
 
 

@@ -13,12 +13,14 @@ from tests.conftest import (
 )
 
 # The release version the generated-CI assertions below are DERIVED from
-# (W1501). ``roam init --with-ci=github`` emits the action ref and its
-# ``version:`` input from a template that ``scripts/sync_surface_counts.py``
-# rewrites on every bump; a frozen literal here would either agree with a
-# template that never got bumped, or fail the release that did bump it.
-# Neither outcome is a defect this test can actually see.
-ROAM_VERSION = sync._pyproject_version()
+# (W1501). ``roam init --with-ci=github`` writes a workflow into the USER'S
+# repository, so the action ref and ``version:`` input it emits are INSTALL
+# instructions: they must name a release that exists, which is the last
+# PUBLISHED one and not the declared one. Asserting pyproject here made the
+# test agree with a workflow that pinned an untagged version -- green in this
+# repo, `Unable to resolve action` in the user's. A frozen literal would be
+# worse still. ``scripts/sync_surface_counts.py`` owns the templates.
+ROAM_VERSION = sync._published_version()
 
 # ---------------------------------------------------------------------------
 # Fixture: a git-init'd project that has NOT been indexed yet.

@@ -284,7 +284,7 @@ def test_gate_reports_every_stale_distribution_manifest(fake_tree) -> None:
             "CITATION.cff": _STALE_CITATION,
         }
     )
-    drift = sync.release_pin_drift("14.0.0")
+    drift = sync.release_pin_drift("14.0.0", "14.0.0")
     assert {line.split(":", 1)[0] for line in drift} == {
         ".claude-plugin/plugin.json",
         "codemeta.json",
@@ -300,8 +300,8 @@ def test_write_mode_repairs_every_distribution_manifest(fake_tree) -> None:
             "CITATION.cff": _STALE_CITATION,
         }
     )
-    assert sync.release_pin_drift("14.0.0", write=True) != []
-    assert sync.release_pin_drift("14.0.0") == []
+    assert sync.release_pin_drift("14.0.0", "14.0.0", write=True) != []
+    assert sync.release_pin_drift("14.0.0", "14.0.0") == []
     assert json.loads((tree / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"] == "14.0.0"
     assert json.loads((tree / "codemeta.json").read_text(encoding="utf-8"))["version"] == "14.0.0"
     assert "version: 14.0.0" in (tree / "CITATION.cff").read_text(encoding="utf-8")
@@ -315,5 +315,5 @@ def test_cff_version_key_is_not_swept(fake_tree) -> None:
     to be in a citation-file-format revision that does not exist.
     """
     tree = fake_tree({"CITATION.cff": _STALE_CITATION})
-    sync.release_pin_drift("14.0.0", write=True)
+    sync.release_pin_drift("14.0.0", "14.0.0", write=True)
     assert "cff-version: 1.2.0" in (tree / "CITATION.cff").read_text(encoding="utf-8")

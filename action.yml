@@ -8,7 +8,7 @@ inputs:
   version:
     description: 'Exact roam-code version to install; source installs this action checkout; latest requires allow-latest=true'
     required: false
-    default: '14.0.0'
+    default: '13.10.0'
   allow-latest:
     description: 'Explicitly permit the mutable version=latest install path (true/false)'
     required: false
