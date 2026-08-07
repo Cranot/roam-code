@@ -158,7 +158,11 @@ dev = [
 # their complete transitive graphs and artifact hashes across Python 3.10-3.13.
 ci = [
     "pip-audit==2.10.1",
-    "pypdf==6.14.2",
+    # 6.15.0 carries the fixes for CVE-2026-71852 and CVE-2026-71870, both
+    # published against 6.14.2 on 2026-08-07. CI-only, like pillow above, and
+    # like pillow it must still audit clean: the dependency-audit lane fails on
+    # ANY known vulnerability in the locked graph, which is what caught this.
+    "pypdf==6.15.0",
     "setuptools==83.0.0",
     "wheel==0.47.0",
 ]
