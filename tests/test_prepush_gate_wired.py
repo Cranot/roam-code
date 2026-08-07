@@ -255,31 +255,78 @@ def _release_note_bullets(tree: ast.Module) -> list[str]:
     )
 
 
+_TIER_FLAG_NAMES = frozenset({"full", "release"})
+
+
+def _is_tier_conditional(stmt: ast.stmt) -> bool:
+    """True for a statement whose execution depends on the ``--full``/``--release`` tier.
+
+    ``main()`` derives exactly two tier flags (``release = args.release`` and
+    ``full = args.full or release``) and branches on them by name, so a
+    conservative name test over the branch condition is a complete reading of
+    tier-conditionality in this script. Attribute form (``args.release``) is
+    accepted too, so hoisting the branch back onto the namespace does not
+    silently reclassify a release-only gate as always-on.
+
+    Deliberately conservative: a compound test that mentions a tier flag at all
+    (``if release and not runner.<gate>().passed:``) counts as tier-conditional.
+    Under-collecting keeps the note guard from demanding that a genuinely
+    unproven lane stop being disclaimed.
+
+    Residual, stated rather than implied: a branch that is conditional on
+    something OTHER than a tier — ``if os.environ.get(...):`` at the top level
+    of ``main()`` — is NOT recognised here, so a gate inside it reads as
+    always-on. No such branch exists in ``main()`` today (the only top-level
+    conditions are the two tier flags). If one is added, extend this predicate
+    rather than re-narrowing the extractor by statement kind — that is the
+    filter that produced the blind spot in the first place.
+    """
+    if not isinstance(stmt, ast.If):
+        return False
+    for node in ast.walk(stmt.test):
+        if isinstance(node, ast.Name) and node.id in _TIER_FLAG_NAMES:
+            return True
+        if isinstance(node, ast.Attribute) and node.attr in _TIER_FLAG_NAMES:
+            return True
+    return False
+
+
 def _unconditional_gate_labels(tree: ast.Module) -> dict[str, str]:
     """Map every gate label that runs in EVERY tier to the method that runs it.
 
-    ``main()`` wires its always-on gates in TWO shapes, and both must be read:
+    The question this answers is "does this gate run in every tier", and the
+    only thing that decides that is whether the call sits under an ``if full:``
+    / ``if release:`` branch. So the filter is tier-conditionality alone: skip
+    the tier branches among ``main``'s direct-child statements, and read
+    ``runner.<…>`` calls ANYWHERE inside what survives.
 
-    1. **Indirect** — ``runner.<method>()``, where ``<method>`` is a grouping
-       helper (``_run_leak_gate``, ``_run_ruff``, …) that registers one or more
-       labels via ``self._run("<label>", …)`` inside its own body.
-    2. **Direct** — ``runner._run("<label>", …)`` written straight into
-       ``main()``. This is a shape ``main()`` already uses (the RELEASE gates),
-       so a new gate can plausibly be wired this way.
+    That is deliberately not a filter on statement KIND. Two earlier versions
+    filtered by shape and each was blind to the shapes it had not enumerated:
 
-    Reading only shape 1 was a live blind spot: a direct call resolves
-    ``method='_run'``, the walk then descends into ``GateRunner._run`` looking
-    for a nested ``self._run(...)``, finds none, and the gate contributes
-    NOTHING. Measured 2026-08-07 on a mutated tree carrying one unconditional
-    ``runner._run("roam compatibility --ci", …)`` — a label the RELEASE note
-    already disclaims: the pre-widening extractor returned the same 7 labels as
-    the real tree and the guard passed. That is this guard's own defect class
-    turned on itself — a gate reporting coverage over a shape it cannot read.
+    1. Reading only ``runner.<method>()`` grouping helpers (``_run_leak_gate``,
+       ``_run_ruff``, …) missed a direct ``runner._run("<label>", …)``: the
+       method resolves to ``GateRunner._run``, which contains no nested
+       ``self._run(...)``, so the gate contributed NOTHING.
+    2. Reading both of those but only as ``ast.Expr`` statements missed every
+       VALUE position — and the value position is house style here, since
+       ``main()`` already writes
+       ``if release and not runner.run_release_temp_capacity_gate().passed:``.
 
-    Only statements that are direct children of ``main``'s body count, for both
-    shapes — anything nested under ``if full:`` / ``if release:`` is
-    tier-conditional and must stay uncollected, or the guard would demand that
-    the note stop disclaiming lanes that genuinely do not run in FAST.
+    Measured 2026-08-07 against the real ``scripts/prepush_check.py`` with one
+    unconditional ``roam compatibility --ci`` gate (a label the RELEASE note
+    disclaims) spliced in three ways — ``if not runner._run(…).passed:``,
+    ``if not runner._run_compat_gate().passed:``, and
+    ``compat = runner._run(…)``. All three returned the SAME 7 labels as the
+    unmutated tree, so the note guard reported ``liars=0`` and passed while the
+    note disclaimed a gate every tier now ran. A gate reporting coverage over a
+    shape it cannot read is this guard's own defect class aimed at itself.
+
+    Two shapes then turn a collected call into labels:
+
+    * **Indirect** — ``runner.<method>(…)`` where ``<method>`` is a grouping
+      helper that registers labels via ``self._run("<label>", …)`` in its body.
+    * **Direct** — ``runner._run("<label>", …)``, the label being the literal
+      first argument.
     """
     main_fn = next(
         (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main"),
@@ -288,13 +335,14 @@ def _unconditional_gate_labels(tree: ast.Module) -> dict[str, str]:
     assert main_fn is not None, "scripts/prepush_check.py must define main()."
 
     unconditional_calls = [
-        stmt.value
+        node
         for stmt in main_fn.body
-        if isinstance(stmt, ast.Expr)
-        and isinstance(stmt.value, ast.Call)
-        and isinstance(stmt.value.func, ast.Attribute)
-        and isinstance(stmt.value.func.value, ast.Name)
-        and stmt.value.func.value.id == "runner"
+        if not _is_tier_conditional(stmt)
+        for node in ast.walk(stmt)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "runner"
     ]
     assert unconditional_calls, (
         "Found no unconditional `runner.<gate>()` calls in main(); the AST shape "
@@ -328,14 +376,24 @@ def _unconditional_gate_labels(tree: ast.Module) -> dict[str, str]:
             if isinstance(call.args[0].value, str):
                 labels.setdefault(call.args[0].value, "main")
 
-    # Residual tripwire for a THIRD shape neither branch above anticipates.
-    # `unconditional_calls` being non-empty does NOT imply the extractor read
-    # anything: on a main() whose always-on gates are all direct-form, the
-    # pre-widening extractor saw methods == ['_run'] — non-empty, so the
-    # assertion above passed — and still returned zero labels, leaving the
-    # guard to compare an empty set against the note and report green. A guard
-    # that can only pass is the defect it exists to prevent, so an extractor
-    # that reads NOTHING must fail loudly rather than certify silence.
+    # Residual tripwire for TOTAL blindness, and only that. `unconditional_calls`
+    # being non-empty does NOT imply the extractor read anything: on a main()
+    # whose always-on gates were all direct-form, the first extractor saw
+    # methods == ['_run'] — non-empty, so the assertion above passed — and still
+    # returned zero labels, leaving the guard to compare an empty set against
+    # the note and report green. A guard that can only pass is the defect it
+    # exists to prevent, so an extractor that reads NOTHING must fail loudly
+    # rather than certify silence.
+    #
+    # What it does NOT measure: per-gate coverage. It is a floor, not a census,
+    # so a PARTIALLY blind extractor stays silent — the value-position blindness
+    # above returned 7 labels and tripped nothing. A shape no branch can read is
+    # already in the tree: `run_release_temp_capacity_gate` builds its GateResult
+    # inline and appends to self.results without ever calling `self._run` with a
+    # literal label, so neither branch can name it (it is tier-conditional today,
+    # so it is correctly excluded anyway — but nothing here would notice if it
+    # were not). Closing that class needs a per-gate check against
+    # `runner.results`, not a stronger tripwire.
     assert labels, (
         "Read no gate labels from main()'s unconditional calls "
         f"({[call.func.attr for call in unconditional_calls]}); the wiring shape has "
@@ -445,19 +503,153 @@ def test_gate_label_extractor_reads_both_wiring_shapes() -> None:
     )
 
 
+_VALUE_POSITION_FIXTURE = """
+class GateRunner:
+    def _run(self, name, argv, fix_hint):
+        ...
+
+    def _run_compat_gate(self):
+        return self._run("helper-in-value gate", [], fix_hint="")
+
+    def run_bundle(self, guards, tier):
+        ...
+
+
+def main(argv=None):
+    runner = GateRunner()
+    if not runner._run("if-value gate", [], fix_hint="").passed:
+        return 1
+    if not runner._run_compat_gate().passed:
+        return 1
+    assigned = runner._run("assigned gate", [], fix_hint="")
+    runner.run_bundle(FAST, "FAST")
+    if release and not runner._run("release-guarded gate", [], fix_hint="").passed:
+        return 1
+    if full:
+        runner._run("full-only gate", [], fix_hint="")
+    return 0 if assigned.passed else 1
+"""
+
+
+def test_gate_label_extractor_reads_value_position_gates() -> None:
+    """A gate whose call sits in a VALUE position still runs in every tier.
+
+    The statement-position shapes (``runner._run_group()`` /
+    ``runner._run("…")`` as a bare expression) are not the only way main()
+    wires an always-on gate, and they are not even the shape main() reaches
+    for when a gate's RESULT decides control flow. main() already writes
+    ``if release and not runner.run_release_temp_capacity_gate().passed:`` —
+    so the value position is established house style, and the next
+    unconditional gate is at least as likely to be written that way.
+
+    Measured 2026-08-07 against the real ``scripts/prepush_check.py`` with one
+    unconditional ``roam compatibility --ci`` gate spliced in after
+    ``runner._run_leak_gate()`` — a label the RELEASE note disclaims. All three
+    value-position shapes returned the SAME 7 labels as the unmutated tree, so
+    the note guard reported ``liars=0`` and passed on a tree whose note lies:
+
+    * ``if not runner._run("…", …).passed:``      (test position)
+    * ``if not runner._run_compat_gate().passed:``(test position, via helper)
+    * ``compat = runner._run("…", …)``            (assignment value)
+
+    The cause was the ``isinstance(stmt, ast.Expr)`` filter: a call that is not
+    the whole statement is not an ``ast.Expr``, so it was never a candidate.
+    Filtering by STATEMENT KIND asks "how is this written", when the only
+    question that matters is "does this run in every tier" — which is answered
+    by tier-conditionality alone. Hence the extractor now skips exactly the
+    ``if full:`` / ``if release:`` branches and reads runner calls anywhere in
+    what survives.
+    """
+    labels = _unconditional_gate_labels(ast.parse(_VALUE_POSITION_FIXTURE))
+
+    for shape, label in (
+        ("`if not runner._run(...).passed:` (test position)", "if-value gate"),
+        ("`if not runner._run_compat_gate().passed:` (test position via helper)", "helper-in-value gate"),
+        ("`assigned = runner._run(...)` (assignment value)", "assigned gate"),
+    ):
+        assert label in labels, (
+            f"{shape} contributes no label, so a gate wired that way runs in "
+            f"every tier while the RELEASE note may keep disclaiming it. Read: {sorted(labels)}"
+        )
+
+    assert "release-guarded gate" not in labels, (
+        "a runner call inside `if release and ...:` is tier-conditional and must "
+        f"stay uncollected — widening must not start demanding that genuinely "
+        f"unproven lanes stop being disclaimed. Read: {sorted(labels)}"
+    )
+    assert "full-only gate" not in labels, (
+        f"a runner call under `if full:` is tier-conditional and must stay uncollected. Read: {sorted(labels)}"
+    )
+
+
+def test_note_guard_catches_a_value_position_gate_in_the_real_script() -> None:
+    """End-to-end: splice a disclaimed gate into the REAL script, note guard must fail.
+
+    ``test_gate_label_extractor_reads_value_position_gates`` pins the extractor
+    on a synthetic fixture; this pins the property that actually matters — that
+    the NOTE guard goes red — against the real ``main()``, its real tier
+    branching and the real RELEASE bullets. A fixture can drift away from the
+    script it stands in for; this cannot.
+
+    The mutation is the plausible next commit, not a contrived one: wiring
+    ``roam compatibility --ci`` into the push path is exactly what the bullet
+    "roam compatibility --ci / --require-coverage" anticipates someone doing,
+    and forgetting to delete the bullet afterwards is the whole failure class.
+    """
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    anchor = "    runner._run_leak_gate()\n"
+    assert anchor in source, (
+        f"Expected the unconditional `{anchor.strip()}` call in main() as the splice "
+        "point for this mutation. main()'s wiring moved — re-anchor this test rather "
+        "than deleting it; it is the only end-to-end check that the note guard can fail."
+    )
+    disclaimed = "roam compatibility --ci"
+    assert any(disclaimed in bullet for bullet in _release_note_bullets(ast.parse(source))), (
+        f"This test mutates in a gate labelled {disclaimed!r} because the RELEASE note "
+        "disclaims it. The note no longer does, so the mutation would prove nothing — "
+        "pick another disclaimed label."
+    )
+
+    for shape, injected in (
+        ("test position", f'    if not runner._run("{disclaimed}", [], fix_hint="").passed:\n        return 1\n'),
+        ("assignment value", f'    compat = runner._run("{disclaimed}", [], fix_hint="")\n    del compat\n'),
+    ):
+        mutated = ast.parse(source.replace(anchor, anchor + injected))
+        labels = _unconditional_gate_labels(mutated)
+        bullets = _release_note_bullets(mutated)
+        liars = [(label, method, b) for label, method in labels.items() for b in bullets if label in b]
+        assert liars, (
+            f"An unconditional `{disclaimed}` gate wired into main() in the {shape} "
+            "was not detected: the RELEASE note still disclaims a gate every tier now "
+            f"runs, and test_release_note_never_disclaims_a_gate_it_actually_runs would "
+            f"pass on that tree. Labels read: {sorted(labels)}"
+        )
+
+
 def test_gate_label_extractor_refuses_to_certify_silence() -> None:
-    """An extractor that reads NOTHING must fail, not report an empty set.
+    """An extractor that reads NOTHING AT ALL must fail, not report an empty set.
 
     The note guard's verdict is ``labels ∩ bullets == ∅``. With zero labels that
-    is vacuously true, so a blind extractor reports green with maximum
+    is vacuously true, so a totally blind extractor reports green with maximum
     confidence — an absent measurement published as a benign result.
 
     The older `unconditional_methods` tripwire does not cover this: it fires
     only when main() has no ``runner.<…>()`` calls at all. Measured on a main()
-    whose always-on gates were all direct-form, the pre-widening extractor saw
+    whose always-on gates were all direct-form, the first extractor saw
     ``methods == ['_run']`` — non-empty, tripwire silent — and still returned
-    zero labels. This asserts on the OUTPUT, so it fires for any future wiring
-    shape, including ones neither branch of the extractor anticipates.
+    zero labels. Asserting on the OUTPUT catches that.
+
+    SCOPE — this is a floor, not a census, and the difference is the whole
+    point of stating it. It fires only on TOTAL blindness. A PARTIALLY blind
+    extractor passes it: measured 2026-08-07, the value-position blindness
+    returned 7 labels from the real script while contributing NOTHING for an
+    unconditional gate spliced into main(), and this assertion stayed silent
+    throughout. A shape neither branch can read is in the tree right now —
+    ``run_release_temp_capacity_gate`` constructs its ``GateResult`` inline and
+    appends to ``self.results`` without ever calling ``self._run`` with a
+    literal label. Per-shape coverage is pinned by the
+    ``test_gate_label_extractor_reads_*`` tests above, each naming the shapes it
+    proves; do not read this one as covering shapes they do not enumerate.
     """
     blind_source = (
         "def main(argv=None):\n    runner = GateRunner()\n    runner.run_bundle(FAST, 'FAST')\n    return 0\n"
