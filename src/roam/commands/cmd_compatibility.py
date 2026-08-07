@@ -7,7 +7,7 @@ that users / agents / CI depend on:
 
   * CLI:     a command renamed or removed; a flag removed.
   * JSON:    a top-level envelope field removed; a closed-enum value removed.
-  * MCP:     a tool renamed; a preset changed.
+  * MCP:     a tool renamed; a tool parameter removed; a preset changed.
 
 Scope (intentionally MVP):
 
@@ -22,8 +22,9 @@ Scope (intentionally MVP):
   * ``--require-coverage`` additionally exits 5 when the baseline no
     longer records the whole current surface (see below).
   * Detection is structural ONLY: name presence, flag presence, MCP-tool
-    presence, preset count. Behavior-regression detection is explicitly
-    out of scope (a much larger problem).
+    presence, MCP-tool-parameter presence, preset count.
+    Behavior-regression detection is explicitly out of scope (a much
+    larger problem).
 
 The baseline is captured by running the command itself with
 ``--write-baseline``; commit the resulting snapshot so future runs gate
@@ -63,6 +64,44 @@ would drop entries, unless ``--accept-removals`` says so deliberately.
 Graceful renames (old name present in ``deprecated_aliases``, pointing
 at a live command) are not drops and never trip the refusal.
 
+WHY COVERAGE IS CLAIMED PER DIMENSION AND NEVER OVER "THE SURFACE"
+------------------------------------------------------------------
+
+``surface_coverage: complete`` used to be printed next to
+``unevaluated_surface_entries: 0`` over a baseline that recorded MCP
+tools as a flat list of names. A tool's PARAMETERS were therefore not in
+the snapshot at all, so ``coverage_gap`` — which sums additions across
+the dimensions the snapshot collects — could not count them: a dimension
+the snapshot never collects contributes 0 by construction, which makes
+the completeness claim unfalsifiable rather than merely unmeasured.
+
+Commit 67a09fd1 is the proof it mattered. It removed three CLI flags AND
+their two MCP wrapper mirrors (``staged`` from ``roam_budget_check``,
+``model_tier`` from ``roam_compile``). The CLI half took CI red and
+forced a deliberate roll-forward; the MCP half was invisible in the same
+commit, in the same gate, in the same run, while the envelope printed
+``0 removed MCP tools`` and ``surface_coverage: complete``. Snapshots
+built from the two revisions were byte-identical, so the artifact could
+not distinguish them.
+
+Both halves of that are now fixed, and in the only two honest ways:
+
+  1. The measurement was WIDENED. ``mcp_tools`` records
+     ``{tool: [parameter, ...]}`` (schema 1.1.0), and a removed
+     parameter is a breaking entry, so the completeness claim over that
+     dimension is now true rather than vacuous.
+  2. The remaining claim was NARROWED to what it measures. Coverage is
+     asserted over :data:`_COVERED_DIMENSIONS` and the envelope names
+     :data:`_UNCOVERED_DIMENSIONS` alongside it, because parameter
+     types, defaults, tool descriptions and CLI categories are still not
+     recorded and their removal still would not be reported.
+
+A baseline written before 1.1.0 does not record the parameter dimension.
+It is treated as UNRECORDED — a coverage gap that ``--require-coverage``
+fails on — never as "this tool has no parameters", which would read an
+absent measurement as a benign definite value and reproduce the exact
+defect one schema version later.
+
 Output formats: text (default), ``--json``. SARIF is deliberately NOT
 emitted because compatibility outputs are repo-scoped surface-contract
 deltas (CLI / JSON / MCP name additions and removals) — not
@@ -90,7 +129,36 @@ from roam.output.formatter import json_envelope, to_json
 # baseline shape (added/removed top-level keys, restructured per-command
 # fields). The comparator falls back to "best-effort" against older
 # snapshots and surfaces a partial_success=true verdict noting the drift.
-SNAPSHOT_SCHEMA_VERSION = "1.0.0"
+SNAPSHOT_SCHEMA_VERSION = "1.1.0"
+
+#: The surface dimensions this comparison actually reads out of a
+#: snapshot and diffs. ``surface_coverage`` is a claim about THESE and
+#: nothing else; the envelope publishes the list so a reader never has to
+#: infer the scope of a "complete" verdict from the word alone.
+_COVERED_DIMENSIONS: tuple[str, ...] = (
+    "cli_commands",
+    "cli_flags",
+    "envelope_summary_keys",
+    "mcp_tools",
+    "mcp_tool_parameters",
+    "mcp_preset_counts",
+)
+
+#: Surface a consumer can depend on that this gate does NOT evaluate.
+#: Published next to the coverage verdict for the same reason
+#: ``partial_success`` is published next to the findings: absence of a
+#: finding in an unread dimension is not evidence of absence. Entries
+#: here are either not recorded by ``_build_snapshot`` at all, or
+#: recorded and never diffed (``cli_categories``), and each one is
+#: asserted unread by ``tests/test_cmd_compatibility.py`` rather than
+#: merely asserted in prose.
+_UNCOVERED_DIMENSIONS: tuple[str, ...] = (
+    "cli_categories",
+    "cli_flag_types_and_defaults",
+    "mcp_tool_parameter_types_and_defaults",
+    "mcp_tool_descriptions",
+    "runtime_behavior",
+)
 
 # Top-level envelope summary keys we want to gate on for the canonical
 # ``roam surface --json`` envelope. The compatibility command treats THIS
@@ -103,8 +171,9 @@ SNAPSHOT_SCHEMA_VERSION = "1.0.0"
 #: ``_RESOLUTION_KINDS`` idiom in ``roam.output.formatter``: a bare
 #: ``partial_success`` is ambiguous, so the state is named directly.
 #:
-#:   ``complete``  every entry of the current surface is recorded by the
-#:                 baseline, so a removal of ANY of them would be caught.
+#:   ``complete``  every entry of the current surface IN THE COVERED
+#:                 DIMENSIONS is recorded by the baseline, so a removal
+#:                 of any of them would be caught.
 #:   ``partial``   the baseline does not record some of the current
 #:                 surface. Findings are still sound, but absence of
 #:                 findings is NOT evidence of absence: the unrecorded
@@ -112,6 +181,11 @@ SNAPSHOT_SCHEMA_VERSION = "1.0.0"
 #:                 would go unreported.
 #:
 #: ``partial`` MUST imply ``summary.partial_success: true``.
+#:
+#: Neither value is a claim about the whole outbound surface. The scope
+#: is exactly :data:`_COVERED_DIMENSIONS`, which the envelope publishes
+#: beside this field together with :data:`_UNCOVERED_DIMENSIONS`, so
+#: ``complete`` cannot be read as "nothing at all could have regressed".
 _SURFACE_COVERAGE_KINDS: frozenset[str] = frozenset({"complete", "partial"})
 
 _CANONICAL_ENVELOPE_KEYS: tuple[str, ...] = (
@@ -146,7 +220,7 @@ def _build_snapshot() -> dict[str, Any]:
     """
     from roam.cli import _CATEGORIES, _DEPRECATED_COMMANDS
     from roam.surface_counts import cli_commands as _cli_commands_ast
-    from roam.surface_counts import mcp_preset_counts, mcp_tool_names
+    from roam.surface_counts import mcp_preset_counts, mcp_tool_params
 
     _commands = _cli_commands_ast()
 
@@ -166,7 +240,11 @@ def _build_snapshot() -> dict[str, Any]:
     # Deprecated alias map (used by the diff to recognise graceful renames).
     deprecated = {name: dict(record) for name, record in _DEPRECATED_COMMANDS.items()}
 
-    mcp_tools = sorted(mcp_tool_names())
+    # ``{tool: [parameter, ...]}``, not a flat name list. Read from the
+    # traversal that already reads the names, so the two dimensions cannot
+    # disagree about which tools exist; ``mcp_tool_params`` keeps
+    # ``mcp_tool_names``' fail-loud duplicate check.
+    mcp_tools = {name: sorted(params) for name, params in sorted(mcp_tool_params().items())}
     mcp_presets = dict(mcp_preset_counts())
 
     return {
@@ -211,6 +289,34 @@ def _introspect_flags(module_path: str, func_name: str) -> list[str]:
     return out
 
 
+def _mcp_tools_of(snapshot: dict[str, Any]) -> tuple[set[str], dict[str, set[str]]]:
+    """Split a snapshot's ``mcp_tools`` into ``(names, recorded parameters)``.
+
+    Accepts both on-disk shapes:
+
+      schema <= 1.0.0   ``["roam_a", "roam_b"]`` -- names only.
+      schema >= 1.1.0   ``{"roam_a": ["root"], ...}`` -- names + params.
+
+    The returned parameter map contains an entry ONLY for tools whose
+    parameters the snapshot actually recorded. A tool absent from the map
+    is UNRECORDED, which is a different fact from "recorded as having no
+    parameters", and callers must keep them apart: collapsing the two
+    would let a 1.0.0 baseline read as "no parameters were removed" and
+    republish an absent measurement as a benign definite value -- the
+    exact defect widening the snapshot exists to close.
+    """
+    raw = snapshot.get("mcp_tools") or {}
+    if isinstance(raw, dict):
+        names = {name for name in raw if isinstance(name, str)}
+        params = {
+            name: {p for p in value if isinstance(p, str)}
+            for name, value in raw.items()
+            if isinstance(name, str) and isinstance(value, (list, tuple))
+        }
+        return names, params
+    return {name for name in raw if isinstance(name, str)}, {}
+
+
 def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     """Compute the structural diff between two snapshots.
 
@@ -219,26 +325,45 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
       removed_flags, added_flags,
       removed_envelope_fields, added_envelope_fields,
       removed_mcp_tools, added_mcp_tools,
+      removed_mcp_tool_params, added_mcp_tool_params,
+      unrecorded_mcp_tool_params,
       changed_presets.
 
     The ``breaking`` count counts entries that would BREAK an existing
-    consumer. It is the sum of FIVE terms, and the fifth is the one
+    consumer. It is the sum of SIX terms, and the last two are the ones
     readers miss:
 
-      ``removed_commands``         a command is gone with no alias
-      ``removed_flags``            a flag is gone from a live command
-      ``removed_envelope_fields``  a canonical summary key is gone
-      ``removed_mcp_tools``        an MCP tool name is gone
-      ``preset_shrinks``           an MCP preset exposes FEWER tools
-                                   than the baseline recorded
+      ``removed_commands``          a command is gone with no alias
+      ``removed_flags``             a flag is gone from a live command
+      ``removed_envelope_fields``   a canonical summary key is gone
+      ``removed_mcp_tools``         an MCP tool name is gone
+      ``removed_mcp_tool_params``   a live MCP tool no longer accepts a
+                                    parameter the baseline recorded
+      ``preset_shrinks``            an MCP preset exposes FEWER tools
+                                    than the baseline recorded
 
-    Enumerate all five whenever this list is touched. With only the four
-    ``removed_*`` terms written down, a real result of ``breaking=1``
-    with every ``removed_*`` list empty reads as a contradiction, and the
-    reader has to re-derive the tally to find ``preset_shrinks``. That
-    exact case is live on this repository: ``core`` went 57 -> 17 tools,
-    which is a genuine break for any consumer gated on that preset and
-    is what makes the next release major rather than minor.
+    Enumerate all six whenever this list is touched. With only the
+    ``removed_*`` command/flag/field/tool terms written down, a real
+    result of ``breaking=1`` with those lists empty reads as a
+    contradiction, and the reader has to re-derive the tally to find
+    ``preset_shrinks``. That exact case is live on this repository:
+    ``core`` went 57 -> 17 tools, which is a genuine break for any
+    consumer gated on that preset and is what makes the next release
+    major rather than minor.
+
+    ``removed_mcp_tool_params`` is the term commit 67a09fd1 needed and
+    did not have: it removed ``staged`` from ``roam_budget_check`` and
+    ``model_tier`` from ``roam_compile`` alongside three CLI flags, the
+    flags went red, and the two MCP parameters passed the same gate in
+    the same run because the baseline recorded MCP tools as bare names.
+
+    ``unrecorded_mcp_tool_params`` is neither a break nor an addition: it
+    is a tool present in both snapshots whose parameters at least one
+    side never recorded (a pre-1.1.0 baseline, or a ``--current`` file
+    captured by an older build). Those tools are counted into
+    ``coverage_gap`` so the run reports itself blind, and are NEVER read
+    as "this tool has no parameters" -- that inference is what would turn
+    a schema migration back into a silent false clean.
 
     Added entries are never breaking. A graceful rename (command removed
     from canonical names BUT an alias from old->new now exists in
@@ -301,10 +426,29 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     # canonical alias substrate yet for MCP names; the 4 historical
     # renames live in ``_NAMING_DRIFT_ALIAS`` per CLAUDE.md). Future
     # extension: read that alias table here.
-    base_mcp = set(baseline.get("mcp_tools", []) or [])
-    cur_mcp = set(current.get("mcp_tools", []) or [])
+    base_mcp, base_mcp_params = _mcp_tools_of(baseline)
+    cur_mcp, cur_mcp_params = _mcp_tools_of(current)
     removed_mcp_tools = sorted(base_mcp - cur_mcp)
     added_mcp_tools = sorted(cur_mcp - base_mcp)
+
+    # Per-tool parameter diff, mirroring the per-command flag diff above.
+    # Only tools present in BOTH snapshots -- a removed tool's parameters
+    # are already counted under ``removed_mcp_tools``. A tool whose
+    # parameters either side did not record is reported as unrecorded
+    # rather than compared against an assumed-empty set.
+    removed_mcp_tool_params: list[dict[str, str]] = []
+    added_mcp_tool_params: list[dict[str, str]] = []
+    unrecorded_mcp_tool_params: list[str] = []
+    for tool in sorted(base_mcp & cur_mcp):
+        if tool not in base_mcp_params or tool not in cur_mcp_params:
+            unrecorded_mcp_tool_params.append(tool)
+            continue
+        base_params = base_mcp_params[tool]
+        cur_params = cur_mcp_params[tool]
+        for p in sorted(base_params - cur_params):
+            removed_mcp_tool_params.append({"tool": tool, "parameter": p})
+        for p in sorted(cur_params - base_params):
+            added_mcp_tool_params.append({"tool": tool, "parameter": p})
 
     # Preset count delta (presets are a closed enum: core / review /
     # refactor / debug / architecture / compliance / full).
@@ -333,6 +477,7 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
         + len(removed_flags)
         + len(removed_envelope_fields)
         + len(removed_mcp_tools)
+        + len(removed_mcp_tool_params)
         + len(preset_shrinks)
     )
 
@@ -340,8 +485,17 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     # A changed preset count counts on EITHER side -- a shrink is already
     # breaking, and a growth means the recorded count is no longer the
     # shipped one, so the next shrink is measured from a stale floor.
+    # ``unrecorded_mcp_tool_params`` belongs here for the same reason an
+    # addition does: the parameters of those tools cannot be reported as
+    # removed later, so they are lost reach, not a finding.
     coverage_gap = (
-        len(added) + len(added_flags) + len(added_envelope_fields) + len(added_mcp_tools) + len(changed_presets)
+        len(added)
+        + len(added_flags)
+        + len(added_envelope_fields)
+        + len(added_mcp_tools)
+        + len(added_mcp_tool_params)
+        + len(unrecorded_mcp_tool_params)
+        + len(changed_presets)
     )
 
     return {
@@ -354,6 +508,9 @@ def _diff(baseline: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
         "added_envelope_fields": added_envelope_fields,
         "removed_mcp_tools": removed_mcp_tools,
         "added_mcp_tools": added_mcp_tools,
+        "removed_mcp_tool_params": removed_mcp_tool_params,
+        "added_mcp_tool_params": added_mcp_tool_params,
+        "unrecorded_mcp_tool_params": unrecorded_mcp_tool_params,
         "changed_presets": changed_presets,
         "breaking_count": breaking,
         "coverage_gap_count": coverage_gap,
@@ -385,9 +542,18 @@ def _verdict_for(diff: dict[str, Any], require_coverage: bool = False) -> tuple[
     if require_coverage and diff["coverage_gap_count"] > 0:
         return ("baseline stale", "blocker")
     any_added = bool(
-        diff["added_commands"] or diff["added_flags"] or diff["added_envelope_fields"] or diff["added_mcp_tools"]
+        diff["added_commands"]
+        or diff["added_flags"]
+        or diff["added_envelope_fields"]
+        or diff["added_mcp_tools"]
+        or diff["added_mcp_tool_params"]
     )
-    any_drift = bool(diff["renamed_commands"] or diff["changed_presets"])
+    # A dimension one side never recorded is drift between the baseline
+    # and the build, not a clean comparison. Without this the verdict
+    # line could read the flat "no regressions" while ``coverage_gap``
+    # counted hundreds of unevaluated tools -- the same false clean this
+    # command's ``partial_success`` wiring was fixed for.
+    any_drift = bool(diff["renamed_commands"] or diff["changed_presets"] or diff["unrecorded_mcp_tool_params"])
     if any_drift:
         return ("surface drift", "warning")
     if any_added:
@@ -434,6 +600,7 @@ def _erasures(existing_path: Path, fresh: dict[str, Any]) -> dict[str, Any] | No
         "removed_flags": delta["removed_flags"],
         "removed_envelope_fields": delta["removed_envelope_fields"],
         "removed_mcp_tools": delta["removed_mcp_tools"],
+        "removed_mcp_tool_params": delta["removed_mcp_tool_params"],
         "preset_shrinks": delta["preset_shrinks"],
         "erased_count": delta["breaking_count"],
     }
@@ -447,6 +614,9 @@ def _erasure_lines(erasures: dict[str, Any]) -> list[str]:
     lines += [f"flag {entry['command']} {entry['flag']}" for entry in erasures["removed_flags"]]
     lines += [f"envelope field surface.summary.{name}" for name in erasures["removed_envelope_fields"]]
     lines += [f"MCP tool {name}" for name in erasures["removed_mcp_tools"]]
+    lines += [
+        f"MCP tool parameter {entry['tool']}({entry['parameter']})" for entry in erasures["removed_mcp_tool_params"]
+    ]
     lines += [
         f"preset {entry['preset']} shrinks {entry['baseline_count']} -> {entry['current_count']}"
         for entry in erasures["preset_shrinks"]
@@ -550,13 +720,17 @@ def compatibility(
       - removed/added per-command flags
       - removed/added top-level envelope summary fields (canonical witness)
       - removed/added MCP tools
+      - removed/added per-tool MCP parameters
       - MCP preset count changes (preset shrinkage = breaking)
 
     Detection REACH is the baseline: nothing the baseline never recorded
     can be reported as removed later. --require-coverage gates on that
     reach, so a surface change and its baseline refresh land together.
 
-    Out of scope: semantic-behavior regressions (a much larger problem).
+    NOT in scope, and named on every run so a clean verdict cannot be
+    read as "nothing regressed": command categories, flag/parameter types
+    and defaults, MCP tool descriptions, and semantic-behavior
+    regressions (a much larger problem).
     """
     json_mode = bool(ctx.obj and ctx.obj.get("json"))
 
@@ -628,6 +802,7 @@ def compatibility(
             encoding="utf-8",
             newline="",
         )
+        captured_params = sum(len(params) for params in snapshot["mcp_tools"].values())
         if json_mode:
             click.echo(
                 to_json(
@@ -639,12 +814,16 @@ def compatibility(
                             "partial_success": False,
                             "commands": len(snapshot["commands"]),
                             "mcp_tools": len(snapshot["mcp_tools"]),
+                            "mcp_tool_parameters": captured_params,
                             "path": str(write_baseline),
                         },
+                        covered_dimensions=list(_COVERED_DIMENSIONS),
+                        uncovered_dimensions=list(_UNCOVERED_DIMENSIONS),
                         agent_contract={
                             "facts": [
                                 f"{len(snapshot['commands'])} commands captured",
                                 f"{len(snapshot['mcp_tools'])} MCP tools captured",
+                                f"{captured_params} MCP tool parameters captured",
                                 f"baseline path {write_baseline}",
                             ],
                             "next_commands": [f"roam compatibility --baseline {write_baseline}"],
@@ -655,7 +834,8 @@ def compatibility(
         else:
             click.echo(
                 f"VERDICT: baseline written ({len(snapshot['commands'])} commands, "
-                f"{len(snapshot['mcp_tools'])} MCP tools) -> {write_baseline}"
+                f"{len(snapshot['mcp_tools'])} MCP tools, {captured_params} MCP tool parameters) "
+                f"-> {write_baseline}"
             )
         return
 
@@ -715,6 +895,7 @@ def compatibility(
         + len(diff["removed_flags"])
         + len(diff["removed_envelope_fields"])
         + len(diff["removed_mcp_tools"])
+        + len(diff["removed_mcp_tool_params"])
     )
     renamed_n = len(diff["renamed_commands"])
     added_n = (
@@ -722,19 +903,29 @@ def compatibility(
         + len(diff["added_flags"])
         + len(diff["added_envelope_fields"])
         + len(diff["added_mcp_tools"])
+        + len(diff["added_mcp_tool_params"])
     )
 
     if json_mode:
-        # LAW-4 anchored facts. Terminals: commands, flags, fields, tools.
+        # LAW-4 anchored facts. Terminals: commands, flags, fields, tools,
+        # tool parameters, dimensions. The last two facts are the scope of
+        # every count above them: "0 removed X" is only a claim about the
+        # dimensions this comparison reads, and the unread ones are named
+        # rather than left for the reader to infer from silence.
         facts = [
             f"{len(diff['removed_commands'])} removed commands",
             f"{len(diff['removed_flags'])} removed flags",
             f"{len(diff['removed_envelope_fields'])} removed envelope fields",
             f"{len(diff['removed_mcp_tools'])} removed MCP tools",
+            f"{len(diff['removed_mcp_tool_params'])} removed MCP tool parameters",
             f"{len(diff['added_commands'])} added commands",
             f"{len(diff['added_mcp_tools'])} added MCP tools",
+            f"{len(diff['unrecorded_mcp_tool_params'])} MCP tools whose parameters the baseline does not record",
             f"{breaking} breaking entries",
             f"{coverage_gap} entries outside baseline coverage",
+            f"{len(_COVERED_DIMENSIONS)} surface dimensions evaluated: {', '.join(_COVERED_DIMENSIONS)}",
+            f"{len(_UNCOVERED_DIMENSIONS)} surface dimensions NOT evaluated by this gate: "
+            f"{', '.join(_UNCOVERED_DIMENSIONS)}",
         ]
         next_commands: list[str] = []
         if breaking:
@@ -765,8 +956,19 @@ def compatibility(
                         # degraded. Findings live in ``breaking``; the
                         # blind spot lives here.
                         "partial_success": coverage_gap > 0,
+                        # Scoped to ``covered_dimensions`` below, never to
+                        # "the surface". ``complete`` here means the
+                        # baseline records every entry of the dimensions
+                        # this comparison reads -- it is not, and must not
+                        # be read as, a claim that nothing else could have
+                        # regressed. ``uncovered_dimensions`` names the
+                        # rest in the same envelope so the scope travels
+                        # with the verdict.
                         "surface_coverage": ("partial" if coverage_gap > 0 else "complete"),
+                        "surface_coverage_scope": "covered_dimensions",
                         "unevaluated_surface_entries": coverage_gap,
+                        "covered_dimension_count": len(_COVERED_DIMENSIONS),
+                        "uncovered_dimension_count": len(_UNCOVERED_DIMENSIONS),
                         "removed": removed_n,
                         "renamed": renamed_n,
                         "added": added_n,
@@ -782,7 +984,12 @@ def compatibility(
                     added_envelope_fields=diff["added_envelope_fields"],
                     removed_mcp_tools=diff["removed_mcp_tools"],
                     added_mcp_tools=diff["added_mcp_tools"],
+                    removed_mcp_tool_params=diff["removed_mcp_tool_params"],
+                    added_mcp_tool_params=diff["added_mcp_tool_params"],
+                    unrecorded_mcp_tool_params=diff["unrecorded_mcp_tool_params"],
                     changed_presets=diff["changed_presets"],
+                    covered_dimensions=list(_COVERED_DIMENSIONS),
+                    uncovered_dimensions=list(_UNCOVERED_DIMENSIONS),
                     baseline_path=str(baseline_path),
                     agent_contract={
                         "facts": facts,
@@ -821,6 +1028,22 @@ def compatibility(
             click.echo("removed MCP tools:")
             for t in diff["removed_mcp_tools"]:
                 click.echo(f"  - {t}")
+        if diff["removed_mcp_tool_params"]:
+            click.echo("")
+            click.echo("removed MCP tool parameters:")
+            for e in diff["removed_mcp_tool_params"]:
+                click.echo(f"  - {e['tool']}({e['parameter']})")
+        if diff["unrecorded_mcp_tool_params"]:
+            click.echo("")
+            unrecorded = diff["unrecorded_mcp_tool_params"]
+            click.echo(
+                f"{len(unrecorded)} MCP tools have parameters this comparison could not evaluate "
+                f"(one side's snapshot predates schema {SNAPSHOT_SCHEMA_VERSION}):"
+            )
+            for t in unrecorded[:10]:
+                click.echo(f"  - {t}")
+            if len(unrecorded) > 10:
+                click.echo(f"  ... and {len(unrecorded) - 10} more")
         if diff["changed_presets"]:
             click.echo("")
             click.echo("changed presets:")
@@ -839,6 +1062,14 @@ def compatibility(
                 f"{possessive} later removal would go undetected."
             )
             click.echo(f"  refresh the baseline in the same commit as the surface change: {refresh_remedy}")
+        # The scope of every count above. Printed on EVERY run, including a
+        # clean one, because a clean run is exactly when "no regressions"
+        # is most likely to be read as "nothing regressed" -- and this gate
+        # does not read parameter types, defaults, tool descriptions,
+        # command categories or any runtime behavior.
+        click.echo("")
+        click.echo(f"evaluated dimensions ({len(_COVERED_DIMENSIONS)}): {', '.join(_COVERED_DIMENSIONS)}")
+        click.echo(f"NOT evaluated ({len(_UNCOVERED_DIMENSIONS)}): {', '.join(_UNCOVERED_DIMENSIONS)}")
 
     if ci and breaking > 0:
         ctx.exit(EXIT_GATE_FAILURE)

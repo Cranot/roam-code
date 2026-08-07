@@ -395,8 +395,9 @@ jobs:
   # -- Outbound surface compatibility ---------------------------------------
   # `roam compatibility` diffs the shipped CLI/JSON/MCP surface against
   # dev/compatibility-baseline.json and exits 5 on a removed command, a
-  # removed flag, a removed envelope field, a removed MCP tool, or a shrunk
-  # MCP preset. It shipped at W1293 with the baseline committed, a closed-enum
+  # removed flag, a removed envelope field, a removed MCP tool, a removed MCP
+  # tool PARAMETER, or a shrunk MCP preset. It shipped at W1293 with the
+  # baseline committed, a closed-enum
   # verdict, and a `--ci` exit-code contract — and was then never run by
   # anything. `grep -rn compatibility .github/workflows/*.yml` returned
   # nothing until this job. A gate that is never executed is decoration; the
@@ -405,7 +406,8 @@ jobs:
   # TWO GATES, TWO STEPS, because they fail for different reasons and the
   # step name should say which:
   #
-  #   --ci               a consumer's command/flag/field/tool is GONE. Fix by
+  #   --ci               a consumer's command/flag/field/tool/tool-parameter
+  #                      is GONE. Fix by
   #                      restoring it, or by removing it deliberately and
   #                      refreshing the baseline with --accept-removals so the
   #                      deletion is visible in the diff that performs it.
@@ -457,7 +459,7 @@ jobs:
           uv sync --locked --no-default-groups --extra dev --python python
           uv pip check --python .venv/bin/python
 
-      - name: Fail on a removed command, flag, envelope field or MCP tool
+      - name: Fail on a removed command, flag, envelope field, MCP tool or MCP tool parameter
         run: .venv/bin/python -m roam compatibility --baseline dev/compatibility-baseline.json --ci
 
       - name: Fail if the baseline no longer records the whole shipped surface

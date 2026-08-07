@@ -348,6 +348,51 @@ def mcp_tool_descriptions() -> list[tuple[str, str]]:
     return sorted(entries.items())
 
 
+#: Parameters FastMCP injects from the transport rather than from the
+#: caller. They are not part of a tool's agent-facing call surface, so
+#: removing one breaks no consumer and recording one would make the
+#: compatibility gate red on an internal refactor.
+_MCP_INJECTED_PARAMS: frozenset[str] = frozenset({"ctx"})
+
+
+def mcp_tool_params() -> dict[str, list[str]]:
+    """Return ``{tool_name: [parameter, ...]}`` for every ``@_tool(...)`` decoration.
+
+    Reads the wrapped function's signature from the SAME traversal
+    :func:`mcp_tool_names` uses for names, so the name dimension and the
+    parameter dimension cannot disagree about which tools exist:
+    ``sorted(mcp_tool_params()) == mcp_tool_names()`` is asserted by
+    ``tests/test_cmd_compatibility.py``.
+
+    Parameter NAMES only. Types and defaults are behavior, and the one
+    consumer of this helper (``roam compatibility``) is structural-only
+    by design; recording them would also make the MCP dimension
+    asymmetric with the CLI flag dimension, which records names alone.
+
+    Fails loud on duplicate ``name=`` kwargs for the same reason
+    :func:`mcp_tool_names` does (W444): a dict build would silently keep
+    the last decoration and hide a W432-class duplicate registration
+    from every downstream reader.
+    """
+    mcp_path = _package_file("mcp_server.py")
+    module = _load_ast(mcp_path)
+    params: dict[str, list[str]] = {}
+    seen: list[str] = []
+    for node, decorator in _iter_tool_decorations(module):
+        name, _description = _decoration_name_and_description(decorator)
+        if name is None:
+            continue
+        seen.append(name)
+        args = node.args
+        params[name] = sorted(
+            arg.arg for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs) if arg.arg not in _MCP_INJECTED_PARAMS
+        )
+    duplicates = sorted(name for name, c in Counter(seen).items() if c > 1)
+    if duplicates:
+        raise ValueError(f"duplicate @_tool(name=...) decorations in mcp_server.py: {duplicates}")
+    return dict(sorted(params.items()))
+
+
 def mcp_tool_decorations() -> list[tuple[str, str, int]]:
     """Return every `@_tool(name=...)` decoration as (tool_name, def_name, lineno).
 
