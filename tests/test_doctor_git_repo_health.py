@@ -15,11 +15,18 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 from roam.commands.cmd_doctor import _check_git_repo_health
+
+# Deliberately NOT imported from the module under test. These tests must be
+# runnable against a tree that predates the staleness threshold, so that the
+# must-not-fire case below fails on its ASSERTION rather than on an ImportError
+# -- an import error proves the module changed, not that the behaviour did.
+_AN_HOUR = 3600.0
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -110,10 +117,39 @@ def test_worktree_with_unresolvable_foreign_path_is_caught(repo: Path) -> None:
 
 
 def test_stale_index_lock_is_caught(repo: Path) -> None:
-    (repo / ".git" / "index.lock").write_text("", encoding="utf-8")
+    """A lock old enough that no writer could still hold it."""
+    lock = repo / ".git" / "index.lock"
+    lock.write_text("", encoding="utf-8")
+    old = time.time() - _AN_HOUR
+    os.utime(lock, (old, old))
     result = _check_in(repo)
     assert result["passed"] is False
     assert "index.lock" in result["detail"]
+    assert "stale" in result["detail"]
+
+
+def test_a_lock_a_live_writer_is_holding_is_not_called_stale(repo: Path) -> None:
+    """The must-not-fire pair this check shipped without.
+
+    git holds ``.git/index.lock`` for the duration of every index write, so a
+    lock created moments ago is a LIVE writer. The original check fired on
+    ``lock.exists()`` alone and reported "a git process was killed mid-write"
+    -- a cause it never measured. Under pytest-xdist that made ``roam doctor``
+    exit 2 on a healthy repo, which on 2026-08-07 took one of four CI lanes red
+    at a commit the other three passed, and blocked a release.
+    """
+    (repo / ".git" / "index.lock").write_text("", encoding="utf-8")
+    result = _check_in(repo)
+    assert result["passed"] is True, f"a freshly-created index.lock was reported as a problem: {result['detail']}"
+
+
+# NOT COVERED, deliberately, and recorded rather than left as a silent gap: the
+# unreadable-age branch (stat raises OSError -> report anyway). Driving it needs
+# Path.stat to fail for one path, but Path.exists() is itself implemented via
+# stat, so any patch that reaches the branch also defeats the exists() guard
+# that precedes it, and the test then proves nothing. That branch's behaviour is
+# unchanged by this fix -- it reported before and reports now -- so it is a
+# pre-existing coverage gap, not one this change introduced.
 
 
 def test_detached_head_with_unreachable_commit_is_caught(repo: Path) -> None:
