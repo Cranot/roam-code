@@ -12425,6 +12425,11 @@ def effects(symbol: str = "", path: str = "", effect_type: str = "", root: str =
 @_tool(
     name="roam_budget_check",
     description="Check changes against architectural budgets (cycles, health floor, complexity).",
+    # 1.1.0: the ``staged`` input was removed in 67a09fd1. This tool carried no
+    # explicit version, so it defaulted to 1.0.0 and stayed there across an
+    # input-schema removal -- a cached client sees an unchanged version and
+    # keeps sending a parameter that no longer exists.
+    version="1.1.0",
 )
 def budget_check(config: str = "", commit_range: str = "", root: str = ".") -> dict:
     """Check pending changes against architectural budgets.
@@ -19563,7 +19568,12 @@ def roam_workflow(
         "Different from roam_plan (symbol-centric execution plan) -- "
         "this is the freeform-task compiler."
     ),
-    version="1.2.0",
+    # 1.3.0: the ``model_tier`` input was removed in 67a09fd1. ``_tool``'s own
+    # contract requires a bump whenever an input schema changes, because an
+    # agent holding a cached schema polls ``roam_catalog`` and keeps using the
+    # parameter it remembers. That bump was missed, so the removal was
+    # undetectable by the exact mechanism built to announce it.
+    version="1.3.0",
     read_only=False,
     destructive=False,
     idempotent=False,
