@@ -440,6 +440,23 @@ class GateRunner:
             [sys.executable, "scripts/sync_surface_counts.py"],
             fix_hint="python scripts/sync_surface_counts.py --write",
         )
+        # W1502. The sibling above proves every install pin names the SAME
+        # version; this proves the version they name EXISTS. Public main shipped
+        # a pip install pin for an unreleased version for 33 commits with the
+        # sibling green, because agreeing with pyproject and being installable are different
+        # questions. Offline (tag list only) and sub-second, so it belongs here
+        # rather than in publish.yml — a truth check that runs after publication
+        # cannot prevent the lie it detects.
+        self._run(
+            "check_install_targets.py",
+            [sys.executable, "scripts/check_install_targets.py"],
+            fix_hint=(
+                "an install instruction names a version with no v<version> tag; "
+                "run `python scripts/sync_surface_counts.py --write` to pin install "
+                "sites to the last published release (exit 2 means UNKNOWN — the "
+                "gate could not reach the tag list and refused rather than passing)"
+            ),
+        )
         self._run(
             "build_readme_counts.py --check",
             [sys.executable, "dev/build_readme_counts.py", "--check"],

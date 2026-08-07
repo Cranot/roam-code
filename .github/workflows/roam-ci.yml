@@ -380,6 +380,14 @@ jobs:
       - name: Surface-count drift gate
         run: .venv/bin/python scripts/sync_surface_counts.py
 
+      # W1502. The step above proves the install pins AGREE with each other;
+      # this proves what they name EXISTS. Offline (git tag list only) — no
+      # network, so it cannot flake. Exit 2 is UNKNOWN and is a failure here
+      # by design: this job checks out with fetch-depth 0, so an unreadable
+      # tag list means something is wrong with the checkout, not with the gate.
+      - name: Install-target existence gate
+        run: .venv/bin/python scripts/check_install_targets.py
+
       - name: README/CLAUDE/llms-install count drift gate
         run: .venv/bin/python dev/build_readme_counts.py --check
 

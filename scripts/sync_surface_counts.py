@@ -193,6 +193,11 @@ _VERSION_PIN_EXEMPT: dict[str, str] = {
         "negative-control fixtures are intentionally stale pins; syncing them "
         "would disarm the proof that this gate can fail"
     ),
+    "tests/test_w1502_install_targets_exist.py": (
+        "negative-control fixtures pin a DELIBERATELY unreleased version; "
+        "syncing them to the published release would make the install-target "
+        "gate's failure case unreachable, i.e. green by construction"
+    ),
 }
 
 
@@ -287,34 +292,59 @@ def _install_sweep_patterns(published: str) -> list[tuple[re.Pattern, str]]:
     ]
 
 
-def _structural_pin_patterns(version: str, published: str) -> dict[str, list[tuple[re.Pattern, str]]]:
-    """Version sites with no reusable shape — anchored per file, not swept.
+def _install_structural_patterns(published: str) -> dict[str, list[tuple[re.Pattern, str]]]:
+    """INSTALL-class sites with no reusable shape — anchored per file.
 
-    These are the surfaces that misreport the running version to a machine
-    (registry metadata, action input defaults) or to a reader (generated doc
-    headers). Each pattern is anchored on surrounding structure so it can only
-    ever match the one intended field.
-
-    Two arguments, because these sites are NOT one class. ``version`` is the
-    declared version and drives the ``identity`` sites (what this artifact
-    calls itself); ``published`` is the last released version and drives the
-    ``install`` sites (what a consumer is told to fetch). Each entry below
-    says which it uses and why.
+    Kept as its own registry rather than as a comment inside one merged dict,
+    so the classification is DATA. ``scripts/check_install_targets.py`` reads
+    exactly this registry plus ``_install_sweep_patterns`` to decide what
+    counts as an install instruction. If the class lived only in a comment,
+    the gate and the rewriter could disagree about which sites are install
+    sites and nothing would say so.
     """
     return {
-        # INSTALL. THE release-breaking one: the composite action's default
-        # install target. Before the class split this was synced forward at
-        # bump time, which shipped `pip install "roam-code==<unpublished>"` to
-        # every consumer pinning `@main` — a hard install failure. It now
-        # names the last published release, which is the only version the
-        # unguarded `pip install` at the bottom of action.yml can resolve.
+        # THE release-breaking one: the composite action's default install
+        # target. Before the class split this was synced forward at bump time,
+        # which shipped `pip install "roam-code==<unpublished>"` to every
+        # consumer pinning `@main` — a hard install failure. It now names the
+        # last published release, which is the only version the unguarded
+        # `pip install` at the bottom of action.yml can resolve.
         "action.yml": [
             (
                 re.compile(rf"(^  version:\n(?:^ {{4}}[^\n]*\n){{0,6}}?^    default: '){_PIN_VERSION}", re.M),
                 rf"\g<1>{published}",
             ),
         ],
-        # IDENTITY. Claude Code plugin marketplace manifest. ``version`` here is not
+        # The MCP registry's PyPI package pin — the field that decides what a
+        # registry client actually downloads. Its sibling, ``server.json``'s
+        # top-level ``version``, is IDENTITY and lives in the other registry:
+        # one file, both classes, which is why the split is per-pattern rather
+        # than per-file.
+        "server.json": [
+            (
+                re.compile(rf'("identifier": "roam-code",\s*\n\s*"version": "){_PIN_VERSION}'),
+                rf"\g<1>{published}",
+            ),
+        ],
+        # The documented default for the action input above; they must agree,
+        # so it takes the same source. A reader who copies this table row into
+        # their own `with:` block is issuing a fetch.
+        "docs/ci-integration.md": [
+            (re.compile(rf"(\| `version` \| `){_PIN_VERSION}"), rf"\g<1>{published}"),
+        ],
+    }
+
+
+def _identity_structural_patterns(version: str) -> dict[str, list[tuple[re.Pattern, str]]]:
+    """IDENTITY-class sites with no reusable shape — anchored per file.
+
+    These surfaces state what this artifact IS, to a machine (registry and
+    package metadata) or to a reader (generated doc headers). Each pattern is
+    anchored on surrounding structure so it can only ever match the one
+    intended field.
+    """
+    return {
+        # Claude Code plugin marketplace manifest. ``version`` here is not
         # cosmetic: the docs make it the update trigger — "Setting this pins
         # the plugin to that version string, so users only receive updates
         # when you bump it." A stale literal therefore means every installed
@@ -341,19 +371,12 @@ def _structural_pin_patterns(version: str, published: str) -> dict[str, list[tup
         "codemeta.json": [
             (re.compile(rf'(^    "version": "){_PIN_VERSION}', re.M), rf"\g<1>{version}"),
         ],
-        # MCP registry — ONE FILE, BOTH CLASSES, and the split matters here
-        # more than anywhere else. The top-level ``version`` is IDENTITY: it
-        # is what this server calls itself, so it tracks pyproject. The
-        # ``packages[].version`` under ``identifier: roam-code`` is INSTALL:
-        # it is the PyPI pin a registry client actually downloads, so it
-        # tracks the published release. Syncing both forward at bump time told
-        # every registry consumer to fetch a wheel that does not exist.
+        # MCP registry, IDENTITY half only: what this server calls itself.
+        # Its ``packages[].version`` sibling is INSTALL and lives in the other
+        # registry. Syncing both forward at bump time told every registry
+        # consumer to fetch a wheel that does not exist.
         "server.json": [
             (re.compile(rf'(^    "version": "){_PIN_VERSION}', re.M), rf"\g<1>{version}"),
-            (
-                re.compile(rf'("identifier": "roam-code",\s*\n\s*"version": "){_PIN_VERSION}'),
-                rf"\g<1>{published}",
-            ),
         ],
         # Generated index header. `tests/test_commands_doc_synced.py`
         # deliberately canonicalizes this token away (the generator reads
@@ -362,12 +385,6 @@ def _structural_pin_patterns(version: str, published: str) -> dict[str, list[tup
         # makes it deterministic instead of environment-dependent.
         "docs/COMMANDS.md": [
             (re.compile(rf"(· roam v){_PIN_VERSION}"), rf"\g<1>{version}"),
-        ],
-        # INSTALL. The documented default for the action input above; they
-        # must agree, so it takes the same source. A reader who copies this
-        # table into their own `with:` block is issuing a fetch.
-        "docs/ci-integration.md": [
-            (re.compile(rf"(\| `version` \| `){_PIN_VERSION}"), rf"\g<1>{published}"),
         ],
         # Landing-page prose that states the CURRENT surface's version. The
         # existing sweep in tests/test_doc_consistency.py only recognises
@@ -418,6 +435,58 @@ def _tracked_files() -> list[str]:
             f"git exited {proc.returncode}: {proc.stderr.decode('utf-8', 'replace').strip()}"
         )
     return [p for p in proc.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+
+
+def _structural_pin_patterns(version: str, published: str) -> dict[str, list[tuple[re.Pattern, str]]]:
+    """The two structural registries merged, per file.
+
+    ``server.json`` carries one pattern from each, so the merge is by
+    concatenation rather than by ``dict`` update — a plain update would drop
+    one of them and the loss would be silent.
+    """
+    merged: dict[str, list[tuple[re.Pattern, str]]] = {}
+    for registry in (_install_structural_patterns(published), _identity_structural_patterns(version)):
+        for rel, patterns in registry.items():
+            merged.setdefault(rel, []).extend(patterns)
+    return merged
+
+
+def install_pin_sites() -> list[tuple[str, int, str]]:
+    """Every INSTALL-class pin in the tree, as ``(path, line, version)``.
+
+    The one place that answers "what does this repository tell people to
+    fetch?". It reads the same two registries the rewriter writes through, at
+    a sentinel version, so the gate in ``scripts/check_install_targets.py``
+    cannot drift out of agreement with what ``--write`` actually rewrites.
+
+    Deliberately says nothing about whether those versions EXIST — that is the
+    caller's question, and it is the one this repository had no gate for.
+    """
+    # The patterns are independent of the version passed in; only the
+    # replacement strings use it. The sentinel makes that explicit rather than
+    # implying the argument is meaningful here.
+    sentinel = "0.0.0"
+    sweep = [pat for pat, _ in _install_sweep_patterns(sentinel)]
+    structural = {rel: [pat for pat, _ in pats] for rel, pats in _install_structural_patterns(sentinel).items()}
+
+    sites: list[tuple[str, int, str]] = []
+    for rel in _tracked_files():
+        if rel in _VERSION_PIN_EXEMPT:
+            continue
+        try:
+            data = (REPO_ROOT / rel).read_bytes()
+        except OSError:
+            continue
+        if b"roam" not in data:
+            continue
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        for pat in sweep + structural.get(rel, []):
+            for m in pat.finditer(text):
+                sites.append((rel, text.count("\n", 0, m.end()) + 1, m.group("ver")))
+    return sites
 
 
 def _trim_pin_context(match_text: str, limit: int = 64) -> str:
