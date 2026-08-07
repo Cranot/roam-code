@@ -57,7 +57,11 @@ def test_verify_declares_its_index_refresh_and_ledger_writes() -> None:
         ("roam_test_scaffold", False, False, "1.1.0"),
         # W1442: the compile result gained the additive orchestration_contract
         # block, so its declared tool version moved with the shape it returns.
-        ("roam_compile", False, False, "1.2.0"),
+        # 1.3.0 since the ``model_tier`` input was removed: _tool's contract
+        # requires a bump on any input-schema change so a client holding a
+        # cached schema can detect it via roam_catalog. Pinning the version
+        # here is deliberate -- it makes a silent schema change fail a test.
+        ("roam_compile", False, False, "1.3.0"),
         ("roam_trends", False, False, "1.1.0"),
         ("roam_vuln_reach", False, True, "1.1.0"),
     ],
