@@ -182,6 +182,49 @@ def _extract_numeric_literals(
     return out
 
 
+# W1464 -- the three outcomes a per-file scan can have.
+#
+# Both scanners used to return the same ``[]`` for "read it, found nothing",
+# "could not open it" and "could not parse it", while ``files_scanned`` was
+# ``len(_discover_files(root))`` -- the count of paths rglob YIELDED. The
+# denominator therefore admitted files the numerator could never see, and
+# two syntactically broken files full of repeated literals produced
+# "VERDICT: 0 magic numbers across 2 files scanned", exit 0.
+#
+# The shape used here is the one this repo already ships in
+# ``cmd_article_12_check`` -- separate counters for unreadable and
+# unparseable, a named reason string, and coverage travelling WITH the
+# verdict so a consumer never has to infer "scanned == all".
+_READ = "read"
+_UNREADABLE = "unreadable"
+_UNPARSEABLE = "unparseable"
+
+
+def _scan_python_file_status(
+    path: Path,
+    include_trivial: bool,
+) -> tuple[list[tuple[int | float, int, str]], str]:
+    """``(occurrences, status)`` for a Python ``path``.
+
+    *status* is one of :data:`_READ`, :data:`_UNREADABLE`,
+    :data:`_UNPARSEABLE`. An empty list with status ``read`` is a
+    measurement; an empty list with either other status is not.
+    """
+    try:
+        src = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [], _UNREADABLE
+    try:
+        tree = ast.parse(src, filename=str(path))
+    except SyntaxError:
+        return [], _UNPARSEABLE
+    source_lines = src.splitlines()
+    raw = _extract_numeric_literals(tree, source_lines, str(path))
+    if include_trivial:
+        return raw, _READ
+    return [(v, ln, sn) for (v, ln, sn) in raw if not (isinstance(v, int) and v in _TRIVIAL_VALUES)], _READ
+
+
 def _scan_python_file(
     path: Path,
     include_trivial: bool,
@@ -189,20 +232,12 @@ def _scan_python_file(
     """Return the raw numeric-literal occurrences for a Python ``path``.
 
     Caller aggregates across files before applying the threshold filter.
+    This is the lossy projection of :func:`_scan_python_file_status`: an
+    empty list here does NOT mean the file was clean. Anything that counts
+    files must use the status form.
     """
-    try:
-        src = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    try:
-        tree = ast.parse(src, filename=str(path))
-    except SyntaxError:
-        return []
-    source_lines = src.splitlines()
-    raw = _extract_numeric_literals(tree, source_lines, str(path))
-    if include_trivial:
-        return raw
-    return [(v, ln, sn) for (v, ln, sn) in raw if not (isinstance(v, int) and v in _TRIVIAL_VALUES)]
+    occurrences, _status = _scan_python_file_status(path, include_trivial)
+    return occurrences
 
 
 # Back-compat alias: existing tests import ``_scan_file`` and expect the
@@ -282,13 +317,29 @@ def _scan_ts_file(
     language: str,
     include_trivial: bool,
 ) -> list[tuple[int | float, int, str]]:
+    """Lossy projection of :func:`_scan_ts_file_status` -- see W1464."""
+    occurrences, _status = _scan_ts_file_status(path, language, include_trivial)
+    return occurrences
+
+
+def _scan_ts_file_status(
+    path: Path,
+    language: str,
+    include_trivial: bool,
+) -> tuple[list[tuple[int | float, int, str]], str]:
     """Scan a non-Python file via tree-sitter. Falls back to the regex
     sweep when the grammar isn't installed or the node kinds are unknown
-    for the language."""
+    for the language.
+
+    Returns ``(occurrences, status)``; see W1464 above. There is no
+    ``_UNPARSEABLE`` outcome on this path -- when the grammar is absent or
+    the parse produces nothing usable, the regex sweep still READS the file,
+    so a genuinely-empty result there is a measurement.
+    """
     try:
         src_bytes = path.read_bytes()
     except OSError:
-        return []
+        return [], _UNREADABLE
     source_lines = src_bytes.decode("utf-8", errors="replace").splitlines()
 
     kinds = _TS_NUMERIC_NODE_KINDS.get(language)
@@ -339,8 +390,8 @@ def _scan_ts_file(
                 raw.append((value, lineno, snippet))
 
     if include_trivial:
-        return raw
-    return [(v, ln, sn) for (v, ln, sn) in raw if not (isinstance(v, int) and v in _TRIVIAL_VALUES)]
+        return raw, _READ
+    return [(v, ln, sn) for (v, ln, sn) in raw if not (isinstance(v, int) and v in _TRIVIAL_VALUES)], _READ
 
 
 def _discover_files(root: Path) -> list[Path]:
@@ -625,15 +676,22 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
     files = _discover_files(root)
 
     # Aggregate occurrences across all files keyed by numeric value.
+    # W1464: track what was actually READ, separately from what rglob listed.
     by_value: dict[int | float, list[dict]] = defaultdict(list)
+    files_unreadable: list[str] = []
+    files_unparseable: list[str] = []
     for f in files:
         if f.suffix in _PY_EXTS:
-            occs = _scan_python_file(f, include_trivial)
+            occs, status = _scan_python_file_status(f, include_trivial)
         else:
             from roam.languages.registry import get_language_for_file
 
             language = get_language_for_file(str(f)) or ""
-            occs = _scan_ts_file(f, language, include_trivial)
+            occs, status = _scan_ts_file_status(f, language, include_trivial)
+        if status == _UNREADABLE:
+            files_unreadable.append(str(f))
+        elif status == _UNPARSEABLE:
+            files_unparseable.append(str(f))
         for value, lineno, snippet in occs:
             by_value[value].append(
                 {
@@ -657,7 +715,20 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
         )
     findings.sort(key=lambda f: (-f["occurrences"], str(f["value"])))
 
-    files_scanned = len(files)
+    # W1464: ``files_scanned`` used to be ``len(files)`` -- the count of paths
+    # rglob YIELDED, never decremented by a file the scanner could not open or
+    # parse. It keeps that meaning under a name that says so, and the count of
+    # files actually decoded is published beside it.
+    files_discovered = len(files)
+    files_read = files_discovered - len(files_unreadable) - len(files_unparseable)
+    files_scanned = files_read
+    scan_incomplete = files_read < files_discovered
+    coverage_gaps: list[str] = []
+    if files_unreadable:
+        coverage_gaps.append(f"{len(files_unreadable)} unreadable")
+    if files_unparseable:
+        coverage_gaps.append(f"{len(files_unparseable)} unparseable")
+    gap_text = ", ".join(coverage_gaps)
     files_with_findings = len({s["file"] for f in findings for s in f["sites"]})
 
     clusters: dict[str, dict] | None = None
@@ -670,6 +741,11 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
             f"{len(findings)} magic numbers across {files_with_findings} files "
             f"(top: `{top['value']}` in {top['occurrences']} sites)"
         )
+    elif scan_incomplete:
+        # A zero finding-count over a partial read is not a clean result.
+        # An unread file can only ADD occurrences, never retract one, so the
+        # honest empty verdict names its own denominator.
+        verdict = f"0 magic numbers across {files_read} of {files_discovered} files read ({gap_text})"
     else:
         verdict = f"0 magic numbers across {files_scanned} files scanned"
 
@@ -686,9 +762,11 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
 
     facts = [
         f"{len(findings)} magic numbers across {files_with_findings} files",
-        f"{files_scanned} files scanned",
+        f"{files_read} of {files_discovered} files read",
         f"threshold {threshold} occurrences",
     ]
+    if scan_incomplete:
+        facts.append(f"not scanned: {gap_text}")
     if findings:
         top = findings[0]
         facts.append(f"top value `{top['value']}` at {top['occurrences']} sites")
@@ -699,6 +777,12 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
         "verdict": verdict,
         "findings_count": len(findings),
         "files_scanned": files_scanned,
+        "files_discovered": files_discovered,
+        "files_read": files_read,
+        "files_unreadable": len(files_unreadable),
+        "files_unparseable": len(files_unparseable),
+        "scan_incomplete": scan_incomplete,
+        "partial_success": scan_incomplete,
         "threshold_used": threshold,
         "include_trivial": include_trivial,
     }
@@ -710,6 +794,10 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
             summary=summary,
             path=str(path),
             files_scanned=files_scanned,
+            files_discovered=files_discovered,
+            files_read=files_read,
+            unreadable_files=sorted(files_unreadable),
+            unparseable_files=sorted(files_unparseable),
             threshold_used=threshold,
             include_trivial=include_trivial,
             findings=findings,
@@ -722,7 +810,13 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
 
     # Text output
     click.echo(f"VERDICT: {verdict}")
-    click.echo(f"scanned: {files_scanned} files (path={path})")
+    click.echo(f"scanned: {files_read} of {files_discovered} files read (path={path})")
+    if scan_incomplete:
+        click.echo(f"not scanned: {gap_text}")
+        for skipped in sorted(files_unreadable)[:5]:
+            click.echo(f"  unreadable: {skipped}")
+        for skipped in sorted(files_unparseable)[:5]:
+            click.echo(f"  unparseable: {skipped}")
     click.echo(f"threshold: >={threshold} occurrences (include_trivial={include_trivial})")
     if clusters is not None and clusters:
         click.echo("")
