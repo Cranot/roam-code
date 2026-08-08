@@ -217,15 +217,39 @@ def _file_comment_density(project_root, row) -> tuple[int, float] | None:
     return row["id"], comment_count / code_lines
 
 
-def _sample_comment_densities(conn, file_ids: list[int] | None = None) -> list[float]:
+def _sample_comment_densities(conn, file_ids: list[int] | None = None) -> tuple[list[float], dict]:
+    """``(densities, coverage)`` -- see W1470.
+
+    ``coverage`` names the population the densities were drawn from:
+    ``files_eligible`` (rows the query returned), ``files_in_slice`` (rows
+    left after the cap), ``files_measured`` (rows that yielded a density),
+    ``sample_capped`` and ``sample_ordering``. Without those numbers the
+    anomalous COUNT is unreadable: 92 means one thing against 198 and a
+    completely different thing against 4,966.
+    """
     project_root = find_project_root()
+    rows = _comment_density_rows(conn, file_ids)
+    sliced = rows[:_COMMENT_SAMPLE_LIMIT]
     densities: list[float] = []
-    for row in _comment_density_rows(conn, file_ids)[:_COMMENT_SAMPLE_LIMIT]:
+    for row in sliced:
         sample = _file_comment_density(project_root, row)
         if sample is not None:
             _file_id, density = sample
             densities.append(density)
-    return densities
+    coverage = {
+        "files_eligible": len(rows),
+        "files_in_slice": len(sliced),
+        "files_measured": len(densities),
+        "sample_cap": _COMMENT_SAMPLE_LIMIT,
+        "sample_capped": len(rows) > _COMMENT_SAMPLE_LIMIT,
+        # The slice is the query's own row order (rowid), i.e. systematically
+        # the earliest-indexed files -- NOT a random sample. Naming the
+        # ordering is deliberate: randomising would make the number move on
+        # every run over the same tree, and a silently non-representative
+        # slice is worse than a disclosed one.
+        "sample_ordering": "rowid",
+    }
+    return densities, coverage
 
 
 def _median(values: list[float]) -> float:
@@ -250,24 +274,34 @@ def _density_anomaly_score(anomalous_ratio: float) -> float:
     return (anomalous_ratio - 0.03) / (0.25 - 0.03)
 
 
-def _comment_density_signal(conn, file_ids: list[int] | None = None) -> tuple[float, int]:
-    """Score [0, 1] from comment density anomaly across files.
+def _comment_density_signal(conn, file_ids: list[int] | None = None) -> tuple[float, int, dict]:
+    """Score [0, 1] from comment density anomaly across SAMPLED files.
 
     AI-generated code often has unusually uniform or extreme comment density.
     We look at the ratio of comment lines (lines containing # or //) to total
     lines for each file, then find outliers using median absolute deviation.
 
-    Returns (score, anomalous_file_count).
-    """
-    densities = _sample_comment_densities(conn, file_ids)
-    if len(densities) < 5:
-        return 0.0, 0
+    Returns ``(score, anomalous_file_count, coverage)``. The count is over
+    the SAMPLE described by *coverage*, never over the corpus -- W1470: it
+    was published beside four whole-corpus signals with no denominator, so a
+    reader took 92 against 4,966 when the measurement was 92 against 198.
 
+    Fewer than 5 measurable densities makes the score UNCOMPUTABLE, not 0.0.
+    ``coverage["computable"]`` says which, and the caller drops the signal
+    from the weighted average rather than feeding it an unmeasured zero.
+    """
+    densities, coverage = _sample_comment_densities(conn, file_ids)
+    if len(densities) < 5:
+        coverage["computable"] = False
+        return 0.0, 0, coverage
+
+    coverage["computable"] = True
     median = _median(densities)
     mad = _median_absolute_deviation(densities, median)
     anomalous = _anomalous_density_count(densities, median, mad)
     anomalous_ratio = anomalous / len(densities)
-    return _density_anomaly_score(anomalous_ratio), anomalous
+    coverage["anomalous_ratio_in_sample"] = round(anomalous_ratio, 3)
+    return _density_anomaly_score(anomalous_ratio), anomalous, coverage
 
 
 # ---------------------------------------------------------------------------
@@ -624,17 +658,26 @@ def analyse_ai_ratio(conn, since_days: int = 90) -> dict:
     gini_score = _gini_signal(commits)
     burst_score, burst_count = _burst_signal(commits)
     pattern_score, co_author_count, ai_pattern_count = _pattern_signal(commits)
-    comment_score, anomalous_files = _comment_density_signal(conn)
+    comment_score, anomalous_files, density_coverage = _comment_density_signal(conn)
     temporal_score, burst_sessions = _temporal_signal(commits)
 
-    # Weighted aggregate
-    ai_ratio = (
-        _W_GINI * gini_score
-        + _W_BURST * burst_score
-        + _W_PATTERNS * pattern_score
-        + _W_COMMENT * comment_score
-        + _W_TEMPORAL * temporal_score
-    )
+    # Weighted aggregate.
+    #
+    # W1470: an UNCOMPUTABLE comment-density signal used to enter this sum as
+    # 0.0 at its full 0.15 weight -- an absent measurement pushing the
+    # headline ratio DOWN as if it were evidence of human authorship. It is
+    # now dropped and the remaining weights renormalised, so the ratio is a
+    # weighted average of the signals that were actually measured.
+    _terms = [
+        (_W_GINI, gini_score),
+        (_W_BURST, burst_score),
+        (_W_PATTERNS, pattern_score),
+        (_W_TEMPORAL, temporal_score),
+    ]
+    if density_coverage.get("computable"):
+        _terms.append((_W_COMMENT, comment_score))
+    _weight_total = sum(weight for weight, _score in _terms)
+    ai_ratio = sum(weight * score for weight, score in _terms) / _weight_total if _weight_total else 0.0
     ai_ratio = round(min(ai_ratio, 1.0), 2)
 
     confidence = _confidence_label(len(commits))
@@ -665,9 +708,23 @@ def analyse_ai_ratio(conn, since_days: int = 90) -> dict:
             "weight": _W_PATTERNS,
         },
         "comment_density": {
+            # W1470: the count is over the SAMPLE, and the field name now
+            # says so. ``anomalous_files`` is kept as an alias so an existing
+            # consumer does not break on the same release that tells it the
+            # number meant something narrower than it thought.
+            "anomalous_files_in_sample": anomalous_files,
             "anomalous_files": anomalous_files,
+            "files_measured": density_coverage.get("files_measured", 0),
+            "files_eligible": density_coverage.get("files_eligible", 0),
+            "sample_cap": density_coverage.get("sample_cap", _COMMENT_SAMPLE_LIMIT),
+            "sample_capped": density_coverage.get("sample_capped", False),
+            "sample_ordering": density_coverage.get("sample_ordering", "rowid"),
+            "computable": density_coverage.get("computable", False),
             "score": round(comment_score, 2),
-            "weight": _W_COMMENT,
+            # The EFFECTIVE weight is 0 when the signal could not be
+            # computed, because it is then excluded from the average.
+            "weight": _W_COMMENT if density_coverage.get("computable") else 0.0,
+            "nominal_weight": _W_COMMENT,
         },
         "temporal": {
             "burst_sessions": burst_sessions,
@@ -742,7 +799,18 @@ def _emit_pattern_signal(signals: dict) -> None:
 
 def _emit_comment_density_signal(signals: dict) -> None:
     density = signals["comment_density"]
-    click.echo(f"  Comment density: {density['anomalous_files']} files with anomalous density")
+    if not density.get("computable", True):
+        click.echo("  Comment density: not computable (fewer than 5 readable files) - signal excluded")
+        return
+    measured = density.get("files_measured", 0)
+    eligible = density.get("files_eligible", measured)
+    anomalous = density.get("anomalous_files_in_sample", density.get("anomalous_files", 0))
+    line = f"  Comment density: {anomalous} of {measured} sampled files anomalous"
+    if density.get("sample_capped"):
+        cap = density.get("sample_cap")
+        ordering = density.get("sample_ordering")
+        line += f" ({cap}-file cap by {ordering}; {eligible} eligible)"
+    click.echo(line)
 
 
 def _emit_temporal_signal(signals: dict) -> None:
