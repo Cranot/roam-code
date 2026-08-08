@@ -16,8 +16,11 @@ from pathlib import Path
 
 from roam.commands.cmd_verify import (
     _DEFAULT_CHECKS,
+    _LEAK_CATALOGUE_FAILED,
+    _LEAK_CATALOGUE_NOT_TRUSTED,
     SEVERITY_FAIL,
     SEVERITY_WARN,
+    _category_summary,
     _check_secrets,
     _load_repo_leak_patterns,
     auto_select_checks,
@@ -48,9 +51,14 @@ def test_repo_local_catalogue_requires_explicit_opt_in(tmp_path: Path, monkeypat
     _write_repo_catalogue(tmp_path, sentinel)
 
     monkeypatch.delenv(_REPO_LEAK_PATTERNS_ENVVAR, raising=False)
-    patterns, should_scan, err = _load_repo_leak_patterns(tmp_path)
+    patterns, should_scan, err, kind = _load_repo_leak_patterns(tmp_path)
     assert patterns == []
     assert should_scan is None
+    # Declining to execute untrusted repo config is a POLICY outcome, not a
+    # check that failed. The distinction decides a verdict: marking this
+    # incomplete would fail verification for every repository that merely
+    # ships a catalogue without opting in.
+    assert kind == _LEAK_CATALOGUE_NOT_TRUSTED
     assert err == (
         ".roam-leak-patterns.py present but not executed "
         "(untrusted repo config; set ROAM_ALLOW_REPO_LEAK_PATTERNS=1 to enable)"
@@ -63,8 +71,9 @@ def test_repo_local_catalogue_requires_explicit_opt_in(tmp_path: Path, monkeypat
     assert not sentinel.exists()
 
     monkeypatch.setenv(_REPO_LEAK_PATTERNS_ENVVAR, "1")
-    patterns, should_scan, err = _load_repo_leak_patterns(tmp_path)
+    patterns, should_scan, err, kind = _load_repo_leak_patterns(tmp_path)
     assert err is None
+    assert kind is None
     assert len(patterns) == 1
     assert should_scan is None
     assert sentinel.exists()
@@ -140,8 +149,9 @@ def test_roam_codes_own_shim_loads(monkeypatch):
     from tests._helpers.repo_root import repo_root
 
     monkeypatch.setenv(_REPO_LEAK_PATTERNS_ENVVAR, "1")
-    patterns, should_scan, err = _load_repo_leak_patterns(repo_root())
+    patterns, should_scan, err, kind = _load_repo_leak_patterns(repo_root())
     assert err is None
+    assert kind is None
     assert len(patterns) >= 20  # the full internal-language catalogue
     assert callable(should_scan)
     # The exemplar suite is exempt via the catalogue's own whitelist.
@@ -287,3 +297,65 @@ def test_stop_hook_blocks_with_autofix_directive(tmp_path, monkeypatch):
     assert proc2.returncode == 0
     assert _json.loads(proc2.stdout)["decision"] == "block"
     assert "app.py:3" in _json.loads(proc2.stdout)["reason"]
+
+
+def test_the_catalogue_disclosure_survives_into_the_envelope(tmp_path: Path, monkeypatch):
+    """The disclosure has to reach the layer consumers actually read.
+
+    `_check_secrets` set `repo_patterns_error` specifically so a leak catalogue
+    that did not run could not pass as one that did, and every test covering it
+    asserted on the dict `_check_secrets` returns. `_category_summary` copies a
+    fixed allowlist that did not include the key, so the sentence was dropped
+    one layer below the line that wrote it and no shipped envelope ever carried
+    it. The tests stayed green throughout because they measured above the drop.
+    """
+    sentinel = tmp_path / "executed.txt"
+    _write_repo_catalogue(tmp_path, sentinel)
+    monkeypatch.delenv(_REPO_LEAK_PATTERNS_ENVVAR, raising=False)
+
+    result = _check_secrets(["notes.md"], tmp_path)
+    assert result["repo_patterns_error"]
+
+    envelope_view = _category_summary({"secrets": result})["secrets"]
+    assert envelope_view.get("repo_patterns_error") == result["repo_patterns_error"]
+
+
+def test_an_opted_in_catalogue_that_fails_marks_the_check_incomplete(tmp_path: Path, monkeypatch):
+    # The operator asked for this catalogue and it did not load, so the secrets
+    # check did not do what it was asked. `execution_state` is what carries
+    # that to the verdict; without it the run reports PASS with complete
+    # evidence over a scan that never applied the caller's own patterns.
+    (tmp_path / ".roam-leak-patterns.py").write_text('raise RuntimeError("boom")\n', encoding="utf-8")
+    monkeypatch.setenv(_REPO_LEAK_PATTERNS_ENVVAR, "1")
+
+    patterns, _should_scan, err, kind = _load_repo_leak_patterns(tmp_path)
+    assert patterns == []
+    assert kind == _LEAK_CATALOGUE_FAILED
+    assert "boom" in err
+
+    result = _check_secrets(["notes.md"], tmp_path)
+    assert result["execution_state"] == "incomplete"
+    assert _category_summary({"secrets": result})["secrets"]["execution_state"] == "incomplete"
+
+
+def test_declining_untrusted_config_is_disclosed_but_gates_nothing(tmp_path: Path, monkeypatch):
+    # The must-not-fire pair. Not executing untrusted repo config is the
+    # DEFAULT for every repository that ships a catalogue; marking it
+    # incomplete would fail verification for all of them, which is the same
+    # false verdict as the silence it replaces, pointed the other way.
+    sentinel = tmp_path / "executed.txt"
+    _write_repo_catalogue(tmp_path, sentinel)
+    monkeypatch.delenv(_REPO_LEAK_PATTERNS_ENVVAR, raising=False)
+
+    result = _check_secrets(["notes.md"], tmp_path)
+    assert result["repo_patterns_error"]
+    assert "execution_state" not in result
+    assert not sentinel.exists()
+
+
+def test_a_repository_with_no_catalogue_discloses_nothing(tmp_path: Path, monkeypatch):
+    # The other must-not-fire: absence of the optional file is not an event.
+    monkeypatch.delenv(_REPO_LEAK_PATTERNS_ENVVAR, raising=False)
+    result = _check_secrets(["notes.md"], tmp_path)
+    assert "repo_patterns_error" not in result
+    assert "execution_state" not in result
