@@ -39,8 +39,10 @@ import click
 
 from roam.capability import roam_capability
 from roam.index.calc_extract import (
+    CALC_NO_LANGUAGE,
+    CALC_UNREADABLE,
     Calc,
-    extract_calcs_from_file,
+    extract_calcs_from_file_status,
     normalize_formula,
     normalize_target,
     rounding_semantic,
@@ -219,9 +221,30 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs, fail_on_diver
         return
 
     files = _discover_files(root)
+    # W1465: count what was DECODED, not what rglob listed. ``files_scanned``
+    # used to be ``len(files)``, so a corpus whose every file failed to open
+    # still reported its full discovered count next to "no calculations
+    # found" and an exit-0 gate.
     calcs: list[Calc] = []
+    files_unreadable: list[str] = []
+    files_no_language: list[str] = []
     for f in files:
-        calcs.extend(extract_calcs_from_file(f, extra_round_funcs))
+        found, status = extract_calcs_from_file_status(f, extra_round_funcs)
+        if status == CALC_UNREADABLE:
+            files_unreadable.append(str(f))
+        elif status == CALC_NO_LANGUAGE:
+            files_no_language.append(str(f))
+        calcs.extend(found)
+
+    files_discovered = len(files)
+    files_read = files_discovered - len(files_unreadable) - len(files_no_language)
+    scan_incomplete = files_read < files_discovered
+    coverage_gaps: list[str] = []
+    if files_unreadable:
+        coverage_gaps.append(f"{len(files_unreadable)} unreadable")
+    if files_no_language:
+        coverage_gaps.append(f"{len(files_no_language)} of unknown language")
+    gap_text = ", ".join(coverage_gaps)
 
     if money_only:
         calcs = [c for c in calcs if _MONEY_RE.search(normalize_target(c.target))]
@@ -241,6 +264,8 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs, fail_on_diver
             if rd:
                 extra.append(f"{rd} rounding-divergent")
             verdict += f"; {len(divergences)} divergent fields" + (f" ({', '.join(extra)})" if extra else "")
+    elif scan_incomplete:
+        verdict = f"cannot certify — {files_read} of {files_discovered} files read ({gap_text})"
     else:
         verdict = "no calculations found"
 
@@ -251,15 +276,28 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs, fail_on_diver
     ]
     if divergences is not None:
         facts.append(f"{len(divergences)} divergent fields flagged")
+    if scan_incomplete:
+        facts.append(f"not scanned: {gap_text} of {files_discovered} discovered")
 
-    gate_failed = (
-        fail_on_divergence and bool(divergences) and any(d["rounding_semantics_divergent"] for d in divergences)
+    # W1465: the opt-in CI gate must not exit 0 on a clean verdict it could
+    # not compute. A divergence lives in the RELATION between two formulas,
+    # so a file that was never decoded can hide one entirely -- unlike a
+    # per-file finding, an unread file here can retract the answer, not just
+    # add to it.
+    gate_failed = fail_on_divergence and (
+        (bool(divergences) and any(d["rounding_semantics_divergent"] for d in divergences)) or scan_incomplete
     )
 
     summary = {
         "verdict": verdict,
         "calculations": len(calcs),
-        "files_scanned": len(files),
+        "files_scanned": files_read,
+        "files_discovered": files_discovered,
+        "files_read": files_read,
+        "files_unreadable": len(files_unreadable),
+        "files_unknown_language": len(files_no_language),
+        "scan_incomplete": scan_incomplete,
+        "partial_success": scan_incomplete,
         "files_with_calcs": files_with_calcs,
         "rounding_count": rounding_count,
         "money_only": money_only,
@@ -270,7 +308,10 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs, fail_on_diver
         envelope_kwargs: dict = dict(
             summary=summary,
             path=str(path),
-            files_scanned=len(files),
+            files_scanned=files_read,
+            files_discovered=files_discovered,
+            unreadable_files=sorted(files_unreadable),
+            unknown_language_files=sorted(files_no_language),
             calculations=[_calc_to_dict(c) for c in calcs],
             agent_contract={"facts": facts},
         )
@@ -284,7 +325,19 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs, fail_on_diver
         return
 
     click.echo(f"VERDICT: {verdict}")
+    if scan_incomplete:
+        click.echo(f"not scanned: {gap_text} of {files_discovered} discovered")
+        for skipped in sorted(files_unreadable)[:5]:
+            click.echo(f"  unreadable: {skipped}")
+        for skipped in sorted(files_no_language)[:5]:
+            click.echo(f"  unknown language: {skipped}")
     if not calcs:
+        # W1465: the gate decision must not sit BELOW this early return, or
+        # the text channel exits 0 on a refusal the --json channel makes.
+        # Same shape as the ignore-drift channel split fixed earlier.
+        if gate_failed:
+            click.echo("\nVERDICT: FAIL — cannot certify a corpus that was not fully read (--fail-on-divergence)")
+            ctx.exit(5)
         return
     if divergences:
         click.echo("\nDIVERGENT FIELDS (same name, different formula):")
@@ -313,5 +366,8 @@ def calc_inventory(ctx, path, money_only, divergence, round_funcs, fail_on_diver
                 click.echo(f"  L{c.line:<5} {c.target[:26]:26s} = {c.formula[:60]}{r}")
 
     if gate_failed:
-        click.echo("\nVERDICT: FAIL — rounding-semantics-divergent field(s) found (--fail-on-divergence)")
+        if scan_incomplete:
+            click.echo("\nVERDICT: FAIL — cannot certify a corpus that was not fully read (--fail-on-divergence)")
+        else:
+            click.echo("\nVERDICT: FAIL — rounding-semantics-divergent field(s) found (--fail-on-divergence)")
         ctx.exit(5)
