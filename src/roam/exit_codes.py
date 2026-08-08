@@ -2,13 +2,41 @@
 
 Exit code scheme (POSIX + SAST tool conventions):
 
-    0  SUCCESS        -- command completed, no issues found (or info-only output)
-    1  GENERAL_ERROR  -- unexpected failure, crash, unhandled exception
-    2  USAGE_ERROR    -- invalid arguments, bad flags, unknown command (Click default)
-    3  INDEX_MISSING  -- .roam/index.db not found, run `roam init` first
-    4  INDEX_STALE    -- index exists but is outdated (mtime check failed)
-    5  GATE_FAILURE   -- quality gate check failed (health score below threshold, etc.)
-    6  PARTIAL        -- command completed but with warnings/partial results
+    0    SUCCESS        -- command completed, no issues found (or info-only output)
+    1    GENERAL_ERROR  -- unexpected failure, crash, unhandled exception
+    2    USAGE_ERROR    -- invalid arguments, bad flags, unknown command (Click default)
+    3    INDEX_MISSING  -- reserved; see the reachability note below
+    4    INDEX_STALE    -- reserved name; in the field this integer means NEEDS_REVIEW
+    5    GATE_FAILURE   -- quality gate check failed (health score below threshold, etc.)
+    6    PARTIAL        -- command completed but with warnings/partial results
+    130  INTERRUPTED    -- SIGINT / Ctrl-C (128 + SIGINT, POSIX convention)
+
+REACHABILITY -- what a caller branching on this table will actually receive.
+This section exists because the table above was, for two of its rows, a
+description of an intention rather than of the program.
+
+* 3 (INDEX_MISSING) is returned by NO shipped command. The only helper that
+  raises ``IndexMissingError`` is ``roam.commands.resolve.require_index``,
+  which nothing in ``src/roam`` calls: commands auto-index instead of
+  refusing, so a repo with no ``.roam/index.db`` gets an index, not exit 3.
+  Measured in a fresh repo: ``roam search`` / ``roam health`` / ``roam dead``
+  all exit 0.
+
+* 4 (INDEX_STALE) is returned by NO command with that meaning --
+  ``IndexStaleError`` is never raised outside tests. The integer 4 IS
+  returned, by the guard family (``verdict`` / ``guard-pr`` /
+  ``proof-bundle``, via ``guard_enums.VERDICT_EXIT_CODES``), where it means
+  ``needs_review``: a human must look. The constant keeps its old NAME for
+  import compatibility; treat the VALUE as needs_review. Re-running does not
+  change it, so it is not retryable.
+
+* 2 is overloaded. Click uses it for a usage error, and ``roam doctor`` also
+  uses it for "a blocking environment check failed" -- a run whose arguments
+  were perfectly valid. Distinguish by which command you ran.
+
+* 130 is not optional trivia: an uncaught KeyboardInterrupt exits 130 through
+  both the console-script entry point and ``python -m roam``. A caller
+  branching only over 0-6 falls through every arm when a user presses Ctrl-C.
 
 CI tools (GitHub Actions, etc.) can differentiate between:
   - "analysis found issues" (5 = gate failure)
@@ -33,6 +61,11 @@ EXIT_INDEX_MISSING: int = 3
 EXIT_INDEX_STALE: int = 4
 EXIT_GATE_FAILURE: int = 5
 EXIT_PARTIAL: int = 6
+#: 128 + SIGINT. Produced by an uncaught KeyboardInterrupt through every
+#: entry point, and previously absent from this catalogue -- so the artifact
+#: roam ships for callers to branch on did not list the code a caller is most
+#: likely to meet by accident.
+EXIT_INTERRUPTED: int = 130
 
 # ---------------------------------------------------------------------------
 # Human-readable descriptions (useful for --help, diagnostics, MCP hints)
@@ -42,10 +75,11 @@ DESCRIPTIONS: dict[int, str] = {
     EXIT_SUCCESS: "success",
     EXIT_ERROR: "unexpected error",
     EXIT_USAGE: "invalid usage (bad arguments or flags)",
-    EXIT_INDEX_MISSING: "index not found -- run `roam init`",
-    EXIT_INDEX_STALE: "index is stale -- run `roam index`",
+    EXIT_INDEX_MISSING: "index not found -- run `roam init` (reserved; no command returns this)",
+    EXIT_INDEX_STALE: "needs_review -- a guard verdict requires a human; re-running will not change it",
     EXIT_GATE_FAILURE: "quality gate failed",
     EXIT_PARTIAL: "partial results (completed with warnings)",
+    EXIT_INTERRUPTED: "interrupted (SIGINT / Ctrl-C)",
 }
 
 # ---------------------------------------------------------------------------

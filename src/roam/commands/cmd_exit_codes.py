@@ -21,10 +21,20 @@ _DESCRIPTIONS = {
     "EXIT_SUCCESS": "Command completed normally.",
     "EXIT_ERROR": "Generic failure (unhandled exception, missing file, etc.).",
     "EXIT_USAGE": "Bad arguments or flags. Check `--help`.",
-    "EXIT_INDEX_MISSING": "No `.roam/index.db` found. Run `roam init` or `roam index`.",
-    "EXIT_INDEX_STALE": "Index doesn't match the working tree. Run `roam index`.",
+    # The two index rows described an intention, not the program. Verified by
+    # measurement and by grep: `require_index` (the only raiser of
+    # IndexMissingError) is called by nothing, and IndexStaleError is never
+    # raised outside tests -- while the guard family really does return 4 for
+    # `needs_review`. A CI script or agent branching on this table was being
+    # told to `roam index` in response to a human-judgment gate.
+    "EXIT_INDEX_MISSING": "Reserved. No command returns this -- roam auto-indexes instead of refusing.",
+    "EXIT_INDEX_STALE": (
+        "needs_review: a guard verdict (`verdict`, `guard-pr`, `proof-bundle`) requires "
+        "a human. Re-running produces the same answer. NOT a stale index."
+    ),
     "EXIT_GATE_FAILURE": "Quality gate failed (`--gate`, `--ci`, `--threshold`).",
     "EXIT_PARTIAL": "Command completed with warnings or skipped sections.",
+    "EXIT_INTERRUPTED": "Interrupted by SIGINT / Ctrl-C (128 + SIGINT).",
 }
 
 

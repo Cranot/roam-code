@@ -2610,7 +2610,18 @@ def _classify_error(stderr: str, exit_code: int) -> tuple[str, str, bool]:
     _EXIT_CODE_MAP: dict[int, tuple[str, str]] = {
         EXIT_USAGE: ("USAGE_ERROR", "invalid arguments or flags. check --help."),
         EXIT_INDEX_MISSING: ("INDEX_NOT_FOUND", "run `roam init` to create the codebase index."),
-        EXIT_INDEX_STALE: ("INDEX_STALE", "run `roam index` to refresh."),
+        # Exit 4 does NOT mean a stale index. `IndexStaleError` is never
+        # raised by a shipped command; the integer 4 is produced by the guard
+        # family via `guard_enums.VERDICT_EXIT_CODES` and means `needs_review`.
+        # Reporting it as INDEX_STALE told an agent to re-index and -- because
+        # INDEX_STALE is in `_RETRYABLE_CODES` -- to RETRY, which re-derives
+        # the same verdict forever. INDEX_STALE remains a valid error_code when
+        # it arrives on the structured/stderr path (a schema bump really is
+        # retryable); it is only this mapping from an exit code that was wrong.
+        EXIT_INDEX_STALE: (
+            "NEEDS_REVIEW",
+            "a guard verdict requires human review. re-running produces the same answer.",
+        ),
         EXIT_GATE_FAILURE: ("GATE_FAILURE", "quality gate check failed."),
         EXIT_PARTIAL: ("PARTIAL_FAILURE", "command completed with warnings."),
     }
@@ -2633,6 +2644,7 @@ def _classify_error(stderr: str, exit_code: int) -> tuple[str, str, bool]:
 _SEVERITY_MAP: dict[str, str] = {
     "INDEX_NOT_FOUND": "error",
     "INDEX_STALE": "warning",
+    "NEEDS_REVIEW": "warning",
     "DB_LOCKED": "warning",
     "NOT_GIT_REPO": "warning",
     "PERMISSION_DENIED": "error",
@@ -2697,6 +2709,10 @@ _ERROR_CODE_TO_STATUS: dict[str, str] = {
     "INDEX_NOT_FOUND": "index_not_built",
     # stale-index class.
     "INDEX_STALE": "stale_index",
+    # human-judgment class -- not retryable, not a tool failure. Mapped to
+    # hard_failure because the agent must change something material (get a
+    # review) before the answer can change.
+    "NEEDS_REVIEW": "hard_failure",
     "STALE_DB_DIR": "stale_index",
     # rate-limited class.
     "RATE_LIMITED": "rate_limited",
