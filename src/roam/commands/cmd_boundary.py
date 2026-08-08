@@ -24,8 +24,11 @@ Persistence follows the canonical mandate: ``emit_finding`` is called
 with ``--persist``. Re-running the command upserts via the
 deterministic ``finding_id_str`` so the registry stays stable.
 
-CI mode: ``--ci`` exits 5 on any ``wrong_direction_import``;
-public-by-accident is warning-only and does NOT trigger the CI gate.
+CI mode: ``--ci`` exits 5 on any ``wrong_direction_import``, and ALSO on
+an unanalyzable run -- a corpus with 0 import edges (``state:
+"no_imports"``), where a wrong-direction import could not have been counted
+even if one existed. public-by-accident is warning-only and does NOT
+trigger the CI gate.
 
 Output formats: text (default), ``--json``, and a private
 ``--sarif PATH`` flag that writes the SARIF 2.1.0 projection to disk
@@ -58,6 +61,7 @@ from roam.db.findings import (
     emit_finding,
     make_finding_id,
 )
+from roam.exit_codes import gate_should_fail
 from roam.graph.builder import build_symbol_graph
 from roam.graph.layers import detect_layers
 from roam.output.formatter import format_table, json_envelope, loc, to_json
@@ -469,8 +473,11 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
     * public_by_accident      (severity warning) — _name in __all__
     * wrong_direction_import  (severity high)    — layer N → layer M edge, N<M
 
-    ``--ci`` exits 5 when any wrong_direction_import is detected.
-    public_by_accident is warning-only and never triggers the CI gate.
+    ``--ci`` exits 5 when any wrong_direction_import is detected, and also
+    when the corpus holds 0 import edges so nothing could be checked at all
+    (``state: "no_imports"``) — a gate that could not measure must not
+    report success. public_by_accident is warning-only and never triggers
+    the CI gate.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -543,6 +550,20 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
     # empty-corpus case is a strictly stronger partial_success signal.
     partial_success = (n_wrong == 0 and total > 0 and cr != "all") or empty_corpus
 
+    # ``partial_success`` is overloaded here and cannot be the gate's input: it
+    # is ALSO true for a clean run that was legitimately scoped to a changed
+    # range, which is a real measurement of what the caller asked for.
+    # ``scan_incomplete`` is the narrow signal -- the analysis had NO input at
+    # all -- and it is the one a gate must refuse on. `--ci` used to read
+    # `n_wrong > 0` alone, so a repo whose index held zero import edges printed
+    # "no imports to analyze ... run `roam index --force`" and then authorized
+    # the pipeline. A wrong-direction import cannot be counted in a corpus with
+    # no imports; reporting zero of them is not evidence there are none.
+    scan_incomplete = empty_corpus
+    # ONE SITE DECIDES: the json branch, the text tail, and the `total == 0`
+    # early return below all read this single boolean.
+    gate_failed = gate_should_fail(ci, findings=n_wrong, scan_incomplete=scan_incomplete)
+
     # PARTIAL scope disclosure — the wrong-direction kind is scoped to
     # the changed-range (W1295 strategy memo) AND the layer-numbering
     # is derived (not config-pinned) per CLAUDE.md. Surface both cuts
@@ -588,6 +609,10 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
             "public_by_accident": n_public,
             "wrong_direction_import": n_wrong,
             "partial_success": partial_success,
+            # The narrow "nothing was analysed" signal, kept separate from the
+            # overloaded partial_success above so a gate has an unambiguous
+            # input. See the comment where it is derived.
+            "scan_incomplete": scan_incomplete,
             "scope": cr,
         }
         if empty_corpus:
@@ -604,13 +629,18 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
                 )
             )
         )
-        if ci and n_wrong > 0:
+        if gate_failed:
             ctx.exit(5)
         return
 
     # --- Text output ---
     click.echo(f"VERDICT: {verdict}")
     if total == 0:
+        # The gate is evaluated BEFORE this early return. It used to sit only
+        # at the bottom of the text tail, so an empty corpus -- total == 0 --
+        # left the function without the gate ever being consulted.
+        if gate_failed:
+            ctx.exit(5)
         return
     click.echo()
     rows: list[list[str]] = []
@@ -642,7 +672,7 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
         click.echo()
         click.echo(f"... {len(all_findings) - 50} more (use --json for the full list)")
 
-    if ci and n_wrong > 0:
+    if gate_failed:
         ctx.exit(5)
 
 

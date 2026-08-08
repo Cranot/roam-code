@@ -10,7 +10,7 @@ Examples
 
     roam taint
     roam taint --rules-dir src/roam/security/taint_rules
-    roam taint --ci   # exit 5 on findings (gateable in CI)
+    roam taint --ci   # exit 5 on findings, or on an unanalyzable corpus
     roam --json taint --max-hops 8
     roam taint --persist  # mirror findings into the central registry
 """
@@ -28,6 +28,7 @@ from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.db.edge_kinds import call_or_ref_in_clause
+from roam.exit_codes import gate_should_fail
 from roam.output.confidence import (
     confidence_distribution,
     verdict_with_high_count,
@@ -460,7 +461,7 @@ def _default_rules_dir() -> Path:
     "--ci",
     "ci_mode",
     is_flag=True,
-    help="Exit 5 on any high-severity finding (CI gate).",
+    help=("Exit 5 on any high-severity finding, or on an empty corpus where no rule could run at all (CI gate)."),
 )
 @click.option(
     "--rule",
@@ -764,6 +765,14 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 f"{len(rules)} rules loaded but not run — "
                 f"run `roam index --force` to populate the graph)"
             )
+            # ONE SITE DECIDES, for both channels of this early exit. `--ci`
+            # used to be consulted only at the three `high_count > 0` sites
+            # further down, which this branch returns before reaching -- so a
+            # run that loaded 22 rules and executed none of them against 0
+            # symbols printed exactly that and then authorized the pipeline.
+            # Zero taint findings in an empty corpus is not evidence of zero
+            # taint; it is evidence that nothing was analyzed.
+            _empty_corpus_gate_failed = gate_should_fail(ci_mode, findings=0, scan_incomplete=True)
             if json_mode:
                 # W489-A: stamp the qualified_only lint result on the
                 # empty-corpus branch too. partial_success is already
@@ -773,6 +782,11 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                     "verdict": verdict,
                     "state": "empty_corpus",
                     "partial_success": True,
+                    # The narrow "nothing was analysed" signal. partial_success
+                    # is also set by populated runs that were merely scoped, so
+                    # a gate cannot key on it; this key means the analysis had
+                    # no input at all.
+                    "scan_incomplete": True,
                     "rules": len(rules),
                     "findings": 0,
                     # Keep the distribution shape consistent with the
@@ -823,8 +837,12 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                         )
                     )
                 )
+                if _empty_corpus_gate_failed:
+                    ctx.exit(5)
                 return
             click.echo(f"VERDICT: {verdict}")
+            if _empty_corpus_gate_failed:
+                ctx.exit(5)
             return
 
         # W1330: resolve project_root so run_taint's text-scan fallback
