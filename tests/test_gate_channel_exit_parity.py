@@ -294,7 +294,14 @@ def _invoke(cwd: Path, argv: list[str]) -> _Run:
 
 
 def _last_envelope(stdout: str) -> dict | None:
-    """Return the last JSON object printed on stdout, or None."""
+    """Return the JSON object printed on stdout, or None.
+
+    Three shapes, in order, because getting this wrong makes Law 2 skip
+    silently rather than fail: a single-line envelope; the whole of stdout
+    when it is one pretty-printed object; and a pretty-printed object
+    preceded by plain-text lines (a staleness WARNING on stdout is enough to
+    defeat the naive form, and a skipped case proves nothing).
+    """
     for line in reversed(stdout.splitlines()):
         stripped = line.strip()
         if stripped.startswith("{") and stripped.endswith("}"):
@@ -304,12 +311,15 @@ def _last_envelope(stdout: str) -> dict | None:
                 continue
             if isinstance(parsed, dict):
                 return parsed
+
     stripped = stdout.strip()
-    if stripped.startswith("{"):
+    for start in (0, stripped.find("{")):
+        if start < 0:
+            continue
         try:
-            parsed = json.loads(stripped)
+            parsed = json.loads(stripped[start:])
         except json.JSONDecodeError:
-            return None
+            continue
         if isinstance(parsed, dict):
             return parsed
     return None
