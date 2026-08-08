@@ -2263,7 +2263,14 @@ def resolution_disclosure(
         - ``cmd_trace`` (W1248): pre-existing no_path flag → OR-combine.
         - ``cmd_preflight`` (W1243): pre-existing error-path flag only → no
           conflict (the two flags do not co-occur on the success envelope).
-        - ``cmd_diagnose`` (W1244): no pre-existing flag → direct merge.
+        - ``cmd_diagnose`` (W1244 / corrected W1469): the isolated-in-graph
+          branch DOES carry a pre-existing flag — the graph could not be
+          built, so it is unconditionally True — and the direct merge
+          overwrote it with the resolver's ``False`` for an exact match. It
+          now OR-combines like cmd_impact and cmd_trace. The line above used
+          to read "no pre-existing flag → direct merge"; that was true of the
+          command's OTHER envelopes and false of this one, which is exactly
+          how a stale reference entry launders a defect.
 
     W1270 — reserved-key collision disclosure:
         Pre-W1270 the reserved-key filter silently dropped any

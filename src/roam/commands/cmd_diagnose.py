@@ -736,12 +736,29 @@ def diagnose_cmd(ctx, name, depth, batch_input):
                         "file_path": "",
                     },
                 )
+                # W1469: OR-combine, do NOT direct-merge. ``resolution_block``
+                # carries its own ``partial_success = (resolution != "symbol")``,
+                # so for an EXACT match it is False and the ``**`` merge below
+                # overwrote the True set three lines up -- the comment above
+                # asserting "partial_success is already True here" was false for
+                # exactly the branch that needs it most. Measured: a repo whose
+                # index.db had its ``edges`` table renamed away reported
+                # ``partial_success: false`` in the same envelope as
+                # ``warnings_out: ["diagnose_build_graph_failed:OperationalError:
+                # no such table: edges"]``. This is the discipline formatter.py
+                # prescribes and that cmd_impact (W1242) and cmd_trace (W1248)
+                # already follow.
+                _iso_resolution = dict(resolution_block)
+                # The pre-existing flag on this branch is the constant True
+                # (the graph could not answer), so the OR is unconditionally
+                # True. Written as an assignment rather than an ``or`` so the
+                # value cannot drift back to the resolver's opinion.
+                _iso_resolution["partial_success"] = True
                 _iso_summary: dict = {
                     "target": sym_name,
                     "verdict": verdict,
-                    "partial_success": True,
                     "state": "isolated_in_graph",
-                    **resolution_block,
+                    **_iso_resolution,
                 }
                 _iso_kwargs: dict = {
                     "summary": _iso_summary,
@@ -753,7 +770,8 @@ def diagnose_cmd(ctx, name, depth, batch_input):
                     "cochange_partners": [],
                     "recent_commits": [],
                     "did_you_mean": did_you_mean,
-                    **resolution_block,
+                    # W1469: the TOP-LEVEL mirror had the same collision.
+                    **_iso_resolution,
                 }
                 # W607-S + W607-BH -- combine substrate-CALL and
                 # aggregation-phase buckets BEFORE threading into the
@@ -767,6 +785,13 @@ def diagnose_cmd(ctx, name, depth, batch_input):
                 return
             click.echo(f"VERDICT: {verdict}")
             click.echo(f"  Tip: {hint_text}")
+            # W1469: the text channel said nothing at all about the failure.
+            # "Symbol 'beta' is not connected in the dependency graph" is a
+            # statement about the USER'S CODE; when the graph could not be
+            # built the true statement is about the database. The bucket the
+            # --json branch publishes is echoed here for the same reason the
+            # success path at the end of this command does it.
+            echo_text_warnings(list(_w607dn_warnings_out) + list(_w607s_warnings_out) + list(_w607bh_warnings_out))
             raise SystemExit(1)
 
         _metrics_floor = {
