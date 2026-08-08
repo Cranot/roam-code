@@ -90,11 +90,18 @@ class DoctorReport:
 
         ``warnings`` used to be unreachable. It was gated on
         ``has_any_failure``, and every ``status == "fail"`` construction site
-        in this module passes ``blocking=True`` (verified: lines 146, 182,
-        321, 334, 360), so ``has_any_failure`` was true if and only if
-        ``has_blocking_failure`` was. Non-blocking problems are emitted as
-        ``"warn"``, which neither property could see. The measured result was
-        a run that printed
+        in this module passes ``blocking=True``, so ``has_any_failure`` was
+        true if and only if ``has_blocking_failure`` was. Non-blocking
+        problems are emitted as ``"warn"``, which neither property could see.
+
+        The count and location of those sites are DERIVED, not cited: the
+        first draft of this note pinned five line numbers, and the commit
+        that added the note shifted every one of them, so a docstring whose
+        subject is a stale contract shipped carrying stale coordinates.
+        ``test_documented_exit_code_rungs_match_the_ones_exit_code_can_return``
+        re-derives the set from this module's AST on every run.
+
+        The measured result was a run that printed
 
             VERDICT: healthy
             ⚠ github_token — GITHUB_TOKEN not set ...
