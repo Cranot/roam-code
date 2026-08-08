@@ -116,6 +116,13 @@ REASON_CODES: frozenset[str] = frozenset(
         "policy_violation",
         "ledger_integrity_failure",
         "mcp_redaction_required",
+        # The change set itself could not be determined (git refused, timed
+        # out, or is absent) and the bundle declared no files either. Every
+        # other input is derived from the change set, so an empty `required`
+        # list makes "all required passed" vacuously true. Without this code
+        # an unreadable repo and a repo that legitimately required nothing
+        # both printed `pass` and exited 0.
+        "change_set_unanalyzable",
         # needs_review
         "high_risk_path",
         "out_of_scope_edit",

@@ -230,6 +230,7 @@ _REASON_TO_SARIF_LEVEL = {
     "required_check_failed": "error",
     "required_checks_failed": "error",
     "policy_violation": "error",
+    "change_set_unanalyzable": "error",
     "ledger_integrity_failure": "error",
     "mcp_redaction_required": "error",
     "high_risk_path": "warning",
