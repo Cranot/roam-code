@@ -2062,6 +2062,58 @@ def _tree_sitter_error_violations(path: str, tree) -> list[dict]:
     return violations
 
 
+# A type-position `import('...')` is TypeScript the bundled grammar can only
+# parse as a bare terminal. Apply ANY postfix to it and the parse breaks.
+# Measured against tree-sitter typescript in language-pack 1.13.3:
+#
+#   import('x').Y          ok      typeof import('x')        ok
+#   import('x').Y[]        ERROR   Array<import('x').Y>      ok
+#   import('x').Y<number>  ERROR   N.Y[]                     ok
+#   import('x').N.Y[]      ERROR
+#
+# The first column is ordinary modern TypeScript -- `import()` types are the
+# standard way to reference a type without a circular import, and an array of
+# them is the common case. Reporting that as "syntax error" is a gate claiming
+# more than it measured: what was observed is that THIS build's grammar could
+# not parse the construct, which is not the same as the code being invalid, and
+# syntax is the check a reader trusts most absolutely.
+#
+# So: when the grammar reports an error, mask these calls and parse again. The
+# mask is an identifier of IDENTICAL byte length, so every line and column in a
+# genuine error is still correct on the second parse. Substituting an
+# identifier for a parenthesised call is valid in both type and value position,
+# so this can only ever remove this specific false positive -- a file with a
+# real syntax error still fails, at the same line.
+_IMPORT_TYPE_CALL_RE = re.compile(rb"""import\s*\(\s*(['"])[^'"\r\n]*\1\s*\)""")
+
+
+def _mask_import_type_calls(source: bytes) -> bytes | None:
+    """Blank out `import('...')` calls, preserving every byte offset."""
+
+    def _same_length_identifier(match: re.Match) -> bytes:
+        # All-underscore is a valid identifier in TS/JS at any length, and the
+        # shortest possible match -- `import('')` -- is already 10 bytes.
+        return b"_" * (match.end() - match.start())
+
+    masked, count = _IMPORT_TYPE_CALL_RE.subn(_same_length_identifier, source)
+    return masked if count else None
+
+
+def _reparse_without_import_types(fpath: Path, lang: str):
+    """Re-parse with the known grammar gap masked, or ``None`` if not possible."""
+    try:
+        from roam.parser_pack import get_parser, has_language
+
+        if not has_language(lang):
+            return None
+        masked = _mask_import_type_calls(fpath.read_bytes())
+        if masked is None:
+            return None  # nothing to mask, so the error is not this gap
+        return get_parser(lang).parse(masked)
+    except Exception:  # noqa: BLE001 — the retry is best-effort; the first verdict stands
+        return None
+
+
 def _tree_sitter_syntax_gate(path: str, fpath: Path, lang: str, parse_file) -> dict:
     try:
         result = parse_file(fpath, lang)
@@ -2072,6 +2124,10 @@ def _tree_sitter_syntax_gate(path: str, fpath: Path, lang: str, parse_file) -> d
         return _syntax_result(parse_failures=1, violations=[_syntax_parse_failure(path)])
 
     violations = _tree_sitter_error_violations(path, result[0])
+    if violations:
+        retried = _reparse_without_import_types(fpath, lang)
+        if retried is not None:
+            violations = _tree_sitter_error_violations(path, retried)
     return _syntax_result(files_checked=1, files_with_errors=1 if violations else 0, violations=violations)
 
 
