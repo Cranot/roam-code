@@ -671,6 +671,28 @@ def scan_project(
     else:
         file_paths = _walk_for_files(root, dropped=walk_dropped)
 
+    # W1466: recover the files discovery's 1 MB cap dropped.
+    #
+    # That cap is an INDEXER bound -- parsing a multi-megabyte file into a
+    # symbol graph is expensive. A line-oriented regex sweep over the same
+    # bytes is not, and honouring the indexer's bound here made the scan
+    # blind to a whole class of tracked file: the oversized path is in
+    # neither the discovered set nor the indexed set, so ``files_unindexed``
+    # (discovered - indexed) subtracts it to zero and every counter reads
+    # clean. Measured: a tracked 1.4 MB file whose last line held
+    # ``AKIA...`` produced "No secrets found (1 files scanned)" and exit 0
+    # under --fail-on-found, while the identical key in a 39-byte file was
+    # reported.
+    #
+    # Recovering the file MEASURES what the verdict claims, which is better
+    # than refusing to answer. A second, much larger bound still applies so
+    # the pass stays bounded -- and unlike the first one, exceeding it is
+    # LOUD (see _oversized_beyond_recovery / oversized_blind).
+    oversized_recovered, oversized_unrecoverable = _oversized_candidates(root)
+    if oversized_recovered:
+        _already = {p.replace("\\", "/") for p in file_paths}
+        file_paths = list(file_paths) + [p for p in oversized_recovered if p not in _already]
+
     all_findings: list[dict] = []
     read_errors: list[dict] = []
     files_scanned = 0
@@ -730,6 +752,17 @@ def scan_project(
         # ...and separable again from "0 findings because the newest files
         # were never in the list we scanned". See _count_unindexed.
         stats["files_unindexed"] = _count_unindexed(root, file_paths) if index_backed else 0
+        # W1466: a file discovery declined to open because it exceeds the
+        # 1 MB cap is in NEITHER the discovered set nor the indexed set, so
+        # ``files_unindexed`` (discovered - indexed) can never see it. It
+        # needs its own number for the same reason ``files_undiscoverable``
+        # does: it is a candidate that never entered any partition above.
+        stats["files_oversized_recovered"] = len(oversized_recovered)
+        stats["oversized_recovered_paths"] = list(oversized_recovered)
+        # ``None`` when the discovery probe itself could not run -- "I could
+        # not determine whether anything was skipped" is not "nothing was".
+        stats["files_oversized_unscanned"] = None if oversized_unrecoverable is None else len(oversized_unrecoverable)
+        stats["oversized_unscanned_paths"] = list(oversized_unrecoverable or [])
 
     # Sort: high severity first, then by file path, then line number
     all_findings.sort(key=lambda f: (-severity_rank(f["severity"]), f["file"], f["line"]))
@@ -764,6 +797,48 @@ def _count_unindexed(root: Path, indexed_paths: list[str]) -> int | None:
         return None
     known = {p.replace("\\", "/") for p in indexed_paths}
     return len(discovered - known)
+
+
+#: Secondary bound for the W1466 recovery pass. Discovery's 1 MB cap is an
+#: indexer bound; this is the scanner's own, and it is ~25x larger because a
+#: line-oriented regex sweep costs far less than building a symbol graph.
+#: Unlike the first cap, exceeding THIS one is loud: the file is named,
+#: counted, and makes ``--fail-on-found`` refuse rather than certify.
+SECRETS_MAX_RECOVERABLE_SIZE = 25_000_000
+
+
+def _oversized_candidates(root: Path) -> tuple[list[str], list[str] | None]:
+    """``(recoverable, unrecoverable)`` for files discovery's size cap dropped.
+
+    ``_count_unindexed`` measures against ``discover_files``, which is the
+    right yardstick for scope DECISIONS (generated artefacts, distribution
+    templates) but blind to the SIZE CAP: an oversized file is dropped
+    before discovery returns, so it appears on neither side of
+    ``discovered - indexed`` and subtracts to zero.
+
+    *unrecoverable* is ``None`` when the probe itself could not run. That is
+    deliberately not ``[]`` -- the same discipline ``_count_unindexed``
+    follows, for the same reason.
+    """
+    try:
+        from roam.index.discovery import SKIP_OVERSIZED, discover_files_with_skips
+
+        _discovered, skips = discover_files_with_skips(root)
+    except (ImportError, OSError, ValueError, sqlite3.DatabaseError):
+        return [], None
+    recoverable: list[str] = []
+    unrecoverable: list[str] = []
+    for rel_path in sorted(skips.get(SKIP_OVERSIZED, [])):
+        try:
+            size = (root / rel_path).stat().st_size
+        except OSError:
+            unrecoverable.append(rel_path)
+            continue
+        if size > SECRETS_MAX_RECOVERABLE_SIZE:
+            unrecoverable.append(rel_path)
+        else:
+            recoverable.append(rel_path)
+    return recoverable, unrecoverable
 
 
 def _walk_for_files(root: Path, dropped: list[dict] | None = None) -> list[str]:
@@ -868,7 +943,14 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     files_unreadable = scan_stats.get("files_unreadable", 0)
     files_undiscoverable = scan_stats.get("files_undiscoverable", 0)
     unread_blind = files_unreadable > 0 or files_undiscoverable > 0
-    scan_incomplete = vacuous_filter or files_scanned == 0 or unindexed_blind or unread_blind
+    # W1466 — a fifth: files discovery never opened because they exceed the
+    # 1 MB cap. They are in neither the discovered nor the indexed set, so
+    # ``files_unindexed`` subtracts them to zero. ``None`` means the probe
+    # could not run, which is not a clean answer either.
+    files_oversized_recovered = scan_stats.get("files_oversized_recovered", 0)
+    files_oversized_unscanned = scan_stats.get("files_oversized_unscanned", 0)
+    oversized_blind = files_oversized_unscanned is None or files_oversized_unscanned > 0
+    scan_incomplete = vacuous_filter or files_scanned == 0 or unindexed_blind or unread_blind or oversized_blind
 
     # Compute summary stats. W566 — bucketing delegates to the canonical
     # ``severity_breakdown`` helper. Secrets patterns at module-load
@@ -935,6 +1017,18 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             f"NOT PROVEN CLEAN: {files_scanned} indexed files scanned, but {missed} "
             "not in the index and were NOT scanned. Run `roam index` and retry."
         )
+    elif total == 0 and oversized_blind:
+        # W1466: the file was never opened, so it is in neither the scanned
+        # count nor the unindexed count. Saying "no secrets found" here
+        # certifies bytes nothing read.
+        if files_oversized_unscanned is None:
+            skipped = "an undetermined number of files were"
+        else:
+            skipped = f"{files_oversized_unscanned} file(s) larger than {SECRETS_MAX_RECOVERABLE_SIZE} bytes were"
+        verdict = (
+            f"NOT PROVEN CLEAN: {files_scanned} files scanned, but {skipped} "
+            "past the scanner size bound and were NOT read."
+        )
     elif total == 0:
         verdict = f"No secrets found ({files_scanned} files scanned)"
     else:
@@ -956,6 +1050,9 @@ def secrets(ctx, severity, fail_on_found, include_tests):
                 f" — and a LOWER BOUND again: {files_unreadable} file(s) could not be read, "
                 f"{files_undiscoverable} could not be named"
             )
+        if oversized_blind:
+            _n = "an undetermined number of" if files_oversized_unscanned is None else str(files_oversized_unscanned)
+            verdict += f" — and a LOWER BOUND again: {_n} file(s) exceeded the scanner size bound"
 
     # --- SARIF output ---
     if sarif_mode:
@@ -1007,6 +1104,13 @@ def secrets(ctx, severity, fail_on_found, include_tests):
                 "files_undiscoverable": files_undiscoverable,
                 "index_fallback": scan_stats.get("index_fallback", False),
                 "files_unindexed": files_unindexed,
+                # W1466: files discovery never opened because of the 1 MB
+                # cap. They are in NEITHER files_scanned NOR files_unindexed,
+                # so without this bucket they vanish from every partition.
+                "files_oversized_recovered": files_oversized_recovered,
+                "oversized_recovered_paths": scan_stats.get("oversized_recovered_paths", []),
+                "files_oversized_unscanned": files_oversized_unscanned,
+                "oversized_unscanned_paths": scan_stats.get("oversized_unscanned_paths", []),
                 "severity_floor": severity.lower(),
                 "severity_floor_vacuous": vacuous_filter,
                 "scan_incomplete": scan_incomplete,
@@ -1091,6 +1195,17 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             f"  Scanned {files_scanned} indexed files and found nothing, but {_n} file(s) "
             "on disk were never scanned — this is NOT a clean result."
         )
+    elif oversized_blind:
+        # W1466: same discipline as the two branches above — the text
+        # channel must name the gap the envelope names.
+        _n = "an undetermined number of" if files_oversized_unscanned is None else str(files_oversized_unscanned)
+        click.echo(
+            f"  Scanned {files_scanned} files and found nothing, but {_n} file(s) exceeded the "
+            f"{SECRETS_MAX_RECOVERABLE_SIZE}-byte scanner size bound and were never opened — "
+            "this is NOT a clean result."
+        )
+        for skipped in scan_stats.get("oversized_unscanned_paths", [])[:5]:
+            click.echo(f"    over size bound: {skipped}")
     elif scan_incomplete:
         click.echo("  Scan did not run over any pattern/file — this is NOT a clean result.")
     else:

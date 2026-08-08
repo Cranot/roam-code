@@ -296,11 +296,31 @@ def _walk_files(root: Path) -> list[str]:
     return result
 
 
+# W1466 -- skip reasons discovery must be able to REPORT, not only apply.
+#
+# ``_filter_files`` dropped an oversized path with a bare ``continue``. The
+# file was then in neither the discovered set nor the indexed set, so the
+# blind-spot counters that compute ``discovered - indexed`` could never see
+# it: ``roam secrets --fail-on-found`` exited 0 with "No secrets found
+# (1 files scanned)" and every counter reading clean, over a tracked file
+# holding a live-shaped AWS key on its last line.
+#
+# Commit 93f9655e chose ``discover_files`` as the yardstick on the premise
+# that "files discovery deliberately excludes are not blind spots". That is
+# true of generated artefacts and distribution templates -- a deliberate
+# scope decision -- and false of a RESOURCE CAP, which is roam declining to
+# look rather than deciding not to care. The cap stays; what changes is that
+# it is now countable.
+SKIP_OVERSIZED = "oversized"
+SKIP_UNSTATABLE = "unstatable"
+
+
 def _filter_files(
     paths: list[str],
     root: Path,
     exclude_patterns: list[str] | None = None,
     include_excluded: bool = False,
+    skips: dict[str, list[str]] | None = None,
 ) -> list[str]:
     """Filter out binary, oversized, non-code, and excluded files.
 
@@ -309,6 +329,10 @@ def _filter_files(
         root: Project root directory.
         exclude_patterns: Glob patterns to exclude (from .roamignore, config, built-in).
         include_excluded: If True, skip exclusion filtering (for debugging).
+        skips: Optional dict collecting resource-cap skips by reason
+            (:data:`SKIP_OVERSIZED` / :data:`SKIP_UNSTATABLE`). Scope
+            exclusions -- skippable extensions, ignore patterns, generated
+            content -- are NOT recorded: those are decisions, not failures.
     """
     kept = []
     for rel_path in paths:
@@ -320,14 +344,49 @@ def _filter_files(
         full_path = root / rel_path
         try:
             if full_path.stat().st_size > MAX_FILE_SIZE:
+                if skips is not None:
+                    skips.setdefault(SKIP_OVERSIZED, []).append(rel_path)
                 continue
         except OSError:
+            if skips is not None:
+                skips.setdefault(SKIP_UNSTATABLE, []).append(rel_path)
             continue
         # Content-based generated-file detection (only when not including excluded)
         if not include_excluded and _is_generated_content(full_path):
             continue
         kept.append(rel_path)
     return kept
+
+
+def discover_files_with_skips(root: Path, include_excluded: bool = False) -> tuple[list[str], dict[str, list[str]]]:
+    """``(discovered, skips)`` -- see W1466 above for why *skips* exists.
+
+    *skips* maps a reason (:data:`SKIP_OVERSIZED`, :data:`SKIP_UNSTATABLE`)
+    to the relative paths dropped for it. Reasons that are scope DECISIONS
+    (ignore patterns, non-code extensions, generated content) are absent by
+    design: they are not blind spots. A resource cap is.
+    """
+    root = Path(root).resolve()
+    raw = _git_ls_files(root)
+    if raw is None:
+        raw = _walk_files(root)
+
+    # Normalise path separators
+    raw = [p.replace("\\", "/") for p in raw]
+
+    skips: dict[str, list[str]] = {}
+    exclude_patterns = load_exclude_patterns(root)
+    filtered = _filter_files(
+        raw,
+        root,
+        exclude_patterns=exclude_patterns,
+        include_excluded=include_excluded,
+        skips=skips,
+    )
+    filtered.sort()
+    for paths in skips.values():
+        paths.sort()
+    return filtered, skips
 
 
 def discover_files(root: Path, include_excluded: bool = False) -> list[str]:
@@ -341,21 +400,11 @@ def discover_files(root: Path, include_excluded: bool = False) -> list[str]:
         root: Project root directory.
         include_excluded: If True, skip .roamignore / config / built-in
             exclusion filtering (useful for debugging).
+
+    Lossy projection of :func:`discover_files_with_skips`: a path missing
+    from the result was either out of scope by design OR dropped by the
+    1 MB size cap, and this return type cannot say which. Anything that
+    reports coverage must use the ``_with_skips`` form.
     """
-    root = Path(root).resolve()
-    raw = _git_ls_files(root)
-    if raw is None:
-        raw = _walk_files(root)
-
-    # Normalise path separators
-    raw = [p.replace("\\", "/") for p in raw]
-
-    exclude_patterns = load_exclude_patterns(root)
-    filtered = _filter_files(
-        raw,
-        root,
-        exclude_patterns=exclude_patterns,
-        include_excluded=include_excluded,
-    )
-    filtered.sort()
-    return filtered
+    discovered, _skips = discover_files_with_skips(root, include_excluded=include_excluded)
+    return discovered
