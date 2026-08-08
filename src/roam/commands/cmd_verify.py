@@ -5071,6 +5071,55 @@ def _auto_deep_enabled(auto: bool, deep: bool) -> bool:
     return os.environ.get("ROAM_VERIFY_NO_DEEP") not in ("1", "true", "yes")
 
 
+def _repair_report_index_coverage(root: Path) -> int:
+    """Index tracked code files the index has never seen. Returns how many.
+
+    Report mode takes its targets FROM the index, so a tracked file the index
+    does not contain cannot become a target, is therefore never handed to
+    `_refresh_stale_verify_targets` (which only diffs the targets it is given),
+    and the run scores a WHOLE-REPO verdict over a subset. The non-report path
+    does not have this hole: it derives targets from the diff and treats an
+    absent index row as a changed file, so a new file is indexed there.
+
+    Measured before this existed, in one repo at one commit: with one file
+    indexed and a second tracked file containing a syntax error, `roam verify
+    --report` returned PASS 100 over `files_checked` 1, `verification_complete`
+    true, and `index_refresh.state` "current" -- a false CLEAN, and a false
+    claim of currency, over a file that does not parse. Running `roam index`
+    and repeating gave FAIL 40 over 2 files from the same tree.
+
+    Closing the gap beats describing it: refusing instead would turn every
+    stale-index run into a non-PASS, which is honest but makes the common case
+    a failure. Best effort by construction -- if the coverage question cannot
+    be answered the function changes nothing and reports 0, so a repository it
+    cannot enumerate behaves exactly as it did before.
+    """
+    try:
+        from roam.index.discovery import discover_files
+        from roam.index.parser import detect_language
+
+        with open_db(readonly=True) as conn:
+            indexed = {row["path"].replace("\\", "/") for row in conn.execute("SELECT path FROM files").fetchall()}
+        missing = 0
+        for rel in discover_files(root):
+            normalized = rel.replace("\\", "/")
+            if normalized in indexed:
+                continue
+            language = (detect_language(normalized) or "").lower()
+            if language and language not in _MODULE_INIT_SKIP_LANGS:
+                missing += 1
+        if not missing:
+            return 0
+
+        from roam.index.indexer import Indexer
+
+        Indexer(project_root=root).run(quiet=True, progress_bar=False, light=True)
+        return missing
+    except Exception as exc:  # noqa: BLE001 — a repair that cannot run must not break the report
+        _swallow_verify("verify.report.index_coverage", exc)
+        return 0
+
+
 def _apply_report_mode(
     report: bool,
     files,
@@ -5102,6 +5151,7 @@ def _apply_report_mode(
     report_selected = selected if checks_opt else [check for check in _ALL_CHECKS if check not in _report_excluded]
     if files:
         return report_selected, target_paths, True, None
+    _repair_report_index_coverage(root)
     report_targets, discovery_error = _all_report_paths(root, report_selected)
     return report_selected, report_targets, True, discovery_error
 
