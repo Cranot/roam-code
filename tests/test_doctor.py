@@ -1040,3 +1040,55 @@ class TestDoctorIndexFlagHints:
         assert "--rebuild" not in self._doctor_index_flags(), (
             "`roam index --rebuild` is not a real flag — use `roam index --force`"
         )
+
+
+def test_documented_doctor_exit_codes_are_all_reachable():
+    """`roam doctor --help` may not advertise an exit code doctor cannot return.
+
+    The command docstring -- rendered verbatim by `--help` -- promised
+    "1  Only advisory checks failed". Exit 1 is not merely unobserved, it is
+    unreachable: cmd_doctor has exactly two exit sites and both are
+    `ctx.exit(2)`. Advisory-only failures deliberately exit 0 (a fresh-install
+    user reading a hard-failure code for a cache-age warning concludes roam is
+    broken), so the CODE is right and the sentence was stale. A CI author
+    writing `if rc == 1: echo advisory` would never have seen that branch fire.
+
+    This pins both docstrings to the exit sites in the same file, in the
+    over-promising direction only: documenting FEWER codes than exist is a
+    different (and here deliberate) matter.
+    """
+    import ast
+    import inspect
+    import re
+
+    from roam.commands import cmd_doctor as mod
+
+    source = inspect.getsource(mod)
+    tree = ast.parse(source)
+
+    literal_exits: set[str] = {"0"}  # falling off the end returns 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name not in ("exit", "_exit"):
+            continue
+        if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, int):
+            literal_exits.add(str(node.args[0].value))
+
+    assert literal_exits != {"0"}, "found no literal exit sites in cmd_doctor -- the scan broke"
+
+    # Both the module docstring and the command docstring use "  N  text".
+    docs = [mod.__doc__ or "", mod.doctor.__doc__ or ""]
+    documented: set[str] = set()
+    for text in docs:
+        documented |= set(re.findall(r"^\s{2,}([0-9])\s{2,}\S", text, re.M))
+    assert documented, "no exit-code rungs parsed out of cmd_doctor's docstrings"
+
+    unreachable = documented - literal_exits
+    assert not unreachable, (
+        f"cmd_doctor documents exit code(s) {sorted(unreachable)} that no "
+        f"`ctx.exit` site in the module can produce (found: {sorted(literal_exits)}). "
+        "Either make the rung reachable or stop advertising it."
+    )

@@ -17,9 +17,21 @@ Runs a battery of cheap checks adopters care about BEFORE their first
   * Python yaml + jsonschema availability (advisory)
 
 Exit codes:
-    0 = all checks pass
-    1 = at least one ADVISORY check failed
+    0 = all checks pass, or only advisory checks are degraded
     2 = at least one REQUIRED check failed (blocks `guard-pr` from working)
+
+Exit 1 is NOT produced. This docstring promised "1 = at least one ADVISORY
+check failed", and a pipeline written as
+``guard-doctor; if rc == 1: warn; elif rc == 2: fail`` would silently collapse
+every advisory degradation into the success branch. The rung is structurally
+unreachable: every ``status == "fail"`` construction site in this module
+passes ``blocking=True``, and non-blocking problems are emitted as ``"warn"``,
+which the exit decision does not read. See ``DoctorReport.exit_code`` for why
+that is left alone rather than papered over, and read the advisory signal from
+``summary_verdict`` (``"warnings"``) or the JSON ``warn_count`` instead.
+
+Note that PyYAML is listed above as advisory but is emitted BLOCKING, and
+correctly so -- rule-pack loading cannot proceed without it.
 """
 
 from __future__ import annotations
@@ -69,14 +81,49 @@ class DoctorReport:
         return any(c.status == "fail" for c in self.checks)
 
     @property
+    def has_warning(self) -> bool:
+        return any(c.status == "warn" for c in self.checks)
+
+    @property
     def summary_verdict(self) -> str:
+        """One of ``blocked`` / ``warnings`` / ``healthy``.
+
+        ``warnings`` used to be unreachable. It was gated on
+        ``has_any_failure``, and every ``status == "fail"`` construction site
+        in this module passes ``blocking=True`` (verified: lines 146, 182,
+        321, 334, 360), so ``has_any_failure`` was true if and only if
+        ``has_blocking_failure`` was. Non-blocking problems are emitted as
+        ``"warn"``, which neither property could see. The measured result was
+        a run that printed
+
+            VERDICT: healthy
+            ⚠ github_token — GITHUB_TOKEN not set ...
+
+        -- the table naming a degradation and the summary line denying it, on
+        the same screen. ``warn`` now reaches the verdict.
+        """
         if self.has_blocking_failure:
             return "blocked"
-        if self.has_any_failure:
+        if self.has_any_failure or self.has_warning:
             return "warnings"
         return "healthy"
 
     def exit_code(self) -> int:
+        """Exit 0 (healthy or advisory) or 2 (a required check failed).
+
+        The documented middle rung -- ``1 = at least one ADVISORY check
+        failed`` -- is NOT produced, and the module docstring now says so
+        rather than promising a branch that never fires. It is left
+        unreachable on purpose: the ``warn`` vocabulary currently mixes
+        "nothing is set up yet, which is fine on a fresh install"
+        (``.roam/`` missing, 0 bundles) with "this will pass trivially"
+        (``command_graph returned 0 commands``). Promoting all of it to a
+        non-zero exit would fire on a healthy fresh install; promoting only
+        some of it requires deciding, per check, which is which. That
+        decision is a separate change. Until then the signal is published --
+        ``summary_verdict`` says ``warnings`` and the JSON summary carries
+        ``warn_count`` -- so a caller that needs it can read it.
+        """
         if self.has_blocking_failure:
             return 2
         if self.has_any_failure:
