@@ -19,7 +19,7 @@ from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files_status, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
 @roam_capability(
@@ -81,6 +81,10 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     changed, git_error = get_changed_files_status(root, staged=staged, commit_range=commit_range)
     if git_error is not None:
         verdict = f"diff unavailable: {git_error} — cannot gate"
+        # W1331: the SAME bucket reaches both channels. Building it once and
+        # emitting it in both branches is what keeps the text reader from
+        # seeing a quieter story than the --json reader.
+        warnings_out = [f"pr_diff_changed_files_failed:{git_error}:cannot read git diff"]
         if json_mode:
             click.echo(
                 to_json(
@@ -111,13 +115,14 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
                             "symbols_total": 0,
                             "symbols_pct": 0.0,
                         },
-                        warnings_out=[f"pr_diff_changed_files_failed:{git_error}:cannot read git diff"],
+                        warnings_out=list(warnings_out),
                     )
                 )
             )
         else:
             click.echo(f"VERDICT: {verdict}")
             click.echo(f"Could not read the git diff ({git_error}); no change set was measured.")
+            echo_text_warnings(warnings_out)
         if fail_on_degradation:
             from roam.exit_codes import EXIT_GATE_FAILURE
 
