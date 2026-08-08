@@ -466,6 +466,18 @@ def guard_pr(
         if dry_run:
             click.echo("[dry-run] no bundle mutation, no log append, no GH post.\n")
         click.echo(rendered or markdown_body)
+        # The SAME degradation the JSON branch publishes as `scan_incomplete`,
+        # said in the channel a human and a shell script read. The rendered
+        # verdict carries the reason code, but a signal that reaches one output
+        # branch and not another is how a degraded run gets read as a clean one
+        # -- which is the whole subject of this change, so it may not be
+        # reintroduced here.
+        if scan_incomplete:
+            click.echo(
+                "\nUNANALYZABLE: the change set could not be determined, so the verification "
+                "contract was built over nothing and nothing here is proven clean.",
+                err=True,
+            )
         if check_result is not None:
             if check_result.get("ok"):
                 click.echo(f"\n[github-check]: posted (status {check_result.get('status', '?')})")
