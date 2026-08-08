@@ -2,10 +2,10 @@
 
 Two supported paths:
 
-1. **Plain pip** -- `pip install "roam-code==13.10.0"`, run any commands, upload SARIF
+1. **Plain pip** -- `pip install "roam-code==14.0.0"`, run any commands, upload SARIF
    yourself. Works on every CI platform (GitHub Actions, GitLab CI, Jenkins,
    Azure Pipelines, BitBucket, CircleCI, ...).
-2. **Composite GitHub Action** -- `uses: Cranot/roam-code@v13.10.0`. Adds sticky
+2. **Composite GitHub Action** -- `uses: Cranot/roam-code@v14.0.0`. Adds sticky
    PR comments, guardrail-enforced SARIF upload, and quality gates with one
    block.
 
@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: |
-          python -m pip install --disable-pip-version-check "roam-code==13.10.0"
+          python -m pip install --disable-pip-version-check "roam-code==14.0.0"
           python -m pip check
       - run: roam init
       - run: roam --sarif health > roam-health.sarif
@@ -88,9 +88,9 @@ jobs:
 
       # The readable tag is shown here. For production,
       # replace the tag with its reviewed 40-character SHA (see below).
-      - uses: Cranot/roam-code@v13.10.0
+      - uses: Cranot/roam-code@v14.0.0
         with:
-          version: '13.10.0'
+          version: '14.0.0'
           allow-latest: 'false'
           commands: 'health pr-risk'
           sarif: 'true'
@@ -110,7 +110,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `13.10.0` | Exact roam-code version to install from PyPI. The explicit `source` mode installs from the selected action checkout; `latest` requires `allow-latest: true`. URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
+| `version` | `14.0.0` | Exact roam-code version to install from PyPI. The explicit `source` mode installs from the selected action checkout; `latest` requires `allow-latest: true`. URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
 | `allow-latest` | `false` | Explicit opt-in required when `version: latest` is requested. This keeps the mutable package path visible in review. |
 | `commands` | `health` | Space-separated roam commands to run. Each command produces JSON output that feeds into the PR comment and quality gate. |
 | `changed-only` | `false` | Incremental CI mode. Adapts supported commands to changed files and transitive dependents (when detectable). |
@@ -329,7 +329,7 @@ Set `changed-only: 'true'` to run incremental PR analysis.
 Example:
 
 ```yaml
-- uses: Cranot/roam-code@v13.10.0
+- uses: Cranot/roam-code@v14.0.0
   with:
     commands: 'verify pr-risk api-changes'
     changed-only: 'true'
@@ -368,7 +368,7 @@ Run `roam --help-all` for all 285 commands.
 ### Multiple commands with strict gate
 
 ```yaml
-- uses: Cranot/roam-code@v13.10.0
+- uses: Cranot/roam-code@v14.0.0
   with:
     commands: 'health complexity dead'
     sarif-commands: 'health complexity dead'
@@ -380,7 +380,7 @@ Run `roam --help-all` for all 285 commands.
 ### PR risk only, no comment
 
 ```yaml
-- uses: Cranot/roam-code@v13.10.0
+- uses: Cranot/roam-code@v14.0.0
   id: roam
   with:
     commands: 'pr-risk'
@@ -394,9 +394,9 @@ Run `roam --help-all` for all 285 commands.
 ### Exact release without caching
 
 ```yaml
-- uses: Cranot/roam-code@v13.10.0
+- uses: Cranot/roam-code@v14.0.0
   with:
-    version: '13.10.0'
+    version: '14.0.0'
     cache: 'false'
     commands: 'health'
 ```
@@ -404,7 +404,7 @@ Run `roam --help-all` for all 285 commands.
 ### Use outputs in subsequent steps
 
 ```yaml
-- uses: Cranot/roam-code@v13.10.0
+- uses: Cranot/roam-code@v14.0.0
   id: analysis
   with:
     commands: 'health'
