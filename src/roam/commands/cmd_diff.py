@@ -12,7 +12,7 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
-from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
+from roam.commands.changed_files import get_changed_files_status, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, format_table, json_envelope, to_json
@@ -654,17 +654,19 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         coupling = True
         fitness = True
 
-    changed = (
-        _run_check(
-            "get_changed_files",
-            get_changed_files,
-            root,
-            staged=staged,
-            commit_range=commit_range,
-            default=[],
-        )
-        or []
-    )
+    # W1468: read the ``(paths, error_kind)`` form. An empty list from a
+    # FAILED ``git diff`` is not "no changes", and this command's state is
+    # what ``pr-analyze --gate`` reads to decide whether a PR is empty.
+    _changed_status = _run_check(
+        "get_changed_files",
+        get_changed_files_status,
+        root,
+        staged=staged,
+        commit_range=commit_range,
+        default=([], None),
+    ) or ([], None)
+    changed, git_error = _changed_status
+    changed = changed or []
     if not changed:
         label = commit_range or ("staged" if staged else "unstaged")
         # Pattern 1 fix (Fix A from the dogfood synthesis notes):
@@ -688,10 +690,12 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         # ``risk_rank(summary["risk_level_canonical"])`` unconditionally;
         # the state field (``"no_changes"``) and ``partial_success=False``
         # already disambiguate the LAW 6 standalone-parse.
+        # W1468: "the diff was read and was empty" and "the diff could not
+        # be read" are different facts, and they had the same state.
         _no_changes_summary: dict = {
-            "verdict": "no changes",
-            "state": "no_changes",
-            "partial_success": False,
+            "verdict": "no changes" if git_error is None else f"diff unavailable: {git_error}",
+            "state": "no_changes" if git_error is None else "diff_unavailable",
+            "partial_success": git_error is not None,
             "changed_files": 0,
             "affected_symbols": 0,
             "affected_files": 0,
@@ -710,8 +714,15 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             blast_radius=[],
             risk_level_canonical=_no_changes_canonical,
             risk_rank=_no_changes_rank,
-            message=f"No changes found for {label}.",
+            message=(
+                f"No changes found for {label}."
+                if git_error is None
+                else f"Could not read the diff for {label} ({git_error})."
+            ),
         )
+        if git_error is not None:
+            _no_changes_summary["git_error"] = git_error
+            _no_changes_envelope_kwargs["git_error"] = git_error
         # W607-Z -- if get_changed_files raised, the substrate marker
         # rides BOTH summary.warnings_out AND the top-level mirror on
         # the no-changes envelope. ``partial_success`` flips to True so

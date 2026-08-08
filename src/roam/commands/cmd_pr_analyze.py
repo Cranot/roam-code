@@ -1494,7 +1494,9 @@ def _serve_from_cache(
         )
     else:
         click.echo(f"VERDICT: {s.get('verdict', '?')} [cache hit]")
-    if gate and s.get("verdict") == "BLOCK":
+    if gate and (s.get("verdict") == "BLOCK" or s.get("state") == "diff_failed"):
+        # W1468: the cached path must refuse on the same states the live one
+        # does, or a replay turns a refusal back into an authorization.
         sys.exit(EXIT_GATE_BLOCK)
     return True
 
@@ -2773,7 +2775,10 @@ def pr_analyze_command(
                 for step in rationale["next_steps"]:
                     click.echo(f"  - {step}")
 
-    if gate and verdict == "BLOCK":
+    # W1468: a gate may not authorize on a diff it could not read. BLOCK is
+    # the risk answer; ``diff_failed`` is the absence of one, and exiting 0
+    # there published "there is nothing to gate" about a substrate failure.
+    if gate and (verdict == "BLOCK" or prep_state == "diff_failed"):
         sys.exit(EXIT_GATE_BLOCK)
 
 
