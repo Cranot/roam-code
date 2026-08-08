@@ -39,6 +39,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.github_check import build_check_run_payload, post_check_run
 from roam.guard_errors import guard_error_envelope
 from roam.guard_log import append_log_entry, build_log_entry
@@ -333,6 +334,23 @@ def guard_pr(
     exit_code = gate_exit_code if gate_enforced else 0
     gate_suppressed = gate_exit_code != 0 and not gate_enforced
 
+    # The command's own claim that it could not measure what changed. Read
+    # back off the verdict rather than recomputed, so the exit code and the
+    # published envelope can not disagree.
+    scan_incomplete = any(
+        r.get("code") == "change_set_unanalyzable" for r in (v1.get("verdict") or {}).get("reasons") or []
+    )
+    # Single decision site, ahead of every channel. `change_set_unanalyzable`
+    # is already a `blocked` reason, so this is belt-and-braces -- but the
+    # verdict tiering is a separate file, and the property "an unmeasured
+    # change set never exits 0 under a gate flag" must not depend on that file
+    # keeping its ranking. UNANALYZABLE is not a benign CLEAN.
+    if (
+        gate_should_fail(gate_enforced, findings=gate_exit_code != 0, scan_incomplete=scan_incomplete)
+        and exit_code == 0
+    ):
+        exit_code = EXIT_GATE_FAILURE
+
     # ---- persistent verdict log (.roam/verdict-log.jsonl) ----
     # Append-only; best-effort. Powers `roam guard-history` fast-path AND
     # gives an audit trail surviving bundle file rotation.
@@ -404,6 +422,10 @@ def guard_pr(
                         "changed_files_count": len(v1["changed_files"]),
                         "dry_run": dry_run,
                         "partial_success": verdict_value in ("blocked", "needs_review"),
+                        # UNANALYZABLE, published separately from a verdict:
+                        # `required_count: 0` reads the same whether nothing
+                        # was required or nothing could be read.
+                        "scan_incomplete": scan_incomplete,
                     },
                     agent_contract={
                         "facts": [

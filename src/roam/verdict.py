@@ -45,6 +45,7 @@ def compute_verdict(
     ledger: dict[str, Any] | None = None,
     review_evidence: dict[str, Any] | None = None,
     orchestration_contract: dict[str, Any] | None = None,
+    change_set_unanalyzable: str | None = None,
 ) -> dict[str, Any]:
     """Compute the proof-bundle verdict from collected evidence.
 
@@ -53,6 +54,14 @@ def compute_verdict(
     :func:`roam.review_receipt.verify_receipt` -- never to fields an agent
     copied out of its own receipt. Absent evidence for a required phase is
     a blocker, not a silent pass.
+
+    ``change_set_unanalyzable`` carries the reason the CHANGE SET itself could
+    not be determined (git refused, timed out, or is not present). Every other
+    input to this function is computed FROM the change set, so when it is
+    unknown the whole proof is unfounded: an empty ``required`` list makes
+    "all required checks passed" vacuously true, and the caller receives a
+    pass it can not distinguish from a real one. It is therefore a hard gate,
+    ranked with the other blockers that invalidate the proof.
 
     Returns:
       {"value": "pass|pass_with_warnings|needs_review|blocked",
@@ -69,7 +78,8 @@ def compute_verdict(
             (
                 "blocked",
                 lambda: (
-                    _collect_blockers_that_invalidate_proof(
+                    _collect_unanalyzable_change_set_blocker(change_set_unanalyzable)
+                    + _collect_blockers_that_invalidate_proof(
                         verification_contract=verification_contract,
                         executed_checks=executed_checks,
                         mcp_tool_findings=mcp_tool_findings,
@@ -268,6 +278,29 @@ def _select_verdict_that_preserves_gate_precedence(
         if reasons:
             return {"value": value, "reasons": aggregate_reasons(reasons)}
     return {"value": "pass", "reasons": aggregate_reasons([{"code": "all_required_passed"}])}
+
+
+def _collect_unanalyzable_change_set_blocker(reason: str | None) -> list[dict[str, Any]]:
+    """Return a hard-gate reason when the change set itself could not be read.
+
+    Measured 2026-08-08 against 14.0.0: in a worktree whose ``.git`` had been
+    corrupted, with a real uncommitted edit on disk, ``roam guard-pr --ci``
+    printed ``✅ Roam Guard verdict: pass`` / "0 of 0 required checks ran" and
+    exited 0 -- byte-identical to the same command in a HEALTHY copy of the
+    same fixture apart from the head sha. The exit code could not tell "this
+    PR required nothing" from "I could not open the repository", so a merge
+    gate built on it authorized an unreadable tree. Naming the state is what
+    makes the two distinguishable.
+    """
+    if not reason:
+        return []
+    return [
+        {
+            "code": "change_set_unanalyzable",
+            "detail": reason,
+            "suggested_command": "run inside a readable git worktree, or record the change set with `roam pr-bundle add affected <symbol>`",
+        }
+    ]
 
 
 def _collect_blockers_that_invalidate_proof(

@@ -141,13 +141,21 @@ def _extract_changed_files(bundle: dict[str, Any]) -> list[str]:
     return files
 
 
-def _git_changed_files(root: Path) -> list[str]:
-    """Fallback: enumerate changed files from git working tree + index.
+def _git_changed_files_with_provenance(root: Path) -> tuple[list[str], str | None]:
+    """Enumerate changed files from git, and say when git could not answer.
 
-    Used when the bundle has no affected_symbols and no explicit changed_files.
-    Real-world dogfood: many agent workflows skip the `pr-bundle add affected`
-    step and only call `pr-bundle init` + `emit`. We don't want the verdict
-    to silently bypass scope simply because the bundle didn't populate.
+    Returns ``(files, unanalyzable_reason)``. ``unanalyzable_reason`` is
+    ``None`` only when git ACTUALLY ANSWERED; then an empty list means "this
+    tree has no changes", which is a measurement.
+
+    The second element exists because the two states used to be one. The
+    fallback returned ``[]`` for "git says nothing changed" AND for "git
+    refused to speak", and every caller downstream read the empty list as the
+    former. In a worktree whose ``.git`` cannot be read, that produced an
+    empty verification contract, which made "all required checks passed"
+    vacuously true, which printed a green verdict and exited 0 over a repo
+    the process had not been able to open. An absent measurement is UNKNOWN,
+    never a benign CLEAN.
     """
     try:
         # Files modified vs HEAD (staged + unstaged).
@@ -159,7 +167,11 @@ def _git_changed_files(root: Path) -> list[str]:
             timeout=5.0,
         )
         if result.returncode != 0:
-            return []
+            detail = (result.stderr or "").strip().splitlines()
+            return [], (
+                f"git could not enumerate the change set (`git diff --name-only HEAD` "
+                f"exited {result.returncode}" + (f": {detail[0]}" if detail else "") + ")"
+            )
         files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         # Plus untracked (new) files.
         result2 = subprocess.run(
@@ -174,9 +186,20 @@ def _git_changed_files(root: Path) -> list[str]:
                 line = line.strip()
                 if line and line not in files:
                     files.append(line)
-        return files
-    except (subprocess.TimeoutExpired, OSError):
-        return []
+        return files, None
+    except subprocess.TimeoutExpired:
+        return [], "git did not answer within 5s while enumerating the change set"
+    except OSError as e:
+        return [], f"git could not be run to enumerate the change set: {e}"
+
+
+def _git_changed_files(root: Path) -> list[str]:
+    """Back-compat shim: the file list only, with the provenance discarded.
+
+    Callers that need to tell "no changes" from "could not ask" must use
+    :func:`_git_changed_files_with_provenance` instead.
+    """
+    return _git_changed_files_with_provenance(root)[0]
 
 
 def _extract_risk(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -284,8 +307,14 @@ def compose_agent_change_proof_bundle(
     # Real-world dogfood fallback: if the bundle has no explicit files but
     # there ARE files changed in the working tree, fall back to git. Keeps
     # the verdict honest (a PR with changes can't be "0 changed files").
+    #
+    # When the bundle declared nothing AND git could not answer either, the
+    # change set is UNKNOWN rather than empty, and every downstream artefact
+    # -- the verification contract, `missing_checks`, the verdict -- is being
+    # computed over a set nobody measured. That is a hard gate, not a pass.
+    change_set_unanalyzable: str | None = None
     if not changed_files:
-        changed_files = _git_changed_files(repo_root)
+        changed_files, change_set_unanalyzable = _git_changed_files_with_provenance(repo_root)
     risk = _extract_risk(bundle)
     executed_checks = _extract_executed_checks(bundle)
     optimizer_findings = _extract_findings(bundle, "optimizer_findings")
@@ -328,6 +357,7 @@ def compose_agent_change_proof_bundle(
         ledger=ledger,
         review_evidence=review_evidence if isinstance(review_evidence, dict) else None,
         orchestration_contract=(orchestration_contract if isinstance(orchestration_contract, dict) else None),
+        change_set_unanalyzable=change_set_unanalyzable,
     )
 
     return {
