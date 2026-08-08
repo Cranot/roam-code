@@ -47,6 +47,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
+from roam.exit_codes import GateFailureError, gate_should_fail
 from roam.git_utils import worktree_git_env
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -329,6 +330,17 @@ def ignore_drift(ctx: click.Context, fail_on_found: bool) -> None:
     # discloses it at all.
     scan_incomplete = status == "unanalyzable"
 
+    # ONE SITE DECIDES. Computed before the first channel branch so both the
+    # --json branch and the text tail read the same boolean. Previously each
+    # channel spelled its own guard: --json used
+    # `fail_on_found and (violations or scan_incomplete)` and the text tail
+    # used `fail_on_found and violations`, reached only after an early return
+    # that skipped it entirely on UNANALYZABLE. Both of this repo's wired
+    # callers (.github/workflows/secret-scan.yml and scripts/prepush_check.py)
+    # read the TEXT channel, so a repo where git could not answer printed
+    # "This is NOT a clean result" and then authorized the push with exit 0.
+    gate_failed = gate_should_fail(fail_on_found, findings=violations, scan_incomplete=scan_incomplete)
+
     facts = [verdict]
     if not scan_incomplete:
         facts.append(f"{report['tracked_files']} tracked paths scanned")
@@ -359,9 +371,7 @@ def ignore_drift(ctx: click.Context, fail_on_found: bool) -> None:
             findings=violations,
         )
         click.echo(to_json(envelope))
-        if fail_on_found and (violations or scan_incomplete):
-            from roam.exit_codes import GateFailureError
-
+        if gate_failed:
             raise GateFailureError(verdict)
         return
 
@@ -370,6 +380,10 @@ def ignore_drift(ctx: click.Context, fail_on_found: bool) -> None:
     if scan_incomplete:
         click.echo("  Nothing was measured, so nothing is proven clean.")
         click.echo("  Run this inside a git worktree with `git` on PATH and retry.")
+        # The early return used to land here and skip the gate below, which is
+        # how the text channel came to authorize an unmeasured result.
+        if gate_failed:
+            raise GateFailureError(verdict)
         return
 
     click.echo(f"  repo: {report['git_root']}")
@@ -403,7 +417,5 @@ def ignore_drift(ctx: click.Context, fail_on_found: bool) -> None:
             "these rows are a batch-only result."
         )
 
-    if fail_on_found and violations:
-        from roam.exit_codes import GateFailureError
-
+    if gate_failed:
         raise GateFailureError(verdict)

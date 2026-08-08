@@ -14,6 +14,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, index_status
 from roam.db.connection import find_project_root, open_db
+from roam.exit_codes import gate_should_fail
 from roam.output._severity import severity_breakdown, severity_rank
 from roam.output.confidence import (
     confidence_distribution,
@@ -877,6 +878,14 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     # zero-padded output byte-identical to the pre-W566 contract that
     # the downstream verdict-build expects.
     total = len(findings)
+    # ONE SITE DECIDES. This command already had the invariant right, but it
+    # held it by writing `fail_on_found and (total > 0 or scan_incomplete)`
+    # three times by hand -- once each in the sarif, json and text branches.
+    # Three copies is three chances to drift, and the sibling gate
+    # `roam ignore-drift` proved the risk is real: it wrote two copies and one
+    # of them lost the `or scan_incomplete` term. Compute the answer once and
+    # let all three channels read it.
+    gate_failed = gate_should_fail(fail_on_found, findings=total, scan_incomplete=scan_incomplete)
     files_affected = len({f["file"] for f in findings})
     by_severity = severity_breakdown(
         findings,
@@ -954,7 +963,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
 
         sarif = secrets_to_sarif(findings)
         click.echo(write_sarif(sarif))
-        if fail_on_found and (total > 0 or scan_incomplete):
+        if gate_failed:
             from roam.exit_codes import GateFailureError
 
             raise GateFailureError(verdict)
@@ -1009,7 +1018,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             findings=finding_triples,
         )
         click.echo(to_json(envelope))
-        if fail_on_found and (total > 0 or scan_incomplete):
+        if gate_failed:
             from roam.exit_codes import GateFailureError
 
             raise GateFailureError(verdict)
@@ -1091,7 +1100,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     # could not have found anything (vacuous --severity floor, or zero
     # files actually read). Exit 0 there meant "clean" for a scan that
     # never ran.
-    if fail_on_found and (total > 0 or scan_incomplete):
+    if gate_failed:
         from roam.exit_codes import GateFailureError
 
         raise GateFailureError(verdict)

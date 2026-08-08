@@ -96,6 +96,48 @@ class GateFailureError(RoamError):
 # ---------------------------------------------------------------------------
 
 
+def gate_should_fail(
+    gate_enabled: bool,
+    *,
+    findings: object,
+    scan_incomplete: bool,
+) -> bool:
+    """Decide ONCE whether a gate flag must refuse, for every output channel.
+
+    A gate answers one question: "may this change proceed?" There are three
+    possible answers -- CLEAN, VIOLATION, UNANALYZABLE -- and only CLEAN
+    authorizes. ``scan_incomplete`` is UNANALYZABLE: the check did not run, so
+    nothing is proven clean and the gate must refuse. Sharing exit code 5 with
+    a measured VIOLATION is correct; sharing exit code 0 with a measured CLEAN
+    is the defect this helper exists to prevent.
+
+    The reason this is a function and not an inline expression at each exit
+    site: the idiom ``if fail_on_found and violations:`` was written once per
+    output channel, by hand, in every gated command. `roam ignore-drift`
+    carried two copies and only the ``--json`` copy included the
+    ``or scan_incomplete`` term, so the text channel -- the channel both of
+    this repo's wired callers use -- printed "This is NOT a clean result" and
+    then exited 0. Nothing but copy-paste discipline was holding the invariant.
+    Call this once, before the first ``if json_mode:`` branch, and let every
+    channel read the single resulting boolean.
+
+    Args:
+        gate_enabled: the gate flag itself (``--fail-on-found``, ``--ci``, ...).
+            False means the command is reporting, not gating, so it never fails.
+        findings: whatever the command counts as a measured violation. Any
+            truthy value (a non-empty list, a positive count) means VIOLATION.
+        scan_incomplete: True when the measurement did not happen or is known
+            to be partial. An absent measurement is UNKNOWN, never a benign
+            CLEAN.
+
+    Returns:
+        True when the gate must exit non-zero (``EXIT_GATE_FAILURE``).
+    """
+    if not gate_enabled:
+        return False
+    return bool(findings) or bool(scan_incomplete)
+
+
 def exit_with(code: int, message: str | None = None) -> None:
     """Print an optional message to stderr and exit with the given code.
 
