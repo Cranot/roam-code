@@ -28,6 +28,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
+from roam.exit_codes import gate_should_fail
 from roam.output.formatter import json_envelope, to_json
 
 EXIT_GATE_FAILURE = 5
@@ -337,7 +338,7 @@ def _print_explain_block() -> None:
 @click.option(
     "--strict",
     is_flag=True,
-    help="Treat warnings as errors (exit 5 on any warning).",
+    help="Gate, and treat warnings as errors: exit 5 on any warning, error, or unreadable rules file.",
 )
 @click.option(
     "--gate",
@@ -379,6 +380,17 @@ def rules_validate_cmd(
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
+    # ONE gate switch, read by both exit sites in this function.
+    #
+    # `--strict` used to be inert on its own: the gate site below read
+    # `if gate and fail`, so the flag whose help promised "exit 5 on any
+    # warning" could only ever change the answer of a run that ALSO passed
+    # `--gate`. Worse, the two
+    # flags disagreed about the same unmeasurable state -- with no rules file
+    # on disk, `--gate` exited 5 and `--strict` exited 0 while both printed
+    # `VERDICT: load failed`. A flag that documents a non-zero exit is a gate.
+    gate_enabled = bool(gate or strict)
+
     path = Path(rules_path)
     parsed, load_error = _load_yaml(path)
 
@@ -389,7 +401,12 @@ def rules_validate_cmd(
             "rules_loaded": 0,
             "errors_count": 1,
             "warnings_count": 0,
+            # Nothing was linted, so nothing is proven valid. Published so a
+            # machine consumer sees the same UNANALYZABLE the exit code means.
+            "scan_incomplete": True,
         }
+        # Decided once, ahead of the channel split.
+        gate_failed = gate_should_fail(gate_enabled, findings=1, scan_incomplete=True)
         if json_mode:
             click.echo(
                 to_json(
@@ -404,7 +421,8 @@ def rules_validate_cmd(
         else:
             click.echo(f"VERDICT: {summary['verdict']}")
             click.echo(f"  path: {path}")
-        if gate:
+            click.echo("  Nothing was linted, so nothing is proven valid.")
+        if gate_failed:
             sys.exit(EXIT_GATE_FAILURE)
         return
 
@@ -537,7 +555,8 @@ def rules_validate_cmd(
         _print_explain_block()
 
     fail = error_count > 0 or (strict and warning_count > 0)
-    if gate and fail:
+    gate_failed = gate_should_fail(gate_enabled, findings=fail, scan_incomplete=False)
+    if gate_failed:
         if not json_mode:
             click.echo(err=True)
             click.echo(
