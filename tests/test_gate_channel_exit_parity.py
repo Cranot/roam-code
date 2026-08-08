@@ -105,12 +105,21 @@ WHAT THIS FILE DOES **NOT** PROVE
   ``_NO_SUMMARY_PUBLISHED`` rather than left as a floating skip count.
 * Law 2 can only hold a command to a claim it actually publishes. A command
   that is blind to its own degradation -- that never sets ``scan_incomplete``
-  no matter what it failed to read -- passes vacuously. Measured 2026-08-08:
-  ``pr-analyze --gate`` reports ``state: "no_changes"`` with no
-  ``scan_incomplete``, and it is deliberately NOT changed here, because "there
-  is no diff to gate" is a real answer rather than an absent measurement.
-  Deciding which of the remaining gated commands are blind rather than clean
-  is a separate audit.
+  no matter what it failed to read -- passes vacuously. Deciding which of the
+  remaining gated commands are blind rather than clean is a separate audit.
+
+  CORRECTION (W1468). This paragraph used to exempt ``pr-analyze --gate`` on
+  the grounds that its ``state: "no_changes"`` was "a real answer rather than
+  an absent measurement". That exemption rested on a property the command did
+  not have: measured in a repo with a modified tracked file and a corrupt
+  ``GIT_INDEX_FILE``, ``pr-analyze --gate`` published exactly the same
+  ``state: "no_changes"`` / ``reasons: ["no changes to analyze"]`` /
+  ``verdict: "NOCHANGES"`` and exited 0 -- so the state did not distinguish
+  the real answer from the failure. ``cmd_diff`` now emits
+  ``state: "diff_unavailable"`` with ``git_error`` when git could not answer,
+  which routes pr-analyze to ``diff_failed`` and makes ``--gate`` refuse. A
+  genuinely empty diff still reports NOCHANGES and still exits 0, which is
+  what the original paragraph was reaching for.
 """
 
 from __future__ import annotations

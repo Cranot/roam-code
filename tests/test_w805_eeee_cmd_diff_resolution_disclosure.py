@@ -255,27 +255,11 @@ class TestBogusCommitRangeStateDisclosure:
     NO resolution field. An agent acting on the verdict concludes the
     diff is safe."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-EEEE REAL BUG: src/roam/commands/cmd_diff.py:475-529 "
-            "(the ``if not changed:`` branch downstream of "
-            '``get_changed_files``) emits ``verdict: "no changes"`` + '
-            '``state: "no_changes"`` + ``partial_success: false`` on a '
-            "bogus commit-range -- byte-identical to the clean-tree "
-            "envelope. The root cause is "
-            "``src/roam/commands/changed_files.py:142,145`` swallowing "
-            "``returncode != 0`` / FileNotFoundError / TimeoutExpired into "
-            "an empty list. Pattern-1-V-D silent-success-on-degraded-"
-            "resolution: a typo'd ref produces the strongest possible "
-            "safety signal. STRICTLY MORE SEVERE than W805-AAAA which at "
-            'least discloses ``git_error: "git_error"`` + '
-            "``partial_success: true``. Pinned strict; graduates when the "
-            "bogus-ref path emits ``state`` with a non-``no_changes`` "
-            "closed-enum value (e.g. ``git_error`` / ``unknown_ref`` / "
-            "``unresolved_diff_source``)."
-        ),
-    )
+    # GRADUATED by W1468. cmd_diff now consumes ``get_changed_files_status``
+    # and emits ``state: "diff_unavailable"`` + ``summary.git_error`` +
+    # ``partial_success: true`` when git could not answer, which is the exit
+    # condition each of these pins named. The markers are removed rather than
+    # the tests: the assertion IS the property.
     def test_bogus_commit_range_state_disclosure(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus commit-range path must emit a non-``no_changes`` ``state``."""
         monkeypatch.chdir(clean_indexed_project)
@@ -307,17 +291,11 @@ class TestBogusBaseRefResolutionDisclosure:
     surface). On cmd_diff the analogous user error is a bogus positional
     COMMIT_RANGE that resolves through ``git diff <ref>`` to nothing."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-EEEE REAL BUG (mirror): a bogus positional ref "
-            "(``roam diff totally_fake_ref``) emits the same "
-            '``state: "no_changes"`` envelope as a clean tree. '
-            "Pattern-1-V-D resolution-disclosure gap on the second "
-            "user-error axis. Pinned strict; graduates when the "
-            "envelope distinguishes bogus-ref from clean-tree."
-        ),
-    )
+    # GRADUATED by W1468. cmd_diff now consumes ``get_changed_files_status``
+    # and emits ``state: "diff_unavailable"`` + ``summary.git_error`` +
+    # ``partial_success: true`` when git could not answer, which is the exit
+    # condition each of these pins named. The markers are removed rather than
+    # the tests: the assertion IS the property.
     def test_bogus_single_ref_resolution_disclosure(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus single ref must emit ``summary.resolution`` OR a non-``no_changes`` state."""
         monkeypatch.chdir(clean_indexed_project)
@@ -355,25 +333,11 @@ class TestGitErrorEnvelopeStateField:
     ``state``/``resolution`` ABOVE that field. The W805-EEEE gap is
     missing the field ENTIRELY."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-EEEE REAL BUG: cmd_diff's bogus-ref path emits no "
-            "``git_error`` field at all -- a STRICTLY WORSE shape than "
-            "cmd_delete_check's W805-AAAA gap. The shared "
-            "``get_changed_files`` helper at "
-            "``src/roam/commands/changed_files.py:131-146`` returns "
-            "``[]`` on three distinct failure classes (returncode != 0, "
-            "FileNotFoundError, TimeoutExpired) -- cmd_diff has no way "
-            "to distinguish them from a real clean tree. The Pattern-2 "
-            "silent-fallback contract requires a loud sentinel on the "
-            "degraded path. Pinned strict; graduates when "
-            "``get_changed_files`` returns a ``(paths, error_kind)`` "
-            "tuple (mirroring ``_git_diff`` in cmd_delete_check) and "
-            "cmd_diff surfaces ``summary.git_error`` on the failure "
-            "branch."
-        ),
-    )
+    # GRADUATED by W1468. cmd_diff now consumes ``get_changed_files_status``
+    # and emits ``state: "diff_unavailable"`` + ``summary.git_error`` +
+    # ``partial_success: true`` when git could not answer, which is the exit
+    # condition each of these pins named. The markers are removed rather than
+    # the tests: the assertion IS the property.
     def test_bogus_ref_envelope_has_git_error_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref path must emit ``summary.git_error`` distinct from clean tree."""
         monkeypatch.chdir(clean_indexed_project)
@@ -404,18 +368,11 @@ class TestEmptyDiffDistinctFromGitError:
     one machine-state field (state, resolution, git_error, or
     partial_success). Pinned strict because the current shape fails it."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-EEEE REAL BUG (invariant): clean-tree envelope and "
-            "bogus-ref envelope are byte-identical on every "
-            "machine-state field (state, resolution, git_error, "
-            "partial_success). The only differing field is ``label`` "
-            "(free-form string). Pattern-2 silent-fallback contract "
-            "violated. Pinned strict; graduates when the two envelopes "
-            "differ on at least one closed-enum machine-state field."
-        ),
-    )
+    # GRADUATED by W1468. cmd_diff now consumes ``get_changed_files_status``
+    # and emits ``state: "diff_unavailable"`` + ``summary.git_error`` +
+    # ``partial_success: true`` when git could not answer, which is the exit
+    # condition each of these pins named. The markers are removed rather than
+    # the tests: the assertion IS the property.
     def test_clean_tree_distinct_from_bogus_ref(self, cli_runner, clean_indexed_project, monkeypatch):
         """Clean-tree envelope must differ from bogus-ref envelope on a machine-state field."""
         monkeypatch.chdir(clean_indexed_project)

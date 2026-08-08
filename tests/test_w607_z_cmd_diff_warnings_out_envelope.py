@@ -215,7 +215,7 @@ def test_diff_get_changed_files_failure_marker_format(cli_runner, diff_project, 
     def _raise(*args, **kwargs):
         raise RuntimeError("synthetic-get-changed-files-from-W607-Z")
 
-    monkeypatch.setattr(cmd_diff, "get_changed_files", _raise)
+    monkeypatch.setattr(cmd_diff, "get_changed_files_status", _raise)
 
     result = _invoke_diff(cli_runner, diff_project)
     assert result.exit_code == 0, result.output
