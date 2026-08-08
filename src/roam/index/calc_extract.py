@@ -317,20 +317,51 @@ def extract_calcs(language: str, source: bytes, extra_round_funcs: frozenset[str
     return out
 
 
-def extract_calcs_from_file(path: str | Path, extra_round_funcs: frozenset[str] = frozenset()) -> list[Calc]:
-    """Detect language, read, and extract. ``[]`` on any I/O or grammar miss."""
+# W1465 -- the outcomes a per-file extraction can have.
+#
+# ``extract_calcs_from_file`` documented itself as returning "``[]`` on any
+# I/O or grammar miss", which meant its only caller -- ``calc-inventory``,
+# whose ``files_scanned`` counter is ``len(_discover_files(root))`` -- could
+# not tell a file it decoded and found nothing in from a file it never
+# opened. With read access denied on a corpus of rounded money formulas,
+# ``calc-inventory --fail-on-divergence`` printed "no calculations found"
+# and exited 0 while reporting ``files_scanned: 2``.
+CALC_READ = "read"
+CALC_UNREADABLE = "unreadable"
+CALC_NO_LANGUAGE = "no_language"
+
+
+def extract_calcs_from_file_status(
+    path: str | Path, extra_round_funcs: frozenset[str] = frozenset()
+) -> tuple[list[Calc], str]:
+    """``(calcs, status)`` -- see W1465 above for why the status exists.
+
+    *status* is one of :data:`CALC_READ`, :data:`CALC_UNREADABLE`,
+    :data:`CALC_NO_LANGUAGE`. Only ``CALC_READ`` makes an empty list a
+    measurement; anything that counts files must branch on this.
+    """
     from roam.languages.registry import get_language_for_file
 
     p = Path(path)
     language = get_language_for_file(str(p)) or ""
     if not language:
-        return []
+        return [], CALC_NO_LANGUAGE
     try:
         source = p.read_bytes()
     except OSError:
-        return []
+        return [], CALC_UNREADABLE
     calcs = extract_calcs(language, source, extra_round_funcs)
-    return [Calc(**{**c.__dict__, "file": str(p)}) for c in calcs]
+    return [Calc(**{**c.__dict__, "file": str(p)}) for c in calcs], CALC_READ
+
+
+def extract_calcs_from_file(path: str | Path, extra_round_funcs: frozenset[str] = frozenset()) -> list[Calc]:
+    """Detect language, read, and extract. ``[]`` on any I/O or grammar miss.
+
+    Lossy projection of :func:`extract_calcs_from_file_status`: an empty list
+    here does NOT mean the file held no calculations.
+    """
+    calcs, _status = extract_calcs_from_file_status(path, extra_round_funcs)
+    return calcs
 
 
 # Language-aware rounding semantics for the SAME bare function name — the subtle
