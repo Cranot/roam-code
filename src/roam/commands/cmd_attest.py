@@ -441,21 +441,42 @@ def _collect_budget_evidence(conn, root):
     }
 
 
+#: How many individual fitness violations the attestation carries. The cap is
+#: kept -- a signed artifact should not grow without bound -- but W1467 makes
+#: it disclosed: ``violations_total`` travels beside the truncated list and is
+#: what the verdict and the rendered section count.
+_FITNESS_EVIDENCE_CAP = 50
+
+
 def _collect_fitness_evidence(conn, file_map, root):
     """Evaluate fitness rules scoped to changed files.
 
-    Returns {rules, violations}.
+    Returns ``{rules, violations, violations_total, violations_truncated}``.
+
+    W1467: the list was capped at 50 and ``_compute_verdict`` then derived the
+    reported number with ``len(fitness_data["violations"])`` -- i.e. over the
+    TRUNCATED list. Measured on roam-code's own index with every indexed file
+    in scope, the checker returned 909 violations and the signed attestation
+    said "50 fitness violations in changed files". ``_collect_test_evidence``
+    in this same module already gets this right: it caps ``tests[:50]`` and
+    publishes ``selected: len(test_results)``. A signed artifact is the last
+    place a count may be quietly smaller than the measurement it names.
     """
     try:
         from roam.commands.cmd_diff import _collect_fitness_violations
 
         rule_results, violations = _collect_fitness_violations(conn, file_map, root)
-        return {"rules": rule_results, "violations": violations[:50]}
+        return {
+            "rules": rule_results,
+            "violations": violations[:_FITNESS_EVIDENCE_CAP],
+            "violations_total": len(violations),
+            "violations_truncated": len(violations) > _FITNESS_EVIDENCE_CAP,
+        }
     except Exception as _exc:  # noqa: BLE001 — defensive
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_attest:fitness_violations", _exc)
-        return {"rules": [], "violations": []}
+        return {"rules": [], "violations": [], "violations_total": 0, "violations_truncated": False}
 
 
 def _collect_effects_evidence(conn, file_map):
@@ -697,8 +718,12 @@ def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
         safe = False
         conditions.append(f"{budget_failed} budget(s) exceeded")
 
-    # Fitness violations
-    fitness_violations = len(fitness_data.get("violations", []))
+    # Fitness violations. W1467: count the MEASUREMENT, not the truncated
+    # evidence list. ``violations_total`` falls back to the list length only
+    # for evidence built before this field existed.
+    fitness_violations = fitness_data.get("violations_total")
+    if fitness_violations is None:
+        fitness_violations = len(fitness_data.get("violations", []))
     if fitness_violations > 0:
         warnings.append(f"{fitness_violations} fitness violations in changed files")
 
@@ -771,6 +796,10 @@ def _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
         "budget_rules": budget.get("rules", []),
         "has_budget": budget.get("rules_checked", 0) > 0,
         "fitness_violations": model["fitness"].get("violations", []),
+        # W1467: the rendered header must name the measurement, not the slice.
+        "fitness_violations_total": model["fitness"].get(
+            "violations_total", len(model["fitness"].get("violations", []))
+        ),
         "tests": tests,
         "has_tests": tests.get("selected", 0) > 0,
         "test_command": tests.get("command", ""),
@@ -1640,9 +1669,14 @@ def _append_attestation_fitness_section(lines, plan, is_md):
     if not is_md:
         fitness_v = plan["fitness_violations"]
         if fitness_v:
-            lines.append(f"FITNESS VIOLATIONS ({len(fitness_v)}):")
+            total = plan.get("fitness_violations_total", len(fitness_v))
+            lines.append(f"FITNESS VIOLATIONS ({total}):")
             for v in fitness_v[:10]:
                 lines.append(f"  {v.get('rule', '?')}: {v.get('message', '')}")
+            if total > len(fitness_v):
+                # Say that the artifact carries fewer than it counted, rather
+                # than letting a reader infer the list IS the total.
+                lines.append(f"  (evidence carries the first {len(fitness_v)} of {total})")
             lines.append("")
 
 
