@@ -692,6 +692,15 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
 
     if not rules:
         verdict = f"No rules in {rules_path}"
+        # ONE SITE DECIDES, for both channels of this early exit. This is the
+        # sibling of the empty-corpus branch below and had the same hole:
+        # zero rules means zero findings by construction, so `--ci` returned
+        # 0 and called it clean. `--rules-pack` is Click-validated, but
+        # `--rule` is a free substring filter, so a one-character typo
+        # (`--rule python-sqlii`) silently turned the security gate into a
+        # no-op that reported success. Zero findings from zero rules is not
+        # evidence of zero taint; it is evidence that nothing was analysed.
+        _no_rules_gate_failed = gate_should_fail(ci_mode, findings=0, scan_incomplete=True)
         if json_mode:
             # W489-A: surface the qualified_only lint even on the
             # no-rules branch — N=0 violations against M=0 rules is
@@ -699,6 +708,12 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             # / broken pack).
             _w489_a_summary = {
                 "verdict": verdict,
+                "state": "no_rules",
+                # The narrow "nothing was analysed" signal, published so a
+                # machine consumer sees the same UNANALYZABLE the exit code
+                # means. Distinct from partial_success, which a fully
+                # populated 638-finding run also sets.
+                "scan_incomplete": True,
                 "rules": 0,
                 "findings": 0,
                 "rules_lint": {
@@ -731,8 +746,13 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                     )
                 )
             )
+            if _no_rules_gate_failed:
+                ctx.exit(5)
             return
         click.echo(f"VERDICT: {verdict}")
+        click.echo("  Nothing was analysed, so nothing is proven clean.")
+        if _no_rules_gate_failed:
+            ctx.exit(5)
         return
 
     ensure_index()
