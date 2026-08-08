@@ -18,7 +18,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.catalog._shared import is_test_path as _is_test_path
-from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
+from roam.commands.changed_files import get_changed_files_status, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output._severity import severity_rank
@@ -853,7 +853,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
     # ``adversarial_<phase>_failed:<exc_class>:<detail>``. Substrates
     # wrapped:
     #
-    #   * resolve_changed_files     -- get_changed_files +
+    #   * resolve_changed_files     -- get_changed_files_status +
     #                                  resolve_changed_to_db
     #   * lookup_changed_symbols    -- batched_in changed-symbol-id lookup
     #   * compose_cycles_check      -- _check_new_cycles (cycles substrate)
@@ -901,16 +901,63 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # ------------------------------------------------------------------
         # Resolve changed files (W607-EK: resolve_changed_files substrate)
         # ------------------------------------------------------------------
-        changed = _run_check_ek(
+        # W1462: gated commands read the ``(paths, error_kind)`` form. A
+        # ``git diff`` that failed must not be reported as "No changes
+        # detected" with exit 0 under --fail-on-critical.
+        _changed_status = _run_check_ek(
             "resolve_changed_files",
-            get_changed_files,
+            get_changed_files_status,
             root,
             staged=staged,
             commit_range=commit_range,
-            default=[],
+            default=([], None),
         )
+        if _changed_status is None:
+            _changed_status = ([], None)
+        changed, git_error = _changed_status
         if changed is None:
             changed = []
+
+        if git_error is not None:
+            # CP45/CP46 fail-loud, ported from delete-check: a gate that
+            # could not read its diff MUST NOT authorise. The empty change
+            # set here is an absent measurement, not a clean tree.
+            _w607ek_warnings_out.append(f"adversarial_changed_files_failed:{git_error}:cannot read git diff")
+            verdict = f"diff unavailable: {git_error} — cannot gate"
+            if json_mode:
+                _git_err_summary: dict = {
+                    "verdict": verdict,
+                    "challenges": 0,
+                    "critical": 0,
+                    "high": 0,
+                    "warning": 0,
+                    "info": 0,
+                    "changed_files": 0,
+                    "partial_success": True,
+                    "git_error": git_error,
+                    "warnings_out": list(_w607ek_warnings_out),
+                }
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "adversarial",
+                            summary=_git_err_summary,
+                            budget=token_budget,
+                            challenges=[],
+                            warnings_out=list(_w607ek_warnings_out),
+                        )
+                    )
+                )
+            elif fmt == "markdown":
+                click.echo(_format_markdown([], verdict, 0))
+            else:
+                click.echo(f"VERDICT: {verdict}")
+                click.echo(f"Could not read the git diff ({git_error}); no change set was measured.")
+            if fail_on_critical:
+                from roam.exit_codes import EXIT_GATE_FAILURE
+
+                ctx.exit(EXIT_GATE_FAILURE)
+            return
 
         if not changed:
             verdict = "No changes detected"

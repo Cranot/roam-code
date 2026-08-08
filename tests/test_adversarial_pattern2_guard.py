@@ -46,7 +46,7 @@ def test_adversarial_pattern2_partial_when_check_errors(monkeypatch, tmp_path):
     # Force changed_files detection to return a non-empty list so the
     # orchestrator drops into the check-running branch instead of the
     # "no changes" early return.
-    monkeypatch.setattr(mod, "get_changed_files", lambda *_a, **_kw: ["src/roam/cli.py"])
+    monkeypatch.setattr(mod, "get_changed_files_status", lambda *_a, **_kw: (["src/roam/cli.py"], None))
 
     # Map the changed path to a synthetic file id so ``file_map`` is
     # non-empty. Returning {} would route into the
@@ -105,7 +105,7 @@ def test_adversarial_clean_path_unchanged(monkeypatch, tmp_path):
     """
     import roam.commands.cmd_adversarial as mod
 
-    monkeypatch.setattr(mod, "get_changed_files", lambda *_a, **_kw: ["src/roam/cli.py"])
+    monkeypatch.setattr(mod, "get_changed_files_status", lambda *_a, **_kw: (["src/roam/cli.py"], None))
     monkeypatch.setattr(mod, "resolve_changed_to_db", lambda _conn, _changed: {"src/roam/cli.py": 1})
     monkeypatch.setattr(mod, "ensure_index", lambda: None)
     # W1259 added a symbol_lookup substrate that runs `batched_in` against the

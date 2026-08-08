@@ -162,10 +162,12 @@ class TestCmdAdversarialConsumesSharedHelper:
             "roam.commands.changed_files; if this changed, re-audit the "
             "shared-helper family membership."
         )
-        assert "get_changed_files," in src and "_run_check_ek(" in src, (
-            "W805-XXXX W978-precondition: cmd_adversarial must call "
-            "get_changed_files through the W607-EK wrapper; if this changed, "
-            "re-audit the shared-helper family membership."
+        assert "get_changed_files_status," in src and "_run_check_ek(" in src, (
+            "W805-XXXX W978-precondition: cmd_adversarial must call the shared "
+            "changed-file helper through the W607-EK wrapper; if this changed, "
+            "re-audit the shared-helper family membership. W1462 moved the call "
+            "from the bare ``get_changed_files`` to the error-carrying "
+            "``get_changed_files_status``; the family membership is unchanged."
         )
 
 
@@ -212,25 +214,12 @@ class TestBogusRefDistinctFromEmptyDiff:
     both emit the IDENTICAL ``"No changes detected"`` verdict --
     Pattern-1 Variant D silent-fallback on a degraded resolution."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-XXXX REAL BUG: cmd_adversarial's W607-EK "
-            "resolve_changed_files wrapper still consumes get_changed_files, "
-            "which inherits silent-SAFE from the shared helper at "
-            "src/roam/commands/changed_files.py. When "
-            "``--range totally-bogus..HEAD`` is passed, the helper "
-            "swallows the returncode != 0 and returns []; cmd_adversarial's "
-            "``if not changed:`` branch emits the same "
-            "``'No changes detected'`` verdict as a legitimately-clean "
-            "tree. Pattern-1 Variant D: degraded-resolution paths must "
-            "be distinguishable from full-resolution-with-no-changes "
-            "paths. SEVENTH strict shared-helper consumer; family is now "
-            "7-STRONG STRUCTURAL on the get_changed_files axis. Pinned "
-            "strict; graduates when the bogus-ref verdict differs from "
-            "the clean-tree verdict."
-        ),
-    )
+    # GRADUATED by W1462. The pin's stated exit condition was "graduates when
+    # the bogus-ref verdict differs from the clean-tree verdict".
+    # ``get_changed_files_status`` now returns ``(paths, error_kind)`` and
+    # cmd_adversarial emits ``diff unavailable: git_error — cannot gate`` on
+    # the failure branch, so the two verdicts differ. The xfail marker is
+    # removed rather than the test: the assertion is the property.
     def test_bogus_ref_verdict_differs_from_clean_tree(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref verdict must differ from clean-tree verdict."""
         monkeypatch.chdir(clean_indexed_project)
@@ -269,22 +258,10 @@ class TestStateFieldOnFailure:
     ``state`` field disclosing the degraded-resolution branch (helper
     returncode != 0 vs legitimately-empty diff)."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-XXXX REAL BUG (state axis): cmd_adversarial's "
-            "``if not changed:`` branch (lines 726-752) emits a JSON "
-            "envelope WITHOUT a ``summary.state`` field. The branch "
-            "merges three distinct conditions: (1) legitimately-empty "
-            "diff, (2) helper returncode != 0 (bogus ref / git not "
-            "found), (3) FileNotFoundError / TimeoutExpired in the "
-            "helper subprocess call. Pattern-1-V-D requires a closed-"
-            "enum disclosure (state OR git_error OR resolution) on the "
-            "degraded-resolution branch. Pinned strict; graduates when "
-            "cmd_adversarial populates ``summary.state`` distinct between "
-            "the no-changes and helper-failure classes."
-        ),
-    )
+    # GRADUATED by W1462. The three conditions the branch used to merge are now
+    # separated at the helper: ``git_error`` / ``git_timeout`` /
+    # ``git_not_available`` are published as ``summary.git_error``, and only a
+    # diff that was READ and was empty still reaches the no-changes branch.
     def test_bogus_ref_emits_state_or_git_error(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref envelope must emit ``summary.state`` or ``summary.git_error``."""
         monkeypatch.chdir(clean_indexed_project)
@@ -327,25 +304,18 @@ class TestSilentSafeInheritedFromSharedHelper:
     family to 7-STRONG STRUCTURAL. Pins the inheritance so a fix to the
     shared helper unblocks ALL SEVEN consumers atomically."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-XXXX FAMILY-CONFIRMATION: cmd_adversarial's bogus-ref "
-            "``if not changed:`` branch emits a JSON envelope without any "
-            "``git_error`` field -- the same gap W805-EEEE pins on cmd_diff, "
-            "W805-JJJJ pins on cmd_pr_diff, W805-OOOO pins on cmd_attest, "
-            "W805-RRRR pins on cmd_test_gaps, W805-SSSS pins on "
-            "cmd_affected_tests, and W805-VVVV pins on cmd_affected. The "
-            "shared helper ``src/roam/commands/changed_files.py:131-146`` "
-            "returns an empty list on three distinct failure classes "
-            "(returncode != 0, FileNotFoundError, TimeoutExpired). All "
-            "SEVEN consumers inherit silent-SAFE -- the family is now "
-            "7-STRONG STRUCTURAL. Pinned strict; graduates when "
-            "``get_changed_files`` returns a ``(paths, error_kind)`` tuple "
-            "and cmd_adversarial surfaces ``summary.git_error`` on the "
-            "failure branch."
-        ),
-    )
+    # GRADUATED by W1462, on the pin's own stated exit condition:
+    # ``get_changed_files_status`` returns ``(paths, error_kind)`` and
+    # cmd_adversarial surfaces ``summary.git_error`` on the failure branch.
+    #
+    # The graduation is PARTIAL for the family. W1462 changed the helper and
+    # the two GATED consumers (adversarial --fail-on-critical, pr-diff
+    # --fail-on-degradation), which are the ones that can authorize a merge.
+    # cmd_diff, cmd_attest, cmd_test_gaps, cmd_affected_tests and cmd_affected
+    # still call the bare ``get_changed_files`` and their W805 pins remain
+    # xfailed on purpose — a report-only command publishing an ambiguous
+    # empty change set is a disclosure defect, not a false authorization, and
+    # is a separate decision.
     def test_bogus_ref_envelope_has_git_error_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref envelope must emit ``summary.git_error``."""
         monkeypatch.chdir(clean_indexed_project)

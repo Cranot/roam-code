@@ -182,7 +182,7 @@ def test_gate_fails_closed_on_corrupt_baseline(tmp_path, monkeypatch):
 
 def test_range_scopes_facts_to_changed_files(tmp_path, monkeypatch):
     _install_compose(monkeypatch, tmp_path, _injected_compose(matched_file="src/app.py"))
-    monkeypatch.setattr(triage, "get_changed_files", lambda root, commit_range: ["src/other.py"])
+    monkeypatch.setattr(triage, "get_changed_files_status", lambda root, commit_range: (["src/other.py"], None))
 
     result = CliRunner().invoke(
         cli,

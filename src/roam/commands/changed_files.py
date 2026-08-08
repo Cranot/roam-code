@@ -380,27 +380,47 @@ def is_low_risk_file(path: str | None) -> bool:
 # Changed file resolution
 # ---------------------------------------------------------------------------
 
+# W1462 fail-loud sentinels for the SHARED changed-file helper.
+#
+# ``get_changed_files`` returns ``list[str]``, a type with no channel for
+# "I could not ask git". Every failure mode of ``git diff --name-only``
+# — binary missing, subprocess timeout, non-zero return (corrupt index,
+# unreadable object store, not-a-repository) — collapsed into the same
+# ``[]`` that means "the tree is clean", and all 19 caller modules read
+# that empty list as the literal fact. Under a corrupt ``GIT_INDEX_FILE``
+# a genuinely dirty tree produced ``adversarial --fail-on-critical`` exit
+# 0 with "VERDICT: No changes detected".
+#
+# The correct shape already existed in this repo on a private helper —
+# ``cmd_delete_check._git_diff`` returns ``(diff_text, error_kind)`` and
+# the command refuses under ``--ci`` (CP45/CP46). These constants are the
+# same vocabulary, hoisted to the shared helper so the gated callers can
+# publish the error kind instead of a false clean. The sentinel values are
+# byte-identical to cmd_delete_check's so an envelope consumer sees one
+# vocabulary across commands.
+GIT_NOT_AVAILABLE = "git_not_available"
+GIT_TIMEOUT = "git_timeout"
+GIT_ERROR = "git_error"
 
-def get_changed_files(
+
+def get_changed_files_status(
     root: Path,
     staged: bool = False,
     commit_range: str | None = None,
     pr: bool = False,
     base_ref: str = "main",
     untracked: bool = False,
-) -> list[str]:
-    """Get list of changed files from git diff.
+) -> tuple[list[str], str | None]:
+    """``(paths, error_kind)`` form of :func:`get_changed_files`.
 
-    Supports four mutually exclusive sources:
-    - *commit_range*: arbitrary range (e.g. ``HEAD~3..HEAD``)
-    - *staged*: files in the staging area
-    - *pr*: files changed in ``base_ref..HEAD``
-    - (default): unstaged working-tree changes
+    *error_kind* is ``None`` when git answered, otherwise one of
+    :data:`GIT_NOT_AVAILABLE`, :data:`GIT_TIMEOUT`, :data:`GIT_ERROR`.
+    When it is not ``None`` the returned path list is empty *because the
+    question could not be asked*, which is not the same fact as "no files
+    changed" and must not be gated on as though it were.
 
-    When *untracked* is True, also includes new files that are not yet
-    tracked by git (``git ls-files --others --exclude-standard``).
-
-    Returns normalised forward-slash paths relative to the repo root.
+    Callers behind a CI gate flag MUST branch on *error_kind* and refuse;
+    callers that only report may keep using :func:`get_changed_files`.
     """
     cmd = ["git", "diff", "--name-only"]
 
@@ -426,7 +446,15 @@ def get_changed_files(
             env=git_env,
         )
         if result.returncode != 0:
-            return []
+            # Previously a bare ``return []`` with no log_swallowed call —
+            # the one failure mode that was discarded without any record.
+            from roam.observability import log_swallowed
+
+            log_swallowed(
+                "changed_files:get_changed_files:git_diff_returncode",
+                RuntimeError(f"git diff exited {result.returncode}: {result.stderr.strip()[:200]}"),
+            )
+            return [], GIT_ERROR
         paths = [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
         # Git missing / diff timed out -> empty changeset. A TimeoutExpired
@@ -434,7 +462,7 @@ def get_changed_files(
         from roam.observability import log_swallowed
 
         log_swallowed("changed_files:get_changed_files:git_diff", _exc)
-        return []
+        return [], (GIT_TIMEOUT if isinstance(_exc, subprocess.TimeoutExpired) else GIT_NOT_AVAILABLE)
 
     if untracked:
         try:
@@ -461,6 +489,44 @@ def get_changed_files(
 
             log_swallowed("changed_files:get_changed_files:untracked_ls_files", _exc)
 
+    return paths, None
+
+
+def get_changed_files(
+    root: Path,
+    staged: bool = False,
+    commit_range: str | None = None,
+    pr: bool = False,
+    base_ref: str = "main",
+    untracked: bool = False,
+) -> list[str]:
+    """Get list of changed files from git diff.
+
+    Supports four mutually exclusive sources:
+    - *commit_range*: arbitrary range (e.g. ``HEAD~3..HEAD``)
+    - *staged*: files in the staging area
+    - *pr*: files changed in ``base_ref..HEAD``
+    - (default): unstaged working-tree changes
+
+    When *untracked* is True, also includes new files that are not yet
+    tracked by git (``git ls-files --others --exclude-standard``).
+
+    Returns normalised forward-slash paths relative to the repo root.
+
+    This is the lossy projection of :func:`get_changed_files_status`: an
+    empty list here means EITHER "no files changed" OR "git could not be
+    asked". Do not gate on it. Any caller with a ``--fail-on-*`` / ``--ci``
+    / ``--gate`` flag must call :func:`get_changed_files_status` and refuse
+    when *error_kind* is not ``None``.
+    """
+    paths, _error_kind = get_changed_files_status(
+        root,
+        staged=staged,
+        commit_range=commit_range,
+        pr=pr,
+        base_ref=base_ref,
+        untracked=untracked,
+    )
     return paths
 
 

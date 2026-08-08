@@ -27,7 +27,7 @@ import click
 
 from roam.atomic_io import atomic_write_json
 from roam.capability import roam_capability
-from roam.commands.changed_files import get_changed_files
+from roam.commands.changed_files import get_changed_files_status
 from roam.commands.cmd_service_report import _GATHER, _is_safe_commit_range
 from roam.commands.cmd_vulns import _vuln_finding_id
 from roam.commands.resolve import ensure_index
@@ -306,9 +306,17 @@ def reachability_triage_cmd(
 
     ensure_index()
     root = find_project_root()
-    changed_files = (
-        {_normalise_file(path) for path in get_changed_files(root, commit_range=commit_range)} if commit_range else None
-    )
+    # W1462: the file-scope filter is built from ``git diff``. When git could
+    # not be asked the helper returns an empty list, which as a filter drops
+    # EVERY flow and turns the gate into a guaranteed pass. That is an absent
+    # measurement, not "the range touched nothing" — disclose it and, when the
+    # gate was requested, refuse.
+    changed_files: set[str] | None = None
+    changed_files_error: str | None = None
+    if commit_range:
+        _changed, changed_files_error = get_changed_files_status(root, commit_range=commit_range)
+        if changed_files_error is None:
+            changed_files = {_normalise_file(path) for path in _changed}
 
     # Do not duplicate or partially reconstruct the six-command compose.
     # Invariant (single reachability source): reachability-triage is a PASS-THROUGH
@@ -342,6 +350,10 @@ def reachability_triage_cmd(
     # still fails open (legitimate first run / bootstrap), but "unreadable"
     # (the tamper/corruption case) fails CLOSED so it cannot pass unnoticed.
     baseline_unreadable = gate_on_new_reachable and not write_baseline and baseline_state == "unreadable"
+    # W1462: a --range whose diff could not be read means the file scope the
+    # caller asked for was never applied. The flows below are therefore
+    # UNSCOPED, and a gate over them cannot certify the range.
+    scope_unavailable = changed_files_error is not None
     new_reachable_ids = sorted(reachable_ids - baseline_ids) if gate_evaluated else []
     gate = {
         "requested": gate_on_new_reachable,
@@ -364,6 +376,9 @@ def reachability_triage_cmd(
         if not env.get(key)
     ]
 
+    if scope_unavailable:
+        observation = f"{observation}; file scope unavailable: {changed_files_error}"
+
     if json_mode:
         envelope = json_envelope(
             "reachability-triage",
@@ -373,9 +388,10 @@ def reachability_triage_cmd(
                 "not_reachable_paths": not_reachable_count,
                 "commit_range": commit_range,
                 "changed_files": len(changed_files) if changed_files is not None else None,
+                "changed_files_error": changed_files_error,
                 "new_reachable_paths": len(new_reachable_ids),
                 "gate_evaluated": gate_evaluated,
-                "partial_success": bool(missing_primitives),
+                "partial_success": bool(missing_primitives) or scope_unavailable,
             },
             agent_contract={"facts": facts, "risks": list(_HONESTY_LINES), "next_commands": []},
             wrapper_version=REACHABILITY_TRIAGE_WRAPPER_VERSION,
@@ -400,7 +416,9 @@ def reachability_triage_cmd(
             )
         )
 
-    if (gate_evaluated and new_reachable_ids) or baseline_unreadable:
-        # Fail the gate on EITHER a new reachable flow (the normal block) OR a
-        # present-but-corrupt baseline (the tamper case that used to pass open).
+    if (gate_evaluated and new_reachable_ids) or baseline_unreadable or (gate_on_new_reachable and scope_unavailable):
+        # Fail the gate on a new reachable flow (the normal block), a
+        # present-but-corrupt baseline (the tamper case that used to pass
+        # open), or a --range whose diff could not be read (W1462 — the
+        # requested scope was never applied, so nothing here is certified).
         ctx.exit(EXIT_GATE_FAILURE)
