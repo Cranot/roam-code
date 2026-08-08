@@ -94,11 +94,28 @@ def _docstring_quality(text: str) -> tuple[str, dict]:
     return "SHALLOW", signals
 
 
-def _compute_coverage(symbols: list[dict]) -> tuple[int, int, float]:
+# W1463 -- the state an empty denominator produces.
+#
+# ``_compute_coverage`` used to return ``100.0`` for ``total <= 0``: an
+# uncomputable signal collapsing into the exact value that means perfect,
+# which the ``--threshold`` gate then compared and passed. Coverage over
+# an empty set is UNKNOWN, not 100%. The sibling gate on the same index
+# already refuses -- ``roam py-types --ci --min-coverage 95`` prints
+# "GATE FAILED: type coverage not computable (no_public_python_functions)"
+# and exits 5 -- so this is that decision, one command over.
+_NO_PUBLIC_SYMBOLS = "no_public_symbols"
+
+
+def _compute_coverage(symbols: list[dict]) -> tuple[int, int, float | None]:
+    """``(total, documented, pct)`` with *pct* ``None`` when uncomputable.
+
+    ``None`` means "there was no denominator", which is a different fact
+    from any number. Callers must branch on it rather than formatting it.
+    """
     total = len(symbols)
     documented = sum(1 for s in symbols if _has_docs(s))
     if total <= 0:
-        return 0, 0, 100.0
+        return 0, 0, None
     pct = (documented / total) * 100.0
     return total, documented, round(pct, 1)
 
@@ -225,9 +242,18 @@ def docs_coverage(ctx, limit, days, threshold, quality):
     display_missing = missing[:limit]
     display_stale = stale[:limit]
 
+    # W1463: uncomputable is not "meets the bar". A gate asked for a number
+    # over an empty denominator gets a refusal, not a pass. Reporting mode
+    # (no --threshold) still exits 0 -- "this project exports nothing public"
+    # is a complete answer when nobody asked it to certify anything.
+    coverage_computable = coverage_pct is not None
     gate_passed = True
-    if threshold > 0 and coverage_pct < float(threshold):
+    if threshold > 0 and not coverage_computable:
         gate_passed = False
+    elif threshold > 0 and coverage_pct is not None and coverage_pct < float(threshold):
+        gate_passed = False
+
+    coverage_display = f"{coverage_pct:.1f}%" if coverage_pct is not None else "not computable"
 
     if json_mode:
         # W17.2 / Pattern 3c: name the inclusion criterion so consumers
@@ -248,12 +274,27 @@ def docs_coverage(ctx, limit, days, threshold, quality):
             "public_symbols_definition": _ps_def(),
             "documented_symbols": documented_public,
             "coverage_pct": coverage_pct,
+            # W1463: ``coverage_pct: null`` is the honest shape for an empty
+            # denominator, and this flag is what a consumer branches on so it
+            # never has to guess whether a number is a measurement or a floor.
+            # Mirrors ``py-types``' ``coverage_pct_computable``.
+            "coverage_pct_computable": coverage_computable,
             "missing_docs": len(missing),
             "stale_docs": len(stale),
             "threshold": threshold,
             "gate_passed": gate_passed,
-            "verdict": (f"{coverage_pct:.1f}% doc coverage ({documented_public}/{total_public} public symbols)"),
+            "verdict": (
+                f"{coverage_display} doc coverage ({documented_public}/{total_public} public symbols)"
+                if coverage_computable
+                else f"doc coverage not computable ({_NO_PUBLIC_SYMBOLS})"
+            ),
         }
+        if not coverage_computable:
+            # Unlike py-types (where "this project has no Python" is a
+            # complete answer about a language), docs-coverage was ASKED for
+            # a number about this index and could not produce one. Say so.
+            summary_payload["state"] = _NO_PUBLIC_SYMBOLS
+            summary_payload["partial_success"] = True
         if quality:
             summary_payload["quality_buckets"] = dict(quality_buckets)
         payload = json_envelope(
@@ -273,7 +314,9 @@ def docs_coverage(ctx, limit, days, threshold, quality):
         return
 
     click.echo("Documentation coverage\n")
-    click.echo(f"  Public symbols: {total_public}\n  Documented: {documented_public}\n  Coverage: {coverage_pct:.1f}%")
+    click.echo(f"  Public symbols: {total_public}\n  Documented: {documented_public}\n  Coverage: {coverage_display}")
+    if not coverage_computable:
+        click.echo(f"  ({_NO_PUBLIC_SYMBOLS}: coverage over an empty set is unknown, not 100%)")
     click.echo(f"  Missing docs: {len(missing)}\n  Stale docs (>{days}d): {len(stale)}")
 
     if quality:
@@ -301,7 +344,10 @@ def docs_coverage(ctx, limit, days, threshold, quality):
             )
 
     if not gate_passed:
-        click.echo(f"\n  GATE FAILED: coverage {coverage_pct:.1f}% below threshold {threshold}%")
+        if coverage_computable:
+            click.echo(f"\n  GATE FAILED: coverage {coverage_display} below threshold {threshold}%")
+        else:
+            click.echo(f"\n  GATE FAILED: doc coverage not computable ({_NO_PUBLIC_SYMBOLS}) — required {threshold}%")
         from roam.exit_codes import EXIT_GATE_FAILURE
 
         ctx.exit(EXIT_GATE_FAILURE)
