@@ -79,6 +79,7 @@ from roam.db.findings import (
     emit_finding,
     make_finding_id,
 )
+from roam.exit_codes import gate_should_fail
 from roam.index.file_roles import ROLE_TEST
 from roam.output.formatter import json_envelope, to_json
 
@@ -502,7 +503,10 @@ def _emit_findings(conn: sqlite3.Connection, findings: list[dict]) -> int:
     "ci_mode",
     is_flag=True,
     default=False,
-    help="Exit 5 when any non-hermetic test is detected (CI gate).",
+    help=(
+        "Exit 5 when any non-hermetic test is detected, when a test file "
+        "could not be read, or when no test files are indexed at all (CI gate)."
+    ),
 )
 @click.pass_context
 def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
@@ -584,6 +588,15 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
     # none of them reached the parser.
     all_skipped = scanned == 0 and total_test_files > 0
     skip_note = f", {skipped} skipped (unparseable/unreadable — hermeticity UNKNOWN)" if skipped else ""
+    # The narrow "nothing was analysed" signal, kept separate from
+    # ``partial_success`` (which this command also sets for a merely PARTIAL
+    # scan). ONE SITE DECIDES: both channels read ``gate_failed`` below.
+    # ``--ci`` already failed closed on an unreadable file; it did not fail
+    # closed on there being no test files at all, so a repo whose index held
+    # zero tests printed "no Python test files indexed" and exited 0. Zero
+    # non-hermetic findings among zero tests is not evidence of hermeticity.
+    scan_incomplete = empty_corpus or bool(skipped_files)
+    gate_failed = gate_should_fail(ci_mode, findings=findings, scan_incomplete=scan_incomplete)
     if empty_corpus:
         verdict = "no Python test files indexed"
     elif all_skipped:
@@ -611,6 +624,7 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
             "non_hermetic": non_hermetic,
             "hermeticity_rate": hermeticity_rate,
         }
+        _summary["scan_incomplete"] = scan_incomplete
         if empty_corpus:
             _summary["partial_success"] = True
             _summary["state"] = "no_tests_indexed"
@@ -656,7 +670,7 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
         )
         # Fail closed: a file the detector could not read is not evidence of
         # hermeticity, so the gate must not pass on it.
-        if ci_mode and (findings or skipped_files):
+        if gate_failed:
             ctx.exit(5)
         return
 
@@ -682,5 +696,5 @@ def test_hermeticity(ctx, persist: bool, ci_mode: bool) -> None:
             click.echo(f"  ... {skipped - 20} more")
 
     # Fail closed: an unread file is not evidence of hermeticity.
-    if ci_mode and (findings or skipped_files):
+    if gate_failed:
         ctx.exit(5)
