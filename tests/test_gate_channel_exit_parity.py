@@ -26,8 +26,8 @@ the TEXT channel, and the only test that asserted the gate refuses on
 UNANALYZABLE invoked the ``--json`` channel -- so the assertion lived on the
 one channel nothing in production uses, and the suite was green.
 
-TWO LAWS, BOTH DRIVEN OFF THE REGISTRY
---------------------------------------
+THREE LAWS, ALL DRIVEN OFF THE REGISTRY
+---------------------------------------
 1. CHANNEL PARITY. For identical argv, ``roam <cmd> <gate-flag>`` and
    ``roam --json <cmd> <gate-flag>`` (and ``--sarif`` where supported) must
    return the SAME exit code. A gate whose answer depends on how you asked
@@ -47,10 +47,36 @@ TWO LAWS, BOTH DRIVEN OFF THE REGISTRY
    "the analysis had no input at all" -- and it is the only one that must
    deny.
 
-Both laws are enumerated from ``roam.cli._COMMANDS`` at collection time, so a
-NEWLY ADDED gate command is covered without touching this file. A
-hand-maintained list would drift, and this repo has shipped that failure
-before.
+3. A PROBE THAT NEVER RAN IS NOT A PASS. If the harness cannot get argv past
+   Click -- a missing positional, a missing required option -- the process
+   dies at exit 2 in every channel and Law 1 holds TRIVIALLY while the gate
+   under test never executes. Silently counting that as coverage is the same
+   shape as the defect: a measurement that did not happen, reported green.
+   Those pairs are pinned in ``_ARGV_UNREACHABLE`` with a reason, and the set
+   may not grow without an edit here.
+
+All three are enumerated from ``roam.cli._COMMANDS`` at collection time rather
+than from a hand-maintained list, which would drift; this repo has shipped
+that failure before.
+
+DISCOVERY IS A HEURISTIC, AND THE EARLIER CLAIM HERE WAS TOO STRONG
+-------------------------------------------------------------------
+This docstring used to say a newly added gate command is covered "without
+touching this file". It is not, and the sentence was refuted by construction:
+a synthetic ``--deny-on-issue`` whose help read "Refuse when problems are
+found." -- no vocabulary word, no documented exit code -- carrying the exact
+text/``--json`` divergence of the seed defect was collected ZERO times. It was
+invisible.
+
+What is true is narrower: a flag is discovered when its stem carries a known
+gate word OR its help documents a non-zero exit. Measured 2026-08-08 over the
+real surface, the arms split stem-only 11, both 32, help-only 2
+(``envelope-diff --regression``, ``proof-bundle --validate``), so the
+vocabulary carries 43 of 45 and the help arm is a thin backstop, not a
+catch-all. A new flag that avoids both drops out silently. The floor in
+``test_gate_discovery_is_not_vacuous`` is the ratchet that makes a COLLAPSE
+loud; nothing here makes an omission loud, and writing gate help that names
+its exit code is the only thing that does.
 
 WHAT THIS FILE DOES **NOT** PROVE
 ---------------------------------
@@ -68,7 +94,15 @@ WHAT THIS FILE DOES **NOT** PROVE
   the fixture); see ``_DESTRUCTIVE_EXCLUSIONS``, which the meta-test pins so
   the exclusion set cannot grow silently.
 * Plugin-registered commands live in ``_PLUGIN_COMMANDS``, not ``_COMMANDS``,
-  and are not covered.
+  and are not covered. Neither are the env-gated ``_EXPERIMENTAL_COMMANDS``
+  (``roam.cli``): they are off by default, so a gate flag on one of them would
+  be as unmeasured here as a plugin's.
+* Law 2 reads every ``summary`` object the command printed, not the last JSON
+  line. The positional form let a command that publishes ``scan_incomplete``
+  and authorizes anyway pass silently, as long as its stdout ENDED with some
+  other JSON object; a hint line was enough. Selecting by position is how a
+  fail-open hides, so the pairs that publish nothing parseable are pinned in
+  ``_NO_SUMMARY_PUBLISHED`` rather than left as a floating skip count.
 * Law 2 can only hold a command to a claim it actually publishes. A command
   that is blind to its own degradation -- that never sets ``scan_incomplete``
   no matter what it failed to read -- passes vacuously. Measured 2026-08-08:
@@ -101,9 +135,14 @@ from roam.cli import _COMMANDS, _SARIF_CONSUMERS
 #: A long option is gate-shaped when its stem carries one of these words as a
 #: whole hyphen-delimited part (``--fail-on-found``, ``--ci``, ``--gate``,
 #: ``--strict``, ``--require-coverage``), OR when its help text documents a
-#: non-zero exit. The second arm is what catches a gate named something this
-#: vocabulary never anticipated -- the vocabulary is a convenience, the
-#: documented exit is the contract.
+#: non-zero exit.
+#:
+#: The second arm is NOT a catch-all, and this comment used to claim it was
+#: ("what catches a gate named something this vocabulary never anticipated").
+#: It only fires when the help text names an exit code, so a flag that avoids
+#: BOTH the vocabulary and the documented exit -- ``--deny-on-issue``, help
+#: "Refuse when problems are found." -- is invisible to this file. Measured
+#: arm split over the real surface: stem-only 11, both 32, help-only 2.
 _GATE_STEM = re.compile(r"(^|-)(fail|strict|gate|ci|enforce|requires?d?|check)($|-)", re.I)
 _GATE_HELP = re.compile(r"exit\s+(with\s+)?(code\s+)?(non-?zero|[1-9])", re.I)
 
@@ -111,12 +150,52 @@ _GATE_HELP = re.compile(r"exit\s+(with\s+)?(code\s+)?(non-?zero|[1-9])", re.I)
 #: cases depend on. Their channel parity is UNKNOWN, not clean. Pinned by
 #: ``test_exclusions_are_exactly_the_declared_destructive_commands`` so that a
 #: future command cannot drop out of coverage by quietly acquiring the flag.
+#: Measured 2026-08-08: only ``stale-refs`` is actually in ``GATE_SURFACE``, so
+#: the effective exclusion is a set of one; ``reset`` is a forward declaration
+#: that costs nothing and stops a future gate flag on it from being a surprise.
+#: The meta-test intersects with the live surface, so the inert entry cannot
+#: mask a command that quietly left coverage.
 _DESTRUCTIVE_EXCLUSIONS: frozenset[str] = frozenset({"reset", "stale-refs"})
 
 #: A subprocess that never returns is an ABSENT measurement, and an absent
 #: measurement is UNKNOWN. The timeout is generous enough that hitting it is
 #: a finding, and the test reports it as a failure rather than a skip.
 _TIMEOUT_SECONDS = 240
+
+#: Click's exit code for "I could not parse your argv".
+_EXIT_USAGE = 2
+
+#: (command, flag) pairs whose gate body this harness never reaches: Click
+#: rejects the argv first, so the process dies at exit 2 in every channel.
+#: Parity then holds because every channel is equally unmeasured, which is
+#: coverage-shaped and proves nothing. Measured 2026-08-08, identically in all
+#: three workspaces; each needs argv this fixture does not synthesise:
+#:
+#:   dict-consistency --check-consistency  -- positional PATH (a Python file)
+#:   envelope-diff    --regression         -- positional A [B] (compile envelopes)
+#:   review-verify    --required           -- required --phase and --artifact
+#:
+#: ``test_every_probed_pair_actually_reaches_its_gate`` fails if this set
+#: grows, so a command acquiring a required argument cannot drop out of
+#: coverage quietly. Shrinking it is the fix; the entries are UNKNOWN, not
+#: clean.
+_ARGV_UNREACHABLE: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("dict-consistency", "--check-consistency"),
+        ("envelope-diff", "--regression"),
+        ("review-verify", "--required"),
+    }
+)
+
+#: (command, flag) pairs that run but print no ``summary`` object on stdout
+#: under ``--json``. Law 2 can only hold a command to a claim it publishes, so
+#: these are skipped -- but pinned, because a floating skip count under CI's
+#: ``-q`` is exactly how coverage evaporates unnoticed.
+_NO_SUMMARY_PUBLISHED: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("pr-analyze", "--rules-strict"),
+    }
+)
 
 
 def _gate_surface() -> dict[str, list[str]]:
@@ -293,36 +372,51 @@ def _invoke(cwd: Path, argv: list[str]) -> _Run:
     return _Run(full, completed.returncode, completed.stdout, completed.stderr)
 
 
-def _last_envelope(stdout: str) -> dict | None:
-    """Return the JSON object printed on stdout, or None.
+def _json_objects(stdout: str) -> list[dict]:
+    """Every top-level JSON object anywhere on stdout, in order.
 
-    Three shapes, in order, because getting this wrong makes Law 2 skip
-    silently rather than fail: a single-line envelope; the whole of stdout
-    when it is one pretty-printed object; and a pretty-printed object
-    preceded by plain-text lines (a staleness WARNING on stdout is enough to
-    defeat the naive form, and a skipped case proves nothing).
+    Scanned with ``raw_decode`` from each ``{`` rather than parsed positionally,
+    because POSITION IS NOT IDENTITY and picking by position is how a fail-open
+    hides. The previous form took the last single-line object on stdout; a
+    command that printed a pretty envelope carrying ``scan_incomplete: true``
+    and then one trailing compact hint line therefore had Law 2 read the hint,
+    find no ``scan_incomplete``, and PASS -- a silent authorization, not even a
+    skip. Reading every object and holding the command to ANY of them fails
+    closed under the same input.
     """
-    for line in reversed(stdout.splitlines()):
-        stripped = line.strip()
-        if stripped.startswith("{") and stripped.endswith("}"):
-            try:
-                parsed = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(parsed, dict):
-                return parsed
-
-    stripped = stdout.strip()
-    for start in (0, stripped.find("{")):
-        if start < 0:
-            continue
+    decoder = json.JSONDecoder()
+    found: list[dict] = []
+    i = stdout.find("{")
+    while i >= 0:
         try:
-            parsed = json.loads(stripped[start:])
-        except json.JSONDecodeError:
+            obj, end = decoder.raw_decode(stdout, i)
+        except ValueError:
+            i = stdout.find("{", i + 1)
             continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
+        if isinstance(obj, dict):
+            found.append(obj)
+            i = stdout.find("{", end)
+        else:
+            i = stdout.find("{", i + 1)
+    return found
+
+
+def _published_summaries(stdout: str) -> list[dict]:
+    """Every ``summary`` object the command published on stdout."""
+    return [obj["summary"] for obj in _json_objects(stdout) if isinstance(obj.get("summary"), dict)]
+
+
+def _died_in_argv_parsing(run: _Run) -> bool:
+    """True when Click rejected the argv, so the gate body never executed.
+
+    Distinguished from the several commands that legitimately CHOOSE exit 2
+    after running (``doctor --strict``, ``guard-pr`` with no bundle on disk,
+    ``verdict`` on an unloadable bundle): those reached their own code and
+    made a decision, and their parity is a real measurement.
+    """
+    if run.returncode != _EXIT_USAGE:
+        return False
+    return run.stderr.lstrip().startswith("Usage:")
 
 
 # ---------------------------------------------------------------------------
@@ -330,14 +424,34 @@ def _last_envelope(stdout: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+#: High-water mark for discovery, measured 2026-08-08: 36 probed commands /
+#: 42 (command, flag) pairs. A RATCHET, not a target -- growth needs no edit,
+#: any fall is a discovery failure until proven otherwise. The previous floor
+#: was a round 30 against an actual 36, which tolerated a silent 17% collapse:
+#: six commands could stop being probed and this file would still report green.
+_DISCOVERY_FLOOR_COMMANDS = 36
+_DISCOVERY_FLOOR_PAIRS = 42
+
+
 def test_gate_discovery_is_not_vacuous() -> None:
     """A regex that stops matching turns every test below into a no-op pass.
 
     This is the failure mode that makes a structural guard worse than none:
-    it keeps reporting green while measuring nothing. Pin the floor and pin
-    the one case whose breakage started this file.
+    it keeps reporting green while measuring nothing. Pin the floor at the
+    measured count and pin the one case whose breakage started this file.
     """
-    assert len(PROBED) >= 30, f"gate discovery collapsed to {len(PROBED)} commands: {sorted(PROBED)}"
+    assert len(PROBED) >= _DISCOVERY_FLOOR_COMMANDS, (
+        f"gate discovery fell to {len(PROBED)} commands, below the measured "
+        f"high-water mark of {_DISCOVERY_FLOOR_COMMANDS}: {sorted(PROBED)}. "
+        "Either _GATE_STEM/_GATE_HELP stopped matching something they used to "
+        "match, or a gate command was removed. Say which, then move the mark."
+    )
+    assert len(CASES) >= _DISCOVERY_FLOOR_PAIRS, (
+        f"gate discovery fell to {len(CASES)} (command, flag) pairs, below the "
+        f"measured high-water mark of {_DISCOVERY_FLOOR_PAIRS}. A command can "
+        "keep its name while losing a flag from coverage; that is the same "
+        "collapse one level down."
+    )
     assert "ignore-drift" in PROBED
     assert "--fail-on-found" in PROBED["ignore-drift"]
     assert "secrets" in PROBED
@@ -354,6 +468,49 @@ def test_exclusions_are_exactly_the_declared_destructive_commands() -> None:
         f"gate commands excluded as destructive changed: {sorted(EXCLUDED)}. "
         f"Declared: {sorted(_DESTRUCTIVE_EXCLUSIONS)}. Update _DESTRUCTIVE_EXCLUSIONS "
         "and say in the docstring what is no longer covered."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Law 0 -- a probe that never ran is not a pass
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("command", "flag"), CASES, ids=[f"{c}{f}" for c, f in CASES])
+def test_every_probed_pair_actually_reaches_its_gate(workspaces: dict[str, Path], command: str, flag: str) -> None:
+    """Law 1 must not be satisfied by a command that never executed.
+
+    Three of the 42 pairs were reported as covered while dying in Click argv
+    parsing -- ``Usage: ... Error: Missing argument 'PATH'`` -- in all three
+    workspaces. Every channel exited 2, so parity held, Law 2 skipped, and the
+    file reported a green PASS with no marker of any kind: the hard commands
+    silently unmeasured, the count still reading covered. That is the defect
+    this whole file exists to catch, committed by the file itself.
+
+    ONE workspace, not three, and that is a measurement rather than a saving:
+    argv rejection happens in Click before the command body touches the
+    filesystem, and the three affected pairs were observed failing identically
+    in all three environment classes. Running it once keeps this file's
+    subprocess count -- already the reason it is not in the pre-push bundle --
+    from growing by half.
+    """
+    run = _invoke(workspaces["clean"], [command, flag])
+    if not _died_in_argv_parsing(run):
+        assert (command, flag) not in _ARGV_UNREACHABLE, (
+            f"`roam {command} {flag}` now reaches its gate. Remove it from "
+            "_ARGV_UNREACHABLE -- the pin is a disclosure of a hole, and a stale "
+            "pin re-opens it."
+        )
+        return
+
+    assert (command, flag) in _ARGV_UNREACHABLE, (
+        f"`roam {command} {flag}` never ran: Click rejected the argv "
+        f"(exit {run.returncode}), so the gate under test did not execute and "
+        "channel parity below is measuring nothing.\n"
+        f"stderr: {run.stderr.strip()[:400]!r}\n"
+        "Give the fixture the argv this command needs, or add the pair to "
+        "_ARGV_UNREACHABLE with the reason. An absent measurement is UNKNOWN, "
+        "never coverage."
     )
 
 
@@ -425,26 +582,34 @@ def test_gate_refuses_when_its_own_envelope_reports_an_unmeasured_scan(
     The command decides what counts as unmeasured; this test only holds it to
     its own published claim.
     """
+    if (command, flag) in _ARGV_UNREACHABLE:
+        pytest.skip(f"`roam {command} {flag}` never reaches its body here; see Law 0")
+
     cwd = workspaces[scenario]
     run = _invoke(cwd, ["--json", command, flag])
-    envelope = _last_envelope(run.stdout)
-    if envelope is None:
-        # No envelope means this pair published no completeness signal at all.
-        # That is a real coverage hole, recorded in the module docstring, not
-        # evidence of health -- but it is not this test's assertion.
-        pytest.skip(f"`roam --json {command} {flag}` emitted no parseable envelope")
 
-    summary = envelope.get("summary")
-    if not isinstance(summary, dict):
-        pytest.skip(f"`roam --json {command} {flag}` envelope carries no summary object")
+    # EVERY summary the command published, not the last JSON object printed.
+    # Selecting by position let a trailing hint line stand in for the envelope
+    # and turn this assertion into a silent pass.
+    summaries = _published_summaries(run.stdout)
+    if not summaries:
+        assert (command, flag) in _NO_SUMMARY_PUBLISHED, (
+            f"`roam --json {command} {flag}` published no summary object in the "
+            f"{scenario} workspace, so Law 2 cannot hold it to anything. That is a "
+            "coverage hole, not health. Make the command publish an envelope, or "
+            "add the pair to _NO_SUMMARY_PUBLISHED so the hole is counted.\n"
+            f"stdout: {run.stdout.strip()[:400]!r}"
+        )
+        pytest.skip(f"`roam --json {command} {flag}` publishes no summary (pinned)")
 
-    if not summary.get("scan_incomplete"):
+    incomplete = [s for s in summaries if s.get("scan_incomplete")]
+    if not incomplete:
         return
 
     assert run.returncode != 0, (
         f"`roam --json {command} {flag}` in the {scenario} workspace published "
-        f"scan_incomplete={summary.get('scan_incomplete')!r} and still exited 0. "
+        f"scan_incomplete={incomplete[0].get('scan_incomplete')!r} and still exited 0. "
         "The command states the analysis had no input and then authorizes on that "
         "non-measurement. An absent measurement is UNKNOWN, never a benign CLEAN.\n"
-        f"verdict: {summary.get('verdict')!r}"
+        f"verdict: {incomplete[0].get('verdict')!r}"
     )
