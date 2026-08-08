@@ -55,6 +55,33 @@ THREE LAWS, ALL DRIVEN OFF THE REGISTRY
    Those pairs are pinned in ``_ARGV_UNREACHABLE`` with a reason, and the set
    may not grow without an edit here.
 
+4. AUTHORIZING IN AN UNANALYZABLE WORKSPACE IS AN INVENTORIED FACT (W1470).
+   Law 2 is only as wide as ``scan_incomplete``. The paragraph below headed
+   "Law 2 can only hold a command to a claim it actually publishes" recorded
+   the resulting hole and called sorting it out "a separate audit"; the audit
+   was then done by hand, one command at a time, across ~48 defects. This law
+   is that audit turned into a fixture so it does not have to be redone.
+
+   In the ``unanalyzable`` workspace -- no git, no index, one text file --
+   every gate flag that exits 0 must appear in
+   ``_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE`` with a CLASS and a reason
+   measured on the day it was added. A pair that starts authorizing is a new
+   entry and fails; a pair that stops authorizing is a stale entry and fails,
+   so the inventory can only shrink. It is not an allowlist: ANSWERED entries
+   are closed, DISCLOSED entries are open questions with their evidence
+   attached, and the difference is written down rather than implied by
+   silence.
+
+   Proved against the pre-fix tree by restoring ``changed_files.py`` and
+   ``cmd_adversarial.py`` to ``f059e077^``::
+
+     $ roam adversarial --fail-on-critical     VERDICT: No changes detected   0
+     $ roam --json adversarial --fail-on-critical                             0
+
+   -- a new, uninventoried entry, so Law 3 goes red. On the shipped tree the
+   same command answers ``diff unavailable: git_error -- cannot gate`` and
+   exits 5.
+
 All three are enumerated from ``roam.cli._COMMANDS`` at collection time rather
 than from a hand-maintained list, which would drift; this repo has shipped
 that failure before.
@@ -105,8 +132,16 @@ WHAT THIS FILE DOES **NOT** PROVE
   ``_NO_SUMMARY_PUBLISHED`` rather than left as a floating skip count.
 * Law 2 can only hold a command to a claim it actually publishes. A command
   that is blind to its own degradation -- that never sets ``scan_incomplete``
-  no matter what it failed to read -- passes vacuously. Deciding which of the
-  remaining gated commands are blind rather than clean is a separate audit.
+  no matter what it failed to read -- passes vacuously. Law 3 does not fix
+  that; it makes the vacuum COUNTABLE. Measured 2026-08-09 over a pristine
+  no-git / no-index directory, 14 of the 39 reachable pairs exit 0: five
+  ANSWERED, one NOT-A-GATE, seven DISCLOSED and one BLIND. The seven
+  DISCLOSED ones are the audit's result rather than a substitute for it --
+  each publishes a private word for "I could not evaluate this"
+  (``gate_evaluated: false``, ``coverage_pct_computable: false``,
+  ``config_state: "missing"``, ``snapshots: 0``) that Law 2's single
+  ``scan_incomplete`` key cannot see. Unifying that vocabulary is the fix;
+  the inventory is what stops the list growing while it is pending.
 
   CORRECTION (W1468). This paragraph used to exempt ``pr-analyze --gate`` on
   the grounds that its ``state: "no_changes"`` was "a real answer rather than
@@ -205,6 +240,145 @@ _NO_SUMMARY_PUBLISHED: frozenset[tuple[str, str]] = frozenset(
         ("pr-analyze", "--rules-strict"),
     }
 )
+
+# ---------------------------------------------------------------------------
+# Law 3 -- the inventory of authorizations granted in an unanalyzable workspace
+# ---------------------------------------------------------------------------
+
+#: An entry's CLASS. Not severity: it records WHAT the exit 0 rests on, which
+#: is the only thing that separates a closed question from an open one.
+#:
+#:   ANSWERED  -- the command observed something real and published it. The
+#:                observation does not need the workspace (a shipped catalogue,
+#:                a version comparison, the absence of a config file), so
+#:                "nothing to analyse here" is a complete answer and exit 0 is
+#:                earned. Nothing to do.
+#:   DISCLOSED -- the command SAYS, in its own envelope, that it could not
+#:                evaluate the thing the flag gates on -- and exits 0 anyway.
+#:                It is not blind and it is not lying; it is authorizing on a
+#:                non-measurement in a vocabulary Law 2 cannot read. OPEN.
+#:   BLIND     -- exit 0, a clean verdict, and NOTHING in the envelope that
+#:                distinguishes "I looked and it was clean" from "there was
+#:                nothing to look at". This is the defect in its pure form.
+#:                OPEN, and the worst of the four.
+#:   NOT-A-GATE -- discovery matched a flag that has no failing exit path at
+#:                all, so its exit 0 carries no information either way. The
+#:                finding is in the flag's NAME, not its behaviour. OPEN.
+_INVENTORY_CLASSES = frozenset({"ANSWERED", "DISCLOSED", "BLIND", "NOT-A-GATE"})
+
+#: (command, flag) -> (class, reason measured on the date in the reason).
+#:
+#: SHRINK-ONLY. ``test_no_gate_newly_authorizes_an_unanalyzable_workspace``
+#: fails on an addition; ``test_authorization_inventory_has_no_stale_entries``
+#: fails on an entry that no longer reproduces, which is the ratchet working
+#: and means the entry should be DELETED in the same commit as the fix. Every
+#: reason quotes the envelope it was taken from, so an entry cannot degrade
+#: into "we agreed not to look".
+_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]] = {
+    ("compatibility", "--ci"): (
+        "ANSWERED",
+        "2026-08-09: verdict 'no regressions' with covered_dimension_count 7, "
+        "uncovered_dimension_count 6, surface_coverage_scope 'covered_dimensions'. "
+        "The comparison is against the shipped compatibility matrix, not the "
+        "workspace, and the part it does NOT cover is published beside the verdict.",
+    ),
+    ("compatibility", "--require-coverage"): (
+        "ANSWERED",
+        "2026-08-09: same envelope and same run as `compatibility --ci` above -- "
+        "one command, two gate flags. The coverage requirement is met by the 7 "
+        "covered dimensions of the shipped matrix, and the 6 uncovered ones are "
+        "counted in the same summary rather than dropped from the denominator.",
+    ),
+    ("config", "--check"): (
+        "ANSWERED",
+        "2026-08-09: verdict 'no .roam/config.json - using defaults', issues 0. "
+        "The absence of a config file IS the observation: there is no document to "
+        "validate, and the defaults the command falls back to are its own shipped "
+        "values, so no part of this answer depends on the workspace being readable.",
+    ),
+    ("evidence-oscal", "--strict"): (
+        "ANSWERED",
+        "2026-08-09: verdict 'emitted OSCAL v1.2 control-mapping with 23 controls "
+        "across 9 frameworks', control_count 23, framework_count 9. The document is "
+        "projected from roam's own control catalogue; an empty workspace changes "
+        "nothing about it, so the emission genuinely succeeded.",
+    ),
+    ("db-check", "--ci"): (
+        "ANSWERED",
+        "2026-08-09: verdict 'OK', checks_run 7, checks_complete true, errors 0. roam "
+        "auto-indexes, so the command builds an index for the empty corpus and then runs "
+        "all 7 integrity checks against the database it built. The subject of db-check is "
+        "the DATABASE, not the corpus, and the database it checked really exists.",
+    ),
+    ("version", "--check"): (
+        "NOT-A-GATE",
+        "2026-08-09: verdict 'installed: 14.0.0, latest on PyPI: 14.0.0'. cmd_version "
+        "contains no ctx.exit and no gate at all -- `--check` means 'also query PyPI', "
+        "and _GATE_STEM matches the word 'check'. It cannot return non-zero on any "
+        "input, including a failed network call, so its exit 0 proves nothing here.",
+    ),
+    ("patterns", "--strict-factory"): (
+        "BLIND",
+        "2026-08-09: verdict 'no patterns detected', total_patterns 0, pattern_types 0, "
+        "types_found [], partial_success false -- over an auto-indexed corpus of one text "
+        "file with no symbols in it. The summary carries no denominator of any kind, so "
+        "this envelope is byte-identical in shape to a real repository with no factories.",
+    ),
+    ("py-types", "--ci"): (
+        "DISCLOSED",
+        "2026-08-09: publishes coverage_pct_computable false, state 'no_python_files', "
+        "python_files 0, total_public 0 -- and exits 0 under a flag whose help promises "
+        "a CI gate. W1320 made the uncomputable state visible in every channel; it did "
+        "not decide whether an uncomputable coverage may authorize. It still does.",
+    ),
+    ("reachability-triage", "--gate-on-new-reachable"): (
+        "DISCLOSED",
+        "2026-08-09: publishes gate_evaluated false, changed_files null, "
+        "reachable_paths 0 -- the envelope states in as many words that the gate was "
+        "never evaluated, and the process still exits 0. The signal is present and "
+        "correctly named; nothing reads it.",
+    ),
+    ("rules", "--ci"): (
+        "DISCLOSED",
+        "2026-08-09: verdict 'no rules directory found', config_state 'missing', "
+        "total 0, passed 0, failed 0. Zero rules passing out of zero rules loaded is "
+        "not evidence that the repository satisfies its rules -- the same shape the "
+        "taint --rule fix closed for a filter that matched nothing.",
+    ),
+    ("digest", "--fail-on-anomaly"): (
+        "DISCLOSED",
+        "2026-08-09: verdict 'No snapshots recorded yet - run `roam index` to begin trend "
+        "analysis', snapshots 0, plus a deprecation_warning naming `trends`. `digest`, "
+        "`snapshot`, `trend` and `trends` are four registry names for one callback in "
+        "cmd_trends.py, and all four exit 0 with no history to test for anomalies.",
+    ),
+    ("snapshot", "--fail-on-anomaly"): (
+        "DISCLOSED",
+        "2026-08-09: verdict 'No snapshots recorded yet - run `roam index` to begin "
+        "trend analysis', snapshots 0. The anomaly test is over a history that does "
+        "not exist, so the gate cannot fire; `digest`, `snapshot`, `trend` and `trends` "
+        "are four registry names for one callback in cmd_trends.py.",
+    ),
+    ("trend", "--fail-on-anomaly"): (
+        "DISCLOSED",
+        "2026-08-09: same callback and same envelope as `snapshot --fail-on-anomaly` "
+        "-- snapshots 0, no anomaly analysis performed, exit 0. Listed separately "
+        "because the inventory is keyed by the (command, flag) a CI job actually "
+        "writes, and all three aliases are reachable from a workflow file.",
+    ),
+    ("trends", "--fail-on-anomaly"): (
+        "DISCLOSED",
+        "2026-08-09: same callback and same envelope as `snapshot --fail-on-anomaly` "
+        "-- snapshots 0, exit 0. This is the alias roam's own generated CI templates "
+        "use, which is why the empty-history case is the one that reaches users.",
+    ),
+}
+
+#: High-water mark for the inventory, measured 2026-08-09. A RATCHET: the
+#: stale-entry test forces it down as gates are fixed, and this pins the raw
+#: count so that swapping one entry for another is still a visible edit of a
+#: number rather than a silent trade.
+_AUTHORIZATION_HIGH_WATER = 14
 
 
 def _gate_surface() -> dict[str, list[str]]:
@@ -621,4 +795,124 @@ def test_gate_refuses_when_its_own_envelope_reports_an_unmeasured_scan(
         "The command states the analysis had no input and then authorizes on that "
         "non-measurement. An absent measurement is UNKNOWN, never a benign CLEAN.\n"
         f"verdict: {incomplete[0].get('verdict')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Law 3 -- authorizing an unanalyzable workspace is an inventoried fact
+# ---------------------------------------------------------------------------
+
+
+def _pristine_unanalyzable(base: Path, name: str) -> Path:
+    """A FRESH no-git / no-index directory, one per probe.
+
+    Deliberately NOT the session-scoped ``unanalyzable`` workspace. roam
+    auto-indexes, so the first command any test runs in that directory leaves
+    a populated ``.roam/index.db`` behind and every later command sees a
+    DIFFERENT environment than the docstring claims. Measured while building
+    this law: ``db-check --ci`` exits 1 ("No roam index found") as the first
+    command in the directory and 0 ("verdict: OK", checks_complete) once some
+    earlier test has auto-indexed it -- so the inventory would record whichever
+    order pytest-xdist happened to pick, and flip in CI.
+
+    A per-probe directory makes the starting state identical for every pair:
+    no git, no index, one text file, and whatever auto-indexing the command
+    under test does to itself.
+    """
+    root = base / name
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "notes.txt").write_text("no git, no index\n", encoding="utf-8")
+    return root
+
+
+def _authorization_evidence(run: _Run) -> str:
+    """The verdict and the head of stdout, for a failure message that names it."""
+    summaries = _published_summaries(run.stdout)
+    verdict = next((s["verdict"] for s in summaries if "verdict" in s), None)
+    keys = sorted({k for s in summaries for k in s}) if summaries else []
+    return f"  verdict: {verdict!r}\n  summary keys: {keys}\n  stdout: {run.stdout.strip()[:400]!r}"
+
+
+@pytest.mark.parametrize(("command", "flag"), CASES, ids=[f"{c}{f}" for c, f in CASES])
+def test_no_gate_newly_authorizes_an_unanalyzable_workspace(tmp_path: Path, command: str, flag: str) -> None:
+    """A gate that starts returning 0 over nothing must be a deliberate edit.
+
+    ONE channel, because Law 1 has already asserted that every channel returns
+    the same code for this argv -- probing all three here would re-measure
+    parity and buy nothing.
+
+    This is the law that fails on the pre-fix tree. Restore
+    ``src/roam/commands/changed_files.py`` and ``src/roam/commands/
+    cmd_adversarial.py`` to ``f059e077^`` and ``adversarial
+    --fail-on-critical`` prints "VERDICT: No changes detected" and exits 0 in
+    this workspace, because a git that answered ``fatal: not a git repository``
+    and rc 128 reached the caller as ``[]`` -- indistinguishable from a clean
+    tree. It is not in the inventory, so this test names it.
+    """
+    if (command, flag) in _ARGV_UNREACHABLE:
+        pytest.skip(f"`roam {command} {flag}` never reaches its body here; see Law 0")
+
+    run = _invoke(_pristine_unanalyzable(tmp_path, "probe"), ["--json", command, flag])
+    if run.returncode != 0:
+        return
+
+    known = _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE.get((command, flag))
+    assert known is not None, (
+        f"`roam --json {command} {flag}` exited 0 in a workspace with no git, no index "
+        "and no source files, and is not in the Law 3 inventory.\n"
+        "Either it answered a question that needs none of those -- then add it as "
+        "ANSWERED with the envelope you measured -- or it authorized on a "
+        "non-measurement, which is the defect and is fixed in the command.\n"
+        f"{_authorization_evidence(run)}"
+    )
+
+
+def test_authorization_inventory_has_no_stale_entries(tmp_path: Path) -> None:
+    """An entry that now refuses must be deleted, so the inventory shrinks.
+
+    Failing here is the ratchet working. It costs one subprocess per inventory
+    entry rather than per case, so it stays cheap as the list gets shorter --
+    which is the direction it is only allowed to move.
+    """
+    still_authorizing: list[tuple[str, str]] = []
+    for index, (command, flag) in enumerate(sorted(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE)):
+        run = _invoke(_pristine_unanalyzable(tmp_path, f"probe{index}"), ["--json", command, flag])
+        if run.returncode == 0:
+            still_authorizing.append((command, flag))
+
+    stale = sorted(set(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE) - set(still_authorizing))
+    assert not stale, (
+        f"{len(stale)} inventory entry(ies) no longer authorize -- good. Delete them from "
+        "_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE in the same commit as the fix, and lower "
+        "_AUTHORIZATION_HIGH_WATER to match:\n"
+        + "\n".join(f"  roam {c} {f}  ({_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE[c, f][0]})" for c, f in stale)
+    )
+
+
+def test_authorization_inventory_is_classified_and_bounded() -> None:
+    """Every entry names a defined class and says what it measured.
+
+    An inventory whose entries do not say why is a shrug, not a policy. The
+    length check is a second, blunt guard: growth is already blocked per-pair
+    above, and this makes a swap show up as an edit of a number.
+    """
+    bad: list[str] = []
+    for (command, flag), entry in sorted(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE.items()):
+        klass, reason = entry
+        if klass not in _INVENTORY_CLASSES:
+            bad.append(f"roam {command} {flag}: undefined class {klass!r}")
+        if len(reason) < 120 or "20" not in reason:
+            bad.append(f"roam {command} {flag}: reason does not quote a dated measurement")
+    assert not bad, "Law 3 inventory entries that do not explain themselves:\n" + "\n".join(f"  {b}" for b in bad)
+
+    assert len(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE) <= _AUTHORIZATION_HIGH_WATER, (
+        f"the inventory grew to {len(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE)} entries, above "
+        f"the recorded high-water mark of {_AUTHORIZATION_HIGH_WATER}. Fix the gate instead; "
+        "if the mark genuinely must move, move it in its own commit and say why."
+    )
+
+    unknown = sorted(set(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE) - set(CASES))
+    assert not unknown, (
+        "inventory entries that are no longer part of the probed gate surface -- a flag was "
+        f"renamed or removed, or discovery stopped seeing it: {unknown}"
     )
