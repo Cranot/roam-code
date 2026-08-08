@@ -2920,39 +2920,54 @@ def _env_truthy(name: str) -> bool:
     return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _load_repo_leak_patterns(root: Path) -> tuple[list, object | None, str | None]:
+# Why the catalogue contributed nothing. These are NOT the same event and must
+# not be reported as one: declining to execute untrusted repo config is this
+# tool working exactly as designed and is the default for every repository that
+# ships a catalogue, whereas a catalogue the operator explicitly opted into and
+# which then failed to load is a check that did not run. Collapsing them in
+# either direction is wrong -- treat the policy case as a failure and every
+# repo holding the file verifies FAIL; treat the failure case as policy and a
+# leak catalogue can break silently forever.
+_LEAK_CATALOGUE_NOT_TRUSTED = "not_trusted"
+_LEAK_CATALOGUE_FAILED = "failed"
+
+
+def _load_repo_leak_patterns(root: Path) -> tuple[list, object | None, str | None, str | None]:
     """Load the optional repo-local leak catalogue ``.roam-leak-patterns.py``.
 
     Contract: the module exposes ``FORBIDDEN_PATTERNS`` (a list of
     ``(name, compiled_regex)`` tuples) and optionally ``should_scan(rel_path)
     -> bool`` to exempt files that intentionally contain the patterns (the
     catalogue itself, exemplar test fixtures). Returns
-    ``(patterns, should_scan_fn, error)`` — fail-open: a broken catalogue
-    yields no patterns plus a disclosed error string, never a crash.
+    ``(patterns, should_scan_fn, error, error_kind)`` — fail-open: a broken
+    catalogue yields no patterns plus a disclosed error string, never a crash.
+    ``error_kind`` is one of the ``_LEAK_CATALOGUE_*`` constants and says
+    whether the absence was chosen or suffered.
     """
     cat_path = root / _LEAK_PATTERNS_FILENAME
     if not cat_path.is_file():
-        return [], None, None
+        return [], None, None, None
     if not _env_truthy(_REPO_LEAK_PATTERNS_ENVVAR):
         return (
             [],
             None,
             f"{_LEAK_PATTERNS_FILENAME} present but not executed "
             f"(untrusted repo config; set {_REPO_LEAK_PATTERNS_ENVVAR}=1 to enable)",
+            _LEAK_CATALOGUE_NOT_TRUSTED,
         )
     try:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("_roam_leak_patterns", cat_path)
         if spec is None or spec.loader is None:
-            return [], None, f"{_LEAK_PATTERNS_FILENAME}: not importable"
+            return [], None, f"{_LEAK_PATTERNS_FILENAME}: not importable", _LEAK_CATALOGUE_FAILED
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         patterns = list(getattr(mod, "FORBIDDEN_PATTERNS", []) or [])
         should_scan = getattr(mod, "should_scan", None)
-        return patterns, should_scan, None
+        return patterns, should_scan, None, None
     except Exception as exc:  # noqa: BLE001 — gate must fail open, disclosed
-        return [], None, f"{_LEAK_PATTERNS_FILENAME}: {exc}"
+        return [], None, f"{_LEAK_PATTERNS_FILENAME}: {exc}", _LEAK_CATALOGUE_FAILED
 
 
 def _secret_scan_targets(changed_paths: list[str], root: Path) -> list[tuple[str, Path]]:
@@ -3064,12 +3079,40 @@ def _secrets_score(checked: int, violations: list[dict]) -> int:
     return max(0, 100 - penalty)
 
 
-def _secrets_result(score: int, violations: list[dict], repo_error: str | None, repo_patterns: list) -> dict:
+def _secrets_result(
+    score: int,
+    violations: list[dict],
+    repo_error: str | None,
+    repo_patterns: list,
+    repo_error_kind: str | None = None,
+) -> dict:
     result: dict = {"score": score, "violations": violations}
     if repo_error:
         # Pattern 2 — the repo catalogue did NOT run; disclose, never
         # silently pass as if it had.
         result["repo_patterns_error"] = repo_error
+        # ...and say it in the vocabulary the envelope actually carries.
+        # Setting the key above is necessary and was not sufficient: for as
+        # long as this shipped, `_category_summary` copied a fixed allowlist
+        # that does not include it, so the disclosure was dropped one layer
+        # below the line that wrote it. Measured on a repo whose
+        # `.roam-leak-patterns.py` raises on load: verdict PASS, score 100,
+        # `verification_complete` true, and no mention of the failure anywhere
+        # in the envelope. The tests that covered this asserted on the dict
+        # returned here, which is above the drop, so they passed throughout.
+        # `execution_state` is the established signal for "this check ran but
+        # its evidence is not complete" and routes through
+        # `_verification_gap_violations` to a hard-blocking FAIL, which is the
+        # correct outcome: a catalogue the operator opted into and which then
+        # failed to load leaves the check short of what it was asked to do.
+        #
+        # Only for a real failure. Declining to execute untrusted repo config
+        # is the DEFAULT for every repository shipping a catalogue, so marking
+        # it incomplete would fail verification for all of them -- the same
+        # false-verdict defect as the silence it replaces, pointed the other
+        # way. That case is disclosed above and gates nothing.
+        if repo_error_kind == _LEAK_CATALOGUE_FAILED:
+            result["execution_state"] = "incomplete"
     if repo_patterns:
         result["repo_pattern_count"] = len(repo_patterns)
     return result
@@ -3097,7 +3140,7 @@ def _check_secrets(changed_paths: list[str], root: Path) -> dict:
     """
     from roam.security.redact import SECRET_PATTERNS, pattern_id
 
-    repo_patterns, repo_should_scan, repo_error = _load_repo_leak_patterns(root)
+    repo_patterns, repo_should_scan, repo_error, repo_error_kind = _load_repo_leak_patterns(root)
 
     violations: list[dict] = []
     checked = 0
@@ -3127,7 +3170,7 @@ def _check_secrets(changed_paths: list[str], root: Path) -> dict:
                 seen.add(key)
                 violations.append(violation)
 
-    return _secrets_result(_secrets_score(checked, violations), violations, repo_error, repo_patterns)
+    return _secrets_result(_secrets_score(checked, violations), violations, repo_error, repo_patterns, repo_error_kind)
 
 
 def _clean_command_example(command: str) -> str:
@@ -5977,6 +6020,13 @@ def _category_summary(categories: dict) -> dict:
         for qualifier in ("execution_state", "timed_out", "partial_success", "capped"):
             if qualifier in cat_result:
                 entry[qualifier] = cat_result[qualifier]
+        # A check that says WHY its evidence is incomplete must be able to get
+        # that sentence out. This allowlist is deliberately narrow, but it was
+        # silently narrower than the disclosures the checks above it write:
+        # `repo_patterns_error` is set precisely to stop a failed leak
+        # catalogue passing as a clean one, and was discarded here.
+        if cat_result.get("repo_patterns_error"):
+            entry["repo_patterns_error"] = cat_result["repo_patterns_error"]
         for counter in ("tests_targeted", "tests_failed", "tests_total_impacted", "no_impacted_tests"):
             if counter in cat_result:
                 entry[counter] = cat_result[counter]
