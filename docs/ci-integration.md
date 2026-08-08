@@ -359,9 +359,15 @@ Run `roam --help-all` for all 285 commands.
 |------|---------|
 | 0 | Success -- analysis completed, no gate failures |
 | 1 | Error -- unexpected failure or crash |
-| 2 | Usage error -- invalid arguments or flags |
-| 3 | Index missing -- `roam init` not run (should not happen with the action) |
-| 5 | Gate failure -- quality gate check failed |
+| 2 | Usage error -- invalid arguments or flags. `roam doctor` also uses 2 for "a blocking environment check failed", with perfectly valid arguments |
+| 3 | Reserved. No command returns this -- roam auto-indexes rather than refusing |
+| 4 | `needs_review` -- a guard verdict (`verdict`, `guard-pr`, `proof-bundle`) requires a human. Re-running produces the same answer, so do not retry |
+| 5 | Gate failure -- quality gate check failed, **or** the check could not run at all. A gate that could not measure does not report success |
+| 6 | Partial -- completed with warnings or skipped sections |
+| 130 | Interrupted -- SIGINT / Ctrl-C. A script branching only over 0-6 falls through every arm here |
+
+`roam exit-codes` prints this same table from the source of truth, so a script
+can read it instead of copying it.
 
 ## Advanced Examples
 

@@ -347,13 +347,28 @@ class TestMCPExitCodeClassification:
         assert code == "INDEX_NOT_FOUND"
         assert "roam init" in hint
 
-    def test_classify_index_stale(self):
+    def test_classify_exit_4_as_needs_review_not_a_stale_index(self):
+        """Exit 4 is the guard family's ``needs_review``, never a stale index.
+
+        This test previously asserted ``INDEX_STALE`` and passed, which is why
+        the misreport survived: it pinned the constant's NAME rather than what
+        the integer means when a real command returns it. ``IndexStaleError``
+        is raised nowhere in ``src/roam``; ``guard_enums.VERDICT_EXIT_CODES``
+        maps ``needs_review -> 4`` and that is the only producer. Telling an
+        agent to ``roam index`` -- and marking the code retryable -- sent it
+        round a loop that re-derives the same human-judgment verdict.
+        """
         from roam.exit_codes import EXIT_INDEX_STALE
+        from roam.guard_enums import VERDICT_EXIT_CODES
         from roam.mcp_server import _classify_error
 
-        code, hint, _retryable = _classify_error("", EXIT_INDEX_STALE)
-        assert code == "INDEX_STALE"
-        assert "roam index" in hint
+        assert VERDICT_EXIT_CODES["needs_review"] == EXIT_INDEX_STALE
+
+        code, hint, retryable = _classify_error("", EXIT_INDEX_STALE)
+        assert code == "NEEDS_REVIEW"
+        assert "review" in hint.lower()
+        assert "roam index" not in hint
+        assert retryable is False, "a human-judgment verdict does not change on a retry"
 
     def test_classify_gate_failure(self):
         from roam.exit_codes import EXIT_GATE_FAILURE
