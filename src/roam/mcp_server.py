@@ -424,10 +424,20 @@ if FastMCP is not None:
         "roam-code",
         instructions=(
             "Codebase intelligence for AI coding agents. "
-            "TIP: call `roam_expand_toolset` first to scope tools to your task "
-            "(core / review / refactor / debug / architecture / compliance / "
-            "compile-curated / full) — "
-            "the default surface is intentionally narrow to keep the prompt tight. "
+            # `roam_expand_toolset` cannot expand anything from inside a
+            # session: `_should_register_tool` is consulted once, at
+            # registration (mcp_server.py:2486), so the surface is fixed when
+            # the server starts. The tool lists what other presets contain and
+            # returns the env var to restart with; its own description says
+            # "discover", which is accurate. This instruction used to say it
+            # would "scope tools to your task", which sent an agent to spend a
+            # turn on a call that cannot do that and returns an action only the
+            # human operator can take. Say what it does instead.
+            "The tool surface is fixed at server start and is intentionally "
+            "narrow to keep the prompt tight; `roam_expand_toolset` lists what "
+            "the other presets (core / review / refactor / debug / "
+            "architecture / compliance / compile-curated / full) contain, and "
+            "selecting one means restarting with ROAM_MCP_PRESET=<name>. "
             "For multi-symbol verification use `roam_batch_get` instead of N "
             # W787: canonical MCP tool name is `roam_search_symbol` (bare `roam_search` is not registered)
             "sequential `roam_uses` / `roam_search_symbol` calls. "
