@@ -5379,6 +5379,34 @@ def _target_resolved_by_file_map(target: str, file_map: dict[str, int]) -> bool:
     return False
 
 
+def _report_scope_oversized_code(root: Path) -> list[str]:
+    """Tracked CODE files discovery dropped on its size cap (W1466).
+
+    Filtered to the same surface report mode would otherwise verify -- a
+    2 MB CHANGELOG or a large JSON fixture is a non-code surface and is not
+    a verification gap. Best effort: if the probe cannot run it returns an
+    empty list, exactly as ``_repair_report_index_coverage`` does, so a
+    repository roam cannot enumerate behaves as it did before.
+    """
+    try:
+        from roam.index.discovery import SKIP_OVERSIZED, discover_files_with_skips
+        from roam.index.parser import detect_language
+
+        _discovered, skips = discover_files_with_skips(root)
+    except Exception as exc:  # noqa: BLE001 — a probe that cannot run must not break the report
+        _swallow_verify("verify.report.oversized_probe", exc)
+        return []
+    out: list[str] = []
+    for rel in skips.get(SKIP_OVERSIZED, []):
+        normalized = rel.replace("\\", "/")
+        if _is_non_code_verify_surface(normalized):
+            continue
+        language = (detect_language(normalized) or "").lower()
+        if language and language not in _MODULE_INIT_SKIP_LANGS:
+            out.append(normalized)
+    return sorted(out)
+
+
 def _verification_gap_violations(
     root: Path,
     target_paths: list[str],
@@ -5426,6 +5454,38 @@ def _verification_gap_violations(
                         else "directory verification target did not resolve to files"
                     ),
                     "fix": "Pass existing files or run `roam index`, then rerun `roam verify`",
+                    "hard_block": True,
+                }
+            )
+
+    if resolution_state == "report_scope":
+        # W1466: report mode's coverage repair enumerates candidates with
+        # ``discover_files``, which applies the indexer's 1 MB size cap. An
+        # oversized tracked source file is therefore never counted as
+        # missing, never triggers the light reindex, and never reaches a
+        # check -- it is simply absent from ``files_checked`` while
+        # ``verification_complete`` stays true. Measured: a repo with ok.py
+        # and a 1.4 MB broken_big.py holding a syntax error at line 200001
+        # returned PASS, score 100, files_checked 1, verification_complete
+        # true. ``verification_complete`` is the field consumers trust to
+        # mean "the whole repo was covered"; it must not be true over a file
+        # the run never opened.
+        for oversized in _report_scope_oversized_code(root):
+            reasons.append("oversized_target_unverified")
+            violations.append(
+                {
+                    "category": "verification",
+                    "severity": SEVERITY_FAIL,
+                    "file": oversized,
+                    "line": None,
+                    "message": (
+                        "tracked source file exceeds roam's discovery size cap, so it was "
+                        "never indexed and never verified"
+                    ),
+                    "fix": (
+                        "Split the file, or verify it explicitly with "
+                        "`roam verify <path>`; a whole-repo report cannot cover it"
+                    ),
                     "hard_block": True,
                 }
             )
