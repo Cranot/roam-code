@@ -190,8 +190,8 @@ def _stub_changed_files(monkeypatch):
 
     monkeypatch.setattr(
         _adv,
-        "get_changed_files",
-        lambda root, staged=False, commit_range=None: ["src/a.py"],
+        "get_changed_files_status",
+        lambda root, staged=False, commit_range=None: (["src/a.py"], None),
     )
     monkeypatch.setattr(
         _adv,
@@ -237,7 +237,7 @@ def test_adversarial_resolve_changed_files_failure_marker_format(cli_runner, adv
     def _raise(*args, **kwargs):
         raise RuntimeError("synthetic-resolve-from-W607-EK")
 
-    monkeypatch.setattr(_adv, "get_changed_files", _raise)
+    monkeypatch.setattr(_adv, "get_changed_files_status", _raise)
 
     result = _invoke_adversarial(cli_runner, adv_project)
     assert result.exit_code == 0, result.output
@@ -270,7 +270,7 @@ def test_adversarial_w607ek_warnings_in_envelope(cli_runner, adv_project, monkey
     def _raise(*args, **kwargs):
         raise RuntimeError("synthetic-mirror-from-W607-EK")
 
-    monkeypatch.setattr(_adv, "get_changed_files", _raise)
+    monkeypatch.setattr(_adv, "get_changed_files_status", _raise)
 
     result = _invoke_adversarial(cli_runner, adv_project)
     assert result.exit_code == 0, result.output
@@ -296,7 +296,7 @@ def test_adversarial_three_segment_marker_shape(cli_runner, adv_project, monkeyp
     def _raise(*args, **kwargs):
         raise PermissionError("synthetic-shape-detail-from-W607-EK")
 
-    monkeypatch.setattr(_adv, "get_changed_files", _raise)
+    monkeypatch.setattr(_adv, "get_changed_files_status", _raise)
 
     result = _invoke_adversarial(cli_runner, adv_project)
     assert result.exit_code == 0, result.output
@@ -372,7 +372,7 @@ def test_w607ek_marker_prefix_stays_in_adversarial_family(cli_runner, adv_projec
     def _raise(*args, **kwargs):
         raise PermissionError("synthetic-prefix-discipline-from-W607-EK")
 
-    monkeypatch.setattr(_adv, "get_changed_files", _raise)
+    monkeypatch.setattr(_adv, "get_changed_files_status", _raise)
 
     result = _invoke_adversarial(cli_runner, adv_project)
     assert result.exit_code == 0, result.output
@@ -506,7 +506,7 @@ def test_law_6_verdict_survives_every_phase_failure(cli_runner, adv_project, mon
     def _raise(*args, **kwargs):
         raise RuntimeError("synthetic-law6-from-W607-EK")
 
-    monkeypatch.setattr(_adv, "get_changed_files", _raise)
+    monkeypatch.setattr(_adv, "get_changed_files_status", _raise)
 
     result = _invoke_adversarial(cli_runner, adv_project)
     assert result.exit_code == 0, result.output
@@ -544,7 +544,7 @@ def test_pattern_2_silent_fallback_eliminated_on_degraded_path(cli_runner, adv_p
     def _raise(*args, **kwargs):
         raise RuntimeError("synthetic-pattern-2-from-W607-EK")
 
-    monkeypatch.setattr(_adv, "get_changed_files", _raise)
+    monkeypatch.setattr(_adv, "get_changed_files_status", _raise)
 
     result = _invoke_adversarial(cli_runner, adv_project)
     assert result.exit_code == 0, result.output

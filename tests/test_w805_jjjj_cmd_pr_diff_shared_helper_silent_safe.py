@@ -184,7 +184,7 @@ class TestCmdPrDiffConsumesSharedHelper:
             "get_changed_files; if this changed, re-audit the "
             "shared-helper family membership."
         )
-        assert "get_changed_files(root" in src, (
+        assert "get_changed_files_status(root" in src, (
             "W805-JJJJ W978-precondition: cmd_pr_diff must CALL "
             "get_changed_files(root, ...); if the call site moved, "
             "re-audit the shared-helper family membership."
@@ -334,22 +334,10 @@ class TestSilentSafeInheritedFromSharedHelper:
     is the structural class confirmation -- pins the inheritance so a
     fix to the shared helper unblocks BOTH consumers atomically."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-JJJJ FAMILY-CONFIRMATION: cmd_pr_diff's bogus-ref path "
-            "emits no ``git_error`` field -- the same gap W805-EEEE pins "
-            "on cmd_diff. The shared helper "
-            "``src/roam/commands/changed_files.py:131-146`` returns an "
-            "empty list on three distinct failure classes (returncode != "
-            "0, FileNotFoundError, TimeoutExpired). Both consumers "
-            "(cmd_diff and cmd_pr_diff) inherit silent-SAFE. THIRD "
-            "shared-helper family member confirmed. Pinned strict; "
-            "graduates when ``get_changed_files`` returns a "
-            "``(paths, error_kind)`` tuple and cmd_pr_diff surfaces "
-            "``summary.git_error`` on the failure branch."
-        ),
-    )
+    # GRADUATED by W1462, on the pin's own stated exit condition:
+    # ``get_changed_files_status`` returns ``(paths, error_kind)`` and
+    # cmd_pr_diff surfaces ``summary.git_error`` on the failure branch.
+    # cmd_diff still consumes the bare helper and its W805-EEEE pin stays.
     def test_bogus_ref_envelope_has_git_error_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref path must emit ``summary.git_error`` distinct from clean tree."""
         monkeypatch.chdir(clean_indexed_project)
@@ -374,17 +362,11 @@ class TestEmptyPrDistinctFromUnresolvedRef:
     git-error path MUST produce distinguishable envelopes. Today they
     are byte-identical on every machine-state field cmd_pr_diff emits."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-JJJJ REAL BUG (invariant): clean-tree envelope and "
-            "bogus-ref envelope are byte-identical on every machine-state "
-            "field (state, resolution, git_error, partial_success). "
-            "Pattern-2 silent-fallback contract violated. Pinned strict; "
-            "graduates when the two envelopes differ on at least one "
-            "closed-enum machine-state field."
-        ),
-    )
+    # GRADUATED by W1462: the two envelopes now differ on ``git_error`` and on
+    # ``partial_success``. ``state`` and ``resolution`` are still absent from
+    # both, which is why the two sibling pins above remain xfailed -- adding a
+    # state vocabulary to pr-diff is a separate decision from stopping the
+    # gate authorizing on an unread diff.
     def test_clean_tree_distinct_from_bogus_ref(self, cli_runner, clean_indexed_project, monkeypatch):
         """Clean-tree envelope must differ from bogus-ref envelope on a machine-state field."""
         monkeypatch.chdir(clean_indexed_project)

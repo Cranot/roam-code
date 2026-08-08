@@ -16,7 +16,7 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
-from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
+from roam.commands.changed_files import get_changed_files_status, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
@@ -75,7 +75,54 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     root = find_project_root()
 
     # Determine changed files
-    changed = get_changed_files(root, staged=staged, commit_range=commit_range)
+    # W1462: read the ``(paths, error_kind)`` form — an empty list from a
+    # FAILED ``git diff`` must not be published as "no changes detected"
+    # and must not authorise under --fail-on-degradation.
+    changed, git_error = get_changed_files_status(root, staged=staged, commit_range=commit_range)
+    if git_error is not None:
+        verdict = f"diff unavailable: {git_error} — cannot gate"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "pr-diff",
+                        summary={
+                            "verdict": verdict,
+                            "footprint_pct": 0.0,
+                            "metric_deltas_available": False,
+                            "health_delta": None,
+                            "new_issues": 0,
+                            "partial_success": True,
+                            "git_error": git_error,
+                        },
+                        changed_files=[],
+                        metric_deltas={},
+                        edge_analysis={
+                            "total_from_changed": 0,
+                            "cross_cluster": [],
+                            "layer_violations": [],
+                        },
+                        symbol_changes={"added": [], "removed": [], "modified": []},
+                        footprint={
+                            "files_changed": 0,
+                            "files_total": 0,
+                            "files_pct": 0.0,
+                            "symbols_changed": 0,
+                            "symbols_total": 0,
+                            "symbols_pct": 0.0,
+                        },
+                        warnings_out=[f"pr_diff_changed_files_failed:{git_error}:cannot read git diff"],
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(f"Could not read the git diff ({git_error}); no change set was measured.")
+        if fail_on_degradation:
+            from roam.exit_codes import EXIT_GATE_FAILURE
+
+            ctx.exit(EXIT_GATE_FAILURE)
+        return
     if not changed:
         if json_mode:
             click.echo(
