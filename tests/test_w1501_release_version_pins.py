@@ -271,6 +271,75 @@ def test_published_version_refuses_when_no_release_tag_exists(monkeypatch) -> No
     assert "fetch-depth" in str(exc.value), "the message must say how to make the tag list reachable"
 
 
+def test_a_tag_only_this_checkout_has_is_not_published(monkeypatch) -> None:
+    """The release blocker: a local tag is published to nobody.
+
+    ``git tag v14.0.0`` used to make this module believe 14.0.0 was PUBLISHED,
+    so it demanded all 48 install pins move to a version no consumer could
+    fetch — and refused the very ``git push origin v14.0.0`` that would have
+    made the tag real. The sweep blocked the release it exists to protect, and
+    complying with it would have put 404ing pins on public main. Measured
+    2026-08-08 with a two-arm control: tag present -> rc 1, tag absent -> rc 0,
+    nothing else changed.
+    """
+    monkeypatch.setattr(sync, "release_tags", lambda: ["v13.10.0", "v14.0.0"])
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: ["v13.10.0"])
+    assert sync._published_version() == "13.10.0", (
+        "a tag the remote does not have must not count as the published release"
+    )
+    assert sync._PUBLISHED_SOURCE == "remote tags"
+
+
+def test_an_unreachable_remote_degrades_loudly_rather_than_silently(monkeypatch) -> None:
+    """Offline is allowed to answer, but not allowed to sound verified.
+
+    Refusing outright would break every offline run; answering from local tags
+    without saying so would republish the defect above under a clean-looking
+    report. The answer is given AND labelled.
+    """
+    monkeypatch.setattr(sync, "release_tags", lambda: ["v13.10.0", "v14.0.0"])
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: None)
+    assert sync._published_version() == "14.0.0"
+    assert "UNVERIFIED" in sync._PUBLISHED_SOURCE, (
+        "a degraded answer must be labelled, or it is indistinguishable from a verified one"
+    )
+
+
+def test_a_remote_with_no_release_tag_refuses(monkeypatch) -> None:
+    """Nothing published is UNKNOWN, not "use whatever is local"."""
+    monkeypatch.setattr(sync, "release_tags", lambda: ["v14.0.0"])
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: [])
+    with pytest.raises(SystemExit) as exc:
+        sync._published_version()
+    assert "published to nobody" in str(exc.value)
+
+
+def test_remote_release_tags_survives_annotated_peel_refs_and_junk(monkeypatch) -> None:
+    """``ls-remote`` lists annotated tags twice; the peel suffix is not a tag."""
+    import subprocess
+
+    payload = (
+        b"aaaa\trefs/tags/v13.10.0\nbbbb\trefs/tags/v13.10.0^{}\ncccc\trefs/tags/v14.0.0-rc1\ndddd\trefs/heads/main\n"
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0] if a else [], 0, payload, b""),
+    )
+    assert sync._remote_release_tags() == ["v13.10.0", "v13.10.0"]
+
+
+def test_remote_release_tags_returns_none_when_the_remote_cannot_answer(monkeypatch) -> None:
+    """None means "could not ask", which is not the same as "no tags"."""
+    import subprocess
+
+    def _boom(*a: object, **k: object):
+        raise OSError("no network")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    assert sync._remote_release_tags() is None
+
+
 def test_release_tags_refuses_when_git_is_unreachable(monkeypatch) -> None:
     """An unreachable tag list is not an empty tag list, and neither is OK."""
     import subprocess
@@ -298,6 +367,13 @@ def test_release_tags_ignores_non_release_tags(monkeypatch) -> None:
         "run",
         lambda *_a, **_kw: subprocess.CompletedProcess([], returncode=0, stdout=out, stderr=b""),
     )
+    # The property under test is TAG FILTERING, not remote resolution. Since
+    # `_published_version` began asking the remote which tags are actually
+    # published, it too calls `subprocess.run` — and would read this
+    # `git tag --list` payload as `ls-remote` output, find no `refs/tags/`
+    # line, and correctly refuse. Pin the remote to the same published set so
+    # this test keeps measuring the one thing it is named for.
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: ["v13.9.0", "v13.10.0"])
     assert sync.release_tags() == ["v13.9.0", "v13.10.0"]
     assert sync._published_version() == "13.10.0", "13.10.0 > 13.9.0 numerically, not lexically"
 

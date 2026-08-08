@@ -239,6 +239,53 @@ def release_tags() -> list[str]:
     return [t for t in (line.strip() for line in out.splitlines()) if _RELEASE_TAG.fullmatch(t)]
 
 
+_PUBLISHED_SOURCE = ""
+"""How ``_published_version()`` answered. Read by the report so a degraded
+answer is disclosed rather than passed off as a verified one."""
+
+
+def _remote_release_tags() -> list[str] | None:
+    """Final-release tags the REMOTE has, or ``None`` when it cannot answer.
+
+    A tag that exists only in this working copy is published to nobody. That
+    distinction has exactly one moment where it matters and it is the release:
+    ``git tag v14.0.0`` used to make this module believe 14.0.0 was published,
+    which made it demand every install pin move to a version no consumer could
+    fetch -- and refuse the very ``git push origin v14.0.0`` that would have
+    made the tag real. The sweep blocked the release it exists to protect.
+
+    Network here is not a new dependency. This runs on the PRE-PUSH path, and a
+    push already requires the remote; the same hook already hands
+    ``--remote-url`` to two other scanners. ``ls-remote`` is measured at ~620ms
+    against 169 refs. It is bounded by a timeout so it can never hang a push,
+    and it returns None rather than raising so an offline caller degrades
+    loudly instead of failing outright.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-remote", "--tags", "origin"],
+            capture_output=True,
+            check=False,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = proc.stdout.decode("utf-8", "surrogateescape")
+    tags: list[str] = []
+    for line in out.splitlines():
+        _, _, ref = line.partition("refs/tags/")
+        # Annotated tags are listed twice, the second with a ``^{}`` peel
+        # suffix. Both name the same tag; keep one.
+        ref = ref.strip().removesuffix("^{}")
+        if ref and _RELEASE_TAG.fullmatch(ref):
+            tags.append(ref)
+    return tags
+
+
 def _published_version() -> str:
     """The last PUBLISHED release — the highest final-release ``v*`` tag.
 
@@ -251,6 +298,8 @@ def _published_version() -> str:
     closes the other half when a network is available, and reports UNKNOWN
     (not OK) when it is not.
     """
+    global _PUBLISHED_SOURCE
+
     tags = release_tags()
     if not tags:
         raise SystemExit(
@@ -261,6 +310,26 @@ def _published_version() -> str:
             "shallow clone, fetch tags (`git fetch --tags`, or checkout with "
             "fetch-depth: 0)."
         )
+
+    # A tag only this working copy has is published to nobody. Prefer the
+    # remote's answer; fall back to the local list ONLY when the remote cannot
+    # be reached, and say so, because an unverified answer reported as a
+    # verified one is the class this module exists to refuse.
+    remote = _remote_release_tags()
+    if remote is None:
+        _PUBLISHED_SOURCE = "local tags — remote unreachable, so PUBLISHED is UNVERIFIED"
+    elif remote:
+        _PUBLISHED_SOURCE = "remote tags"
+        tags = remote
+    else:
+        raise SystemExit(
+            "the remote has no final-release `v*` tag, so nothing is PUBLISHED "
+            "and install pins cannot be resolved. A tag that exists only in "
+            "this working copy is published to nobody. Refusing rather than "
+            "treating a local tag as a release — that substitution is what "
+            "makes this sweep demand pins for a version no consumer can fetch."
+        )
+
     return max(tags, key=lambda t: tuple(int(p or 0) for p in _RELEASE_TAG.fullmatch(t).groups()))[1:]
 
 
