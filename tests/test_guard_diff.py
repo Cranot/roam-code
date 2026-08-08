@@ -3,11 +3,34 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from click.testing import CliRunner
 
 from roam.cli import cli
 from tests.helpers import make_pr_bundle
+
+
+def _readable_repo(tmp_path):
+    """Make the cwd a git worktree git can actually answer questions about.
+
+    A bundle that declares no affected symbols falls back to git for its
+    change set. In a plain temp directory git answers ``fatal: not a git
+    repository``, and the composer used to read that refusal as "nothing
+    changed" -- which is what made a ``pass`` verdict here vacuous rather than
+    earned. It is now reported as an unanalyzable change set, so these tests
+    have to give the command the readable repository the verdict they assert
+    presupposes. The fixture is the thing that was wrong, not the assertion.
+    """
+    subprocess.run(["git", "init", "-q", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "fixture@example.invalid"], cwd=tmp_path, check=True, capture_output=True
+    )
+    subprocess.run(["git", "config", "user.name", "fixture"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "seed.txt"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=tmp_path, check=True, capture_output=True)
+    return tmp_path
 
 
 def _bundle_blocking(tmp_path, name: str):
@@ -35,6 +58,7 @@ def _bundle_passing(tmp_path, name: str):
 
 def test_guard_diff_two_explicit_bundles(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    _readable_repo(tmp_path)
     a = _bundle_blocking(tmp_path, "a.json")
     b = _bundle_passing(tmp_path, "b.json")
     runner = CliRunner()
@@ -57,6 +81,7 @@ def test_guard_diff_unchanged_when_same_bundle(tmp_path):
 
 def test_guard_diff_text_mode(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    _readable_repo(tmp_path)
     a = _bundle_blocking(tmp_path, "a.json")
     b = _bundle_passing(tmp_path, "b.json")
     runner = CliRunner()
@@ -162,6 +187,7 @@ def test_guard_diff_without_by_file_omits_per_file(tmp_path, monkeypatch):
 def test_guard_diff_detects_regression(tmp_path, monkeypatch):
     """When verdict moves to a more-severe value, direction = regressed."""
     monkeypatch.chdir(tmp_path)
+    _readable_repo(tmp_path)
     a = _bundle_passing(tmp_path, "good.json")
     b = _bundle_blocking(tmp_path, "bad.json")
     runner = CliRunner()
