@@ -1,8 +1,20 @@
 """Setup diagnostics command — checks environment, dependencies, and index state.
 
-Exit codes:
-  0  All checks passed.
-  1  One or more checks failed.
+Exit codes (verified against this module's ``ctx.exit`` sites — there are
+exactly two and both are ``ctx.exit(2)``):
+  0  All checks passed, OR only advisory checks failed.
+  2  At least one blocking check failed. Also returned by ``--strict`` on an
+     advisory failure, because ``--strict`` promotes advisory to blocking.
+
+There is no exit 1. This docstring said "1  One or more checks failed", which
+described an older implementation: advisory-only failures were deliberately
+made exit 0 (a fresh-install user reading a hard-failure code for a cache-age
+warning concludes roam is broken — see the comment above the exit decision).
+The code moved and this sentence did not, so a CI author writing
+``if rc == 1: echo advisory`` against it would never see that branch fire.
+
+Note that 2 collides with Click's usage-error code, so a doctor run with
+perfectly valid arguments still exits 2 on a blocking environment failure.
 
 Output formats: text (default) and ``--json``. SARIF is deliberately NOT
 emitted because doctor checks are environment-scoped (Python version,
@@ -2566,10 +2578,10 @@ _ADVISORY_CHECK_NAMES = frozenset(
     "--strict",
     is_flag=True,
     help=(
-        "Promote advisory check failures to blocking. CI gates that "
-        "require zero drift use this; default behaviour treats advisory "
-        "failures as warnings (exit 1) so cache-age and cloud-sync "
-        "warnings don't fail every CI run."
+        "Promote advisory check failures to blocking (exit 2). CI gates "
+        "that require zero drift use this; default behaviour reports "
+        "advisory failures in the table and exits 0, so cache-age and "
+        "cloud-sync warnings don't fail every CI run."
     ),
 )
 @click.option(
@@ -2594,9 +2606,14 @@ def doctor(ctx, strict, persist):
 
     \b
     Exit codes:
-      0  All checks passed.
-      1  Only advisory checks failed (cache age, cloud sync, optional extras).
+      0  All checks passed, OR only advisory checks failed (cache age,
+         cloud sync, optional extras). Advisory failures are reported in
+         the table and in the JSON summary, never in the exit code.
       2  At least one blocking check failed (Python version, tree-sitter, ...).
+
+    There is NO exit 1. Advisory-only failures deliberately exit 0 so a
+    fresh install does not read as broken; branch on the JSON summary
+    (``advisory_failed``) if you need to detect them.
 
     With ``--strict``, advisory failures are promoted to blocking — any
     failure exits 2. CI gates that require zero drift use this.
