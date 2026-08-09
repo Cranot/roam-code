@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
 from typing import NamedTuple
 
@@ -110,11 +112,32 @@ def _risk_level(pin_status: str, is_dev: bool) -> str:
     return level
 
 
-def _parse_requirements_txt(path: Path, source: str) -> list[Dependency]:
+def _record_manifest_gap(read_errors, source: str, exc: BaseException, kind: str) -> None:
+    """Record a manifest that was DISCOVERED but never measured.
+
+    ``kind`` is ``"unreadable"`` (the open raised :class:`OSError`) or
+    ``"unparseable"`` (it opened but the content did not parse).  Both mean
+    the file contributed zero dependencies for a reason that is NOT "it
+    declares none", and a denominator that silently drops them reports a
+    pin coverage over a corpus the user never chose.
+    """
+    if read_errors is None:
+        return
+    read_errors.append(
+        {
+            "file": source,
+            "kind": kind,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    )
+
+
+def _parse_requirements_txt(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -144,11 +167,12 @@ def _parse_requirements_txt(path: Path, source: str) -> list[Dependency]:
 _SETUP_INSTALL_REQUIRES_RE = re.compile(r"install_requires\s*=\s*\[([^\]]*)\]", re.DOTALL)
 
 
-def _parse_setup_py(path: Path, source: str) -> list[Dependency]:
+def _parse_setup_py(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
     m = _SETUP_INSTALL_REQUIRES_RE.search(text)
     if m:
@@ -173,11 +197,12 @@ def _parse_setup_py(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
-def _parse_setup_cfg(path: Path, source: str) -> list[Dependency]:
+def _parse_setup_cfg(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
     in_install = False
     in_continuation = False
@@ -213,12 +238,13 @@ def _parse_setup_cfg(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
-def _parse_pyproject_toml(path: Path, source: str) -> list[Dependency]:
+def _parse_pyproject_toml(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     """Parse pyproject.toml -- [project] PEP 621 and [tool.poetry] formats."""
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
 
     # Strip TOML comments line-by-line so apostrophes inside English
@@ -340,13 +366,21 @@ def _parse_pyproject_toml(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
-def _parse_package_json(path: Path, source: str) -> list[Dependency]:
+def _parse_package_json(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     import json as _json
 
     deps: list[Dependency] = []
     try:
-        data = _json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
+        return deps
+    try:
+        data = _json.loads(raw)
+    except ValueError as exc:
+        # Opened fine, content is not JSON. A different cause from an
+        # unreadable file, and equally not "declares no dependencies".
+        _record_manifest_gap(read_errors, source, exc, "unparseable")
         return deps
     for section, is_dev in [
         ("dependencies", False),
@@ -372,11 +406,12 @@ def _parse_package_json(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
-def _parse_go_mod(path: Path, source: str) -> list[Dependency]:
+def _parse_go_mod(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
     for block in re.findall(r"require\s*\((.*?)\)", text, re.DOTALL):
         for line in block.splitlines():
@@ -416,11 +451,12 @@ def _parse_go_mod(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
-def _parse_cargo_toml(path: Path, source: str) -> list[Dependency]:
+def _parse_cargo_toml(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
     section_re = re.compile(r"^\[([^\]]+)\]", re.MULTILINE)
     sections = [(m.group(1), m.start()) for m in section_re.finditer(text)]
@@ -469,11 +505,12 @@ def _parse_cargo_toml(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
-def _parse_pom_xml(path: Path, source: str) -> list[Dependency]:
+def _parse_pom_xml(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
     for dep_block in re.findall(r"<dependency>(.*?)</dependency>", text, re.DOTALL):
         group_m = re.search(r"<groupId>([^<]+)</groupId>", dep_block)
@@ -501,11 +538,12 @@ def _parse_pom_xml(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
-def _parse_build_gradle(path: Path, source: str) -> list[Dependency]:
+def _parse_build_gradle(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
     for m in re.finditer(r"(\w+)\s+[\x27\x22]([^\x27\x22]+:[^\x27\x22]+:[^\x27\x22]+)[\x27\x22]", text):
         config = m.group(1).lower()
@@ -553,14 +591,22 @@ def _pin_status_composer(spec: str) -> str:
     return "range"
 
 
-def _parse_composer_json(path: Path, source: str) -> list[Dependency]:
+def _parse_composer_json(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     """Parse a composer.json file -- `require` and `require-dev` sections."""
     import json as _json
 
     deps: list[Dependency] = []
     try:
-        data = _json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
+        return deps
+    try:
+        data = _json.loads(raw)
+    except ValueError as exc:
+        # Opened fine, content is not JSON. A different cause from an
+        # unreadable file, and equally not "declares no dependencies".
+        _record_manifest_gap(read_errors, source, exc, "unparseable")
         return deps
     if not isinstance(data, dict):
         return deps
@@ -590,11 +636,12 @@ def _parse_composer_json(path: Path, source: str) -> list[Dependency]:
     return deps
 
 
-def _parse_gemfile(path: Path, source: str) -> list[Dependency]:
+def _parse_gemfile(path: Path, source: str, read_errors: list | None = None) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _record_manifest_gap(read_errors, source, exc, "unreadable")
         return deps
     in_test_group = False
     for line in text.splitlines():
@@ -666,7 +713,46 @@ _SUBDIR_SKIP: frozenset[str] = frozenset(
 )
 
 
-def discover_and_parse(project_root: Path) -> list[Dependency]:
+@dataclass
+class ManifestCoverage:
+    """Which discovered manifests actually contributed to the numbers.
+
+    ``discovered`` is every manifest path the walk found on disk.  ``read`` is
+    the subset that opened and parsed.  ``gaps`` names the rest with a reason.
+    A manifest that opened, parsed, and declares zero dependencies is in
+    ``read`` and NOT in ``gaps`` -- an empty ``requirements.txt`` or a
+    ``pyproject.toml`` carrying only ``[build-system]`` is an ordinary clean
+    measurement, and keying incompleteness on emptiness instead of on the
+    error would make most Python repos report a partial scan.
+    """
+
+    discovered: list[str] = dc_field(default_factory=list)
+    read: list[str] = dc_field(default_factory=list)
+    gaps: list[dict] = dc_field(default_factory=list)
+
+    @property
+    def scan_incomplete(self) -> bool:
+        return len(self.read) < len(self.discovered)
+
+    def gap_names(self, cap: int = 3) -> str:
+        names = [str(g.get("file") or "?") for g in self.gaps]
+        head = ", ".join(names[:cap])
+        if len(names) > cap:
+            head += f", +{len(names) - cap} more"
+        return head or "none"
+
+    def to_dict(self) -> dict:
+        return {
+            "manifests_discovered": len(self.discovered),
+            "manifests_read": len(self.read),
+            "manifests_unreadable": sum(1 for g in self.gaps if g.get("kind") == "unreadable"),
+            "manifests_unparseable": sum(1 for g in self.gaps if g.get("kind") == "unparseable"),
+            "manifests_not_measured": [dict(g) for g in self.gaps[:10]],
+            "scan_incomplete": self.scan_incomplete,
+        }
+
+
+def discover_and_parse(project_root: Path, coverage: ManifestCoverage | None = None) -> list[Dependency]:
     """Discover dependency manifests at the project root + 1-deep subdirs.
 
     Root-level files are always scanned. For monorepos and backend/frontend
@@ -674,14 +760,34 @@ def discover_and_parse(project_root: Path) -> list[Dependency]:
     manifest types (``composer.json``, ``package.json``, ``go.mod``,
     ``Cargo.toml``, ``Gemfile``) so that, e.g., ``./backend/composer.json``
     isn't invisible to ``supply-chain`` / ``sbom``.
+
+    W1517: pass a :class:`ManifestCoverage` as *coverage* to learn which of
+    the discovered manifests actually contributed.  The accumulator is an
+    optional out-parameter rather than a second return value on purpose --
+    this function is the W607-AK fault-injection boundary that the envelope
+    tests patch by name, and moving the call site to a differently-named
+    function silently un-wires that boundary.  Same idiom as the
+    ``filter_stats`` accumulator threaded through the auth-gaps collector.
     """
     all_deps: list[Dependency] = []
+    if coverage is None:
+        coverage = ManifestCoverage()
+
+    def _run(parser_fn, candidate: Path, source: str) -> list[Dependency]:
+        coverage.discovered.append(source)
+        errors: list[dict] = []
+        parsed = parser_fn(candidate, source, errors)
+        if errors:
+            coverage.gaps.extend(errors)
+        else:
+            coverage.read.append(source)
+        return parsed
 
     # Root-level discovery (existing behaviour)
     for filename, (parser_fn, _eco) in _DEP_FILES.items():
         candidate = project_root / filename
         if candidate.is_file():
-            parsed = parser_fn(candidate, filename)
+            parsed = _run(parser_fn, candidate, filename)
             if filename in _DEV_FILE_MARKERS:
                 parsed = [d._replace(is_dev=True) for d in parsed]
             all_deps.extend(parsed)
@@ -699,8 +805,7 @@ def discover_and_parse(project_root: Path) -> list[Dependency]:
                 candidate = sub / filename
                 if candidate.is_file():
                     rel_source = f"{sub.name}/{filename}"
-                    parsed = parser_fn(candidate, rel_source)
-                    all_deps.extend(parsed)
+                    all_deps.extend(_run(parser_fn, candidate, rel_source))
 
     seen: set[tuple[str, str, str]] = set()
     unique: list[Dependency] = []
@@ -710,6 +815,23 @@ def discover_and_parse(project_root: Path) -> list[Dependency]:
             seen.add(key)
             unique.append(dep)
     return unique
+
+
+def discover_and_parse_status(project_root: Path) -> tuple[list[Dependency], ManifestCoverage]:
+    """Discover dependency manifests, disclosing which ones were measured.
+
+    Thin wrapper over :func:`discover_and_parse` that keeps the coverage
+    channel instead of dropping it, so a caller can tell a manifest that
+    declares nothing apart from one that could not be opened.  Mirrors the
+    ``load_tenant_guard_signals`` / ``load_tenant_guard_signals_status``
+    split in :mod:`roam.security.tenant_scope`.
+
+    Prefer this anywhere a score or a count is published: the bare
+    list-returning form drops an unread manifest out of the denominator, and
+    that moves pin coverage in an unbounded direction.
+    """
+    coverage = ManifestCoverage()
+    return discover_and_parse(project_root, coverage), coverage
 
 
 def compute_risk_score(deps: list[Dependency]) -> dict:
@@ -926,7 +1048,23 @@ def supply_chain(ctx, top):
     if project_root is None:
         project_root = Path.cwd()
 
-    deps = _run_check_ak("discover_and_parse", discover_and_parse, project_root, default=[])
+    # W1517: the coverage accumulator is passed IN rather than returned, so
+    # this stays a call to ``discover_and_parse`` -- the name the W607-AK
+    # envelope tests patch to inject a filesystem refusal. Calling a
+    # differently-named function here would leave that boundary un-wired
+    # while every one of its tests still passed against the old name.
+    # A raise mid-walk leaves the accumulator partially filled, which is the
+    # honest record of how far discovery got before it failed.
+    manifest_coverage = ManifestCoverage()
+    deps = _run_check_ak(
+        "discover_and_parse",
+        discover_and_parse,
+        project_root,
+        manifest_coverage,
+        default=[],
+    )
+    scan_incomplete = manifest_coverage.scan_incomplete
+    _gap_names = manifest_coverage.gap_names()
     metrics = _run_check_ak(
         "compute_risk_score",
         compute_risk_score,
@@ -962,7 +1100,13 @@ def supply_chain(ctx, top):
     total_risky_full = len(risky_full)
     risky = _run_check_ak("top_risky", top_risky, deps, top, default=[])
     risky_truncated = total_risky_full > len(risky)
-    found_files = sorted({d.source_file for d in deps})
+    # W1517: ``files_scanned`` used to be derived from the dependencies that
+    # survived -- a manifest that could not be opened was absent from the list
+    # entirely, so no reader could tell it had ever existed. It now names every
+    # DISCOVERED manifest, with the ones that were never measured marked.
+    found_files = sorted(set(manifest_coverage.discovered) | {d.source_file for d in deps})
+    _gap_files = {str(g.get("file")) for g in manifest_coverage.gaps}
+    found_files_annotated = [f"{f} (NOT READ)" if f in _gap_files else f for f in found_files]
     ecosystems: dict[str, int] = dict(Counter(d.ecosystem for d in deps))
 
     # W607-CD -- compute_predicate boundary. Wraps the per-field extraction
@@ -1030,6 +1174,19 @@ def supply_chain(ctx, top):
         bool(deps),
         default="Supply chain analysis completed",
     )
+    if scan_incomplete:
+        # An unread manifest can contain only exact pins (raising true
+        # coverage) or only unpinned ones (lowering it), so the published
+        # number is neither an upper nor a lower bound on the project. It is
+        # restated with its real denominator rather than presented as a
+        # whole-project score. See CHANGELOG for the open decision on
+        # withholding the number entirely.
+        verdict = (
+            f"{verdict} -- over {len(manifest_coverage.read)} of "
+            f"{len(manifest_coverage.discovered)} manifests; "
+            f"{len(manifest_coverage.gaps)} not measured ({_gap_names}). "
+            "NOT a whole-project score"
+        )
 
     if sarif_mode:
         sarif = _run_check_ak(
@@ -1047,15 +1204,21 @@ def supply_chain(ctx, top):
         # ``with_sarif_disclosures`` covers both (it substitutes a valid
         # zero-result run for a floored ``{}``). Emitting on both halves
         # duplicated every marker in toolExecutionNotifications[].
-        sarif = with_sarif_disclosures(
-            sarif,
-            list(_w607ak_warnings_out) + list(_w607cd_warnings_out),
-        )
+        _sarif_markers = list(_w607ak_warnings_out) + list(_w607cd_warnings_out)
+        if scan_incomplete:
+            # A SARIF document has nowhere else to say the census was partial,
+            # and a Code-Scanning consumer reads a short result list as a
+            # complete one. Same W1331 adapter every sibling command uses.
+            _sarif_markers.append(
+                f"supply_chain_scan_incomplete:{len(manifest_coverage.read)}"
+                f"_of_{len(manifest_coverage.discovered)}_manifests_measured"
+            )
+        sarif = with_sarif_disclosures(sarif, _sarif_markers)
         _sarif_text = _run_check_ak("write_sarif", write_sarif, sarif, default="")
         click.echo(_sarif_text)
         # W1331: a SARIF document has nowhere to carry these markers, so a
         # Code-Scanning gate reads a degraded dependency scan as a clean one.
-        echo_text_warnings(list(_w607ak_warnings_out) + list(_w607cd_warnings_out))
+        echo_text_warnings(_sarif_markers)
         return
 
     if json_mode:
@@ -1099,10 +1262,13 @@ def supply_chain(ctx, top):
             unpinned_count=metrics.get("unpinned_count", 0),
             range_count=metrics.get("range_count", 0),
             exact_count=metrics.get("exact_count", 0),
-            files_scanned=found_files,
+            files_scanned=found_files_annotated,
             ecosystems=ecosystems,
             **_cap_summary,
+            **manifest_coverage.to_dict(),
         )
+        if scan_incomplete:
+            _summary["partial_success"] = True
         if _combined_warnings_out:
             _summary["warnings_out"] = list(_combined_warnings_out)
             _summary["partial_success"] = True
@@ -1118,7 +1284,8 @@ def supply_chain(ctx, top):
             pin_coverage_pct=round(_pred_fields.get("pin_coverage", 0.0) * 100, 1)
             if isinstance(_pred_fields.get("pin_coverage"), (int, float))
             else 0.0,
-            files_scanned=found_files,
+            files_scanned=found_files_annotated,
+            manifests_not_measured=[dict(g) for g in manifest_coverage.gaps[:10]],
             ecosystems=ecosystems,
             top_risky=[
                 dict(
@@ -1195,6 +1362,15 @@ def supply_chain(ctx, top):
     # W1331: same disclosure for the human-readable branch.
     echo_text_warnings(list(_w607ak_warnings_out) + list(_w607cd_warnings_out))
     click.echo(f"VERDICT: {verdict}")
+    # Same boolean the JSON branch reads. roam.exit_codes.gate_should_fail's
+    # docstring records why the two must not be computed independently.
+    if scan_incomplete:
+        click.echo(
+            f"# warning: {len(manifest_coverage.gaps)} of {len(manifest_coverage.discovered)} "
+            f"discovered manifest(s) were NOT measured ({_gap_names}); the score and pin "
+            "coverage above are computed over the rest, and an unread manifest moves them "
+            "in either direction."
+        )
     click.echo()
 
     if not deps:
@@ -1210,8 +1386,8 @@ def supply_chain(ctx, top):
     _unp = metrics["unpinned_count"]
     click.echo(f"Risk Score: {score}/100  |  Total: {_t}  |  Direct: {_dc}  |  Dev: {_dv}")
     click.echo(f"Pin Coverage: {_pct}%  |  Exact: {_ex}  |  Range: {_rng}  |  Unpinned: {_unp}")
-    if found_files:
-        click.echo("Files: " + ", ".join(found_files))
+    if found_files_annotated:
+        click.echo("Files: " + ", ".join(found_files_annotated))
     if ecosystems:
         eco_str = "  ".join(f"{k}:{v}" for k, v in sorted(ecosystems.items()))
         click.echo(f"Ecosystems: {eco_str}")
