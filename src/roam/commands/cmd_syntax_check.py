@@ -148,6 +148,22 @@ def _parse_file_for_syntax(file_path: str) -> dict | None:
     tree = parser.parse(source)
 
     errors = check_syntax(file_path, source, tree)
+    if errors:
+        # The bundled grammar cannot parse a type-position `import('...')` with
+        # any postfix applied, and that is a limitation of THIS build, not a
+        # defect in the file. `roam verify` already declined to report it as a
+        # syntax error; this command -- whose entire job is reporting syntax --
+        # did not, so the dedicated tool was harsher than the incidental one on
+        # the identical source. See `parser_pack` for the measurement.
+        #
+        # Re-parse with those calls masked to an identifier of equal byte
+        # length. A clean second parse means the construct was the whole
+        # complaint; a genuine error survives, at its true line and column.
+        from roam.parser_pack import reparse_without_import_types
+
+        retried = reparse_without_import_types(source, grammar)
+        if retried is not None:
+            errors = check_syntax(file_path, source, retried)
     return {
         "path": file_path.replace("\\", "/"),
         "language": language,

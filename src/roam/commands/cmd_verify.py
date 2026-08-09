@@ -2100,17 +2100,19 @@ def _mask_import_type_calls(source: bytes) -> bytes | None:
 
 
 def _reparse_without_import_types(fpath: Path, lang: str):
-    """Re-parse with the known grammar gap masked, or ``None`` if not possible."""
-    try:
-        from roam.parser_pack import get_parser, has_language
+    """Re-parse with the known grammar gap masked, or ``None`` if not possible.
 
-        if not has_language(lang):
-            return None
-        masked = _mask_import_type_calls(fpath.read_bytes())
-        if masked is None:
-            return None  # nothing to mask, so the error is not this gap
-        return get_parser(lang).parse(masked)
-    except Exception:  # noqa: BLE001 — the retry is best-effort; the first verdict stands
+    Thin wrapper over ``parser_pack``. The accommodation moved there because it
+    describes the BUNDLED GRAMMAR rather than this command: it shipped here
+    first, and `roam syntax-check` -- whose entire job is reporting syntax --
+    did not get it, so the dedicated tool called valid TypeScript broken while
+    this one did not. One implementation, both callers.
+    """
+    try:
+        from roam.parser_pack import reparse_without_import_types
+
+        return reparse_without_import_types(fpath.read_bytes(), lang)
+    except OSError:  # unreadable file: the caller's original verdict stands
         return None
 
 
