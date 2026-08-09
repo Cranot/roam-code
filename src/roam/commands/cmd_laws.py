@@ -25,7 +25,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
-from roam.exit_codes import EXIT_GATE_FAILURE
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.laws.checker import check_laws, get_diff_text_status, parse_added
 from roam.laws.miner import Law, mine_laws
 from roam.laws.serializer import (
@@ -651,22 +651,35 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
                 "diff_available": diff_error is None,
                 "diff_error": diff_error,
                 "partial_success": diff_error is not None,
+                # Narrow companion to the broad `partial_success`, matching
+                # cmd_taint / cmd_secrets / cmd_ignore_drift: this run did not
+                # measure the thing it was asked about.
+                "scan_incomplete": diff_error is not None,
             },
             violations=[],
         )
         auto_log(envelope, action="laws-check", target=str(laws_path))
+        # Decide ONCE, above the channel branches. The hand-copied
+        # `if strict and diff_error is not None` used to sit only on the path
+        # the text and --json arms reached; the --sarif arm returned before it,
+        # so the auto-uploaded CI channel exited 0 on a diff it could not read
+        # while the other two channels exited 5 on the identical state.
+        gate_failed = gate_should_fail(strict, findings=0, scan_incomplete=diff_error is not None)
         if sarif_mode:
             from roam.output.sarif import laws_to_sarif, write_sarif
 
-            click.echo(write_sarif(laws_to_sarif([])))
-            return
-        if json_mode:
+            # Carry the verdict into run.invocations[].toolExecutionNotifications[]
+            # like the not_initialized / empty-laws branches already do; a
+            # zero-result SARIF with no notification reads as "checked, clean".
+            click.echo(write_sarif(laws_to_sarif([], disclosures=[verdict])))
+        elif json_mode:
             click.echo(to_json(envelope))
         else:
             click.echo(f"VERDICT: {verdict}")
         # Fail closed under --strict: a gate that could not read the diff
-        # has not cleared anything.
-        if strict and diff_error is not None:
+        # has not cleared anything. A genuinely EMPTY diff (diff_error is None)
+        # is a measured clean result and must stay exit 0.
+        if gate_failed:
             ctx.exit(EXIT_GATE_FAILURE)
         return
 

@@ -280,16 +280,94 @@ class TestLawsCheckDiffUnavailable:
         assert summary["diff_available"] is False, summary
         assert summary["diff_error"], summary
         assert summary["partial_success"] is True, summary
+        # Narrow companion to the broad partial_success, matching cmd_taint /
+        # cmd_secrets / cmd_ignore_drift: this run measured nothing.
+        assert summary["scan_incomplete"] is True, summary
         assert "nothing to check" not in summary["verdict"].lower(), summary["verdict"]
 
-    def test_valid_but_empty_diff_still_passes(self, cli_runner, laws_repo, monkeypatch):
-        """Negative control — a real empty diff must stay quiet and exit 0."""
+    @pytest.mark.parametrize("mode_args", [[], ["--json"], ["--sarif"]])
+    def test_unknown_base_ref_gates_in_every_channel(self, cli_runner, laws_repo, monkeypatch, mode_args):
+        """The gate decision must not depend on the output format.
+
+        This test is the hole that let the defect survive. Its sibling above
+        was named ``..._and_gates`` but asserted only JSON summary FIELDS -- it
+        never asserted an exit code and never ran the SARIF channel. Measured
+        on identical state: text exited 5, ``--json`` exited 5, and ``--sarif``
+        exited 0 with a well-formed zero-result document and no mention of the
+        diff it could not read. ``laws`` is in action.yml ``_SUPPORTED_SARIF``,
+        so that was the auto-uploaded CI channel.
+        """
+        monkeypatch.chdir(laws_repo)
+        result = invoke_cli(
+            cli_runner,
+            [*mode_args, "laws", "check", "--strict", "--diff-source", "pr", "--base-ref", "no-such-ref"],
+        )
+        assert result.exit_code == 5, (
+            f"mode {mode_args or ['text']} exited {result.exit_code}; a gate that could not "
+            f"read the diff has cleared nothing.\n{result.output[:400]}"
+        )
+
+    def test_unknown_base_ref_sarif_carries_the_disclosure(self, cli_runner, laws_repo, monkeypatch):
+        """A zero-result SARIF with no notification reads as "checked, clean".
+
+        The sibling not_initialized / empty-laws branches already pass
+        ``disclosures=[verdict]``; this branch did not, so the document said
+        nothing at all about why it held no results.
+        """
+        monkeypatch.chdir(laws_repo)
+        result = invoke_cli(
+            cli_runner,
+            ["--sarif", "laws", "check", "--strict", "--diff-source", "pr", "--base-ref", "no-such-ref"],
+        )
+        doc = json.loads(result.output)
+        run = doc["runs"][0]
+        assert run["results"] == [], run["results"]
+        notes = [
+            n.get("message", {}).get("text", "")
+            for inv in run.get("invocations", [])
+            for n in inv.get("toolExecutionNotifications", [])
+        ]
+        assert any("DIFF UNAVAILABLE" in n for n in notes), notes
+
+    @pytest.mark.parametrize("mode_args", [[], ["--json"], ["--sarif"]])
+    def test_valid_but_empty_diff_still_passes(self, cli_runner, laws_repo, monkeypatch, mode_args):
+        """Negative control — a real empty diff must stay quiet and exit 0.
+
+        This is the run that must NOT newly fail. A branch with no changes
+        yields ``diff_text == ""`` with ``diff_error is None``: a measured
+        clean result. The refusal is gated strictly on ``diff_error is not
+        None`` -- never on ``not violations`` or ``not diff_text``.
+        """
+        monkeypatch.chdir(laws_repo)
+        result = invoke_cli(cli_runner, [*mode_args, "laws", "check", "--strict"])
+        assert result.exit_code == 0, f"mode {mode_args or ['text']}: {result.output[:400]}"
+
+    def test_valid_but_empty_diff_reports_complete(self, cli_runner, laws_repo, monkeypatch):
         monkeypatch.chdir(laws_repo)
         result = invoke_cli(cli_runner, ["laws", "check", "--strict"], json_mode=True)
         summary = json.loads(result.output)["summary"]
         assert summary["diff_available"] is True, summary
         assert summary["partial_success"] is False, summary
+        assert summary["scan_incomplete"] is False, summary
         assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize("mode_args", [[], ["--json"], ["--sarif"]])
+    def test_uninitialized_repo_is_not_newly_gated(self, cli_runner, tmp_path, monkeypatch, mode_args):
+        """Deliberately out of scope — `laws check --strict` on a repo with no
+        roam-laws.yml exits 0 in every channel and keeps doing so.
+
+        roam-code itself ships no roam-laws.yml. Flipping this would turn
+        "laws not adopted yet" into a hard CI failure for everyone who wired
+        the gate before mining laws. That is a separate, larger decision, and
+        this test exists so the present fix cannot take it by accident.
+        """
+        repo = tmp_path / "no_laws_repo"
+        repo.mkdir()
+        (repo / "seed.py").write_text("x = 1\n", encoding="utf-8")
+        _git_init(repo)
+        monkeypatch.chdir(repo)
+        result = invoke_cli(cli_runner, [*mode_args, "laws", "check", "--strict"])
+        assert result.exit_code == 0, f"mode {mode_args or ['text']}: {result.output[:400]}"
 
 
 # ---------------------------------------------------------------------------
