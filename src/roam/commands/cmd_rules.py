@@ -13,6 +13,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -166,7 +167,16 @@ def _build_config_state_facts(config_state: str) -> list[str]:
 )
 @click.command("rules")
 @click.option("--init", "do_init", is_flag=True, help="Generate example rule files in .roam/rules/.")
-@click.option("--ci", "ci_mode", is_flag=True, help="Exit code 1 on error-severity violations.")
+@click.option(
+    "--ci",
+    "ci_mode",
+    is_flag=True,
+    help=(
+        "Exit non-zero on error-severity violations, and on error-severity "
+        "rules that could not be evaluated at all. Warning/info rules that "
+        "cannot be evaluated are disclosed, never gated."
+    ),
+)
 @click.option("--rules-dir", "rules_dir_opt", default=None, help="Custom rules directory path.")
 @click.option(
     "--top",
@@ -308,8 +318,25 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
     failed_infos = sum(1 for r in results if not r["passed"] and r["severity"] == "info")
     failed = total - passed
     partial_success = any(r.get("partial_success") for r in results)
+    # A graph clause that could not resolve returns (False, {...}) from
+    # check_clones_with / friends, so `fired = must_not and matches` is False
+    # and no violation is recorded -- and `_graph_clause_result` then emits
+    # passed=True + partial_success=True. That rule did not PASS; it did not
+    # RUN. `--ci` is documented as error-severity only, so only an
+    # error-severity rule that could not be evaluated blocks: an advisory
+    # graph-clause rule that legitimately cannot resolve (every `clones_with`
+    # rule before `roam clones --persist` has run -- documented as normal by
+    # the R18 comment and the `rules --init` template) must disclose, not gate.
+    unevaluated_errors = sum(
+        1 for r in results if r.get("partial_success") and r.get("severity") == "error" and r.get("passed")
+    )
+    unevaluated_total = sum(1 for r in results if r.get("partial_success") and r.get("passed"))
+    passed_fully = passed - unevaluated_total
 
-    if failed == 0:
+    if failed == 0 and unevaluated_total > 0:
+        # Never claim a total the run did not measure.
+        verdict = f"{passed_fully} of {total} rules passed, {unevaluated_total} could not be evaluated"
+    elif failed == 0:
         verdict = f"all {total} rules passed" if total > 0 else "no rules found"
     else:
         parts = []
@@ -319,7 +346,20 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
             parts.append(f"{failed_warnings} warning(s)")
         if failed_infos > 0:
             parts.append(f"{failed_infos} info")
-        verdict = f"{passed} of {total} rules passed, {', '.join(parts)}"
+        if unevaluated_total > 0:
+            parts.append(f"{unevaluated_total} could not be evaluated")
+        verdict = f"{passed_fully} of {total} rules passed, {', '.join(parts)}"
+
+    # One decision, read by all three channels -- gate_should_fail's stated
+    # reason for existing. UNANALYZABLE shares exit 5 with a measured
+    # VIOLATION; sharing exit 0 with a measured CLEAN is the defect.
+    gate_failed = gate_should_fail(ci_mode, findings=failed_errors, scan_incomplete=unevaluated_errors > 0)
+    incomplete_reason = (
+        f"{unevaluated_errors} error-severity rule(s) could not be evaluated "
+        "(graph clause had unresolved targets or missing clone index)"
+        if unevaluated_errors > 0
+        else None
+    )
 
     # R18: derive imperative `next_commands` from graph-clause violations so
     # an agent that consumes only the verdict can keep going. LAW 2: every
@@ -361,15 +401,18 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
         # path above; mirrors W1060 complexity SARIF). Hash invariant:
         # empty/missing warnings keep the SARIF output byte-identical to
         # pre-W1114 because emit_runtime_notifications stays False.
+        # Feed the partial disclosure into the channel that already exists for
+        # W1114 loader warnings rather than inventing a second mechanism.
+        _sarif_notes = list(_rules_warnings_out)
+        if incomplete_reason:
+            _sarif_notes.append(incomplete_reason)
         sarif = rules_to_sarif(
             results,
-            emit_runtime_notifications=bool(_rules_warnings_out),
-            warnings_out=list(_rules_warnings_out),
+            emit_runtime_notifications=bool(_sarif_notes),
+            warnings_out=_sarif_notes,
         )
         click.echo(write_sarif(sarif))
-        if ci_mode and failed_errors > 0:
-            from roam.exit_codes import EXIT_GATE_FAILURE
-
+        if gate_failed:
             ctx.exit(EXIT_GATE_FAILURE)
         return
 
@@ -388,6 +431,13 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
         }
         if partial_success:
             summary_dict["partial_success"] = True
+        if unevaluated_total > 0:
+            summary_dict["unevaluated"] = unevaluated_total
+            summary_dict["unevaluated_errors"] = unevaluated_errors
+        # Narrow companion to the broad partial_success: scan_incomplete is the
+        # subset that makes the GATE refuse, so a caller can tell "some
+        # advisory rule could not resolve" from "the gate could not decide".
+        summary_dict["scan_incomplete"] = unevaluated_errors > 0
         if _rules_warnings_out:
             # W1036: surface loader warnings (malformed files that were
             # skipped) so the agent doesn't see a green verdict that
@@ -402,6 +452,8 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
         # so an agent reading only the contract sees the lineage of the
         # verdict (missing config -> baseline rules / degraded -> warning).
         state_facts = _build_config_state_facts(config_state)
+        if incomplete_reason:
+            state_facts = [*state_facts, incomplete_reason]
         envelope_kwargs: dict = {
             "summary": summary_dict,
             "results": results,
@@ -417,9 +469,7 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
                 )
             )
         )
-        if ci_mode and failed_errors > 0:
-            from roam.exit_codes import EXIT_GATE_FAILURE
-
+        if gate_failed:
             ctx.exit(EXIT_GATE_FAILURE)
         return
 
@@ -435,7 +485,13 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
         count = len(violations)
 
         if r["passed"]:
-            click.echo(f"  [{status}] {name}")
+            # A rule whose graph clause could not resolve returns passed=True
+            # with no violations. Labelling that [PASS] told the reader the
+            # rule held; it did not run.
+            if r.get("partial_success"):
+                click.echo(f"  [UNEVAL] [{sev}] {name} (could not be evaluated)")
+            else:
+                click.echo(f"  [{status}] {name}")
         else:
             click.echo(f"  [{status}] [{sev}] {name} ({count} violation(s))")
             limit = count if top_n <= 0 else top_n
@@ -464,15 +520,15 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
             "had unresolved targets or missing clone index). Verdict reflects "
             "rules that DID run; consult evidence for partial cases."
         )
+        if incomplete_reason:
+            click.echo(f"REFUSED: {incomplete_reason}." if ci_mode else f"UNEVALUATED: {incomplete_reason}.")
 
     if _rules_warnings_out:
         click.echo()
         for w in _rules_warnings_out:
             click.echo(f"WARNING: {w}")
 
-    if ci_mode and failed_errors > 0:
-        from roam.exit_codes import EXIT_GATE_FAILURE
-
+    if gate_failed:
         ctx.exit(EXIT_GATE_FAILURE)
 
 
