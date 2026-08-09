@@ -252,11 +252,32 @@ def _is_skippable(rel_path: str) -> bool:
     return False
 
 
-def _git_ls_files(root: Path) -> list[str] | None:
+def _quoted_path(message: str) -> str | None:
+    """Pull the path git named out of one of its warnings, if it named one.
+
+    git's format string is ``could not open directory '%s': %s``. The words
+    are translated; the quoting around the path is part of the format and
+    survives translation, so the first quoted span is a better bet than any
+    English keyword. Returns ``None`` when nothing is quoted, and the caller
+    keeps the whole message instead of inventing a path.
+    """
+    start = message.find("'")
+    if start < 0:
+        return None
+    end = message.find("'", start + 1)
+    if end < 0:
+        return None
+    return message[start + 1 : end].strip() or None
+
+
+def _git_ls_files(root: Path, skips: dict[str, list[str]] | None = None) -> list[str] | None:
     """Try to list files using git ls-files. Returns None if git unavailable.
 
     Uses ``worktree_git_env`` so parallel agents in sibling worktrees don't
     contend on ``.git/index.lock``.
+
+    *skips* collects :data:`SKIP_UNENUMERABLE` — see W1533 below. Callers that
+    pass nothing behave exactly as before.
     """
     from roam.git_utils import worktree_git_env
 
@@ -273,16 +294,47 @@ def _git_ls_files(root: Path) -> list[str] | None:
         )
         if result.returncode != 0:
             return None
+        # W1533 — ``--others`` WALKS THE WORKTREE, and a directory it cannot
+        # open is reported here and nowhere else: the subtree vanishes from
+        # stdout and the exit code stays 0. Reading only the return code made
+        # a pruned listing byte-identical to a complete one.
+        #
+        # Any stderr counts. For a command whose successful output IS the file
+        # list, git having something to say is itself the anomaly, and matching
+        # the English warning would bind this to git's locale and fail open
+        # under LANG -- an unreadable message must not become an unread
+        # directory.
+        if skips is not None and result.stderr.strip():
+            for line in result.stderr.splitlines():
+                line = line.strip()
+                if line:
+                    skips.setdefault(SKIP_UNENUMERABLE, []).append(_quoted_path(line) or line)
         paths = [p.strip() for p in result.stdout.splitlines() if p.strip()]
         return paths
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
 
 
-def _walk_files(root: Path) -> list[str]:
-    """Fallback file discovery using os.walk, respecting common ignore dirs."""
+def _walk_files(root: Path, skips: dict[str, list[str]] | None = None) -> list[str]:
+    """Fallback file discovery using os.walk, respecting common ignore dirs.
+
+    *skips* collects :data:`SKIP_UNENUMERABLE`. ``os.walk`` defaults to
+    ``onerror=None``, which DISCARDS the error and yields nothing for that
+    directory — the same blind spot as the git path, reached without git.
+    """
+
+    def _unreadable(error: OSError) -> None:
+        if skips is None:
+            return
+        named = error.filename or str(root)
+        try:
+            named = os.path.relpath(named, root).replace("\\", "/")
+        except (ValueError, OSError):
+            pass
+        skips.setdefault(SKIP_UNENUMERABLE, []).append(named)
+
     result = []
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_unreadable):
         # Filter out skippable directories in place
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
         for fname in filenames:
@@ -313,6 +365,31 @@ def _walk_files(root: Path) -> list[str]:
 # it is now countable.
 SKIP_OVERSIZED = "oversized"
 SKIP_UNSTATABLE = "unstatable"
+
+# W1533 -- the same defect one layer earlier: a skip applied by the ENUMERATOR
+# rather than by roam's own filter.
+#
+# ``git ls-files --others`` walks the worktree. On a directory it cannot open
+# it prints a warning, omits the whole subtree, and EXITS 0; ``os.walk``
+# defaults to ``onerror=None`` and discards the error entirely. Both were read
+# as complete listings. Measured on the tree that shipped, over an untracked
+# file holding a live-shaped AWS key::
+#
+#     credential in an ordinary directory      rc 5  "1 secrets found"
+#     credential in an unenumerable directory  rc 0  "No secrets found (1 files scanned)"
+#     no credential at all                     rc 0  "No secrets found (1 files scanned)"
+#
+# The last two were byte-identical -- same verdict, every disclosure field
+# false or zero, including the one named ``files_undiscoverable``. Three
+# independent doors, so this is not one platform's curiosity: a mode-000
+# directory under any non-root user (git 2.43.0; root bypasses the mode), and
+# on Windows a trailing-dot or lone-surrogate name, both legal on NTFS.
+#
+# Unlike the two reasons above, the entries here are DIRECTORIES, and the count
+# of them says nothing about how many files are behind them. A consumer may
+# use presence to refuse a completeness claim; it must never let this number
+# stand in for a file count.
+SKIP_UNENUMERABLE = "unenumerable"
 
 
 def _filter_files(
@@ -361,20 +438,28 @@ def _filter_files(
 def discover_files_with_skips(root: Path, include_excluded: bool = False) -> tuple[list[str], dict[str, list[str]]]:
     """``(discovered, skips)`` -- see W1466 above for why *skips* exists.
 
-    *skips* maps a reason (:data:`SKIP_OVERSIZED`, :data:`SKIP_UNSTATABLE`)
-    to the relative paths dropped for it. Reasons that are scope DECISIONS
-    (ignore patterns, non-code extensions, generated content) are absent by
-    design: they are not blind spots. A resource cap is.
+    *skips* maps a reason (:data:`SKIP_OVERSIZED`, :data:`SKIP_UNSTATABLE`,
+    :data:`SKIP_UNENUMERABLE`) to what was dropped for it. Reasons that are
+    scope DECISIONS (ignore patterns, non-code extensions, generated content)
+    are absent by design: they are not blind spots. A resource cap is, and so
+    is a directory the enumerator could not open.
+
+    The first two reasons list FILES that were seen and then dropped;
+    :data:`SKIP_UNENUMERABLE` lists DIRECTORIES that were never opened, behind
+    which an unknown number of files sit. Use its presence to withhold a
+    completeness claim, never its length as a file count.
     """
     root = Path(root).resolve()
-    raw = _git_ls_files(root)
+    skips: dict[str, list[str]] = {}
+    raw = _git_ls_files(root, skips=skips)
     if raw is None:
-        raw = _walk_files(root)
+        # git could not run at all, so nothing it might have said applies.
+        skips.pop(SKIP_UNENUMERABLE, None)
+        raw = _walk_files(root, skips=skips)
 
     # Normalise path separators
     raw = [p.replace("\\", "/") for p in raw]
 
-    skips: dict[str, list[str]] = {}
     exclude_patterns = load_exclude_patterns(root)
     filtered = _filter_files(
         raw,
@@ -402,9 +487,10 @@ def discover_files(root: Path, include_excluded: bool = False) -> list[str]:
             exclusion filtering (useful for debugging).
 
     Lossy projection of :func:`discover_files_with_skips`: a path missing
-    from the result was either out of scope by design OR dropped by the
-    1 MB size cap, and this return type cannot say which. Anything that
-    reports coverage must use the ``_with_skips`` form.
+    from the result was out of scope by design, OR dropped by the 1 MB size
+    cap, OR behind a directory the enumerator could not open — and this
+    return type cannot say which. Anything that reports coverage must use
+    the ``_with_skips`` form.
     """
     discovered, _skips = discover_files_with_skips(root, include_excluded=include_excluded)
     return discovered
