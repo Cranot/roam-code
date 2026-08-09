@@ -19,6 +19,7 @@ from roam.capability import roam_capability
 from roam.commands.changed_files import get_changed_files_status, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
@@ -124,8 +125,6 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
             click.echo(f"Could not read the git diff ({git_error}); no change set was measured.")
             echo_text_warnings(warnings_out)
         if fail_on_degradation:
-            from roam.exit_codes import EXIT_GATE_FAILURE
-
             ctx.exit(EXIT_GATE_FAILURE)
         return
     if not changed:
@@ -190,9 +189,19 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
         deltas = {}
         deltas_available = False
         health_delta = None
+        baseline_commit = None
         if before:
             deltas = metric_delta(before, current)
             deltas_available = True
+            # `find_before_snapshot` falls back to the LATEST snapshot by
+            # timestamp when ``base_ref`` has no snapshot of its own, so
+            # `metric_deltas_available: true` does NOT mean "compared against
+            # the base". Name the commit the baseline actually came from, so
+            # the claim carries its own comparand instead of implying one.
+            try:
+                baseline_commit = before["git_commit"]
+            except (KeyError, IndexError, TypeError):
+                baseline_commit = None
             if "health_score" in deltas:
                 health_delta = deltas["health_score"]["delta"]
 
@@ -224,6 +233,28 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     else:
         verdict = f"minimal structural impact (footprint: {fp_pct}% of graph)"
 
+    # W1526 -- the gate cannot fire without a baseline, so say so rather than
+    # publishing "0 new issues". `roam init` leaves 0 snapshots (measured), so
+    # this is the DEFAULT state of a freshly onboarded repo, not a corner case.
+    # The shape and wording mirror the git_error branch ~90 lines above, which
+    # already refuses on the same UNANALYZABLE class with `partial_success:
+    # true` and a "cannot gate" verdict.
+    no_baseline_for_gate = fail_on_degradation and not deltas_available
+    if no_baseline_for_gate:
+        verdict = (
+            f"no baseline snapshot for {base_ref} - cannot gate on degradation "
+            "(run `roam index`, or `roam trends --save` on the base ref, to record one)"
+        )
+    # ONE decision, read by all three output channels below. This file carried
+    # THREE hand-written copies of `fail_on_degradation and health_degraded`
+    # -- the highest count in the batch, and exactly the duplication
+    # `gate_should_fail` exists to eliminate.
+    gate_failed = gate_should_fail(
+        fail_on_degradation,
+        findings=health_degraded,
+        scan_incomplete=not deltas_available,
+    )
+
     # --- JSON output ---
     if json_mode:
         click.echo(
@@ -236,6 +267,8 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
                         "metric_deltas_available": deltas_available,
                         "health_delta": health_delta,
                         "new_issues": new_issues,
+                        "baseline_commit": baseline_commit,
+                        "partial_success": no_baseline_for_gate,
                     },
                     changed_files=changed,
                     metric_deltas=deltas,
@@ -245,18 +278,14 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
                 )
             )
         )
-        if fail_on_degradation and health_degraded:
-            from roam.exit_codes import EXIT_GATE_FAILURE
-
+        if gate_failed:
             ctx.exit(EXIT_GATE_FAILURE)
         return
 
     # --- Markdown output ---
     if fmt == "markdown":
         _emit_markdown(verdict, deltas, deltas_available, edges, sym_changes, footprint, changed)
-        if fail_on_degradation and health_degraded:
-            from roam.exit_codes import EXIT_GATE_FAILURE
-
+        if gate_failed:
             ctx.exit(EXIT_GATE_FAILURE)
         return
 
@@ -319,9 +348,15 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
         f"({footprint['symbols_pct']}%)"
     )
 
-    if fail_on_degradation and health_degraded:
-        from roam.exit_codes import EXIT_GATE_FAILURE
+    if no_baseline_for_gate:
+        click.echo()
+        click.echo(
+            f"Could not gate: no baseline snapshot for {base_ref}, so no metric delta "
+            "was computed. Record one with `roam index`, or `roam trends --save` on "
+            "the base ref."
+        )
 
+    if gate_failed:
         ctx.exit(EXIT_GATE_FAILURE)
 
 
