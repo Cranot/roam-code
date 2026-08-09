@@ -210,7 +210,35 @@ When a gate fails, the action:
 2. Exits with code **5** (distinct from code 1 for crashes)
 3. Marks the check as failed in the PR
 
-The PR comment will show the gate result as `PASSED` or `FAILED`.
+### Gates that could not be evaluated
+
+A gate expression naming a metric none of the commands you ran produced —
+or a trend function on a repository with fewer than two stored snapshots —
+cannot be evaluated at all. That is a third outcome, not a pass:
+
+| `gate-state` | `gate-passed` | Meaning |
+|---|---|---|
+| `passed` | `true` | Every expression was evaluated and satisfied |
+| `failed` | `false` | At least one expression was evaluated and violated |
+| `unevaluated` | `unknown` | At least one expression matched no payload |
+
+`unevaluated` always prints an `::error::` annotation naming the expression,
+and the PR comment reads `Quality Gate: NOT EVALUATED`. It does **not** fail
+the job by default: a repository's first CI run has one stored snapshot, so
+`direction(metric)` and `delta(metric)` are unevaluable through no fault of
+the repository, and blocking there would be red on a run where nothing is
+wrong. Set `gate-strict: true` to make an unevaluable gate exit 5 as well:
+
+```yaml
+- uses: Cranot/roam-code@v14.0.0
+  with:
+    gate: 'direction(health_score)!=worsening'
+    gate-strict: 'true'
+```
+
+Read `gate-state` rather than `gate-passed` when you need to tell a gate that
+passed from one that was never computed — `gate-passed` is a boolean and
+cannot express the third state.
 
 ## SARIF Integration
 
