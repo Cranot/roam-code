@@ -496,3 +496,180 @@ class TestHelpers:
         assert _normalise_name("@Alice") == "alice"
         assert _normalise_name("bob") == "bob"
         assert _normalise_name("@TEAM") == "team"
+
+
+# ===========================================================================
+# W1530: a file the command could not read must leave the denominator
+# ===========================================================================
+
+
+def _mixed_history_project(tmp_path):
+    """CODEOWNERS matches 4 files; only 2 of them have any git history.
+
+    ``src/mod3.py`` / ``src/mod4.py`` are indexed but never committed, so
+    ``_compute_file_ownership_by_file_ids`` returns no shares for them and
+    they cannot be analysed. The two that ARE committed are authored by
+    the git_init identity rather than the declared ``@alice``, so both
+    drift -- making the true rate 2 of 2 analysable files, i.e. 100%.
+
+    Real-world shapes with the same signature: newly added files not yet
+    committed, history predating a shallow clone, vendored or generated
+    trees caught by a CODEOWNERS glob, renames without --follow.
+    """
+    proj = tmp_path / "repo"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+    src = proj / "src"
+    src.mkdir()
+    # Only mod1/mod2 exist when git_init runs, so only they get committed.
+    for i in (1, 2):
+        (src / f"mod{i}.py").write_text(f"def f{i}():\n    return {i}\n")
+    (proj / "CODEOWNERS").write_text("src/* @alice\n")
+    (proj / "README.md").write_text("readme\n")
+
+    git_init(proj)
+
+    # mod3/mod4 appear AFTER the only commit: on disk, indexed, and with
+    # no git history whatsoever -- the exact condition the skip branch hits.
+    for i in (3, 4):
+        (src / f"mod{i}.py").write_text(f"def f{i}():\n    return {i}\n")
+
+    out, rc = index_in_process(proj, "--force")
+    assert rc == 0, f"Index failed: {out}"
+    return proj
+
+
+def _clean_history_project(tmp_path):
+    """Every CODEOWNERS-matched file is committed, so nothing is skipped."""
+    proj = tmp_path / "repo"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+    src = proj / "src"
+    src.mkdir()
+    (src / "app.py").write_text("def main():\n    pass\n")
+    (proj / "CODEOWNERS").write_text("src/* @someone-else\n")
+
+    git_init(proj)
+    out, rc = index_in_process(proj, "--force")
+    assert rc == 0, f"Index failed: {out}"
+    return proj
+
+
+class TestDriftUnanalysableFilesLeaveTheDenominator:
+    """An unreadable file is unmeasured -- not "not drifting".
+
+    Before W1530 a file with no git history was dropped before
+    ``compute_drift_score`` but still counted by ``total_owned``, so it
+    could never enter the numerator while permanently inflating the
+    denominator. The published rate was wrong in BOTH directions and
+    ``partial_success`` stayed false in both.
+    """
+
+    # --- must fire -------------------------------------------------------
+
+    def test_rate_is_over_what_was_actually_analysed(self, tmp_path):
+        """2 of 2 analysable files drift -> 100%, not 50% of 4."""
+        proj = _mixed_history_project(tmp_path)
+        runner = CliRunner()
+        result = invoke_cli(runner, ["drift", "--json"], cwd=proj)
+        assert result.exit_code == 0
+        summary = parse_json_output(result, "drift")["summary"]
+
+        assert summary["unanalysed_owned_files"] == 2, f"fixture did not produce skips: {summary}"
+        assert summary["analysed_owned_files"] == 2, summary
+        assert summary["drift_files"] == 2, summary
+        assert summary["drift_pct"] == 100.0, f"the rate must be over analysed files, not CODEOWNERS matches: {summary}"
+
+    def test_codeowners_match_count_is_still_published(self, tmp_path):
+        """``owned_files`` keeps answering its own question.
+
+        Dropping it would make a broken CODEOWNERS glob and a shallow clone
+        report the same ``owned_files: 0`` for opposite reasons.
+        """
+        proj = _mixed_history_project(tmp_path)
+        runner = CliRunner()
+        result = invoke_cli(runner, ["drift", "--json"], cwd=proj)
+        summary = parse_json_output(result, "drift")["summary"]
+        assert summary["owned_files"] == 4, summary
+
+    def test_skipped_files_raise_partial_success(self, tmp_path):
+        proj = _mixed_history_project(tmp_path)
+        runner = CliRunner()
+        result = invoke_cli(runner, ["drift", "--json"], cwd=proj)
+        summary = parse_json_output(result, "drift")["summary"]
+        assert summary["partial_success"] is True, summary
+        assert summary["incomplete_reasons"] == ["no_git_history"], summary
+
+    def test_verdict_names_both_counts(self, tmp_path):
+        """LAW 6: the verdict alone says how much of the scope was measured."""
+        proj = _mixed_history_project(tmp_path)
+        runner = CliRunner()
+        result = invoke_cli(runner, ["drift", "--json"], cwd=proj)
+        verdict = parse_json_output(result, "drift")["summary"]["verdict"]
+        assert "analysed" in verdict, verdict
+        assert "100.0%" in verdict, verdict
+
+    def test_text_mode_names_the_skipped_files(self, tmp_path):
+        proj = _mixed_history_project(tmp_path)
+        runner = CliRunner()
+        result = invoke_cli(runner, ["drift"], cwd=proj)
+        assert result.exit_code == 0
+        assert "Files skipped (no git history): 2" in result.output, result.output
+        assert "Files analysed: 2" in result.output, result.output
+
+    def test_skipped_files_do_not_fail_the_command(self, tmp_path):
+        """Disclose, do not gate.
+
+        ``drift`` has no CI gate today, and a shallow ``actions/checkout``
+        (fetch-depth 1, the GitHub default) makes unanalysable files the
+        common case -- exiting non-zero here would be a mass outage.
+        """
+        proj = _mixed_history_project(tmp_path)
+        runner = CliRunner()
+        assert invoke_cli(runner, ["drift"], cwd=proj).exit_code == 0
+        assert invoke_cli(runner, ["drift", "--json"], cwd=proj).exit_code == 0
+
+    # --- must NOT fire ---------------------------------------------------
+
+    def test_fully_analysable_repo_is_not_flagged(self, tmp_path):
+        """Nothing skipped -> no disclosure, no partial_success.
+
+        Guards the over-eager fix: if every repo were flagged the signal
+        would stop meaning anything.
+        """
+        proj = _clean_history_project(tmp_path)
+        runner = CliRunner()
+        result = invoke_cli(runner, ["drift", "--json", "--threshold", "0.1"], cwd=proj)
+        assert result.exit_code == 0
+        summary = parse_json_output(result, "drift")["summary"]
+
+        assert summary["unanalysed_owned_files"] == 0, summary
+        assert summary["analysed_owned_files"] == summary["owned_files"], summary
+        assert summary.get("partial_success") is not True, summary
+        assert "incomplete_reasons" not in summary, summary
+
+    def test_clean_repo_text_has_no_skip_line(self, tmp_path):
+        proj = _clean_history_project(tmp_path)
+        runner = CliRunner()
+        result = invoke_cli(runner, ["drift", "--threshold", "0.1"], cwd=proj)
+        assert "Files skipped" not in result.output, result.output
+
+    def test_no_codeowners_match_stays_its_own_state(self, tmp_path):
+        """A CODEOWNERS that matches nothing is NOT the same as a shallow clone.
+
+        The two must not collapse onto one message, or a user with a broken
+        glob and a user with no history get the same diagnosis.
+        """
+        proj = tmp_path / "repo"
+        proj.mkdir()
+        (proj / ".gitignore").write_text(".roam/\n")
+        (proj / "app.py").write_text("def main():\n    pass\n")
+        (proj / "CODEOWNERS").write_text("nonexistent-dir/* @alice\n")
+        git_init(proj)
+        out, rc = index_in_process(proj, "--force")
+        assert rc == 0, f"Index failed: {out}"
+
+        runner = CliRunner()
+        result = invoke_cli(runner, ["drift"], cwd=proj)
+        assert result.exit_code == 0
+        assert "No files matched by CODEOWNERS rules" in result.output, result.output

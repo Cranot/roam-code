@@ -258,10 +258,17 @@ def drift(ctx, threshold, limit, by_team):
             now=now_ts,
             half_life_days=_HALF_LIFE_DAYS,
         )
+        # W1530: a file with no git history cannot be analysed, and it used
+        # to be dropped from the numerator while staying in the denominator.
+        # Count it instead of swallowing it: it is neither drifting nor
+        # not-drifting, it is unmeasured, and both the percentage and the
+        # verdict have to say so.
+        unanalysable: list[str] = []
         for fo in owned_files:
             shares = ownership_by_file.get(fo["file_id"], {})
             if not shares:
-                # No git history for this file -- skip
+                # No git history for this file -- it cannot be analysed.
+                unanalysable.append(fo["path"])
                 continue
 
             dscore = compute_drift_score(fo["owners"], shares)
@@ -297,8 +304,13 @@ def drift(ctx, threshold, limit, by_team):
         drift_entries.sort(key=lambda e: e["drift_score"], reverse=True)
 
         total_owned = len(owned_files)
+        # W1530: the rate is over what was actually measured. ``total_owned``
+        # is kept as the CODEOWNERS-match count -- it answers a different,
+        # still-useful question, and dropping it would make a broken
+        # CODEOWNERS glob and a shallow clone report the same 0.
+        analysed_owned = total_owned - len(unanalysable)
         drift_count = len(drift_entries)
-        drift_pct = round(drift_count * 100 / total_owned, 1) if total_owned else 0.0
+        drift_pct = round(drift_count * 100 / analysed_owned, 1) if analysed_owned else 0.0
         avg_drift = round(sum(e["drift_score"] for e in drift_entries) / drift_count, 2) if drift_count else 0.0
         highest_entry = drift_entries[0] if drift_entries else None
 
@@ -318,11 +330,15 @@ def drift(ctx, threshold, limit, by_team):
                     common = _common_directory(paths)
                     recommendations.append(f"{contrib} should be added as owner for {len(paths)} files in {common}")
 
-        # Build verdict
+        # Build verdict. W1530: the subject of the sentence is what was
+        # analysed, never the CODEOWNERS-match count, and when the two
+        # differ the verdict names both so it reads standalone (LAW 6).
+        scope = f"{analysed_owned} of {total_owned}" if unanalysable else f"{total_owned}"
         if drift_count == 0:
-            verdict = f"No ownership drift detected (threshold={threshold}, {total_owned} owned files analysed)"
+            verdict = f"No ownership drift detected (threshold={threshold}, {scope} owned files analysed)"
         else:
-            verdict = f"{drift_count} files with ownership drift ({drift_pct}% of {total_owned} owned files)"
+            noun = "analysed owned files" if unanalysable else "owned files"
+            verdict = f"{drift_count} files with ownership drift ({drift_pct}% of {analysed_owned} {noun})"
 
         team_summary = _build_team_summary(per_owner_files) if per_owner_files else []
 
@@ -345,10 +361,17 @@ def drift(ctx, threshold, limit, by_team):
                         else None
                     ),
                     "threshold": threshold,
+                    # W1530: additive, so no consumer loses a number it had.
+                    "analysed_owned_files": analysed_owned,
+                    "unanalysed_owned_files": len(unanalysable),
                 },
                 "drift": drift_entries[:limit],
                 "recommendations": recommendations,
             }
+            if unanalysable:
+                envelope_payload["summary"]["partial_success"] = True
+                envelope_payload["summary"]["incomplete_reasons"] = ["no_git_history"]
+                envelope_payload["unanalysed_files"] = sorted(unanalysable)[:limit]
             if by_team:
                 envelope_payload["team_summary"] = team_summary
             click.echo(to_json(json_envelope("drift", budget=budget, **envelope_payload)))
@@ -383,7 +406,11 @@ def drift(ctx, threshold, limit, by_team):
 
         # Summary
         click.echo("  Summary:")
-        click.echo(f"    Files analysed: {total_owned}")
+        click.echo(f"    Files analysed: {analysed_owned}")
+        if unanalysable:
+            shown = sorted(unanalysable)[:3]
+            more = f" (+{len(unanalysable) - len(shown)} more)" if len(unanalysable) > len(shown) else ""
+            click.echo(f"    Files skipped (no git history): {len(unanalysable)} -- {', '.join(shown)}{more}")
         click.echo(f"    Files with drift: {drift_count} ({drift_pct}%)")
         click.echo(f"    Average drift score: {avg_drift}")
         if highest_entry:
@@ -408,6 +435,14 @@ def drift(ctx, threshold, limit, by_team):
                     ],
                 )
             )
+            if unanalysable:
+                # W1530: per_owner_files is fed from the same loop, so an
+                # owner whose files are ALL unanalysable has no row at all.
+                # Say that rather than let the table read as full coverage.
+                click.echo(
+                    f"    NOTE: {len(unanalysable)} owned file(s) have no git history and are "
+                    f"absent from these counts; an owner whose files are all unanalysed has no row."
+                )
             click.echo()
 
         # Recommendations
