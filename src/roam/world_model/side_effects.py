@@ -455,8 +455,26 @@ def _classify_one_symbol(
     body_text: str,
     callee_qnames: list[str],
     file_imports: set[str],
+    source_status: str = "read",
 ) -> tuple[list[str], dict, str]:
     """Run the three-layer classifier on a single symbol body.
+
+    ``source_status`` is the outcome of the per-FILE read: ``"read"``,
+    ``"missing"`` (the indexed path is gone from disk) or ``"unreadable"``
+    (the open raised :class:`OSError`).  Layers 2 and 3 need the body; when
+    the file was never opened they observe nothing, and "observed nothing"
+    is not the same claim as "there is nothing".  Anything other than
+    ``"read"`` therefore floors the no-evidence outcome at
+    ``(["unknown"], "low")`` instead of ``(["none"], "high")``.
+
+    Layer 1 (resolved call edges) is independent of the read and still runs,
+    so an unreadable file can still be PROVEN side-effecting — it just can
+    never again be certified pure.
+
+    The switch is the read outcome, deliberately not ``body_text == ""``: a
+    stale index whose ``line_start``/``line_end`` point past EOF yields an
+    empty slice from a perfectly readable file, which is a staleness problem
+    with its own disclosure, not a read failure.
 
     Returns ``(kinds, evidence, confidence)``.
     """
@@ -504,6 +522,13 @@ def _classify_one_symbol(
         confidence = "high"
     elif matched_patterns:
         confidence = "medium"
+    elif source_status != "read":
+        # The body was never observed. `none` here would be an affirmative
+        # denial of evidence nobody looked for; `unknown` is the taxonomy's
+        # word for "signal may exist, per-symbol evidence does not".
+        confidence = "low"
+        kinds = set()
+        kinds.add("unknown")
     elif file_imports & _SIDE_EFFECTING_IMPORTS:
         # File imports a side-effecting lib but per-symbol evidence
         # is silent → safe to claim ``none`` (the symbol body has no
@@ -534,6 +559,12 @@ def _classify_one_symbol(
         evidence["matched_patterns"] = uniq[:8]
     if file_imports & _SIDE_EFFECTING_IMPORTS:
         evidence["imports_seen"] = sorted(file_imports & _SIDE_EFFECTING_IMPORTS)
+    if source_status != "read":
+        evidence["source_status"] = source_status
+        if not matched_calls:
+            evidence["reason"] = (
+                f"source unavailable ({source_status}) — body never read, so absence of side effects was not observed"
+            )
     if not evidence:
         evidence["reason"] = "no outgoing calls, no patterns, no risky imports"
 
@@ -583,12 +614,53 @@ def _load_source_slice(repo_root: Path, rel_path: str, ls: int, le: int) -> Opti
     return "".join(lines[ls - 1 : le])
 
 
-def classify_side_effects(
+@dataclass
+class SideEffectScanCoverage:
+    """Which of the files the classifier needed were actually read.
+
+    A per-symbol classification is only as good as the file read behind it,
+    and the two failure modes (path gone, open refused) previously produced
+    the same empty body as a genuinely effect-free function.  Callers that
+    report a result to a human or a gate must publish these counts beside
+    the classifications.
+    """
+
+    files_discovered: int = 0
+    files_read: int = 0
+    files_unreadable: list[str] = field(default_factory=list)
+    files_missing: list[str] = field(default_factory=list)
+    symbols_source_unavailable: int = 0
+
+    @property
+    def scan_incomplete(self) -> bool:
+        return self.files_read < self.files_discovered
+
+    def to_dict(self) -> dict:
+        return {
+            "files_discovered": self.files_discovered,
+            "files_read": self.files_read,
+            "files_unreadable": sorted(self.files_unreadable)[:10],
+            "files_unreadable_count": len(self.files_unreadable),
+            "files_missing": sorted(self.files_missing)[:10],
+            "files_missing_count": len(self.files_missing),
+            "symbols_source_unavailable": self.symbols_source_unavailable,
+            "scan_incomplete": self.scan_incomplete,
+        }
+
+
+def classify_side_effects_status(
     conn,
     symbol_name: Optional[str] = None,
     limit: Optional[int] = None,
-) -> list[SideEffectClassification]:
-    """Scan symbols and classify their side effects.
+) -> tuple[list[SideEffectClassification], SideEffectScanCoverage]:
+    """Scan symbols and classify their side effects, disclosing read coverage.
+
+    Same classification work as :func:`classify_side_effects`, but returns
+    the :class:`SideEffectScanCoverage` alongside so a caller can tell
+    "every body was read and nothing was found" apart from "some bodies
+    were never opened".  Mirrors the
+    ``load_tenant_guard_signals`` / ``load_tenant_guard_signals_status``
+    split in :mod:`roam.security.tenant_scope`.
 
     Args:
         conn: Read-only DB connection.
@@ -598,7 +670,7 @@ def classify_side_effects(
         limit: Optional cap on scanned symbols (None = no cap).
 
     Returns:
-        List of :class:`SideEffectClassification`.  Order: by file then
+        ``(classifications, coverage)``.  Classification order: by file then
         symbol id (stable).
     """
     # 1) Pull candidate symbols.
@@ -627,8 +699,10 @@ def classify_side_effects(
             q += f" LIMIT {int(limit)}"
         rows = conn.execute(q).fetchall()
 
+    coverage = SideEffectScanCoverage()
+
     if not rows:
-        return []
+        return [], coverage
 
     sym_ids = [r["id"] for r in rows]
 
@@ -684,8 +758,13 @@ def classify_side_effects(
 
     out: list[SideEffectClassification] = []
 
+    coverage.files_discovered = len(rows_by_file)
+
     for file_path, file_rows in rows_by_file.items():
         # Read file once, derive imports + per-symbol source slices.
+        # The read OUTCOME is retained (it used to be discarded), because a
+        # body that was never read cannot support the claim "no side effects".
+        source_status = "read"
         try:
             p = repo_root / file_path
             if p.exists():
@@ -693,6 +772,7 @@ def classify_side_effects(
                     all_text = f.read()
                 all_lines = all_text.splitlines(keepends=True)
             else:
+                source_status = "missing"
                 all_text = ""
                 all_lines = []
         except OSError as exc:
@@ -701,8 +781,16 @@ def classify_side_effects(
             # identical to genuinely effect-free symbols. Surface the
             # lineage (rate-limited per-scope; visible under ROAM_VERBOSE=1).
             log_swallowed(f"world_model.side_effects:file_read:{file_path}", exc)
+            source_status = "unreadable"
             all_text = ""
             all_lines = []
+
+        if source_status == "read":
+            coverage.files_read += 1
+        elif source_status == "missing":
+            coverage.files_missing.append(file_path)
+        else:
+            coverage.files_unreadable.append(file_path)
 
         imports = _file_imports(all_text) if all_text else set()
 
@@ -715,7 +803,10 @@ def classify_side_effects(
             else:
                 body = ""
             callees = callee_map.get(sid, [])
-            kinds, evidence, confidence = _classify_one_symbol(body, callees, imports)
+            kinds, evidence, confidence = _classify_one_symbol(body, callees, imports, source_status=source_status)
+            if source_status != "read":
+                coverage.symbols_source_unavailable += 1
+                evidence["source_unavailable"] = file_path
             out.append(
                 SideEffectClassification(
                     symbol=r["qualified_name"] or r["name"],
@@ -729,12 +820,29 @@ def classify_side_effects(
                 )
             )
 
-    return out
+    return out, coverage
+
+
+def classify_side_effects(
+    conn,
+    symbol_name: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> list[SideEffectClassification]:
+    """Scan symbols and classify their side effects.
+
+    Thin wrapper over :func:`classify_side_effects_status` that drops the
+    coverage channel.  Use the ``_status`` variant anywhere the caller
+    reports a result to a human or a gate — this one cannot tell "the whole
+    corpus was read" apart from "half of it could not be opened".
+    """
+    return classify_side_effects_status(conn, symbol_name=symbol_name, limit=limit)[0]
 
 
 __all__ = [
     "SIDE_EFFECT_KINDS",
     "SideEffectClassification",
+    "SideEffectScanCoverage",
     "KNOWN_SIDE_EFFECTING_PREFIXES",
     "classify_side_effects",
+    "classify_side_effects_status",
 ]

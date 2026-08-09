@@ -40,7 +40,7 @@ from roam.db.connection import find_project_root, open_db
 from roam.output.confidence import confidence_level_rank
 from roam.output.formatter import format_table, json_envelope, to_json
 from roam.runs.helpers import auto_log
-from roam.world_model.side_effects import SIDE_EFFECT_KINDS, classify_side_effects
+from roam.world_model.side_effects import SIDE_EFFECT_KINDS, classify_side_effects_status
 
 
 @roam_capability(
@@ -96,7 +96,13 @@ def side_effects_cmd(ctx, symbol, kind, top):
         repo_root = None
 
     with open_db(readonly=True) as conn:
-        all_results = classify_side_effects(conn, symbol_name=symbol)
+        all_results, coverage = classify_side_effects_status(conn, symbol_name=symbol)
+
+    scan_incomplete = coverage.scan_incomplete
+    unread_n = len(coverage.files_unreadable) + len(coverage.files_missing)
+    unread_names = ", ".join(sorted(coverage.files_unreadable + coverage.files_missing)[:3])
+    if unread_n > 3:
+        unread_names += f", +{unread_n - 3} more"
 
     # Optional kind filter — keep classifications that include that kind.
     filtered = all_results
@@ -113,12 +119,15 @@ def side_effects_cmd(ctx, symbol, kind, top):
             by_kind[k] += 1
 
     # Build verdict.
+    state = "ok"
     if symbol and not filtered:
         verdict = f"No function/method/constructor named '{symbol}' classified."
         partial_success = True
+        state = "no_data"
     elif not all_results:
         verdict = "No symbols available to classify (run `roam index`)."
         partial_success = True
+        state = "no_data"
     else:
         parts = []
         for k in SIDE_EFFECT_KINDS:
@@ -127,6 +136,19 @@ def side_effects_cmd(ctx, symbol, kind, top):
                 parts.append(f"{n} {k}")
         verdict = f"Classified {len(all_results)} symbols: " + ", ".join(parts)
         partial_success = False
+
+    # A classification built on a file that was never opened is not a
+    # measurement of that file. Name the denominator in BOTH channels off a
+    # single boolean (see roam.exit_codes.gate_should_fail's docstring for
+    # why the two must not be computed independently).
+    if scan_incomplete:
+        partial_success = True
+        if state == "ok":
+            state = "scan_incomplete"
+        verdict += (
+            f" — source read for {coverage.files_read} of {coverage.files_discovered} files; "
+            f"{coverage.symbols_source_unavailable} symbol(s) not classified from source ({unread_names})"
+        )
 
     # Rank classifications:
     #  1. confidence high > medium > low
@@ -169,8 +191,20 @@ def side_effects_cmd(ctx, symbol, kind, top):
         if n:
             facts.append(f"side-effects scan classified {n} symbols as {k} out of {len(all_results)} analysed")
     pure_n = by_kind.get("none", 0)
-    if pure_n:
+    if pure_n and not scan_incomplete:
         facts.append(f"side-effects scan confirmed {pure_n} symbols are pure (no detected side effects)")
+    elif pure_n:
+        # "confirmed pure" is an affirmative denial. It is only earned over
+        # bodies that were actually read.
+        facts.append(
+            f"side-effects scan classified {pure_n} of {len(all_results)} symbols as pure over the "
+            f"{coverage.files_read} of {coverage.files_discovered} files whose source could be read"
+        )
+    if scan_incomplete:
+        facts.append(
+            f"{coverage.symbols_source_unavailable} symbols were NOT classified from source "
+            f"(source unavailable: {unread_names})"
+        )
     if not facts:
         facts.append("side-effects scan found no symbols to classify")
 
@@ -185,12 +219,13 @@ def side_effects_cmd(ctx, symbol, kind, top):
         "side-effects",
         summary={
             "verdict": verdict,
-            "state": "ok" if not partial_success else "no_data",
+            "state": state,
             "partial_success": partial_success,
             "by_kind": dict(by_kind),
             "total_classified": len(all_results),
             "surfaced": len(surfaced),
             "filter_kind": kind,
+            **coverage.to_dict(),
             "kind_definition": ("coarse-grained agent-facing taxonomy: none|io_read|io_write|mutation|process|unknown"),
             "detector": "world_model.side_effects (heuristic)",
         },
@@ -210,6 +245,12 @@ def side_effects_cmd(ctx, symbol, kind, top):
 
     # Text output.
     click.echo(f"VERDICT: {verdict}")
+    if scan_incomplete:
+        click.echo(
+            f"# warning: {coverage.symbols_source_unavailable} symbol(s) in "
+            f"{coverage.files_discovered - coverage.files_read} file(s) were classified WITHOUT their "
+            f"source ({unread_names}); they are reported `unknown`, not `none`."
+        )
     click.echo()
     if not surfaced:
         return
