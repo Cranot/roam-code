@@ -149,8 +149,28 @@ def _build_adjacency(conn):
 
 
 def _find_paths(adj, entry_id, sink_ids, max_depth):
-    """BFS from entry_id, return list of paths (as node ID lists) that reach any sink."""
+    """BFS from entry_id for paths (node ID lists) that reach any sink.
+
+    Returns ``(paths, pruned)`` where ``pruned`` is the number of queue
+    entries that were actually discarded at the ``max_depth`` bound. A
+    non-zero ``pruned`` means the walk stopped with unexplored frontier
+    left over, so the returned list is a lower bound on what a deeper
+    walk would find — callers must disclose that rather than publish the
+    count as a finished scan.
+
+    ``pruned`` is deliberately keyed on a real discard, not on graph
+    depth: a graph deeper than ``max_depth`` whose every branch already
+    terminated at a sink (or at an already-visited node) inside the bound
+    discards nothing and reports ``0``.
+
+    NOTE: ``pruned == 0`` does NOT mean the enumeration is complete.
+    ``visited`` is shared across branches of one entry's walk, so a sink
+    reachable by several distinct routes is recorded once; this function
+    under-counts paths even when unbounded. No caller may turn
+    ``pruned == 0`` into a completeness claim.
+    """
     paths = []
+    pruned = 0
     queue = deque()
     queue.append((entry_id, [entry_id]))
     visited = {entry_id}
@@ -158,6 +178,7 @@ def _find_paths(adj, entry_id, sink_ids, max_depth):
     while queue:
         current, path = queue.popleft()
         if len(path) > max_depth:
+            pruned += 1
             continue
         if current in sink_ids and len(path) > 1:
             paths.append(path)
@@ -168,7 +189,7 @@ def _find_paths(adj, entry_id, sink_ids, max_depth):
                 visited.add(tid)
                 queue.append((tid, path + [tid]))
 
-    return paths
+    return paths, pruned
 
 
 # ---------------------------------------------------------------------------
@@ -379,8 +400,10 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
         # --- 3. BFS path search ---
         adj = _build_adjacency(conn)
         all_paths = []
+        pruned_at_depth = 0
         for entry in entries:
-            paths = _find_paths(adj, entry["id"], sink_id_set, max_depth)
+            paths, pruned = _find_paths(adj, entry["id"], sink_id_set, max_depth)
+            pruned_at_depth += pruned
             all_paths.extend(paths)
 
         # Deduplicate paths (same node sequence)
@@ -400,6 +423,8 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
                 from_pattern,
                 to_pattern,
                 token_budget=token_budget,
+                pruned_at_depth=pruned_at_depth,
+                max_depth=max_depth,
             )
             return
 
@@ -520,6 +545,21 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
         else:
             verdict = f"{total_paths} path{'s' if total_paths != 1 else ''} found"
 
+        # W1528: the BFS bound is part of the measurement, so it has to be
+        # part of the claim. When the walk actually discarded frontier at
+        # ``--max-depth`` the published counts are a lower bound, and LAW 6
+        # requires the verdict to say so without any other field.
+        truncation_note = ""
+        if pruned_at_depth:
+            verdict += (
+                f"; {pruned_at_depth} branch{'es' if pruned_at_depth != 1 else ''} pruned at --max-depth {max_depth}"
+            )
+            truncation_note = (
+                f"NOTE: {pruned_at_depth} branch{'es' if pruned_at_depth != 1 else ''} "
+                f"pruned at --max-depth {max_depth}; longer entry->sink paths were not "
+                f"enumerated. Re-run with a larger --max-depth to search further."
+            )
+
         # --- Output ---
         if json_mode:
             # Strip internal path_ids before serialising
@@ -527,17 +567,27 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             for cp in classified_paths:
                 paths_clean.append({k: v for k, v in cp.items() if k != "path_ids"})
 
+            summary = {
+                "verdict": verdict,
+                "total_paths": total_paths,
+                "untested_paths": untested_paths_count,
+                "critical": counts["critical"],
+                "high": counts["high"],
+                # Echo the effective bound so the counts above are
+                # self-describing rather than needing the invocation.
+                "max_depth": max_depth,
+                "pruned_at_max_depth": pruned_at_depth,
+            }
+            if pruned_at_depth:
+                summary["partial_success"] = True
+                summary["scan_incomplete"] = True
+                summary["incomplete_reasons"] = ["max_depth"]
+
             click.echo(
                 to_json(
                     json_envelope(
                         "path-coverage",
-                        summary={
-                            "verdict": verdict,
-                            "total_paths": total_paths,
-                            "untested_paths": untested_paths_count,
-                            "critical": counts["critical"],
-                            "high": counts["high"],
-                        },
+                        summary=summary,
                         budget=token_budget,
                         paths=paths_clean,
                         suggestions=suggestions,
@@ -550,6 +600,8 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
 
         # --- Text output ---
         click.echo(f"VERDICT: {verdict}")
+        if truncation_note:
+            click.echo(truncation_note)
         click.echo()
 
         if not classified_paths:
@@ -589,22 +641,63 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             click.echo("No test insertion suggestions (all paths have some coverage).")
 
 
-def _no_paths_output(json_mode, entry_count, sink_count, from_pattern, to_pattern, token_budget=0):
+def _no_paths_output(
+    json_mode,
+    entry_count,
+    sink_count,
+    from_pattern,
+    to_pattern,
+    token_budget=0,
+    pruned_at_depth=0,
+    max_depth=None,
+):
     """Emit a graceful message when no entry→sink paths can be found.
 
     W807 Pattern-2 empty-corpus disclosure: the verdict line distinguishes
-    the three degenerate causes (no entries, no sinks, no paths) so machine
+    the degenerate causes (no entries, no sinks, no paths) so machine
     consumers don't confuse a degenerate-graph "0 paths" with a fully-
     scanned "0 critical paths found". ``partial_success`` is True + the
     ``state`` field surfaces a closed-enum disclosure when the degeneracy
     is on the graph side (no entries / no sinks). LAW 6 — verdict reads
     without any other field. LAW 4 anchored on ``paths``/``entries``/
     ``sinks`` concrete-noun terminals.
+
+    W1528 splits the old catch-all ``no_paths_connecting`` in two, because
+    a BFS that ran out of depth measured nothing about connectivity:
+
+    * ``no_paths_connecting``     — the walk completed and found nothing
+      connecting; ``partial_success`` stays False.
+    * ``no_paths_within_max_depth`` — the walk discarded frontier at the
+      ``--max-depth`` bound, so "no paths" is unproven;
+      ``partial_success`` is True and the note names the escape hatch.
     """
-    # Pick a verdict + state that names which degenerate axis fired. The
-    # filter-narrowed case is NOT a degenerate corpus — it's a clean scan
-    # with a narrow filter — so it stays partial_success: False.
-    if from_pattern or to_pattern:
+    # Pick a verdict + state that names which degenerate axis fired.
+    #
+    # W1528: the truncation branch is tested FIRST because it is the only
+    # one that says the walk did not finish. "Filter narrowed to 0 paths"
+    # and "no paths connecting" are both clean-scan claims; a walk that
+    # discarded frontier at the bound has not earned either of them, even
+    # when a filter was also in play.
+    if pruned_at_depth:
+        # The walk did not complete — it hit the depth bound and threw
+        # frontier away. "No paths connecting" would be a claim the
+        # traversal never earned, so this is its own state and it is NOT
+        # a clean scan.
+        note = (
+            f"No paths found within --max-depth {max_depth}, but "
+            f"{pruned_at_depth} branch{'es' if pruned_at_depth != 1 else ''} "
+            f"were pruned at that bound and never searched. "
+            f"Re-run with a larger --max-depth to search further."
+        )
+        verdict = (
+            f"0 paths found within --max-depth {max_depth}; "
+            f"{pruned_at_depth} branch{'es' if pruned_at_depth != 1 else ''} pruned unsearched"
+        )
+        state = "no_paths_within_max_depth"
+        partial_success = True
+    elif from_pattern or to_pattern:
+        # NOT a degenerate corpus — a clean scan with a narrow filter —
+        # so it stays partial_success: False.
         note = "No paths found matching the specified filters."
         verdict = "Filter narrowed to 0 paths"
         state = "no_paths_matching_filters"
@@ -621,24 +714,32 @@ def _no_paths_output(json_mode, entry_count, sink_count, from_pattern, to_patter
         partial_success = True
     else:
         note = "No paths found between entry points and sinks."
-        verdict = f"No paths found between {entry_count} entries and {sink_count} paths"
+        verdict = f"No paths found between {entry_count} entries and {sink_count} sinks"
         state = "no_paths_connecting"
         partial_success = False
+
+    summary = {
+        "verdict": verdict,
+        "state": state,
+        "partial_success": partial_success,
+        "total_paths": 0,
+        "untested_paths": 0,
+        "critical": 0,
+        "high": 0,
+        "pruned_at_max_depth": pruned_at_depth,
+    }
+    if max_depth is not None:
+        summary["max_depth"] = max_depth
+    if pruned_at_depth:
+        summary["scan_incomplete"] = True
+        summary["incomplete_reasons"] = ["max_depth"]
 
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "path-coverage",
-                    summary={
-                        "verdict": verdict,
-                        "state": state,
-                        "partial_success": partial_success,
-                        "total_paths": 0,
-                        "untested_paths": 0,
-                        "critical": 0,
-                        "high": 0,
-                    },
+                    summary=summary,
                     budget=token_budget,
                     paths=[],
                     suggestions=[],
