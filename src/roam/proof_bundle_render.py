@@ -82,12 +82,24 @@ def _md_headline(v1: dict[str, Any]) -> str:
     executed = v1.get("executed_checks") or []
     missing = v1.get("missing_checks") or []
     risk_level = (v1.get("risk") or {}).get("level", "low")
-    return (
-        f"## {icon} Roam Guard verdict: `{verdict_val}`\n"
-        f"\n"
-        f"> **{len(executed)}** of **{len(required)}** required checks ran. "
-        f"**{len(missing)}** missing. Risk: `{risk_level}`."
-    )
+    meta = contract.get("_meta") or {}
+    unmatched = meta.get("unmatched_changed_files") or []
+    pack_name = (meta.get("rule_pack") or {}).get("name", "default")
+    if not required and unmatched:
+        # "0 of 0 required checks ran" reads as a completed gate. It is a
+        # vacuous denominator: no rule in the pack had an opinion about any
+        # changed file. Say that instead, so a human can see the gap.
+        body = (
+            f"> No rule in pack `{pack_name}` matched any of the "
+            f"**{len(unmatched)}** changed file(s); **nothing was required**. "
+            f"Risk: `{risk_level}`."
+        )
+    else:
+        body = (
+            f"> **{len(executed)}** of **{len(required)}** required checks ran. "
+            f"**{len(missing)}** missing. Risk: `{risk_level}`."
+        )
+    return f"## {icon} Roam Guard verdict: `{verdict_val}`\n\n{body}"
 
 
 def _md_reasons(v1: dict[str, Any]) -> str:
@@ -242,6 +254,11 @@ _REASON_TO_SARIF_LEVEL = {
     "scope_findings": "warning",
     "mcp_tool_finding": "warning",
     "all_required_passed": "note",
+    # A vacuous pass: nothing was required because nothing matched. `note`,
+    # not `warning` -- the scan WAS complete, the rule set was narrow, and
+    # promoting it would turn a configuration gap into a CI failure for every
+    # repo whose layout the default pack does not cover.
+    "no_rule_matched_for_changed_files": "note",
 }
 
 
