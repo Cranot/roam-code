@@ -227,6 +227,11 @@ def _evaluate_gate_rules(conn, rules):
                     {
                         "rule": rule.name,
                         "severity": rule.severity,
+                        # The label as authored, so a consumer can tell a
+                        # coercion (critical -> error) from a choice, and an
+                        # unrecognised label from a deliberate "warning".
+                        "severity_declared": rule.severity_declared or rule.severity,
+                        "severity_unrecognised": rule.severity_unrecognised,
                         "file": fp,
                         "description": rule.description,
                         "test_found": has_test,
@@ -496,6 +501,20 @@ def coverage_gaps(
         # hundreds of files and is advisory by design.
         preset_gate_failed = gate_should_fail(ci_mode, findings=len(errors), scan_incomplete=False)
 
+        # A rule whose declared severity is not on the canonical ladder keeps
+        # its W531 warning fallback -- but the run is no longer fully
+        # analysable, because the user asked for a tier roam could not read.
+        # `state` + `partial_success` is the idiom already used by the
+        # `no_gates` / `no_entries` branches below.
+        unrecognised_rules = sorted({r.name for r in gate_rules if r.severity_unrecognised})
+        preset_extra: dict[str, object] = {}
+        if unrecognised_rules:
+            preset_extra = {
+                "partial_success": True,
+                "state": "severity_unrecognised",
+                "severity_unrecognised_rules": unrecognised_rules,
+            }
+
         if json_mode:
             click.echo(
                 to_json(
@@ -512,6 +531,7 @@ def coverage_gaps(
                             # computation so the preset-only branch is
                             # unambiguous to downstream consumers.
                             "gate_violation_definition": GATE_VIOLATION_DEFINITION,
+                            **preset_extra,
                         },
                         preset=preset_info,
                         gate_violations=gate_violations,
@@ -521,6 +541,12 @@ def coverage_gaps(
             )
         else:
             click.echo(f"VERDICT: {preset_verdict}")
+            if unrecognised_rules:
+                click.echo(
+                    "  NOTE: unrecognised severity in "
+                    f"{', '.join(unrecognised_rules)} - treated as 'warning' "
+                    "(advisory, never gates). Use critical/error/high to block."
+                )
             click.echo()
             click.echo(f"=== Coverage Gaps (preset: {preset_info}) ===\n")
             if import_summary:
