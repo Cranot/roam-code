@@ -81,17 +81,40 @@ jobs:
             --intent "$PR_TITLE" \
             > .roam-artifacts/pr-analysis.json
           # Validate the required evidence before exporting a bounded output.
+          #
+          # `summary.verdict` is a DECORATED sentence, not a bare token:
+          # pr-analyze appends the canonical `(risk_level X)` suffix so the
+          # line parses standalone in a PR comment or an audit trail. Match
+          # the whole sentence against both closed vocabularies (the verdict
+          # set plus NOCHANGES; the four canonical risk levels) and publish
+          # only the bare token downstream. The match is ANCHORED on purpose:
+          # when the verdict could not be composed pr-analyze emits the floor
+          # sentence `pr-analyze completed (risk_level low)`, which must keep
+          # failing this step — an uncomputed verdict is not a passing one.
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
+          import re
           from pathlib import Path
 
           path = Path(".roam-artifacts/pr-analysis.json")
           payload = json.loads(path.read_text(encoding="utf-8"))
-          verdict = payload.get("summary", {}).get("verdict")
-          allowed = {"INTENTIONAL", "SAFE", "REVIEW", "BLOCK", "NOCHANGES"}
-          if verdict not in allowed:
+          summary = payload.get("summary") or {}
+          verdict = summary.get("verdict")
+          pattern = re.compile(
+              r"(INTENTIONAL|SAFE|REVIEW|BLOCK|NOCHANGES) "
+              r"\(risk_level (low|medium|high|critical)\)"
+          )
+          match = pattern.fullmatch(verdict) if isinstance(verdict, str) else None
+          if match is None:
               raise SystemExit(f"invalid or missing pr-analyze verdict: {verdict!r}")
-          print(f"verdict={verdict}")
+          code = match.group(1)
+          # `summary.verdict_code` is the machine-readable mirror of the same
+          # token (roam >= 14.1). When both are present they must agree —
+          # disagreement means the envelope was rewritten between them.
+          declared = summary.get("verdict_code")
+          if declared is not None and declared != code:
+              raise SystemExit(f"pr-analyze verdict_code {declared!r} disagrees with verdict {verdict!r}")
+          print(f"verdict={code}")
           PY
 
       - name: Render PR comment

@@ -174,6 +174,18 @@ def test_required_evidence_paths_fail_closed() -> None:
     assert "pr-analyze did not emit the required audit trail" in agent_review
     assert "if-no-files-found: error" in agent_review
     assert "invalid or missing pr-analyze verdict" in agent_review
+    # The refusal string being PRESENT is not evidence the refusal FIRES: this
+    # assertion alone let a validator ship that rejected every verdict
+    # pr-analyze can emit. The behavioural guard lives in
+    # tests/test_w1513_agent_review_verdict_contract.py, which executes this
+    # heredoc against real envelopes. Here we only forbid the loose parses
+    # that would make that guard pass while gutting the gate.
+    assert "pattern.fullmatch(verdict)" in agent_review, (
+        "the verdict parse must stay anchored -- a substring or split() parse "
+        "would accept the uncomputed W607-BY floor sentence"
+    )
+    assert "verdict.split()" not in agent_review
+    assert "in verdict" not in agent_review
 
     sarif = _read("roam-sarif-with-codeql.yml")
     assert "roam --sarif health > roam-health.sarif" in sarif

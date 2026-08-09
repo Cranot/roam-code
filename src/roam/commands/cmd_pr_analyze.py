@@ -1100,6 +1100,35 @@ from roam.commands.pr_analyze.rules import (  # noqa: E402
 
 _INTENTIONAL_RE = re.compile(r"\[intentional\]|^intentional\s*[:!]\s*", re.IGNORECASE)
 
+# Closed verdict vocabulary. ``_determine_verdict`` returns the first four;
+# the empty-diff / failed-subcommand override adds NOCHANGES.
+VERDICT_CODES: frozenset[str] = frozenset({"INTENTIONAL", "SAFE", "REVIEW", "BLOCK", "NOCHANGES"})
+
+# The canonical ``summary.verdict`` sentence: a verdict token followed by the
+# W607-BY LAW-6 standalone-parse suffix naming the canonical risk level. Both
+# alternations are CLOSED sets (VERDICT_CODES above; roam.output.risk
+# .RISK_LEVELS) and the match is anchored via ``fullmatch`` at every call
+# site, so the W607-BY floor sentence -- ``pr-analyze completed (risk_level
+# low)``, emitted when the verdict could not be composed at all -- does NOT
+# parse. That refusal is the point: an uncomputed verdict must never resolve
+# to a passing token. Consumers should prefer ``summary.verdict_code``, which
+# is derived through this same expression and is absent when it does not
+# match.
+VERDICT_SENTENCE_RE = re.compile(r"(INTENTIONAL|SAFE|REVIEW|BLOCK|NOCHANGES) \(risk_level (low|medium|high|critical)\)")
+
+
+def parse_verdict_sentence(sentence: object) -> str | None:
+    """Return the bare verdict token from a canonical ``summary.verdict``.
+
+    Returns ``None`` for anything that is not the exact canonical sentence --
+    including the degraded W607-BY floor text -- so a caller cannot mistake an
+    uncomputed verdict for a computed one.
+    """
+    if not isinstance(sentence, str):
+        return None
+    match = VERDICT_SENTENCE_RE.fullmatch(sentence)
+    return match.group(1) if match is not None else None
+
 
 def _concern_high_blast(blast_radius: int) -> dict | None:
     if blast_radius < 60:
@@ -2609,6 +2638,16 @@ def pr_analyze_command(
     # disambiguating degraded outcomes (`"unknown"`) from real
     # classifications (`"classified"`).
     bundle_summary["verdict"] = augmented_verdict
+    # Machine-readable mirror of the bare verdict token, so consumers do not
+    # have to string-parse the human sentence above. Same mirror discipline as
+    # ``risk_level_canonical`` / ``risk_rank`` below. Derived THROUGH the
+    # canonical sentence rather than from the ``verdict`` local, so the key is
+    # absent exactly when the sentence is the degraded W607-BY floor -- a
+    # consumer that reads ``verdict_code`` inherits the same fail-closed
+    # behaviour as one that regex-matches ``verdict``.
+    _verdict_code = parse_verdict_sentence(augmented_verdict)
+    if _verdict_code is not None:
+        bundle_summary["verdict_code"] = _verdict_code
     bundle_summary["risk_level_canonical"] = risk_level_canonical
     bundle_summary["risk_rank"] = risk_rank_int
     bundle_summary["score_classification"] = _score_classification_state
