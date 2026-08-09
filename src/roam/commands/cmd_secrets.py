@@ -688,7 +688,7 @@ def scan_project(
     # than refusing to answer. A second, much larger bound still applies so
     # the pass stays bounded -- and unlike the first one, exceeding it is
     # LOUD (see _oversized_beyond_recovery / oversized_blind).
-    oversized_recovered, oversized_unrecoverable = _oversized_candidates(root)
+    oversized_recovered, oversized_unrecoverable, unenumerable_dirs = _discovery_gaps(root)
     if oversized_recovered:
         _already = {p.replace("\\", "/") for p in file_paths}
         file_paths = list(file_paths) + [p for p in oversized_recovered if p not in _already]
@@ -763,6 +763,13 @@ def scan_project(
         # not determine whether anything was skipped" is not "nothing was".
         stats["files_oversized_unscanned"] = None if oversized_unrecoverable is None else len(oversized_unrecoverable)
         stats["oversized_unscanned_paths"] = list(oversized_unrecoverable or [])
+        # W1533: directories the enumerator could not open. Deliberately NOT a
+        # ``files_*`` key -- an unknown number of files sit behind each, and a
+        # count of directories presented as a file count would be the same
+        # false precision this whole family of counters exists to remove.
+        # ``None`` means the probe could not run, which is not "none found".
+        stats["unenumerable_dirs"] = None if unenumerable_dirs is None else len(unenumerable_dirs)
+        stats["unenumerable_paths"] = list(unenumerable_dirs or [])
 
     # Sort: high severity first, then by file path, then line number
     all_findings.sort(key=lambda f: (-severity_rank(f["severity"]), f["file"], f["line"]))
@@ -807,25 +814,33 @@ def _count_unindexed(root: Path, indexed_paths: list[str]) -> int | None:
 SECRETS_MAX_RECOVERABLE_SIZE = 25_000_000
 
 
-def _oversized_candidates(root: Path) -> tuple[list[str], list[str] | None]:
-    """``(recoverable, unrecoverable)`` for files discovery's size cap dropped.
+def _discovery_gaps(root: Path) -> tuple[list[str], list[str] | None, list[str] | None]:
+    """``(recoverable, unrecoverable, unenumerable)`` from one discovery pass.
 
     ``_count_unindexed`` measures against ``discover_files``, which is the
     right yardstick for scope DECISIONS (generated artefacts, distribution
-    templates) but blind to the SIZE CAP: an oversized file is dropped
-    before discovery returns, so it appears on neither side of
-    ``discovered - indexed`` and subtracts to zero.
+    templates) but blind to both gaps below, because a path dropped before
+    discovery returns appears on NEITHER side of ``discovered - indexed`` and
+    subtracts to zero.
 
-    *unrecoverable* is ``None`` when the probe itself could not run. That is
-    deliberately not ``[]`` -- the same discipline ``_count_unindexed``
-    follows, for the same reason.
+    *recoverable* / *unrecoverable* split the files the 1 MB size cap dropped
+    (W1466) by whether this command will still read them.
+
+    *unenumerable* is W1533: DIRECTORIES the enumerator could not open. Unlike
+    the other two these name no files at all -- an unknown number sit behind
+    each -- so a caller may use the list's presence to withhold a completeness
+    claim but must never read its length as a file count.
+
+    The two ``None``s mean the probe itself could not run. That is deliberately
+    not ``[]`` -- the same discipline ``_count_unindexed`` follows, for the
+    same reason.
     """
     try:
-        from roam.index.discovery import SKIP_OVERSIZED, discover_files_with_skips
+        from roam.index.discovery import SKIP_OVERSIZED, SKIP_UNENUMERABLE, discover_files_with_skips
 
         _discovered, skips = discover_files_with_skips(root)
     except (ImportError, OSError, ValueError, sqlite3.DatabaseError):
-        return [], None
+        return [], None, None
     recoverable: list[str] = []
     unrecoverable: list[str] = []
     for rel_path in sorted(skips.get(SKIP_OVERSIZED, [])):
@@ -838,7 +853,7 @@ def _oversized_candidates(root: Path) -> tuple[list[str], list[str] | None]:
             unrecoverable.append(rel_path)
         else:
             recoverable.append(rel_path)
-    return recoverable, unrecoverable
+    return recoverable, unrecoverable, sorted(skips.get(SKIP_UNENUMERABLE, []))
 
 
 def _walk_for_files(root: Path, dropped: list[dict] | None = None) -> list[str]:
@@ -950,7 +965,17 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     files_oversized_recovered = scan_stats.get("files_oversized_recovered", 0)
     files_oversized_unscanned = scan_stats.get("files_oversized_unscanned", 0)
     oversized_blind = files_oversized_unscanned is None or files_oversized_unscanned > 0
-    scan_incomplete = vacuous_filter or files_scanned == 0 or unindexed_blind or unread_blind or oversized_blind
+    # W1533 — a sixth: a directory the ENUMERATOR could not open. Every count
+    # above is computed from a list that never contained what is behind it, so
+    # each one subtracts to zero and reads clean. Measured: a repo with a
+    # credential here produced output byte-identical to a genuinely clean one.
+    # Presence alone decides; the number of directories is not a number of
+    # files, and nothing here pretends otherwise.
+    unenumerable_dirs = scan_stats.get("unenumerable_dirs", 0)
+    unenumerable_blind = unenumerable_dirs is None or unenumerable_dirs > 0
+    scan_incomplete = (
+        vacuous_filter or files_scanned == 0 or unindexed_blind or unread_blind or oversized_blind or unenumerable_blind
+    )
 
     # Compute summary stats. W566 — bucketing delegates to the canonical
     # ``severity_breakdown`` helper. Secrets patterns at module-load
@@ -1029,6 +1054,21 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             f"NOT PROVEN CLEAN: {files_scanned} files scanned, but {skipped} "
             "past the scanner size bound and were NOT read."
         )
+    elif total == 0 and unenumerable_blind:
+        # W1533: the enumerator never handed these paths over, so they are in
+        # no count above — not scanned, not unindexed, not oversized, not
+        # unreadable. Every counter subtracts them to zero and reads clean.
+        if unenumerable_dirs is None:
+            blocked = "an undetermined number of directories"
+        else:
+            _p = "directory" if unenumerable_dirs == 1 else "directories"
+            blocked = f"{unenumerable_dirs} {_p}"
+        named = ", ".join(scan_stats.get("unenumerable_paths", [])[:3])
+        verdict = (
+            f"NOT PROVEN CLEAN: {files_scanned} files scanned, but {blocked} "
+            "could not be opened, so an unknown number of files were never "
+            f"listed at all{f' ({named})' if named else ''}."
+        )
     elif total == 0:
         verdict = f"No secrets found ({files_scanned} files scanned)"
     else:
@@ -1053,6 +1093,12 @@ def secrets(ctx, severity, fail_on_found, include_tests):
         if oversized_blind:
             _n = "an undetermined number of" if files_oversized_unscanned is None else str(files_oversized_unscanned)
             verdict += f" — and a LOWER BOUND again: {_n} file(s) exceeded the scanner size bound"
+        if unenumerable_blind:
+            _d = "an undetermined number of" if unenumerable_dirs is None else str(unenumerable_dirs)
+            verdict += (
+                f" — and a LOWER BOUND again: {_d} directory/ies could not be opened, "
+                "so an unknown number of files were never listed"
+            )
 
     # --- SARIF output ---
     if sarif_mode:
@@ -1111,6 +1157,13 @@ def secrets(ctx, severity, fail_on_found, include_tests):
                 "oversized_recovered_paths": scan_stats.get("oversized_recovered_paths", []),
                 "files_oversized_unscanned": files_oversized_unscanned,
                 "oversized_unscanned_paths": scan_stats.get("oversized_unscanned_paths", []),
+                # W1533: directories the enumerator could not open. Named
+                # ``unenumerable_dirs`` and not ``files_*`` on purpose -- an
+                # unknown number of files sit behind each, and every sibling
+                # count above is a file count. ``None`` means the probe could
+                # not run, which is not "none found".
+                "unenumerable_dirs": unenumerable_dirs,
+                "unenumerable_paths": scan_stats.get("unenumerable_paths", []),
                 "severity_floor": severity.lower(),
                 "severity_floor_vacuous": vacuous_filter,
                 "scan_incomplete": scan_incomplete,
@@ -1206,6 +1259,18 @@ def secrets(ctx, severity, fail_on_found, include_tests):
         )
         for skipped in scan_stats.get("oversized_unscanned_paths", [])[:5]:
             click.echo(f"    over size bound: {skipped}")
+    elif unenumerable_blind:
+        # W1533: same discipline again. This one cannot report how many files
+        # were missed, because nothing ever listed them -- so it names the
+        # directories instead of inventing a number.
+        _d = "an undetermined number of" if unenumerable_dirs is None else str(unenumerable_dirs)
+        click.echo(
+            f"  Scanned {files_scanned} files and found nothing, but {_d} director(y/ies) could "
+            "not be opened, so an unknown number of files were never listed — "
+            "this is NOT a clean result."
+        )
+        for blocked in scan_stats.get("unenumerable_paths", [])[:5]:
+            click.echo(f"    could not enumerate: {blocked}")
     elif scan_incomplete:
         click.echo("  Scan did not run over any pattern/file — this is NOT a clean result.")
     else:
