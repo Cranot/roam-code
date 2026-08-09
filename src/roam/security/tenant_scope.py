@@ -7,9 +7,30 @@ The detector proves three things before emitting a finding:
 3. that handler reaches a concrete ORM / database operation without reaching
    a configured guard.
 
-It intentionally fails closed on parse errors, ambiguous handlers, and bounded
-call-graph traversals.  The check displaces the manual ``Grep`` + call-chain
-audit developers otherwise perform when reviewing multi-tenant endpoints.
+It intentionally fails closed on parse errors and ambiguous handlers.  The
+check displaces the manual ``Grep`` + call-chain audit developers otherwise
+perform when reviewing multi-tenant endpoints.
+
+Bounded traversal (W1518)
+=========================
+
+The reachability walk is bounded by ``_MAX_HOPS`` / ``_MAX_REACHABLE_SYMBOLS``.
+Hitting either bound used to drop the endpoint from the analysis entirely,
+which reads as "no finding" and therefore as "clean" -- the opposite of failing
+closed, and it discarded evidence the walk had *already* collected.  The bound
+is on the traversal, not on the evidence: a data access in the handler's own
+body sits at hop 0 and is known long before the bound is reached.
+
+So a truncated traversal is now analysed over the symbols that WERE visited:
+
+* a guard found in the visited prefix is positive proof and still suppresses
+  the finding -- the bound cannot invalidate it;
+* a data access with no guard in the visited prefix still yields a finding,
+  carrying ``traversal_truncated`` so the reader knows the guard search was
+  not exhaustive;
+* an endpoint where neither was found is genuinely undetermined, and it is
+  reported through :func:`find_tenant_scope_findings_status` so the caller can
+  refuse to publish a complete verification.
 """
 
 from __future__ import annotations
@@ -505,21 +526,45 @@ def _path_to(symbol_id: int, parents: dict[int, int], symbols: dict[int, _Symbol
     return [{"symbol": symbols[item].qualified_name or symbols[item].name, "file": symbols[item].file} for item in ids]
 
 
-def find_tenant_scope_findings(
+def _empty_traversal_coverage() -> dict:
+    """Coverage for a run whose preconditions stopped it before any traversal."""
+    return {
+        "endpoints_total": 0,
+        "endpoints_analyzed": 0,
+        "endpoints_truncated": 0,
+        "truncated_endpoints": [],
+        "hop_limit": _MAX_HOPS,
+        "symbol_limit": _MAX_REACHABLE_SYMBOLS,
+    }
+
+
+def find_tenant_scope_findings_status(
     conn,
     root: Path,
     *,
     guard_signals: Iterable[str] = DEFAULT_TENANT_GUARDS,
-) -> list[dict]:
-    """Return deterministic unguarded tenant-data endpoint findings."""
+) -> tuple[list[dict], dict]:
+    """Return findings plus how much of the reachability analysis completed.
+
+    The second element names the endpoints whose bounded traversal hit
+    ``_MAX_HOPS`` / ``_MAX_REACHABLE_SYMBOLS`` without settling the guard
+    question.  A caller that publishes a verdict must consult it: those
+    endpoints are UNDETERMINED, and reporting them as clean is the defect
+    this split exists to prevent.  Mirrors the ``load_tenant_guard_signals``
+    / ``load_tenant_guard_signals_status`` split above.
+
+    An endpoint whose truncated traversal still found a guard is NOT listed:
+    a guard is positive evidence and no amount of further traversal can
+    retract it, so the bound did not affect that answer.
+    """
     guards = _configured_guard_map(guard_signals)
     if not guards:
-        return []
+        return [], _empty_traversal_coverage()
     modules = _load_modules(conn, root)
     symbols = _load_symbols(conn, modules)
     matched_project_guards = _project_guard_matches(modules, symbols, guards)
     if not matched_project_guards or _has_global_guard(modules, guards):
-        return []
+        return [], _empty_traversal_coverage()
 
     endpoints: list[_Endpoint] = []
     for module in modules.values():
@@ -528,6 +573,9 @@ def find_tenant_scope_findings(
 
     findings: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
+    endpoints_total = 0
+    endpoints_truncated = 0
+    truncated_endpoints: list[dict] = []
     for endpoint in sorted(endpoints, key=lambda item: (item.route_file, item.route_line, item.method, item.path)):
         key = (endpoint.method, endpoint.path, endpoint.handler)
         if key in seen:
@@ -536,9 +584,13 @@ def find_tenant_scope_findings(
         handler = _resolve_handler(endpoint, symbols)
         if handler is None:
             continue
+        endpoints_total += 1
+        # W1518: a truncated walk is NOT a reason to drop the endpoint. The
+        # bound is on the traversal, not on the evidence -- a data access in
+        # the handler's own body is at hop 0 and was known before the walk
+        # ever reached the limit. The visited prefix is analysed exactly as a
+        # complete one; only the *absence* of a guard becomes unproven.
         reachable, parents, truncated = _reachable_symbols(conn, handler, symbols)
-        if truncated:
-            continue
         guard_on_path: str | None = None
         data_evidence: tuple[_Symbol, str, int] | None = None
         for symbol in reachable:
@@ -558,7 +610,32 @@ def find_tenant_scope_findings(
             access = _data_access(direct_nodes, module)
             if access is not None and data_evidence is None:
                 data_evidence = (symbol, access[0], access[1])
-        if guard_on_path or data_evidence is None:
+        if guard_on_path:
+            # Positive evidence. A longer walk cannot retract a guard, so the
+            # bound did not affect this answer and the endpoint is settled.
+            continue
+        if truncated:
+            # No guard was seen, and the walk did not finish -- so "no guard
+            # on this path" is unproven whether or not a data access turned
+            # up. Record it either way; the caller decides what a verdict
+            # over an undetermined endpoint is allowed to say.
+            endpoints_truncated += 1
+            if len(truncated_endpoints) < 10:
+                truncated_endpoints.append(
+                    {
+                        "method": endpoint.method,
+                        "endpoint": endpoint.path,
+                        "handler": handler.qualified_name or handler.name,
+                        "file": handler.file,
+                        "route_file": endpoint.route_file,
+                        "files": sorted({symbol.file for symbol in reachable} | {endpoint.route_file}),
+                        "symbols_visited": len(reachable),
+                        "hop_limit": _MAX_HOPS,
+                        "symbol_limit": _MAX_REACHABLE_SYMBOLS,
+                        "conclusion": "unguarded_data_access" if data_evidence is not None else "undetermined",
+                    }
+                )
+        if data_evidence is None:
             continue
         data_symbol, data_signal, data_line = data_evidence
         path = _path_to(data_symbol.id, parents, symbols)
@@ -576,21 +653,55 @@ def find_tenant_scope_findings(
                 "reachable_path": path,
                 "reachable_files": sorted({step["file"] for step in path} | {endpoint.route_file}),
                 "matched_project_guards": sorted(matched_project_guards),
+                "traversal_truncated": truncated,
+                "symbols_searched": len(reachable),
                 "guard_metric_definition": (
                     "exact configured identifier match on the handler's bounded call path; "
                     "global middleware registrations suppress findings"
+                )
+                + (
+                    f"; traversal stopped at the {_MAX_HOPS}-hop / {_MAX_REACHABLE_SYMBOLS}-symbol bound "
+                    f"after {len(reachable)} symbol(s), so a guard beyond it would not have been seen"
+                    if truncated
+                    else ""
                 ),
                 "data_access_definition": (
                     "explicit Django ORM manager, SQLAlchemy query/select, or named DB session/connection operation"
                 ),
             }
         )
-    return findings
+    coverage = {
+        "endpoints_total": endpoints_total,
+        "endpoints_analyzed": endpoints_total - endpoints_truncated,
+        "endpoints_truncated": endpoints_truncated,
+        "truncated_endpoints": truncated_endpoints,
+        "hop_limit": _MAX_HOPS,
+        "symbol_limit": _MAX_REACHABLE_SYMBOLS,
+    }
+    return findings, coverage
+
+
+def find_tenant_scope_findings(
+    conn,
+    root: Path,
+    *,
+    guard_signals: Iterable[str] = DEFAULT_TENANT_GUARDS,
+) -> list[dict]:
+    """Return deterministic unguarded tenant-data endpoint findings.
+
+    Thin wrapper over :func:`find_tenant_scope_findings_status` that drops the
+    traversal-coverage channel.  Prefer the ``_status`` form anywhere a verdict
+    is published: this one cannot tell "every endpoint's guard search
+    completed" apart from "one of them hit the traversal bound and is
+    undetermined".
+    """
+    return find_tenant_scope_findings_status(conn, root, guard_signals=guard_signals)[0]
 
 
 __all__ = [
     "DEFAULT_TENANT_GUARDS",
     "find_tenant_scope_findings",
+    "find_tenant_scope_findings_status",
     "load_tenant_guard_signals",
     "load_tenant_guard_signals_status",
 ]

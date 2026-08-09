@@ -4075,7 +4075,10 @@ def _check_tenant_scope(conn, file_ids: list[int], target_paths: list[str], root
     if not changed:
         return {"score": 100, "violations": [], "advisory": True}
     try:
-        from roam.security.tenant_scope import find_tenant_scope_findings, load_tenant_guard_signals_status
+        from roam.security.tenant_scope import (
+            find_tenant_scope_findings_status,
+            load_tenant_guard_signals_status,
+        )
 
         guards, guard_config_error = load_tenant_guard_signals_status(root)
         if guard_config_error:
@@ -4088,7 +4091,7 @@ def _check_tenant_scope(conn, file_ids: list[int], target_paths: list[str], root
                 f"tenant-guard configuration could not be honoured: {guard_config_error}",
                 advisory=True,
             )
-        findings = find_tenant_scope_findings(conn, root, guard_signals=guards)
+        findings, traversal = find_tenant_scope_findings_status(conn, root, guard_signals=guards)
     except Exception as exc:  # noqa: BLE001 - opt-in security analysis must fail closed
         from roam.observability import log_swallowed
 
@@ -4126,7 +4129,30 @@ def _check_tenant_scope(conn, file_ids: list[int], target_paths: list[str], root
                 "evidence": finding,
             }
         )
-    return {"score": 100 if not violations else 60, "violations": violations, "advisory": True}
+    # W1518: an endpoint whose reachability walk hit the hop / symbol bound
+    # without settling the guard question is UNDETERMINED, not clean. Publishing
+    # score 100 with `verification_complete: true` over it is the same
+    # silence-read-as-success the check itself exists to catch. `capped` is the
+    # established flag for this: _normalize_verify_check_result turns it into
+    # partial_success + execution_state "incomplete", which flips
+    # verification_complete without discarding the violations that WERE proven
+    # (_verify_check_incomplete would zero them).
+    capped_endpoints = [
+        entry
+        for entry in (traversal.get("truncated_endpoints") or [])
+        if set(entry.get("files") or ()) & changed or (entry.get("route_file") or "") in changed
+    ]
+    result = {"score": 100 if not violations else 60, "violations": violations, "advisory": True}
+    if capped_endpoints:
+        named = ", ".join(f"{entry.get('method')} {entry.get('endpoint')}" for entry in capped_endpoints[:3])
+        result["capped"] = True
+        result["scan_cap"] = len(capped_endpoints)
+        result["unavailable_reason"] = (
+            f"tenant-scope reachability hit the {traversal.get('hop_limit')}-hop / "
+            f"{traversal.get('symbol_limit')}-symbol bound for {len(capped_endpoints)} endpoint(s) "
+            f"({named}); a guard beyond the bound would not have been seen"
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
