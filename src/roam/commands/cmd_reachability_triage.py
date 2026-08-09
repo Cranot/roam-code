@@ -32,7 +32,7 @@ from roam.commands.cmd_service_report import _GATHER, _is_safe_commit_range
 from roam.commands.cmd_vulns import _vuln_finding_id
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root
-from roam.exit_codes import EXIT_GATE_FAILURE
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.output.formatter import json_envelope, to_json
 
 REACHABILITY_TRIAGE_WRAPPER_VERSION = "1.0.0"
@@ -53,10 +53,46 @@ _HONESTY_LINES = (
 )
 
 
+def _component_failed(envelope: object) -> bool:
+    """True when a component envelope is a HARD FAILURE, not a clean result.
+
+    Keys STRICTLY on the failure fields ``_component_failure`` constructs --
+    ``isError: True`` / ``status: "hard_failure"`` -- and never on emptiness.
+    That distinction is the whole safety of this fix: `roam vulns` with no
+    ingested scanner report is a SUCCESS with zero findings and is the normal
+    state for most repos, so keying on "the payload is empty" would newly fail
+    every such repo's security gate on first adoption.
+    """
+    if not isinstance(envelope, dict):
+        return False
+    return envelope.get("isError") is True or envelope.get("status") == "hard_failure"
+
+
+def _component_state(envelope: object) -> str:
+    """The failure state a failed component published, for disclosure."""
+    if not isinstance(envelope, dict):
+        return "unknown"
+    summary = envelope.get("summary")
+    if isinstance(summary, dict) and summary.get("state"):
+        return str(summary["state"])
+    return str(envelope.get("error_code") or "unknown")
+
+
 def _summary_value(envelope: dict, key: str, default=0):
-    """Read a metric from an envelope summary, then its top level."""
+    """Read a metric from an envelope summary, then its top level.
+
+    A component that HARD FAILED has no metric to report, and flooring it to
+    ``0`` publishes a number nothing measured. The sibling renderer in the
+    same compose already made this call and documented why
+    (cmd_service_report.py: "on a component failure the key is absent, and a
+    floored zero here printed 'Taint flows: 0' in the executive summary while
+    sections 4 and 5 printed the em-dash for the SAME missing field"); this
+    module had re-introduced the floor. ``None`` is the absent measurement.
+    """
     if not isinstance(envelope, dict):
         return default
+    if _component_failed(envelope):
+        return None
     summary = envelope.get("summary")
     if isinstance(summary, dict) and key in summary:
         return summary[key]
@@ -206,6 +242,11 @@ def _load_baseline(path: Path) -> tuple[set[str] | None, str]:
     return set(values), "loaded"
 
 
+def _fig(value):
+    """Render an absent measurement as an em-dash, never as 0."""
+    return "--" if value is None else value
+
+
 def _text_output(
     *,
     observation: str,
@@ -213,6 +254,7 @@ def _text_output(
     facts: list[str],
     commit_range: str | None,
     gate: dict,
+    honesty_lines: list[str] | None = None,
 ) -> str:
     lines = [f"REACHABILITY: {observation}"]
     if commit_range:
@@ -222,15 +264,21 @@ def _text_output(
         [
             "",
             (
-                f"Figures: {metrics['dependencies']['reachable']}/{metrics['dependencies']['total']} "
-                f"dependencies reachable; {metrics['taint']['flows']} taint flows; "
-                f"{metrics['secrets']['findings']} secret findings."
+                f"Figures: {_fig(metrics['dependencies']['reachable'])}/"
+                f"{_fig(metrics['dependencies']['total'])} dependencies reachable; "
+                f"{_fig(metrics['taint']['flows'])} taint flows; "
+                f"{_fig(metrics['secrets']['findings'])} secret findings."
             ),
         ]
     )
     if gate["requested"]:
         if gate["evaluated"]:
             lines.append(f"Baseline gate: {len(gate['new_reachable_finding_ids'])} new reachable paths.")
+        elif gate.get("unevaluated_reason"):
+            lines.append(
+                f"Baseline gate: NOT EVALUATED -- {gate['unevaluated_reason']}. "
+                "Refusing to certify a comparison this run could not make."
+            )
         elif gate.get("baseline_error"):
             lines.append(
                 f"Baseline gate: FAIL-CLOSED -- baseline at {gate['baseline_path']} is present but unreadable "
@@ -240,7 +288,7 @@ def _text_output(
             lines.append(f"Baseline gate: fail-open ({gate['baseline_state']} baseline).")
     if gate["baseline_state"] == "written":
         lines.append(f"Baseline: wrote {gate['baseline_path']}.")
-    lines.extend(["", "Honesty:", *[f"- {line}" for line in _HONESTY_LINES]])
+    lines.extend(["", "Honesty:", *[f"- {line}" for line in (honesty_lines or _HONESTY_LINES)]])
     return "\n".join(lines)
 
 
@@ -357,7 +405,7 @@ def reachability_triage_cmd(
     new_reachable_ids = sorted(reachable_ids - baseline_ids) if gate_evaluated else []
     gate = {
         "requested": gate_on_new_reachable,
-        "evaluated": gate_evaluated,
+        "evaluated": gate_evaluated,  # narrowed below once failures are known
         "baseline_state": baseline_state,
         "baseline_error": baseline_unreadable,
         "baseline_path": str(baseline_path),
@@ -367,17 +415,59 @@ def reachability_triage_cmd(
     reachable_count = sum(flow["reachability"] == "reachable" for flow in flows)
     not_reachable_count = len(flows) - reachable_count
     observation = f"{reachable_count} reachable paths; {not_reachable_count} not-reachable paths"
+    _PRIMITIVE_KEYS = ("sbom", "supply_chain", "vulns", "vuln_reach", "taint", "secrets")
+    # `missing_primitives` keeps its original meaning: no envelope AT ALL.
+    # It could never see a hard failure, because `_component_failure` returns
+    # a TRUTHY dict carrying status "hard_failure" / isError True, so a
+    # component that timed out counted as PRESENT and the list stayed empty
+    # while three of the six scanners had died.
     missing_primitives = [
-        primitive
-        for primitive, key in zip(
-            REACHABILITY_TRIAGE_PRIMITIVES,
-            ("sbom", "supply_chain", "vulns", "vuln_reach", "taint", "secrets"),
-        )
-        if not env.get(key)
+        primitive for primitive, key in zip(REACHABILITY_TRIAGE_PRIMITIVES, _PRIMITIVE_KEYS) if not env.get(key)
     ]
+    failed_primitives = [
+        {"primitive": primitive, "state": _component_state(env.get(key))}
+        for primitive, key in zip(REACHABILITY_TRIAGE_PRIMITIVES, _PRIMITIVE_KEYS)
+        if _component_failed(env.get(key))
+    ]
+    # The reachability computation itself. If vuln-reach did not run, no
+    # statement about what is reachable was produced by this run at all.
+    reachability_unavailable = _component_failed(env.get("vuln_reach")) or not env.get("vuln_reach")
+    scan_incomplete = bool(failed_primitives or missing_primitives) or scope_unavailable
 
+    if failed_primitives:
+        observation = f"{observation}; INCOMPLETE: " + ", ".join(
+            f"{item['primitive']} {item['state']}" for item in failed_primitives
+        )
     if scope_unavailable:
         observation = f"{observation}; file scope unavailable: {changed_files_error}"
+
+    if reachability_unavailable:
+        # `evaluated: true` over a reachability set that was never computed
+        # was the strongest false claim in the envelope: it says the gate
+        # compared this run against the baseline, when this run has nothing
+        # to compare.
+        gate["evaluated"] = False
+        gate["unevaluated_reason"] = "vuln-reach did not run; no reachability set was computed"
+    if failed_primitives:
+        gate["failed_primitives"] = [item["primitive"] for item in failed_primitives]
+
+    if reachability_unavailable:
+        # An absent measurement must not be published as a fact.
+        facts = ["reachability not computed - vuln-reach did not run"]
+
+    honesty_lines = list(_HONESTY_LINES)
+    if failed_primitives:
+        honesty_lines.append(
+            "This run is INCOMPLETE: "
+            + ", ".join(f"{item['primitive']} ({item['state']})" for item in failed_primitives)
+            + ". Absent components are reported as unknown, not as zero."
+        )
+
+    gate_failed = gate_should_fail(
+        gate_on_new_reachable,
+        findings=new_reachable_ids,
+        scan_incomplete=scan_incomplete or baseline_unreadable,
+    )
 
     if json_mode:
         envelope = json_envelope(
@@ -390,10 +480,11 @@ def reachability_triage_cmd(
                 "changed_files": len(changed_files) if changed_files is not None else None,
                 "changed_files_error": changed_files_error,
                 "new_reachable_paths": len(new_reachable_ids),
-                "gate_evaluated": gate_evaluated,
-                "partial_success": bool(missing_primitives) or scope_unavailable,
+                "gate_evaluated": gate["evaluated"],
+                "partial_success": scan_incomplete,
+                "scan_incomplete": scan_incomplete,
             },
-            agent_contract={"facts": facts, "risks": list(_HONESTY_LINES), "next_commands": []},
+            agent_contract={"facts": facts, "risks": honesty_lines, "next_commands": []},
             wrapper_version=REACHABILITY_TRIAGE_WRAPPER_VERSION,
             delegated_compose="service-report:reachability-triage",
             primitives=list(REACHABILITY_TRIAGE_PRIMITIVES),
@@ -401,7 +492,8 @@ def reachability_triage_cmd(
             flows=flows,
             gate=gate,
             missing_primitives=missing_primitives,
-            honesty=list(_HONESTY_LINES),
+            failed_primitives=failed_primitives,
+            honesty=honesty_lines,
             budget=token_budget,
         )
         click.echo(to_json(envelope))
@@ -413,10 +505,11 @@ def reachability_triage_cmd(
                 facts=facts,
                 commit_range=commit_range,
                 gate=gate,
+                honesty_lines=honesty_lines,
             )
         )
 
-    if (gate_evaluated and new_reachable_ids) or baseline_unreadable or (gate_on_new_reachable and scope_unavailable):
+    if gate_failed or baseline_unreadable:
         # Fail the gate on a new reachable flow (the normal block), a
         # present-but-corrupt baseline (the tamper case that used to pass
         # open), or a --range whose diff could not be read (W1462 — the
