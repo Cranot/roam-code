@@ -23,9 +23,26 @@ class GateRule:
     exclude_patterns: list[str] = field(default_factory=list)
     # Minimum number of test functions expected
     min_test_count: int = 1
-    # Severity: "error" (blocks CI under `coverage-gaps --ci`) or "warning"
-    # (advisory -- reported, never gated, in any mode).
+    # Canonical two-tier bucket this rule gates on.
+    # "error" blocks CI under `coverage-gaps --ci`; "warning" is advisory --
+    # reported, never gated, in any mode. This is the COERCED value: any
+    # ladder label ranking at or above `error` (critical / error / high)
+    # lands in the "error" bucket. The label the user actually wrote is
+    # preserved in ``severity_declared``.
     severity: str = "warning"
+    # The severity label exactly as declared in .roam-gates.yml, before
+    # coercion to the two-tier bucket. ``None`` for built-in preset rules,
+    # which declare the canonical bucket directly. A user who writes
+    # `severity: critical` must be able to see that roam read "critical" and
+    # what it did with it -- publishing only the coerced value made a
+    # demotion indistinguishable from an authored choice.
+    severity_declared: str | None = None
+    # True when ``severity_declared`` is not on the canonical ladder at all
+    # (``severity_rank`` -> -1: a typo, or a word roam does not know like
+    # "blocker"). Such a rule KEEPS the documented warning fallback per W531
+    # -- a typo must never promote a finding into a CI-failing rank -- but the
+    # coercion is now DISCLOSED rather than silent.
+    severity_unrecognised: bool = False
 
 
 @dataclass
@@ -184,7 +201,45 @@ def detect_preset(file_paths: list[str]) -> GatePreset | None:
     return None
 
 
-_VALID_SEVERITIES = frozenset({"error", "warning"})
+def _blocking_rank() -> int:
+    """Rank at or above which a gate rule blocks. Derived, never literal."""
+    from roam.output._severity import severity_rank
+
+    return severity_rank("error")
+
+
+def coerce_gate_severity(raw: object) -> tuple[str, bool]:
+    """Coerce a declared severity label to the gate's two-tier bucket.
+
+    Returns ``(bucket, unrecognised)`` where ``bucket`` is ``"error"``
+    (blocking) or ``"warning"`` (advisory), and ``unrecognised`` is True
+    when the label is not on the canonical ladder at all.
+
+    The vocabulary is NOT a local set. It is
+    :func:`roam.output._severity.severity_rank`, the repo's single source of
+    truth for severity ORDER, so the words a user may already have learned
+    from `roam adversarial --min-severity` mean the same thing here. A rule
+    blocks iff its declared label ranks at or above ``error`` -- which admits
+    ``critical`` (5), ``error`` (4) and ``high`` (4), and nothing else.
+
+    The previous implementation compared against a local two-element set,
+    so ``severity: critical`` -- the HIGHEST tier on the ladder, strictly
+    above ``error`` -- fell through the membership test and was rewritten to
+    ``warning``, the least severe bucket, in silence. The user's most severe
+    word disabled the gate it was written to arm.
+
+    W531 is preserved exactly: a label that ranks -1 (a typo, or a word the
+    ladder does not carry such as ``catastrophic`` / ``blocker``) still falls
+    back to ``warning``. An unknown label must never promote a finding into a
+    CI-failing rank. It is now reported as unrecognised so the fallback is
+    visible instead of silent.
+    """
+    from roam.output._severity import severity_rank
+
+    rank = severity_rank(raw if isinstance(raw, str) else None)
+    if rank < 0:
+        return "warning", True
+    return ("error" if rank >= _blocking_rank() else "warning"), False
 
 
 def load_gates_config(config_path: str) -> list[GateRule]:
@@ -199,6 +254,15 @@ def load_gates_config(config_path: str) -> list[GateRule]:
             exclude: ["**/__init__.py"]
             min_tests: 3
             severity: error
+
+    ``severity`` accepts any label on the canonical roam ladder (see
+    :func:`roam.output._severity.severity_rank`). A rule BLOCKS under
+    ``coverage-gaps --ci`` iff its label ranks at or above ``error`` --
+    that is ``critical``, ``error`` and ``high``. ``warning``, ``medium``,
+    ``low`` and ``info`` are advisory. A label the ladder does not carry
+    (a typo, or a word like ``blocker``) falls back to ``warning`` per W531
+    and is reported through ``GateRule.severity_unrecognised`` so the
+    coercion is disclosed rather than silent.
 
     W706 family: every fallback path is non-crashing. Missing PyYAML,
     missing file, malformed YAML, wrong top-level shape, and per-rule
@@ -261,9 +325,24 @@ def load_gates_config(config_path: str) -> list[GateRule]:
             # Expected: a non-numeric ``min_tests`` in user YAML falls
             # back to the documented default of 1 (per-rule, not fatal).
             min_tests = 1
-        severity = r.get("severity", "warning")
-        if severity not in _VALID_SEVERITIES:
-            severity = "warning"
+        raw_severity = r.get("severity", "warning")
+        severity, unrecognised = coerce_gate_severity(raw_severity)
+        if unrecognised:
+            # W531 keeps the warning fallback; this makes it AUDIBLE. The
+            # three sibling signals in this function cover pyyaml-missing /
+            # file-read / yaml-parse -- a rewritten severity emitted nothing
+            # at all, so the one path that can silently disarm a gate was the
+            # one path with no lineage record.
+            from roam.observability import log_swallowed
+
+            log_swallowed(
+                "gate_presets:load_gates_config:severity_unrecognised",
+                ValueError(
+                    f"rule {r.get('name', 'unnamed')!r}: severity "
+                    f"{raw_severity!r} is not a known severity - "
+                    f"treated as 'warning' (advisory, never gates)"
+                ),
+            )
         rules.append(
             GateRule(
                 name=str(r.get("name", "unnamed")),
@@ -272,6 +351,8 @@ def load_gates_config(config_path: str) -> list[GateRule]:
                 exclude_patterns=[str(p) for p in exclude],
                 min_test_count=min_tests,
                 severity=severity,
+                severity_declared=(raw_severity if isinstance(raw_severity, str) else str(raw_severity)),
+                severity_unrecognised=unrecognised,
             )
         )
     return rules
