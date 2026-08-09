@@ -1511,6 +1511,13 @@ def duplicates(
         if sarif_mode:
             from roam.output.sarif import duplicates_to_sarif, with_sarif_disclosures, write_sarif
 
+            # W1529: ``uncapped=True``. This envelope exists only to be
+            # projected into SARIF for a code-scanning ingester -- it is
+            # never LLM context, so the default JSON token budget has no
+            # rationale here. Without it the budget stripped ``clusters``
+            # to a 10-item (measured: 0-item) list and the projector
+            # published a zero-result document for a repo the same run
+            # measured at 99 clusters.
             sarif_envelope = json_envelope(
                 "duplicates",
                 summary={
@@ -1519,6 +1526,7 @@ def duplicates(
                     "total_functions": total_functions,
                     "estimated_reducible_lines": estimated_lines,
                 },
+                uncapped=True,
                 clusters=clusters_json,
             )
             # W607-BM: wrap the SARIF projection so a raise inside

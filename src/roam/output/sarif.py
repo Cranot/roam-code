@@ -744,6 +744,41 @@ def with_sarif_disclosures(document: dict, disclosures: list[str] | None) -> dic
     return document
 
 
+def envelope_truncation_disclosures(data: object) -> list[str]:
+    """Read an envelope's own truncation markers back out as SARIF disclosures.
+
+    W1529: ``json_envelope`` bounds oversized payloads and records the fact
+    in ``summary.truncated`` / ``summary.truncation_reason`` /
+    ``summary.emitted_counts``. A ``*_to_sarif`` projector that reads only
+    the payload list therefore emits a document with fewer results than the
+    run measured -- and, when the whole list was stripped, a zero-result
+    document for a dirty repo.
+
+    The envelope-uncapping fix at the producing call sites is one keyword
+    argument away from regressing, so projectors call this as well: if the
+    envelope they were handed says it was truncated, the SARIF document says
+    so too. Returns an empty list for a complete envelope, so a normal run
+    stays byte-identical.
+    """
+    if not isinstance(data, dict):
+        return []
+    summary = data.get("summary")
+    if not isinstance(summary, dict) or not summary.get("truncated"):
+        return []
+
+    reason = str(summary.get("truncation_reason") or "unknown")
+    emitted = summary.get("emitted_counts")
+    if isinstance(emitted, dict) and emitted:
+        shown = ", ".join(f"{k}={v}" for k, v in sorted(emitted.items()))
+    else:
+        shown = "unrecorded"
+    return [
+        f"Envelope payload was truncated before SARIF projection "
+        f"(reason={reason}; emitted {shown}). This document reports FEWER "
+        f"results than the run measured; it is not a clean-scan result."
+    ]
+
+
 def _automation_details(tool_name: str, version: str) -> dict:
     """Build a SARIF automationDetails block — stable run identifier.
 
@@ -3061,7 +3096,14 @@ def partition_to_sarif(data: dict) -> dict:
                 )
             )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    # W1529: same envelope->SARIF shape as ``duplicates_to_sarif``. On this
+    # repo the partition envelope currently sits under the default cap, so
+    # the defect is latent here rather than live -- guard it in the same
+    # change instead of waiting for a repo large enough to trip it.
+    return with_sarif_disclosures(
+        to_sarif(_TOOL_NAME, _get_version(), rules, results),
+        envelope_truncation_disclosures(data),
+    )
 
 
 # -- Clones (AST structural clone detection) --------------------------
@@ -5646,7 +5688,13 @@ def duplicates_to_sarif(data: dict) -> dict:
             )
         )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    # W1529: if the envelope handed to us says its ``clusters`` list was
+    # bounded, the document must say so rather than presenting a short (or
+    # empty) result set as the whole measurement.
+    return with_sarif_disclosures(
+        to_sarif(_TOOL_NAME, _get_version(), rules, results),
+        envelope_truncation_disclosures(data),
+    )
 
 
 # -- Dark-matter (hidden co-change couplings) -------------------------

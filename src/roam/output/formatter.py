@@ -1644,7 +1644,14 @@ def _stamp_response_meta(out: dict, command: str) -> None:
     out["_meta"]["cache_ttl_s"] = cache_ttl_s
 
 
-def _apply_envelope_budget(out: dict, budget: int) -> dict:
+def _apply_envelope_budget(out: dict, budget: int, uncapped: bool = False) -> dict:
+    # W1529: an envelope built only to be projected into another format
+    # (SARIF for a code-scanning ingester) is not LLM context, so the token
+    # budget's entire rationale is absent -- and silently emptying its
+    # payload turns the projection into a false clean. Callers on that path
+    # declare themselves; nothing else changes.
+    if uncapped:
+        return out
     if budget > 0:
         return budget_truncate_json(out, budget)
 
@@ -1676,7 +1683,14 @@ def _apply_envelope_budget(out: dict, budget: int) -> dict:
 # arbitrary user-supplied dicts merged via ``.update()``; do NOT TypedDict
 # this return without an at-boundary validator. See W933 _resolved_thresholds
 # for the canonical case study.
-def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **payload) -> dict:
+def json_envelope(
+    command: str,
+    summary: dict | None = None,
+    budget: int = 0,
+    *,
+    uncapped: bool = False,
+    **payload,
+) -> dict:
     """Wrap command output in a self-describing envelope.
 
     Every ``roam --json <cmd>`` call should use this to produce consistent
@@ -1711,7 +1725,7 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     compact = _compact_json_envelope_or_none(command, summary, payload)
     if compact is not None:
         projected_compact = _project_if_requested(compact)
-        if budget > 0:
+        if budget > 0 and not uncapped:
             return budget_truncate_json(projected_compact, budget)
         return projected_compact
 
@@ -1738,7 +1752,7 @@ def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **
     # Wrapped in try/except inside the helper — must NEVER break envelope
     # generation.
     _write_response_to_responses_dir(out)
-    return _apply_envelope_budget(_project_if_requested(out), budget)
+    return _apply_envelope_budget(_project_if_requested(out), budget, uncapped=uncapped)
 
 
 def _command_is_stale_sensitive(command: str) -> bool:

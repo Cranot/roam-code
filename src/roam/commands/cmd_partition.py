@@ -956,7 +956,9 @@ def partition(ctx, n_agents, output_format):
             sarif_summary["partial_success"] = True
             sarif_summary["warnings_out"] = list(_w607du_warnings_out)
             sarif_envelope_kwargs["warnings_out"] = list(_w607du_warnings_out)
-        envelope = json_envelope("partition", **sarif_envelope_kwargs)
+        # W1529: envelope->SARIF projection, so it is bounded by nothing but
+        # the SARIF consumer. See the same argument at cmd_duplicates.py.
+        envelope = json_envelope("partition", uncapped=True, **sarif_envelope_kwargs)
         click.echo(write_sarif(partition_to_sarif(envelope)))
         return
 
