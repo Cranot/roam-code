@@ -35,6 +35,7 @@ from roam.db.connection import find_project_root
 from roam.index.parser import (
     GRAMMAR_ALIASES,
     REGEX_ONLY_LANGUAGES,
+    SYNTAX_UNVERIFIABLE_LANGUAGES,
     detect_language,
     read_source,
 )
@@ -126,6 +127,14 @@ def _parse_file_for_syntax(file_path: str) -> dict | None:
 
     # Regex-only languages have no tree-sitter grammar -- skip
     if language in REGEX_ONLY_LANGUAGES:
+        return None
+
+    # Stand-in grammars (apex parsed with java, .page/.cmp with html, .jsonc
+    # with json, .mdx with markdown) cannot produce a verdict attributable to
+    # the source: the strict stand-ins reject valid input and the permissive
+    # ones accept anything. Skip rather than publish either answer. The skip is
+    # counted and named by the caller -- it must never be absorbed into "clean".
+    if language in SYNTAX_UNVERIFIABLE_LANGUAGES:
         return None
 
     path = Path(file_path)
@@ -261,10 +270,21 @@ def syntax_check(ctx, paths, changed):
     # Parse each file
     results: list[dict] = []
     skipped = 0
+    stand_in_skipped = 0
+    stand_in_langs: set[str] = set()
     for fp in file_list:
         result = _parse_file_for_syntax(fp)
         if result is None:
             skipped += 1
+            # A stand-in grammar is a NAMED skip, not generic "unsupported":
+            # apex is parsed with java, .page/.cmp with html, .jsonc with json,
+            # .mdx with markdown. Saying which kind of skip it was is the whole
+            # point -- a Salesforce user must be able to see that their .cls was
+            # never syntax-checked, rather than read silence as approval.
+            lang = detect_language(fp)
+            if lang in SYNTAX_UNVERIFIABLE_LANGUAGES:
+                stand_in_skipped += 1
+                stand_in_langs.add(lang)
             continue
         results.append(result)
 
@@ -280,15 +300,23 @@ def syntax_check(ctx, paths, changed):
     all_skipped = total_files == 0 and skipped > 0
     partial_success = skipped > 0
 
+    # Name the stand-in-grammar share of the skip so it cannot be read as
+    # "unsupported file type, nothing of yours was in scope".
+    stand_in_note = ""
+    if stand_in_skipped > 0:
+        pairs = ", ".join(f"{lang} parsed with {GRAMMAR_ALIASES.get(lang, lang)}" for lang in sorted(stand_in_langs))
+        stand_in_note = f" ({stand_in_skipped} because the grammar is a stand-in: {pairs})"
+
     if all_skipped:
         # Nothing was actually parsed -- must NOT claim "clean".
         verdict = (
-            f"nothing checked -- all {skipped} file{'s' if skipped != 1 else ''} skipped (unparseable/unsupported)"
+            f"nothing checked -- all {skipped} file{'s' if skipped != 1 else ''} "
+            f"skipped (unparseable/unsupported){stand_in_note}"
         )
     elif clean:
         verdict = f"clean -- {total_files} files checked, 0 errors"
         if skipped > 0:
-            verdict += f", {skipped} skipped -- unparseable/unsupported"
+            verdict += f", {skipped} skipped -- unparseable/unsupported{stand_in_note}"
     else:
         n_err_files = len(files_with_errors)
         verdict = (
@@ -296,7 +324,7 @@ def syntax_check(ctx, paths, changed):
             f"in {n_err_files} file{'s' if n_err_files != 1 else ''}"
         )
         if skipped > 0:
-            verdict += f", {skipped} skipped -- unparseable/unsupported"
+            verdict += f", {skipped} skipped -- unparseable/unsupported{stand_in_note}"
 
     if json_mode:
         summary = {
@@ -311,6 +339,9 @@ def syntax_check(ctx, paths, changed):
         if partial_success:
             summary["files_skipped"] = skipped
             summary["partial_success"] = True
+            if stand_in_skipped > 0:
+                summary["files_skipped_stand_in_grammar"] = stand_in_skipped
+                summary["incomplete_reasons"] = ["grammar_is_stand_in"]
         click.echo(
             to_json(
                 json_envelope(
@@ -331,10 +362,10 @@ def syntax_check(ctx, paths, changed):
             click.echo("")
             click.echo(
                 f"{total_errors} errors, {len(files_with_errors)} files affected, "
-                f"{total_files} files checked, {skipped} skipped"
+                f"{total_files} files checked, {skipped} skipped{stand_in_note}"
             )
         elif skipped > 0:
-            click.echo(f"  {total_files} files checked, {skipped} skipped (unparseable/unsupported)")
+            click.echo(f"  {total_files} files checked, {skipped} skipped (unparseable/unsupported){stand_in_note}")
 
     if not clean:
         from roam.exit_codes import EXIT_GATE_FAILURE

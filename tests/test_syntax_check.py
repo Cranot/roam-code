@@ -524,3 +524,145 @@ class TestCoreFunctions:
         fp.write_text("def hello():\n    pass\n", encoding="utf-8")
         with pytest.raises(RuntimeError, match="parser.parse crashed"):
             _parse_file_for_syntax(str(fp))
+
+
+# ===========================================================================
+# 11. Stand-in grammars: no verdict is attributable to the source
+# ===========================================================================
+
+APEX_VALID = """\
+public with sharing class AccountService {
+    public static List<Account> findByName(String namePart) {
+        List<Account> accts = [SELECT Id, Name FROM Account WHERE Name LIKE :namePart LIMIT 50];
+        return accts;
+    }
+
+    global static void purge(List<Account> victims) {
+        delete victims;
+    }
+}
+"""
+
+JSONC_VALID = """\
+{
+  // JSONC allows comments
+  "compilerOptions": {
+    "strict": true,
+  },
+}
+"""
+
+
+class TestStandInGrammars:
+    """apex is parsed with the java grammar, .jsonc with json, .mdx with
+    markdown, .page/.cmp with html.  None of those can produce a syntax
+    verdict attributable to the source: the strict stand-ins reject valid
+    input, the permissive ones accept anything.  The command must skip and
+    SAY it skipped.
+    """
+
+    # --- must-fire: the skip happens and is named ---------------------------
+
+    def test_valid_apex_is_not_reported_as_broken(self, tmp_path):
+        """A valid Salesforce class must not be reported as 13 syntax errors."""
+        proj = _make_files(tmp_path, {"AccountService.cls": APEX_VALID})
+        result = _invoke(proj, "AccountService.cls")
+        assert result.exit_code == 0, result.output
+        assert "syntax error" not in result.output.lower()
+
+    def test_valid_jsonc_is_not_reported_as_broken(self, tmp_path):
+        """A JSONC-legal trailing comma is not an error in the .jsonc file."""
+        proj = _make_files(tmp_path, {"settings.jsonc": JSONC_VALID})
+        result = _invoke(proj, "settings.jsonc")
+        assert result.exit_code == 0, result.output
+        assert "syntax error" not in result.output.lower()
+
+    def test_stand_in_skip_is_named_in_text_output(self, tmp_path):
+        """The skip must be counted and named -- never absorbed into 'clean'.
+
+        This is the assertion that separates the fix from the outage: a
+        Salesforce user must be able to see that their .cls was never checked.
+        """
+        proj = _make_files(tmp_path, {"AccountService.cls": APEX_VALID})
+        result = _invoke(proj, "AccountService.cls")
+        assert "stand-in" in result.output
+        assert "apex parsed with java" in result.output
+        assert "1 skipped" in result.output
+
+    def test_stand_in_skip_is_named_in_json_envelope(self, tmp_path):
+        proj = _make_files(tmp_path, {"settings.jsonc": JSONC_VALID})
+        result = _invoke(proj, "settings.jsonc", json_mode=True)
+        payload = json.loads(result.output)
+        summary = payload["summary"]
+        assert summary["partial_success"] is True
+        assert summary["files_skipped"] == 1
+        assert summary["files_skipped_stand_in_grammar"] == 1
+        assert summary["incomplete_reasons"] == ["grammar_is_stand_in"]
+
+    def test_mixed_run_still_checks_the_real_language(self, tmp_path):
+        """A stand-in file next to a broken .py must not mask the .py."""
+        proj = _make_files(
+            tmp_path,
+            {"AccountService.cls": APEX_VALID, "broken.py": BROKEN_PYTHON},
+        )
+        result = _invoke(proj, "AccountService.cls", "broken.py")
+        assert result.exit_code == EXIT_GATE_FAILURE, result.output
+        assert "broken.py" in result.output
+        assert "1 skipped" in result.output
+        assert "stand-in" in result.output
+
+    # --- must-not-fire: real languages keep their real syntax check ---------
+
+    def test_csharp_is_not_a_stand_in(self):
+        """c_sharp -> csharp is a NAMING alias for the same language.
+
+        Sweeping it into the stand-in set would stop syntax-checking C# --
+        a real language losing a real check.
+        """
+        from roam.index.parser import GRAMMAR_ALIASES, SYNTAX_UNVERIFIABLE_LANGUAGES
+
+        assert "c_sharp" not in SYNTAX_UNVERIFIABLE_LANGUAGES
+        assert set(GRAMMAR_ALIASES) - SYNTAX_UNVERIFIABLE_LANGUAGES == {"c_sharp"}
+
+    def test_broken_csharp_still_reported(self, tmp_path):
+        proj = _make_files(tmp_path, {"Broken.cs": "class C { void M( { } }\n"})
+        result = _invoke(proj, "Broken.cs")
+        assert result.exit_code == EXIT_GATE_FAILURE, result.output
+        assert "0 skipped" in result.output
+
+    def test_plain_json_still_reported(self, tmp_path):
+        """.json is NOT jsonc: a trailing comma there is a real error."""
+        proj = _make_files(tmp_path, {"tsconfig.json": JSONC_VALID.replace("  // JSONC allows comments\n", "")})
+        result = _invoke(proj, "tsconfig.json")
+        assert result.exit_code == EXIT_GATE_FAILURE, result.output
+        assert "0 skipped" in result.output
+
+    def test_broken_python_still_reported(self, tmp_path):
+        proj = _make_files(tmp_path, {"broken.py": BROKEN_PYTHON})
+        result = _invoke(proj, "broken.py")
+        assert result.exit_code == EXIT_GATE_FAILURE, result.output
+
+    def test_verify_and_syntax_check_share_one_skip_set(self):
+        """The duplication is what let syntax-check be harsher than verify."""
+        from roam.commands.cmd_verify import _SYNTAX_SKIP_LANGS
+        from roam.index.parser import SYNTAX_UNVERIFIABLE_LANGUAGES
+
+        assert SYNTAX_UNVERIFIABLE_LANGUAGES <= _SYNTAX_SKIP_LANGS
+        assert "c_sharp" not in _SYNTAX_SKIP_LANGS
+
+    def test_stand_in_parse_errors_are_not_called_syntax_errors(self, tmp_path):
+        """The index summary said '2 with syntax errors' beside 'coverage 100%'."""
+        from roam.index import parser as parser_mod
+
+        parser_mod.reset_parse_errors()
+        fp = tmp_path / "AccountService.cls"
+        fp.write_text(APEX_VALID, encoding="utf-8")
+        tree, source, lang = parser_mod.parse_file(fp)
+        assert tree is not None and lang == "apex"
+        assert parser_mod.parse_errors["syntax_error"] == 0
+        assert parser_mod.parse_errors["stand_in_grammar"] == 1
+        assert "with syntax errors" not in parser_mod.get_parse_error_summary()
+        assert "grammar is a stand-in" in parser_mod.get_parse_error_summary()
+        # The conservative total is unchanged by the rename.
+        assert parser_mod.get_parse_error_count() == 1
+        parser_mod.reset_parse_errors()

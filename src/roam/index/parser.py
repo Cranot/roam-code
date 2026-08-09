@@ -126,8 +126,40 @@ GRAMMAR_ALIASES = {
 # implementation in src/roam/languages/.
 REGEX_ONLY_LANGUAGES = frozenset({"foxpro", "yaml", "hcl"})
 
-# Track parse error stats
-parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0, "syntax_error": 0}
+# Languages whose entry in GRAMMAR_ALIASES is a STAND-IN: the grammar belongs to
+# a DIFFERENT language and merely resembles this one closely enough to extract
+# structure from. Extraction still works and is worth having; a syntax VERDICT
+# is not, because an ERROR node is then attributable to the grammar mismatch and
+# not to the source. Measured on a valid Salesforce class: `with sharing`,
+# inline SOQL, `update x.values()` and `global` each produce ERROR/MISSING nodes
+# under the java grammar, and apex_lang.py hand-writes regexes (_SHARING_RE,
+# _SOQL_FROM_RE, _DML_RE) for exactly those constructs — roam already knows the
+# grammar cannot parse them. The permissive stand-ins fail the other way: html
+# and markdown never emit ERROR nodes, so a .page/.cmp/.mdx file publishes
+# "clean" having verified nothing.
+#
+# c_sharp -> csharp is deliberately EXCLUDED: that is a naming alias for the
+# same language (the pack spells it "csharp"), not a stand-in, and C# keeps its
+# real syntax check.
+#
+# Consumed by cmd_syntax_check.py (skip + `grammar_is_stand_in` disclosure),
+# cmd_verify.py:_SYNTAX_SKIP_LANGS (same skip, one definition), and parse_file
+# below (routes ERROR nodes to the stand_in_grammar counter, not syntax_error).
+SYNTAX_UNVERIFIABLE_LANGUAGES = frozenset({"apex", "aura", "visualforce", "sfxml", "jsonc", "mdx"})
+
+# Track parse error stats.
+# ``stand_in_grammar`` counts files that parsed under a SYNTAX_UNVERIFIABLE
+# grammar and produced ERROR nodes. Those are NOT syntax errors in the source --
+# see SYNTAX_UNVERIFIABLE_LANGUAGES -- so they get their own name. They stay in
+# get_parse_error_count()'s total (the parse WAS degraded) so the corpus verdict
+# is unchanged by this split; only the wording changes.
+parse_errors = {
+    "no_grammar": 0,
+    "parse_error": 0,
+    "unreadable": 0,
+    "syntax_error": 0,
+    "stand_in_grammar": 0,
+}
 
 
 def _plugin_language_extensions() -> dict[str, str]:
@@ -337,7 +369,12 @@ def parse_file(path: Path, language: str | None = None):
     # error nodes are counted here.
     try:
         if tree.root_node.has_error:
-            parse_errors["syntax_error"] += 1
+            # A stand-in grammar's ERROR nodes describe the grammar mismatch,
+            # not the file. Count them, name them differently.
+            if language in SYNTAX_UNVERIFIABLE_LANGUAGES:
+                parse_errors["stand_in_grammar"] += 1
+            else:
+                parse_errors["syntax_error"] += 1
     except AttributeError as exc:  # pragma: no cover - older tree-sitter bindings
         # Not silent: this counter decides whether a zero-symbol index is a
         # legitimate empty tree or a broken one. A binding without
@@ -501,6 +538,7 @@ def get_parse_error_count() -> int:
         + parse_errors["parse_error"]
         + parse_errors["no_grammar"]
         + parse_errors["syntax_error"]
+        + parse_errors["stand_in_grammar"]
     )
 
 
@@ -515,4 +553,6 @@ def get_parse_error_summary() -> str:
         parts.append(f"{parse_errors['no_grammar']} no grammar")
     if parse_errors["syntax_error"]:
         parts.append(f"{parse_errors['syntax_error']} with syntax errors")
+    if parse_errors["stand_in_grammar"]:
+        parts.append(f"{parse_errors['stand_in_grammar']} not syntax-checked (grammar is a stand-in)")
     return ", ".join(parts) if parts else ""

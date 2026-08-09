@@ -1935,6 +1935,10 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
 # Syntax integrity check
 # ---------------------------------------------------------------------------
 
+from roam.index.parser import (
+    SYNTAX_UNVERIFIABLE_LANGUAGES as _SYNTAX_UNVERIFIABLE_LANGUAGES,
+)
+
 # Data / config / prose-markup languages the syntax check does NOT apply to.
 # verify's syntax gate exists to catch authored CODE that won't parse; a
 # config or markup file is out of scope. Two failure modes this skip removes:
@@ -1946,30 +1950,37 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
 # tolerant in tree-sitter (a broken file yields a tree with ERROR nodes, never
 # None), so the W-Pattern2 "None on a code file = unverified, don't credit"
 # rule still holds for everything NOT in this set.
-_SYNTAX_SKIP_LANGS: frozenset[str] = frozenset(
-    {
-        "yaml",
-        "json",
-        "toml",
-        "ini",
-        "markdown",
-        "text",
-        "csv",
-        "tsv",
-        "xml",
-        "html",
-        "css",
-        "scss",
-        "less",
-        # Regex-only languages (no tree-sitter grammar): parse_file returns
-        # None for every file, which was disclosed as "could not parse"
-        # noise on each verify pass over legacy FoxPro .prg/.scx artifacts.
-        # The extractor never syntax-checks them, so
-        # reporting them as unverified-code is misleading — they're out of
-        # scope for this rule, like markup.
-        "foxpro",
-    }
+_SYNTAX_SKIP_LANGS: frozenset[str] = (
+    frozenset(
+        {
+            "yaml",
+            "json",
+            "toml",
+            "ini",
+            "markdown",
+            "text",
+            "csv",
+            "tsv",
+            "xml",
+            "html",
+            "css",
+            "scss",
+            "less",
+            # Regex-only languages (no tree-sitter grammar): parse_file returns
+            # None for every file, which was disclosed as "could not parse"
+            # noise on each verify pass over legacy FoxPro .prg/.scx artifacts.
+            # The extractor never syntax-checks them, so
+            # reporting them as unverified-code is misleading — they're out of
+            # scope for this rule, like markup.
+            "foxpro",
+        }
+    )
+    | _SYNTAX_UNVERIFIABLE_LANGUAGES
 )
+# The stand-in-grammar set is IMPORTED, not restated. syntax-check and verify
+# disagreeing on the same source is exactly what the import-type gap produced:
+# the dedicated tool was harsher than the incidental one because the skip list
+# lived in two places. One definition, two consumers.
 
 
 def _syntax_unavailable() -> dict:
