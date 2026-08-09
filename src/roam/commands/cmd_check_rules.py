@@ -592,6 +592,14 @@ def _evaluate_custom_rules(
                 "passed": len(violations) == 0,
                 "violation_count": len(violations),
                 "violations": violations,
+                # The adapted dict used to DROP `partial_success`, so
+                # check-rules reported partial_success=False over the exact
+                # rule file where `roam rules` reported True -- the same rule,
+                # the same repo, two different answers about whether it ran.
+                # A graph clause that could not resolve yields passed=True +
+                # partial_success=True from the engine; without this key the
+                # caller could not tell "passed" from "never evaluated".
+                "partial_success": bool(item.get("partial_success")),
             }
         )
     return adapted
@@ -1001,6 +1009,15 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
 
     verdict, exit_code = _calculate_verdict(results)
 
+    # A custom graph-clause rule that could not resolve comes back
+    # passed=True with no violations, so `_calculate_verdict` folded it into
+    # "PASS - all N rule(s) passed" -- a total the run did not measure. Name
+    # it in the verdict, in every channel. The exit code is deliberately
+    # unchanged here: `roam rules --ci` is the gate for this state.
+    _unevaluated_rules = sum(1 for r in results if r.get("partial_success") and r.get("passed"))
+    if _unevaluated_rules:
+        verdict = f"{verdict} ({_unevaluated_rules} could not be evaluated)"
+
     # --- SARIF output ---
     if sarif_mode:
         from roam.output.sarif import runtime_filter_disclosure, write_sarif
@@ -1066,6 +1083,15 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
         errors = sum(1 for r in results if not r["passed"] and r["severity"] == "error")
         warnings = sum(1 for r in results if not r["passed"] and r["severity"] == "warning")
 
+        # A custom graph-clause rule that could not resolve comes back
+        # passed=True + partial_success=True. Counting it as a pass without
+        # saying so is the same false-clean `roam rules` carried; both
+        # commands now report it, using the same word.
+        unevaluated = sum(1 for r in results if r.get("partial_success") and r.get("passed"))
+        unevaluated_errors = sum(
+            1 for r in results if r.get("partial_success") and r.get("passed") and r.get("severity") == "error"
+        )
+
         summary: dict = {
             "verdict": verdict,
             "total": total,
@@ -1074,6 +1100,11 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
             "errors": errors,
             "warnings": warnings,
         }
+        if unevaluated:
+            summary["unevaluated"] = unevaluated
+            summary["unevaluated_errors"] = unevaluated_errors
+            summary["partial_success"] = True
+        summary["scan_incomplete"] = unevaluated_errors > 0
         # W1030-followup-C: closed-enum LoadStatus disclosure on the
         # envelope. Mirrors the cmd_alerts + cmd_budget + cmd_health
         # vocabulary so the four W1030-followup-cohort emitters use a
