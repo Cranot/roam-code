@@ -98,6 +98,14 @@ def _run_validator(tmp_path: Path, envelope: object) -> tuple[int, str, str]:
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
+        # Both halves, or they disagree about the wire. ``PYTHONUTF8`` below
+        # governs how the CHILD decodes; ``text=True`` without this argument
+        # leaves the PARENT encoding by ambient locale. On a Windows host with
+        # a legacy codepage the em-dash in the validator went out as one byte
+        # and the child refused it: "Non-UTF-8 code starting with '\x97' in
+        # file <stdin>". All 30 tests here failed, none for the reason they
+        # exist to check, and CI never saw it because CI is UTF-8.
+        encoding="utf-8",
         env={**os.environ, "PYTHONUTF8": "1"},
     )
     return proc.returncode, proc.stdout, proc.stderr
