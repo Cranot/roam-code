@@ -224,6 +224,34 @@ def _bfs_symbol_reachable(
     return visited, hit_depth_cap, hit_node_cap
 
 
+def _mark_truncated_negative(evidence: dict, matches: bool, hit_depth_cap: bool, hit_node_cap: bool) -> None:
+    """Record traversal truncation, and degrade only the NEGATIVE answer.
+
+    W1531. A bounded BFS is three-valued, not two-valued:
+
+    * ``matches`` True  -- sound under truncation. Finding the target
+      proves reachability however early the walk stopped, so the status
+      stays ``ok`` and a real ``must_not`` violation keeps reading as
+      VIOLATED rather than "could not run".
+    * ``matches`` False + a cap fired -- INDETERMINATE. The walk ran out
+      of depth or nodes; it measured nothing about non-reachability.
+      ``status`` becomes ``traversal_truncated``, joining the existing
+      closed enum (``target_not_indexed`` / ``entry_not_indexed`` /
+      ``no_tests_indexed`` / ``not_indexed``) that
+      ``rules/engine.py`` already reads to flip ``partial``.
+
+    Before this, ``truncated_depth`` / ``truncated_nodes`` were written
+    into evidence and read by nothing: evidence is attached only to
+    violations, so on a PASS the flag never left the function.
+    """
+    if hit_depth_cap:
+        evidence["truncated_depth"] = True
+    if hit_node_cap:
+        evidence["truncated_nodes"] = True
+    if (hit_depth_cap or hit_node_cap) and not matches:
+        evidence["status"] = "traversal_truncated"
+
+
 # ---------------------------------------------------------------------------
 # Public clause checkers
 # ---------------------------------------------------------------------------
@@ -304,10 +332,7 @@ def check_reachable_from(
         "visited_count": len(visited),
         "reachable": matches,
     }
-    if hit_depth_cap:
-        evidence["truncated_depth"] = True
-    if hit_node_cap:
-        evidence["truncated_nodes"] = True
+    _mark_truncated_negative(evidence, matches, hit_depth_cap, hit_node_cap)
     return matches, evidence
 
 
@@ -557,10 +582,7 @@ def check_tested_by(
         "max_nodes": max_nodes,
         "tested_by": matches,
     }
-    if hit_depth_cap:
-        evidence["truncated_depth"] = True
-    if hit_node_cap:
-        evidence["truncated_nodes"] = True
+    _mark_truncated_negative(evidence, matches, hit_depth_cap, hit_node_cap)
     return matches, evidence
 
 

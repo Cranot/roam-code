@@ -1559,8 +1559,21 @@ def _graph_clause_max_depth(rule: dict, default_depth: int) -> int:
     return default_depth
 
 
-def _graph_clause_result(name: str, severity: str, violations: list[dict], partial: bool) -> dict:
-    """Build the standard graph-clause result envelope."""
+def _graph_clause_result(
+    name: str,
+    severity: str,
+    violations: list[dict],
+    partial: bool,
+    degraded_statuses: set[str] | None = None,
+) -> dict:
+    """Build the standard graph-clause result envelope.
+
+    W1531: ``incomplete_reasons`` names WHICH degraded status made the rule
+    partial. Without it every partial rule is indistinguishable, and the
+    ``--ci`` exit policy cannot tell "the clone index was never built" from
+    "the walk ran out of depth" -- two conditions with different remedies
+    and, deliberately, different gate treatment.
+    """
     result = {
         "name": name,
         "severity": severity,
@@ -1569,6 +1582,8 @@ def _graph_clause_result(name: str, severity: str, violations: list[dict], parti
     }
     if partial:
         result["partial_success"] = True
+        if degraded_statuses:
+            result["incomplete_reasons"] = sorted(degraded_statuses)
     return result
 
 
@@ -1632,13 +1647,15 @@ def _eval_plan_for_target(
 ) -> tuple[list[dict], bool]:
     """Run every clause in the plan against one candidate.
 
-    Returns ``(violations, partial)`` — partial is True when any clause
-    reported a non-ok evidence status.
+    Returns ``(violations, partial, degraded_statuses)`` — partial is True
+    when any clause reported a non-ok evidence status, and
+    ``degraded_statuses`` is the set of those statuses (W1531).
     """
     from roam.policy.graph_clauses import evaluate_clause
 
     violations: list[dict] = []
     partial = False
+    degraded_statuses: set[str] = set()
     for block_kind, cname, carg in plan:
         matches, evidence = evaluate_clause(
             cname,
@@ -1652,6 +1669,7 @@ def _eval_plan_for_target(
         status = evidence.get("status", "ok") if isinstance(evidence, dict) else "ok"
         if status not in ("ok",):
             partial = True
+            degraded_statuses.add(str(status))
         # must => clause must hold; must_not => clause must NOT hold.
         fired = (block_kind == "must" and not matches) or (block_kind == "must_not" and matches)
         if fired:
@@ -1666,7 +1684,7 @@ def _eval_plan_for_target(
                     "reason": _format_clause_reason(block_kind, cname, carg, candidate, evidence, message),
                 }
             )
-    return violations, partial
+    return violations, partial, degraded_statuses
 
 
 def _eval_plan_for_targets(
@@ -1681,8 +1699,9 @@ def _eval_plan_for_targets(
     """Run a graph-clause plan against every resolved target."""
     violations: list[dict] = []
     partial = False
+    degraded_statuses: set[str] = set()
     for label, target_file, line, candidate in targets:
-        target_violations, target_partial = _eval_plan_for_target(
+        target_violations, target_partial, target_statuses = _eval_plan_for_target(
             conn,
             plan,
             label,
@@ -1695,7 +1714,8 @@ def _eval_plan_for_targets(
         )
         violations.extend(target_violations)
         partial = partial or target_partial
-    return violations, partial
+        degraded_statuses |= target_statuses
+    return violations, partial, degraded_statuses
 
 
 def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: int = 100) -> dict:
@@ -1767,7 +1787,7 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
             "to scope the rule",
         )
 
-    violations, partial = _eval_plan_for_targets(
+    violations, partial, degraded_statuses = _eval_plan_for_targets(
         conn,
         plan,
         targets,
@@ -1775,7 +1795,7 @@ def _evaluate_graph_clause(rule: dict, conn, *, max_depth: int = 3, max_nodes: i
         max_nodes=max_nodes,
         message=message,
     )
-    return _graph_clause_result(name, severity, violations, partial)
+    return _graph_clause_result(name, severity, violations, partial, degraded_statuses)
 
 
 def _format_clause_reason(block_kind, cname, carg, candidate, evidence, message):

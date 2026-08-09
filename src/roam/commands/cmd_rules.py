@@ -327,8 +327,32 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
     # graph-clause rule that legitimately cannot resolve (every `clones_with`
     # rule before `roam clones --persist` has run -- documented as normal by
     # the R18 comment and the `rules --init` template) must disclose, not gate.
+    #
+    # W1531 -- DELIBERATE, NARROW CARVE-OUT, and an open decision for the
+    # owner. ``traversal_truncated`` (the BFS hit --depth / --max-nodes and
+    # answered NEGATIVE, so it measured nothing) now flips partial_success
+    # and is counted in ``unevaluated_total`` -- it changes the verdict from
+    # "all N rules passed" to "N of M rules passed, K could not be
+    # evaluated", which is the false-clean this fix exists to remove. It is
+    # NOT counted in ``unevaluated_errors``, so the ``--ci`` exit code is
+    # unchanged. Reason: DEFAULT_DEPTH is 3, so every ``must_not:
+    # reachable_from`` rule in every repo with a chain longer than 3 hops --
+    # the norm in layered code -- would flip from exit 0 to exit 5 on
+    # upgrade. Whether UNANALYZABLE-by-truncation should refuse (which is
+    # what this file's own doctrine at exit_codes.py:139-146 argues) is a
+    # release decision with a large blast radius, not something to change as
+    # a side effect of making the report honest. Removing this filter is the
+    # entire diff if that decision goes the other way.
+    _NON_GATING_INCOMPLETE_REASONS = {"traversal_truncated"}
+
+    def _blocks_gate(r: dict) -> bool:
+        reasons = set(r.get("incomplete_reasons") or [])
+        return bool(reasons - _NON_GATING_INCOMPLETE_REASONS) if reasons else True
+
     unevaluated_errors = sum(
-        1 for r in results if r.get("partial_success") and r.get("severity") == "error" and r.get("passed")
+        1
+        for r in results
+        if r.get("partial_success") and r.get("severity") == "error" and r.get("passed") and _blocks_gate(r)
     )
     unevaluated_total = sum(1 for r in results if r.get("partial_success") and r.get("passed"))
     passed_fully = passed - unevaluated_total
@@ -515,11 +539,19 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
 
     if partial_success:
         click.echo()
+        # W1531: the old wording named only two causes and did not cover a
+        # walk that ran out of budget, which is the most common one.
         click.echo(
             "NOTE: at least one rule could not fully evaluate (graph clause "
-            "had unresolved targets or missing clone index). Verdict reflects "
-            "rules that DID run; consult evidence for partial cases."
+            "had unresolved targets, a missing clone index, or a traversal "
+            "that hit --depth / --max-nodes before answering). Verdict "
+            "reflects rules that DID run; consult evidence for partial cases."
         )
+        if any("traversal_truncated" in (r.get("incomplete_reasons") or []) for r in results):
+            click.echo(
+                f"  A bounded walk that found nothing has NOT proven non-reachability. "
+                f"Re-run with a larger --depth (current: {depth}) to search further."
+            )
         if incomplete_reason:
             click.echo(f"REFUSED: {incomplete_reason}." if ci_mode else f"UNEVALUATED: {incomplete_reason}.")
 
