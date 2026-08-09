@@ -49,7 +49,8 @@ from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.stale_refs_anchors import AnchorCache
 from roam.commands.stale_refs_hints import HintContext, best_hint
 from roam.db.connection import find_project_root
-from roam.index.discovery import discover_files
+from roam.exit_codes import gate_should_fail
+from roam.index.discovery import discover_files, discover_files_with_skips
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -490,15 +491,27 @@ def _extract_refs(
     return refs
 
 
-def _read_text_safe(path: Path, max_bytes: int = 1_000_000) -> str | None:
-    """Read a file as UTF-8 with replacement; return None on read error or oversize."""
+def _read_text_with_reason(path: Path, max_bytes: int = 1_000_000) -> tuple[str | None, str | None]:
+    """Read a file as UTF-8 with replacement, naming WHY it could not be read.
+
+    Returns ``(content, None)`` on success and ``(None, reason)`` otherwise.
+    The two failure causes need different remedies -- ``oversize`` is fixed
+    with ``--ignore``, ``unreadable`` by fixing permissions -- so
+    collapsing both into a bare ``None`` left the caller unable to say
+    anything useful even if it had wanted to.
+    """
     try:
         if path.stat().st_size > max_bytes:
-            return None
+            return None, f"oversize (> {max_bytes} bytes)"
         with open(path, encoding="utf-8", errors="replace") as fh:
-            return fh.read()
-    except OSError:
-        return None
+            return fh.read(), None
+    except OSError as exc:
+        return None, f"unreadable ({type(exc).__name__})"
+
+
+def _read_text_safe(path: Path, max_bytes: int = 1_000_000) -> str | None:
+    """Read a file as UTF-8 with replacement; return None on read error or oversize."""
+    return _read_text_with_reason(path, max_bytes)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -850,10 +863,11 @@ def _scan_project(
     ignore_target: tuple[str, ...] = (),
     check_anchors: bool = True,
     scan_bare_backticks: bool = False,
-) -> tuple[dict[str, list[dict]], int, int, dict[str, list[str]], AnchorCache]:
+) -> tuple[dict[str, list[dict]], int, int, dict[str, list[str]], AnchorCache, list[dict[str, str]]]:
     """Walk the repo and collect every reference.
 
-    Returns ``(stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache)``.
+    Returns ``(stale_by_target, files_scanned, refs_seen, basename_idx,
+    anchor_cache, files_unreadable)``.
 
     * ``stale_by_target`` maps the resolved missing target (relative path
       string) to a list of source records
@@ -868,13 +882,31 @@ def _scan_project(
       scan; the caller reuses it for "did you mean" anchor hints
       without re-parsing target files.
     """
-    all_files = discover_files(project_root, include_excluded=include_excluded)
+    # W1527: the LOSSY `discover_files` cannot say whether a path is absent
+    # by scope decision or because the 1 MB resource cap dropped it -- its own
+    # docstring says "anything that reports coverage must use the
+    # ``_with_skips`` form", and a gate that certifies "all refs resolve" is
+    # reporting coverage. W1466 already built the mechanism; stale-refs was
+    # not using it.
+    all_files, discovery_skips = discover_files_with_skips(project_root, include_excluded=include_excluded)
     tracked_set, dir_set, basename_idx = _build_lookup_indices(all_files)
     anchor_cache = AnchorCache(project_root)
 
     stale_by_target: dict[str, list[dict]] = defaultdict(list)
     files_scanned = 0
     refs_seen = 0
+    # W1527: a file this scan could not READ is dropped from the numerator
+    # AND the denominator. Counting it is what lets the verdict stop saying
+    # "all refs resolve" about references it never looked at.
+    files_unreadable: list[dict[str, str]] = []
+    for reason, paths in sorted(discovery_skips.items()):
+        for rel in paths:
+            ext = os.path.splitext(rel)[1].lower()
+            if ext not in _SCANNABLE_EXTS:
+                continue  # never scannable -- a scope decision, not a blind spot
+            if _matches_any_glob(rel, ignore_source):
+                continue  # the caller explicitly excluded it
+            files_unreadable.append({"file": rel, "reason": reason})
 
     for rel in all_files:
         ext = os.path.splitext(rel)[1].lower()
@@ -883,8 +915,9 @@ def _scan_project(
         if _matches_any_glob(rel, ignore_source):
             continue
         full = project_root / rel
-        content = _read_text_safe(full)
+        content, unread_reason = _read_text_with_reason(full)
         if content is None:
+            files_unreadable.append({"file": rel, "reason": unread_reason or "unknown"})
             continue
         files_scanned += 1
         if not _has_ref_triggers(content):
@@ -914,7 +947,7 @@ def _scan_project(
                 stale_by_target=stale_by_target,
             )
 
-    return stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache
+    return stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache, files_unreadable
 
 
 _ANCHOR_DID_YOU_MEAN_THRESHOLD = 0.6
@@ -2650,7 +2683,9 @@ def _run_watch_loop(
     serial avoids debugging surprises.
     """
     include_excluded = scan_kwargs.get("include_excluded", False)
-    stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache = _scan_project(project_root, **scan_kwargs)
+    stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache, files_unreadable = _scan_project(
+        project_root, **scan_kwargs
+    )
     if baseline:
         stale_by_target = _filter_against_baseline(stale_by_target, baseline)
     on_initial(stale_by_target, files_scanned, refs_seen)
@@ -2668,7 +2703,7 @@ def _run_watch_loop(
             time.sleep(max(0.05, interval * 0.3))
             last_mtimes = _collect_mtimes(project_root, include_excluded=include_excluded)
 
-            stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache = _scan_project(
+            stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache, files_unreadable = _scan_project(
                 project_root, **scan_kwargs
             )
             if baseline:
@@ -3253,7 +3288,7 @@ def stale_refs(
         return
 
     t_start = time.perf_counter()
-    stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache = _scan_project(
+    stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache, files_unreadable = _scan_project(
         project_root,
         include_excluded=include_excluded,
         check_absolute_routes=check_absolute_routes,
@@ -3422,15 +3457,27 @@ def stale_refs(
         for s in item["sources"]:
             by_kind[s["kind"]] += 1
 
+    # W1527: a file that could not be read contributed no refs to either
+    # the numerator or the denominator, so "all refs resolve" would be a
+    # claim about references this scan never looked at.
+    unreadable_count = len(files_unreadable)
+    unread_note = f" · {unreadable_count} unreadable" if unreadable_count else ""
     if target_count == 0:
-        verdict = f"all refs resolve · {refs_seen} checked · {files_scanned} files · {scan_seconds}s"
+        if unreadable_count:
+            verdict = (
+                f"no stale refs among the {refs_seen} checked, but "
+                f"{unreadable_count} file(s) could not be read · "
+                f"{files_scanned} files · {scan_seconds}s"
+            )
+        else:
+            verdict = f"all refs resolve · {refs_seen} checked · {files_scanned} files · {scan_seconds}s"
     else:
         anchor_note = f" · {anchor_findings} anchor" if anchor_findings else ""
         fix_note = f" · {fixable_count} auto-fixable" if fixable_count else ""
         diff_note = f" · diff base {diff_info['base_sha'][:7]}" if diff_info else ""
         verdict = (
             f"{total_refs} stale ref(s) · {target_count} missing target(s){anchor_note}{fix_note}{diff_note} · "
-            f"{refs_seen} refs checked · {files_scanned} files · {scan_seconds}s"
+            f"{refs_seen} refs checked · {files_scanned} files{unread_note} · {scan_seconds}s"
         )
 
     # ---- Baseline write side --------------------------------------
@@ -3677,7 +3724,10 @@ def stale_refs(
     # run from a healthy run. Without --gate, attestation errors are
     # informational only (exit 0) — they're already in the envelope.
     def _exit_with_policy() -> None:
-        if gate and target_count > 0:
+        # W1527: an unreadable file is UNANALYZABLE, not clean -- the gate
+        # must refuse rather than certify refs it never read. Decided once,
+        # through the shared policy, for every output channel below.
+        if gate_should_fail(bool(gate), findings=target_count, scan_incomplete=bool(files_unreadable)):
             ctx.exit(5)
         if gate and attest_error:
             from roam.exit_codes import EXIT_PARTIAL
@@ -3697,6 +3747,9 @@ def stale_refs(
             "missing_targets": target_count,
             "stale_refs": total_refs,
             "files_scanned": files_scanned,
+            "files_unreadable": len(files_unreadable),
+            "scan_incomplete": bool(files_unreadable),
+            "partial_success": bool(files_unreadable),
             "refs_checked": refs_seen,
             "displayed": len(displayed),
             "scan_seconds": scan_seconds,
@@ -3737,6 +3790,12 @@ def stale_refs(
             other_paths = [p for p in basename_idx_paths(basename_idx) if not _is_prose_path(p)]
             sample = (prose_paths[:300] + other_paths[:200])[:500]
             summary["repo_paths_sample"] = sorted(sample)
+        envelope_extra: dict = {}
+        if files_unreadable:
+            # `unreadable_files` is this repository's existing name for the
+            # paths behind a `files_unreadable` count (cmd_calc_inventory,
+            # cmd_magic_numbers, cmd_article_12_check).
+            envelope_extra["unreadable_files"] = files_unreadable
         click.echo(
             to_json(
                 json_envelope(
@@ -3744,6 +3803,7 @@ def stale_refs(
                     summary=summary,
                     budget=token_budget,
                     targets=displayed,
+                    **envelope_extra,
                 )
             )
         )
@@ -3754,8 +3814,26 @@ def stale_refs(
     if diff_warning:
         click.echo(diff_warning, err=True)
     click.echo(f"VERDICT: {verdict}\n")
+    if files_unreadable:
+        # The text channel is the one this repo's own wired gate callers
+        # read; it must not tell a quieter story than --json.
+        click.echo(
+            f"SCAN INCOMPLETE: {len(files_unreadable)} file(s) could not be read and "
+            "contributed no references to this result:"
+        )
+        for item in files_unreadable[:10]:
+            click.echo(f"  {item['file']}  ({item['reason']})")
+        if len(files_unreadable) > 10:
+            click.echo(f"  (+{len(files_unreadable) - 10} more)")
+        click.echo()
     if target_count == 0:
-        click.echo(f"Scanned {files_scanned} files, checked {refs_seen} references — all targets exist.")
+        if files_unreadable:
+            click.echo(
+                f"Scanned {files_scanned} files, checked {refs_seen} references — "
+                "every reference that WAS read resolves."
+            )
+        else:
+            click.echo(f"Scanned {files_scanned} files, checked {refs_seen} references — all targets exist.")
         if next_steps:
             click.echo()
             click.echo(format_next_steps_text(next_steps))
