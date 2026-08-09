@@ -133,10 +133,52 @@ def _load_custom_presets(config_path: str) -> dict:
     return data
 
 
+#: Flag tokens that make a roam sub-command REFUSE -- exit non-zero because it
+#: measured a violation. A report section carrying none of these reports its
+#: findings and always exits 0, so ``--strict`` is structurally incapable of
+#: failing on anything that section finds.
+#:
+#: ``--gate-pattern`` is deliberately ABSENT and must stay absent. It is
+#: ``coverage-gaps``' selector for which SYMBOLS count as a gate (the regex
+#: ``auth|permission|guard``); it does not make the command refuse. Matching it
+#: on a ``--gate`` prefix would report the ``security`` preset's coverage-gaps
+#: section as gate-capable, which is the exact false claim this constant
+#: exists to prevent.
+_GATE_FLAGS: frozenset[str] = frozenset(
+    {
+        "--ci",
+        "--gate",
+        "--strict",
+        "--fail-on-found",
+        "--fail-on-anomaly",
+        "--fail-on-critical",
+        "--fail-on-degradation",
+        "--fail-on-divergence",
+        "--gate-on-new-reachable",
+    }
+)
+
+
+def _section_is_gated(section) -> bool:
+    """True when this section's command can exit non-zero on its own findings.
+
+    Works for custom presets loaded from ``--config`` as well as built-ins:
+    the answer is read off the command line the section actually runs, not
+    off an annotation someone has to remember to keep in sync.
+    """
+    return any(str(tok) in _GATE_FLAGS for tok in section.get("command", ()))
+
+
 def _run_section(section, root):
     """Run a single report section as a subprocess.
 
-    Returns (title, success, output_data, stderr).
+    Returns (title, success, output_data, stderr, execution_state).
+
+    ``execution_state`` uses the vocabulary ``cmd_verify`` already publishes --
+    ``complete`` / ``failed`` / ``timed_out`` -- because ``success`` alone
+    conflates "the section ran" with "the section found nothing". A timeout
+    used to flatten into ``success=False`` and become indistinguishable from a
+    command that ran and refused.
     """
     cmd = [sys.executable, "-m", "roam", "--json"] + section["command"]
     try:
@@ -155,19 +197,21 @@ def _run_section(section, root):
         except json.JSONDecodeError:
             data = {"raw": output}
 
+        succeeded = result.returncode == 0
         return (
             section["title"],
-            result.returncode == 0,
+            succeeded,
             data,
-            result.stderr.strip() if result.returncode != 0 else "",
+            result.stderr.strip() if not succeeded else "",
+            "complete" if succeeded else "failed",
         )
     except subprocess.TimeoutExpired:
-        return (section["title"], False, None, "timeout (180s)")
+        return (section["title"], False, None, "timeout (180s)", "timed_out")
     except Exception as e:
-        return (section["title"], False, None, str(e))
+        return (section["title"], False, None, str(e), "failed")
 
 
-def _format_markdown(preset_name, results):
+def _format_markdown(preset_name, results, advisory=()):
     """Format results as GitHub-compatible markdown."""
     lines = [f"## Roam Report: {preset_name}\n"]
     workflow = _workflow_for_preset(preset_name)
@@ -175,7 +219,14 @@ def _format_markdown(preset_name, results):
         lines.append(f"Workflow: `{workflow['recipe']}` / `{workflow['phase']}`")
         lines.append("")
 
-    for title, success, data, stderr in results:
+    if advisory:
+        lines.append(
+            "> Advisory sections (report findings, never fail): " + ", ".join(advisory) + ". "
+            "`pass` below means the section RAN, not that it found nothing."
+        )
+        lines.append("")
+
+    for title, success, data, stderr, _state in results:
         status = "pass" if success else "FAIL"
         lines.append(f"### {title} [{status}]")
 
@@ -224,7 +275,15 @@ def _workflow_for_preset(preset: str) -> dict | None:
 @click.command()
 @click.argument("preset", required=False, default=None)
 @click.option("--list", "list_presets", is_flag=True, help="List available presets")
-@click.option("--strict", is_flag=True, help="Exit non-zero if any section fails")
+@click.option(
+    "--strict",
+    is_flag=True,
+    help=(
+        "Exit non-zero if any section could not run, or returned its own gate "
+        "failure. A section whose command carries no gate flag reports its "
+        "findings and never fails, so --strict cannot fail on those findings."
+    ),
+)
 @click.option("--md", "markdown", is_flag=True, help="Output GitHub-compatible markdown")
 @click.option(
     "--config",
@@ -323,16 +382,23 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
     t0 = time.monotonic()
 
     results = []
+    gated_by_title: dict[str, bool] = {}
     for section in preset_data["sections"]:
-        title, success, data, stderr = _run_section(section, root)
-        results.append((title, success, data, stderr))
+        gated_by_title[section["title"]] = _section_is_gated(section)
+        title, success, data, stderr, state = _run_section(section, root)
+        results.append((title, success, data, stderr, state))
 
     elapsed = time.monotonic() - t0
-    ok_count = sum(1 for _, s, _, _ in results if s)
-    fail_count = sum(1 for _, s, _, _ in results if not s)
+    ok_count = sum(1 for _, s, _, _, _ in results if s)
+    fail_count = sum(1 for _, s, _, _, _ in results if not s)
+    # A section that carries no gate flag reports its findings and exits 0 no
+    # matter what it found, so `--strict` is structurally incapable of failing
+    # on it. Name those sections rather than letting "OK" imply "clean".
+    advisory_titles = [title for title, _, _, _, _ in results if not gated_by_title.get(title, False)]
+    incomplete_reasons = sorted({state for _, _, _, _, state in results if state != "complete"})
 
     if markdown:
-        click.echo(_format_markdown(preset, results))
+        click.echo(_format_markdown(preset, results, advisory_titles))
         if strict and fail_count > 0:
             raise SystemExit(1)
         return
@@ -340,6 +406,7 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
     _report_verdict = (
         f"report '{preset}': {ok_count}/{len(results)} sections OK"
         + (f", {fail_count} failed" if fail_count > 0 else "")
+        + (f"; {len(advisory_titles)} advisory (cannot fail)" if advisory_titles else "")
         + f" in {elapsed:.1f}s"
     )
 
@@ -353,6 +420,10 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
                         "preset": preset,
                         "sections_ok": ok_count,
                         "sections_failed": fail_count,
+                        "sections_advisory": len(advisory_titles),
+                        "advisory_sections": advisory_titles,
+                        "partial_success": fail_count > 0,
+                        "incomplete_reasons": incomplete_reasons,
                         "elapsed_s": round(elapsed, 1),
                     },
                     preset=preset,
@@ -361,10 +432,12 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
                         {
                             "title": title,
                             "success": success,
+                            "execution_state": state,
+                            "gated": gated_by_title.get(title, False),
                             "data": data,
                             "error": stderr if not success else None,
                         }
-                        for title, success, data, stderr in results
+                        for title, success, data, stderr, state in results
                     ],
                 )
             )
@@ -378,8 +451,16 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
     click.echo()
     click.echo(f"=== Report: {preset} ({ok_count}/{len(results)} OK, {elapsed:.1f}s) ===\n")
 
-    for title, success, data, stderr in results:
-        status = "OK" if success else "FAIL"
+    if advisory_titles:
+        click.echo(
+            "NOTE: [OK] means the section RAN, not that it found nothing. "
+            "Advisory sections (no gate flag, so --strict cannot fail on their "
+            "findings): " + ", ".join(advisory_titles)
+        )
+        click.echo()
+
+    for title, success, data, stderr, state in results:
+        status = "OK" if success else ("TIMEOUT" if state == "timed_out" else "FAIL")
         click.echo(f"--- {title} [{status}] ---")
 
         if not success:
