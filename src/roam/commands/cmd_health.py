@@ -2291,7 +2291,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             return
 
         if sarif_mode:
-            from roam.output.sarif import health_to_sarif, write_sarif
+            from roam.output.sarif import health_to_sarif, with_sarif_disclosures, write_sarif
 
             # W1084 — mirror of W1060 cmd_complexity: collect any
             # silent-fallback warnings from the gate-config loader so
@@ -2383,9 +2383,28 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     "version": "2.1.0",
                     "runs": [],
                 }
+            # W1448-followup: the god-component / bottleneck lists are
+            # CAPPED (``_GOD_COMPONENT_LIST_LIMIT`` / ``_BOTTLENECK_LIST_LIMIT``)
+            # and the cap is computed in the shared prologue, so the SARIF
+            # results are the same top-N rows the JSON and text channels
+            # disclose. Both of those channels publish the marker; SARIF
+            # published nothing at all, so a Code Scanning consumer saw 50
+            # alerts drawn from a population of 60 and no way to tell a
+            # top-N list from a census. Project the SAME bucket onto the
+            # canonical W1331 adapter, which appends each marker as a
+            # ``run.invocations[0].toolExecutionNotifications[]`` entry --
+            # and returns the document UNCHANGED when the bucket is empty,
+            # preserving health_to_sarif's byte-identical-without-kwargs
+            # invariant for every uncapped repo.
+            sarif = with_sarif_disclosures(sarif, list(_w1448_truncation_warnings))
             click.echo(write_sarif(sarif))
             # W1331: nothing in a SARIF document carries these markers.
-            echo_text_warnings(list(_w607m_warnings_out) + list(_w607ba_warnings_out))
+            # The W1448 cap markers ride the SARIF document itself (above)
+            # AND stderr, matching the text channel -- echo_text_warnings
+            # writes to STDERR by design, so stdout stays byte-identical.
+            echo_text_warnings(
+                list(_w607m_warnings_out) + list(_w607ba_warnings_out) + list(_w1448_truncation_warnings)
+            )
             return
 
         if json_mode:
