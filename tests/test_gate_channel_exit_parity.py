@@ -82,9 +82,22 @@ THREE LAWS, ALL DRIVEN OFF THE REGISTRY
    same command answers ``diff unavailable: git_error -- cannot gate`` and
    exits 5.
 
-All three are enumerated from ``roam.cli._COMMANDS`` at collection time rather
-than from a hand-maintained list, which would drift; this repo has shipped
-that failure before.
+5. AN ENTRY'S CLASS IS A MEASUREMENT, NOT A SENTENCE (W1470b). Law 4's reasons
+   are prose, and prose outlives the envelope it described. Each entry now also
+   carries the dialect fields its envelope publishes, drawn from
+   ``_NON_EVALUATION_VOCABULARY``;
+   ``test_authorization_inventory_evidence_still_reproduces`` re-measures them
+   and requires exact equality, and requires DISCLOSED to mean exactly
+   "publishes at least one of them". A disclosure that is removed, or added to
+   an entry claimed BLIND, is then an edit somebody has to make on purpose.
+
+   Without it the inventory is only as honest as its last reader: an entry can
+   keep exiting 0 -- so Laws 3 and 4 both stay green -- while the envelope its
+   reason quotes has been gone for months.
+
+All of these are enumerated from ``roam.cli._COMMANDS`` at collection time
+rather than from a hand-maintained list, which would drift; this repo has
+shipped that failure before.
 
 DISCOVERY IS A HEURISTIC, AND THE EARLIER CLAIM HERE WAS TOO STRONG
 -------------------------------------------------------------------
@@ -142,6 +155,38 @@ WHAT THIS FILE DOES **NOT** PROVE
   ``config_state: "missing"``, ``snapshots: 0``) that Law 2's single
   ``scan_incomplete`` key cannot see. Unifying that vocabulary is the fix;
   the inventory is what stops the list growing while it is pending.
+
+  UPDATE 2026-08-09 (W1470b). The dialect is now written down in
+  ``_NON_EVALUATION_VOCABULARY`` and read by Law 5, so an entry's class is a
+  measurement instead of a sentence. That is the half of the unification
+  which costs nothing. The other half is a DESIGN DECISION, TAKEN AND
+  RECORDED HERE RATHER THAN FORCED:
+
+    The obvious "fix" is to make these three commands publish
+    ``scan_incomplete: true``. They would then route through Law 2 and
+    refuse. Measured consequence, one honest run each: ``py-types --ci``
+    fails in every repository that contains no Python; ``rules --ci`` fails
+    in every repository with no ``.roam/rules/``; and
+    ``reachability-triage --gate-on-new-reachable`` fails on its FIRST run
+    in every repository, because a baseline it has not written yet is
+    missing. Three commands, three green CI runs turned red, zero defects
+    found. Closing a finding by making an honest run fail is not closing it.
+
+  What the absent input actually needs is a THIRD verdict -- "nothing to
+  measure, and that is a legitimate state of this repository" -- distinct
+  both from CLEAN and from UNANALYZABLE, plus a caller-side policy switch for
+  which of those may authorize. ``exit_codes.gate_should_fail`` has two
+  states and every gate in the repo is wired to it, so adding a third is a
+  cross-cutting change with its own blast radius and is NOT smuggled in
+  behind a batch of command fixes. Until it is taken deliberately, these
+  three stay DISCLOSED, and Law 5 keeps their disclosure honest.
+
+  The sharpest single thing the 2026-08-09 census found is in that
+  inventory as data: ``reachability-triage --gate-on-new-reachable``
+  publishes ``scan_incomplete: false`` -- Law 2's own key, asserting the
+  scan was COMPLETE -- in the same envelope as ``gate_evaluated: false``.
+  Law 2 is not merely blind to the private word; it is being answered
+  "complete" by a command that is simultaneously saying it never ran.
 
   CORRECTION (W1468). This paragraph used to exempt ``pr-analyze --gate`` on
   the grounds that its ``state: "no_changes"`` was "a real answer rather than
@@ -266,7 +311,63 @@ _NO_SUMMARY_PUBLISHED: frozenset[tuple[str, str]] = frozenset(
 #:                finding is in the flag's NAME, not its behaviour. OPEN.
 _INVENTORY_CLASSES = frozenset({"ANSWERED", "DISCLOSED", "BLIND", "NOT-A-GATE"})
 
-#: (command, flag) -> (class, reason measured on the date in the reason).
+#: THE DIALECT. ``dotted envelope field -> the value that means "I could not
+#: evaluate the thing the gate asks about"``.
+#:
+#: Law 2 gates on ONE key, ``scan_incomplete``. The paragraph in the module
+#: docstring headed "Law 2 can only hold a command to a claim it actually
+#: publishes" recorded that several commands say the same thing in a private
+#: word instead, and called unifying that vocabulary "the fix". This constant
+#: is the part of that unification which can be done without changing a single
+#: exit code: the dialect stops being prose in a reason string and becomes a
+#: list the suite reads.
+#:
+#: Enumerated by measurement, 2026-08-09, over all 40 reachable (command, flag)
+#: pairs in the pristine unanalyzable workspace -- not by grepping for
+#: plausible names. Nine pairs exit 0; three of them speak this dialect::
+#:
+#:   py-types --ci                                coverage_pct_computable false
+#:   rules --ci                                   config_state "missing"
+#:   reachability-triage --gate-on-new-reachable  gate_evaluated false,
+#:                                                gate.evaluated false,
+#:                                                gate.baseline_state "missing"
+#:
+#: ``checks_complete`` is listed although nothing currently publishes it at
+#: ``False`` (``db-check --ci`` publishes ``true``, having really run all seven
+#: checks): it is the same dialect word, and listing it is what makes a future
+#: ``checks_complete: false`` land as a classification failure rather than as
+#: silence.
+#:
+#: DELIBERATELY ABSENT: ``partial_success``, for the reason Law 2 already
+#: records -- ``boundary`` sets it on a legitimately scoped clean run and
+#: ``taint`` sets it on a full corpus with 638 findings, so it does not mean
+#: this. Also absent are SCOPE disclosures such as ``compatibility --ci``'s
+#: ``surface_coverage_scope: "covered_dimensions"``: that command evaluated
+#: every dimension it claims to cover and published the ones it does not, which
+#: is a narrowed question answered, not a question left unanswered.
+#:
+#: NOT in ``src/roam``. Putting it there would assert that commands SHOULD
+#: speak one word, which is the design decision recorded under "WHAT THIS FILE
+#: DOES NOT PROVE" and not taken here. This is the catalogue of the dialect
+#: that exists, owned by the guard that reads it.
+_NON_EVALUATION_VOCABULARY: dict[str, object] = {
+    "summary.gate_evaluated": False,
+    "summary.coverage_pct_computable": False,
+    "summary.config_state": "missing",
+    "summary.checks_complete": False,
+    "gate.evaluated": False,
+    "gate.baseline_state": "missing",
+}
+
+#: (command, flag) -> (class, reason measured on the date in the reason,
+#: evidence).
+#:
+#: ``evidence`` is the reason's machine-checkable half: every
+#: ``_NON_EVALUATION_VOCABULARY`` field the envelope published at its
+#: non-evaluating value, plus ``summary.scan_incomplete`` when the envelope
+#: published it as ``False``. ``test_authorization_inventory_evidence_still_
+#: reproduces`` re-measures it and demands EXACT equality, so an entry cannot
+#: decay into a sentence that was true once.
 #:
 #: SHRINK-ONLY. ``test_no_gate_newly_authorizes_an_unanalyzable_workspace``
 #: fails on an addition; ``test_authorization_inventory_has_no_stale_entries``
@@ -274,13 +375,14 @@ _INVENTORY_CLASSES = frozenset({"ANSWERED", "DISCLOSED", "BLIND", "NOT-A-GATE"})
 #: and means the entry should be DELETED in the same commit as the fix. Every
 #: reason quotes the envelope it was taken from, so an entry cannot degrade
 #: into "we agreed not to look".
-_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]] = {
+_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str, tuple[tuple[str, object], ...]]] = {
     ("compatibility", "--ci"): (
         "ANSWERED",
         "2026-08-09: verdict 'no regressions' with covered_dimension_count 7, "
         "uncovered_dimension_count 6, surface_coverage_scope 'covered_dimensions'. "
         "The comparison is against the shipped compatibility matrix, not the "
         "workspace, and the part it does NOT cover is published beside the verdict.",
+        (),
     ),
     ("config", "--check"): (
         "ANSWERED",
@@ -288,6 +390,7 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]]
         "The absence of a config file IS the observation: there is no document to "
         "validate, and the defaults the command falls back to are its own shipped "
         "values, so no part of this answer depends on the workspace being readable.",
+        (),
     ),
     ("evidence-oscal", "--strict"): (
         "ANSWERED",
@@ -295,6 +398,7 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]]
         "across 9 frameworks', control_count 23, framework_count 9. The document is "
         "projected from roam's own control catalogue; an empty workspace changes "
         "nothing about it, so the emission genuinely succeeded.",
+        (),
     ),
     ("db-check", "--ci"): (
         "ANSWERED",
@@ -302,6 +406,7 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]]
         "auto-indexes, so the command builds an index for the empty corpus and then runs "
         "all 7 integrity checks against the database it built. The subject of db-check is "
         "the DATABASE, not the corpus, and the database it checked really exists.",
+        (),
     ),
     ("version", "--check"): (
         "NOT-A-GATE",
@@ -309,13 +414,18 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]]
         "contains no ctx.exit and no gate at all -- `--check` means 'also query PyPI', "
         "and _GATE_STEM matches the word 'check'. It cannot return non-zero on any "
         "input, including a failed network call, so its exit 0 proves nothing here.",
+        (),
     ),
     ("patterns", "--strict-factory"): (
         "BLIND",
         "2026-08-09: verdict 'no patterns detected', total_patterns 0, pattern_types 0, "
         "types_found [], partial_success false -- over an auto-indexed corpus of one text "
         "file with no symbols in it. The summary carries no denominator of any kind, so "
-        "this envelope is byte-identical in shape to a real repository with no factories.",
+        "this envelope is byte-identical in shape to a real repository with no factories. "
+        "Empty evidence is the CLAIM here, and it is now measured: BLIND means the "
+        "envelope publishes nothing from the dialect either, so there is no word in it "
+        "-- shared or private -- that a reader could have used.",
+        (),
     ),
     ("py-types", "--ci"): (
         "DISCLOSED",
@@ -323,20 +433,35 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]]
         "python_files 0, total_public 0 -- and exits 0 under a flag whose help promises "
         "a CI gate. W1320 made the uncomputable state visible in every channel; it did "
         "not decide whether an uncomputable coverage may authorize. It still does.",
+        (("summary.coverage_pct_computable", False),),
     ),
     ("reachability-triage", "--gate-on-new-reachable"): (
         "DISCLOSED",
         "2026-08-09: publishes gate_evaluated false, changed_files null, "
         "reachable_paths 0 -- the envelope states in as many words that the gate was "
         "never evaluated, and the process still exits 0. The signal is present and "
-        "correctly named; nothing reads it.",
+        "correctly named; nothing reads it. Sharper than that, and the reason this "
+        "entry's evidence names scan_incomplete: the SAME envelope publishes "
+        "scan_incomplete false. It answers Law 2's question with 'the scan was "
+        "complete' and its own question with 'the gate never ran', and Law 2 reads "
+        "the half that authorizes. a875ad08 fixed a different arm of this command "
+        "(dead scanners reported as a complete run); the absent baseline is untouched.",
+        (
+            ("gate.baseline_state", "missing"),
+            ("gate.evaluated", False),
+            ("summary.gate_evaluated", False),
+            ("summary.scan_incomplete", False),
+        ),
     ),
     ("rules", "--ci"): (
         "DISCLOSED",
         "2026-08-09: verdict 'no rules directory found', config_state 'missing', "
         "total 0, passed 0, failed 0. Zero rules passing out of zero rules loaded is "
         "not evidence that the repository satisfies its rules -- the same shape the "
-        "taint --rule fix closed for a filter that matched nothing.",
+        "taint --rule fix closed for a filter that matched nothing. 7ca433c1 fixed a "
+        "different arm (a rule that EXISTS and could not be evaluated now refuses); "
+        "an absent rules directory still authorizes, measured here today.",
+        (("summary.config_state", "missing"),),
     ),
 }
 
@@ -353,6 +478,24 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]]
 #: -- e2f55a4c fixed the gate and did not delete its inventory entry, so the
 #: ratchet had been failing on it since. Deleted here with the others rather
 #: than left red.
+#:
+#: HELD AT 9 on 2026-08-09 after the claim-exceeds-measurement batch (29
+#: commits, 42dbacfa..7f086ac7), and the reason is recorded because "the number
+#: did not move" is the answer most easily reached by not looking. Two commands
+#: in that batch are in this inventory, and BOTH entries were re-measured
+#: rather than reasoned about::
+#:
+#:   rules --ci                  7ca433c1   still exits 0, config_state "missing"
+#:   reachability-triage --gate-on-new-reachable
+#:                               a875ad08   still exits 0, gate_evaluated false
+#:
+#: Each fix closed a DIFFERENT arm of its command -- a rule that exists and
+#: cannot be evaluated; scanners that died mid-run -- and neither arm is the
+#: one this workspace exercises, which is the absent input. A census of all 40
+#: reachable pairs in the pristine workspace returned exactly these 9 exit-0
+#: pairs, the same 9 already inventoried: no additions, no deletions. Lowering
+#: the mark without a deletion would be the defect this file exists to catch,
+#: pointed at the file itself.
 _AUTHORIZATION_HIGH_WATER = 9
 
 
@@ -562,6 +705,42 @@ def _json_objects(stdout: str) -> list[dict]:
 def _published_summaries(stdout: str) -> list[dict]:
     """Every ``summary`` object the command published on stdout."""
     return [obj["summary"] for obj in _json_objects(stdout) if isinstance(obj.get("summary"), dict)]
+
+
+def _published_fields(stdout: str) -> dict[str, object]:
+    """``summary.*`` and ``gate.*`` fields, flattened across every object.
+
+    Two namespaces because the dialect uses both: ``reachability-triage``
+    publishes ``summary.gate_evaluated`` AND a sibling ``gate`` object carrying
+    ``evaluated`` / ``baseline_state``. Reading only ``summary`` would miss half
+    of the one envelope that speaks the dialect most fluently.
+    """
+    fields: dict[str, object] = {}
+    for obj in _json_objects(stdout):
+        for namespace in ("summary", "gate"):
+            child = obj.get(namespace)
+            if isinstance(child, dict):
+                for key, value in child.items():
+                    fields[f"{namespace}.{key}"] = value
+    return fields
+
+
+def _non_evaluation_evidence(stdout: str) -> tuple[tuple[str, object], ...]:
+    """The dialect this envelope speaks, as a sorted, comparable tuple.
+
+    Every ``_NON_EVALUATION_VOCABULARY`` field published at its non-evaluating
+    value, plus ``summary.scan_incomplete`` when published as ``False`` -- that
+    last one is not a dialect word but its presence beside one is the finding:
+    an envelope telling Law 2 the scan was complete while telling its own
+    reader the gate never ran.
+    """
+    fields = _published_fields(stdout)
+    found = [
+        (key, value) for key, value in _NON_EVALUATION_VOCABULARY.items() if key in fields and fields[key] == value
+    ]
+    if found and fields.get("summary.scan_incomplete") is False:
+        found.append(("summary.scan_incomplete", False))
+    return tuple(sorted(found, key=lambda pair: pair[0]))
 
 
 def _died_in_argv_parsing(run: _Run) -> bool:
@@ -872,12 +1051,21 @@ def test_authorization_inventory_is_classified_and_bounded() -> None:
     above, and this makes a swap show up as an edit of a number.
     """
     bad: list[str] = []
+    known_fields = set(_NON_EVALUATION_VOCABULARY) | {"summary.scan_incomplete"}
     for (command, flag), entry in sorted(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE.items()):
-        klass, reason = entry
+        klass, reason, evidence = entry
         if klass not in _INVENTORY_CLASSES:
             bad.append(f"roam {command} {flag}: undefined class {klass!r}")
         if len(reason) < 120 or "20" not in reason:
             bad.append(f"roam {command} {flag}: reason does not quote a dated measurement")
+        for field, _value in evidence:
+            if field not in known_fields:
+                bad.append(
+                    f"roam {command} {flag}: evidence names {field!r}, which is not in "
+                    "_NON_EVALUATION_VOCABULARY. Add the field to the vocabulary with the value "
+                    "that means 'not evaluated' -- an entry may not carry private evidence that "
+                    "the dialect registry does not list."
+                )
     assert not bad, "Law 3 inventory entries that do not explain themselves:\n" + "\n".join(f"  {b}" for b in bad)
 
     assert len(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE) <= _AUTHORIZATION_HIGH_WATER, (
@@ -890,4 +1078,63 @@ def test_authorization_inventory_is_classified_and_bounded() -> None:
     assert not unknown, (
         "inventory entries that are no longer part of the probed gate surface -- a flag was "
         f"renamed or removed, or discovery stopped seeing it: {unknown}"
+    )
+
+
+def test_authorization_inventory_evidence_still_reproduces(tmp_path: Path) -> None:
+    """LAW 5. An entry's class must be a MEASUREMENT, not a remembered sentence.
+
+    Law 3 pins WHICH pairs authorize over nothing. It says nothing about
+    whether the reason attached to a pair is still true, and a reason is a
+    string: ``py-types --ci`` could stop publishing
+    ``coverage_pct_computable`` entirely, or publish it as ``true`` while still
+    exiting 0 over zero Python files, and the inventory would stay green
+    describing an envelope that no longer exists. That is this file's own
+    defect shape -- a claim outliving its observation -- so it gets a law.
+
+    Two assertions, both driven off ``_NON_EVALUATION_VOCABULARY``:
+
+    1. The recorded evidence EQUALS what the envelope publishes today. Exact
+       set equality in both directions, because a lost disclosure and a gained
+       one are both edits somebody must make deliberately.
+    2. ``DISCLOSED`` means, precisely, "publishes at least one dialect word";
+       every other class means "publishes none". That biconditional is what
+       stops ``DISCLOSED`` decaying into a sympathetic adjective and stops
+       ``BLIND`` being asserted about an envelope that was in fact disclosing.
+
+    What this does NOT do: unify the dialect in the PRODUCT. Making these
+    commands publish ``scan_incomplete: true`` would route them through Law 2
+    and make them refuse -- and refusing is wrong for all three, which is why
+    the batch that fixed their sibling arms deliberately left this one alone.
+    See the module docstring under "WHAT THIS FILE DOES NOT PROVE".
+    """
+    problems: list[str] = []
+    for index, (command, flag) in enumerate(sorted(_AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE)):
+        klass, _reason, recorded = _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE[command, flag]
+        run = _invoke(_pristine_unanalyzable(tmp_path, f"dialect{index}"), ["--json", command, flag])
+        if run.returncode != 0:
+            continue  # the stale-entry test owns this; it is the ratchet, not a dialect fault
+        measured = _non_evaluation_evidence(run.stdout)
+        if measured != tuple(recorded):
+            problems.append(
+                f"roam {command} {flag} [{klass}]\n    recorded: {list(recorded)}\n    measured: {list(measured)}"
+            )
+            continue
+        speaks = any(field in _NON_EVALUATION_VOCABULARY for field, _ in measured)
+        if speaks and klass != "DISCLOSED":
+            problems.append(
+                f"roam {command} {flag} is classified {klass} but publishes {list(measured)}. "
+                "An envelope that says it could not evaluate the gated thing is DISCLOSED."
+            )
+        if not speaks and klass == "DISCLOSED":
+            problems.append(
+                f"roam {command} {flag} is classified DISCLOSED and publishes no dialect word. "
+                "If the disclosure was removed this is now BLIND, which is worse and must be "
+                "reclassified rather than left describing an envelope that no longer exists."
+            )
+
+    assert not problems, (
+        "Law 3 inventory entries whose evidence no longer matches the envelope. The reason "
+        "string is prose; this is the half a machine can check, and it has drifted:\n"
+        + "\n".join(f"  {p}" for p in problems)
     )
