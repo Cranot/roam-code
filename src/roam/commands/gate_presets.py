@@ -23,7 +23,8 @@ class GateRule:
     exclude_patterns: list[str] = field(default_factory=list)
     # Minimum number of test functions expected
     min_test_count: int = 1
-    # Severity: "error" (blocks CI) or "warning" (advisory)
+    # Severity: "error" (blocks CI under `coverage-gaps --ci`) or "warning"
+    # (advisory -- reported, never gated, in any mode).
     severity: str = "warning"
 
 
