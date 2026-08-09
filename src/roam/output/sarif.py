@@ -6485,7 +6485,7 @@ def _verify_imports_kind_level(kind: str) -> str:
     label = (kind or "").lower()
     if label == "hallucination-import":
         return "error"
-    if label in ("invalid-import", "unverifiable-file"):
+    if label in ("invalid-import", "unverifiable-file", "unverifiable-import"):
         return "warning"
     return "note"
 
@@ -6584,6 +6584,17 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
             help_uri=_HELP_BASE + "verify-imports",
             default_level="warning",
         ),
+        _rule_entry(
+            id="unverifiable-import",
+            short_desc=(
+                "An import in a language roam has no standard-library or "
+                "package-manager model for — the index is the only oracle "
+                "and it never holds that language's stdlib, so 'not indexed' "
+                "is not evidence the import is wrong"
+            ),
+            help_uri=_HELP_BASE + "verify-imports",
+            default_level="warning",
+        ),
     ]
 
     results: list[dict] = []
@@ -6629,7 +6640,11 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
         # invalid-import (typo / rename signal); no candidates ->
         # hallucination-import (the name genuinely isn't in the index).
         if status == "unverifiable":
-            kind = "unverifiable-file"
+            # ``subject`` discriminates the two absences: a FILE that could not
+            # be read at all, versus an IMPORT in a language this producer has
+            # no dependency model for. Absent ``subject`` means the older
+            # file-only shape, so existing callers keep their behaviour.
+            kind = "unverifiable-import" if f.get("subject") == "import" else "unverifiable-file"
         else:
             kind = "invalid-import" if suggestions else "hallucination-import"
 
@@ -6650,6 +6665,12 @@ def verify_imports_to_sarif(findings: list[dict]) -> dict:
             rationale = (
                 "file is in the index but could not be read — its imports "
                 "were never checked; refresh the index and re-run"
+            )
+        elif kind == "unverifiable-import":
+            rationale = (
+                "no standard-library or package-manager model for this "
+                "language — the index is the only oracle and does not hold "
+                "the language's stdlib, so this import was NOT decided"
             )
         elif kind == "hallucination-import":
             rationale = "no nearby symbol in the indexed table — hallucinated import"
