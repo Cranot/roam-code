@@ -966,11 +966,19 @@ def test_cli_check_rules_severity_error(indexed_project, monkeypatch):
 
 
 def test_cli_check_rules_no_match_rule(indexed_project, monkeypatch):
+    """A filter that matched nothing analysed nothing, so it refuses.
+
+    This assertion used to read ``exit_code == 0``; it encoded the defect.
+    ``check-rules`` has no gate flag because it is ALWAYS a gate -- every
+    populated path ends in an unconditional ``ctx.exit(exit_code)`` -- so a
+    filter that emptied the rule set is UNANALYZABLE, not CLEAN.
+    """
     monkeypatch.chdir(indexed_project)
     runner = CliRunner()
     result = runner.invoke(cli, ["check-rules", "--rule", "nonexistent-rule"], catch_exceptions=False)
-    assert result.exit_code == 0
+    assert result.exit_code == 5, result.output
     assert "no rules matched" in result.output
+    assert "nothing is proven clean" in result.output
 
 
 def test_cli_check_rules_sarif(indexed_project, monkeypatch):
