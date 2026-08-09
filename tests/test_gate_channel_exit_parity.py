@@ -282,13 +282,6 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]]
         "The comparison is against the shipped compatibility matrix, not the "
         "workspace, and the part it does NOT cover is published beside the verdict.",
     ),
-    ("compatibility", "--require-coverage"): (
-        "ANSWERED",
-        "2026-08-09: same envelope and same run as `compatibility --ci` above -- "
-        "one command, two gate flags. The coverage requirement is met by the 7 "
-        "covered dimensions of the shipped matrix, and the 6 uncovered ones are "
-        "counted in the same summary rather than dropped from the denominator.",
-    ),
     ("config", "--check"): (
         "ANSWERED",
         "2026-08-09: verdict 'no .roam/config.json - using defaults', issues 0. "
@@ -345,40 +338,22 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str]]
         "not evidence that the repository satisfies its rules -- the same shape the "
         "taint --rule fix closed for a filter that matched nothing.",
     ),
-    ("digest", "--fail-on-anomaly"): (
-        "DISCLOSED",
-        "2026-08-09: verdict 'No snapshots recorded yet - run `roam index` to begin trend "
-        "analysis', snapshots 0, plus a deprecation_warning naming `trends`. `digest`, "
-        "`snapshot`, `trend` and `trends` are four registry names for one callback in "
-        "cmd_trends.py, and all four exit 0 with no history to test for anomalies.",
-    ),
-    ("snapshot", "--fail-on-anomaly"): (
-        "DISCLOSED",
-        "2026-08-09: verdict 'No snapshots recorded yet - run `roam index` to begin "
-        "trend analysis', snapshots 0. The anomaly test is over a history that does "
-        "not exist, so the gate cannot fire; `digest`, `snapshot`, `trend` and `trends` "
-        "are four registry names for one callback in cmd_trends.py.",
-    ),
-    ("trend", "--fail-on-anomaly"): (
-        "DISCLOSED",
-        "2026-08-09: same callback and same envelope as `snapshot --fail-on-anomaly` "
-        "-- snapshots 0, no anomaly analysis performed, exit 0. Listed separately "
-        "because the inventory is keyed by the (command, flag) a CI job actually "
-        "writes, and all three aliases are reachable from a workflow file.",
-    ),
-    ("trends", "--fail-on-anomaly"): (
-        "DISCLOSED",
-        "2026-08-09: same callback and same envelope as `snapshot --fail-on-anomaly` "
-        "-- snapshots 0, exit 0. This is the alias roam's own generated CI templates "
-        "use, which is why the empty-history case is the one that reaches users.",
-    ),
 }
 
 #: High-water mark for the inventory, measured 2026-08-09. A RATCHET: the
 #: stale-entry test forces it down as gates are fixed, and this pins the raw
 #: count so that swapping one entry for another is still a visible edit of a
 #: number rather than a silent trade.
-_AUTHORIZATION_HIGH_WATER = 14
+#:
+#: 14 -> 9 on 2026-08-09. Four of the five deletions are the `--fail-on-anomaly`
+#: aliases (digest / snapshot / trend / trends -- four registry names for one
+#: callback in cmd_trends.py), closed by the W1524 fix: a gate over a history
+#: that does not exist is now UNANALYZABLE and refuses. The fifth,
+#: `compatibility --require-coverage`, was already stale when W1524 was written
+#: -- e2f55a4c fixed the gate and did not delete its inventory entry, so the
+#: ratchet had been failing on it since. Deleted here with the others rather
+#: than left red.
+_AUTHORIZATION_HIGH_WATER = 9
 
 
 def _gate_surface() -> dict[str, list[str]]:
