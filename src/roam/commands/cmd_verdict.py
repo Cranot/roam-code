@@ -45,8 +45,28 @@ def _load_bundle(bundle: str | None) -> dict:
     return json.loads(text)
 
 
+def _dict_or_none(value: object) -> dict | None:
+    """Forward a mapping, or None. Mirrors proof_bundle.py's own type guard.
+
+    ``compute_verdict`` distinguishes "no review evidence was supplied" (None,
+    legacy path) from "evidence was supplied and is empty" ({}), so a
+    non-mapping must become None, not {}.
+    """
+    return value if isinstance(value, dict) else None
+
+
 def _extract_contract_inputs(bundle: dict) -> dict:
-    """Pull verdict inputs from a proof bundle, tolerant to nested shapes."""
+    """Pull verdict inputs from a proof bundle, tolerant to nested shapes.
+
+    ``compute_verdict`` takes 11 inputs. This function used to return 8 on
+    BOTH branches, so ``review_evidence``, ``orchestration_contract`` and
+    ``change_set_unanalyzable`` defaulted to None and every review-obligation
+    blocker plus the unanalyzable-change-set blocker was UNREACHABLE from
+    ``roam verdict`` -- measured: the same bundle `guard-pr` called blocked at
+    exit 5, including one whose reviews were explicitly ``rejected``, this
+    command called pass at exit 0, and ``--strict`` did not help because the
+    blockers were never computed rather than suppressed.
+    """
     # AgentChangeProofBundle v1 shape (preferred):
     if "verification_contract" in bundle:
         return {
@@ -58,6 +78,16 @@ def _extract_contract_inputs(bundle: dict) -> dict:
             "mcp_tool_findings": bundle.get("mcp_tool_findings", []),
             "risk": bundle.get("risk") or {},
             "ledger": bundle.get("ledger") or {},
+            "review_evidence": _dict_or_none(bundle.get("review_evidence")),
+            "orchestration_contract": _dict_or_none(bundle.get("orchestration_contract")),
+            # Persisted by compose_agent_change_proof_bundle. It cannot be
+            # recomputed from a static file -- it is the record of whether git
+            # ANSWERED at emit time -- so it is read back, never inferred.
+            "change_set_unanalyzable": (
+                bundle.get("change_set_unanalyzable")
+                if isinstance(bundle.get("change_set_unanalyzable"), str)
+                else None
+            ),
         }
     # Legacy pr-bundle shape — best-effort mapping
     body = bundle.get("body") or bundle.get("bundle") or bundle
@@ -77,7 +107,45 @@ def _extract_contract_inputs(bundle: dict) -> dict:
         "mcp_tool_findings": body.get("mcp_tool_findings") or [],
         "risk": body.get("risks_considered_block") or body.get("risk") or {},
         "ledger": body.get("ledger") or {},
+        "review_evidence": _dict_or_none(body.get("review_evidence")),
+        "orchestration_contract": _dict_or_none(body.get("orchestration_contract")),
+        # DELIBERATELY not inferred. "the bundle lists no changed files" and
+        # "the change set was never measured" are different facts, and a
+        # legacy bundle does not distinguish them. Manufacturing a blocker
+        # here would exit 5 on every `cat bundle | roam verdict --` over the
+        # many legacy bundles that never carried a file list. The gap is
+        # published as `scan_incomplete` instead -- see `_scan_incomplete`.
+        "change_set_unanalyzable": None,
     }
+
+
+# Keys any bundle shape may use to declare its change set. Present-and-empty
+# still counts as DECLARED: a bundle that says "no files changed" measured
+# something. Absent entirely is what cannot be told apart from unmeasured.
+_CHANGE_SET_KEYS = ("changed_files", "files_touched", "affected_symbols")
+
+
+def _scan_incomplete(bundle: dict, inputs: dict) -> bool:
+    """True when this file cannot say whether the change set was measured.
+
+    Not a blocker and not an exit-code change: the verdict engine already
+    refuses on a KNOWN-unanalyzable change set (``change_set_unanalyzable``).
+    This flag covers the weaker case -- a bundle that carries neither a change
+    set nor the provenance field, so "declared empty" and "never measured"
+    are indistinguishable. Saying UNKNOWN in the envelope is the honest
+    answer; inventing a blocker would be an outage.
+    """
+    if inputs.get("change_set_unanalyzable"):
+        return False
+    body = bundle.get("body") or bundle.get("bundle") or bundle
+    for source in (bundle, body):
+        if not isinstance(source, dict):
+            continue
+        if "change_set_unanalyzable" in source:
+            return False
+        if any(key in source for key in _CHANGE_SET_KEYS):
+            return False
+    return True
 
 
 @click.command(name="verdict")
@@ -124,7 +192,31 @@ def verdict(ctx: click.Context, bundle: str | None, strict: bool) -> None:
         return
 
     inputs = _extract_contract_inputs(bundle_dict)
-    result = compute_verdict(**inputs)
+    scan_incomplete = _scan_incomplete(bundle_dict, inputs)
+    try:
+        result = compute_verdict(**inputs)
+    except ValueError as e:
+        # compute_verdict RAISES on a review status outside its closed enum --
+        # deliberately, so a new failure mode cannot pass silently. Forwarding
+        # review_evidence makes that reachable from CI, and a traceback out of
+        # a CI job is not a verdict. Refuse in the published vocabulary.
+        if json_mode:
+            click.echo(
+                to_json(
+                    guard_error_envelope(
+                        "verdict",
+                        "unmapped_review_status",
+                        "the bundle carries a review status this build cannot classify",
+                        fix="Upgrade roam, or correct the review_evidence status to a known value.",
+                        context={"bundle_arg": bundle, "exception": str(e)},
+                    )
+                )
+            )
+        else:
+            click.echo(f"verdict could not be computed: {e}", err=True)
+        ctx.exit(2)
+        return
+
     exit_code = verdict_exit_code(result["value"])
 
     if strict and result["value"] == "pass_with_warnings":
@@ -139,7 +231,12 @@ def verdict(ctx: click.Context, bundle: str | None, strict: bool) -> None:
                         "verdict": result["value"],
                         "reason_count": len(result["reasons"]),
                         "exit_code": exit_code,
-                        "partial_success": False,
+                        # Was hardcoded False -- a positive claim of
+                        # completeness from an envelope that had dropped three
+                        # of compute_verdict's eleven inputs. Same vocabulary
+                        # `guard-pr` already publishes.
+                        "scan_incomplete": scan_incomplete,
+                        "partial_success": scan_incomplete,
                     },
                     agent_contract={
                         "facts": [
@@ -160,6 +257,12 @@ def verdict(ctx: click.Context, bundle: str | None, strict: bool) -> None:
         )
     else:
         click.echo(f"VERDICT: {result['value']}")
+        if scan_incomplete:
+            click.echo(
+                "  NOTE: this bundle declares no change set and no "
+                "change-set provenance -- 'nothing changed' and 'never "
+                "measured' cannot be told apart from this file."
+            )
         for r in result["reasons"][:10]:
             click.echo(f"  - {r['code']}: " + ", ".join(f"{k}={v}" for k, v in r.items() if k != "code"))
         if len(result["reasons"]) > 10:

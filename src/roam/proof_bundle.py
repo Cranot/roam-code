@@ -377,6 +377,12 @@ def compose_agent_change_proof_bundle(
         "mode": mode,
         "policy_profile": policy_profile,
         "changed_files": changed_files,
+        # The PROVENANCE of `changed_files`, persisted so a later reader can
+        # tell "git answered, nothing changed" from "git could not answer".
+        # Without it, `roam verdict` reading this file back had no way to
+        # reach the unanalyzable-change-set blocker at all -- it defaulted to
+        # None and the gate was unreachable from the CI-facing entry point.
+        "change_set_unanalyzable": change_set_unanalyzable,
         "affected": {
             "areas": [],
             "symbols": [s.get("name") for s in bundle.get("affected_symbols") or [] if isinstance(s, dict)],

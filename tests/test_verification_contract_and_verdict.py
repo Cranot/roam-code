@@ -477,3 +477,236 @@ def test_obligations_declared_predicate():
     assert obligations_declared({"obligations": []}) is False
     assert obligations_declared(None) is False
     assert obligations_declared("not-a-dict") is False
+
+
+# ---- `roam verdict` must feed compute_verdict the SAME inputs guard-pr does ----
+#
+# Measured on one bundle file: `roam guard-pr --ci --dry-run --bundle X` printed
+# `blocked` at exit 5 with `review_rejected` for both phases, and
+# `roam verdict --bundle X` printed `pass` at exit 0. `--strict` did not help:
+# the blockers were never COMPUTED, not suppressed. _extract_contract_inputs
+# returned 8 keys on both branches while compute_verdict takes 11, so
+# review_evidence / orchestration_contract / change_set_unanalyzable defaulted
+# to None and every review-obligation blocker short-circuited on its first line.
+
+
+def _bundle_with_rejected_reviews() -> dict:
+    return {
+        "schema": "roam.pr_bundle/1",
+        "files_touched": ["src/app/auth.py"],
+        "risk": {"level": "low", "reasons": [], "paths": []},
+        "orchestration_contract": {
+            "obligations": [
+                {"phase": "1b_plan_critique", "required": True},
+                {"phase": "4b_done_verdict", "required": True},
+            ]
+        },
+        "tests_run": [{"command": "test.pytest", "status": "pass"}],
+        "review_evidence": {
+            "1b_plan_critique": {"status": "rejected"},
+            "4b_done_verdict": {"status": "rejected"},
+        },
+    }
+
+
+def _verdict_via_cmd(bundle: dict) -> dict:
+    from roam.commands.cmd_verdict import _extract_contract_inputs
+
+    return compute_verdict(**_extract_contract_inputs(bundle))
+
+
+def test_cmd_verdict_forwards_all_eleven_compute_verdict_inputs():
+    """The extractor's key set must cover compute_verdict's signature.
+
+    A parity assertion on the SIGNATURE, so a future input added to
+    compute_verdict cannot silently go unforwarded from the CI entry point.
+    """
+    import inspect
+
+    from roam.commands.cmd_verdict import _extract_contract_inputs
+
+    params = {
+        name
+        for name, p in inspect.signature(compute_verdict).parameters.items()
+        if p.kind is inspect.Parameter.KEYWORD_ONLY
+    }
+    for shape in (_bundle_with_rejected_reviews(), {"verification_contract": {"required": [], "skipped": []}}):
+        assert set(_extract_contract_inputs(shape)) == params, shape.get("schema", "v1")
+
+
+def test_cmd_verdict_and_proof_bundle_agree_on_one_bundle():
+    """ONE fixture, both entry points, the SAME verdict value.
+
+    Written as a parity assertion rather than two independent ones so the
+    entry points cannot drift apart again.
+    """
+    bundle = _bundle_with_rejected_reviews()
+    cmd_result = _verdict_via_cmd(bundle)
+
+    # The library path guard-pr uses, given the identical evidence.
+    lib_result = compute_verdict(
+        verification_contract={"required": [], "skipped": []},
+        executed_checks=[{"command": "test.pytest", "status": "pass"}],
+        risk=bundle["risk"],
+        review_evidence=bundle["review_evidence"],
+        orchestration_contract=bundle["orchestration_contract"],
+    )
+    assert cmd_result["value"] == lib_result["value"] == "blocked"
+    assert {r["code"] for r in cmd_result["reasons"]} == {"review_rejected"}
+
+
+def test_cmd_verdict_blocks_on_declared_obligations_with_no_evidence():
+    bundle = _bundle_with_rejected_reviews()
+    bundle.pop("review_evidence")
+    result = _verdict_via_cmd(bundle)
+    assert result["value"] == "blocked"
+    codes = {r["code"] for r in result["reasons"]}
+    assert codes == {"plan_critique_not_run", "done_verdict_not_run"}
+
+
+def test_cmd_verdict_reads_back_persisted_change_set_provenance():
+    """compose_agent_change_proof_bundle now PERSISTS the field; read it."""
+    from roam.commands.cmd_verdict import _extract_contract_inputs
+
+    v1 = {
+        "verification_contract": {"required": [], "skipped": []},
+        "changed_files": [],
+        "change_set_unanalyzable": "git_failed",
+    }
+    assert _extract_contract_inputs(v1)["change_set_unanalyzable"] == "git_failed"
+    assert compute_verdict(**_extract_contract_inputs(v1))["value"] == "blocked"
+
+
+def test_emitted_v1_bundle_carries_the_change_set_provenance_key(tmp_path):
+    """The 'preferred' shape could not round-trip the field it needs.
+
+    Emit a real v1 bundle and feed it straight back into the reader: the
+    round trip is the property, not the presence of a literal.
+    """
+    from roam.commands.cmd_verdict import _extract_contract_inputs
+    from roam.proof_bundle import compose_agent_change_proof_bundle
+
+    emitted = compose_agent_change_proof_bundle(
+        {"risk": {"level": "low"}, "changed_files": ["src/app/auth.py"]},
+        repo_root=tmp_path,
+    )
+    assert "change_set_unanalyzable" in emitted
+    # Round-trips through the reader without being inferred.
+    assert _extract_contract_inputs(emitted)["change_set_unanalyzable"] == emitted["change_set_unanalyzable"]
+
+
+# ---- MUST NOT FIRE: the entry point must not newly refuse honest bundles ----
+
+
+def test_legacy_bundle_without_obligations_still_passes():
+    """REGRESSION GUARD: bundles that declare nothing keep exit 0.
+
+    Forwarding review_evidence would be an outage if it blocked work that
+    never declared a review obligation.
+    """
+    bundle = {
+        "schema": "roam.pr_bundle/1",
+        "files_touched": ["src/app/auth.py"],
+        "risk": {"level": "low"},
+        "tests_run": [{"command": "test.pytest", "status": "pass"}],
+    }
+    assert _verdict_via_cmd(bundle)["value"] == "pass"
+
+
+def test_change_set_is_never_inferred_from_an_absent_file_list():
+    """'Declared empty' and 'never measured' must stay distinguishable.
+
+    Inferring a blocker from "no file list" would exit 5 on every legacy
+    bundle piped through `cat bundle | roam verdict --`.
+    """
+    from roam.commands.cmd_verdict import _extract_contract_inputs
+
+    bundle = {"risk": {"level": "low"}, "tests_run": [{"command": "test.pytest", "status": "pass"}]}
+    assert _extract_contract_inputs(bundle)["change_set_unanalyzable"] is None
+    assert compute_verdict(**_extract_contract_inputs(bundle))["value"] == "pass"
+
+
+def test_scan_incomplete_names_the_gap_instead_of_manufacturing_a_blocker():
+    from roam.commands.cmd_verdict import _extract_contract_inputs, _scan_incomplete
+
+    silent = {"risk": {"level": "low"}}
+    assert _scan_incomplete(silent, _extract_contract_inputs(silent)) is True
+
+    declared_empty = {"risk": {"level": "low"}, "changed_files": []}
+    assert _scan_incomplete(declared_empty, _extract_contract_inputs(declared_empty)) is False
+
+    measured = {"risk": {"level": "low"}, "files_touched": ["a.py"]}
+    assert _scan_incomplete(measured, _extract_contract_inputs(measured)) is False
+
+
+def _run_verdict_cli(tmp_path, bundle: dict, *, json_mode: bool = False):
+    import json as _json
+
+    import click
+    from click.testing import CliRunner
+
+    from roam.commands.cmd_verdict import verdict as verdict_cmd
+
+    @click.group()
+    @click.option("--json", "json_mode", is_flag=True, default=False)
+    @click.pass_context
+    def cli(ctx, json_mode):
+        ctx.ensure_object(dict)
+        ctx.obj["json"] = json_mode
+
+    cli.add_command(verdict_cmd)
+
+    path = tmp_path / "bundle.json"
+    path.write_text(_json.dumps(bundle), encoding="utf-8")
+    args = (["--json"] if json_mode else []) + ["verdict", "--bundle", str(path)]
+    return CliRunner().invoke(cli, args, catch_exceptions=False)
+
+
+def test_unmapped_review_status_is_a_refusal_not_a_traceback(tmp_path):
+    """compute_verdict RAISES on an unmapped status -- deliberately.
+
+    Forwarding review_evidence makes that reachable from a CI job, and a
+    traceback out of a CI job is not a verdict.
+    """
+    bundle = _bundle_with_rejected_reviews()
+    bundle["review_evidence"]["1b_plan_critique"] = {"status": "brand_new_status"}
+    # The totality property itself still holds at the library layer.
+    with pytest.raises(ValueError, match="unmapped review status"):
+        _verdict_via_cmd(bundle)
+
+    result = _run_verdict_cli(tmp_path, bundle)
+    assert result.exit_code == 2, result.output
+    assert "could not be computed" in result.output
+
+
+def test_cli_blocks_at_exit_5_on_a_rejected_review(tmp_path):
+    result = _run_verdict_cli(tmp_path, _bundle_with_rejected_reviews())
+    assert result.exit_code == 5, result.output
+    assert "blocked" in result.output
+
+
+def test_cli_still_exits_0_on_a_bundle_that_declares_no_obligations(tmp_path):
+    """REGRESSION GUARD at the CLI boundary, not just the extractor."""
+    bundle = {
+        "schema": "roam.pr_bundle/1",
+        "files_touched": ["src/app/auth.py"],
+        "risk": {"level": "low"},
+        "tests_run": [{"command": "test.pytest", "status": "pass"}],
+    }
+    result = _run_verdict_cli(tmp_path, bundle)
+    assert result.exit_code == 0, result.output
+    assert "pass" in result.output
+
+
+def test_cli_envelope_no_longer_hardcodes_partial_success_false(tmp_path):
+    import json as _json
+
+    silent = {"risk": {"level": "low"}}
+    payload = _json.loads(_run_verdict_cli(tmp_path, silent, json_mode=True).output)
+    assert payload["summary"]["scan_incomplete"] is True
+    assert payload["summary"]["partial_success"] is True
+
+    measured = {"risk": {"level": "low"}, "files_touched": ["a.py"]}
+    payload2 = _json.loads(_run_verdict_cli(tmp_path, measured, json_mode=True).output)
+    assert payload2["summary"]["scan_incomplete"] is False
+    assert payload2["summary"]["partial_success"] is False
