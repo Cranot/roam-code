@@ -66,6 +66,62 @@ _DIST_TO_IMPORT_ALIASES: dict[str, str] = {
 
 _REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
+# ---------------------------------------------------------------------------
+# Which host languages this command actually has a dependency model for
+# ---------------------------------------------------------------------------
+
+# Only two languages carry a real model of where an import may legitimately
+# come from WITHOUT being in the index: Python (``sys.stdlib_module_names``,
+# above) and Node/JS (``_NODE_BUILTINS`` + the nearest package.json, below).
+# For every other language the index is the only oracle, and a repo's index
+# does not contain that language's standard library -- so `import "net/http"`
+# in Go and `import java.util.List` in Java resolve against nothing. Measured:
+# 9 of 9 Go+Java imports in a valid two-language repo published as
+# ``unresolved``, 4 of them escalating to SARIF ``hallucination-import`` at
+# level ``error``. Those rows are now ``unverifiable`` -- emitted, never
+# dropped, but out of the ``unresolved`` numerator and never ``error``.
+_LANGS_WITH_STDLIB_MODEL: frozenset[str] = frozenset(
+    {"python", "javascript", "typescript", "tsx", "jsx", "vue", "svelte"}
+)
+
+# Languages whose import syntax is their OWN -- not Python-shaped.
+# ``_extract_import_names_from_line`` routes every non-JS host through the
+# Python regexes (that is how a `python -c "import json"` heredoc inside a
+# .yml CI step gets extracted at all), and ``_is_stdlib_module`` then tests the
+# FIRST DOTTED SEGMENT against the Python stdlib. That is how
+# `import io.totallyfake.doesnotexist.Nope;` -- a Java import of a package that
+# exists nowhere -- was published as RESOLVED: `io` is a Python stdlib module.
+# The guard it replaces was a blocklist of one (``lang_lower != "go"``); every
+# other non-JS language fell straight through it into the Python stdlib list.
+_LANGS_WITH_OWN_IMPORT_SYNTAX: frozenset[str] = frozenset(
+    {
+        "go",
+        "java",
+        "kotlin",
+        "scala",
+        "csharp",
+        "c_sharp",
+        "php",
+        "ruby",
+        "rust",
+        "swift",
+        "dart",
+    }
+)
+
+
+def _import_is_unverifiable(language: str | None) -> bool:
+    """True when this command cannot decide an unresolved import in *language*.
+
+    A host language with its own import syntax and no dependency model here
+    has exactly one oracle -- the index -- and the index never contains that
+    language's standard library or its package manager's tree. "Not in the
+    index" is therefore not evidence of "does not exist". Say so instead of
+    forcing the answer into ``unresolved``.
+    """
+    lang = (language or "").lower()
+    return lang in _LANGS_WITH_OWN_IMPORT_SYNTAX and lang not in _LANGS_WITH_STDLIB_MODEL
+
 
 def _import_name_for_requirement(req: str) -> str | None:
     """Map one requirement string to its top-level import name (or None)."""
@@ -968,13 +1024,18 @@ def _get_edge_imports(conn: sqlite3.Connection, file_path: str | None) -> list[d
     return [dict(r) for r in rows]
 
 
-def _import_scan_entry(file_path: str, line_num: int, name: str, *, resolved: bool) -> dict:
-    """Build the per-import scan row used by text/JSON/SARIF consumers."""
+def _import_scan_entry(file_path: str, line_num: int, name: str, *, resolved: bool, status: str | None = None) -> dict:
+    """Build the per-import scan row used by text/JSON/SARIF consumers.
+
+    ``status`` overrides the resolved/unresolved binary with a third value --
+    ``unverifiable`` -- for the case where this command has no way to decide.
+    See ``_import_is_unverifiable``.
+    """
     return {
         "file": file_path,
         "line": line_num,
         "name": name,
-        "status": "resolved" if resolved else "unresolved",
+        "status": status or ("resolved" if resolved else "unresolved"),
         "suggestions": [],
     }
 
@@ -1056,6 +1117,7 @@ def _scan_import_entry(
     project_root: str,
     is_py: bool,
     stdlib_scope: bool = False,
+    unverifiable_scope: bool = False,
     js_deps: frozenset[str] | None,
     js_aliases: dict[str, list[str]],
     symbol_names: set[str] | None,
@@ -1112,6 +1174,15 @@ def _scan_import_entry(
     )
     if not resolved and js_deps is not None and "/" in name:
         resolved = _js_directory_import_resolves(conn, probe_name)
+
+    if not resolved and unverifiable_scope:
+        # The index is the only oracle for this language and it never held the
+        # answer. Emit the row -- dropping it would delete the hallucination
+        # firewall for Go and Java outright and ship a zero-result SARIF
+        # document a code-scanning gate reads as clean -- but do not call it
+        # unresolved, and do not offer a suggestion: `strings` -> "App.main"
+        # is an invitation to a wrong edit.
+        return _import_scan_entry(file_path, line_num, name, resolved=False, status="unverifiable")
 
     entry = _import_scan_entry(file_path, line_num, name, resolved=resolved)
     if not resolved:
@@ -1178,7 +1249,13 @@ def _scan_file_imports(
     # package literally called `os` or `csv`, a Go `os`/`io` import) — those
     # already have their own correct builtin/declared-dependency resolution
     # path and must not be short-circuited by an unrelated Python stdlib list.
-    stdlib_scope = is_py or (not is_js_like and lang_lower != "go")
+    #
+    # The blocklist-of-one this replaced (`lang_lower != "go"`) let every OTHER
+    # language with its own import syntax fall into the Python stdlib list,
+    # first-dotted-segment matched: `import io.totallyfake.doesnotexist.Nope;`
+    # in Java was published RESOLVED because `io` is a Python stdlib module.
+    stdlib_scope = is_py or (not is_js_like and lang_lower not in _LANGS_WITH_OWN_IMPORT_SYNTAX)
+    unverifiable_scope = _import_is_unverifiable(lang_lower)
     try:
         with open(full_path, "r", encoding="utf-8", errors="replace") as f:
             prev_stripped = ""
@@ -1231,6 +1308,7 @@ def _scan_file_imports(
                             project_root=project_root,
                             is_py=is_py,
                             stdlib_scope=stdlib_scope,
+                            unverifiable_scope=unverifiable_scope,
                             js_deps=js_deps,
                             js_aliases=js_aliases,
                             symbol_names=symbol_names,
@@ -1397,14 +1475,18 @@ def verify_imports_for_connection(
             symbol_qnames=symbol_qnames,
             file_index=file_index,
         )
+        # Same three-valued rule as the source-scan pass: an unresolved import
+        # in a language this command has no dependency model for is UNKNOWN,
+        # not a hallucination.
+        edge_unverifiable = not resolved and _import_is_unverifiable(edge_lang)
         entry: dict = {
             "file": fp,
             "line": line,
             "name": target_name,
-            "status": "resolved" if resolved else "unresolved",
+            "status": "unverifiable" if edge_unverifiable else ("resolved" if resolved else "unresolved"),
             "suggestions": [],
         }
-        if not resolved:
+        if not resolved and not edge_unverifiable:
             entry["suggestions"] = _fts_suggestions(conn, target_name)
         all_imports.append(entry)
         files_checked.add(fp)
@@ -1412,7 +1494,18 @@ def verify_imports_for_connection(
 
     total = len(all_imports)
     resolved = sum(1 for i in all_imports if i["status"] == "resolved")
-    unresolved = total - resolved
+    unverifiable_imports = sum(1 for i in all_imports if i["status"] == "unverifiable")
+    unresolved = total - resolved - unverifiable_imports
+    # Name the languages, so a consumer sees WHICH coverage hole produced the
+    # bucket rather than having to infer it from the file extensions.
+    unverifiable_langs = sorted(
+        {
+            (_get_file_language(conn, i["file"], lang_by_path=lang_by_path) or "").lower()
+            for i in all_imports
+            if i["status"] == "unverifiable"
+        }
+        - {""}
+    )
 
     # Deliberately NOT subtracting ``files_checked``: a file whose source
     # could not be read but which still contributed imports via the DB edge
@@ -1424,6 +1517,8 @@ def verify_imports_for_connection(
         "total": total,
         "resolved": resolved,
         "unresolved": unresolved,
+        "unverifiable_imports": unverifiable_imports,
+        "unverifiable_languages": unverifiable_langs,
         "files_checked": len(files_checked),
         "files_in_scope": len(file_paths),
         "files_unreadable": sorted(files_unreadable),
@@ -1517,12 +1612,18 @@ def verify_imports_cmd(ctx, file_path, include_docs):
                         "line": None,
                         "name": missing,
                         "status": "unverifiable",
+                        "subject": "file",
                         "language": _get_file_language(conn, missing) or "",
                         "suggestions": [],
                     }
                 )
+            # ``unverifiable`` import rows are EMITTED, never dropped. Dropping
+            # them would delete the hallucination firewall for Go and Java
+            # outright: a real `import "github.com/nope/nope"` would become
+            # invisible and the document would go out with zero results, which
+            # a code-scanning gate reads as clean.
             for i in result["imports"]:
-                if i.get("status") != "unresolved":
+                if i.get("status") not in ("unresolved", "unverifiable"):
                     continue
                 lang = _get_file_language(conn, i["file"]) or ""
                 sarif_findings.append(
@@ -1531,6 +1632,7 @@ def verify_imports_cmd(ctx, file_path, include_docs):
                         "line": i["line"],
                         "name": i["name"],
                         "status": i["status"],
+                        "subject": "import",
                         "language": lang,
                         "suggestions": i.get("suggestions", []),
                     }
@@ -1546,6 +1648,18 @@ def verify_imports_cmd(ctx, file_path, include_docs):
     files_in_scope = result.get("files_in_scope", files_checked)
     unverifiable_files = list(result.get("files_unreadable", []))
     unverifiable = len(unverifiable_files)
+    unverifiable_imports = result.get("unverifiable_imports", 0)
+    unverifiable_languages = result.get("unverifiable_languages", [])
+    # A row this command had no dependency model for is a coverage hole, not a
+    # finding. It leaves the ``unresolved`` numerator and gets named here.
+    unverifiable_note = ""
+    if unverifiable_imports:
+        langs = ", ".join(unverifiable_languages) or "unknown"
+        unverifiable_note = (
+            f"{unverifiable_imports} import"
+            f"{'s' if unverifiable_imports != 1 else ''} UNVERIFIABLE "
+            f"(no stdlib/dependency model for {langs})"
+        )
 
     # Build verdict.
     #
@@ -1568,12 +1682,20 @@ def verify_imports_cmd(ctx, file_path, include_docs):
                 f"{unverifiable} of {files_in_scope} files could not be read — "
                 f"their imports were never verified ({stale_hint})"
             )
+        if unverifiable_imports:
+            verdict += f"; {unverifiable_note}"
     elif total == 0:
         verdict = "No imports found to verify"
     elif unresolved == 0:
-        verdict = f"All {total} imports resolved across {files_checked} files"
+        if unverifiable_imports:
+            # NOT "all resolved": some were never decided.
+            verdict = f"{resolved} of {total} imports resolved across {files_checked} files; {unverifiable_note}"
+        else:
+            verdict = f"All {total} imports resolved across {files_checked} files"
     else:
         verdict = f"{unresolved} unresolved imports out of {total} in {files_checked} files"
+        if unverifiable_imports:
+            verdict += f"; {unverifiable_note}"
 
     # --- JSON output ---
     if json_mode:
@@ -1601,8 +1723,13 @@ def verify_imports_cmd(ctx, file_path, include_docs):
             # instead of reading ``files_checked`` as if it were the total.
             "files_in_scope": files_in_scope,
             "files_unverifiable": unverifiable,
-            "partial_success": bool(unverifiable),
+            "partial_success": bool(unverifiable) or bool(unverifiable_imports),
         }
+        # Surfaced only on the degraded path so an all-Python/JS envelope stays
+        # byte-identical to what consumers already parse.
+        if unverifiable_imports:
+            summary["unverifiable"] = unverifiable_imports
+            summary["incomplete_reasons"] = ["no_stdlib_model_for_language: " + ", ".join(unverifiable_languages)]
         payload: dict = {"imports": import_records}
         if unverifiable:
             payload["unverifiable_files"] = unverifiable_files
@@ -1639,12 +1766,26 @@ def verify_imports_cmd(ctx, file_path, include_docs):
         click.echo()
         click.echo("  Tip: Run `roam search <name>` for more details on a symbol.")
         click.echo("       If recently added, run `roam index` to refresh.")
-    elif not unverifiable:
+    elif not unverifiable and not unverifiable_imports:
         # Only claim success when nothing was left unexamined.
         if total > 0:
             click.echo(f"  All {total} imports verified successfully.")
         else:
             click.echo("  No import statements found in indexed files.")
+
+    if unverifiable_imports:
+        click.echo()
+        click.echo(f"  {unverifiable_note}")
+        click.echo(
+            "  roam has no standard-library or package-manager model for "
+            "these languages, and the index does not contain one — so "
+            "'not in the index' is not evidence the import is wrong."
+        )
+        shown = [i for i in imports if i["status"] == "unverifiable"]
+        for i in shown[:10]:
+            click.echo(f"    - {i['file']}:{i['line']}  {i['name']}")
+        if len(shown) > 10:
+            click.echo(f"    ... and {len(shown) - 10} more")
 
     if unverifiable:
         click.echo()

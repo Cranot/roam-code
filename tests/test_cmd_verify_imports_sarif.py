@@ -30,6 +30,13 @@ candidate — and projects onto two closed-enum rule ids:
   at all. This is not a verdict about an import — it is the disclosure
   that no verdict exists, and it exists so a zero-result document can
   never be produced by a scan that silently skipped part of its input.
+- ``unverifiable-import`` (defaultLevel ``warning``): an import in a
+  language this producer has no standard-library or package-manager
+  model for (Go, Java, Kotlin, ...). The index is the only oracle and
+  it never holds that language's stdlib, so "not indexed" is not
+  evidence the import is wrong. The row is EMITTED -- dropping it would
+  delete the firewall for those languages -- but it never escalates to
+  ``error``.
 
 Mirrors the closed-enum test design from ``test_cmd_flag_dead_sarif.py``
 (W1226) and ``test_cmd_orphan_routes_sarif.py`` (W1227), adapted for the
@@ -59,10 +66,15 @@ def test_empty_findings_produce_valid_sarif_with_zero_results() -> None:
     assert "runs" in doc and len(doc["runs"]) == 1
     run = doc["runs"][0]
     assert run["results"] == []
-    # The rule catalogue is always present (closed enum: 3 rules).
+    # The rule catalogue is always present (closed enum: 4 rules).
     rules = run["tool"]["driver"]["rules"]
     rule_ids = {r["id"] for r in rules}
-    assert rule_ids == {"invalid-import", "hallucination-import", "unverifiable-file"}
+    assert rule_ids == {
+        "invalid-import",
+        "hallucination-import",
+        "unverifiable-file",
+        "unverifiable-import",
+    }
     # Closed-enum default-level verification — the SARIF severity
     # contract is encoded in the rule descriptor itself so consumers
     # can introspect it without firing a finding. The SARIF schema
@@ -85,6 +97,11 @@ def test_empty_findings_produce_valid_sarif_with_zero_results() -> None:
     # re-indexing, preserving the invariant that hallucination-import is the
     # only rule escalating to ``error``.
     assert by_id["unverifiable-file"]["defaultConfiguration"]["level"] == "warning"
+    # unverifiable-import is the same absence, one level down: the file WAS
+    # read, the import WAS extracted, and the producer still has no way to
+    # decide it. Warning, never error -- an unverifiable row must not block a
+    # gate keyed on ``level: error``, and it must not vanish either.
+    assert by_id["unverifiable-import"]["defaultConfiguration"]["level"] == "warning"
 
 
 def test_classification_bands_map_to_warning_and_error() -> None:
