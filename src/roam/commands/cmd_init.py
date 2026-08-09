@@ -38,17 +38,26 @@ _ROAM_DIR_GITIGNORE = """\
 *
 """
 
+# W1514: every key here must be one the dispatched checker READS -- see
+# ``_RULE_KEYS_BY_TYPE`` in cmd_fitness. The original template used
+# ``source``/``forbidden_target`` and ``threshold``, none of which any
+# checker reads, so the dependency rule forbade every edge in the
+# repository (``from``/``to`` both default to ``**``) and the complexity
+# rule was inert (``max`` defaulted to 999 -- a measured cc=377 function
+# PASSED). The first rule was also named for a check that cannot exist:
+# circular imports are a ``metric: cycles`` rule, not a dependency rule.
 _FITNESS_YAML = """\
 rules:
-  - name: No circular imports in core
+  - name: Production code must not import test modules
     type: dependency
-    source: "src/**"
-    forbidden_target: "tests/**"
-    reason: "Production code should not import test modules"
+    from: "src/**"
+    to: "tests/**"
+    allow: false
+    reason: "Production code should not depend on test infrastructure"
   - name: Complexity threshold
     type: metric
     metric: cognitive_complexity
-    threshold: 30
+    max: 30
     reason: "Functions above 30 cognitive complexity need refactoring"
 """
 

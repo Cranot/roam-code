@@ -265,6 +265,30 @@ def _load_rules_with_status(
             warnings_out.append(
                 f"fitness: {path_str!r} rules[{idx}] ({r.get('name', 'unnamed')!r}): {_unknown_type_detail(unknown)}"
             )
+        # W1514 -- a KNOWN type whose keys nothing reads is the quieter
+        # half of the same defect: the rule is dispatchable, so it is
+        # counted in ``rules_checked`` and reported PASS/FAIL, but the
+        # constraint the user wrote never reached the checker. Warn (do
+        # NOT refuse): hand-written configs legitimately carry
+        # documentation keys, and the exit code is computed from
+        # failed/errored alone, so this disclosure cannot turn a passing
+        # run red. It does flip ``summary.partial_success`` -- which is
+        # the point, since the run's verdict covers fewer constraints
+        # than the config declares.
+        if warnings_out is not None:
+            unread = _unread_rule_keys(r)
+            if unread:
+                warnings_out.append(
+                    f"fitness: {path_str!r} rules[{idx}] ({r.get('name', 'unnamed')!r}): "
+                    f"{_unread_keys_detail(str(r.get('type', '')), unread)}"
+                )
+            if _vacuous_dependency_rule(r):
+                warnings_out.append(
+                    f"fitness: {path_str!r} rules[{idx}] ({r.get('name', 'unnamed')!r}): "
+                    f"`dependency` rule supplies neither `from` nor `to`, so it forbids "
+                    f"EVERY edge in the repository (both globs default to `**`). Set at "
+                    f"least one of them."
+                )
         out.append(r)
     return out, status
 
@@ -352,7 +376,7 @@ def _check_dependency_rule(rule, conn) -> list[dict]:
         if src_match and tgt_match and not allow:
             violations.append(
                 {
-                    "rule": rule["name"],
+                    "rule": rule.get("name", "unnamed"),
                     "type": "dependency",
                     "message": f"{r['source_name']} -> {r['target_name']}",
                     "source": f"{r['source_path']}:{r['line'] or '?'}",
@@ -375,7 +399,7 @@ def _threshold_metric_violations(rule, metric: str, value, max_val, min_val) -> 
 
 def _metric_violation(rule, metric: str, value, bound: str, threshold) -> dict:
     return {
-        "rule": rule["name"],
+        "rule": rule.get("name", "unnamed"),
         "type": "metric",
         "message": f"{metric}={value} ({bound}={threshold})",
         "metric": metric,
@@ -451,7 +475,7 @@ def _check_cognitive_complexity_metric(rule, conn) -> list[dict]:
 
     return [
         {
-            "rule": rule["name"],
+            "rule": rule.get("name", "unnamed"),
             "type": "metric",
             "message": f"{row['name']} complexity={row['cognitive_complexity']:.0f} (max={threshold})",
             "source": loc(row["path"], row["line_start"]),
@@ -506,7 +530,7 @@ def _check_count_metric(metric, rule, conn, violations):
     if max_val is not None and count > max_val:
         violations.append(
             {
-                "rule": rule["name"],
+                "rule": rule.get("name", "unnamed"),
                 "type": "metric",
                 "message": f"{metric}={count} (max={max_val})",
                 "metric": metric,
@@ -517,7 +541,7 @@ def _check_count_metric(metric, rule, conn, violations):
     if min_val is not None and count < min_val:
         violations.append(
             {
-                "rule": rule["name"],
+                "rule": rule.get("name", "unnamed"),
                 "type": "metric",
                 "message": f"{metric}={count} (min={min_val})",
                 "metric": metric,
@@ -555,7 +579,7 @@ def _check_naming_rule(rule, conn) -> list[dict]:
         if not regex.match(name):
             violations.append(
                 {
-                    "rule": rule["name"],
+                    "rule": rule.get("name", "unnamed"),
                     "type": "naming",
                     "message": f"{name} does not match {pattern}",
                     "source": loc(r["path"], r["line_start"]),
@@ -754,6 +778,79 @@ def _unknown_type_detail(rtype: str) -> str:
     return (
         f"unknown rule type {rtype!r}; expected one of: {known}.{hint} Rule NOT enforced (reported ERROR, never PASS)."
     )
+
+
+# -- W1514: keys the dispatched checker actually READS -----------------
+#
+# A fitness rule whose keys no checker reads is not a rule -- it is a
+# comment that occupies a slot in ``rules_checked`` and reports PASS. The
+# shipped `roam init` template spent its whole life in that state: it
+# wrote ``threshold: 30`` (nothing reads ``threshold``; the checker reads
+# ``max``, defaulting to 999) and ``source:``/``forbidden_target:``
+# (nothing reads either; the checker reads ``from``/``to``, both
+# defaulting to ``**``), so a 377-complexity function PASSED and every
+# edge in the repository FAILED.
+#
+# These sets are read off the checkers themselves -- see
+# ``_check_dependency_rule`` (from/to/allow), ``_check_metric_rule`` +
+# ``_threshold_metric_violations`` (metric/max/min), ``_check_naming_rule``
+# (kind/pattern/exclude) and ``_check_trend_rule``
+# (metric/window/max_decrease/max_increase). Adding a ``rule.get("x")``
+# to a checker without adding ``"x"`` here makes the loader warn about a
+# key that now works, which is the loud failure direction.
+_UNIVERSAL_RULE_KEYS: frozenset[str] = frozenset({"name", "type", "reason", "link", "severity"})
+
+_RULE_KEYS_BY_TYPE: dict[str, frozenset[str]] = {
+    "dependency": frozenset({"from", "to", "allow"}),
+    "metric": frozenset({"metric", "max", "min"}),
+    "naming": frozenset({"kind", "pattern", "exclude"}),
+    "trend": frozenset({"metric", "window", "max_decrease", "max_increase"}),
+}
+
+
+def _unread_rule_keys(rule: dict) -> list[str]:
+    """Return the rule's keys that the dispatched checker never reads.
+
+    Empty for an unknown ``type`` -- :func:`_unknown_rule_type` already
+    reports that rule as unenforceable and a second warning naming every
+    key would bury the actionable one. Underscore-prefixed keys are
+    roam's own internal plumbing (``_all_violations``) and are skipped.
+    """
+    rtype = rule.get("type", "")
+    if not isinstance(rtype, str):
+        return []
+    known = _RULE_KEYS_BY_TYPE.get(rtype)
+    if known is None:
+        return []
+    accepted = known | _UNIVERSAL_RULE_KEYS
+    return sorted(str(key) for key in rule if isinstance(key, str) and not key.startswith("_") and key not in accepted)
+
+
+def _unread_keys_detail(rtype: str, unread: list[str]) -> str:
+    """Actionable one-liner naming the dead keys and the live vocabulary."""
+    reads = ", ".join(sorted(_RULE_KEYS_BY_TYPE.get(rtype, frozenset()) | _UNIVERSAL_RULE_KEYS))
+    subject = "keys" if len(unread) > 1 else "key"
+    verb = "are" if len(unread) > 1 else "is"
+    names = ", ".join(repr(k) for k in unread)
+    return (
+        f"{subject} {names} on this `{rtype}` rule {verb} read by NOTHING; "
+        f"a `{rtype}` rule is evaluated from: {reads}. "
+        f"The rule still runs, using the DEFAULTS for whatever you meant to set."
+    )
+
+
+def _vacuous_dependency_rule(rule: dict) -> bool:
+    """True when a ``dependency`` rule constrains neither end of the edge.
+
+    ``from`` and ``to`` both default to ``**``, so a rule supplying
+    neither forbids every edge in the repository. Nobody writes that on
+    purpose -- it is what a rule using some OTHER spelling of the two
+    globs degrades into. One-sided rules ("nothing anywhere may reach
+    this") are legitimate and are NOT reported.
+    """
+    if rule.get("type") != "dependency" or rule.get("allow", False):
+        return False
+    return "from" not in rule and "to" not in rule
 
 
 def _default_baseline_path(root: Path) -> Path:
@@ -1388,10 +1485,14 @@ def _init_config(root: Path):
 
 rules:
   # Dependency constraints
+  # `from` / `to` / `allow` are the keys the dependency checker reads.
+  # Both globs default to `**`, so a rule that omits them forbids every
+  # edge in the repository -- always name at least one end.
   - name: "No test imports in production"
     type: dependency
-    source: "src/**"
-    forbidden_target: "tests/**"
+    from: "src/**"
+    to: "tests/**"
+    allow: false
     reason: "Production code must not depend on test infrastructure"
     link: ""
 
