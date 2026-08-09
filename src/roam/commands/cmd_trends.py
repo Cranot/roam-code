@@ -25,6 +25,7 @@ from roam.capability import roam_capability
 from roam.commands.metrics_history import append_snapshot, collect_metrics, get_snapshots
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.exit_codes import gate_should_fail
 from roam.index.git_stats import get_blame_for_file
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -234,6 +235,18 @@ def _trend_verdict(analysis):
     if improving:
         return "improving"
     return "stable"
+
+
+def _analysis_requested(anomalies_flag, do_forecast, analyze_flag, fail_on_anomaly):
+    """True when the caller asked for trend analysis, not just a timeline.
+
+    Mirrors ``do_analysis`` in the timeline path. Kept as a named predicate
+    because the disclosure must key on "an analysis was requested and could
+    not be produced", never on "the history is short" -- a plain
+    ``roam trends`` over two snapshots is a COMPLETE answer to what was asked
+    and must keep reporting ``partial_success: false``.
+    """
+    return bool(analyze_flag or anomalies_flag or do_forecast or fail_on_anomaly)
 
 
 def _insufficient_history_verdict(n_snapshots):
@@ -859,6 +872,14 @@ def _render_timeline_json(
         # "insufficient snapshot history" path; terminal token
         # ``analysis`` is a LAW-4 concrete-noun anchor.
         summary["verdict"] = _insufficient_history_verdict(len(snap_dicts))
+        # The verdict string was already honest here ("insufficient history
+        # for trend analysis"); `partial_success: false` contradicted it on
+        # the machine-readable channel. Only claim incompleteness when an
+        # analysis was actually ASKED for -- a plain `roam trends` timeline
+        # over 2 snapshots is a complete answer to what was asked.
+        if _analysis_requested(anomalies_flag, do_forecast, analyze_flag, fail_on_anomaly):
+            summary["partial_success"] = True
+            summary["scan_incomplete"] = True
 
     envelope = json_envelope(
         cmd_name,
@@ -883,7 +904,14 @@ def _render_timeline_json(
     click.echo(to_json(envelope))
     if assertion_results:
         raise SystemExit(1)
-    if fail_on_anomaly and analysis and analysis["anomalies"]:
+    if gate_should_fail(
+        bool(fail_on_anomaly),
+        findings=(analysis or {}).get("anomalies") or [],
+        # `analysis is None` means the anomaly detector never ran (fewer than
+        # 4 chronological snapshots). "No anomalies found" and "anomalies were
+        # never looked for" are different answers and only one authorizes.
+        scan_incomplete=analysis is None,
+    ):
         raise SystemExit(1)
 
 
@@ -969,6 +997,12 @@ def _render_timeline_text(snap_dicts, chrono, assertions, assertion_results, ana
         # LAW 6: emit a verdict even when there's no trend ``analysis``
         # (single / sub-4 snapshot history). Mirrors the JSON renderer.
         click.echo(f"\nVERDICT: {_insufficient_history_verdict(len(snap_dicts))}")
+        if fail_on_anomaly:
+            click.echo(
+                "ANOMALY GATE UNANALYZABLE: trend analysis needs >= 4 snapshots "
+                f"and this history has {len(snap_dicts)}; no anomaly test was run. "
+                "Record more with `roam index` or `roam trends --save`."
+            )
 
     # Assertions
     if assertions:
@@ -981,8 +1015,12 @@ def _render_timeline_text(snap_dicts, chrono, assertions, assertion_results, ana
         else:
             click.echo("All assertions passed.")
 
-    # CI gate for anomalies
-    if fail_on_anomaly and analysis and analysis["anomalies"]:
+    # CI gate for anomalies -- same single decision the JSON channel makes.
+    if gate_should_fail(
+        bool(fail_on_anomaly),
+        findings=(analysis or {}).get("anomalies") or [],
+        scan_incomplete=analysis is None,
+    ):
         raise SystemExit(1)
 
 
@@ -1750,24 +1788,61 @@ def _handle_timeline(
         snaps = get_snapshots(conn, limit=count, since=since_ts)
 
         if not snaps:
+            # A gate flag over an empty history is UNANALYZABLE, not clean.
+            # `--assert health_score>=80` is an ABSOLUTE assertion: it is
+            # fully evaluable from a SINGLE snapshot, so "no history" is not
+            # a bootstrap exemption the way a differential baseline is -- it
+            # is a check that never ran. Decide once, for both channels.
+            gate_requested = bool(assertions) or bool(fail_on_anomaly)
+            no_history_gate_failed = gate_should_fail(
+                gate_requested,
+                findings=0,
+                scan_incomplete=True,
+            )
+            remedy = "run `roam index` or `roam trends --save` to record one"
             if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            cmd_name,
-                            summary={
-                                "snapshots": 0,
-                                # LAW 6: verdict present even on the
-                                # no-snapshot path.
-                                "verdict": _insufficient_history_verdict(0),
-                            },
-                            budget=token_budget,
-                            snapshots=[],
-                        )
-                    )
+                envelope = json_envelope(
+                    cmd_name,
+                    summary={
+                        "snapshots": 0,
+                        # LAW 6: verdict present even on the
+                        # no-snapshot path.
+                        "verdict": _insufficient_history_verdict(0),
+                        # The narrow claim the gate-parity fixture reads:
+                        # the analysis had no input at all. `partial_success`
+                        # is the broad companion; both are only set when a
+                        # gate was actually requested, so a plain
+                        # `roam trends` on a fresh repo keeps reporting an
+                        # empty history as the complete answer it is.
+                        **({"partial_success": True, "scan_incomplete": True} if gate_requested else {}),
+                    },
+                    budget=token_budget,
+                    snapshots=[],
                 )
+                if assertions:
+                    # _check_assertions already records a metric it cannot
+                    # evaluate as a FAILURE ("unknown metric: X"). The only
+                    # bug was that it is never reached when snaps is empty,
+                    # so the block was omitted entirely and `assertions` read
+                    # as null -- indistinguishable from "not requested".
+                    envelope["assertions"] = {
+                        "expression": assertions,
+                        "passed": False,
+                        "failures": [f"no snapshot recorded - assertion was never evaluated; {remedy}"],
+                    }
+                click.echo(to_json(envelope))
             else:
                 click.echo("No snapshots found. Run `roam index` or `roam trends --save` first.")
+                if assertions:
+                    click.echo(
+                        f"ASSERTIONS FAILED (1):\n  FAIL: no snapshot recorded - assertion was never evaluated; {remedy}"
+                    )
+                elif fail_on_anomaly:
+                    click.echo(f"ANOMALY GATE UNANALYZABLE: no snapshot to test for anomalies; {remedy}")
+            if no_history_gate_failed:
+                # Matches the two existing assertion exits in this command
+                # (SystemExit(1)); trends uses neither exit 5 nor exit 2.
+                raise SystemExit(1)
             return
 
         # Convert to dicts for easier access
