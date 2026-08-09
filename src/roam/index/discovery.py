@@ -326,11 +326,17 @@ def _walk_files(root: Path, skips: dict[str, list[str]] | None = None) -> list[s
     def _unreadable(error: OSError) -> None:
         if skips is None:
             return
-        named = error.filename or str(root)
+        absolute = str(error.filename or root)
         try:
-            named = os.path.relpath(named, root).replace("\\", "/")
+            named = os.path.relpath(absolute, root).replace("\\", "/")
         except (ValueError, OSError):
-            pass
+            # A different drive on Windows, or a broken junction: the path
+            # cannot be expressed relative to the root. Keep the absolute
+            # form rather than dropping the entry -- naming the directory
+            # imprecisely still withholds the completeness claim, and
+            # dropping it is the exact blind spot this reason exists to
+            # close.
+            named = absolute
         skips.setdefault(SKIP_UNENUMERABLE, []).append(named)
 
     result = []

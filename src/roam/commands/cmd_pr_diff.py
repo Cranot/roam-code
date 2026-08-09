@@ -249,10 +249,29 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # THREE hand-written copies of `fail_on_degradation and health_degraded`
     # -- the highest count in the batch, and exactly the duplication
     # `gate_should_fail` exists to eliminate.
+    # An absent baseline DISCLOSES, it does not refuse -- and the difference is
+    # the whole of this gate's honesty.
+    #
+    # Two states arrive here looking alike, and only one is a failure. A diff
+    # this command could not READ is unanalyzable input: it refuses, ~120 lines
+    # above, before reaching this line. No baseline snapshot for the base ref is
+    # something else -- it is the DEFAULT state of every freshly onboarded repo,
+    # as the comment above already says, and nothing the user does on this run
+    # fixes it. Feeding it to `scan_incomplete` made `--fail-on-degradation`
+    # exit 5 on any repository that had not yet run `roam trends --save`: a gate
+    # that fires on clean input, which gets switched off, after which it detects
+    # nothing at all.
+    #
+    # This is the same call the batch made for the CI gate expression evaluator
+    # and declined there for the same reason -- an adoption-day outage, red on a
+    # run where nothing is wrong. The original finding stands and is preserved
+    # above: a gate that cannot fire must not read as "passed". It says so, in
+    # the verdict, in `partial_success`, and in the "Could not gate" line. What
+    # it must not do is refuse the run.
     gate_failed = gate_should_fail(
         fail_on_degradation,
         findings=health_degraded,
-        scan_incomplete=not deltas_available,
+        scan_incomplete=False,
     )
 
     # --- JSON output ---
