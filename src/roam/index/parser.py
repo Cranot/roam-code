@@ -145,6 +145,16 @@ REGEX_ONLY_LANGUAGES = frozenset({"foxpro", "yaml", "hcl"})
 # Consumed by cmd_syntax_check.py (skip + `grammar_is_stand_in` disclosure),
 # cmd_verify.py:_SYNTAX_SKIP_LANGS (same skip, one definition), and parse_file
 # below (routes ERROR nodes to the stand_in_grammar counter, not syntax_error).
+#
+# 6 entries, measured: every language whose configured grammar is a stand-in for
+# a different language rather than its own. Apex was the one that surfaced it --
+# routed to the java grammar, so 100% of valid Salesforce classes read as broken
+# -- and the sweep that followed found the other 5 by the same test: parse a
+# known-good file of that language and see whether the grammar can represent it.
+# Two directions of falseness live here, which is why the set is explicit rather
+# than derived: apex/aura/visualforce/sfxml emit ERROR nodes on valid source, and
+# jsonc/mdx emit none on invalid source, so a file publishes "clean" having
+# verified nothing.
 SYNTAX_UNVERIFIABLE_LANGUAGES = frozenset({"apex", "aura", "visualforce", "sfxml", "jsonc", "mdx"})
 
 # Track parse error stats.

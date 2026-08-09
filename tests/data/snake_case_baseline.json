@@ -17,17 +17,17 @@
   {
     "file": "src/roam/security/tenant_scope.py",
     "function": "visit_FunctionDef",
-    "line": 107
+    "line": 128
   },
   {
     "file": "src/roam/security/tenant_scope.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 111
+    "line": 132
   },
   {
     "file": "src/roam/security/tenant_scope.py",
     "function": "visit_ClassDef",
-    "line": 115
+    "line": 136
   },
   {
     "file": "src/roam/world_model/fabricated_success.py",
