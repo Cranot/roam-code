@@ -387,3 +387,189 @@ class TestPathCoverage:
         assert "total_paths" in summary
         # untested_paths should be <= total_paths
         assert summary.get("untested_paths", 0) <= summary.get("total_paths", 0)
+
+
+# ---------------------------------------------------------------------------
+# W1528: the --max-depth bound is part of the measurement
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def deep_chain_project(tmp_path, monkeypatch):
+    """Project holding one 13-node chain AND one 2-node chain.
+
+    This is the shape that hides the defect rather than exposing it: at the
+    default ``--max-depth 8`` the short chain is enumerated, so the output
+    looks fully populated while the 13-node chain -- and its optimal test
+    point -- are absent entirely.
+    """
+    proj = tmp_path / "repo"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+
+    parts = ["def sink_writer():\n    return 1\n\n"]
+    prev = "sink_writer"
+    for i in range(11, 0, -1):
+        parts.append(f"def f{i}():\n    {prev}()\n\n")
+        prev = f"f{i}"
+    parts.append(f"def entry_main():\n    {prev}()\n")
+    (proj / "chain.py").write_text("".join(parts))
+
+    (proj / "short.py").write_text("def sink_short():\n    return 2\n\ndef entry_short():\n    sink_short()\n")
+
+    git_init(proj)
+    monkeypatch.chdir(proj)
+    out, rc = index_in_process(proj, "--force")
+    assert rc == 0, f"index failed: {out}"
+    return proj
+
+
+@pytest.fixture
+def deep_only_project(tmp_path, monkeypatch):
+    """Project holding ONLY the 13-node chain, no short chain to mask it."""
+    proj = tmp_path / "repo"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n")
+
+    parts = ["def sink_writer():\n    return 1\n\n"]
+    prev = "sink_writer"
+    for i in range(11, 0, -1):
+        parts.append(f"def f{i}():\n    {prev}()\n\n")
+        prev = f"f{i}"
+    parts.append(f"def entry_main():\n    {prev}()\n")
+    (proj / "chain.py").write_text("".join(parts))
+
+    git_init(proj)
+    monkeypatch.chdir(proj)
+    out, rc = index_in_process(proj, "--force")
+    assert rc == 0, f"index failed: {out}"
+    return proj
+
+
+class TestPathCoverageDepthTruncationDisclosure:
+    """A BFS that discarded frontier at ``--max-depth`` has not finished.
+
+    Before W1528 the discard was silent: ``total_paths``, the verdict and
+    ``partial_success`` all read as a completed scan while whole entry->sink
+    chains longer than the bound were missing with no marker of any kind.
+    """
+
+    # --- must fire -------------------------------------------------------
+
+    def test_truncated_walk_discloses_pruning_in_json(self, deep_chain_project, cli_runner):
+        """Default depth on a 13-node chain: counts are marked as a lower bound."""
+        result = invoke_path_coverage(cli_runner, cwd=deep_chain_project, json_mode=True)
+        assert result.exit_code == 0
+        summary = parse_json_output(result, "path-coverage")["summary"]
+
+        assert summary.get("pruned_at_max_depth", 0) > 0, (
+            f"BFS discarded frontier at the bound but reported none: {summary}"
+        )
+        assert summary["partial_success"] is True, (
+            f"a truncated walk must not publish its counts as a completed scan: {summary}"
+        )
+        assert summary.get("scan_incomplete") is True, f"summary missing scan_incomplete: {summary}"
+        assert summary.get("incomplete_reasons") == ["max_depth"], (
+            f"truncation reason must name the bound that fired: {summary}"
+        )
+        assert summary.get("max_depth") == 8, f"effective bound must be echoed so counts self-describe: {summary}"
+
+    def test_truncated_walk_verdict_names_the_bound(self, deep_chain_project, cli_runner):
+        """LAW 6: the verdict alone says the enumeration was cut short."""
+        result = invoke_path_coverage(cli_runner, cwd=deep_chain_project, json_mode=True)
+        verdict = parse_json_output(result, "path-coverage")["summary"]["verdict"]
+        assert "pruned" in verdict, f"verdict must disclose pruning standalone; got {verdict!r}"
+        assert "--max-depth" in verdict, f"verdict must name the bound that fired; got {verdict!r}"
+
+    def test_truncated_walk_text_mode_names_the_escape_hatch(self, deep_chain_project, cli_runner):
+        """Text mode prints a NOTE that tells the user how to search further."""
+        result = invoke_path_coverage(cli_runner, cwd=deep_chain_project)
+        assert result.exit_code == 0
+        assert "NOTE:" in result.output, f"text mode must disclose pruning:\n{result.output}"
+        assert "--max-depth" in result.output, f"NOTE must name the escape hatch:\n{result.output}"
+
+    def test_zero_paths_at_a_bound_that_pruned_is_not_a_clean_scan(self, deep_only_project, cli_runner):
+        """0 paths + discarded frontier is a different state from 0 paths + finished walk."""
+        result = invoke_path_coverage(
+            cli_runner,
+            ["--max-depth", "3"],
+            cwd=deep_only_project,
+            json_mode=True,
+        )
+        assert result.exit_code == 0
+        summary = parse_json_output(result, "path-coverage")["summary"]
+        assert summary["total_paths"] == 0
+        assert summary.get("state") == "no_paths_within_max_depth", (
+            f"a depth-truncated empty result must not claim no_paths_connecting: {summary}"
+        )
+        assert summary["partial_success"] is True, (
+            f"a walk that ran out of depth proved nothing about connectivity: {summary}"
+        )
+
+    # --- must NOT fire ---------------------------------------------------
+
+    def test_complete_walk_does_not_claim_truncation(self, deep_chain_project, cli_runner):
+        """Same repo, bound large enough to finish: the flag stays down.
+
+        This is the assertion that keeps the disclosure meaningful. The flag
+        is keyed on an actual discard, not on the graph being deeper than the
+        default, so raising the bound past the deepest chain clears it.
+        """
+        result = invoke_path_coverage(
+            cli_runner,
+            ["--max-depth", "20"],
+            cwd=deep_chain_project,
+            json_mode=True,
+        )
+        assert result.exit_code == 0
+        summary = parse_json_output(result, "path-coverage")["summary"]
+
+        assert summary.get("pruned_at_max_depth", 0) == 0, f"nothing was discarded at depth 20: {summary}"
+        assert summary.get("partial_success") is not True, f"a completed walk must not be flagged partial: {summary}"
+        assert "scan_incomplete" not in summary, f"completed walk must not carry scan_incomplete: {summary}"
+        assert "incomplete_reasons" not in summary, f"completed walk must not carry incomplete_reasons: {summary}"
+        assert "pruned" not in summary["verdict"], f"completed walk verdict must not mention pruning: {summary}"
+        # And the deeper chain is genuinely there once the bound allows it.
+        assert summary["total_paths"] > 1, f"raising the bound must surface the long chain the default hid: {summary}"
+
+    def test_shallow_project_at_default_depth_is_not_flagged(self, path_cov_project, cli_runner):
+        """A repo whose chains all terminate inside the bound stays clean.
+
+        Guards the over-eager fix: flagging on graph depth rather than on a
+        real discard would make ``partial_success`` permanently true and the
+        signal worthless.
+        """
+        result = invoke_path_coverage(cli_runner, cwd=path_cov_project, json_mode=True)
+        assert result.exit_code == 0
+        summary = parse_json_output(result, "path-coverage")["summary"]
+        assert summary.get("pruned_at_max_depth", 0) == 0, f"nothing should be discarded here: {summary}"
+        assert summary.get("partial_success") is not True, f"clean scan flagged partial: {summary}"
+
+    def test_genuinely_disconnected_graph_keeps_no_paths_connecting(self, no_paths_project, cli_runner):
+        """A finished walk that found nothing is still a finished walk."""
+        result = invoke_path_coverage(cli_runner, cwd=no_paths_project, json_mode=True)
+        assert result.exit_code == 0
+        summary = parse_json_output(result, "path-coverage")["summary"]
+        assert summary.get("state") != "no_paths_within_max_depth", (
+            f"an untruncated empty result must not claim depth truncation: {summary}"
+        )
+        assert summary.get("pruned_at_max_depth", 0) == 0, f"no frontier was discarded: {summary}"
+
+    # --- unit level ------------------------------------------------------
+
+    def test_find_paths_reports_zero_pruned_when_walk_completes(self):
+        """``_find_paths`` counts real discards, not graph depth."""
+        from roam.commands.cmd_path_coverage import _find_paths
+
+        # entry 1 -> 2 -> 3 (sink). Depth 10 is far past the graph.
+        paths, pruned = _find_paths({1: [2], 2: [3]}, 1, {3}, 10)
+        assert paths == [[1, 2, 3]]
+        assert pruned == 0
+
+    def test_find_paths_counts_discarded_frontier(self):
+        """Bounding the same walk records what it threw away."""
+        from roam.commands.cmd_path_coverage import _find_paths
+
+        paths, pruned = _find_paths({1: [2], 2: [3]}, 1, {3}, 2)
+        assert paths == []
+        assert pruned > 0, "the depth-3 frontier was discarded and must be counted"
