@@ -486,3 +486,170 @@ class TestRuleIntegration:
         # main.py imports legacy; safe.py does not.
         assert any("main.py" in (f or "").replace("\\", "/") for f in files_hit)
         assert not any("safe.py" in (f or "").replace("\\", "/") for f in files_hit)
+
+
+# ---------------------------------------------------------------------------
+# W1531: a truncated walk has not measured non-reachability
+# ---------------------------------------------------------------------------
+
+
+_DEEP_CHAIN = {
+    "src/handlers/h.py": "from step_a import a\n\ndef handle():\n    return a()\n",
+    "src/step_a.py": "from step_b import b\n\ndef a():\n    return b()\n",
+    "src/step_b.py": "from step_c import c\n\ndef b():\n    return c()\n",
+    "src/step_c.py": "from step_d import d\n\ndef c():\n    return d()\n",
+    "src/step_d.py": "from legacy import legacy_write\n\ndef d():\n    return legacy_write()\n",
+    "src/legacy.py": "def legacy_write():\n    return 1\n",
+}
+
+
+class TestTruncatedTraversalIsIndeterminate:
+    """A bounded BFS is three-valued; ``must_not`` used to read it as two.
+
+    Before W1531 a walk that ran out of depth answered "not reachable",
+    which a ``must_not: reachable_from`` gate accepted as satisfied. The
+    ``truncated_depth`` flag the clause wrote was read by nothing, because
+    evidence is attached only to violations and this path produced none.
+    """
+
+    # --- must fire -------------------------------------------------------
+
+    def test_negative_answer_under_truncation_is_degraded(self, tmp_path):
+        """5-hop chain, depth 2: not-found is a budget outcome, not a measurement."""
+        proj = _build_indexed(tmp_path, _DEEP_CHAIN)
+        with _Scoped(proj) as conn:
+            matches, evidence = check_reachable_from(
+                conn,
+                entry="handle",
+                target_symbol="legacy_write",
+                max_depth=2,
+            )
+        assert matches is False
+        assert evidence.get("truncated_depth") is True, evidence
+        assert evidence["status"] == "traversal_truncated", (
+            f"a walk that ran out of depth must not report status ok: {evidence}"
+        )
+
+    def test_rule_at_default_depth_is_not_reported_as_passed(self, tmp_path):
+        """The end-to-end claim: `all rules passed` was the false statement."""
+        proj = _build_indexed(tmp_path, _DEEP_CHAIN)
+        rule = {
+            "name": "legacy-must-not-be-reachable-from-handlers",
+            "severity": "error",
+            "when": {"symbol": "legacy_write"},
+            "must_not": {"reachable_from": "src/handlers/h.py"},
+        }
+        with _Scoped(proj) as conn:
+            result = evaluate_rule(rule, conn, max_depth=2)
+
+        assert result.get("partial_success") is True, f"truncated clause must flip partial: {result}"
+        assert result.get("incomplete_reasons") == ["traversal_truncated"], (
+            f"the degraded status must be named so consumers can tell causes apart: {result}"
+        )
+
+    # --- must NOT fire ---------------------------------------------------
+
+    def test_positive_hit_under_truncation_stays_sound(self, tmp_path):
+        """Reaching the target proves reachability however early the walk stopped.
+
+        This is the assertion that stops the fix turning real violations into
+        "could not run": a ``must_not`` that DID find its target must keep
+        reading as VIOLATED.
+        """
+        proj = _build_indexed(tmp_path, _DEEP_CHAIN)
+        with _Scoped(proj) as conn:
+            matches, evidence = check_reachable_from(
+                conn,
+                entry="handle",
+                target_symbol="a",
+                max_depth=1,
+            )
+        assert matches is True, evidence
+        assert evidence["status"] == "ok", f"a positive hit is sound under truncation: {evidence}"
+
+    def test_completed_walk_is_never_degraded(self, tmp_path):
+        """Depth large enough to finish: no truncation, no disclosure.
+
+        Guards the over-eager fix. If every deep repo were permanently
+        indeterminate the signal would carry no information.
+        """
+        proj = _build_indexed(tmp_path, _DEEP_CHAIN)
+        with _Scoped(proj) as conn:
+            matches, evidence = check_reachable_from(
+                conn,
+                entry="handle",
+                target_symbol="legacy_write",
+                max_depth=20,
+            )
+        assert matches is True, evidence
+        assert evidence["status"] == "ok", evidence
+        assert "truncated_depth" not in evidence, evidence
+
+    def test_genuinely_unreachable_within_a_completed_walk_still_passes(self, tmp_path):
+        """A small graph the walk exhausts is a real, clean PASS."""
+        proj = _build_indexed(
+            tmp_path,
+            {
+                "src/handler.py": "def handle():\n    return 1\n",
+                "src/utils.py": "def unrelated():\n    return 2\n",
+            },
+        )
+        rule = {
+            "name": "utils-must-not-be-reachable",
+            "severity": "error",
+            "when": {"symbol": "unrelated"},
+            "must_not": {"reachable_from": "handle"},
+        }
+        with _Scoped(proj) as conn:
+            result = evaluate_rule(rule, conn, max_depth=3)
+
+        assert result["passed"] is True, result
+        assert result.get("partial_success") is not True, (
+            f"an exhausted walk is a real measurement and must stay clean: {result}"
+        )
+        assert "incomplete_reasons" not in result, result
+
+    def test_truncation_alone_does_not_change_the_ci_exit_code(self, tmp_path):
+        """DELIBERATE, and pinned so a future change is a decision, not a drift.
+
+        Truncation flips the verdict and partial_success but is excluded from
+        ``unevaluated_errors``, so ``--ci`` still exits 0. DEFAULT_DEPTH is 3,
+        so gating on it would flip every ``must_not: reachable_from`` rule in
+        every repo deeper than 3 hops from green to exit 5 on upgrade. The
+        counter-argument -- exit_codes.gate_should_fail's own doctrine that
+        UNANALYZABLE must refuse -- is real; resolving it is a release
+        decision, not a side effect of making the report honest.
+        """
+        from roam.commands.cmd_rules import rules as rules_cmd
+
+        proj = _build_indexed(tmp_path, _DEEP_CHAIN)
+        rules_dir = proj / ".roam" / "rules"
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        (rules_dir / "depth.yaml").write_text(
+            "name: legacy-must-not-be-reachable-from-handlers\n"
+            "severity: error\n"
+            "when:\n"
+            "  symbol: legacy_write\n"
+            "must_not:\n"
+            '  reachable_from: "src/handlers/h.py"\n',
+            encoding="utf-8",
+        )
+
+        from click.testing import CliRunner
+
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            truncated = runner.invoke(rules_cmd, ["--ci", "--depth", "2"], obj={"json": False})
+            complete = runner.invoke(rules_cmd, ["--ci", "--depth", "20"], obj={"json": False})
+        finally:
+            os.chdir(old_cwd)
+
+        assert truncated.exit_code == 0, f"truncation must not silently become a gate failure:\n{truncated.output}"
+        assert "could not be evaluated" in truncated.output, truncated.output
+        assert "all 1 rules passed" not in truncated.output, f"the false clean must be gone:\n{truncated.output}"
+        # And the measured violation still refuses, with a measured reason.
+        assert complete.exit_code == 5, complete.output
+        assert "VIOLATED" in complete.output, complete.output
+        assert "could not run" not in complete.output, complete.output
