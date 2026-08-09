@@ -453,12 +453,41 @@ _RE_PROVIDER_ROUTE_MIDDLEWARE = re.compile(
 
 
 def _read_source(file_path: str) -> str | None:
-    """Read source file as text, returning None on failure."""
+    """Read source file as text, returning None on failure.
+
+    ``None`` here means exactly one thing: the open raised :class:`OSError`.
+    ``errors="replace"`` means decoding never fails, so a file whose bytes do
+    not decode still reads successfully, and an EMPTY file returns ``""`` --
+    a clean measurement, not a failure.  Callers that report coverage must use
+    :func:`_read_source_status`; this one cannot tell "scanned and clean"
+    apart from "never opened".
+    """
     try:
         with open(file_path, encoding="utf-8", errors="replace") as fh:
             return fh.read()
     except OSError:
         return None
+
+
+def _read_source_status(file_path: str) -> tuple[str | None, str | None]:
+    """Read source and, when the read failed, name WHY.
+
+    Returns ``(source, error)``.  ``error`` is ``None`` whenever the file was
+    read -- including the empty file -- and a human-readable reason otherwise.
+    Delegates the read itself to :func:`_read_source` so there is exactly one
+    reader; the failure path re-probes the path for its exception rather than
+    duplicating the open, which costs one byte on files that already failed
+    and keeps the two functions from drifting apart.
+    """
+    source = _read_source(file_path)
+    if source is not None:
+        return source, None
+    try:
+        with open(file_path, encoding="utf-8", errors="replace") as fh:
+            fh.read(1)
+    except OSError as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+    return None, "source unavailable (reader returned nothing)"
 
 
 def _resolve_path(project_root, db_path: str) -> str:
@@ -1319,6 +1348,15 @@ def _emit_auth_gaps_findings(
         )
 
 
+def _format_unreadable_names(unreadable, cap: int = 3) -> str:
+    """Name the files that could not be opened, capped, so the user can judge."""
+    names = [str(item.get("file") or "?") for item in unreadable]
+    head = ", ".join(names[:cap])
+    if len(names) > cap:
+        head += f", +{len(names) - cap} more"
+    return head or "none"
+
+
 def _run_auth_gaps_phase_preserving_failure_provenance(
     phase,
     fn,
@@ -1354,6 +1392,7 @@ def _emit_auth_gaps_json(
     min_confidence="low",
     scanned_findings=0,
     filtered_out=0,
+    read_stats=None,
 ):
     """Emit the canonical auth-gaps JSON envelope.
 
@@ -1361,16 +1400,36 @@ def _emit_auth_gaps_json(
     (score_classify / compute_predicate / compute_verdict /
     serialize_envelope) so the command body stays focused on detection.
     """
+    _reads = dict(read_stats or {})
+    scan_incomplete = bool(_reads.get("scan_incomplete"))
+    files_discovered = int(_reads.get("files_discovered", 0))
+    files_read = int(_reads.get("files_read", 0))
+    unreadable = list(_reads.get("files_unreadable") or [])
+    unreadable_names = _format_unreadable_names(unreadable)
+
     verdict_floor = f"{total} auth gap(s) found"
+    if scan_incomplete:
+        # 0 gaps over files that were never opened is not "no auth gaps".
+        verdict_floor += (
+            f" over {files_read} of {files_discovered} scanned file(s); "
+            f"{len(unreadable)} could not be read ({unreadable_names})"
+        )
 
     # LAW 4: suppress zero-severity rows from auto-derived facts.
     explicit_facts = [verdict_floor]
     for sev, n in (("high", n_high), ("medium", n_medium), ("low", n_low)):
         if n > 0:
             explicit_facts.append(f"{n} {sev}-severity auth gaps")
+    if scan_incomplete:
+        explicit_facts.append(f"{len(unreadable)} discovered file(s) could not be opened: {unreadable_names}")
 
     def _score_classify_run(_total):
-        if _total == 0:
+        if _total == 0 and scan_incomplete:
+            # Wins over NO_AUTH_GAPS only. A non-zero finding count is a
+            # measurement that stands on its own and keeps its severity tier;
+            # the incompleteness rides beside it in `scan_incomplete`.
+            _state_label = "SCAN_INCOMPLETE"
+        elif _total == 0:
             _state_label = "NO_AUTH_GAPS"
         elif _total <= 3:
             _state_label = "LIGHT"
@@ -1460,7 +1519,21 @@ def _emit_auth_gaps_json(
         "min_confidence": min_confidence,
         "scanned_findings": scanned_findings,
         "filtered_out": filtered_out,
-        "partial_success": bool(controllers_only or routes_only or filtered_out),
+        # Read-coverage disclosure. ``routes_scanned`` / ``controllers_scanned``
+        # keep their historical meaning ("the --routes-only/--controllers-only
+        # flag did not skip this scope") -- silently redefining a published
+        # field is the same class of defect this fixes -- so the per-scope read
+        # counts are published BESIDE them, not folded in.
+        "files_discovered": files_discovered,
+        "files_read": files_read,
+        "files_unreadable": len(unreadable),
+        "unreadable_files": [item.get("file") for item in unreadable[:10]],
+        "routes_files_discovered": int(_reads.get("routes_files_discovered", 0)),
+        "routes_files_read": int(_reads.get("routes_files_read", 0)),
+        "controllers_files_discovered": int(_reads.get("controllers_files_discovered", 0)),
+        "controllers_files_read": int(_reads.get("controllers_files_read", 0)),
+        "scan_incomplete": scan_incomplete,
+        "partial_success": bool(controllers_only or routes_only or filtered_out or scan_incomplete),
     }
     envelope_kwargs: dict = {
         "summary": summary_block,
@@ -1512,9 +1585,20 @@ def _emit_auth_gaps_text(
     controllers_scanned=True,
     filtered_out=0,
     min_confidence="low",
+    read_stats=None,
 ):
     """Emit the human-readable auth-gaps report."""
     click.echo("=== Auth Gaps ===\n")
+
+    _reads = dict(read_stats or {})
+    # Same boolean the JSON branch reads -- see roam.exit_codes.gate_should_fail,
+    # which exists because ignore-drift had two hand-written copies of a
+    # disclosure and only the --json one carried the `or scan_incomplete` term.
+    scan_incomplete = bool(_reads.get("scan_incomplete"))
+    files_discovered = int(_reads.get("files_discovered", 0))
+    files_read = int(_reads.get("files_read", 0))
+    unreadable = list(_reads.get("files_unreadable") or [])
+    unreadable_names = _format_unreadable_names(unreadable)
 
     verdict = f"{total} auth gap(s) found"
     if total:
@@ -1526,6 +1610,11 @@ def _emit_auth_gaps_text(
         if n_low:
             parts.append(f"{n_low} low")
         verdict += f"  ({', '.join(parts)})"
+    if scan_incomplete:
+        verdict += (
+            f"  over {files_read} of {files_discovered} scanned file(s); "
+            f"{len(unreadable)} could not be read ({unreadable_names})"
+        )
     click.echo(f"VERDICT: {verdict}\n")
 
     if route_findings:
@@ -1552,6 +1641,10 @@ def _emit_auth_gaps_text(
         # --controllers-only skipped the route scan entirely. Saying
         # "(none found)" here asserts a result for a scan that never ran.
         click.echo("Routes without auth middleware: NOT SCANNED (--controllers-only)\n")
+    elif scan_incomplete:
+        _rr = int(_reads.get("routes_files_read", 0))
+        _rd = int(_reads.get("routes_files_discovered", 0))
+        click.echo(f"Routes without auth middleware: (none found in the {_rr} of {_rd} route file(s) read)\n")
     else:
         click.echo("Routes without auth middleware: (none found)\n")
 
@@ -1587,10 +1680,21 @@ def _emit_auth_gaps_text(
         click.echo()
     elif not controllers_scanned:
         click.echo("Controllers without authorization: NOT SCANNED (--routes-only)\n")
+    elif scan_incomplete:
+        _cr = int(_reads.get("controllers_files_read", 0))
+        _cd = int(_reads.get("controllers_files_discovered", 0))
+        click.echo(f"Controllers without authorization: (none found in the {_cr} of {_cd} controller file(s) read)\n")
     else:
         click.echo("Controllers without authorization: (none found)\n")
 
-    if total == 0 and filtered_out:
+    if total == 0 and scan_incomplete:
+        # Highest-priority branch: a zero count over files that were never
+        # opened is the claim this disclosure exists to refuse.
+        click.echo(
+            f"0 auth gaps found, but {files_discovered - files_read} of {files_discovered} "
+            f"scanned file(s) could not be read ({unreadable_names}). This is NOT 'no auth gaps'."
+        )
+    elif total == 0 and filtered_out:
         # The scan DID find gaps; --min-confidence discarded them all.
         click.echo(
             f"0 gaps at or above --min-confidence {min_confidence}; "
@@ -1618,15 +1722,39 @@ def _collect_auth_gaps_findings(
     routes_only,
     controllers_only,
     _run_check_cm,
+    read_stats=None,
 ):
     """Scan route, provider, and controller files for auth-gap findings.
 
     Encapsulates the W607-CM substrate-CALL boundaries for the three
     file-discovery and per-file analysis phases so the command body can
     focus on orchestration.
+
+    ``read_stats``, when given, is filled in with per-scope discovered / read
+    counts and the paths that could not be opened — threaded the same way
+    ``filter_stats`` is threaded through :func:`_prepare_auth_gaps_findings`.
+    A file that was discovered and never opened contributes zero findings, and
+    without this channel that is indistinguishable from a file that was read
+    and is clean.
     """
     all_findings: list[dict] = []
     route_protected_controllers: set[str] = set()
+
+    _scopes: dict[str, dict] = {
+        "routes": {"discovered": 0, "read": 0, "unreadable": []},
+        "providers": {"discovered": 0, "read": 0, "unreadable": []},
+        "controllers": {"discovered": 0, "read": 0, "unreadable": []},
+    }
+
+    def _read(scope: str, db_path: str, abs_path: str) -> str | None:
+        bucket = _scopes[scope]
+        bucket["discovered"] += 1
+        source, error = _read_source_status(abs_path)
+        if source is None:
+            bucket["unreadable"].append({"file": db_path, "error": error})
+            return None
+        bucket["read"] += 1
+        return source
 
     if not controllers_only:
         route_files = _run_check_cm(
@@ -1639,7 +1767,7 @@ def _collect_auth_gaps_findings(
             route_files = []
         for db_path in route_files:
             abs_path = _resolve_path(project_root, db_path)
-            source = _read_source(abs_path)
+            source = _read("routes", db_path, abs_path)
             if source is None:
                 continue
             pair = _run_check_cm(
@@ -1666,7 +1794,7 @@ def _collect_auth_gaps_findings(
             provider_files = []
         for db_path in provider_files:
             abs_path = _resolve_path(project_root, db_path)
-            source = _read_source(abs_path)
+            source = _read("providers", db_path, abs_path)
             if source is None:
                 continue
             provider_protected = _run_check_cm(
@@ -1700,7 +1828,7 @@ def _collect_auth_gaps_findings(
             class_source_map = {}
         for db_path in controller_files:
             abs_path = _resolve_path(project_root, db_path)
-            source = _read_source(abs_path)
+            source = _read("controllers", db_path, abs_path)
             if source is None:
                 continue
             findings = _run_check_cm(
@@ -1715,6 +1843,25 @@ def _collect_auth_gaps_findings(
             if findings is None:
                 findings = []
             all_findings.extend(findings)
+
+    if read_stats is not None:
+        unreadable = [item for bucket in _scopes.values() for item in bucket["unreadable"]]
+        discovered = sum(b["discovered"] for b in _scopes.values())
+        read = sum(b["read"] for b in _scopes.values())
+        read_stats.update(
+            {
+                "files_discovered": discovered,
+                "files_read": read,
+                "files_unreadable": unreadable,
+                "scan_incomplete": read < discovered,
+                "routes_files_discovered": _scopes["routes"]["discovered"],
+                "routes_files_read": _scopes["routes"]["read"],
+                "providers_files_discovered": _scopes["providers"]["discovered"],
+                "providers_files_read": _scopes["providers"]["read"],
+                "controllers_files_discovered": _scopes["controllers"]["discovered"],
+                "controllers_files_read": _scopes["controllers"]["read"],
+            }
+        )
 
     return all_findings, route_protected_controllers
 
@@ -2023,12 +2170,14 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         # --- Discovery and analysis ---
         # Encapsulates route / ServiceProvider / controller scanning so the
         # command body focuses on orchestration, not per-file loops.
+        _read_stats: dict = {}
         all_findings, _route_protected_controllers = _collect_auth_gaps_findings(
             conn,
             project_root,
             routes_only,
             controllers_only,
             _run_check_cm,
+            _read_stats,
         )
 
         # --- Dogfood FP: exclude test-file findings by default. ---
@@ -2140,6 +2289,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
             min_confidence=min_confidence,
             scanned_findings=_filter_stats.get("scanned_findings", 0),
             filtered_out=_filter_stats.get("filtered_out", 0),
+            read_stats=_read_stats,
         )
         return
 
@@ -2159,4 +2309,5 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         controllers_scanned=not routes_only,
         filtered_out=_filter_stats.get("filtered_out", 0),
         min_confidence=min_confidence,
+        read_stats=_read_stats,
     )
