@@ -29,6 +29,7 @@ from roam.commands.graph_helpers import build_forward_adj
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import ingest_coverage_reports
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.output.confidence import (
     confidence_distribution,
     verdict_with_high_count,
@@ -298,6 +299,20 @@ def _evaluate_gate_rules(conn, rules):
     default=False,
     help="Merge imported coverage into existing data (default replaces old imports).",
 )
+@click.option(
+    "--ci",
+    "ci_mode",
+    is_flag=True,
+    default=False,
+    help=(
+        "Refuse (exit 5) on any of three conditions: an error-severity preset "
+        "or config gate violation; an uncovered entry point in the "
+        "--gate/--gate-pattern traversal; or a state where coverage could not "
+        "be computed at all (no gate symbols matched, or no entry points in "
+        "scope). Warning-severity violations stay advisory and never gate. "
+        "Without --ci the command reports and always exits 0."
+    ),
+)
 @click.pass_context
 def coverage_gaps(
     ctx,
@@ -311,6 +326,7 @@ def coverage_gaps(
     config_path,
     import_reports,
     merge_imported,
+    ci_mode,
 ):
     """Find entry points with no path to a required gate symbol.
 
@@ -472,6 +488,14 @@ def coverage_gaps(
         else:
             preset_verdict = f"0 gate violations across {preset_info} preset rules"
 
+        # gate_presets.py documents `severity: "error"` as "blocks CI under
+        # --ci"; before --ci existed the word "blocking" in this verdict named
+        # nothing, because the command had no exit path at all. Only ERROR
+        # severity gates: the python preset's `source-modules` rule flags
+        # every module without a matching test file, which on a real repo is
+        # hundreds of files and is advisory by design.
+        preset_gate_failed = gate_should_fail(ci_mode, findings=len(errors), scan_incomplete=False)
+
         if json_mode:
             click.echo(
                 to_json(
@@ -530,6 +554,8 @@ def coverage_gaps(
                 )
             else:
                 click.echo("All gate rules pass.")
+        if preset_gate_failed:
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     if not gate_names and not gate_pattern:
@@ -584,6 +610,10 @@ def coverage_gaps(
                                 "verdict": verdict,
                                 "error": "No gate symbols found",
                                 "partial_success": True,
+                                # Narrow companion to the broad
+                                # partial_success: this run computed no
+                                # coverage at all, so under --ci it refuses.
+                                "scan_incomplete": True,
                                 "state": "no_gates",
                             },
                             agent_contract={"facts": [verdict]},
@@ -593,6 +623,10 @@ def coverage_gaps(
             else:
                 click.echo(f"VERDICT: {verdict}")
                 click.echo("No gate symbols found matching the criteria.")
+            # The verdict already says "coverage cannot be computed"; the run
+            # used to say that and exit 0.
+            if gate_should_fail(ci_mode, findings=0, scan_incomplete=True):
+                ctx.exit(EXIT_GATE_FAILURE)
             return
 
         entries = _find_entries(conn, scope, entry_pattern)
@@ -611,6 +645,7 @@ def coverage_gaps(
                                 "verdict": verdict,
                                 "error": "No entry points found",
                                 "partial_success": True,
+                                "scan_incomplete": True,
                                 "state": "no_entries",
                             },
                             agent_contract={"facts": [verdict]},
@@ -620,6 +655,8 @@ def coverage_gaps(
             else:
                 click.echo(f"VERDICT: {verdict}")
                 click.echo("No entry points found in scope.")
+            if gate_should_fail(ci_mode, findings=0, scan_incomplete=True):
+                ctx.exit(EXIT_GATE_FAILURE)
             return
 
         adj = build_forward_adj(conn)
@@ -678,6 +715,17 @@ def coverage_gaps(
 
         total = len(entries)
         coverage_pct = round(len(covered) * 100 / total, 1) if total else 0
+
+        # Computed ONCE, above the channel branches. The traversal gates on
+        # uncovered entry points and on error-severity preset/config
+        # violations reported alongside them; warning-severity violations stay
+        # advisory. Coverage WAS computable here (gates and entries both
+        # exist), so scan_incomplete is False on this path.
+        traversal_gate_failed = gate_should_fail(
+            ci_mode,
+            findings=len(uncovered) + sum(1 for v in gate_violations if v["severity"] == "error"),
+            scan_incomplete=False,
+        )
 
         if json_mode:
             # R22: annotate each uncovered entry with its caller count
@@ -750,6 +798,7 @@ def coverage_gaps(
                 extra["gate_violations"] = gate_violations
             if import_summary:
                 extra["import_summary"] = import_summary
+            summary["scan_incomplete"] = False
             click.echo(
                 to_json(
                     json_envelope(
@@ -759,6 +808,8 @@ def coverage_gaps(
                     )
                 )
             )
+            if traversal_gate_failed:
+                ctx.exit(EXIT_GATE_FAILURE)
             return
 
         # --- Text output ---
@@ -852,3 +903,6 @@ def coverage_gaps(
                     budget=30,
                 )
             )
+
+        if traversal_gate_failed:
+            ctx.exit(EXIT_GATE_FAILURE)
