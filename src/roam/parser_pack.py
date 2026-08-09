@@ -10,6 +10,7 @@ the same boundary semantics.
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Callable
 from threading import RLock
@@ -171,3 +172,65 @@ def get_language(grammar: str) -> Language:
         except DownloadError as error:
             raise RuntimeError(f"sealed parser cache could not load grammar: {grammar}") from error
     return _acquire_with_retry(_language_pack.get_language, grammar)
+
+
+# --------------------------------------------------------------------------
+# Known grammar gaps
+# --------------------------------------------------------------------------
+# A type-position `import('...')` is TypeScript the bundled grammar can only
+# parse as a bare terminal. Apply ANY postfix to it and the parse breaks.
+# Measured against tree-sitter typescript in language-pack 1.13.3:
+#
+#   import('x').Y          ok      typeof import('x')        ok
+#   import('x').Y[]        ERROR   Array<import('x').Y>      ok
+#   import('x').Y<number>  ERROR   N.Y[]                     ok
+#   import('x').N.Y[]      ERROR
+#
+# The first column is ordinary modern TypeScript -- `import()` types are the
+# standard way to reference a type without a circular import, and an array of
+# them is the common case. Reporting that as "syntax error" is a claim stronger
+# than the observation: what was measured is that THIS build's grammar could not
+# parse the construct, which is not the same as the code being invalid.
+#
+# This lives here rather than in one command because it is a property of the
+# BUNDLED GRAMMAR, not of any caller. It first shipped inside `roam verify`, and
+# `roam syntax-check` -- the command whose entire job is reporting syntax -- did
+# not get it, so the dedicated tool was harsher than the incidental one on the
+# identical file. A grammar gap belongs next to the parser that has it.
+_IMPORT_TYPE_CALL_RE = re.compile(rb"""import\s*\(\s*(['"])[^'"\r\n]*\1\s*\)""")
+
+
+def mask_import_type_calls(source: bytes) -> bytes | None:
+    """Blank out `import('...')` calls, preserving every byte offset.
+
+    Returns ``None`` when the source contains none, so a caller can tell
+    "nothing to mask, the error is something else" from "masked and reparsed".
+    """
+
+    def _same_length_identifier(match: re.Match) -> bytes:
+        # All-underscore is a valid identifier in TS/JS at any length, and the
+        # shortest possible match -- `import('')` -- is already 10 bytes. Equal
+        # length is what keeps every line and column of a GENUINE error correct
+        # on the second parse.
+        return b"_" * (match.end() - match.start())
+
+    masked, count = _IMPORT_TYPE_CALL_RE.subn(_same_length_identifier, source)
+    return masked if count else None
+
+
+def reparse_without_import_types(source: bytes, grammar: str):
+    """Re-parse with the known grammar gap masked, or ``None`` if not possible.
+
+    Best effort by construction: any failure returns ``None`` and the caller's
+    original verdict stands, so this can only ever REMOVE this one false
+    positive. A file with a real syntax error still fails, at the same line.
+    """
+    try:
+        if not has_language(grammar):
+            return None
+        masked = mask_import_type_calls(source)
+        if masked is None:
+            return None
+        return get_parser(grammar).parse(masked)
+    except Exception:  # noqa: BLE001 -- best-effort; the first verdict stands
+        return None
