@@ -20,10 +20,23 @@ is ~1.5e7 against a threshold of 0.5. The cap, never the threshold, decides.
 These tests seed a population deliberately larger than the cap rather than
 relying on this repository staying large, so they keep discriminating on any
 checkout.
+
+W1448-followup — the disclosure existed on only two of the three channels.
+Every test in the original file went through ``invoke_cli(["--json", …])``, so
+nothing exercised ``--sarif``, and ``roam --sarif health`` shipped 50 of 60
+god components to Code Scanning with no cap notice anywhere: no
+``invocations``, no ``toolExecutionNotifications``, nothing on stderr. That
+output is uploaded by ``github/codeql-action/upload-sarif`` in the composite
+action and redirected to a file in five bundled CI templates, so a consumer
+saw a complete-looking census that was missing ten findings. The channel tests
+below close that: the SARIF document now carries the same ``warnings_out``
+bucket the JSON and text channels publish, projected through the canonical
+``with_sarif_disclosures`` adapter.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -164,3 +177,134 @@ def test_unsaturated_repo_makes_no_truncation_claim(cli_runner, indexed_project)
     warnings = " ".join((data.get("summary") or {}).get("warnings_out") or [])
     assert "health_god_components_list_capped" not in warnings
     assert "health_bottlenecks_list_capped" not in warnings
+
+
+# ---------------------------------------------------------------------------
+# W1448-followup — the OTHER two channels
+#
+# The disclosure is only worth anything on the channel a consumer reads. These
+# fixtures deliberately re-run the command per output mode rather than reusing
+# ``seeded_health``, because the defect was precisely that one mode took a
+# different code path out of the same prologue.
+# ---------------------------------------------------------------------------
+
+
+def _sarif_notifications(document: dict) -> list[str]:
+    """Every producer-advisory notification text in a SARIF document."""
+    texts: list[str] = []
+    for run in document.get("runs") or []:
+        for invocation in run.get("invocations") or []:
+            for note in invocation.get("toolExecutionNotifications") or []:
+                texts.append(str((note.get("message") or {}).get("text", "")))
+    return texts
+
+
+@pytest.fixture
+def seeded_sarif(cli_runner, indexed_project):
+    """SARIF document for a project whose populations exceed both caps."""
+    god_pop, bn_pop = _seed_graph_metrics(indexed_project)
+    result = invoke_cli(cli_runner, ["--sarif", "health"], cwd=indexed_project)
+    assert result.exit_code == 0, result.output
+    return json.loads(result.stdout), god_pop, bn_pop, result
+
+
+def test_sarif_channel_discloses_the_cap(seeded_sarif) -> None:
+    """THE DEFECT: 50 alerts drawn from 60 findings, published as a census.
+
+    A Code Scanning consumer has no other surface to learn this from — SARIF
+    results carry no population, and the run exits 0 with an empty stderr.
+    """
+    document, god_pop, _bn_pop, _result = seeded_sarif
+    texts = _sarif_notifications(document)
+    assert any("health_god_components_list_capped" in t for t in texts), (
+        f"SARIF published no cap disclosure; notifications were {texts!r}"
+    )
+    # The marker must name the population as well as the cap, or the reader
+    # learns only that something was dropped and not how much.
+    assert any(f"showing_top_{_GOD_COMPONENT_LIST_LIMIT}_of_{god_pop}" in t for t in texts), texts
+
+
+def test_sarif_channel_publishes_every_marker_the_json_channel_does(cli_runner, indexed_project) -> None:
+    """Channel parity, asserted against the JSON envelope rather than a literal.
+
+    Pinning SARIF to a hard-coded marker list would let the two drift apart
+    the next time a truncation site is added. Compare them.
+    """
+    _god_pop, _bn_pop = _seed_graph_metrics(indexed_project)
+    json_result = invoke_cli(cli_runner, ["--json", "health"], cwd=indexed_project, json_mode=True)
+    data = parse_json_output(json_result, "health")
+    expected = [w for w in ((data.get("summary") or {}).get("warnings_out") or []) if "_list_capped" in w]
+    assert expected, "fixture did not saturate a cap — the parity assertion would be vacuous"
+
+    sarif_result = invoke_cli(cli_runner, ["--sarif", "health"], cwd=indexed_project)
+    texts = _sarif_notifications(json.loads(sarif_result.stdout))
+    for marker in expected:
+        assert marker in texts, f"{marker!r} is on the JSON channel but not the SARIF one; got {texts!r}"
+
+
+def test_sarif_channel_also_writes_the_cap_to_stderr(seeded_sarif) -> None:
+    """Parity with the text channel, without touching stdout.
+
+    ``echo_text_warnings`` writes to stderr by design, so a pipeline doing
+    ``roam --sarif health > file`` still gets a human-visible notice and the
+    redirected document stays byte-identical to what the assertions above read.
+    """
+    _document, _god_pop, _bn_pop, result = seeded_sarif
+    assert "health_god_components_list_capped" in result.stderr, result.stderr
+    assert "health_god_components_list_capped" not in result.stdout.split('"results"')[0]
+
+
+def test_sarif_results_are_still_capped(seeded_sarif) -> None:
+    """NEGATIVE CONTROL — disclosure must not have become "upload everything".
+
+    Uncapping would change the reported issue count on every repo at once,
+    making every stored ``--baseline`` snapshot read as a phantom regression,
+    and would flood Code Scanning with thousands of INFO alerts on any large
+    codebase. The cap is legitimate; only its silence was the defect.
+    """
+    document, god_pop, _bn_pop, _result = seeded_sarif
+    god_results = [r for r in document["runs"][0]["results"] if r.get("ruleId") == "health/god-component"]
+    assert len(god_results) <= _GOD_COMPONENT_LIST_LIMIT
+    assert len(god_results) < god_pop, "the cap stopped being a cap"
+
+
+def test_sarif_run_still_exits_zero_when_the_cap_fires(seeded_sarif) -> None:
+    """NEGATIVE CONTROL — this finding is disclosure, not refusal.
+
+    All five bundled CI templates run ``roam --sarif health > file`` inside
+    pipelines that are or may be ``set -e``. Exiting non-zero on a capped list
+    would break the pipeline — and the SARIF upload — on every repository with
+    more than 50 god components, i.e. most real ones. The alerts that ARE
+    emitted are all correct.
+    """
+    _document, _god_pop, _bn_pop, result = seeded_sarif
+    assert result.exit_code == 0
+
+
+def test_unsaturated_sarif_carries_no_invocations_block(cli_runner, indexed_project) -> None:
+    """NEGATIVE CONTROL — hash stability for every clean repo.
+
+    ``health_to_sarif`` documents a byte-identical-without-kwargs invariant.
+    ``with_sarif_disclosures`` returns the document untouched on an empty
+    bucket; a hand-rolled version that always appended the block would move
+    the bytes for every uncapped repository.
+    """
+    result = invoke_cli(cli_runner, ["--sarif", "health"], cwd=indexed_project)
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    run = document["runs"][0]
+    assert "invocations" not in run, run.get("invocations")
+    assert _sarif_notifications(document) == []
+    assert "list_capped" not in result.stderr
+
+
+def test_text_channel_names_the_cap_and_the_population(cli_runner, indexed_project) -> None:
+    """The third channel, asserted rather than assumed.
+
+    The text renderer already disclosed this; the guard is here so the three
+    channels are covered by one file and none can regress unobserved.
+    """
+    god_pop, _bn_pop = _seed_graph_metrics(indexed_project)
+    result = invoke_cli(cli_runner, ["health"], cwd=indexed_project)
+    blob = result.output + result.stderr
+    assert f"of {god_pop} god components" in blob or f"of_{god_pop}" in blob, blob[:800]
