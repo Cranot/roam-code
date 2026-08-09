@@ -135,6 +135,13 @@ REASON_CODES: frozenset[str] = frozenset(
         "mcp_tool_finding",
         # pass
         "all_required_passed",
+        # Also pass -- but the pass is VACUOUS: no rule in the active pack
+        # matched any changed file, so `required` is empty for a reason that
+        # is not "nothing needed checking". Measured: a byte-identical edit
+        # blocks under `src/` and passed with `all_required_passed` over a
+        # zero denominator under `mypkg/`. The verdict value is unchanged;
+        # only the sentence is.
+        "no_rule_matched_for_changed_files",
     }
 )
 

@@ -710,3 +710,146 @@ def test_cli_envelope_no_longer_hardcodes_partial_success_false(tmp_path):
     payload2 = _json.loads(_run_verdict_cli(tmp_path, measured, json_mode=True).output)
     assert payload2["summary"]["scan_incomplete"] is False
     assert payload2["summary"]["partial_success"] is False
+
+
+# ---- a vacuous pass must not print "all_required_passed" ----
+#
+# Measured on two scratch repos identical except the top directory name: the
+# same one-line edit to `app/api.py` blocked at exit 5 under `src/` and passed
+# at exit 0 under `mypkg/` with `all_required_passed` / "0 of 0 required checks
+# ran". The default pack's public_api_changed rule is
+# `^(?:src/.*\.py|src/.*\.ts|lib/.*\.rb|app/.*\.php)$` -- four literal
+# layout/language pairs, one of which is this repo's own layout, which is why
+# dogfooding never surfaced it. `roam guard-rules test` was already honest
+# ("NO MATCH ... 5 rules tried"); the verdict one layer up was not.
+
+
+def _graph_with_pytest():
+    return {"commands": [{"id": "test.pytest", "kind": "test", "command": "pytest"}]}
+
+
+def test_contract_publishes_the_denominator_it_computed_over():
+    c = build_verification_contract(
+        changed_files=["mypkg/app/api.py"],
+        command_graph=_graph_with_pytest(),
+    )
+    assert c["required"] == []
+    assert c["_meta"]["unmatched_changed_files"] == ["mypkg/app/api.py"]
+    assert c["_meta"]["rule_pack"] == {"name": "default", "version": "1.0"}
+
+
+def test_vacuous_pass_says_no_rule_matched_not_all_required_passed():
+    c = build_verification_contract(
+        changed_files=["mypkg/app/api.py"],
+        command_graph=_graph_with_pytest(),
+    )
+    v = compute_verdict(verification_contract=c, executed_checks=[])
+    codes = {r["code"] for r in v["reasons"]}
+    assert codes == {"no_rule_matched_for_changed_files"}
+    assert "all_required_passed" not in codes
+    reason = v["reasons"][0]
+    assert reason["detail"] == ["mypkg/app/api.py"]
+    assert reason["rule_pack"] == "default"
+    assert "guard-rules test" in reason["suggested_command"]
+
+
+def test_the_markdown_headline_stops_claiming_a_completed_gate():
+    from roam.proof_bundle_render import render_markdown
+
+    c = build_verification_contract(
+        changed_files=["mypkg/app/api.py"],
+        command_graph=_graph_with_pytest(),
+    )
+    v1 = {
+        "verdict": compute_verdict(verification_contract=c, executed_checks=[]),
+        "verification_contract": c,
+        "executed_checks": [],
+        "missing_checks": [],
+        "changed_files": ["mypkg/app/api.py"],
+        "risk": {"level": "low"},
+    }
+    md = render_markdown(v1)
+    assert "0** of **0** required checks ran" not in md
+    assert "No rule in pack `default` matched" in md
+
+
+def test_the_new_reason_code_is_registered_in_both_closed_enums():
+    from roam.guard_enums import REASON_CODES
+    from roam.proof_bundle_render import _REASON_TO_SARIF_LEVEL
+
+    assert "no_rule_matched_for_changed_files" in REASON_CODES
+    assert _REASON_TO_SARIF_LEVEL["no_rule_matched_for_changed_files"] == "note"
+
+
+# ---- MUST NOT FIRE: no exit code anywhere may change ----
+
+
+def test_the_verdict_value_stays_pass_so_no_exit_code_moves():
+    """DELIBERATE: `pass`, not `pass_with_warnings`.
+
+    Promoting the vacuous pass would exit 4 under `roam verdict --strict` for
+    every repo whose layout the default pack does not cover -- a new refusal
+    those users did not cause. Only the sentence changes here; whether the
+    VALUE should move is a policy decision recorded in the CHANGELOG.
+    """
+    c = build_verification_contract(
+        changed_files=["mypkg/app/api.py"],
+        command_graph=_graph_with_pytest(),
+    )
+    v = compute_verdict(verification_contract=c, executed_checks=[])
+    assert v["value"] == "pass"
+    assert verdict_exit_code(v["value"]) == 0
+
+
+def test_a_matched_layout_still_blocks_when_its_check_did_not_run():
+    """REGRESSION GUARD: the src/ arm of the measured pair must stay blocked."""
+    c = build_verification_contract(
+        changed_files=["src/app/api.py"],
+        command_graph=_graph_with_pytest(),
+    )
+    assert [r["reason"] for r in c["required"]] == ["public_api_changed"]
+    assert c["_meta"]["unmatched_changed_files"] == []
+    v = compute_verdict(
+        verification_contract=c,
+        executed_checks=[],
+        missing_checks=[{"command": "test.pytest", "reason": "required_but_not_run"}],
+    )
+    assert v["value"] == "blocked"
+    assert verdict_exit_code(v["value"]) == 5
+
+
+def test_a_genuine_all_passed_still_says_all_required_passed():
+    """REGRESSION GUARD: an EARNED pass must keep its own sentence."""
+    c = build_verification_contract(
+        changed_files=["src/app/api.py"],
+        command_graph=_graph_with_pytest(),
+    )
+    v = compute_verdict(
+        verification_contract=c,
+        executed_checks=[{"command": "test.pytest", "status": "pass"}],
+    )
+    assert v["value"] == "pass"
+    assert {r["code"] for r in v["reasons"]} == {"all_required_passed"}
+
+
+def test_an_empty_change_set_is_not_a_vacuous_pass():
+    """No changed files means nothing to be unmatched -- keep the old wording."""
+    c = build_verification_contract(changed_files=[], command_graph=_graph_with_pytest())
+    assert c["_meta"]["unmatched_changed_files"] == []
+    v = compute_verdict(verification_contract=c, executed_checks=[])
+    assert {r["code"] for r in v["reasons"]} == {"all_required_passed"}
+
+
+def test_a_partly_matched_change_set_keeps_the_earned_wording():
+    """One matched file means `required` is non-empty -- not a vacuous pass."""
+    c = build_verification_contract(
+        changed_files=["src/app/api.py", "mypkg/app/api.py"],
+        command_graph=_graph_with_pytest(),
+    )
+    assert c["required"]
+    assert c["_meta"]["unmatched_changed_files"] == ["mypkg/app/api.py"]
+    v = compute_verdict(
+        verification_contract=c,
+        executed_checks=[{"command": "test.pytest", "status": "pass"}],
+    )
+    assert {r["code"] for r in v["reasons"]} == {"all_required_passed"}

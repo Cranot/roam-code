@@ -110,7 +110,8 @@ def compute_verdict(
                     + _collect_review_coverage_warnings(review_evidence=review_evidence)
                 ),
             ),
-        )
+        ),
+        pass_reasons=_pass_reasons_for_contract(verification_contract),
     )
 
 
@@ -271,13 +272,53 @@ def _collect_review_obligation_blockers(
 
 def _select_verdict_that_preserves_gate_precedence(
     reason_collectors: tuple[tuple[str, Callable[[], list[dict[str, Any]]]], ...],
+    pass_reasons: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Return the first verdict tier with evidence, preserving hard-gate order."""
+    """Return the first verdict tier with evidence, preserving hard-gate order.
+
+    ``pass_reasons`` is the reason list for the no-evidence tier. It is a
+    parameter rather than a literal because "everything required passed" and
+    "nothing was required, because no rule matched anything you changed" are
+    different facts that used to print the same sentence.
+    """
     for value, collect_reasons in reason_collectors:
         reasons = collect_reasons()
         if reasons:
             return {"value": value, "reasons": aggregate_reasons(reasons)}
-    return {"value": "pass", "reasons": aggregate_reasons([{"code": "all_required_passed"}])}
+    return {
+        "value": "pass",
+        "reasons": aggregate_reasons(pass_reasons or [{"code": "all_required_passed"}]),
+    }
+
+
+def _pass_reasons_for_contract(verification_contract: dict[str, Any]) -> list[dict[str, Any]]:
+    """Say WHY the pass tier was reached: earned, or vacuous.
+
+    ``all_required_passed`` over an empty ``required`` list is a claim about
+    checks that were never demanded. Measured: the same one-line edit blocks
+    under ``src/app/api.py`` and passes with ``all_required_passed`` /
+    "0 of 0 required checks ran" under ``mypkg/app/api.py``, because the
+    default pack's ``public_api_changed`` rule is four literal layout/language
+    pairs. ``roam guard-rules test`` was already honest about it
+    ("NO MATCH ... 5 rules tried"); the verdict one layer up was not.
+
+    The verdict VALUE stays ``pass`` -- see the note in CHANGELOG. This
+    replaces only the false sentence, so no exit code anywhere changes.
+    """
+    required = verification_contract.get("required") or []
+    meta = verification_contract.get("_meta") or {}
+    unmatched = meta.get("unmatched_changed_files") or []
+    if required or not unmatched:
+        return [{"code": "all_required_passed"}]
+    return [
+        {
+            "code": "no_rule_matched_for_changed_files",
+            "detail": list(unmatched[:20]),
+            "unmatched_count": len(unmatched),
+            "rule_pack": (meta.get("rule_pack") or {}).get("name", "default"),
+            "suggested_command": "roam guard-rules test <path>   # then: roam guard-pr --rules <pack.yml>",
+        }
+    ]
 
 
 def _collect_unanalyzable_change_set_blocker(reason: str | None) -> list[dict[str, Any]]:

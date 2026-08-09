@@ -191,12 +191,25 @@ def build_verification_contract(
             reason = "kind_not_test"
         skipped.append({"command": name, "reason": reason})
 
+    # Publish the DENOMINATOR the contract was computed over. A changed file
+    # that matched zero rules contributed nothing to `required`, and with no
+    # other file matching either, `required` is empty for a reason that is not
+    # "nothing needed checking" -- it is "this pack has no opinion about these
+    # paths". Measured: the same one-line edit blocks under `src/app/api.py`
+    # (public_api_changed) and passes under `mypkg/app/api.py`, because the
+    # built-in rule is `^(?:src/.*\.py|src/.*\.ts|lib/.*\.rb|app/.*\.php)$` --
+    # four layout/language pairs, one of which is this repo's own layout, which
+    # is why dogfooding never surfaced it.
+    matched_files = {f for f, _reason in file_reasons}
+    unmatched_changed_files = [f for f in changed_files if f not in matched_files]
     return {
         "required": required,
         "skipped": skipped,
         "_meta": {
             "changed_files_count": len(changed_files),
             "high_risk_path_hits": list(high_risk_paths & set(changed_files)),
+            "unmatched_changed_files": unmatched_changed_files,
+            "rule_pack": {"name": rules.name, "version": rules.version},
             "mode": mode,
             "policy_profile": policy_profile,
         },
