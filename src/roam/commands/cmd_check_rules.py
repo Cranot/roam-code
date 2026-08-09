@@ -27,6 +27,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.output._severity import severity_rank
 from roam.output.formatter import WarningsOut, json_envelope, to_json
 
@@ -633,12 +634,22 @@ def _evaluate_custom_rules(
         # ``roam.output._severity.severity_rank`` for the canonical comparison.
         # The built-in + custom rules currently EMIT only {error, warning, info}
         # (the SARIF-aligned 3-tier alphabet), so input/emit asymmetry is
-        # intentional and documented at the filter site below: ``critical`` /
-        # ``high`` collapse onto rank 4-or-5 floors that match the emitted
-        # ``error`` rank; ``medium`` / ``low`` collapse onto floors that match
-        # the emitted ``warning`` / ``info`` ranks. This means
-        # ``--severity high`` keeps every ``error`` finding (rank 4 ==
-        # rank 4) — the same set ``--severity error`` would keep. Aliases
+        # intentional and documented at the filter site below: ``high``
+        # collapses onto the rank-4 floor that matches the emitted ``error``
+        # rank; ``medium`` / ``low`` collapse onto floors that match the
+        # emitted ``warning`` / ``info`` ranks. This means ``--severity high``
+        # keeps every ``error`` finding (rank 4 == rank 4) — the same set
+        # ``--severity error`` would keep.
+        #
+        # ``critical`` is the exception, and the previous wording here
+        # ("critical / high collapse onto rank 4-or-5 floors that match the
+        # emitted error rank") was false for it. severity_rank("critical") is
+        # 5 and the highest severity any shipped rule emits is ``error`` at
+        # rank 4, so ``--severity critical`` selects ZERO rules under every
+        # builtin profile (default / strict-security / ai-code-review /
+        # legacy-maintenance / minimal). It used to report "no rules matched"
+        # and exit 0; it now refuses, because a filter that emptied the rule
+        # set measured nothing. Aliases
         # like ``note`` / ``unknown`` are intentionally NOT in the Choice —
         # they collapse to ``info`` / sort-below-info via ``severity_rank``,
         # so a user-facing filter on them would be confusing.
@@ -862,9 +873,51 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
             deduped_warnings_out.append(w)
 
     if not results:
-        verdict = "no rules matched"
+        # Two states used to share one verdict and one exit code.
+        #
+        #   (1) A FILTER was supplied and matched nothing. Nothing was
+        #       analysed, so nothing is proven clean -- UNANALYZABLE. This is
+        #       the same shape `taint --ci --rule no-such-rule-id` already
+        #       refuses on ("Nothing was analysed, so nothing is proven
+        #       clean", exit 5); check-rules never got the generalisation.
+        #       `--rule circular-imprts` (a one-character typo) and
+        #       `--severity critical` (structurally vacuous: no builtin rule
+        #       emits critical, so the rank-5 floor selects nothing under any
+        #       shipped profile) both landed here and exited 0.
+        #
+        #   (2) NO filter, and the resolved config/profile carries zero rules.
+        #       That is an explicit opt-out, not an absent measurement, and
+        #       stays exit 0.
+        _filters_applied = [
+            f"--rule {rule_filter}" if rule_filter else "",
+            f"--severity {severity_filter}" if severity_filter else "",
+        ]
+        _filters_applied = [f for f in _filters_applied if f]
+        _emptied_by_filter = bool(_filters_applied)
+        if _emptied_by_filter:
+            verdict = "no rules matched {} — nothing was analysed, so nothing is proven clean".format(
+                " ".join(_filters_applied)
+            )
+        else:
+            # Reach the `total == 0` arm of _calculate_verdict, which was
+            # written for this state and was unreachable from the CLI because
+            # this branch returned first.
+            verdict, _ = _calculate_verdict([])
+        # check-rules has no gate flag because it is ALWAYS a gate: every
+        # populated path ends in an unconditional ``ctx.exit(exit_code)``.
+        # gate_enabled=True is therefore the correct argument.
+        _empty_gate_failed = gate_should_fail(True, findings=0, scan_incomplete=_emptied_by_filter)
         if json_mode:
             empty_summary: dict = {"verdict": verdict, "passed": 0, "failed": 0, "total": 0}
+            empty_summary["state"] = "no_rules_matched" if _emptied_by_filter else "no_rules_configured"
+            if _emptied_by_filter:
+                # Narrow companion to the broad partial_success, the word
+                # cmd_taint / cmd_secrets / cmd_ignore_drift already use.
+                empty_summary["scan_incomplete"] = True
+                empty_summary["partial_success"] = True
+                empty_summary["filters_applied"] = list(_filters_applied)
+            else:
+                empty_summary["scan_incomplete"] = False
             # W1030-followup-C: closed-enum LoadStatus disclosure so agents
             # can tell "no .roam-rules.yml configured yet" (missing -> use
             # baseline rules silently) from ".roam-rules.yml exists but is
@@ -890,12 +943,46 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
                 results=[],
                 warnings_out=list(deduped_warnings_out),
             )
-            if _empty_facts:
+            if _empty_facts or _emptied_by_filter:
                 empty_envelope_kwargs["agent_contract"] = {
                     "facts": [verdict, *_empty_facts],
                     "next_commands": ["roam check-rules"],
                 }
             click.echo(to_json(json_envelope("check-rules", **empty_envelope_kwargs)))
+        elif sarif_mode:
+            # This branch had NO sarif arm at all, so `--sarif check-rules
+            # --rule <typo>` printed plain text on the SARIF channel. Emit a
+            # zero-result document that carries the filter disclosure through
+            # the same helper the populated path already uses.
+            from roam.output.sarif import runtime_filter_disclosure, write_sarif
+
+            _empty_rule_disabled: list[tuple[str, dict]] = []
+            _empty_finding_filters: list[tuple[str, dict]] = []
+            if rule_filter:
+                _empty_rule_disabled.append(
+                    (
+                        f"rules/{rule_filter}",
+                        {"disabled_by": "--rule", "filter_value": rule_filter},
+                    )
+                )
+            if severity_filter:
+                _empty_finding_filters.append(
+                    (
+                        "severity-filter",
+                        {"filter": "--severity", "filter_value": severity_filter},
+                    )
+                )
+            _empty_overrides, _empty_notif_overrides = runtime_filter_disclosure(
+                rule_ids_disabled=_empty_rule_disabled,
+                finding_level_filters=_empty_finding_filters,
+            )
+            _empty_sarif = _results_to_sarif(
+                [],
+                warnings_out=[*deduped_warnings_out, verdict],
+                runtime_overrides=_empty_overrides or None,
+                runtime_notification_overrides=_empty_notif_overrides or None,
+            )
+            click.echo(write_sarif(_empty_sarif))
         else:
             click.echo("VERDICT: {}".format(verdict))
             if deduped_warnings_out:
@@ -903,6 +990,13 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
                 click.echo(f"Warnings ({len(deduped_warnings_out)}):")
                 for w in deduped_warnings_out:
                     click.echo(f"  - {w}")
+        # One decision, read by every channel. EXIT_GATE_FAILURE (5), not 1 or
+        # 2: docs/ci-integration.md already defines 5 as "quality gate check
+        # failed, OR the check could not run at all", and 5 is inside MCP
+        # ``_SUCCESS_EXIT_CODES`` so roam_check_rules keeps returning a
+        # parseable envelope instead of isError:true.
+        if _empty_gate_failed:
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     verdict, exit_code = _calculate_verdict(results)
