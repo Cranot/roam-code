@@ -152,9 +152,23 @@ function _formatComment(env = process.env, results = {}) {
   }
 
   if (gateExpr) {
-    const status = gatePassed === 'false' ? 'FAILED' : 'PASSED';
+    // Explicit map, not a two-way ternary. The old `!== 'false' -> PASSED`
+    // form rendered "Quality Gate: PASSED" for BOTH `unknown` (no expression
+    // could be evaluated) and the empty string (the quality-gate step was
+    // skipped or crashed, so nothing was ever written to GATE_PASSED). Two
+    // states that mean "we do not know" were being reported as a pass.
+    const GATE_LABELS = { true: 'PASSED', false: 'FAILED', unknown: 'NOT EVALUATED' };
+    const status = GATE_LABELS[gatePassed] || 'NOT EVALUATED';
     lines.push(`### Quality Gate: ${status}`, '');
     lines.push(`Gate expression: \`${gateExpr}\``, '');
+    if (status === 'NOT EVALUATED') {
+      lines.push(
+        gatePassed
+          ? 'No gate expression could be evaluated against the analysis output.'
+          : 'The quality-gate step did not report a result.',
+        '',
+      );
+    }
   }
 
   if (sarifCategory || sarifResults || sarifTruncated === 'true') {

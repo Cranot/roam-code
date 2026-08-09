@@ -18,7 +18,6 @@ import re
 import sys
 from pathlib import Path
 
-
 _NUMERIC_RE = re.compile(
     r"^(?P<lhs>[A-Za-z_]\w*(?:\([A-Za-z_]\w*\))?)\s*"
     r"(?P<op>>=|<=|>|<|==|=|!=)\s*"
@@ -292,19 +291,59 @@ def _evaluate_on_payload(expr: str, payload: dict, source_name: str) -> tuple[st
     return "failed", f"{source_name}: {lhs}={actual} (required {op} {target})"
 
 
+# Closed vocabulary for the gate outcome. ``passed`` and ``failed`` are the
+# two states the evaluator can EARN; ``unevaluated`` is the one it must not
+# silently spend. Before this existed, ``passed`` was computed from
+# ``failures`` alone -- so a gate whose expressions matched no payload had
+# zero failures and published ``true``, and the composite action turned that
+# into ``gate-passed=true`` plus a PR comment reading "Quality Gate: PASSED".
+# The partial case was worse than the total one, because a real number was
+# published beside the expressions nobody had checked.
+#
+# ``unevaluated`` is deliberately NOT ``partial_success``: nothing degraded,
+# the gate simply never ran. Callers map it to the stdout token ``unknown``.
+GATE_STATES = ("passed", "failed", "unevaluated")
+
+# The stdout token for each state. ``true`` / ``false`` are unchanged so the
+# failure axis stays byte-compatible for any consumer already parsing them.
+_STATE_TOKENS = {"passed": "true", "failed": "false", "unevaluated": "unknown"}
+
+
+def _gate_state(failures: list[str], unchecked: int) -> str:
+    """Classify the run. A real failure outranks an unevaluated expression."""
+    if failures:
+        return "failed"
+    if unchecked > 0:
+        return "unevaluated"
+    return "passed"
+
+
 def evaluate_gate(gate_expr: str, results: dict[str, dict]) -> dict:
-    """Evaluate one gate expression string across command result payloads."""
+    """Evaluate one gate expression string across command result payloads.
+
+    ``passed`` retains its historical meaning -- "no expression FAILED" -- so
+    the failure axis is unchanged for existing consumers. Read ``state`` to
+    tell a gate that passed from one that was never evaluated;
+    ``unchecked_expressions`` says how many of the user's expressions found no
+    compatible payload.
+    """
     expressions = _parse_expressions(gate_expr)
     if not expressions:
+        # An empty gate expression is not an unevaluated gate: the caller
+        # asked for nothing, and nothing is what it got. The action only
+        # runs this step when the gate input is non-empty.
         return {
             "passed": True,
+            "state": "passed",
             "warnings": ["empty gate expression"],
             "failures": [],
             "checked_expressions": 0,
+            "unchecked_expressions": 0,
         }
 
     warnings: list[str] = []
     failures: list[str] = []
+    unresolved: list[str] = []
     checked_exprs = 0
 
     for expr in expressions:
@@ -322,13 +361,16 @@ def evaluate_gate(gate_expr: str, results: dict[str, dict]) -> dict:
         if checked_for_expr:
             checked_exprs += 1
         else:
-            warnings.append(f"no compatible payload found for `{expr}`")
+            unresolved.append(expr)
 
     return {
         "passed": len(failures) == 0,
+        "state": _gate_state(failures, len(unresolved)),
         "warnings": warnings,
         "failures": failures,
         "checked_expressions": checked_exprs,
+        "unchecked_expressions": len(unresolved),
+        "unchecked": list(unresolved),
     }
 
 
@@ -343,10 +385,16 @@ def main() -> int:
 
     for w in report["warnings"]:
         print(f"::warning::{w}", file=sys.stderr)
+    # An expression that matched NO payload is an error, not a warning: the
+    # user asked for that gate and did not get it. The per-payload
+    # "metric not available" lines above stay warnings -- they fire once per
+    # payload and are normal noise when several commands ran.
+    for expr in report.get("unchecked", []):
+        print(f"::error::no compatible payload found for `{expr}`", file=sys.stderr)
     for f in report["failures"]:
         print(f"::error::Quality gate failed: {f}", file=sys.stderr)
 
-    print("true" if report["passed"] else "false")
+    print(_STATE_TOKENS[report["state"]])
     return 0
 
 

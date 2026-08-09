@@ -61,6 +61,16 @@ inputs:
     description: 'Quality gate expression (supports key ops + trend functions like velocity(metric)<=0). Empty = no gate.'
     required: false
     default: ''
+  gate-strict:
+    description: >-
+      Fail the job when the gate could not be EVALUATED (true/false). Default
+      false: a first CI run has one stored snapshot, so trend expressions like
+      direction(metric) and delta(metric) are unevaluable through no fault of
+      the repository, and blocking on that would go red on a run where nothing
+      is wrong. An unevaluated gate is always reported as ::error:: and as
+      gate-state=unevaluated regardless of this input.
+    required: false
+    default: 'false'
   cache:
     description: 'Cache the SQLite index between runs (true/false)'
     required: false
@@ -98,6 +108,12 @@ outputs:
   affected-count:
     description: 'Detected changed+dependent file count in changed-only mode'
     value: ${{ steps.run-analysis.outputs.affected-count }}
+  gate-state:
+    description: >-
+      Gate outcome as a three-state word: passed / failed / unevaluated.
+      `gate-passed` is a boolean and cannot distinguish a gate that passed
+      from one whose expressions matched no payload; read this instead.
+    value: ${{ steps.quality-gate.outputs.gate-state }}
 
 runs:
   using: 'composite'
@@ -121,6 +137,7 @@ runs:
         INPUT_SARIF_MAX_BYTES: ${{ inputs.sarif-max-bytes }}
         INPUT_COMMENT: ${{ inputs.comment }}
         INPUT_GATE: ${{ inputs.gate }}
+        INPUT_GATE_STRICT: ${{ inputs.gate-strict }}
         INPUT_CACHE: ${{ inputs.cache }}
         INPUT_PYTHON_VERSION: ${{ inputs.python-version }}
         ACTION_PATH_INPUT: ${{ github.action_path }}
@@ -187,6 +204,7 @@ runs:
         validate_bool "sarif" "${INPUT_SARIF}"
         validate_bool "comment" "${INPUT_COMMENT}"
         validate_bool "cache" "${INPUT_CACHE}"
+        validate_bool "gate-strict" "${INPUT_GATE_STRICT}"
 
         validate_scalar "version" "${INPUT_VERSION}" 64
         version_re='^[0-9]+(\.[0-9]+){1,3}((a|b|rc)[0-9]+)?(\.post[0-9]+)?(\.dev[0-9]+)?$'
@@ -302,6 +320,7 @@ runs:
           printf 'sarif-max-bytes=%s\n' "${INPUT_SARIF_MAX_BYTES}"
           printf 'comment=%s\n' "${INPUT_COMMENT}"
           printf 'gate=%s\n' "${INPUT_GATE}"
+          printf 'gate-strict=%s\n' "${INPUT_GATE_STRICT}"
           printf 'cache=%s\n' "${INPUT_CACHE}"
           printf 'python-version=%s\n' "${INPUT_PYTHON_VERSION}"
           printf 'action-path=%s\n' "${ACTION_PATH_INPUT}"
@@ -676,19 +695,45 @@ runs:
           --expr "${GATE_EXPR}" \
           --results-dir "${RESULTS_DIR}")
 
-        if [[ ! "${GATE_RESULT}" =~ ^(true|false)$ ]]; then
+        # `unknown` is the third token: the evaluator ran, and NONE of the
+        # gate expressions the user asked for could be evaluated against the
+        # payloads that were produced. Publishing `true` there -- which is
+        # what happened before -- rendered "Quality Gate: PASSED" on the PR
+        # beside a gate nobody had checked.
+        if [[ ! "${GATE_RESULT}" =~ ^(true|false|unknown)$ ]]; then
           echo "::error::Gate evaluator returned an unexpected result" >&2
           exit 1
         fi
+
+        case "${GATE_RESULT}" in
+          true)    GATE_STATE=passed ;;
+          false)   GATE_STATE=failed ;;
+          unknown) GATE_STATE=unevaluated ;;
+        esac
         echo "gate-passed=${GATE_RESULT}" >> "${GITHUB_OUTPUT}"
+        echo "gate-state=${GATE_STATE}" >> "${GITHUB_OUTPUT}"
 
         if [ "${GATE_RESULT}" = "false" ]; then
           echo "::error::Quality gate failed: ${GATE_EXPR}"
           exit 5
         fi
+
+        if [ "${GATE_RESULT}" = "unknown" ]; then
+          echo "::error::Quality gate could not be evaluated: ${GATE_EXPR}"
+          # Advisory by DEFAULT, and deliberately. A repository's FIRST run
+          # has one stored snapshot, and both direction() and delta() need
+          # two, so every adopter with a trend gate would go red on a run
+          # where nothing is wrong and nothing they can do fixes it except
+          # wait for a second snapshot. Teams that want an unevaluable gate
+          # to block set gate-strict: true.
+          if [ "${GATE_STRICT}" = "true" ]; then
+            exit 5
+          fi
+        fi
       env:
         RESULTS_DIR: ${{ steps.run-analysis.outputs.results-dir }}
         GATE_EXPR: ${{ steps.validate-inputs.outputs.gate }}
+        GATE_STRICT: ${{ steps.validate-inputs.outputs.gate-strict }}
         ACTION_PATH: ${{ steps.validate-inputs.outputs.action-path }}
 
     # ---- 9. Generate SARIF --------------------------------------------------

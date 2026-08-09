@@ -276,3 +276,11 @@ ignore = [
 "tests/**/*.py" = ["T201", "T203"]
 "dev/**/*.py" = ["T201", "T203"]
 "scripts/**/*.py" = ["T201", "T203"]  # CLI scripts print progress/status by design
+# Same rationale, fourth script directory: .github/scripts holds the composite
+# action's helpers (gate_eval.py, sarif_guard.py). Their stdout IS the
+# published value the action captures and their stderr IS the ::error:: /
+# ::warning:: annotation stream — printing is the interface, not a debug leak.
+# Listed explicitly (and late) because these files were previously outside
+# every lint scope: the push gate runs `ruff check src/ tests/`, so nothing
+# looked at them until the commit-time hook started checking staged files.
+".github/scripts/**/*.py" = ["T201", "T203"]

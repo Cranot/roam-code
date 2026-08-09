@@ -93,6 +93,7 @@ def _validator_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "INPUT_SARIF_MAX_BYTES": "10000000",
         "INPUT_COMMENT": "true",
         "INPUT_GATE": "health_score>=60, velocity(risk_score)<=0",
+        "INPUT_GATE_STRICT": "false",
         "INPUT_CACHE": "true",
         "INPUT_PYTHON_VERSION": "3.11",
         "ACTION_PATH_INPUT": ROOT.as_posix(),
@@ -425,6 +426,11 @@ def test_validator_accepts_closed_pep440_style_release_forms(tmp_path: Path, ver
         ({"INPUT_SARIF_MAX_BYTES": "999999999"}, "expected 1024..100000000"),
         ({"INPUT_GATE": "health_score>=60; id"}, "unsupported expression grammar"),
         ({"INPUT_GATE": "$(id)>=0"}, "unsupported expression grammar"),
+        # W1515: gate-strict escalates an unevaluable gate to a hard failure,
+        # so it goes through the same closed-boolean boundary as every other
+        # flag rather than being interpolated raw into the gate step.
+        ({"INPUT_GATE_STRICT": "yes"}, "Invalid gate-strict"),
+        ({"INPUT_GATE_STRICT": "true; id"}, "Invalid gate-strict"),
         ({"INPUT_PYTHON_VERSION": "3.x"}, "expected Python 3.10 through 3.13"),
         ({"INPUT_PYTHON_VERSION": "3.14"}, "expected Python 3.10 through 3.13"),
         ({"PR_BASE_SHA_INPUT": "main"}, "expected an empty, SHA-1, or SHA-256"),
@@ -459,8 +465,16 @@ def test_generated_step_outputs_are_closed_before_github_output_emission() -> No
 
     assert "health score is not a bounded decimal" in analysis
     assert "health score is outside 0..100" in analysis
-    assert '[[ ! "${GATE_RESULT}" =~ ^(true|false)$ ]]' in gate
+    # W1515: the token set widened from two to three -- `unknown` is what the
+    # evaluator prints when NO gate expression could be evaluated, and the
+    # action must accept it rather than fail the job at "unexpected result".
+    # The set stays CLOSED and anchored: a validator that accepted anything
+    # would let a crashed evaluator's stray stdout become `gate-passed`.
+    assert '[[ ! "${GATE_RESULT}" =~ ^(true|false|unknown)$ ]]' in gate
     assert "Gate evaluator returned an unexpected result" in gate
+    # And `unknown` must not silently become a pass on the way out.
+    assert "gate-state=${GATE_STATE}" in gate
+    assert "Quality gate could not be evaluated" in gate
 
 
 def test_soft_failure_sites_are_closed_and_explicitly_advisory() -> None:
