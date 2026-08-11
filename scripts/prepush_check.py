@@ -199,6 +199,22 @@ FAST_PYTEST_GUARDS: tuple[str, ...] = (
     # Pure AST parse of a single script, no subprocess and no index: 10 tests
     # in 0.70s serial, and it folds into the existing worker pool.
     "test_prepush_gate_wired.py",
+    # 2026-08-11: the anti-leak catalogue's hashed private values are DERIVED
+    # from a gitignored literals file, and the derivation step was a human
+    # pasting two printed blocks. A skipped paste has no symptom -- the
+    # catalogue still parses, the gate still runs on every push, and it simply
+    # stops matching a value nobody notices is missing. Measured: the platform
+    # was renamed, only the old name was ever digested, and
+    # `scan_internal_language.py --all` exited 0 while the new name sat in six
+    # tracked PUBLIC paths.
+    #
+    # This guard runs `regen_leak_hashes.py --check`, which compares the
+    # committed digests against the literals file. It belongs HERE and nowhere
+    # else: the literals file is gitignored, so CI and every public clone have
+    # nothing to compare against and the check can only ever fire on the
+    # machine where the change is being made. Subprocess + a hash pass over a
+    # short wordlist; it SKIPS rather than fails where the file is absent.
+    "test_leak_gate_hashed_terms.py",
 )
 
 # FULL-tier additions (heavy doc-hygiene + extra-axis guards). Per the memo,
