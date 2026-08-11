@@ -249,29 +249,28 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # THREE hand-written copies of `fail_on_degradation and health_degraded`
     # -- the highest count in the batch, and exactly the duplication
     # `gate_should_fail` exists to eliminate.
-    # An absent baseline DISCLOSES, it does not refuse -- and the difference is
-    # the whole of this gate's honesty.
+    # An absent baseline REFUSES, and `scan_incomplete` is how it says so.
     #
-    # Two states arrive here looking alike, and only one is a failure. A diff
-    # this command could not READ is unanalyzable input: it refuses, ~120 lines
-    # above, before reaching this line. No baseline snapshot for the base ref is
-    # something else -- it is the DEFAULT state of every freshly onboarded repo,
-    # as the comment above already says, and nothing the user does on this run
-    # fixes it. Feeding it to `scan_incomplete` made `--fail-on-degradation`
-    # exit 5 on any repository that had not yet run `roam trends --save`: a gate
-    # that fires on clean input, which gets switched off, after which it detects
-    # nothing at all.
+    # This line was briefly changed to `scan_incomplete=False` on the argument
+    # that a missing snapshot is the default state of a fresh repo, so refusing
+    # would be an adoption-day outage. That argument does not survive contact
+    # with the two facts W1526 measured. The flag is OPT-IN: the caller has
+    # explicitly asked to gate on degradation, and degradation cannot be
+    # computed, so exiting 0 publishes "minimal structural impact" and "0 new
+    # issues" about a comparison that never happened. And the remedy is one
+    # named command, printed in the verdict -- `roam index`, or `roam trends
+    # --save` on the base ref.
     #
-    # This is the same call the batch made for the CI gate expression evaluator
-    # and declined there for the same reason -- an adoption-day outage, red on a
-    # run where nothing is wrong. The original finding stands and is preserved
-    # above: a gate that cannot fire must not read as "passed". It says so, in
-    # the verdict, in `partial_success`, and in the "Could not gate" line. What
-    # it must not do is refuse the run.
+    # That is what separates this from the CI gate expression evaluator, where
+    # the same change WAS declined: there, nothing the user could do on that run
+    # would help, because a second snapshot only exists after a second run. Here
+    # the user fixes it immediately. An outage you cannot clear and a setup step
+    # you clear with one command are not the same thing, and treating them alike
+    # was the error.
     gate_failed = gate_should_fail(
         fail_on_degradation,
         findings=health_degraded,
-        scan_incomplete=False,
+        scan_incomplete=not deltas_available,
     )
 
     # --- JSON output ---
