@@ -272,10 +272,31 @@ def test_pr_diff_gate_refuses_a_diff_it_could_not_read(indexed_dirty_repo: Path,
 
 
 def test_pr_diff_gate_still_passes_a_readable_tree(indexed_dirty_repo: Path) -> None:
+    """The must-not-fire control for the git_error refusal, and ONLY that.
+
+    This file's subject is whether the gate reads a failed diff as clean, so
+    this control exists to prove that teaching it to refuse an unreadable diff
+    did not teach it to refuse everything.
+
+    It needs a baseline to say that. ``roam init`` alone leaves zero snapshot
+    rows (measured in W1526), so without this save the repo is missing a
+    baseline as well as being readable, and the control fires on the SECOND
+    property -- the one W1526 deliberately made refusing, for a reason that has
+    nothing to do with this file. Asserting exit 0 here without a snapshot is
+    asserting that a requested gate may authorize a comparison it never made.
+
+    So: record a baseline, then require the pass. Readable tree, computable
+    delta, exit 0.
+    """
+    saved = _run(indexed_dirty_repo, "trends", "--save")
+    assert saved.returncode == 0, (
+        f"could not record the baseline this control needs.\nstdout: {saved.stdout.strip()[:600]!r}"
+    )
+
     run = _run(indexed_dirty_repo, "pr-diff", "--fail-on-degradation")
     assert run.returncode == 0, (
-        f"the gate now over-refuses a readable repo.\nstdout: {run.stdout.strip()[:600]!r}\n"
-        f"stderr: {run.stderr.strip()[:600]!r}"
+        f"the gate now over-refuses a readable repo WITH a baseline.\n"
+        f"stdout: {run.stdout.strip()[:600]!r}\nstderr: {run.stderr.strip()[:600]!r}"
     )
 
 
