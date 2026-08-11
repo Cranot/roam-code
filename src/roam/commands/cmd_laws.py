@@ -636,6 +636,11 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
         # so `laws check --strict` on a shallow CI clone whose --base-ref
         # does not exist (git exits 128) reported a complete, clean run and
         # exited 0 without ever evaluating a single law.
+        # Named for the canonical disclosure token rather than re-spelled per
+        # channel: cmd_ignore_drift.py:331 records why every arm must read ONE
+        # variable with this exact name, or a reader cannot tell the text and
+        # SARIF arms disclose the signal at all.
+        scan_incomplete = diff_error is not None
         if diff_error is not None:
             verdict = f"DIFF UNAVAILABLE — no laws were evaluated: {diff_error}"
         else:
@@ -654,7 +659,7 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
                 # Narrow companion to the broad `partial_success`, matching
                 # cmd_taint / cmd_secrets / cmd_ignore_drift: this run did not
                 # measure the thing it was asked about.
-                "scan_incomplete": diff_error is not None,
+                "scan_incomplete": scan_incomplete,
             },
             violations=[],
         )
@@ -664,18 +669,33 @@ def laws_check(ctx, laws_file, diff_source, diff_file, base_ref, strict):
         # the text and --json arms reached; the --sarif arm returned before it,
         # so the auto-uploaded CI channel exited 0 on a diff it could not read
         # while the other two channels exited 5 on the identical state.
-        gate_failed = gate_should_fail(strict, findings=0, scan_incomplete=diff_error is not None)
+        gate_failed = gate_should_fail(strict, findings=0, scan_incomplete=scan_incomplete)
         if sarif_mode:
             from roam.output.sarif import laws_to_sarif, write_sarif
 
             # Carry the verdict into run.invocations[].toolExecutionNotifications[]
             # like the not_initialized / empty-laws branches already do; a
             # zero-result SARIF with no notification reads as "checked, clean".
-            click.echo(write_sarif(laws_to_sarif([], disclosures=[verdict])))
+            _sarif_disclosures = [verdict]
+            if scan_incomplete:
+                # W1331, same adapter as cmd_supply_chain.py:1208-1215: the
+                # marker goes in the DOCUMENT, because the document is what a
+                # Code-Scanning consumer ingests, and it names the canonical
+                # signal rather than leaving prose to be pattern-matched.
+                _sarif_disclosures.append(f"laws_scan_incomplete:0_of_{len(laws)}_laws_evaluated")
+            click.echo(write_sarif(laws_to_sarif([], disclosures=_sarif_disclosures)))
         elif json_mode:
             click.echo(to_json(envelope))
         else:
             click.echo(f"VERDICT: {verdict}")
+            if scan_incomplete:
+                # W1331, same shape as cmd_supply_chain.py:1367-1373: the human
+                # channel reads the SAME boolean the envelope publishes, so a
+                # CI log cannot show a quieter story than --json does.
+                click.echo(
+                    f"# warning: scan_incomplete — 0 of {len(laws)} law(s) were evaluated, "
+                    "so nothing above is a measurement of this change"
+                )
         # Fail closed under --strict: a gate that could not read the diff
         # has not cleared anything. A genuinely EMPTY diff (diff_error is None)
         # is a measured clean result and must stay exit 0.

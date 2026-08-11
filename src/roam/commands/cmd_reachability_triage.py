@@ -255,6 +255,12 @@ def _text_output(
     commit_range: str | None,
     gate: dict,
     honesty_lines: list[str] | None = None,
+    # Named for the canonical disclosure token, not shortened: the --json
+    # branch and this text branch must spell the signal the same way, or a
+    # reader (and the W1331 scanner) cannot tell the text branch discloses it
+    # at all. Same reasoning as cmd_ignore_drift's `scan_incomplete`.
+    scan_incomplete: bool = False,
+    missing_primitives: list[str] | None = None,
 ) -> str:
     lines = [f"REACHABILITY: {observation}"]
     if commit_range:
@@ -271,6 +277,21 @@ def _text_output(
             ),
         ]
     )
+    # W1331: the SAME degradation the --json branch publishes as
+    # `scan_incomplete`, said in the channel a human and a shell script read.
+    # Of the three things that set it, only two reached this branch before:
+    # a failed component rode in on `observation`/`Honesty:` and an unreadable
+    # `--range` diff rode in on `observation`, but a primitive that returned NO
+    # envelope at all was published as `missing_primitives` in the envelope and
+    # NOWHERE here -- so a text reader saw a complete-looking report of a run
+    # that never invoked part of the compose. This is disclosure only; the gate
+    # decision is made once, above, and both branches fall through to it.
+    if scan_incomplete:
+        lines.append(
+            "scan_incomplete: this run did not read every component"
+            + (f" (no result from: {', '.join(missing_primitives)})" if missing_primitives else "")
+            + ". Absent figures are unknown, not zero, and nothing here is proven complete."
+        )
     if gate["requested"]:
         if gate["evaluated"]:
             lines.append(f"Baseline gate: {len(gate['new_reachable_finding_ids'])} new reachable paths.")
@@ -506,6 +527,8 @@ def reachability_triage_cmd(
                 commit_range=commit_range,
                 gate=gate,
                 honesty_lines=honesty_lines,
+                scan_incomplete=scan_incomplete,
+                missing_primitives=missing_primitives,
             )
         )
 

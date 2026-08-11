@@ -226,6 +226,17 @@ def side_effects_cmd(ctx, symbol, kind, top):
             "surfaced": len(surfaced),
             "filter_kind": kind,
             **coverage.to_dict(),
+            # W1331: the SAME boolean the text tail warns on, named by this
+            # command in its own envelope rather than reaching --json only
+            # through the spread above. The key is already present (and keeps
+            # its position, since a dict overwrite does not reorder), and the
+            # value is the same `coverage.scan_incomplete` read at the top, so
+            # the payload is byte-identical -- what changes is that a rename
+            # inside the shared `SideEffectScanCoverage.to_dict()` can no
+            # longer leave --json silently reporting a complete scan while the
+            # text channel warns. Same shape as cmd_calc_inventory.py:299 and
+            # cmd_magic_numbers.py:784.
+            "scan_incomplete": scan_incomplete,
             "kind_definition": ("coarse-grained agent-facing taxonomy: none|io_read|io_write|mutation|process|unknown"),
             "detector": "world_model.side_effects (heuristic)",
         },

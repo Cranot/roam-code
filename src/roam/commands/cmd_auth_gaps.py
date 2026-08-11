@@ -2257,16 +2257,47 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
         # integration path; now degrades silently to None with a
         # marker, and the function returns early (matches pre-W607-CM
         # semantics that SARIF mode short-circuits).
+        # W1331: the read-coverage disclosure the json and text branches
+        # already carry has to reach the DOCUMENT, not just stderr. A
+        # Code-Scanning consumer keeps the SARIF artifact and drops the
+        # terminal, so a short result list over files that were never opened
+        # reads as a complete, clean scan -- the same false-clean the json
+        # ``summary.scan_incomplete`` and the text "This is NOT 'no auth
+        # gaps'." line exist to refuse. Same source variable
+        # (``_read_stats["scan_incomplete"]``) and same command-boundary
+        # adapter the sibling commands use -- see cmd_supply_chain.py:1208.
+        _sarif_reads = dict(_read_stats)
+        scan_incomplete = bool(_sarif_reads.get("scan_incomplete"))
+        _sarif_scan_markers: list[str] = []
+        if scan_incomplete:
+            _sarif_unreadable = list(_sarif_reads.get("files_unreadable") or [])
+            _sarif_scan_markers.append(
+                f"auth_gaps_scan_incomplete:{int(_sarif_reads.get('files_read', 0))}"
+                f"_of_{int(_sarif_reads.get('files_discovered', 0))}_files_read; "
+                f"{len(_sarif_unreadable)} could not be read "
+                f"({_format_unreadable_names(_sarif_unreadable)})"
+            )
+
         def _emit_sarif():
-            from roam.output.sarif import auth_gaps_to_sarif, write_sarif
+            from roam.output.sarif import auth_gaps_to_sarif, with_sarif_disclosures, write_sarif
 
             sarif = auth_gaps_to_sarif(all_findings)
+            # ``with_sarif_disclosures`` returns the document UNCHANGED for an
+            # empty marker list, so a complete scan emits byte-identical SARIF
+            # and nothing about the results or the exit code moves.
+            sarif = with_sarif_disclosures(
+                sarif,
+                _sarif_scan_markers + list(_w607cm_warnings_out) + list(_w607ed_warnings_out),
+            )
             click.echo(write_sarif(sarif))
 
         _run_check_cm("serialize_to_sarif", _emit_sarif, default=None)
         # W1331: a SARIF document has nowhere to carry these markers, so a
-        # Code-Scanning gate would read a degraded scan as a clean one.
-        echo_text_warnings(list(_w607cm_warnings_out) + list(_w607ed_warnings_out))
+        # Code-Scanning gate would read a degraded scan as a clean one. The
+        # markers ride in the document above; this terminal copy stays for a
+        # human watching the run, and re-reads the buckets so a marker raised
+        # BY the projection above is still disclosed.
+        echo_text_warnings(_sarif_scan_markers + list(_w607cm_warnings_out) + list(_w607ed_warnings_out))
         return
 
     # --- JSON output ---
