@@ -52,8 +52,9 @@ from claude_agent_sdk import (
 
 # MCP_SYSTEM_PROMPT — locked from round 4 of the multi-repo bake-off.
 # Wins by 30% cost-per-character vs vanilla and 30% vs the original tight
-# prompt across roam-code (Python), union-frontend (Vue/TS), and
-# union-backend (Laravel/PHP). Zero max-turn failures across 12 tasks.
+# prompt across roam-code (Python) and two private sibling repositories
+# (a TypeScript SPA and a PHP service). Zero max-turn failures across 12
+# tasks.
 # See dev/agent_compare_multirepo_results_round4.json for the bake-off
 # data and dev/agent_compare_multirepo_scoreboard.py for the scoreboard.
 # v7 prompt — locked after v8 regressed both focus (8/10 -> 3/8 R-wins)

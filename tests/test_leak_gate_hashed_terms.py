@@ -1,15 +1,21 @@
 """Detection-regression proof for the anti-leak gate's hashed literal terms.
 
-``scripts/internal_language_patterns.py`` stores 12 literal-value patterns
+``scripts/internal_language_patterns.py`` stores its literal-value patterns
 (a personal path, a client codename, private domain identifiers, a
-contributor handle, and similar) as salted SHA-256 digests rather than
-plain regexes — see that module's docstring, "Hashed literal terms — what
-this buys you, honestly" — so the denylist doesn't ship the very values it
-exists to protect. Two different guarantees need two different tests:
+contributor handle, the private platform's names, the host it runs on, and
+similar) as salted SHA-256 digests rather than plain regexes — see that
+module's docstring, "Hashed literal terms — what this buys you, honestly" —
+so the denylist doesn't ship the very values it exists to protect. Three
+different guarantees need three different tests:
 
 * ``test_hashed_term_count_matches_expected`` — permanent, runs everywhere,
   needs no private data. It can't see WHAT was dropped, but it catches a
   silent drop (an entry quietly removed from ``_COMMITTED_HASHED_TERMS``).
+
+* ``test_drift_check_refuses_to_pass_without_a_literals_file`` — also
+  permanent and private-data-free. It pins the one behaviour that decides
+  whether any of this is real: with no source of truth to compare against,
+  the drift check must say UNCHECKABLE, not "in sync".
 
 * The rest of this file is the actual "did we lose detection" proof. It
   reads real plaintext values from a gitignored, never-committed file
@@ -18,11 +24,21 @@ exists to protect. Two different guarantees need two different tests:
   public clone. Putting the literals directly in THIS file instead would
   just relocate the leak from the catalogue to the test suite; the skip is
   the honest alternative to that.
+
+A caution the catalogue paid for once already: on a maintainer's machine the
+scanner MERGES that gitignored file into its lookup at runtime, so a
+detection test can pass locally on a value that was never hashed into the
+committed constants — while CI and every public clone stay blind to it.
+``test_committed_digests_have_not_drifted_from_the_literals_file`` is the
+test that separates those two states, and it is the one to keep green.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -40,13 +56,15 @@ def _patterns():
 
 _m = _patterns()
 
-# Expected label -> variant count for the 12 patterns held as hashed literal
+# Expected label -> variant count for the patterns held as hashed literal
 # terms. Update this alongside internal_language_patterns.py ONLY when a
 # literal term is deliberately added or removed — never just to silence a
 # failing count.
 _EXPECTED_LABEL_COUNTS = {
     "personal-machine-path": 2,
-    "internal-project-codename": 2,
+    # 4: the client codename plus the sibling PRIVATE repositories of the
+    # same engagement, which were tracked in this public repo unnoticed.
+    "internal-project-codename": 4,
     "internal-domain-term-a": 2,
     "internal-domain-term-b": 1,
     "internal-domain-term-c": 2,
@@ -56,7 +74,13 @@ _EXPECTED_LABEL_COUNTS = {
     "internal-policy-clause": 3,
     "legacy-identity-string": 1,
     "unlisted-contributor-handle": 4,
-    "private-platform-name": 1,
+    # 3: the platform's original name, and BOTH spellings of the name it was
+    # renamed to. The rename is why this count is the one to read twice --
+    # while only the original name was digested, the whole-tree scan exited 0
+    # with the new name sitting in tracked public files.
+    "private-platform-name": 3,
+    "infrastructure-provider-name": 1,
+    "infrastructure-host-address": 2,
 }
 
 
@@ -99,7 +123,7 @@ def literals() -> dict[str, list[str]]:
             f"{path} absent (gitignored, never committed) -- expected in CI and "
             "every public clone. This proof only runs where a maintainer has "
             "populated the file locally; see internal_language_patterns.py's "
-            "docstring, 'Optional private supplement'."
+            "docstring, 'Private supplement'."
         )
     return _load_literals(path)
 
@@ -180,3 +204,73 @@ def test_split_literal_across_concatenation_still_detected(literals: dict[str, l
     hits = _m.scan_text("synthetic.py", line)
     names = {h[0] for h in hits}
     assert "internal-project-codename" in names, f"split literal no longer reassembled and caught: {line!r} -> {names}"
+
+
+def test_committed_digests_have_not_drifted_from_the_literals_file(literals: dict[str, list[str]]) -> None:
+    """The committed digests must be a faithful derivation of the literals file.
+
+    Why this is not covered by ``test_all_hashed_literals_still_detected``:
+    that test scans through the LIVE catalogue, which merges the private
+    literals file into the lookup at runtime. On a maintainer's machine it
+    therefore passes for a value that exists ONLY in the gitignored file and
+    was never hashed into ``_COMMITTED_HASHED_TERMS`` — while CI and every
+    public clone, which have no literals file, run a gate that is blind to
+    exactly that value. Green locally, blind where it matters, no diagnostic
+    anywhere. Measured: with the literals file present, the pre-fix catalogue
+    caught the platform's post-rename name; with it absent, the same
+    catalogue exited 0 on the same input.
+
+    ``regen_leak_hashes.py --check`` recomputes from the literals file with
+    the PUBLIC salt and compares against the committed constants, so it sees
+    the standalone catalogue rather than the merged one. Exit 3 means the
+    literals file was absent and nothing was compared; the fixture above has
+    already skipped in that case, so reaching it here would be a bug in the
+    check itself, not a legitimate skip.
+    """
+    proc = subprocess.run(
+        [sys.executable, str(repo_root() / "scripts" / "regen_leak_hashes.py"), "--check"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 3, (
+        f"the literals file is present for this test but --check reported it missing:\n{proc.stdout}{proc.stderr}"
+    )
+    assert proc.returncode == 0, (
+        "committed hashed-term digests have drifted from the literals file. "
+        "Run `python scripts/regen_leak_hashes.py` and paste both blocks.\n"
+        f"{proc.stdout}{proc.stderr}"
+    )
+
+
+def test_drift_check_refuses_to_pass_without_a_literals_file(tmp_path: Path) -> None:
+    """An absent source of truth must report UNCHECKABLE, never "in sync".
+
+    This is the negative control for the control. The check runs in a copy of
+    ``scripts/`` with the literals file deliberately absent -- the state of
+    CI and of every public clone -- and must exit 3 rather than 0. A checker
+    that returns success after comparing nothing is the precise failure mode
+    the whole module exists to prevent, and it would be invisible: same exit
+    code, same silence.
+
+    Runs everywhere, including CI: it needs no private data, only its
+    absence.
+    """
+    scripts = repo_root() / "scripts"
+    staging = tmp_path / "scripts"
+    staging.mkdir()
+    for name in ("internal_language_patterns.py", "regen_leak_hashes.py"):
+        shutil.copy2(scripts / name, staging / name)
+    assert not (staging / "internal_language_literals.txt").exists()
+
+    proc = subprocess.run(
+        [sys.executable, str(staging / "regen_leak_hashes.py"), "--check"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 3, (
+        f"--check with no literals file returned {proc.returncode}, expected 3 (UNCHECKABLE):\n"
+        f"{proc.stdout}{proc.stderr}"
+    )
+    assert "UNCHECKABLE" in proc.stderr

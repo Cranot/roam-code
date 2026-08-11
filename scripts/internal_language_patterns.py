@@ -48,16 +48,29 @@ faces (it must ship in the open to do its job), and closing off casual
 discovery — while being upfront that it's all this achieves — is the goal
 of the hashing below.
 
-Optional private supplement
-----------------------------
-A maintainer's checkout may keep a gitignored ``scripts/
-internal_language_literals.txt`` (``label<TAB>literal`` per line) with
-additional real values to catch locally — never committed. When present, its
-entries are hashed and merged into the runtime lookup, using
-``ROAM_LEAK_SALT`` from the environment if set, else the same committed
-public salt. When the file and env var are both absent (the public/CI case),
-the committed hashes still work standalone. Regenerate the committed digests
-from that file with ``scripts/regen_leak_hashes.py``.
+Private supplement — the SINGLE SOURCE for every hashed term
+-------------------------------------------------------------
+A maintainer's checkout keeps a gitignored ``scripts/
+internal_language_literals.txt`` (``label<TAB>literal`` per line) holding the
+real values — never committed. When present, its entries are hashed and
+merged into the runtime lookup, using ``ROAM_LEAK_SALT`` from the environment
+if set, else the same committed public salt. When the file and env var are
+both absent (the public/CI case), the committed hashes still work standalone.
+
+``_COMMITTED_HASHED_TERMS`` and ``_LEADING_MULTI_HASHES`` below are a DERIVED
+artifact of that file, produced by ``scripts/regen_leak_hashes.py``. They are
+not a second list to maintain in parallel, and
+``python scripts/regen_leak_hashes.py --check`` fails (exit 1) when they have
+drifted from it, so "added a value and forgot to regenerate" breaks the build
+instead of leaving the gate quietly blind.
+
+That is as far as a machine can go, and the limit is worth stating plainly:
+NOTHING here can know about a private value that was never written into the
+literals file. That is exactly how this catalogue's most recent defect
+happened — the platform was renamed, only the old name had ever been
+recorded, and ``scan_internal_language.py --all`` went on exiting 0 while the
+new name sat in tracked PUBLIC files. A rename is a catalogue change; record
+it in the literals file first, then regenerate.
 
 Whitelisted contexts (intentional uses):
 - The CI test file itself (it owns the patterns it forbids).
@@ -79,6 +92,7 @@ from pathlib import Path
 __all__ = (
     "EXCLUDED_DIRS",
     "FORBIDDEN_PATTERNS",
+    "PATTERN_PATH_EXEMPTIONS",
     "SCAN_EXTENSIONS",
     "WHITELIST_FILES",
     "decode_text",
@@ -242,11 +256,65 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
     ),
     # Absolute VPS filesystem paths — leak the deployment box's layout.
     # Tracked configs must use PATH-resolved commands / relative paths.
+    #
+    # This used to enumerate the box's directory names
+    # (``apps|services|repos|legacy|accounting-source``), which meant every
+    # directory nobody had thought to add was invisible: a benchmark
+    # write-up naming a *different* top-level box directory passed the gate
+    # cleanly. An enumeration of real values cannot be a gate for "a value of
+    # this shape appeared" — it only ever catches the past.
+    #
+    # Now: any absolute path under the box's root account, with two
+    # deliberate qualifications.
+    #
+    # * The lookbehind stops a mid-word match. ``policy/root/mode resolution``
+    #   is prose about policy resolution, not a filesystem path, and a rule
+    #   that flags it teaches people to ignore the rule.
+    # * ``(?!\.)`` exempts DOT-directories (``/root/.config/...``). Those are
+    #   tool-managed, XDG-style state locations that exist identically on any
+    #   machine where that tool ran as root; they describe the tool, not the
+    #   operator's service tree, which is what this rule exists to catch.
+    #   This is a shape-level distinction, not another name list.
     (
         "VPS absolute path",
-        re.compile(r"/root/(?:apps|services|repos|legacy|accounting-source)/"),
+        re.compile(r"(?<![A-Za-z0-9_.\-/~])/root/(?!\.)[A-Za-z0-9_][A-Za-z0-9_.\-]*/"),
     ),
 ]
+
+
+# Per-PATTERN, per-PATH exemptions: {pattern_name: {rel_posix_path, ...}}.
+#
+# Deliberately NOT ``WHITELIST_FILES``. Whitelisting a file drops it from the
+# sweep for EVERY pattern, present and future; these entries drop exactly one
+# named rule for exactly one named file and leave the rest of the catalogue
+# applied to it. Reach for this when a rule is genuinely correct in general
+# and a specific file cannot comply for a reason that is itself checkable.
+PATTERN_PATH_EXEMPTIONS: dict[str, frozenset[str]] = {
+    # A byte-pinned provenance artifact from a preregistered experiment: it
+    # records the absolute clone paths of the mined corpora as they existed
+    # on the benchmark host. ``tests/test_repair_intent_frozen.py`` asserts
+    # its SHA-256 (EXPECTED_FROZEN_SHA256, and the same digest is
+    # cross-checked against the results file), so rewriting the paths out of
+    # it would invalidate the artifact it exists to freeze.
+    #
+    # This exemption is safe specifically BECAUSE of that pin: the file
+    # cannot acquire a new leak of any kind without failing that test, which
+    # is a stronger guarantee than a scan. Do not copy this rationale to a
+    # file that is merely inconvenient to fix.
+    "VPS absolute path": frozenset({"tests/data/1c_frozen.json"}),
+}
+
+
+def _exemptions_by_path() -> dict[str, frozenset[str]]:
+    """Invert PATTERN_PATH_EXEMPTIONS to {rel_path: {pattern_name, ...}}."""
+    out: dict[str, set[str]] = {}
+    for pattern_name, paths in PATTERN_PATH_EXEMPTIONS.items():
+        for rel in paths:
+            out.setdefault(rel, set()).add(pattern_name)
+    return {rel: frozenset(names) for rel, names in out.items()}
+
+
+_EXEMPTIONS_BY_PATH = _exemptions_by_path()
 
 
 # ---------------------------------------------------------------------------
@@ -264,16 +332,23 @@ _PUBLIC_SALT = "roam-code-anti-leak-public-salt-v1"
 _PRIVATE_SALT_ENVVAR = "ROAM_LEAK_SALT"
 _PRIVATE_LITERALS_FILENAME = "internal_language_literals.txt"
 
-# 7 of these 12 labels came from an ORIGINAL regex with no ``re.IGNORECASE``
+# 7 of these 14 labels came from an ORIGINAL regex with no ``re.IGNORECASE``
 # — the case sensitivity was load-bearing, not incidental: e.g. the private
-# platform name is a common-enough word that this project's own codebase
-# legitimately reuses it in lowercase (env-var names, vendored-path
+# platform's ORIGINAL name is a common-enough word that this project's own
+# codebase legitimately reuses it in lowercase (env-var names, vendored-path
 # comments) as an intentional, already-public naming convention, while a
 # capitalized mid-sentence mention is the real leak shape. Casefolding
 # everything uniformly would catch the former and break real, shipped,
 # non-leak code. So case sensitivity is tracked per label and preserved
-# exactly as each original regex had it; the other 5 labels genuinely were
+# exactly as each original regex had it; the other labels genuinely were
 # ``re.IGNORECASE`` and stay case-insensitive.
+#
+# A case-SENSITIVE label carries a per-VARIANT cost that a case-insensitive
+# one does not: a term whose lowercase spelling is also a leak needs its own
+# digest. That is a real consequence, not a formality — the platform's
+# post-rename name is not an English word, so its lowercase form leaks just
+# as much, and the literals file lists both spellings for exactly that
+# reason. Do not "simplify" this by casefolding the whole label.
 _CASE_SENSITIVE_LABELS = frozenset(
     {
         "personal-machine-path",
@@ -290,9 +365,15 @@ _COMMITTED_HASHED_TERMS: tuple[tuple[str, str, int], ...] = (
     # A personal machine's filesystem path (two drive-letter variants).
     ("personal-machine-path", "ad2edab6d0d101a93e515af6aad1b0336ba5562bc34b3c8f9e46654ebdec2ffd", 3),
     ("personal-machine-path", "e263598c28f17abc0b080b7a4bf0b36ff208d58d9553cf6b4e69f4ab2981c8f6", 3),
-    # A day-job client's codename (two spellings).
+    # A day-job client's codename, and the sibling PRIVATE repositories of
+    # the same engagement (four spellings). Each repo needs its own digest:
+    # the shared leading word is far too common to forbid on its own, so
+    # only the full two-word name can be matched without wrecking precision
+    # on ordinary uses of that word.
     ("internal-project-codename", "e44d93d135f2c759b6e31ee0a47d76c8735f583783c65f1f651c0ad1cf48f497", 2),
     ("internal-project-codename", "645fc1c1e38e08a70205a9f26aabb02dab76ae9b70906d812ff13944f17734ab", 2),
+    ("internal-project-codename", "fcad3cbfc013ea8b77e13556821ce7f06b959271faf9c66ae6eb330bcdc0516d", 2),
+    ("internal-project-codename", "4a79330334fd2cca0e92d6cecae703602c9704bb7fe815af926a2760d95e31c2", 2),
     # Private domain identifiers from that same engagement (4 distinct
     # terms, one of them also as a fused camelCase identifier).
     ("internal-domain-term-a", "fefa6e1703316473fa856d73077ec3d8ec162526f620d6b8e6b73128e5f5d330", 1),
@@ -323,11 +404,36 @@ _COMMITTED_HASHED_TERMS: tuple[tuple[str, str, int], ...] = (
     ("unlisted-contributor-handle", "f8a42d93a56bd061eebc93964eb86741d83e94176e0efa0a266da2e4e383e675", 2),
     ("unlisted-contributor-handle", "839b9335924d19112d5e1316f3a4e4d75e8025d4f3b87a9d56e42b196795eb54", 3),
     ("unlisted-contributor-handle", "5a57536e1518ad4a530065b2b50db036816e7e2f0ccc583aec1e75b553f4798f", 3),
-    # The private name of the platform this project is developed alongside.
-    # Case-sensitive: this repo also legitimately reuses the same word,
-    # lowercase, in env-var and vendored-path conventions (see
-    # _CASE_SENSITIVE_LABELS above) — only a capitalized mention is the leak.
+    # The private name of the platform this project is developed alongside,
+    # in THREE variants: the original name, and both spellings of the name it
+    # was renamed to.
+    #
+    # Why three, and why this is the defect this catalogue most recently had:
+    # the platform was renamed and only the original name was ever digested.
+    # ``scan_internal_language.py --all`` then exited 0, with no output, for
+    # the entire life of the rename, while the new name sat in tracked PUBLIC
+    # files. The rule "existed", ran on every push, and matched nothing it was
+    # supposed to match. Adding a name here is NOT optional bookkeeping — it
+    # is the whole mechanism.
+    #
+    # Case-sensitive label (see _CASE_SENSITIVE_LABELS): the ORIGINAL name is
+    # an ordinary word this repo reuses lowercase on purpose in env-var and
+    # vendored-path conventions, so only a capitalized mention of THAT one is
+    # a leak. The post-rename name is not such a word, so both its spellings
+    # are digested and a lowercase mention of it is caught too.
     ("private-platform-name", "82fedeef1be283818b6b249fc77ac0c18c296cf0fef5bfa6091ddf55aaa580c3", 1),
+    ("private-platform-name", "9827f5df9622255c0a069ac57637686964484be8a7a70bd781fde3cb9aed08aa", 1),
+    ("private-platform-name", "e4b8d1ef28b88366f62619fc36a712a650599fa230ae98a149e78867f53cf728", 1),
+    # The hosting vendor of the machine that platform runs on, and that
+    # machine's reachable addresses. Case-insensitive: unlike the platform
+    # name there is no lowercase convention in this repo that legitimately
+    # reuses either, so every spelling is a leak. Legitimate customer-facing
+    # mentions of a hosting vendor (a subprocessor disclosure in published
+    # release notes) are separated from leaks by FILE ROLE via
+    # WHITELIST_FILES, not by the pattern — see the note there.
+    ("infrastructure-provider-name", "d8474e1fcd4d0205e21981a84b3547cbb97bb3d852d2eb69a4a39f454b31482a", 1),
+    ("infrastructure-host-address", "cab3f237e089cac3c0a9b000f9ad0e4badb1d2ac91fdd5b89fb6684e922f4b1c", 4),
+    ("infrastructure-host-address", "05d0cd499a56cfcee6ad8c69453b1340d92192b8bf3d44aaa074d9fdda0f53b1", 4),
 )
 
 # Hash of a 1-token candidate's normalized text -> token counts of multi-word
@@ -350,6 +456,8 @@ _LEADING_MULTI_HASHES: dict[str, tuple[int, ...]] = {
     "c0d8e9dde81b6f36d6c76bfd8a9f19acf8027a5ab8ef59e21dd0f4ed8c163312": (2, 3),
     "b460c2f5095f66783b578d9cb7ec6762183cadd1650a6dfa2e54040449613b6e": (2,),
     "147cb5f72862985bfe15c77b1baafa936eb0e9f56d81215491b729306351ba54": (3,),
+    "30a1767309fe118027496744826b4f7bc48480953e1e9d311489cf3413329d15": (4,),
+    "4473a9da6127f5d2681e951a5c1e880974986e28a49fd0cf17a61c6dbb0c082e": (4,),
 }
 
 # The one standalone-abbreviation hash that gets the "not immediately
@@ -457,7 +565,7 @@ def _load_private_supplement() -> list[tuple[str, str, int, str | None]]:
     public salt. Returns ``[]`` when the file is absent — the normal
     public/CI case.
 
-    A label that coincides with one of the 12 built-in ``_CASE_SENSITIVE_LABELS``
+    A label that coincides with one of the built-in ``_CASE_SENSITIVE_LABELS``
     (e.g. a maintainer testing the built-in catalogue against real values, as
     tests/test_leak_gate_hashed_terms.py does) uses that SAME case mode, so a
     private-file entry can never silently re-broaden a committed
@@ -610,6 +718,27 @@ def _first_hashed_match(line: str) -> str | None:
 # still describe cleanup in neutral terms rather than enumerate private
 # pattern values; review and the pushed-history gate cover every non-whitelisted
 # public file regardless of extension or directory.
+#
+# LEAK vs LEGITIMATE MENTION — how this catalogue actually tells them apart,
+# and where it cannot:
+#
+# The same private name can appear legitimately and illegitimately in this
+# repo. "roam-code emits an aggregate contract the platform can ingest" in
+# published release notes is a product-integration statement about a real
+# integration; "our build pins exist for the platform's toolchain
+# attestation" in a build file is internal process rationale that names a
+# private system for no reader's benefit. NO PATTERN CAN SEPARATE THOSE — the
+# strings are identical. The separation is made by FILE ROLE, via this
+# whitelist: published release notes are exempt wholesale, and every other
+# tracked file is treated as leaking when it names a private value.
+#
+# That is a real, admitted limitation and it cuts both ways. A future
+# customer-facing document that legitimately names a hosting subprocessor
+# will be flagged until it is added here, and a genuine leak that lands
+# INSIDE a whitelisted changelog is invisible. Widening the whitelist is
+# therefore a security decision, not tidying: prefer
+# PATTERN_PATH_EXEMPTIONS, which drops one named rule for one named file
+# instead of the entire catalogue.
 WHITELIST_FILES = {
     # The CI test file owns the pattern catalogue.
     "tests/test_no_internal_language.py",
@@ -676,7 +805,43 @@ EXCLUDED_DIRS = (
 )
 
 # Only check these file extensions.
-SCAN_EXTENSIONS = (".py", ".md", ".html", ".yml", ".yaml", ".json", ".txt", ".tmpl", ".css", ".js")
+#
+# This list is itself a hand-maintained allowlist, and it has already cost a
+# real miss: the private platform's post-rename name sat in a tracked
+# ``.toml`` build file, and the sweep skipped the file for its extension
+# alone — so even a correct pattern could not have caught it. Every
+# extension below ``.js`` was added after MEASURING that it introduces no
+# new hits on this tree, i.e. it is pure added reach.
+#
+# The residual gap is structural and is NOT closed here: an extension nobody
+# adds is still unscanned, and this repo tracks text files with no extension
+# at all (they stay out of the sweep by construction). The honest fix is to
+# scan every tracked file except a denylist of binary/generated ones; that is
+# a behaviour change with its own blast radius and belongs in its own change.
+SCAN_EXTENSIONS = (
+    ".py",
+    ".md",
+    ".html",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".txt",
+    ".tmpl",
+    ".css",
+    ".js",
+    ".toml",
+    ".cfg",
+    ".ini",
+    ".sh",
+    ".ps1",
+    ".ts",
+    ".tsx",
+    ".vue",
+    ".php",
+    ".jsonl",
+    ".xml",
+    ".rst",
+)
 
 
 def should_scan(rel_posix_path: str) -> bool:
@@ -704,15 +869,20 @@ def scan_text(rel_posix_path: str, text: str) -> list[tuple[str, int, str]]:
     at most one pattern per line (mirrors the CI test's ``_scan_for_leaks``
     inner loop: the first matching pattern on a line wins, then move on).
     Checks regex SHAPES first, then hashed literal terms (see the module
-    docstring) — either can produce the one hit recorded per line.
+    docstring) — either can produce the one hit recorded per line. Rules
+    listed for this exact path in ``PATTERN_PATH_EXEMPTIONS`` are skipped;
+    every other rule still applies to the file.
 
     The caller is responsible for having decided ``should_scan(rel_posix_path)``
     is True; this function does not re-check.
     """
     hits: list[tuple[str, int, str]] = []
+    exempt = _EXEMPTIONS_BY_PATH.get(rel_posix_path, frozenset())
     for line_no, line in enumerate(text.splitlines(), start=1):
         name = None
         for pattern_name, pattern in FORBIDDEN_PATTERNS:
+            if pattern_name in exempt:
+                continue
             if pattern.search(line):
                 name = pattern_name
                 break

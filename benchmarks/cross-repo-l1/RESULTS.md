@@ -1,7 +1,7 @@
 # Cross-repo L1 transfer — RESULTS
 
 Run date: 2026-07-27. Engine: roam-code `b6a8e87f` (`roam, version 13.10.0`),
-fresh venv from `git archive HEAD`, on the Hetzner box. Corpus:
+fresh venv from `git archive HEAD`, on the benchmark host. Corpus:
 `CORPUS_L1_TRANSFER_60.txt`, frozen at `b6a8e87f`, `--limit 60`,
 `ROAM_AGENT_MODE=bench`. Target SHAs in `TARGET_SHAS.md`, recorded pre-run.
 

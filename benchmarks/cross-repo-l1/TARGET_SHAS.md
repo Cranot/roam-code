@@ -1,6 +1,7 @@
 # Target SHAs — recorded BEFORE any compiler-corpus run
 
-Cloned full-history on the Hetzner box, 2026-07-27, into `/root/l1-measure/targets`.
+Cloned full-history on the benchmark host, 2026-07-27, into a dedicated
+clone directory outside any repository under test.
 
 | target  | repo             | HEAD SHA                                   | committer date            |
 |---------|------------------|--------------------------------------------|---------------------------|
