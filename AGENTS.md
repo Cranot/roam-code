@@ -231,7 +231,7 @@ src/roam/
     gate_presets.py    # Framework-specific gate rules + .roam-gates.yml loader
     graph_helpers.py   # Shared graph utilities (adjacency builders, BFS helpers)
     context_helpers.py # Data-gathering helpers extracted from cmd_context.py
-    cmd_*.py           # 274 command modules: 272 back the 281 default names; 2 are feature-gated
+    cmd_*.py           # 276 command modules: 274 back the 285 default names; 2 are feature-gated
   output/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
@@ -555,7 +555,7 @@ roam supports third-party `roam-plugin-*` packages — the substrate is in
 `src/roam/plugins/` and the reference example is at `dev/example-plugin/`.
 Framework-specific knowledge (nextjs, laravel, prisma, django, …) should ship
 as a plugin rather than landing in core. Plugin-registered commands do NOT count
-toward the "281 commands" headline (W319) — the figure pins core-tree commands
+toward the "285 commands" headline (W319) — the figure pins core-tree commands
 only; the plugin count surfaces separately in `roam plugins list`.
 
 **Entry-point pattern.** Plugins register via Python entry points; roam

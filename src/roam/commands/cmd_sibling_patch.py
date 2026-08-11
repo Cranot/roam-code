@@ -1,6 +1,6 @@
 """Sibling Patch Network v1 — ``roam sibling-patch apply <claim>``.
 
-A replay-certified defect-transfer command (design: ``fable-packets/SPN_V1_DESIGN.md``).
+A replay-certified defect-transfer command (design: ``docs/sibling-patch-network-v1.md``).
 A producer who fixed a defect emits one proof-carrying ``RepairTransferClaim``;
 a consumer runs it against *their own* repo and gets, PROPOSE-ONLY:
 

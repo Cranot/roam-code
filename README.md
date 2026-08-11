@@ -202,10 +202,13 @@ contains the literal answer — and a further ~33% ship structured facts
 (context, not the literal answer), at **p50 0.45 s cold / p50 92 ms live**
 (warm cache) compile latency, fully local. Zero model calls.
 
-**Eval history by version** — re-measured on every kernel change; losses are
-published, attacked, then re-measured. The table below is the summary ledger;
-raw per-cell data for the historical runs is retained privately, not in this
-repository:
+**Eval history by version** — losses are published, attacked, then
+re-measured. The ledger is **not** re-run on every release: the newest
+measured kernel is **v13.7 (Jul 11)**, and four kernel releases have shipped
+since without a fresh A/B (13.8.0, 13.9.0, 13.10.0, 14.0.0). Read every row
+below as measured-at-the-stated-kernel, not as a current-release claim. The
+table is the summary ledger; raw per-cell data for the historical runs is
+retained privately, not in this repository:
 
 | measured | kernel | what | result |
 |---|---|---|---|
@@ -438,7 +441,9 @@ Roam's surfaces differ in how rigorously they've been validated — know which i
 | `roam preflight <symbol>` | Pre-change safety gate: blast radius + tests + complexity + coupling + fitness |
 | `roam critique` | Verify a patch against the graph: clones-not-edited + blast radius + intent vs semantic-diff. Pipe `git diff` in; exit 5 on high severity |
 
+<!-- BEGIN auto-count:readme-sarif-surface-mention -->
 The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 37 commands).
+<!-- END auto-count:readme-sarif-surface-mention -->
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
@@ -644,7 +649,9 @@ The Action accepts `commands`, `gate` (quality-gate expression, exit 5 on
 failure), `sarif` (upload to GitHub Code Scanning), `comment` (sticky PR
 comment), `cache`, and `changed-only` (incremental mode).
 
+<!-- BEGIN auto-count:readme-sarif-output-count -->
 **SARIF output.** 37 commands honour the global `--sarif` flag (health, complexity, dead, smells, clones, vulns, taint, secrets, n1, …). Minimal upload:
+<!-- END auto-count:readme-sarif-output-count -->
 
 ```yaml
 - run: roam --sarif health > roam-health.sarif

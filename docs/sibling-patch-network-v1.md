@@ -1,15 +1,19 @@
 # Sibling Patch Network v1 (experimental, propose-only, default-OFF)
 
 Productizes the measured **1c cross-org WIN** (mined repair-intent reranking
-beats a stranger's own grep) — see `fable-packets/SPN_V1_DESIGN.md` and the
-falsifier verdict (`SURVIVES, SCOPED` to defect-shaped repairs, judged on
-nDCG/P@3/hard-neg, not top-10 recall alone).
+beats a stranger's own grep), scoped by the falsifier verdict (`SURVIVES,
+SCOPED` to defect-shaped repairs, judged on nDCG/P@3/hard-neg, not top-10
+recall alone). This file is the design reference; the raw 1c per-cell
+measurement data is retained privately and is not in this repository.
 
-**Status:** branch `sibling-patch-network-v1`, gated behind
+**Status:** merged to `main` and released in v13.7.0 (2026-07-08); present at
+v14.0.0. Still **experimental and propose-only**, gated behind
 `ROAM_EXPERIMENTAL_REPAIR_SIBLINGS=1` (same flag as `repair-siblings`).
-Default-off is a true no-op: the command is absent from the static surface,
-help, counts, and MCP until the owner opts in. Nothing here is deployed,
-merged, or wired into autopilot.
+Default-off remains a true no-op: with the flag unset, `sibling-patch` is
+absent from the CLI command list, help, the shipped command counts, and the
+MCP tool surface (measured — it appears in `roam --help` only with the flag
+set). Shipping the code is not the same as endorsing the result: the
+cross-org lift is still the open question below.
 
 ## What it does
 
