@@ -921,7 +921,11 @@ def _start_component_process(
         job_handle = _create_windows_component_job()
         if job_handle is None:
             raise RuntimeError("Windows process-tree containment is unavailable")
-        process_argv = [_os.path.realpath(_sys.executable), "-c", _WINDOWS_COMPONENT_WRAPPER, *argv]
+        # Unresolved, for the reason given at the component launcher below: resolving
+        # the interpreter defeats virtualenv detection. Inert on Windows today, where
+        # `python.exe` is a real file -- fixed anyway so the construct does not read
+        # as endorsed, and does not get copied to a platform where it bites.
+        process_argv = [_sys.executable, "-c", _WINDOWS_COMPONENT_WRAPPER, *argv]
         child_stdin = _subprocess.PIPE
     elif linux_supervisor:
         if not callable(getattr(_os, "pidfd_open", None)) or not callable(getattr(_signal, "pidfd_send_signal", None)):
@@ -1268,7 +1272,19 @@ def _run_roam_json(args: list[str], *, deadline: float | None = None) -> dict:
             )
         timeout_seconds = min(timeout_seconds, remaining)
         deadline_limited = timeout_seconds < _COMPONENT_TIMEOUT_SECONDS
-    argv = [_os.path.realpath(_sys.executable), "-m", "roam", "--json", *args]
+    # `_sys.executable` UNRESOLVED, deliberately. A virtualenv is located from the
+    # interpreter's own path -- CPython reads `pyvenv.cfg` from beside it -- and on
+    # Linux and macOS `.venv/bin/python` is a SYMLINK to the base interpreter.
+    # `realpath` therefore resolved the child straight out of the environment that
+    # has roam installed and into one that does not. Every component then imported
+    # nothing, printed nothing, and returned `component_empty_output`.
+    #
+    # It was invisible here because Windows `.venv\Scripts\python.exe` is a real
+    # file, so `realpath` is a no-op and the venv survives -- the defect was never
+    # "Linux", it was "symlinked interpreter". The Linux supervisor twelve hundred
+    # lines up already passes `_sys.executable` unresolved, which is exactly why
+    # the supervisor could import roam while the component it launched could not.
+    argv = [_sys.executable, "-m", "roam", "--json", *args]
     child_env = dict(_os.environ)
     child_env["PYTHONUTF8"] = "1"
     try:
