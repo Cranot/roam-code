@@ -3461,6 +3461,14 @@ def stale_refs(
     # the numerator or the denominator, so "all refs resolve" would be a
     # claim about references this scan never looked at.
     unreadable_count = len(files_unreadable)
+    # W1331: ONE SITE DECIDES, and every channel spells it the same way.
+    # Named for the canonical disclosure token rather than a local shorthand —
+    # the json, text and SARIF branches must all be able to say this scan was
+    # partial, and a reader (or the disclosure-symmetry scanner) cannot tell a
+    # branch discloses it at all when each branch invents its own spelling.
+    # Identical in value to the `bool(files_unreadable)` guards it replaces:
+    # this is a DISCLOSURE change, not a decision change.
+    scan_incomplete = bool(files_unreadable)
     unread_note = f" · {unreadable_count} unreadable" if unreadable_count else ""
     if target_count == 0:
         if unreadable_count:
@@ -3727,7 +3735,7 @@ def stale_refs(
         # W1527: an unreadable file is UNANALYZABLE, not clean -- the gate
         # must refuse rather than certify refs it never read. Decided once,
         # through the shared policy, for every output channel below.
-        if gate_should_fail(bool(gate), findings=target_count, scan_incomplete=bool(files_unreadable)):
+        if gate_should_fail(bool(gate), findings=target_count, scan_incomplete=scan_incomplete):
             ctx.exit(5)
         if gate and attest_error:
             from roam.exit_codes import EXIT_PARTIAL
@@ -3735,9 +3743,23 @@ def stale_refs(
             ctx.exit(EXIT_PARTIAL)
 
     if sarif_mode:
-        from roam.output.sarif import stale_refs_to_sarif, write_sarif
+        from roam.output.sarif import stale_refs_to_sarif, with_sarif_disclosures, write_sarif
 
-        click.echo(write_sarif(stale_refs_to_sarif(full_targets_with_hints)))
+        _sarif_doc = stale_refs_to_sarif(full_targets_with_hints)
+        if scan_incomplete:
+            # W1331: a SARIF document has nowhere else to say the census was
+            # partial, and a Code-Scanning consumer reads a short result list
+            # as a complete one. The marker goes in the DOCUMENT — stderr
+            # beside it is not retained by the system that ingests it. Same
+            # adapter and marker shape as cmd_supply_chain.py.
+            _sarif_doc = with_sarif_disclosures(
+                _sarif_doc,
+                [
+                    f"stale_refs_scan_incomplete:{unreadable_count}_file(s)_could_not_be_read"
+                    "_and_contributed_no_references"
+                ],
+            )
+        click.echo(write_sarif(_sarif_doc))
         _exit_with_policy()
         return
 
@@ -3747,9 +3769,9 @@ def stale_refs(
             "missing_targets": target_count,
             "stale_refs": total_refs,
             "files_scanned": files_scanned,
-            "files_unreadable": len(files_unreadable),
-            "scan_incomplete": bool(files_unreadable),
-            "partial_success": bool(files_unreadable),
+            "files_unreadable": unreadable_count,
+            "scan_incomplete": scan_incomplete,
+            "partial_success": scan_incomplete,
             "refs_checked": refs_seen,
             "displayed": len(displayed),
             "scan_seconds": scan_seconds,
@@ -3814,11 +3836,14 @@ def stale_refs(
     if diff_warning:
         click.echo(diff_warning, err=True)
     click.echo(f"VERDICT: {verdict}\n")
-    if files_unreadable:
+    if scan_incomplete:
         # The text channel is the one this repo's own wired gate callers
-        # read; it must not tell a quieter story than --json.
+        # read; it must not tell a quieter story than --json. W1331: the
+        # guard reads the canonical `scan_incomplete` name, so the prose
+        # below is provably the same fact the envelope publishes rather
+        # than an independently-spelled paraphrase that can drift away.
         click.echo(
-            f"SCAN INCOMPLETE: {len(files_unreadable)} file(s) could not be read and "
+            f"SCAN INCOMPLETE: {unreadable_count} file(s) could not be read and "
             "contributed no references to this result:"
         )
         for item in files_unreadable[:10]:
@@ -3827,7 +3852,7 @@ def stale_refs(
             click.echo(f"  (+{len(files_unreadable) - 10} more)")
         click.echo()
     if target_count == 0:
-        if files_unreadable:
+        if scan_incomplete:
             click.echo(
                 f"Scanned {files_scanned} files, checked {refs_seen} references — "
                 "every reference that WAS read resolves."

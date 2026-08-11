@@ -549,8 +549,18 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
         # part of the claim. When the walk actually discarded frontier at
         # ``--max-depth`` the published counts are a lower bound, and LAW 6
         # requires the verdict to say so without any other field.
+        #
+        # W1331: named for the canonical disclosure token rather than for the
+        # counter behind it. Both output branches below have to spell this
+        # signal the same way, or neither a reader diffing them nor the
+        # scanner can tell that the text branch discloses it at all --
+        # exactly the ignore-drift shape fixed in c49b1312. The value is the
+        # same condition both branches already tested, one via the counter
+        # and one via a note string that is non-empty precisely when the
+        # counter is non-zero.
+        scan_incomplete = bool(pruned_at_depth)
         truncation_note = ""
-        if pruned_at_depth:
+        if scan_incomplete:
             verdict += (
                 f"; {pruned_at_depth} branch{'es' if pruned_at_depth != 1 else ''} pruned at --max-depth {max_depth}"
             )
@@ -578,7 +588,7 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
                 "max_depth": max_depth,
                 "pruned_at_max_depth": pruned_at_depth,
             }
-            if pruned_at_depth:
+            if scan_incomplete:
                 summary["partial_success"] = True
                 summary["scan_incomplete"] = True
                 summary["incomplete_reasons"] = ["max_depth"]
@@ -600,7 +610,7 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
 
         # --- Text output ---
         click.echo(f"VERDICT: {verdict}")
-        if truncation_note:
+        if scan_incomplete:
             click.echo(truncation_note)
         click.echo()
 
@@ -678,7 +688,13 @@ def _no_paths_output(
     # and "no paths connecting" are both clean-scan claims; a walk that
     # discarded frontier at the bound has not earned either of them, even
     # when a filter was also in play.
-    if pruned_at_depth:
+    # W1331: one boolean, spelled as the disclosure token itself, feeding both
+    # the text verdict/note below and the JSON summary key. The two branches
+    # used to test the raw counter independently, which is how a spelling
+    # drift between them goes unnoticed.
+    scan_incomplete = bool(pruned_at_depth)
+
+    if scan_incomplete:
         # The walk did not complete — it hit the depth bound and threw
         # frontier away. "No paths connecting" would be a claim the
         # traversal never earned, so this is its own state and it is NOT
@@ -730,7 +746,7 @@ def _no_paths_output(
     }
     if max_depth is not None:
         summary["max_depth"] = max_depth
-    if pruned_at_depth:
+    if scan_incomplete:
         summary["scan_incomplete"] = True
         summary["incomplete_reasons"] = ["max_depth"]
 

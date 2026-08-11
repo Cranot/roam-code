@@ -1018,6 +1018,30 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
     if _unevaluated_rules:
         verdict = f"{verdict} ({_unevaluated_rules} could not be evaluated)"
 
+    # W1331: ONE SITE DECIDES, and every channel reads it. ``unevaluated_errors``
+    # was computed inside the ``if json_mode:`` branch below, which the SARIF
+    # early return never reaches -- so a CI consumer ingesting the SARIF
+    # document read a short result list as a complete one, and the text tail
+    # named only the all-severity count carried by the verdict. Spelled
+    # ``scan_incomplete``, not shortened, because the three branches must spell
+    # the signal the same way or neither a reader nor the W1331 scanner can
+    # tell the blind branch discloses it (cmd_ignore_drift.py:327-331).
+    #
+    # Shape and prose copied from the sibling ``roam rules``
+    # (cmd_rules.py:352-386, :430-436, :555-556): same narrow companion to the
+    # broad ``partial_success`` -- error-severity rules that never ran, i.e.
+    # the subset a gate cannot decide on -- and the same reason string.
+    unevaluated_errors = sum(
+        1 for r in results if r.get("partial_success") and r.get("passed") and r.get("severity") == "error"
+    )
+    scan_incomplete = unevaluated_errors > 0
+    incomplete_reason = (
+        f"{unevaluated_errors} error-severity rule(s) could not be evaluated "
+        "(graph clause had unresolved targets or missing clone index)"
+        if scan_incomplete
+        else None
+    )
+
     # --- SARIF output ---
     if sarif_mode:
         from roam.output.sarif import runtime_filter_disclosure, write_sarif
@@ -1064,9 +1088,20 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
             rule_ids_disabled=rule_disabled,
             finding_level_filters=finding_filters,
         )
+        # W1331: feed the scan_incomplete disclosure into the notification
+        # channel that already exists for W1114 loader warnings rather than
+        # inventing a second mechanism -- exactly as cmd_rules.py:430-436 does.
+        # A SARIF document has nowhere else to say the rule set was only
+        # partly evaluated, and a code-scanning consumer reads a short result
+        # list as a complete one. Hash invariant: when nothing is degraded
+        # ``_sarif_notes`` stays empty, ``emit_runtime_notifications`` stays
+        # False, and the bytes are identical to before.
+        _sarif_notes = list(deduped_warnings_out)
+        if incomplete_reason:
+            _sarif_notes.append(incomplete_reason)
         sarif = _results_to_sarif(
             results,
-            warnings_out=list(deduped_warnings_out),
+            warnings_out=_sarif_notes,
             runtime_overrides=sarif_overrides or None,
             runtime_notification_overrides=sarif_notif_overrides or None,
         )
@@ -1087,10 +1122,10 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
         # passed=True + partial_success=True. Counting it as a pass without
         # saying so is the same false-clean `roam rules` carried; both
         # commands now report it, using the same word.
-        unevaluated = sum(1 for r in results if r.get("partial_success") and r.get("passed"))
-        unevaluated_errors = sum(
-            1 for r in results if r.get("partial_success") and r.get("passed") and r.get("severity") == "error"
-        )
+        # ``unevaluated_errors`` / ``scan_incomplete`` are now computed once
+        # above the SARIF dispatch (W1331), so all three channels read the
+        # same number instead of only this branch being able to see it.
+        unevaluated = _unevaluated_rules
 
         summary: dict = {
             "verdict": verdict,
@@ -1104,7 +1139,7 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
             summary["unevaluated"] = unevaluated
             summary["unevaluated_errors"] = unevaluated_errors
             summary["partial_success"] = True
-        summary["scan_incomplete"] = unevaluated_errors > 0
+        summary["scan_incomplete"] = scan_incomplete
         # W1030-followup-C: closed-enum LoadStatus disclosure on the
         # envelope. Mirrors the cmd_alerts + cmd_budget + cmd_health
         # vocabulary so the four W1030-followup-cohort emitters use a
@@ -1163,6 +1198,18 @@ def check_rules_command(ctx, rule_filter, severity_filter, config_path, profile_
     # --- Text output ---
     click.echo("VERDICT: {}".format(verdict))
     click.echo()
+
+    # W1331: the same fact the JSON summary publishes as ``scan_incomplete``.
+    # The verdict above already carries the ALL-severity "(N could not be
+    # evaluated)" count; this names the error-severity subset, which is the
+    # one a gate cannot decide on (cmd_rules.py:461-464), and which this
+    # branch previously never mentioned at all. Placed here, not in the tail,
+    # for the same reason the warnings block below is: a human piping stdout
+    # to ``head`` must still see the disclosure. Prose is
+    # ``incomplete_reason``, shared verbatim with the SARIF notification.
+    if incomplete_reason:
+        click.echo(f"UNEVALUATED: {incomplete_reason}.")
+        click.echo()
 
     # W1019d: surface accumulated config-load warnings prominently — before
     # the rule list so the user sees the silent-state disclosure even when
