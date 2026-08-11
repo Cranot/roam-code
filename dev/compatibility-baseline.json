@@ -717,6 +717,7 @@
     "coverage-gaps": {
       "flags": [
         "--auto-detect",
+        "--ci",
         "--config",
         "--entry-pattern",
         "--gate",
