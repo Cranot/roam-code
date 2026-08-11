@@ -67,7 +67,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def _live_counts() -> dict:
     sys.path.insert(0, str(REPO_ROOT / "src"))
-    from roam.surface_counts import collect_surface_counts
+    from roam.surface_counts import collect_surface_counts, command_module_counts
 
     surface = collect_surface_counts()
     return {
@@ -82,6 +82,13 @@ def _live_counts() -> dict:
         # roam.surface_counts.mcp_surface_counts.
         "mcp_core_tools": int(surface["mcp"]["preset_counts"]["core"]),
         "mcp_preset_counts": {str(name): int(count) for name, count in surface["mcp"]["preset_counts"].items()},
+        # AGENTS.md states the ``src/roam/commands/`` census in two places —
+        # a directory-tree comment and the plugin-scope note. Both were
+        # hand-typed and had drifted to 274 modules / 272 backing / "281
+        # commands" while the file's own auto-count headline said 285. Read
+        # from the same AST/filesystem census so the three numbers in that
+        # one sentence cannot disagree with each other or with the headline.
+        **{f"module_{key}": value for key, value in command_module_counts().items()},
     }
 
 
@@ -755,6 +762,30 @@ def build_replacements(counts: dict, languages: int) -> None:
                     re.compile(r"Click CLI \(\d+ canonical \+ \d+ aliases\)"),
                     f"Click CLI ({canon} canonical + {aliases} aliases)",
                 ),
+                # Free-form "N languages" prose: the pitch paragraph and the
+                # pipeline diagram both quote the extractor-registry size.
+                # Marker-aware masking skips the headline occurrence (owned by
+                # the cousin script's readme-headline-counts block), so this
+                # only touches the two unguarded sites. Injecting "26
+                # languages" here passed the entire doc-hygiene job before.
+                #
+                # Both exclusions are load-bearing, and both were found by
+                # running the thing rather than by reading it:
+                #
+                # ``(?<!Tier )`` — README says "Tier 2 languages" twice (the
+                #   extractor QUALITY taxonomy, not a count). Without it the
+                #   pattern matched "2 languages" there and would have written
+                #   "Tier 28 languages": a count guard corrupting the prose it
+                #   exists to keep honest.
+                # ``(?!</sub>)`` — the hero headline's "28 languages</sub>"
+                #   lives INSIDE the ``readme-headline-counts`` marker block,
+                #   which build_readme_counts.py owns. Runtime masking already
+                #   skips it, but ``test_count_drift_no_overlap`` enforces the
+                #   stricter rule that a pattern must not even MATCH inside a
+                #   co-owned block. Keeping the rest of the pattern general
+                #   means a NEW unguarded "N languages" sentence is still
+                #   caught — which is the whole point.
+                (re.compile(r"(?<!Tier )\b\d+ languages\b(?!</sub>)"), f"{langs} languages"),
                 # NOTE: the "are 90 of the N tools dead weight?" phrase in the
                 # README MCP-tool table is NOT guarded here. It lives inside the
                 # auto-count `readme-mcp-tool-list-table` marker block, sourced
@@ -811,6 +842,25 @@ def build_replacements(counts: dict, languages: int) -> None:
                 (
                     re.compile(r"\bfor all \d+ command names\b"),
                     f"for all {cmds} command names",
+                ),
+                # Directory-tree comment: the ``src/roam/commands/`` census.
+                # Lives INSIDE a fenced code block, so it cannot carry the
+                # cousin script's HTML auto-count markers — this regex is the
+                # only mechanism that can make it answer to source. It stated
+                # "274 command modules: 272 back the 281 default names" while
+                # the file's own marker-protected headline said 285 commands;
+                # nothing read either number, so nothing could notice.
+                (
+                    re.compile(r"# \d+ command modules: \d+ back the \d+ default names; \d+ are feature-gated"),
+                    f"# {counts['module_modules']} command modules: "
+                    f"{counts['module_backing_default_names']} back the {cmds} default names; "
+                    f"{counts['module_feature_gated']} are feature-gated",
+                ),
+                # Plugin-scope note: 'do NOT count toward the "N commands"
+                # headline'. The quoted figure must BE the headline figure.
+                (
+                    re.compile(r'toward the "\d+ commands" headline'),
+                    f'toward the "{cmds} commands" headline',
                 ),
             ],
             True,

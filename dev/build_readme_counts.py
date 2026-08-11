@@ -91,6 +91,7 @@ from roam.surface_counts import (  # noqa: E402, I001
     cli_surface_counts,
     mcp_surface_counts,
     mcp_tool_descriptions,
+    sarif_consumer_count,
 )
 
 
@@ -110,6 +111,29 @@ class Counts:
     mcp_presets: dict[str, int]  # every named preset, in runtime declaration order
     mcp_default_preset: int  # core + 1 meta-tool (``roam_expand_toolset``)
     pyproject_version: str  # ``version`` string from pyproject.toml (truth)
+    languages: int  # ``roam.languages.registry.get_supported_languages()`` size
+    sarif_commands: int  # commands honouring ``--sarif`` (``cli._SARIF_CONSUMERS``)
+
+
+def _live_languages() -> int:
+    """Number of languages the extractor registry actually supports.
+
+    Imported at call time (not module scope) so ``--root`` overrides and
+    tests can monkeypatch ``roam.languages.registry.get_supported_languages``
+    and have THIS reader observe the change. That is the whole point of the
+    field: before it existed the language count was a literal ``28`` typed
+    into four f-strings below, so ``--check`` could only confirm that the
+    generator agreed with itself. A registry that grew to 29 left every doc
+    surface claiming 28 and the gate green.
+
+    Hard-fails on import error for the same reason
+    ``scripts/sync_surface_counts.py::_live_languages`` does: a silent
+    ``return 0`` would publish ``0 languages`` into README, AGENTS.md, and
+    llms-install.md while exiting 0.
+    """
+    from roam.languages.registry import get_supported_languages
+
+    return len(get_supported_languages())
 
 
 def collect_counts(root: Path | None = None) -> Counts:
@@ -137,6 +161,8 @@ def collect_counts(root: Path | None = None) -> Counts:
         mcp_presets={str(name): int(count) for name, count in mcp["preset_counts"].items()},
         mcp_default_preset=int(mcp["preset_counts"]["core"]),
         pyproject_version=_pyproject_version(root),
+        languages=_live_languages(),
+        sarif_commands=sarif_consumer_count(),
     )
 
 
@@ -276,13 +302,13 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
         # still flow through ``readme-canonical-mention`` and the table /
         # preset blocks below.
         # README:15 ``<sub>N commands · M MCP tools (C in the default
-        # `core` preset) · 28 languages</sub>`` headline. Re-wrapped in
+        # `core` preset) · L languages</sub>`` headline. Re-wrapped in
         # auto-count markers after the integration smoke caught a +3 MCP
         # drift (224 → 227) that the hand-maintained W419-era headline
         # missed. Closes the headline-counts drift class.
         "readme-headline-counts": (
             f"<sub>{c.command_names} commands · {c.mcp_full} MCP tools "
-            f"({c.mcp_default_preset} in the default `core` preset) · 28 languages</sub>"
+            f"({c.mcp_default_preset} in the default `core` preset) · {c.languages} languages</sub>"
         ),
         # Line 325: "the canonical surface is N commands (X canonical + Y aliases) organised into Z categories"
         "readme-canonical-mention": (
@@ -329,6 +355,27 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
             f"<summary><strong>Full command reference — canonical command "
             f"list (all {c.canonical_commands})</strong></summary>"
         ),
+        # The two SARIF-count prose sites. Both quoted the number as a
+        # hand-typed literal outside any marker, so injecting "38 commands"
+        # (real: 37) passed the whole doc-hygiene job and every doc-guard
+        # test. Source of truth: ``cli._SARIF_CONSUMERS`` via
+        # ``surface_counts.sarif_consumer_count()`` — the same tuple
+        # ``tests/test_sarif_consumers_schema.py`` pins and that
+        # ``roam --sarif`` actually dispatches on.
+        "readme-sarif-surface-mention": (
+            f"The full surface spans **{c.category_count} categories** — Getting Started, "
+            f"Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and "
+            f"Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every "
+            f"command name, and `roam surface --json` for the machine-readable inventory. "
+            f"Every command accepts `roam --json <cmd>` for structured output and "
+            f"`roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by "
+            f"{c.sarif_commands} commands)."
+        ),
+        "readme-sarif-output-count": (
+            f"**SARIF output.** {c.sarif_commands} commands honour the global `--sarif` flag "
+            f"(health, complexity, dead, smells, clones, vulns, taint, secrets, n1, …). "
+            f"Minimal upload:"
+        ),
     }
 
 
@@ -374,7 +421,7 @@ def _claude_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 —
             f"It pre-indexes symbols, call graphs, dependencies, architecture, "
             f"and git history into\n"
             f"a local SQLite DB. **{c.command_names} commands · {c.mcp_full} "
-            f"MCP tools ({c.mcp_default_preset} in the default `core` preset) · 28 "
+            f"MCP tools ({c.mcp_default_preset} in the default `core` preset) · {c.languages} "
             f"languages · local analysis · zero API keys.**"
         ),
         # W138: the authoritative-counts line now names the AST-derived,
@@ -397,9 +444,10 @@ def _claude_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 —
 
 def _llms_install_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 — root accepted for signature symmetry with _readme_blocks
     return {
-        # Line 4: "N commands, M MCP tools, 28 languages, local analysis, zero API keys."
+        # Line 4: "N commands, M MCP tools, L languages, local analysis, zero API keys."
         "llms-install-headline": (
-            f"{c.command_names} commands, {c.mcp_full} MCP tools, 28 languages, local analysis, zero API keys."
+            f"{c.command_names} commands, {c.mcp_full} MCP tools, {c.languages} languages, "
+            f"local analysis, zero API keys."
         ),
         # Footer: "Run roam --help-all for all N commands (+ alias pairs)."
         "llms-install-footer": (f"Run `roam --help-all` for all {c.command_names} commands (+ alias pairs)."),
@@ -429,7 +477,7 @@ def _agents_md_blocks(c: Counts, root: Path) -> dict[str, str]:  # noqa: ARG001 
             f"It pre-indexes symbols, call graphs, dependencies, architecture, "
             f"and git history into\n"
             f"a local SQLite DB. **{c.command_names} commands · {c.mcp_full} "
-            f"MCP tools ({c.mcp_default_preset} in the default `core` preset) · 28 "
+            f"MCP tools ({c.mcp_default_preset} in the default `core` preset) · {c.languages} "
             f"languages · local analysis · zero API keys.**"
         ),
         # Authoritative-counts line matches CLAUDE.md's claude-authoritative
@@ -754,7 +802,8 @@ def run(write: bool, *, mode_label: str, rotate_card_hash: bool = True, root: Pa
         f"aliases={c.alias_names} categories={c.category_count} "
         f"mcp_core={c.mcp_core} mcp_full={c.mcp_full} "
         f"mcp_presets={c.mcp_presets} "
-        f"default_preset={c.mcp_default_preset}"
+        f"default_preset={c.mcp_default_preset} "
+        f"languages={c.languages} sarif_commands={c.sarif_commands}"
     )
     for r in results:
         status = "changed" if r.changed else "ok"

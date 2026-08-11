@@ -17923,9 +17923,8 @@ def roam_next(root: str = ".") -> dict:
         "commits), and persisted clone siblings (when ``roam clones "
         "--persist`` was run). Each candidate gets a score that's the "
         "normalised sum of the three contributions. Different from "
-        "``roam_impact`` (transitive blast radius) and "
-        "``roam_neighbours`` (graph-only 1-hop neighbours) -- this "
-        "fuses co-change + clones into the ranking."
+        "``roam_impact`` (transitive blast radius) -- this fuses "
+        "co-change + clones into the ranking."
     ),
 )
 def roam_recommend(
@@ -18123,9 +18122,10 @@ def roam_agent_context(
         "preflight compliance, blast accuracy, replay survival). "
         "Empty state (no runs / no matching runs) returns a clean "
         'envelope with ``state: "no_data"`` -- never empty stdout, '
-        "never a crash. Different from ``roam_runs_verify`` (HMAC "
-        "tamper-detection) -- this is the per-agent quality score "
-        "across runs."
+        "never a crash. Different from the CLI ``roam runs verify`` "
+        "(HMAC ledger tamper-detection -- CLI-only, there is no MCP "
+        "tool for it) -- this is the per-agent quality score across "
+        "runs."
     ),
 )
 def roam_agent_score(
@@ -18137,8 +18137,9 @@ def roam_agent_score(
     """Score each agent on a 0..100 composite across recent runs.
 
     WHEN TO USE: triage which agent is producing the highest-quality
-    runs. Pair with ``roam_runs_verify`` for ledger tamper-detection
-    on a specific run.
+    runs. Pair with the CLI ``roam runs verify`` for ledger
+    tamper-detection on a specific run — that verifier is CLI-only and
+    is deliberately NOT exposed as an MCP tool.
 
     Parameters
     ----------
@@ -19388,8 +19389,9 @@ def roam_minimap(root: str = ".") -> dict:
         "diff, and reports which findings would have surfaced "
         "pre-merge. Useful for retrospective replay -- 'would "
         "today's detector set have caught the incidents already in "
-        "history?' Different from ``roam_pr_replay`` (one PR replay) "
-        "-- this is the range-replay over historical commits."
+        "history?' Different from the CLI ``roam pr-replay`` (one PR "
+        "replay -- CLI-only, there is no MCP tool for it) -- this is "
+        "the range-replay over historical commits."
     ),
 )
 def roam_postmortem(
@@ -19401,9 +19403,10 @@ def roam_postmortem(
     """Replay critique against a historical commit range.
 
     WHEN TO USE: agent wants to know whether the current detector
-    set would have caught past incidents. Pair with
-    ``roam_pr_replay`` for single-PR replay and ``roam_postmortem``
-    in CI for pre-purchase signal.
+    set would have caught past incidents. For single-PR replay use
+    the CLI ``roam pr-replay`` — it is CLI-only and is deliberately
+    NOT exposed as an MCP tool. Run ``roam_postmortem`` in CI for
+    pre-purchase signal.
 
     Parameters
     ----------

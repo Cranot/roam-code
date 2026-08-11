@@ -141,6 +141,75 @@ def cli_commands() -> dict[str, tuple[str, str]]:
     return commands
 
 
+def sarif_consumers() -> tuple[str, ...]:
+    """Return the ``_SARIF_CONSUMERS`` tuple from ``src/roam/cli.py``.
+
+    The single source of truth for "how many commands honour ``--sarif``".
+    Before this helper existed, the README quoted that number as a hand-typed
+    literal and ``dev/build_readme_counts.py`` had no field for it, so the
+    doc-hygiene gate could not tell 37 from 38 — injecting a wrong count
+    passed every check. A count that no reader derives is a claim, not a
+    measurement.
+
+    AST-only, matching the rest of this module: importing ``roam.cli``
+    transitively drags in Click and every lazily-registered command module.
+    ``tests/test_sarif_consumers_schema.py`` already pins the literal-tuple
+    shape, so the parse below cannot silently degrade into a partial read —
+    a non-literal rewrite raises here rather than returning a short tuple.
+    """
+    cli_path = _package_file("cli.py")
+    module = _load_ast(cli_path)
+    value = _literal_assignment(module, "_SARIF_CONSUMERS")
+    if not isinstance(value, tuple):
+        raise TypeError("_SARIF_CONSUMERS is not a tuple literal in cli.py")
+    if not all(isinstance(name, str) for name in value):
+        raise TypeError("_SARIF_CONSUMERS contains a non-string entry")
+    return value
+
+
+def sarif_consumer_count() -> int:
+    """Number of CLI commands that honour the global ``--sarif`` flag."""
+    return len(sarif_consumers())
+
+
+def command_module_counts() -> dict[str, int]:
+    """Return the ``src/roam/commands/`` module census AGENTS.md quotes.
+
+    Three numbers that AGENTS.md states in prose and that nothing derived:
+
+    ``modules``
+        every ``cmd_*.py`` file that ships in the package.
+    ``backing_default_names``
+        distinct modules reachable from ``cli._COMMANDS`` — i.e. the ones
+        that back a default (non-feature-gated) command name.
+    ``feature_gated``
+        ``modules - backing_default_names``: files that ship but are not
+        reachable from the default command table.
+
+    Kept here rather than in the doc writers so the CLI-side census and the
+    doc-side census cannot disagree; ``command_names`` from
+    :func:`cli_surface_counts` is the fourth number in the same sentence.
+    """
+    commands_dir = _package_file("commands")
+    modules = {path.stem for path in commands_dir.glob("cmd_*.py")}
+    if not modules:
+        raise RuntimeError(f"no cmd_*.py modules found under {commands_dir}")
+    backing = {
+        target[0].rsplit(".", 1)[-1]
+        for target in cli_commands().values()
+        if isinstance(target, (tuple, list)) and len(target) == 2 and isinstance(target[0], str)
+    }
+    # Only count backing modules that actually exist as files, so a stale
+    # ``_COMMANDS`` entry pointing at a deleted module cannot inflate the
+    # census into claiming more modules back names than there are modules.
+    backing &= modules
+    return {
+        "modules": len(modules),
+        "backing_default_names": len(backing),
+        "feature_gated": len(modules) - len(backing),
+    }
+
+
 def canonical_cli_commands() -> list[str]:
     """Return canonical command names (aliases collapsed to one primary name)."""
     by_target: dict[tuple[str, str], list[str]] = defaultdict(list)

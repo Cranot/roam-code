@@ -26,9 +26,9 @@ Granularity (finest to coarsest): `raw_edge_rows` > `distinct_caller_tuples` > `
 
 ## When to use which
 
-* **`raw_edge_rows`** — "How many call sites mention this symbol?" Use when you care about textual / structural occurrences. Always biggest because a function called five times in one file contributes five rows.
+* **`raw_edge_rows`** — "How many call sites mention this symbol?" Use when you care about textual / structural occurrences. Always biggest because a function called five times in one file contributes five rows. This is the metric `roam uses` reports (both `summary.total_consumers` and `summary.production_consumers`), and also what `roam context`, `roam deps`, `roam guard`, `roam invariants`, and `roam plan-refactor` expose.
 * **`direct_in_degree`** — "How many distinct callers does this symbol have?" Use when you want a graph-theoretic in-degree. This is the metric `roam fan`, `roam symbol`, and the `key_abstractions` block in `roam understand` all expose.
-* **`distinct_caller_tuples`** — "How many production-scope callers remain after deduping by file + edge kind?" Use when you are filtering away tests and want the headline number `roam uses` reports.
+* **`distinct_caller_tuples`** — "How many production-scope callers remain after deduping by file + edge kind?" Use when you are filtering away tests. This is the metric `roam oracle is-test-only` reports, and it is the only command that emits it. It is **not** what `roam uses` reports — `roam uses` filters tests into a separate `production_consumers` field but still counts `raw_edge_rows`, so its production count is per-call-site, not per-caller.
 * **`transitive_upstream_bfs`** — "How much of the call graph depends, transitively, on this symbol?" Use when ranking root-cause suspects (`roam diagnose`) or assessing blast radius beyond direct callers.
 
 ## Which commands emit which
@@ -48,5 +48,8 @@ Granularity (finest to coarsest): `raw_edge_rows` > `distinct_caller_tuples` > `
 | `roam fan` (mode=file) | `items[*].fan_in` | `direct_in_degree (file-level: distinct source files)` |
 | `roam symbol` | `summary.callers` | `direct_in_degree` |
 | `roam metrics` | `metrics.fan_in` (symbol or file aggregate) | `direct_in_degree (fan_in from graph_metrics.in_degree, raw_edge_rows fallback)` |
+| `roam guard` | `summary.callers` (non-test callers) | `raw_edge_rows` |
+| `roam invariants` | per-symbol `caller_count` | `raw_edge_rows` |
+| `roam plan-refactor` | `summary.callers` (non-test callers) | `raw_edge_rows` |
 
 When adding a new command that surfaces a callers count, follow the same convention: include `caller_metric_definition` in the JSON summary so consumers can interpret the number without re-reading source.
