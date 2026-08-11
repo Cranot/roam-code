@@ -41,9 +41,16 @@ under"; resolving it discards exactly the information that makes it useful.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "roam"
+from tests._helpers.repo_root import repo_root
+
+# W572/W588: ask git for the canonical toplevel rather than walking up from
+# ``__file__``. A nested worktree has ``tests/`` but not the project markers, so
+# the parents[] walk lands somewhere that exists and is wrong -- which for THIS
+# guard would mean scanning an empty or partial tree and passing. A scanner that
+# certifies what it never read is the defect the file below is about; it would
+# be a poor place to commit it.
+SRC = repo_root() / "src" / "roam"
 
 # Module aliases in play: this codebase imports `os as _os` / `sys as _sys` in
 # several command modules, so match on the ATTRIBUTE SHAPE rather than a name.
@@ -105,11 +112,11 @@ def test_no_module_resolves_the_running_interpreter() -> None:
         except (SyntaxError, UnicodeDecodeError) as exc:
             # An unreadable file is UNKNOWN, not clean. Name it rather than
             # letting it drop out of the denominator.
-            unparseable.append(f"{path.relative_to(SRC.parent.parent)}: {type(exc).__name__}")
+            unparseable.append(f"{path.relative_to(repo_root())}: {type(exc).__name__}")
             continue
         scanned += 1
         for lineno, resolver in _violations(tree):
-            offenders.append(f"{path.relative_to(SRC.parent.parent)}:{lineno}  os.path.{resolver}(sys.executable)")
+            offenders.append(f"{path.relative_to(repo_root())}:{lineno}  os.path.{resolver}(sys.executable)")
 
     assert not unparseable, "files this guard could not read (so cannot certify):\n  " + "\n  ".join(unparseable)
     assert scanned > 0, "scanned no files -- the guard is pointed at the wrong directory"
