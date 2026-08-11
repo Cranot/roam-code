@@ -384,6 +384,21 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str, 
         "workspace, and the part it does NOT cover is published beside the verdict.",
         (),
     ),
+    ("compatibility", "--require-coverage"): (
+        "ANSWERED",
+        "2026-08-11: verdict 'no regressions', covered_dimension_count 7, "
+        "surface_coverage 'complete', partial_success false, removed 0 renamed 0 -- "
+        "measured by running it in a directory containing no git, no index and no "
+        "source files. It compares roam's OWN shipped surface, introspected from the "
+        "installed package, against the committed baseline; the workspace is not an "
+        "input, so an empty one does not degrade it and the exit 0 is earned. This "
+        "pair exited 5 until 2026-08-11 for an unrelated reason -- the baseline was "
+        "one flag stale, coverage-gaps --ci added by a1e9c267 without refreshing it "
+        "in the same commit -- so refreshing the baseline did not create the "
+        "workspace-independence, it revealed it. Its sibling --ci is inventoried "
+        "directly above on the same grounds.",
+        (),
+    ),
     ("config", "--check"): (
         "ANSWERED",
         "2026-08-09: verdict 'no .roam/config.json - using defaults', issues 0. "
@@ -496,7 +511,26 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str, 
 #: pairs, the same 9 already inventoried: no additions, no deletions. Lowering
 #: the mark without a deletion would be the defect this file exists to catch,
 #: pointed at the file itself.
-_AUTHORIZATION_HIGH_WATER = 9
+#:
+#: RAISED TO 10 on 2026-08-11, in its own commit as the assertion below demands,
+#: for ``compatibility --require-coverage``. The pair is not newly permissive and
+#: no gate was weakened to admit it: it had been exiting 5 because the committed
+#: baseline was one flag stale (``coverage-gaps --ci``, added by a1e9c267 without
+#: the baseline refresh its own gate demands). Refreshing the baseline restored
+#: the intended exit 0 and thereby exposed a workspace-independence that was
+#: always true -- the command compares roam's OWN shipped surface, introspected
+#: from the installed package, and never reads the workspace at all.
+#:
+#: Measured in a directory with no git, no index and no source files: verdict
+#: 'no regressions', covered_dimension_count 7, surface_coverage 'complete',
+#: partial_success false. A COMPLETE comparison, in an empty workspace. That is
+#: ANSWERED -- the exit 0 is earned -- and its sibling ``--ci`` was already
+#: inventoried on exactly these grounds since 2026-08-09.
+#:
+#: The alternative was to make the command refuse in a workspace it does not
+#: need, which is the over-refusal this same batch had to revert from pr-diff:
+#: a gate that fires on clean input gets switched off, and then detects nothing.
+_AUTHORIZATION_HIGH_WATER = 10
 
 
 def _gate_surface() -> dict[str, list[str]]:
