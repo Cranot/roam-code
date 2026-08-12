@@ -36,11 +36,49 @@ def _walk(cmd: click.Command, ctx: click.Context, path: list[str], out: list[tup
 
 def _all_commands() -> list[tuple[str, click.Command]]:
     out: list[tuple[str, click.Command]] = []
-    _walk(root_cli, click.Context(root_cli, info_name="roam"), [], out)
+    # ``context_settings`` is applied by ``Command.make_context()``, NOT by the
+    # ``Context`` constructor -- so a bare ``click.Context(root_cli)`` silently
+    # gets Click's default ``help_option_names`` of ``["--help"]``. Passing them
+    # explicitly makes this walk resolve help the way a real invocation does.
+    # Without it, the walk itself is a context in which ``-h`` does not exist.
+    _walk(
+        root_cli,
+        click.Context(root_cli, info_name="roam", **root_cli.context_settings),
+        [],
+        out,
+    )
     return out
 
 
 ALL_COMMANDS = _all_commands()
+
+
+@pytest.fixture(autouse=True)
+def _clear_cached_help_options():
+    """Drop Click's per-Command help-option cache before and after every test here.
+
+    ``Command._help_option`` (Click >= 8.1.8) memoises the FIRST help option a
+    command ever resolves, on the shared Command object that ``LazyGroup``
+    hands out. Any earlier test in the session that renders or parses one of
+    these commands under a context without ``-h`` poisons that cache, and this
+    file then sees "No such option: -h" for a command whose ``-h`` works
+    perfectly from a real shell.
+
+    That is exactly what CI hit on 2026-08-12: a DIFFERENT 15-18 commands
+    failed on each of Python 3.10/3.11/3.12/3.13 out of the same 285, while a
+    single-file run passed every time. The tell was in the output -- Click
+    printed "Try 'cli adversarial -h' for help." (so ``help_option_names`` DID
+    contain ``-h``) immediately above "Error: No such option: -h".
+
+    The production behaviour was never broken: a real invocation resolves the
+    option once, in a context that has the alias. This fixture removes the
+    cross-test coupling so the assertion measures the context, not the leftover.
+    """
+    for _, cmd in ALL_COMMANDS:
+        cmd._help_option = None
+    yield
+    for _, cmd in ALL_COMMANDS:
+        cmd._help_option = None
 
 
 def test_command_surface_is_not_empty():
