@@ -27,17 +27,22 @@ The states
 ``indexing_failed``
     Refusal. Files in languages roam claims to support were indexed and
     produced zero symbols, or discovery found work the index does not
-    contain. The measurement is UNKNOWN, never a benign default; callers
-    must exit non-zero and name the cause.
+    contain, or nothing measured whether those files parse at all
+    (``parse_status_unknown``). The measurement is UNKNOWN, never a benign
+    default; callers must exit non-zero and name the cause — and the reason
+    code distinguishes "the parsers failed" from "nobody looked", because
+    only the first one is fixed by reinstalling a grammar.
 
 Cost
 ----
-The disk census only runs on the zero-symbol path, so a healthy index
-pays one extra ``COUNT(*)`` and nothing else. It is deliberately built
-out of ``roam.index.discovery``'s own predicates rather than a
-reimplementation: ``discover_files`` stays the single source of truth
-for what *should* be indexed, and this module only *explains* the
-difference between that set and the files present on disk.
+The disk census and the re-parse probe only run on the zero-symbol path,
+so a healthy index pays one extra ``COUNT(*)`` and nothing else. The
+census is deliberately built out of ``roam.index.discovery``'s own
+predicates rather than a reimplementation: ``discover_files`` stays the
+single source of truth for what *should* be indexed, and this module only
+*explains* the difference between that set and the files present on disk.
+The probe reuses ``parser.parse_file`` for the same reason — it is the
+definition of "this file parses", not a second copy of it.
 """
 
 from __future__ import annotations
@@ -59,6 +64,7 @@ REASON_PARSERS_EXTRACTED_NOTHING = "parsers_extracted_nothing"
 REASON_FILES_DEFINE_NO_SYMBOLS = "files_define_no_symbols"
 REASON_DISCOVERED_FILES_NOT_INDEXED = "discovered_files_not_indexed"
 REASON_INDEX_UNREADABLE = "index_unreadable"
+REASON_PARSE_STATUS_UNKNOWN = "parse_status_unknown"
 
 # Attribution codes for files that exist on disk but never reached the index.
 FILTER_GITIGNORED = "untracked_or_gitignored"
@@ -72,6 +78,12 @@ FILTER_UNEXPLAINED = "unexplained"
 # diagnostic into a hang. Only reached when the corpus is empty anyway.
 _MAX_CENSUS_FILES = 50_000
 _MAX_SAMPLE = 5
+
+# Cap on the re-parse probe (see ``_probe_parse_errors``). Only reached on a
+# zero-symbol corpus, where a legitimate one is a handful of files; 200 covers
+# every real docs-shaped / import-only tree measured so far, and a corpus
+# larger than that with zero symbols is refused rather than sampled.
+_MAX_PARSE_PROBE = 200
 
 
 @dataclass
@@ -277,6 +289,81 @@ def _census_disk(root: Path) -> _Census:
     return census
 
 
+def _probe_parse_errors(conn: sqlite3.Connection, root: Path | None, parseable: int) -> int | None:
+    """Re-parse what the index actually holds and count the failures.
+
+    Why re-measure rather than trust the caller's ``parse_errors``: the
+    parser's counters are per-PROCESS module state scoped to the files THAT
+    run parsed, and the number carries no record of which files those were.
+    Measured 2026-08-12 on a one-file repo of unparseable Python:
+    ``roam index --force`` refused it (exit 1, one syntax error measured)
+    while a warm ``roam index`` — which re-parsed only the ``.roamignore``
+    that ``init`` had just written, and no source at all — reported "1
+    file(s) in languages roam supports parsed without error" and exited 0.
+    Same index, opposite verdicts, because a count taken over zero source
+    files was read as a clean bill of health for the whole corpus. The same
+    zero reaches a second ``roam init``, which does not index at all.
+
+    Re-parsing the corpus's OWN supported-language files is the only form of
+    this measurement whose scope is knowable from here. It is bounded by
+    ``_MAX_PARSE_PROBE`` and only reached on the zero-symbol path, next to the
+    disk census that already walks the tree.
+
+    Returns the failure count when the measurement settles the question —
+    either the probe covered every parseable file the index holds, or it found
+    a failure (one counterexample is enough to refuse). Returns ``None`` for
+    "not measured": a partial clean sample is not evidence about the files it
+    never opened, and must not decay into 0.
+    """
+    if root is None or parseable <= 0:
+        return None
+    try:
+        from roam.index.parser import get_parse_error_count, parse_file
+        from roam.index.parser import parse_errors as _counters
+        from roam.languages.registry import _SUPPORTED_LANGUAGES
+
+        langs = tuple(sorted(_SUPPORTED_LANGUAGES))
+        holes = ",".join("?" * len(langs))
+        rows = conn.execute(
+            f"SELECT path FROM files WHERE language IN ({holes}) ORDER BY id LIMIT ?",
+            (*langs, _MAX_PARSE_PROBE),
+        ).fetchall()
+        # Borrow the indexer's counters: they carry ``parse_file``'s own
+        # definition of a failure (no grammar, unreadable bytes, a rejected
+        # parse, ERROR nodes) instead of a second copy of it that could drift.
+        # Snapshot and restore them — a diagnostic must not leak into the
+        # run's own "Parse issues:" summary or into a later verdict in the
+        # same process (the MCP server and the test suite are long-lived).
+        saved = dict(_counters)
+        covered = 0
+        try:
+            before = get_parse_error_count()
+            for row in rows:
+                full = root / row[0]
+                if not full.is_file():
+                    # Deleted or moved since indexing: unmeasurable now, and
+                    # not a parse failure. It just lowers coverage, which is
+                    # what keeps a partial probe from claiming "all clean".
+                    continue
+                parse_file(full)
+                covered += 1
+            failures = get_parse_error_count() - before
+        finally:
+            _counters.clear()
+            _counters.update(saved)
+    except Exception as exc:  # noqa: BLE001 — a diagnostic must never break init
+        from roam.observability import log_swallowed
+
+        log_swallowed("index.corpus_state:_probe_parse_errors", exc)
+        return None
+
+    if failures > 0:
+        return failures
+    if covered >= parseable:
+        return 0
+    return None
+
+
 def classify(
     conn: sqlite3.Connection,
     project_root: Path | str | None = None,
@@ -300,6 +387,11 @@ def classify(
     Pass it only when this process did the indexing. ``None`` means the
     measurement is absent, and an absent measurement stays a refusal rather
     than decaying into the benign answer.
+
+    It is a HINT, not the authority: ``_probe_parse_errors`` re-measures the
+    corpus's own files and outranks it, because a caller's count cannot say
+    which files it covered. A caller that indexed one file out of ten passes
+    a scope-blind zero exactly like a caller that indexed all ten.
     """
     counts = _counts(conn)
     if counts is None:
@@ -329,8 +421,15 @@ def classify(
 
     # ---- zero symbols. Which of the two zeros is this? --------------------
 
+    root = Path(project_root).resolve() if project_root is not None else None
+
     if parseable > 0:
-        if parse_errors == 0:
+        # The probe is the scoped measurement; the caller's count is the
+        # fallback for when it cannot run (no project root, unreadable files).
+        measured = _probe_parse_errors(conn, root, parseable)
+        if measured is None:
+            measured = parse_errors
+        if measured == 0:
             # Measured: every file was read and parsed without a single
             # failure, and still declares nothing. That is a real property
             # of the tree, not a broken index — a package of empty
@@ -357,11 +456,34 @@ def classify(
                 ),
             )
 
-        # Either parsing genuinely failed, or nobody measured it. Roam
-        # claimed it understands these languages and then extracted nothing
-        # from a single one of them. Never a legitimate result: every
-        # symbol-, call-graph- and dependency-based command would now
-        # return a vacuously clean answer.
+        if measured is None:
+            # Nobody measured it: this process did not parse these files and
+            # the probe could not run either. Refuse, and name the missing
+            # measurement rather than inventing a cause — "the parsers
+            # failed" and "nobody looked" are different findings, and the
+            # second one is fixed by re-measuring, not by reinstalling a
+            # grammar.
+            return CorpusVerdict(
+                state=STATE_FAILED,
+                files=files,
+                symbols=symbols,
+                edges=edges,
+                parseable_files=parseable,
+                parsed_files=parsed,
+                reason=REASON_PARSE_STATUS_UNKNOWN,
+                detail=(
+                    f"index unverified: {parseable} file(s) in languages roam supports are in "
+                    f"the index and none of them contributed a symbol, and whether they parse "
+                    f"could not be measured here. This state is UNKNOWN, not clean — symbol, "
+                    f"call-graph and dependency queries would return empty results either way."
+                ),
+                remediation=("Run `roam index --force` to re-index and measure the parse, then re-read this verdict."),
+            )
+
+        # Parsing genuinely failed. Roam claimed it understands these
+        # languages and then extracted nothing from a single one of them.
+        # Never a legitimate result: every symbol-, call-graph- and
+        # dependency-based command would now return a vacuously clean answer.
         return CorpusVerdict(
             state=STATE_FAILED,
             files=files,
@@ -382,7 +504,6 @@ def classify(
             ),
         )
 
-    root = Path(project_root).resolve() if project_root is not None else None
     census = _census_disk(root) if root is not None else _Census(failed=True)
 
     if census.expected_source > 0:
