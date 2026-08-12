@@ -47,7 +47,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          fetch-depth: 50  # enough for pr-prep churn analysis
+          # FULL history, not a window. `fetch-depth: 50` was "enough for
+          # pr-prep churn analysis" and silently wrong for the retrieval gate
+          # below, which compares against numbers published from a normal
+          # (full) clone.
+          #
+          # `git_cochange` is a ranking signal, and its table is built from
+          # whatever history the checkout has. Measured 2026-08-12 at
+          # 74520ca5, same binary, same corpus, index byte-identical across
+          # all three arms (5001 files / 46783 symbols / 97304 edges):
+          #
+          #   full history (2575 commits)   recall@20 = 0.9139
+          #   git_cochange emptied          recall@20 = 0.8778
+          #   fetch-depth: 50               recall@20 = 0.8500
+          #
+          # Note the ordering: a shallow clone scores BELOW an empty table.
+          # Deleting the signal falls back cleanly; 50 commits supply a
+          # partial, recency-biased one that actively mis-ranks. So this was
+          # not a small environmental offset to be absorbed by tolerance — it
+          # was a 0.064 bias, the entire +/-0.06 budget, permanently spent
+          # before a real regression could ever be seen. The gate went red on
+          # 2026-08-11 only because corpus churn spent the last 0.014.
+          #
+          # Cost of the change: one clone of a ~2.6k-commit repository.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python

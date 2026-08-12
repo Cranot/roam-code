@@ -95,7 +95,12 @@ def truth() -> dict[str, int]:
     unit. Extra keys cost nothing: a unit the description never mentions is
     simply never consulted.
     """
-    counts = _load_build_readme_counts().collect_counts(ROOT)
+    # ``languages=`` is injected, not defaulted: ``collect_counts`` would
+    # otherwise call ``_live_languages()``, which imports the tree-sitter
+    # stack this provider promises (above) never to need — and whose result
+    # this function discards anyway in favour of the AST count below.
+    langs = language_count()
+    counts = _load_build_readme_counts().collect_counts(ROOT, languages=langs)
     return {
         "commands": counts.command_names,
         "cli commands": counts.command_names,
@@ -107,7 +112,7 @@ def truth() -> dict[str, int]:
         "tools": counts.mcp_full,
         "core mcp tools": counts.mcp_core,
         "mcp tool presets": len(counts.mcp_presets),
-        "languages": language_count(),
+        "languages": langs,
     }
 
 

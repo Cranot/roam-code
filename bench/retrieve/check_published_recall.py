@@ -44,13 +44,47 @@ from pathlib import Path
 
 #: Absolute drift permitted per K, in either direction.
 #:
-#: Not guessed. CI clones at ``fetch-depth: 50`` while the reference
-#: measurement used full history; emptying the ``git_cochange`` table
-#: outright -- a strictly larger perturbation than a shallow clone -- moved
-#: recall@20 by 0.011 on this bench. The rest is headroom for platform and
-#: tokenizer differences. For scale, the drift that motivated this gate was
-#: 0.133.
+#: Re-derived 2026-08-12. The previous rationale here read:
+#:
+#:     "CI clones at ``fetch-depth: 50`` while the reference measurement used
+#:      full history; emptying the ``git_cochange`` table outright -- a
+#:      strictly larger perturbation than a shallow clone -- moved recall@20
+#:      by 0.011 on this bench."
+#:
+#: Both halves of that were measured again at 74520ca5, same binary, same
+#: corpus, index byte-identical across arms, and both were wrong:
+#:
+#:   full history (2575 commits)  recall@20 = 0.9139
+#:   ``git_cochange`` emptied     recall@20 = 0.8778   (-0.0361, not -0.011)
+#:   ``fetch-depth: 50``          recall@20 = 0.8500   (-0.0639)
+#:
+#: A shallow clone is NOT the milder perturbation -- it scores below an empty
+#: table, because 50 commits give a partial, recency-biased co-change signal
+#: that mis-ranks, where an absent one degrades to a clean fallback.
+#:
+#: The consequence was not academic. This tolerance was sized to absorb an
+#: environmental offset of ~0.011 and was in fact absorbing ~0.064, so the
+#: gate could not have detected any real regression at all: its whole budget
+#: was pre-spent. ``.github/workflows/dogfood.yml`` now checks out at
+#: ``fetch-depth: 0`` so the measurement matches the environment the docs
+#: publish, which returns the full budget to its actual purpose.
+#:
+#: The number is unchanged at 0.06 -- headroom for platform and tokenizer
+#: differences. For scale, the drift that motivated this gate was 0.133.
 DEFAULT_TOLERANCE = 0.06
+
+#: Fraction of the tolerance at which a still-passing drift is called out.
+#:
+#: A pure pass/fail gate reports nothing until the moment it fails, so a
+#: systematic offset can sit at 80% of budget for days and read as healthy.
+#: That is exactly what happened: recall@20 drift held at -0.047 (78% of
+#: tolerance) from 2026-08-06 to 2026-08-11 across at least five main
+#: commits, every one of them green, and the first signal anyone got was a
+#: red build. This threshold turns that silent band into a warning.
+#:
+#: Advisory only -- it never changes the exit code, so it cannot fail a build
+#: on its own.
+NEAR_MISS_FRACTION = 0.7
 
 #: Docs whose published numbers must agree with the measurement. Every file
 #: here needs a ``canonical-recall`` block; a file that lost its block is an
@@ -126,6 +160,43 @@ def measured_recalls(eval_json: Path) -> tuple[dict[int, float], int]:
     if not isinstance(task_count, int) or task_count <= 0:
         raise CheckError(f"eval-retrieve reported task_count={task_count!r}; refusing to compare against an empty run.")
     return recalls, task_count
+
+
+def near_misses(
+    measured: dict[int, float],
+    published: dict[int, float],
+    source: str,
+    tolerance: float,
+    fraction: float = NEAR_MISS_FRACTION,
+) -> list[str]:
+    """Return one line per K that passes but has eaten most of the budget.
+
+    Strictly between ``fraction * tolerance`` and ``tolerance``: anything at
+    or past ``tolerance`` is already a failure and is reported as one by
+    :func:`compare`, so a K never appears in both lists.
+
+    This exists because a binary gate is silent right up to the moment it
+    breaks. A drift parked at 78% of tolerance for five days looks exactly
+    like a drift of zero in the log, and the difference between them is the
+    difference between "healthy" and "one commit of noise from red".
+    """
+    warnings: list[str] = []
+    if tolerance <= 0:
+        return warnings
+    floor = fraction * tolerance
+    for k in sorted(published):
+        if k not in measured:
+            continue
+        drift = measured[k] - published[k]
+        if floor <= abs(drift) <= tolerance:
+            pct = abs(drift) / tolerance * 100
+            warnings.append(
+                f"{source}: recall@{k} is within tolerance but has consumed "
+                f"{pct:.0f}% of it - published {published[k]:.4f}, "
+                f"measured {measured[k]:.4f}, drift {drift:+.4f} "
+                f"(tolerance +/-{tolerance:g})"
+            )
+    return warnings
 
 
 def compare(
@@ -219,6 +290,23 @@ def main(argv: list[str] | None = None) -> int:
         print("including the commit SHA and date. A stale index alone costs ~13")
         print("points of recall@20 - see SUBMISSION.md 'Known defects'.")
         return 1
+
+    # Passing, but say HOW passing. A gate that prints the same "OK" at 0.001
+    # of drift and at 0.059 hides the approach to its own cliff -- which is
+    # how a -0.047 offset stayed invisible for five days of green builds.
+    warnings: list[str] = []
+    for name, values in docs.items():
+        warnings.extend(near_misses(measured, values, name, args.tolerance))
+    if warnings:
+        print()
+        print(f"::warning::published retrieval numbers still pass, but {len(warnings)} are near the tolerance edge")
+        for line in warnings:
+            print(f"  NEAR  {line}")
+        print()
+        print("Not a failure, and not noise either: a drift parked near the")
+        print("edge means the next ordinary corpus change fails this gate, and")
+        print("that a real regression of the remaining size cannot be seen.")
+        print("Re-measure against a fresh full-history index and republish.")
 
     print()
     print(f"OK - published numbers match measurement within +/-{args.tolerance:.3f}.")

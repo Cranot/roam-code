@@ -27,6 +27,9 @@ exercised by the scheduled workflow, not by the suite):
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -221,6 +224,85 @@ def test_some_workflow_runs_the_description_drift_check() -> None:
             "can be edited on GitHub without any commit, so a push-only trigger "
             "would never notice."
         )
+
+
+def _declared_runtime_distributions() -> set[str]:
+    """Third-party top-level module names implied by ``pyproject.toml``.
+
+    Derived, not typed: a dependency added tomorrow joins the block list
+    automatically, so the bare-interpreter test below keeps its meaning
+    instead of ossifying around the one import that happened to break first.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover — py<3.11
+        pytest.skip("tomllib unavailable")
+    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for spec in data.get("project", {}).get("dependencies", []):
+        # "tree-sitter-language-pack>=1.13.3,<1.14" -> tree_sitter_language_pack
+        dist = re.split(r"[<>=!~;\[\s]", str(spec), maxsplit=1)[0].strip()
+        if dist:
+            names.add(dist.replace("-", "_"))
+    return names
+
+
+def test_truth_provider_runs_on_a_bare_interpreter() -> None:
+    """The drift workflow installs NO dependencies — prove the provider can.
+
+    ``.github/workflows/repo-description-drift.yml`` is a checkout plus one
+    interpreter, deliberately: it runs daily on a schedule and must not be
+    able to break on a dependency resolution. ``description_truth`` documents
+    the same promise ("Stdlib-only and import-light ... runs on a bare
+    interpreter with no dependency install") and ``language_count()`` reads
+    the registry by AST specifically to keep it.
+
+    Nothing checked it. On 2026-08-12 the daily gate died with
+    ``ModuleNotFoundError: No module named 'tree_sitter_language_pack'``
+    because ``collect_counts()`` had grown a ``languages=_live_languages()``
+    field — a live ``roam.languages.registry`` import — whose value this
+    provider then discarded in favour of its own AST count. The prose claim
+    was true when written and no check could contradict it once it stopped
+    being true.
+
+    This is that check. It blocks every declared third-party distribution and
+    runs the provider in a subprocess, so the assertion is about a real
+    interpreter and not about what this test session happens to have imported.
+    """
+    blocked = _declared_runtime_distributions()
+    assert blocked, "no runtime dependencies parsed from pyproject.toml — test would be vacuous"
+    preamble = (
+        "import importlib.abc, sys, json\n"
+        f"BLOCKED = {sorted(blocked)!r}\n"
+        "class B(importlib.abc.MetaPathFinder):\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name.split('.')[0] in BLOCKED:\n"
+        "            raise ModuleNotFoundError('No module named ' + repr(name), name=name)\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, B())\n"
+        f"sys.path.insert(0, {str(REPO_ROOT / 'dev')!r})\n"
+        "import description_truth\n"
+        "json.dump(description_truth.truth(), sys.stdout)\n"
+    )
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", preamble],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        timeout=120,
+    )
+    assert proc.returncode == 0, (
+        "dev/description_truth.py cannot run without third-party packages, but "
+        ".github/workflows/repo-description-drift.yml installs none. The daily "
+        "description gate is dead until this passes.\n"
+        f"blocked={sorted(blocked)}\n"
+        f"stderr:\n{proc.stderr[-2500:]}"
+    )
+    truth = json.loads(proc.stdout)
+    assert truth, "provider returned an empty truth map on a bare interpreter"
+    # A silent zero is the failure mode a "did it run" check would miss.
+    zeros = sorted(k for k, v in truth.items() if not isinstance(v, int) or v <= 0)
+    assert not zeros, f"unit phrases resolved to a non-positive count: {zeros}"
 
 
 def test_pre_commit_hook_does_not_require_the_network() -> None:
