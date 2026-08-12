@@ -137,9 +137,26 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                 # Without it a package of import-only modules — which parses
                 # perfectly and declares nothing — is indistinguishable from
                 # a missing grammar, and gets refused as a failed index.
+                #
+                # ...unless the run parsed nothing. On an unchanged corpus the
+                # indexer returns before phase 1 and the counters stay at 0,
+                # which is a measurement of NO files, not a clean bill of
+                # health for the corpus. Measured 2026-08-12 on a repo whose
+                # only .py is unparseable: `roam index` exited 0 saying the
+                # file "parsed without error" while `roam index --force`
+                # refused the same index. Hand the classifier None there so it
+                # re-measures instead of inheriting a zero nobody took.
                 from roam.index.parser import get_parse_error_count
 
-                corpus = classify(conn, find_project_root("."), parse_errors=get_parse_error_count())
+                # No summary at all means the run never reached its own
+                # bookkeeping (e.g. another process held the index lock) —
+                # also "nobody parsed", also None.
+                _parsed_this_run = bool(indexer.summary) and not indexer.summary.get("up_to_date")
+                corpus = classify(
+                    conn,
+                    find_project_root("."),
+                    parse_errors=get_parse_error_count() if _parsed_this_run else None,
+                )
             except Exception as _exc:  # noqa: BLE001 — unknown state is a refusal
                 from roam.observability import log_swallowed
 

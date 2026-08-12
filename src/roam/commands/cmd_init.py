@@ -399,9 +399,18 @@ def init(ctx, root, yes, with_ci, since, full_history):
         # "every file parsed and declares nothing" (a docs-shaped or
         # import-only tree — legitimately zero) from "no grammar was
         # installed" (a broken index that must refuse).
+        #
+        # Only when it actually indexed, though. ``ensure_index`` is a no-op
+        # over an existing index, and the counters are per-process, so a
+        # SECOND ``roam init`` reads 0 having parsed nothing. Measured
+        # 2026-08-12 on a repo whose only .py is unparseable: run 1 refused
+        # (exit 1), run 2 over the identical index reported "1 file(s) …
+        # parsed without error" and exited 0. Pass None when this process did
+        # not parse, so the classifier re-measures rather than inheriting a
+        # zero that describes nothing.
         from roam.index.parser import get_parse_error_count
 
-        corpus = classify_project(project_root, parse_errors=get_parse_error_count())
+        corpus = classify_project(project_root, parse_errors=None if had_index else get_parse_error_count())
     except Exception as _exc:  # noqa: BLE001 — unknown state is a refusal
         from roam.observability import log_swallowed
 
@@ -424,8 +433,9 @@ def init(ctx, root, yes, with_ci, since, full_history):
     if corpus.state == STATE_INDEXED:
         _verdict = f"initialized: {_files} files, {_symbols} symbols, {_edges} edges"
     else:
-        # ``detail`` already opens with "no indexable content:" or
-        # "indexing failed:" — the two zeros must not read alike.
+        # ``detail`` already opens with "no indexable content:",
+        # "indexing failed:" or "index unverified:" — the zeros must not
+        # read alike, and an unmeasured one must not read like a diagnosed one.
         _verdict = corpus.detail
     # Compact warning codes for the JSON summary — full structured
     # entries live in the top-level ``warnings`` field so JSON consumers
