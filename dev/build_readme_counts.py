@@ -136,7 +136,7 @@ def _live_languages() -> int:
     return len(get_supported_languages())
 
 
-def collect_counts(root: Path | None = None) -> Counts:
+def collect_counts(root: Path | None = None, *, languages: int | None = None) -> Counts:
     """Collect counts. ``root`` defaults to module-global ROOT.
 
     The ``cli_surface_counts`` / ``mcp_surface_counts`` / ``mcp_tool_descriptions``
@@ -144,6 +144,25 @@ def collect_counts(root: Path | None = None) -> Counts:
     ``roam`` package, so they are independent of ``root`` — only the
     file-system reads (pyproject.toml, cli.py for ``_CATEGORIES``) are
     routed through ``root``.
+
+    ``languages`` overrides ``_live_languages()``. It exists because that one
+    field is the only part of ``Counts`` that needs the tree-sitter stack
+    importable: ``_live_languages()`` imports ``roam.languages.registry``,
+    which transitively imports ``roam.parser_pack`` and therefore
+    ``tree_sitter_language_pack``. Every other field here is an AST or
+    resource read that works on a bare interpreter.
+
+    That distinction is load-bearing for ``dev/description_truth.py``, which
+    runs in a deliberately dependency-free CI job (see
+    ``.github/workflows/repo-description-drift.yml``) and derives the language
+    count by AST for exactly this reason. Before this parameter existed it
+    called ``collect_counts()`` and paid for a live import whose result it
+    then discarded — which took the daily gate down with
+    ``ModuleNotFoundError: No module named 'tree_sitter_language_pack'``.
+
+    Callers that want the live registry (the README/AGENTS writers) pass
+    nothing and keep the import; ``tests/test_count_sources_are_measured.py``
+    pins that default to the real source.
     """
     if root is None:
         root = ROOT
@@ -161,7 +180,7 @@ def collect_counts(root: Path | None = None) -> Counts:
         mcp_presets={str(name): int(count) for name, count in mcp["preset_counts"].items()},
         mcp_default_preset=int(mcp["preset_counts"]["core"]),
         pyproject_version=_pyproject_version(root),
-        languages=_live_languages(),
+        languages=_live_languages() if languages is None else int(languages),
         sarif_commands=sarif_consumer_count(),
     )
 
