@@ -145,6 +145,30 @@ def _deprecation_record(name: str) -> dict | None:
     }
 
 
+# W1462 — `-h` is the most universal convention in command-line tooling, and it
+# failed with exit 2 on all 285 roam commands. For a CLI whose primary caller is
+# an agent, a hard usage error on the first probe costs a whole turn; issue #100
+# was filed by an external user whose agents failed on the first or second call.
+#
+# Click resolves the help option from ``ctx.help_option_names``, and a child
+# Context inherits that from its parent when it declares none of its own, so
+# setting it ONCE on the root group covers every subcommand and every subgroup —
+# no per-command sweep, and no way for a new command to be added without it.
+#
+# Safety: adding an alias would SHADOW any command that already defined ``-h``
+# for something else — Click's ``get_help_option_names`` subtracts every opt the
+# command declares, so the command wins and help quietly loses ``-h`` there.
+# Measured 2026-08-12 across all 381 loadable commands (285 top-level + 96
+# subcommands): zero declare ``-h``, and none sets ``ignore_unknown_options``,
+# so no ``-h`` was reaching a command as a pass-through value either.
+# (``allow_extra_args`` is NOT part of that check: every ``click.Group`` sets it
+# so it can forward argv to a subcommand, and a leaf command with it set still
+# rejects unknown options. Asserting on it flagged all 23 groups, every one of
+# which answers ``-h`` correctly.) ``tests/test_dash_h_help_alias.py`` keeps it
+# that way — it fails if any command ever claims ``-h`` for itself.
+CLI_CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+
 # Source-of-truth for compound-recipe linting. ``tests/test_compound_recipe_registry.py``
 # (W1297) asserts every internal-command-name string literal referenced by a
 # compound recipe (ask recipes, report PRESETS, ``_run_roam([...])`` /
@@ -2195,7 +2219,7 @@ def _install_local_telemetry(ctx: click.Context) -> None:
     ctx.call_on_close(_on_close)
 
 
-@click.group(cls=LazyGroup)
+@click.group(cls=LazyGroup, context_settings=CLI_CONTEXT_SETTINGS)
 @click.version_option(package_name="roam-code")
 @click.option(
     "--check",
