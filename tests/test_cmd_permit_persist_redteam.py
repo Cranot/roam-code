@@ -23,12 +23,22 @@ Discipline (per CLAUDE.md):
 
 from __future__ import annotations
 
+# Permit fixtures that mean "issued recently" must be dated RELATIVE to now.
+# A hardcoded date is a time bomb: `issued_at: 2026-05-14` was written as a
+# recent issuance, and on 2026-08-12 it became exactly 90 days old --
+# _PERMIT_STALENESS_THRESHOLD_DAYS -- so the collector correctly stamped
+# `issued_days_ago` and the test asserting its ABSENCE began failing on all
+# four Python versions. The product was right; the fixture had aged out from
+# under its own docstring. Anchoring to now keeps the fixture meaning what it
+# says. Deliberately 1 day, not 0, so the value survives a timezone skew
+# between the fixture and the collector's clock.
 import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+_RECENT_ISO = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 import pytest
 from click.testing import CliRunner
 
@@ -81,7 +91,7 @@ def _valid_permit_dict(permit_id: str = "permit_20260514_aaaaaa") -> dict:
         "scope": "redteam-baseline",
         "expires_at": future_expiry,
         "issued_to": "agent:redteam",
-        "issued_at": "2026-05-14T10:00:00Z",
+        "issued_at": _RECENT_ISO,
         "issued_by": "human:redteam-operator",
         "reason": "",
     }
@@ -261,7 +271,7 @@ def test_permit_record_is_expired_at_reuses_lease_wall_clock_semantics() -> None
         scope="redteam-baseline",
         expires_at="2026-05-14T10:00:00",
         issued_to="agent:redteam",
-        issued_at="2026-05-14T09:00:00Z",
+        issued_at=_RECENT_ISO,
         issued_by="human:redteam-operator",
     )
 
@@ -684,7 +694,7 @@ def test_evidence_collector_projects_permit_sibling_fields_when_well_typed(
         "scope": "deploy:production",
         "expires_at": "2099-01-01T00:00:00Z",
         "issued_to": "agent:deployer",
-        "issued_at": "2026-05-14T00:00:00Z",
+        "issued_at": _RECENT_ISO,
         "issued_by": "human:operator",
     }
     refs = _build_authority_refs(
