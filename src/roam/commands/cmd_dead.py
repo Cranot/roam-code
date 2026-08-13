@@ -81,12 +81,14 @@ def _dead_finding_id(symbol_id: int, file_path: str, kind: str) -> str:
 def _dead_confidence_tier(action: str) -> str:
     """Map the dead-export ``action`` verdict to a registry confidence tier.
 
-    - SAFE  → ``static_analysis``: the call-graph proves no production
-              consumers exist; this is the strongest signal the detector
-              can produce.
+    - SAFE  → ``static_analysis``: no call-graph consumers AND the file
+              is not imported anywhere; the strongest signal the
+              detector can produce (still static-only — dynamic usage
+              is not scanned).
     - REVIEW → ``structural``: heuristic patterns (API naming, barrel
-               files, test-only consumers) — graph-backed but
-               name-dependent.
+               files, test-only consumers, file imported elsewhere with
+               importers unchecked per-symbol) — graph-backed but
+               incomplete evidence.
     - INTENTIONAL / INTENTIONAL_SCAFFOLDING → ``heuristic``: pure name /
                docstring pattern match, no graph evidence.
     """
@@ -368,13 +370,27 @@ def _scaffolding_signals(docstring: str | None) -> dict | None:
 def _dead_action(r, file_imported, tested=False, external_facing=False):
     """Compute actionable verdict and confidence % for a dead symbol.
 
-    Uses tiered confidence scoring (inspired by Vulture and Meta's dead
-    code system, 2023):
-      100% — unreachable code, unused imports, no dynamic usage possible
-       90% — unused functions/classes with no string-based references
-       80% — unused but in imported file (could be consumed externally)
-       70% — API-prefix naming (get*, create*, etc.) or barrel files
+    Tiered confidence scoring over the evidence the detector actually
+    has: symbol-level call-graph edges, module-level file imports, and
+    naming/docstring heuristics. Dynamic usage (getattr, string-based
+    references, framework registries beyond the explicit exemptions
+    below) is NOT scanned for — no tier may claim it.
+       95% — underscore-private symbol, no call-graph consumers, file
+             not imported anywhere
+       90% — unused functions/classes/etc., no call-graph consumers,
+             file not imported anywhere
+       70% — REVIEW: API-prefix naming, barrel files, tested-only or
+             external-facing surface, or file imported elsewhere while
+             the importers were never walked for this specific symbol
        60% — entry-point/lifecycle hooks (frameworks may invoke implicitly)
+
+    The file-imported branch was demoted from SAFE 80 after measurement:
+    hand-verification found 2 of 14 SAFE verdicts on that branch were
+    true (ROAM-FEEDBACK-2026-07-15 THEME 6; Union feedback 2026-05-19 /
+    2026-07-07 saw 0 of 20 survive). The sibling-import graph walk —
+    walking each importing file to check whether it references THIS
+    symbol — is the future fix that could re-earn a high tier; until
+    that check runs, the branch states only what was measured.
 
     Returns (action_string, confidence_pct).
     """
@@ -455,9 +471,14 @@ def _dead_action(r, file_imported, tested=False, external_facing=False):
     if base.startswith("index.") or base == "__init__.py":
         return "REVIEW", 70
 
-    # Imported file but symbol unused — could be externally consumed
+    # Imported file but symbol unused. The importers are NOT walked to
+    # check whether they reference THIS symbol (module import != symbol
+    # use — namespace access and re-export chains are invisible here).
+    # Measured precision of the old SAFE 80 verdict on this branch:
+    # 2 of 14 hand-verified true (THEME 6). REVIEW until the
+    # sibling-import graph walk exists and actually runs.
     if file_imported:
-        return "SAFE", 80
+        return "REVIEW", 70
 
     # Private naming conventions (_, single underscore prefix) = higher confidence
     if name.startswith("_") and not name.startswith("__"):
@@ -941,7 +962,15 @@ def _jsonable_dead_meta(meta):
 
 
 def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
-    """Human-readable reason that separates module imports from symbol use."""
+    """Human-readable reason that separates module imports from symbol use.
+
+    Estate law: a reason string may only name checks that RAN. The
+    file-imported branches therefore disclose that the importing files
+    were never walked for this specific export (no per-symbol importer
+    check exists yet — THEME 6) instead of claiming "no production
+    consumers", which the call graph alone cannot establish for a file
+    that IS imported elsewhere.
+    """
     cmeta = consumer_meta.get(r["id"], {})
     fmeta = file_import_meta.get(r["file_id"], {})
     smeta = sibling_meta.get(r["file_id"], {})
@@ -971,14 +1000,16 @@ def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
         return (
             f"file is imported by {module_importers} place(s) "
             f"({prod_module_importers} production, {consumer_importers} real consumers"
-            f"{barrel_clause}); this export has no production consumers "
+            f"{barrel_clause}); no call-graph edge lands on this export, but "
+            f"importers not checked for this specific export "
             f"while {siblings} sibling export(s) are used"
         )
     if module_importers:
         return (
             f"file is imported by {module_importers} place(s) "
             f"({prod_module_importers} production, {consumer_importers} real consumers"
-            f"{barrel_clause}); this export has no production consumers"
+            f"{barrel_clause}); no call-graph edge lands on this export, but "
+            f"importers not checked for this specific export"
         )
     return "file has no module importers; may be an entry point or consumed by unparsed code"
 
@@ -1897,7 +1928,9 @@ def _analyze_dataflow_dead(conn):
     default=False,
     help=(
         "Only show dead exports that ALSO fail roam oracle is-reachable-from-entry. "
-        "The really-really-dead set — safe to delete without further investigation. "
+        "The strongest signal this detector has — but both checks are static "
+        "call-graph analysis; dynamic usage and string-based references are "
+        "not scanned, so review before deleting. "
         "Filters out scaffolding automatically since the oracle marks "
         "those as reason_class=unreachable_scaffolding. Round 4 feature A."
     ),
@@ -3016,7 +3049,9 @@ def dead(
         # Build imported-by lookup for high-confidence results
         if high:
             click.echo(f"-- High confidence ({len(high)}) --")
-            click.echo("(file is imported; this export has no production consumers)")
+            click.echo(
+                "(file is imported; no call-graph edge lands on these exports, but importers not checked per-export)"
+            )
 
             # Build table headers and rows based on active flags
             headers = ["Action", "Name", "Kind", "Location", "Reason"]

@@ -105,8 +105,9 @@ TANGLE_RATIO_DEFINITION = (
 DEAD_EXPORT_DEFINITION = "exported symbols (kind in function/class/method) with zero inbound edges in edges table."
 
 DEAD_EXPORT_ACTION_DEFINITION = (
-    "SAFE = no production consumers (graph proof); REVIEW = public surface or heuristic (API/barrel/test-only);"
-    " INTENTIONAL = name/docstring scaffolding pattern."
+    "SAFE = no call-graph consumers and file not imported anywhere (static analysis; dynamic usage not scanned);"
+    " REVIEW = public surface, heuristic (API/barrel/test-only), or file imported elsewhere with importers not"
+    " checked for the specific symbol; INTENTIONAL = name/docstring scaffolding pattern."
 )
 
 

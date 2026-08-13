@@ -385,6 +385,178 @@ class TestMinimapCLI:
         assert result.exit_code == 0
         assert "Conventions" in result.output
 
+    def test_notes_migration_happy_path(self, tmp_path):
+        """Pre-mechanism block with hand-written notes: notes file created,
+        content survives the update, disclosure emitted."""
+        proj = _make_project(tmp_path)
+        claude_md = proj / "CLAUDE.md"
+        claude_md.write_text(
+            "# Project\n\n"
+            "<!-- roam:minimap generated=2020-01-01 -->\n"
+            "**Stack:** Python\n\n"
+            "**Project notes:**\n"
+            "- Gotcha: never call frobnicate() without a lock\n"
+            "- The scheduler is UTC-only\n"
+            "<!-- /roam:minimap -->\n\n# End\n",
+            encoding="utf-8",
+        )
+        notes_path = proj / ".roam" / "minimap-notes.md"
+        assert not notes_path.exists()
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        os.chdir(proj)
+        try:
+            result = runner.invoke(cli, ["minimap", "--update"], catch_exceptions=False)
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0
+        # Notes file created with the hand-written content
+        assert notes_path.exists()
+        notes_text = notes_path.read_text(encoding="utf-8")
+        assert "never call frobnicate() without a lock" in notes_text
+        assert "The scheduler is UTC-only" in notes_text
+        # Content survives the update: re-injected into the regenerated block
+        text = claude_md.read_text(encoding="utf-8")
+        assert "never call frobnicate() without a lock" in text
+        assert "The scheduler is UTC-only" in text
+        assert "# Project" in text
+        assert "# End" in text
+        # Disclosure emitted in text output
+        assert "Migrated in-block project notes" in result.output
+
+    def test_notes_migration_json_disclosure(self, tmp_path):
+        """JSON envelope carries the migration disclosure (summary + top-level)."""
+        proj = _make_project(tmp_path)
+        claude_md = proj / "CLAUDE.md"
+        claude_md.write_text(
+            "<!-- roam:minimap generated=2020-01-01 -->\n"
+            "**Project notes:**\n"
+            "- Hand-written gotcha survives\n"
+            "<!-- /roam:minimap -->\n",
+            encoding="utf-8",
+        )
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        os.chdir(proj)
+        try:
+            result = runner.invoke(cli, ["--json", "minimap", "--update"], catch_exceptions=False)
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0
+        import json
+
+        data = json.loads(result.output)
+        assert data["summary"]["notes_migration"]["action"] == "migrated"
+        assert data["notes_migration"]["action"] == "migrated"
+        assert data["notes_migration"]["line_count"] == 1
+        assert "Hand-written gotcha survives" in claude_md.read_text(encoding="utf-8")
+
+    def test_notes_file_precedence_no_merge(self, tmp_path):
+        """Notes file exists with different content: it stays authoritative,
+        no guessed merge, in-block section disclosed as superseded."""
+        proj = _make_project(tmp_path)
+        notes_dir = proj / ".roam"
+        notes_dir.mkdir(exist_ok=True)
+        notes_path = notes_dir / "minimap-notes.md"
+        notes_path.write_text("# Notes\n\n- Authoritative file note\n", encoding="utf-8")
+        claude_md = proj / "CLAUDE.md"
+        claude_md.write_text(
+            "<!-- roam:minimap generated=2020-01-01 -->\n"
+            "**Project notes:**\n"
+            "- Divergent in-block note\n"
+            "<!-- /roam:minimap -->\n",
+            encoding="utf-8",
+        )
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        os.chdir(proj)
+        try:
+            result = runner.invoke(cli, ["minimap", "--update"], catch_exceptions=False)
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0
+        # Notes file untouched (authoritative, no merge)
+        assert notes_path.read_text(encoding="utf-8") == "# Notes\n\n- Authoritative file note\n"
+        text = claude_md.read_text(encoding="utf-8")
+        assert "Authoritative file note" in text
+        assert "Divergent in-block note" not in text
+        # Superseded disclosure emitted
+        assert "superseded" in result.output
+
+    def test_steady_state_no_disclosure(self, tmp_path):
+        """Second --update with a notes file: in-block section mirrors the
+        file, so no migration/superseded noise and no notes-file rewrite."""
+        proj = _make_project(tmp_path)
+        notes_dir = proj / ".roam"
+        notes_dir.mkdir(exist_ok=True)
+        notes_path = notes_dir / "minimap-notes.md"
+        notes_path.write_text("# Notes\n\n- Steady note\n", encoding="utf-8")
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        os.chdir(proj)
+        try:
+            runner.invoke(cli, ["minimap", "--update"], catch_exceptions=False)
+            result = runner.invoke(cli, ["minimap", "--update"], catch_exceptions=False)
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0
+        assert "Migrated" not in result.output
+        assert "superseded" not in result.output
+        assert notes_path.read_text(encoding="utf-8") == "# Notes\n\n- Steady note\n"
+        assert "Steady note" in (proj / "CLAUDE.md").read_text(encoding="utf-8")
+
+    def test_no_notes_block_no_migration(self, tmp_path):
+        """A block without a Project-notes section behaves exactly as before:
+        no notes file created, no disclosure."""
+        proj = _make_project(tmp_path)
+        claude_md = proj / "CLAUDE.md"
+        claude_md.write_text(
+            "<!-- roam:minimap generated=2020-01-01 -->\nold\n<!-- /roam:minimap -->\n",
+            encoding="utf-8",
+        )
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        os.chdir(proj)
+        try:
+            result = runner.invoke(cli, ["minimap", "--update"], catch_exceptions=False)
+        finally:
+            os.chdir(old_cwd)
+        assert result.exit_code == 0
+        assert not (proj / ".roam" / "minimap-notes.md").exists()
+        assert "Migrated" not in result.output
+        assert "superseded" not in result.output
+        assert "old" not in claude_md.read_text(encoding="utf-8")
+
+    def test_migration_failure_refuses_update(self, tmp_path, monkeypatch):
+        """If preservation raises, the target is left untouched -- proceeding
+        would be exactly the silent loss the migration exists to prevent."""
+        proj = _make_project(tmp_path)
+        claude_md = proj / "CLAUDE.md"
+        original = (
+            "<!-- roam:minimap generated=2020-01-01 -->\n"
+            "**Project notes:**\n"
+            "- Load-bearing gotcha\n"
+            "<!-- /roam:minimap -->\n"
+        )
+        claude_md.write_text(original, encoding="utf-8")
+
+        import roam.commands.cmd_minimap as mod
+
+        def _boom(target, root):
+            raise OSError("disk on fire")
+
+        monkeypatch.setattr(mod, "_migrate_inblock_notes", _boom)
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        os.chdir(proj)
+        try:
+            result = runner.invoke(cli, ["minimap", "--update"], catch_exceptions=False)
+        finally:
+            os.chdir(old_cwd)
+        # Target byte-identical: nothing destroyed
+        assert claude_md.read_text(encoding="utf-8") == original
+        assert "Refused" in result.output
+
     def test_idempotent_update(self, tmp_path):
         """Running --update twice should produce consistent output."""
         proj = _make_project(tmp_path)
