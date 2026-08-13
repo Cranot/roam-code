@@ -39,6 +39,12 @@ def test_public_reexport_is_review_but_internal_helper_stays_safe(project_factor
     assert "public_api" in findings, json.dumps(data, indent=2)
     assert findings["public_api"]["action"] == "REVIEW"
     assert "external-facing" in findings["public_api"]["reason"]
+    # NOTE (2026-08, task #141): this SAFE rides the low bucket — the
+    # indexer records no file_edges row for the barrel's relative import
+    # in this src-layout fixture, so api.py counts as not-imported and
+    # internal_helper classifies SAFE 90 (a band the THEME 6 measurement
+    # did not indict). The file-imported SAFE 80 branch itself was
+    # demoted to REVIEW; see test_dead_file_imported_demotion.py.
     assert findings["internal_helper"]["action"] == "SAFE"
 
 

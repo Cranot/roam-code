@@ -478,7 +478,12 @@ def _wrap_sentinels(content: str) -> str:
 
 
 def _upsert_file(filepath: Path, block: str) -> str:
-    """Replace sentinel block if present, otherwise append. Returns verb."""
+    """Replace sentinel block if present, otherwise append. Returns verb.
+
+    Everything between the sentinels is regenerated wholesale. Callers
+    that may hold hand-written content inside the block MUST run
+    :func:`_migrate_inblock_notes` first — the minimap command does.
+    """
     if not filepath.exists():
         filepath.write_text(block + "\n", encoding="utf-8")
         return "Created"
@@ -490,6 +495,81 @@ def _upsert_file(filepath: Path, block: str) -> str:
     # No existing sentinel — append
     filepath.write_text(text.rstrip() + "\n\n" + block + "\n", encoding="utf-8")
     return "Appended to"
+
+
+_PROJECT_NOTES_HEADER = "**Project notes:**"
+
+
+def _extract_inblock_notes(text: str) -> list[str]:
+    """Return the lines of a ``**Project notes:**`` section inside the
+    sentinel block of *text*, stripped of surrounding blank lines.
+
+    Empty list when there is no sentinel block, no Project-notes header,
+    or the section carries no content. Matches the exact shape
+    ``_render_minimap`` emits (header line, then note lines, then the
+    closing sentinel).
+    """
+    m = _SENTINEL_BLOCK_RE.search(text)
+    if not m:
+        return []
+    lines = m.group(0).splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines) if ln.strip() == _PROJECT_NOTES_HEADER)
+    except StopIteration:
+        return []
+    section: list[str] = []
+    for ln in lines[start + 1 :]:
+        if ln.strip() == _SENTINEL_END:
+            break
+        section.append(ln.rstrip())
+    while section and not section[0]:
+        section.pop(0)
+    while section and not section[-1]:
+        section.pop()
+    return section
+
+
+def _migrate_inblock_notes(target: Path, root: Path) -> dict | None:
+    """Preserve a legacy in-block ``**Project notes:**`` section before the
+    sentinel block is regenerated (which destroys everything inside it).
+
+    Returns ``None`` when there is nothing to preserve: target missing, no
+    sentinel block, no Project-notes section, or the section is byte-equal
+    to what ``.roam/minimap-notes.md`` already injects (steady state).
+
+    Otherwise returns a disclosure dict:
+
+    - ``{"action": "migrated", "notes_file": ..., "line_count": N}`` —
+      the notes file did not exist; the in-block section was written into
+      it, so the regenerated block re-injects the same notes.
+    - ``{"action": "superseded", "notes_file": ...}`` — the notes file
+      exists with different content; it stays authoritative (no guessed
+      merge) and the in-block section is replaced by its injection.
+    """
+    if not target.exists():
+        return None
+    section = _extract_inblock_notes(target.read_text(encoding="utf-8"))
+    if not section:
+        return None
+    notes_path = root / ".roam" / "minimap-notes.md"
+    if not notes_path.exists():
+        (root / ".roam").mkdir(exist_ok=True)
+        header = (
+            "# Minimap Notes\n\n"
+            f"Migrated from the in-block '**Project notes:**' section of {target.name} "
+            "by `roam minimap`.\n"
+            "Add bullet points below -- they appear in every `roam minimap` output.\n\n"
+        )
+        notes_path.write_text(header + "\n".join(section) + "\n", encoding="utf-8")
+        return {
+            "action": "migrated",
+            "notes_file": str(notes_path),
+            "line_count": len(section),
+        }
+    # Notes file exists — the documented mechanism is authoritative.
+    if [ln for ln in section if ln.strip()] == _get_project_notes(root):
+        return None  # steady state: the in-block section IS the injected notes
+    return {"action": "superseded", "notes_file": str(notes_path)}
 
 
 # ---------------------------------------------------------------------------
@@ -548,16 +628,17 @@ def minimap(ctx, update_claude, output_file, init_notes):
       roam minimap -o docs/AGENTS.md  # target a different file
       roam minimap --init-notes       # scaffold .roam/minimap-notes.md
 
-    The sentinel pair <!-- roam:minimap --> ... <!-- /roam:minimap --> is
-    replaced on each run, leaving surrounding content intact.
+    Everything between the sentinels <!-- roam:minimap --> ...
+    <!-- /roam:minimap --> is REGENERATED on each run: hand-edits inside
+    the block do not survive an update. Content outside the sentinels is
+    left intact.
 
-    Add project-specific gotchas to .roam/minimap-notes.md -- they appear
-    in every subsequent minimap output.
-
-    The generated snapshot includes tech stack, annotated directory tree,
-    key symbols by PageRank, high-fan-in symbols, and hotspots.  Use
-    ``--update`` to refresh the sentinel block in-place without clobbering
-    surrounding content.
+    Durable hand-written notes belong in .roam/minimap-notes.md -- they
+    are re-injected into every minimap output. --update automatically
+    migrates a legacy in-block "Project notes:" section into that file
+    and discloses the migration; if the notes file already exists, it is
+    authoritative and a differing in-block section is superseded (no
+    silent merge).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()
@@ -662,6 +743,30 @@ def minimap(ctx, update_claude, output_file, init_notes):
             _w607az_warnings_out.append(f"minimap_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
+    # Determine target (before rendering: the notes migration below must
+    # land in .roam/minimap-notes.md BEFORE _get_project_notes reads it).
+    target: Path | None = None
+    if output_file:
+        p = Path(output_file)
+        target = p if p.is_absolute() else root / p
+    elif update_claude:
+        target = root / "CLAUDE.md"
+
+    # Preserve a legacy in-block Project-notes section before regeneration.
+    # Everything inside the sentinels is regenerated wholesale by
+    # _upsert_file; hand-written notes that predate the notes-file
+    # mechanism would be silently destroyed. Migration failure REFUSES the
+    # upsert (the target is left untouched) — proceeding would be exactly
+    # the silent loss this path exists to prevent.
+    migration: dict | None = None
+    migration_failed = False
+    if target is not None:
+        try:
+            migration = _migrate_inblock_notes(target, root)
+        except Exception as exc:  # noqa: BLE001 -- disclosure, then refuse
+            _w607az_warnings_out.append(f"minimap_notes_migration_failed:{type(exc).__name__}:{exc}")
+            migration_failed = True
+
     try:
         with open_db(readonly=True) as conn:
             content = _render_minimap(conn, root, warnings_out=warnings_out)
@@ -677,20 +782,17 @@ def minimap(ctx, update_claude, output_file, init_notes):
     # metadata, git SHA, generated_by token) could raise on missing inputs.
     block = _run_check_az("wrap_sentinels", _wrap_sentinels, content, default="")
 
-    # Determine target
-    target: Path | None = None
-    if output_file:
-        p = Path(output_file)
-        target = p if p.is_absolute() else root / p
-    elif update_claude:
-        target = root / "CLAUDE.md"
-
     if target is not None:
         # W607-AZ: wrap filesystem upsert. _upsert_file performs read +
         # regex-substitute + write; any I/O substrate raise (permission
         # denied, read-only filesystem, encoding error) previously bubbled
         # as a Click traceback. Default to "Failed" verb on substrate raise.
-        verb = _run_check_az("upsert_file", _upsert_file, target, block, default="Failed")
+        if migration_failed:
+            # In-block notes could not be preserved: refuse the rewrite so
+            # nothing is destroyed. Reason lives in the warnings bucket.
+            verb = "Refused"
+        else:
+            verb = _run_check_az("upsert_file", _upsert_file, target, block, default="Failed")
 
     # W607-AZ: merge per-phase bucket into the canonical W607-L
     # ``warnings_out`` channel. Same marker-family prefix (``minimap_*``);
@@ -706,6 +808,10 @@ def minimap(ctx, update_claude, output_file, init_notes):
                 "action": verb.lower(),
                 "file": str(target),
             }
+            # Notes-migration disclosure: mirrored on summary + top-level,
+            # same idiom as warnings_out below.
+            if migration is not None:
+                mm_summary["notes_migration"] = dict(migration)
             # W607-L + W607-AZ: surface combined marker bucket on summary
             # mirror + top-level so the substrate-degrade lineage is
             # visible to consumers reading either the summary block or the
@@ -720,6 +826,7 @@ def minimap(ctx, update_claude, output_file, init_notes):
                         "minimap",
                         summary=mm_summary,
                         file=str(target),
+                        **({"notes_migration": dict(migration)} if migration is not None else {}),
                         **({"warnings_out": list(combined_warnings)} if combined_warnings else {}),
                     )
                 ),
@@ -742,7 +849,24 @@ def minimap(ctx, update_claude, output_file, init_notes):
             click.echo(envelope_text)
         else:
             echo_text_warnings(combined_warnings)
-            click.echo(f"{verb}: {target}")
+            if migration is not None:
+                if migration["action"] == "migrated":
+                    click.echo(
+                        f"Migrated in-block project notes to {migration['notes_file']} "
+                        f"({migration['line_count']} lines); they are re-injected on every run."
+                    )
+                else:
+                    click.echo(
+                        f"Note: in-block project notes were superseded by {migration['notes_file']} "
+                        "(the notes file is authoritative; edit it to change injected notes)."
+                    )
+            if migration_failed:
+                click.echo(
+                    f"{verb}: {target} -- in-block project notes could not be preserved; "
+                    "file left untouched (see warnings)."
+                )
+            else:
+                click.echo(f"{verb}: {target}")
     else:
         # Print to stdout
         if json_mode:
