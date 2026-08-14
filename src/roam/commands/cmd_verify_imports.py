@@ -84,43 +84,61 @@ _LANGS_WITH_STDLIB_MODEL: frozenset[str] = frozenset(
     {"python", "javascript", "typescript", "tsx", "jsx", "vue", "svelte"}
 )
 
-# Languages whose import syntax is their OWN -- not Python-shaped.
-# ``_extract_import_names_from_line`` routes every non-JS host through the
-# Python regexes (that is how a `python -c "import json"` heredoc inside a
-# .yml CI step gets extracted at all), and ``_is_stdlib_module`` then tests the
-# FIRST DOTTED SEGMENT against the Python stdlib. That is how
-# `import io.totallyfake.doesnotexist.Nope;` -- a Java import of a package that
-# exists nowhere -- was published as RESOLVED: `io` is a Python stdlib module.
-# The guard it replaces was a blocklist of one (``lang_lower != "go"``); every
-# other non-JS language fell straight through it into the Python stdlib list.
-_LANGS_WITH_OWN_IMPORT_SYNTAX: frozenset[str] = frozenset(
+# Config/doc host languages whose files legitimately EMBED Python-shaped
+# snippets -- a `python -c "import json"` heredoc in a .yml CI step, a
+# ``local-exec`` provisioner in .tf/.hcl, an inline script in a .toml task
+# runner, a fenced ```python example in .md scanned under ``--include-docs``.
+# These hosts keep the legacy Python-regex scan + Python stdlib model
+# (`test_verify_imports_should_not_flag_stdlib_in_yaml`,
+# ``TestDocFileExclusion.test_markdown_import_reported_with_include_docs``).
+# This allowlist is deliberately SMALL and explicit: it names the hosts where
+# "Python-shaped by construction" is actually true, instead of granting that
+# assumption to every language the dispatch never heard of. Before the
+# inversion, "not in an 11-name list" meant "scan with Python regexes and
+# publish unresolved": Elixir/Julia `import Foo.Bar` matched ``_PY_IMPORT``,
+# Lua `require("socket")` matched ``_JS_REQUIRE``, and both escalated to SARIF
+# ``hallucination-import`` at level ``error`` when FTS found nothing nearby.
+_PY_SNIPPET_CONFIG_HOSTS: frozenset[str] = frozenset(
     {
-        "go",
-        "java",
-        "kotlin",
-        "scala",
-        "csharp",
-        "c_sharp",
-        "php",
-        "ruby",
-        "rust",
-        "swift",
-        "dart",
+        "yaml",
+        "hcl",
+        "toml",
+        "bash",
+        # Docs are skipped by default; under ``--include-docs`` their fenced
+        # Python examples are deliberately scanned and flagged (legacy,
+        # test-asserted behaviour).
+        "markdown",
+        "mdx",
     }
 )
 
 
-def _import_is_unverifiable(language: str | None) -> bool:
+def _import_is_unverifiable(language: str | None, file_path: str = "") -> bool:
     """True when this command cannot decide an unresolved import in *language*.
 
-    A host language with its own import syntax and no dependency model here
-    has exactly one oracle -- the index -- and the index never contains that
-    language's standard library or its package manager's tree. "Not in the
-    index" is therefore not evidence of "does not exist". Say so instead of
-    forcing the answer into ``unresolved``.
+    INVERTED default (task #149): a language is decidable only when it is in
+    ``_LANGS_WITH_STDLIB_MODEL`` (Python / the JS family -- the two real
+    dependency models) or in ``_PY_SNIPPET_CONFIG_HOSTS`` (config/doc hosts
+    whose Python-heredoc contents the Python model legitimately covers).
+    EVERYTHING else -- Go and Java as before, but equally Lua, Elixir, Julia,
+    C, Haskell, ..., and a file whose language is unknown (``None`` / ``""``,
+    e.g. a ``--path`` target absent from the files table) -- has exactly one
+    oracle, the index, and the index never contains that language's standard
+    library or its package manager's tree. "Not in the index" is therefore
+    not evidence of "does not exist". Say so instead of forcing the answer
+    into ``unresolved`` / SARIF ``hallucination-import``.
+
+    ``file_path`` keeps the ``_is_python_file`` extension fallback: a ``.py``
+    file missing from the files table is still Python, not unknown.
     """
     lang = (language or "").lower()
-    return lang in _LANGS_WITH_OWN_IMPORT_SYNTAX and lang not in _LANGS_WITH_STDLIB_MODEL
+    if lang in _LANGS_WITH_STDLIB_MODEL:
+        return False
+    if lang in _PY_SNIPPET_CONFIG_HOSTS:
+        return False
+    if _is_python_file(language, file_path):
+        return False
+    return True
 
 
 def _import_name_for_requirement(req: str) -> str | None:
@@ -1237,25 +1255,22 @@ def _scan_file_imports(
     seen: set[tuple[str, int]] = set()
 
     is_py = _is_python_file(language, file_path)
-    # M5 fix: the stdlib skip must key off the IMPORT's own (apparent)
-    # language, not the host file's. `_extract_import_names_from_line` falls
-    # back to the Python-shaped regexes for ANY non-JS/non-Go host -- that's
-    # how a `python -c "import json"` heredoc embedded in a `.yml` CI step
-    # gets extracted at all -- so any name pulled out of a non-JS, non-Go
-    # host is Python-shaped by construction, even when the host file itself
-    # is `.yml`/`.hcl`/etc. Real JS/TS/Go hosts keep the old is_py-only gate:
-    # their import names come from language-specific regexes and can
-    # coincidentally collide with a Python stdlib module name (an npm
-    # package literally called `os` or `csv`, a Go `os`/`io` import) — those
-    # already have their own correct builtin/declared-dependency resolution
-    # path and must not be short-circuited by an unrelated Python stdlib list.
-    #
-    # The blocklist-of-one this replaced (`lang_lower != "go"`) let every OTHER
-    # language with its own import syntax fall into the Python stdlib list,
-    # first-dotted-segment matched: `import io.totallyfake.doesnotexist.Nope;`
-    # in Java was published RESOLVED because `io` is a Python stdlib module.
-    stdlib_scope = is_py or (not is_js_like and lang_lower not in _LANGS_WITH_OWN_IMPORT_SYNTAX)
-    unverifiable_scope = _import_is_unverifiable(lang_lower)
+    # The Python stdlib skip (M5 fix: keyed off the IMPORT's apparent
+    # language, not the host file's) applies exactly where the extracted
+    # names are Python-shaped by construction: real Python files, plus the
+    # explicit config/doc hosts whose Python-heredoc contents the Python
+    # model legitimately covers (a `python -c "import json"` heredoc in a
+    # `.yml` CI step). This is an ALLOWLIST, not the complement of a
+    # blocklist: the previous gate (`lang_lower not in
+    # _LANGS_WITH_OWN_IMPORT_SYNTAX`) granted the Python stdlib model to
+    # every language the 11-name list never heard of, first-dotted-segment
+    # matched -- the same enumeration-not-inversion shape that published
+    # `import io.totallyfake.doesnotexist.Nope;` (Java) as RESOLVED because
+    # `io` is a Python stdlib module. JS/TS hosts stay outside: their names
+    # come from JS-specific regexes and can coincidentally collide with a
+    # Python stdlib module name (an npm package literally called `os`).
+    stdlib_scope = is_py or lang_lower in _PY_SNIPPET_CONFIG_HOSTS
+    unverifiable_scope = _import_is_unverifiable(language, file_path)
     try:
         with open(full_path, "r", encoding="utf-8", errors="replace") as f:
             prev_stripped = ""
@@ -1478,7 +1493,7 @@ def verify_imports_for_connection(
         # Same three-valued rule as the source-scan pass: an unresolved import
         # in a language this command has no dependency model for is UNKNOWN,
         # not a hallucination.
-        edge_unverifiable = not resolved and _import_is_unverifiable(edge_lang)
+        edge_unverifiable = not resolved and _import_is_unverifiable(edge_lang, fp)
         entry: dict = {
             "file": fp,
             "line": line,

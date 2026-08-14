@@ -189,6 +189,76 @@ class TestSarifProjection:
 
 
 # ---------------------------------------------------------------------------
+# Task #149 -- the dispatch is an INVERSION, not an enumeration. Languages
+# absent from every model list (elixir, julia, lua, ...) used to fall through
+# to the Python regexes: Elixir/Julia `import Foo.Bar` matched _PY_IMPORT,
+# Lua `require("socket")` matched _JS_REQUIRE, and `unresolved` was their only
+# reachable status -- escalating to SARIF hallucination-import at level:error
+# whenever FTS found nothing nearby.
+# ---------------------------------------------------------------------------
+
+ELIXIR_MOD = "defmodule Demo do\n  import Foo.Bar\nend\n"
+JULIA_MOD = "import FakePkg.Sub\n\nfunction go()\nend\n"
+LUA_MOD = 'local socket = require("socket")\nprint(socket)\n'
+
+
+@pytest.fixture
+def tier2_project(project_factory):
+    """Elixir + Julia + Lua (no import model) with a Python control."""
+    return project_factory(
+        {
+            "lib/demo.ex": ELIXIR_MOD,
+            "analysis.jl": JULIA_MOD,
+            "net.lua": LUA_MOD,
+            "ctl.py": PY_CTL,
+        }
+    )
+
+
+class TestUnlistedLanguagesAreUnverifiable:
+    @pytest.mark.parametrize("filename", ["demo.ex", "analysis.jl", "net.lua"])
+    def test_import_like_lines_publish_unverifiable(self, tier2_project, filename):
+        _summary, rows, _out = _rows(tier2_project)
+        file_rows = [r for r in rows if r["file"].endswith(filename)]
+        assert file_rows, f"{filename} contributed no import rows at all"
+        assert all(r["status"] == "unverifiable" for r in file_rows), file_rows
+        for r in file_rows:
+            assert not r.get("suggestions"), r
+
+    def test_summary_names_all_three_languages(self, tier2_project):
+        summary, _rows_, _out = _rows(tier2_project)
+        assert summary["unverifiable"] == 3
+        reason = summary["incomplete_reasons"][0]
+        assert reason.startswith("no_stdlib_model_for_language: ")
+        for lang in ("elixir", "julia", "lua"):
+            assert lang in reason, reason
+
+    def test_never_hallucination_import_never_error(self, tier2_project):
+        """The pre-fix escalation path must be unreachable for these hosts."""
+        result = _invoke(tier2_project, sarif_mode=True)
+        doc = json.loads(result.output)
+        for r in doc["runs"][0]["results"]:
+            locs = json.dumps(r["locations"])
+            if any(name in locs for name in ("demo.ex", "analysis.jl", "net.lua")):
+                assert r["ruleId"] == "unverifiable-import", r
+                assert r["level"] == "warning", r
+
+    def test_rows_are_emitted_to_sarif_not_dropped(self, tier2_project):
+        result = _invoke(tier2_project, sarif_mode=True)
+        doc = json.loads(result.output)
+        results = doc["runs"][0]["results"]
+        for name in ("demo.ex", "analysis.jl", "net.lua"):
+            assert any(name in json.dumps(r["locations"]) for r in results), name
+
+    def test_python_control_still_decides(self, tier2_project):
+        """The firewall keeps blocking where it CAN decide."""
+        _summary, rows, _out = _rows(tier2_project)
+        by_name = {r["name"]: r["status"] for r in rows if r["file"].endswith("ctl.py")}
+        assert by_name.get("os") == "resolved", by_name
+        assert by_name.get("totallyfakepkg123") == "unresolved", by_name
+
+
+# ---------------------------------------------------------------------------
 # MUST NOT FIRE -- the negative controls
 # ---------------------------------------------------------------------------
 
@@ -231,17 +301,35 @@ class TestSetsAreExplicitNotDerived:
         for lang in ("go", "java", "kotlin", "rust", "ruby", "php"):
             assert _import_is_unverifiable(lang) is True, lang
 
-    def test_unknown_language_is_not_swept_in(self):
-        """An unrecognised host keeps the Python-shaped fallback path.
+    def test_config_hosts_keep_the_python_heredoc_model(self):
+        """The explicit config/doc-host allowlist stays decidable.
 
-        ``_extract_import_names_from_line`` routes any non-JS host through the
-        Python regexes, so a ``python -c "import json"`` heredoc in a .yml CI
-        step IS Python-shaped and the Python model applies to it. Widening
-        ``unverifiable`` to "any language not in the model map" would silently
-        stop deciding those rows.
+        ``_extract_import_names_from_line`` routes these hosts through the
+        Python regexes, and that is CORRECT for them: a ``python -c "import
+        json"`` heredoc in a .yml CI step IS Python-shaped, and a fenced
+        ```python example in .md under ``--include-docs`` is too. The
+        inversion (task #149) must not sweep the allowlisted hosts into
+        ``unverifiable``.
         """
         from roam.commands.cmd_verify_imports import _import_is_unverifiable
 
-        assert _import_is_unverifiable("yaml") is False
-        assert _import_is_unverifiable(None) is False
-        assert _import_is_unverifiable("") is False
+        for host in ("yaml", "hcl", "toml", "bash", "markdown", "mdx"):
+            assert _import_is_unverifiable(host) is False, host
+
+    def test_unknown_language_is_unverifiable_not_python(self):
+        """A language the dispatch never heard of gets NO model, not Python's.
+
+        Pre-inversion these fell through to the Python regexes + stdlib list
+        (``unresolved``-only reachable status -> SARIF ``hallucination-import``
+        at ``error``). ``None`` / ``""`` is the ``--path``-names-an-unindexed-
+        file case and joins the unverifiable default -- unless the path itself
+        says ``.py``, which stays Python by extension.
+        """
+        from roam.commands.cmd_verify_imports import _import_is_unverifiable
+
+        for lang in ("elixir", "julia", "lua", "c", "haskell", "r", "zig"):
+            assert _import_is_unverifiable(lang) is True, lang
+        assert _import_is_unverifiable(None) is True
+        assert _import_is_unverifiable("") is True
+        # Extension fallback: an unindexed .py --path target is still Python.
+        assert _import_is_unverifiable(None, "scripts/loose.py") is False
