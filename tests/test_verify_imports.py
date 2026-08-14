@@ -903,3 +903,240 @@ class TestDocFileExclusion:
         # are scanned and flagged as unresolved.
         assert md_rows.get("phantom_md_pkg_xyz") == "unresolved", data["imports"]
         assert md_rows.get("another_fake_md_mod") == "unresolved", data["imports"]
+
+
+# ===========================================================================
+# 15. Multi-line import statement joining (task #148)
+# ===========================================================================
+
+
+def _rows_by_name(result):
+    data = json.loads(result.output)
+    return {imp["name"]: imp for imp in data["imports"]}
+
+
+class TestMultiLineImportJoining:
+    """Task #148 — multi-line import statements were invisible per-line.
+
+    Every import regex is single-line: ``import {\\n  a,\\n} from 'x';``
+    matched ZERO regexes (the opener has no specifier; ``} from 'x';`` fails
+    the ``^\\s*import`` anchor) and ``from pkg import (\\n  alpha,\\n)``
+    dropped the ENTIRE module path (the ``(`` fails ``_PY_FROM_IMPORT``'s
+    member group). Both shapes passed the firewall unverified — a false
+    negative on exactly the hallucination shape the command exists to catch.
+    The fix pre-joins physical lines into one logical statement, attributed
+    to the FIRST physical line number."""
+
+    # -- must fire ---------------------------------------------------------
+
+    def test_multiline_esm_import_reported_at_opening_line(self, project_factory):
+        project = project_factory(
+            {
+                "app.js": (
+                    "// header comment\n"
+                    "import {\n"
+                    "  alpha,\n"
+                    "  beta\n"
+                    "} from 'totally-fake-esm-pkg';\n"
+                    "export function main() { return alpha + beta; }\n"
+                ),
+            }
+        )
+        result = _invoke(["verify-imports"], project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        rows = _rows_by_name(result)
+        row = rows.get("totally-fake-esm-pkg")
+        assert row is not None, result.output
+        assert row["status"] == "unresolved", row
+        # Attributed to the statement's OPENING line, not the closer.
+        assert row["line"] == 2, row
+
+    def test_python_parenthesized_from_import_module_reported(self, project_factory):
+        project = project_factory(
+            {
+                "deep.py": ('"""Module docstring."""\nfrom totally.fake.pkg import (\n    alpha,\n    beta,\n)\n'),
+            }
+        )
+        result = _invoke(["verify-imports"], project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        rows = _rows_by_name(result)
+        row = rows.get("totally.fake.pkg")
+        assert row is not None, result.output
+        assert row["status"] == "unresolved", row
+        assert row["line"] == 2, row
+
+    def test_python_backslash_continuation_module_reported(self, project_factory):
+        """The broken backslash shape is the backslash IMMEDIATELY after
+        ``import`` — ``[\\w*]`` fails on ``\\`` and the whole statement
+        vanished. (``import alpha, \\`` was already caught pre-fix: the
+        module group closes before the backslash — measured on 8009b0c0.)
+        The second statement pins that already-working shape against
+        regression, at its own line."""
+        project = project_factory(
+            {
+                "cont.py": (
+                    "from other_fake_mod_zz import \\\n"
+                    "    alpha, beta\n"
+                    "from second_fake_mod_qq import gamma, \\\n"
+                    "    delta\n"
+                ),
+            }
+        )
+        result = _invoke(["verify-imports"], project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        rows = _rows_by_name(result)
+        row = rows.get("other_fake_mod_zz")
+        assert row is not None, result.output
+        assert row["status"] == "unresolved", row
+        assert row["line"] == 1, row
+        row = rows.get("second_fake_mod_qq")
+        assert row is not None, result.output
+        assert row["status"] == "unresolved", row
+        assert row["line"] == 3, row
+
+    # -- import type: consistent with the single-line treatment ------------
+
+    def test_single_line_import_type_is_not_extracted(self):
+        """Pins today's single-line behaviour: ``import type`` binds no
+        runtime value and no regex matches it — it is never verified."""
+        from roam.commands.cmd_verify_imports import _extract_import_names_from_line
+
+        names = _extract_import_names_from_line("import type { Foo } from 'phantom-type-pkg';", "typescript")
+        assert names == []
+
+    def test_multiline_import_type_matches_single_line_treatment(self, project_factory):
+        """Multi-line ``import type`` joins to the same logical statement the
+        single-line form is, and gets the same treatment: not reported. The
+        sibling VALUE import in the same file proves the scan itself ran."""
+        project = project_factory(
+            {
+                "typed.ts": (
+                    "import type {\n"
+                    "  OnlyAType,\n"
+                    "} from 'phantom-type-only-pkg';\n"
+                    "import {\n"
+                    "  realValue,\n"
+                    "} from 'phantom-value-pkg';\n"
+                    "export const x = realValue;\n"
+                ),
+            }
+        )
+        result = _invoke(["verify-imports"], project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        rows = _rows_by_name(result)
+        assert "phantom-type-only-pkg" not in rows, rows
+        row = rows.get("phantom-value-pkg")
+        assert row is not None, result.output
+        assert row["status"] == "unresolved", row
+        assert row["line"] == 4, row
+
+    # -- must NOT fire: the negative controls ------------------------------
+
+    def test_python_docstring_import_shapes_cannot_arm_the_joiner(self, project_factory):
+        """Import-shaped text inside a docstring is string content: the
+        triple-quote state machine keeps it away from the accumulator, so an
+        unterminated ``import {`` there must not swallow later real code."""
+        project = project_factory(
+            {
+                "doc.py": (
+                    'BLOB = """\nimport {\nfrom fake_inside_docstring import (\n"""\nimport real_after_docstring_pkg\n'
+                ),
+            }
+        )
+        result = _invoke(["verify-imports"], project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        rows = _rows_by_name(result)
+        assert "fake_inside_docstring" not in rows, rows
+        row = rows.get("real_after_docstring_pkg")
+        assert row is not None, result.output
+        assert row["status"] == "unresolved", row
+        assert row["line"] == 5, row
+
+    def test_js_template_literal_import_does_not_swallow_following_code(self, project_factory):
+        """An unterminated ``import {`` inside a template literal arms the
+        accumulator (the raw-line scanner has no JS string model), but the
+        next REAL import opener aborts the join and replays per-line — the
+        real statement is still reported at its own line."""
+        project = project_factory(
+            {
+                "tpl.js": ("const T = `\nimport {\n  swallowed\n`;\nimport { real } from 'actually-fake-pkg';\n"),
+            }
+        )
+        result = _invoke(["verify-imports"], project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        rows = _rows_by_name(result)
+        row = rows.get("actually-fake-pkg")
+        assert row is not None, result.output
+        assert row["status"] == "unresolved", row
+        assert row["line"] == 5, row
+
+    def test_cap_overflow_degrades_to_per_line_without_error(self, project_factory):
+        """A pathological unterminated brace buffers at most
+        ``_JOINER_MAX_LINES`` physical lines; on overflow the buffer replays
+        per-line (a ``require`` caught mid-buffer keeps its own line number,
+        exactly the pre-joiner behaviour) and scanning continues."""
+        lines = ["import {"]
+        lines += [f"const v{i} = {i};" for i in range(40)]
+        lines.append("const mid = require('buffered-mid-fake-req');")
+        lines += [f"const w{i} = {i};" for i in range(40)]
+        lines.append("const late = require('after-cap-fake-req');")
+        mid_line = lines.index("const mid = require('buffered-mid-fake-req');") + 1
+        late_line = lines.index("const late = require('after-cap-fake-req');") + 1
+        project = project_factory({"huge.js": "\n".join(lines) + "\n"})
+
+        result = _invoke(["verify-imports"], project, json_mode=True)
+        assert result.exit_code == 0, result.output
+        rows = _rows_by_name(result)
+        mid = rows.get("buffered-mid-fake-req")
+        assert mid is not None, result.output
+        assert mid["status"] == "unresolved" and mid["line"] == mid_line, mid
+        late = rows.get("after-cap-fake-req")
+        assert late is not None, result.output
+        assert late["status"] == "unresolved" and late["line"] == late_line, late
+
+    # -- joiner unit level -------------------------------------------------
+
+    def test_joiner_single_line_statements_pass_through_verbatim(self):
+        from roam.commands.cmd_verify_imports import _ImportStatementJoiner
+
+        j = _ImportStatementJoiner("js")
+        line = "import { a } from 'x';\n"
+        assert j.feed(3, line) == [(3, line)]
+        j = _ImportStatementJoiner("py")
+        line = "import os\n"
+        assert j.feed(7, line) == [(7, line)]
+
+    def test_joiner_attributes_merged_statement_to_opening_line(self):
+        from roam.commands.cmd_verify_imports import _ImportStatementJoiner
+
+        j = _ImportStatementJoiner("js")
+        assert j.feed(10, "import {\n") == []
+        assert j.feed(11, "  a,\n") == []
+        assert j.feed(12, "} from 'pkg';\n") == [(10, "import { a, } from 'pkg';")]
+
+    def test_joiner_python_paren_join_yields_the_module(self):
+        from roam.commands.cmd_verify_imports import (
+            _extract_import_names_from_line,
+            _ImportStatementJoiner,
+        )
+
+        j = _ImportStatementJoiner("py")
+        assert j.feed(1, "from fakepkg import (\n") == []
+        assert j.feed(2, "    alpha,\n") == []
+        units = j.feed(3, ")\n")
+        assert len(units) == 1
+        num, text = units[0]
+        assert num == 1
+        assert _extract_import_names_from_line(text, "python") == ["fakepkg"]
+
+    def test_joiner_cap_overflow_replays_buffered_lines_verbatim(self):
+        from roam.commands.cmd_verify_imports import _JOINER_MAX_LINES, _ImportStatementJoiner
+
+        j = _ImportStatementJoiner("js")
+        assert j.feed(1, "import {\n") == []
+        out = []
+        for num in range(2, _JOINER_MAX_LINES + 1):
+            out.extend(j.feed(num, f"  junk{num},\n"))
+        assert len(out) == _JOINER_MAX_LINES
+        assert out[0] == (1, "import {\n")
+        assert out[-1] == (_JOINER_MAX_LINES, f"  junk{_JOINER_MAX_LINES},\n")

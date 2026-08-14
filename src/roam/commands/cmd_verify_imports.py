@@ -609,6 +609,170 @@ _GO_IMPORT = re.compile(r"""^\s*(?:import\s+)?["']([^"']+)["']""")
 
 
 # ---------------------------------------------------------------------------
+# Multi-line import statement joining (task #148)
+# ---------------------------------------------------------------------------
+
+# Physical-line cap per logical statement. A pathological unterminated brace
+# (e.g. `import {` inside generated text) must not buffer the whole file: on
+# overflow the buffered lines replay individually -- the pre-joiner behavior.
+_JOINER_MAX_LINES = 64
+
+# A JS-family line that BEGINS an import statement: `import {`, `import Foo`,
+# `import * as ns`, `import 'spec'`, `import type ...`. The lookahead excludes
+# `import.meta` (property access) and `import(` (dynamic import expression),
+# neither of which opens a joinable statement.
+_JS_IMPORT_OPENER = re.compile(r"""^\s*import\b\s*(?=[{*'"\w])""")
+
+# A quoted module specifier anywhere in the (merged) statement text.
+_JS_QUOTED_SPEC = re.compile(r"""['"][^'"]+['"]""")
+
+
+def _py_effective_text(line: str) -> str:
+    """*line* with any ``#`` comment tail removed.
+
+    Used only for the joiner's paren/backslash bookkeeping so a ``)`` or
+    ``\\`` inside a trailing comment cannot miscount; extraction still sees
+    the merged statement text. A ``#`` inside a string literal on an
+    import-shaped line over-trims, which at worst degrades to the replay
+    path -- the same precision class as the rest of the raw-line scanner.
+    """
+    idx = line.find("#")
+    return line if idx < 0 else line[:idx]
+
+
+class _ImportStatementJoiner:
+    """Join multi-line import statements into one logical line (task #148).
+
+    Every import regex above is single-line, so ``import {\\n  a,\\n} from
+    'x';`` matched nothing (the opener line has no specifier; the closer
+    fails the ``^\\s*import`` anchor) and ``from pkg import (\\n  alpha,\\n)``
+    dropped the ENTIRE module path (the ``(`` fails ``_PY_FROM_IMPORT``'s
+    member group). Both shapes sailed through the firewall unverified.
+
+    Contract:
+
+    - The caller feeds only lines that survived its comment/docstring state
+      machine -- string/comment content can neither arm nor feed the
+      accumulator because it is never handed over.
+    - A merged statement is attributed to the FIRST physical line number, so
+      every reported ``file:line`` stays honest.
+    - Bounded and fail-open, never an exception: at most
+      ``_JOINER_MAX_LINES`` lines buffer into one statement. On overflow, on
+      a new import opener arriving mid-statement (the buffered "opener" was
+      text the state machine could not see, e.g. a JS template literal), and
+      at EOF, the buffered lines REPLAY individually at their own line
+      numbers -- exactly the pre-joiner behavior.
+    - Single-line statements never enter the buffer: any line the extractor
+      already handles is emitted verbatim, so every currently-extracted form
+      keeps the same names and line numbers.
+    """
+
+    __slots__ = ("_mode", "_lines", "_nums")
+
+    def __init__(self, mode: str) -> None:
+        self._mode = mode  # "py" (Python + config hosts) | "js" (JS family)
+        self._lines: list[str] = []
+        self._nums: list[int] = []
+
+    def feed(self, line_num: int, line: str) -> list[tuple[int, str]]:
+        """Feed one physical line; return ``(line_num, text)`` units ready
+        for extraction. Empty while a statement is accumulating."""
+        if self._lines:
+            return self._continue(line_num, line)
+        if self._arms(line):
+            self._lines.append(line)
+            self._nums.append(line_num)
+            return []
+        return [(line_num, line)]
+
+    def flush(self) -> list[tuple[int, str]]:
+        """Replay buffered lines individually (EOF / overflow / abort)."""
+        units = list(zip(self._nums, self._lines))
+        self._lines = []
+        self._nums = []
+        return units
+
+    # -- accumulation ------------------------------------------------------
+
+    def _continue(self, line_num: int, line: str) -> list[tuple[int, str]]:
+        if self._is_opener(line):
+            # A new import statement cannot begin inside an unfinished one,
+            # so the buffered opener was not really an import. Degrade to
+            # per-line and process the new line from scratch.
+            units = self.flush()
+            units.extend(self.feed(line_num, line))
+            return units
+        self._lines.append(line)
+        self._nums.append(line_num)
+        if self._complete():
+            first = self._nums[0]
+            merged = self._merged_statement()
+            self._lines = []
+            self._nums = []
+            return [(first, merged)]
+        if len(self._lines) >= _JOINER_MAX_LINES:
+            return self.flush()
+        return []
+
+    def _arms(self, line: str) -> bool:
+        """True when *line* opens a statement that needs continuation."""
+        if self._mode == "py":
+            if not line.lstrip().startswith(("from ", "import ")):
+                return False
+            eff = _py_effective_text(line)
+            return eff.count("(") > eff.count(")") or eff.rstrip().endswith("\\")
+        if not _JS_IMPORT_OPENER.match(line):
+            return False
+        if _JS_IMPORT_FROM.match(line) or _JS_REQUIRE.search(line):
+            return False  # complete single-line statement: extract as today
+        if line.count("{") > line.count("}"):
+            return True
+        if ";" in line:
+            return False  # terminated, just not an extractable shape
+        return not _JS_QUOTED_SPEC.search(line)
+
+    def _is_opener(self, line: str) -> bool:
+        if self._mode == "py":
+            return line.lstrip().startswith(("from ", "import "))
+        return bool(_JS_IMPORT_OPENER.match(line))
+
+    def _complete(self) -> bool:
+        if self._mode == "py":
+            if _py_effective_text(self._lines[-1]).rstrip().endswith("\\"):
+                return False
+            merged = self._merged_raw()
+            return merged.count("(") <= merged.count(")")
+        merged = self._merged_raw()
+        if merged.count("{") > merged.count("}"):
+            return False
+        if _JS_IMPORT_FROM.match(merged) or _JS_REQUIRE.search(merged):
+            return True
+        return ";" in merged or bool(_JS_QUOTED_SPEC.search(merged))
+
+    def _merged_raw(self) -> str:
+        if self._mode == "py":
+            parts = []
+            for raw in self._lines:
+                eff = _py_effective_text(raw).strip()
+                if eff.endswith("\\"):
+                    eff = eff[:-1].rstrip()
+                parts.append(eff)
+        else:
+            parts = [raw.strip() for raw in self._lines]
+        return " ".join(p for p in parts if p)
+
+    def _merged_statement(self) -> str:
+        merged = self._merged_raw()
+        if self._mode == "py" and merged.startswith("from "):
+            # ``from x import (a, b)`` -- the parens fail _PY_FROM_IMPORT's
+            # member group and drop the module path. Neutralize them; the
+            # module path (the only thing Python extraction validates) is
+            # untouched.
+            merged = merged.replace("(", " ").replace(")", " ")
+        return merged
+
+
+# ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
 
@@ -1271,6 +1435,42 @@ def _scan_file_imports(
     # Python stdlib module name (an npm package literally called `os`).
     stdlib_scope = is_py or lang_lower in _PY_SNIPPET_CONFIG_HOSTS
     unverifiable_scope = _import_is_unverifiable(language, file_path)
+
+    # Multi-line statement joiner (task #148) -- only for the languages this
+    # command can actually decide (see _import_is_unverifiable): Python and
+    # the config hosts get the Python paren/backslash grammar, the JS family
+    # gets the brace/specifier grammar. Everything else stays per-line.
+    joiner: _ImportStatementJoiner | None = None
+    if is_py or lang_lower in _PY_SNIPPET_CONFIG_HOSTS:
+        joiner = _ImportStatementJoiner("py")
+    elif is_js_like:
+        joiner = _ImportStatementJoiner("js")
+
+    def _emit_statement(stmt_line: int, stmt_text: str) -> None:
+        for name in _extract_import_names_from_line(stmt_text, language):
+            key = (name, stmt_line)
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(
+                _scan_import_entry(
+                    conn,
+                    file_path,
+                    stmt_line,
+                    name,
+                    project_root=project_root,
+                    is_py=is_py,
+                    stdlib_scope=stdlib_scope,
+                    unverifiable_scope=unverifiable_scope,
+                    js_deps=js_deps,
+                    js_aliases=js_aliases,
+                    symbol_names=symbol_names,
+                    symbol_qnames=symbol_qnames,
+                    file_index=file_index,
+                    declared_deps=declared_deps,
+                )
+            )
+
     try:
         with open(full_path, "r", encoding="utf-8", errors="replace") as f:
             prev_stripped = ""
@@ -1307,31 +1507,22 @@ def _scan_file_imports(
                     continue
                 if stripped:
                     prev_stripped = stripped
-                import_names = _extract_import_names_from_line(line, language)
-                for name in import_names:
-                    key = (name, line_num)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-
-                    results.append(
-                        _scan_import_entry(
-                            conn,
-                            file_path,
-                            line_num,
-                            name,
-                            project_root=project_root,
-                            is_py=is_py,
-                            stdlib_scope=stdlib_scope,
-                            unverifiable_scope=unverifiable_scope,
-                            js_deps=js_deps,
-                            js_aliases=js_aliases,
-                            symbol_names=symbol_names,
-                            symbol_qnames=symbol_qnames,
-                            file_index=file_index,
-                            declared_deps=declared_deps,
-                        )
-                    )
+                if joiner is None:
+                    _emit_statement(line_num, line)
+                else:
+                    # The joiner sits BEHIND the comment/docstring state
+                    # machine above: string/comment content never reaches it,
+                    # so it can neither arm nor feed the accumulator. A line
+                    # that opens a multi-line statement returns no units yet;
+                    # the merged statement comes back attributed to its first
+                    # physical line; aborted buffers replay per-line.
+                    for stmt_line, stmt_text in joiner.feed(line_num, line):
+                        _emit_statement(stmt_line, stmt_text)
+            if joiner is not None:
+                # EOF with an unfinished statement buffered: replay the
+                # physical lines individually -- the pre-joiner behavior.
+                for stmt_line, stmt_text in joiner.flush():
+                    _emit_statement(stmt_line, stmt_text)
     except (OSError, UnicodeDecodeError) as _exc:
         from roam.observability import log_swallowed
 
