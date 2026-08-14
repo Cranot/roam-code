@@ -115,6 +115,9 @@ def _make_db(tmp_path: Path) -> sqlite3.Connection:
             PRIMARY KEY (file_id_a, file_id_b)
         );
     """)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     return conn
 
 

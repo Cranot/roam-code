@@ -116,6 +116,9 @@ def _build_smelly_project(tmp_path: Path) -> Path:
             PRIMARY KEY (file_id_a, file_id_b)
         );
     """)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/engine.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "

@@ -34,6 +34,13 @@ description of an intention rather than of the program.
   uses it for "a blocking environment check failed" -- a run whose arguments
   were perfectly valid. Distinguish by which command you ran.
 
+* A version-incompatible index (built by an older roam, or by a NEWER roam
+  than the running client) refuses at the ``open_db`` readonly gate via
+  ``IndexVersionError`` with exit 1 -- deliberately neither 3 (the index
+  exists) nor 4 (the guard family owns that integer as needs_review). The
+  MCP layer classifies the refusal from its message text as INDEX_STALE
+  (retryable); see the class docstring.
+
 * 130 is not optional trivia: an uncaught KeyboardInterrupt exits 130 through
   both the console-script entry point and ``python -m roam``. A caller
   branching only over 0-6 falls through every arm when a user presses Ctrl-C.
@@ -123,6 +130,34 @@ class GateFailureError(RoamError):
 
     def __init__(self, message: str = "Quality gate failed."):
         super().__init__(message, EXIT_GATE_FAILURE)
+
+
+class IndexVersionError(RoamError):
+    """Raised when the on-disk index schema version does not match this build.
+
+    The read-path gate in ``roam.db.connection.open_db`` (readonly branch)
+    raises this instead of silently consuming an index whose ``PRAGMA
+    user_version`` differs from ``connection.USER_VERSION`` — the defect
+    class where a 13.10-built index consumed under roam 14 produced wrong
+    results with zero staleness disclosure.
+
+    Exit code is ``EXIT_ERROR`` (1), deliberately NOT ``EXIT_INDEX_STALE``
+    (4): the integer 4 is produced by the guard family and means
+    ``needs_review`` in the field — mapping a genuinely-retryable schema
+    mismatch onto it re-creates the misclassification the MCP layer
+    already fixed (see ``mcp_server._classify_error``). The stale-index
+    message text is what the MCP structured/stderr path classifies as
+    ``INDEX_STALE`` (retryable), which is the documented channel for a
+    schema bump.
+
+    ``found`` / ``expected`` carry the version pair so envelopes, tests,
+    and callers can disclose the mismatch without parsing the message.
+    """
+
+    def __init__(self, message: str, *, found: int, expected: int):
+        super().__init__(message, EXIT_ERROR)
+        self.found = found
+        self.expected = expected
 
 
 # ---------------------------------------------------------------------------

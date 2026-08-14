@@ -38,6 +38,9 @@ def _setup_db(tmp_path):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_SQL)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     from roam.db.connection import ensure_schema
 
     ensure_schema(conn)

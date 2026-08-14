@@ -48,6 +48,9 @@ def _make_project(tmp_path: Path) -> Path:
         CREATE TABLE edges (src_id INTEGER, dst_id INTEGER);
         """
     )
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (id, path, loc) VALUES (1, 'src/foo.py', 50)")
     conn.execute("INSERT INTO files (id, path, loc) VALUES (2, 'tests/test_foo.py', 20)")
     conn.execute(

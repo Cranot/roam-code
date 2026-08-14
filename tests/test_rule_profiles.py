@@ -47,6 +47,9 @@ def tmp_project(tmp_path: Path):
             pagerank REAL DEFAULT 0
         );
     """)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (id, path, loc) VALUES (1, 'src/app.py', 100)")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, cognitive_complexity) VALUES (1, 1, 'main', 'function', 5)"

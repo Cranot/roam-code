@@ -192,6 +192,9 @@ def _build_bus_factor_project(tmp_path: Path) -> Path:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.executescript(_populated_schema())
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (id, path, language) VALUES (1, 'src/engine.py', 'python')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, qualified_name, kind, line_start, line_end, "
