@@ -212,6 +212,9 @@ def _build_dead_project(tmp_path: Path) -> Path:
         );
         """
     )
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (id, path, language) VALUES (1, 'src/engine.py', 'python')")
     # alive() calls helper(); dead_one/dead_two have no callers.
     conn.execute(
@@ -330,6 +333,9 @@ def _build_empty_dead_project(tmp_path: Path) -> Path:
         );
         """
     )
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (id, path, language) VALUES (1, 'src/engine.py', 'python')")
     # alive() calls helper(); helper has a caller; alive is exported but its
     # call-target is reached -- no dead exports.

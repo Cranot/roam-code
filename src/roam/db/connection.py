@@ -1063,6 +1063,85 @@ def _setup_schema_or_raise(conn: sqlite3.Connection, warnings_out: WarningsOut) 
         ) from exc
 
 
+def _require_compatible_user_version(conn: sqlite3.Connection) -> None:
+    """Refuse a readonly open when the index schema version mismatches this build.
+
+    Task #147 — the index stamps versions at build time (``ensure_schema``
+    bumps ``PRAGMA user_version``; the manifest records ``schema_version``)
+    but no read path ever compared them, so a stale index built by an older
+    roam was consumed silently (origin incident: a 13.10-built index read
+    under roam 14 produced wrong verify-imports results with zero
+    disclosure). ``open_db(readonly=True)`` is the single chokepoint every
+    requires_index command reads through, and the readonly branch skips
+    ``ensure_schema`` entirely — this gate is its version check.
+
+    Three-valued outcome:
+
+    * ``found == USER_VERSION`` — proceed. Cost: one PRAGMA read.
+    * ``found <  USER_VERSION`` (including 0 = unstamped) — REFUSE with the
+      ``roam index --force`` remediation. An absent stamp is UNKNOWN, never
+      a benign default: a DB with ``user_version=0`` was not built by this
+      roam's indexer (every build path stamps), so nothing about its
+      contents is proven current.
+    * ``found >  USER_VERSION`` — REFUSE: a downgraded client cannot
+      understand the schema. ``roam index --force`` unlinks the DB before
+      rebuilding (``_reset_index_for_force``), so rebuild-with-this-client
+      is valid remediation alongside upgrading roam.
+
+    Write-mode opens are exempt on purpose: ``ensure_schema`` migrates and
+    re-stamps there, and the indexer's rebuild path must stay able to
+    replace an incompatible DB.
+
+    The refusal is a typed ``IndexVersionError`` (disclosed, carries the
+    found/expected pair as attributes and in the message), never a silent
+    fallthrough. The message contains the literal phrase "index is stale"
+    so the MCP structured/stderr path classifies it INDEX_STALE
+    (retryable) — the documented channel for a schema bump.
+    """
+    from roam.exit_codes import IndexVersionError
+
+    try:
+        row = conn.execute("PRAGMA user_version").fetchone()
+        found = int(row[0]) if row else 0
+    except sqlite3.DatabaseError as exc:
+        import click
+
+        # Cannot measure the stamp — UNKNOWN is a refusal, not a pass.
+        raise click.ClickException(
+            f"Database error: could not read the index schema version: {exc}\n"
+            "  The roam index may be corrupted. Run `roam init --force` to rebuild it\n"
+            "  from scratch, or delete .roam/index.db and run `roam init`.\n"
+            "  If this looks unexpected, run `roam doctor` to diagnose your install."
+        ) from exc
+
+    if found == USER_VERSION:
+        return
+    if found < USER_VERSION:
+        if found == 0:
+            first = (
+                f"Index has no schema version stamp (user_version=0); this roam build expects "
+                f"v{USER_VERSION} — the index is stale or was not built by roam's indexer.\n"
+            )
+        else:
+            first = (
+                f"Index schema v{found} is older than this roam build (expects v{USER_VERSION}) — the index is stale.\n"
+            )
+        raise IndexVersionError(
+            first + "  Its contents cannot be trusted by this roam version.\n"
+            "  Run `roam index --force` to rebuild the index with the current version.",
+            found=found,
+            expected=USER_VERSION,
+        )
+    raise IndexVersionError(
+        f"Index schema v{found} is newer than this roam build understands (v{USER_VERSION}).\n"
+        "  A downgraded roam client cannot understand this schema; refusing to read it.\n"
+        "  Upgrade roam-code to at least the version that built this index, or rebuild\n"
+        "  the index with this client via `roam index --force`.",
+        found=found,
+        expected=USER_VERSION,
+    )
+
+
 def _commit_and_optimize(conn: sqlite3.Connection) -> None:
     """Commit pending writes and run PRAGMA optimize (logged + skipped on error)."""
     conn.commit()
@@ -1094,6 +1173,15 @@ def open_db(
     missing or corrupted so that agents receive actionable remediation steps
     instead of a raw SQLite traceback.
 
+    Readonly opens additionally pass through the task #147 schema-version
+    gate (``_require_compatible_user_version``): a ``PRAGMA user_version``
+    that differs from ``USER_VERSION`` raises a typed
+    ``roam.exit_codes.IndexVersionError`` (loud-by-raise, carries the
+    found/expected pair) instead of silently serving an index built by a
+    different roam version. Write-mode opens migrate + re-stamp via
+    ``ensure_schema`` and are exempt so ``roam index --force`` can always
+    rebuild.
+
     W603 Pattern-2 disclosure: ``warnings_out`` (kw-only) is threaded
     through to ``get_connection`` (URI readonly fallback + query-timeout
     parse) and ``ensure_schema`` (FTS5 + user_version PRAGMA reads).
@@ -1114,6 +1202,11 @@ def open_db(
     try:
         if not readonly:
             _setup_schema_or_raise(conn, warnings_out)
+        else:
+            # Task #147 read-path version gate — see the helper's docstring.
+            # Readonly opens skip ensure_schema, so this is the only place
+            # the stamped user_version is ever compared on the read side.
+            _require_compatible_user_version(conn)
         yield conn
         if not readonly:
             _commit_and_optimize(conn)

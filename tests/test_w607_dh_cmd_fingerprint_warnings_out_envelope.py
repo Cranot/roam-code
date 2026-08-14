@@ -209,6 +209,9 @@ def _build_fingerprint_project(tmp_path: Path) -> Path:
         );
         """
     )
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     # Three files with a couple symbols each so build_symbol_graph
     # produces a non-empty DiGraph.
     conn.execute("INSERT INTO files (id, path, language) VALUES (1, 'src/a.py', 'python')")

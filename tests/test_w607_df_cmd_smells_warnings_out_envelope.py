@@ -178,6 +178,9 @@ def _build_smells_project(tmp_path: Path) -> Path:
             status TEXT DEFAULT 'open'
         );
     """)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (id, path, language) VALUES (1, 'src/engine.py', 'python')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, qualified_name, kind, line_start, line_end) "

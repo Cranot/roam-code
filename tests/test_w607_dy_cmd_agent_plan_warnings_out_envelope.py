@@ -151,6 +151,9 @@ def _build_agent_plan_project(tmp_path: Path) -> Path:
         );
         """
     )
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (id, path, language) VALUES (1, 'src/engine.py', 'python')")
     conn.execute("INSERT INTO files (id, path, language) VALUES (2, 'src/runner.py', 'python')")
     conn.execute(

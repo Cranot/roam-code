@@ -274,6 +274,9 @@ def _make_smells_db(tmp_path: Path) -> None:
             health_score REAL DEFAULT NULL
         );
     """)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     # Brain method (critical) + deep nesting (warning) + message chain (info)
     conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/engine.py')")
     conn.execute(
@@ -354,6 +357,9 @@ def _make_vulns_db(tmp_path: Path) -> None:
             hop_count INTEGER
         );
     """)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     # 3 vulns with different sources and reachability — exercises every
     # arm of the classifier.
     conn.execute(
@@ -420,6 +426,9 @@ def _make_complexity_db(tmp_path: Path) -> None:
             halstead_bugs REAL DEFAULT 0
         );
     """)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     # Critical (cc=30), high (cc=20), medium (cc=10), low (cc=3)
     conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/lib.py')")
     for sid, name, cc in [
@@ -475,6 +484,9 @@ def orphan_imports_project(tmp_path):
             hash TEXT, mtime REAL, line_count INTEGER DEFAULT 0
         );
     """)
+    from roam.db.connection import USER_VERSION
+
+    conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     conn.execute("INSERT INTO files (path, language) VALUES (?, 'python')", ("src/pkg/__init__.py",))
     conn.execute("INSERT INTO files (path, language) VALUES (?, 'python')", ("src/pkg/real.py",))
     conn.execute("INSERT INTO files (path, language) VALUES (?, 'python')", ("src/main.py",))
@@ -767,6 +779,9 @@ class TestPilotCommandSecrets:
             );
             """
         )
+        from roam.db.connection import USER_VERSION
+
+        conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
         conn.execute("INSERT INTO files (path, language) VALUES ('app.py', 'python')")
         conn.commit()
         conn.close()
@@ -915,6 +930,9 @@ class TestPilotCommandTaint:
             );
             """
         )
+        from roam.db.connection import USER_VERSION
+
+        conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
         conn.commit()
         conn.close()
         result = _run_cli(["--json", "taint"], tmp_path)
