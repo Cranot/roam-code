@@ -693,3 +693,91 @@ class TestDebugArtifactRules:
         # Just verify it loaded correctly
         assert bp_rule["severity"] == "error"
         assert bp_rule["type"] == "ast_match"
+
+
+class TestClonesSarifCapDisclosure:
+    """Cap-as-census (finding #61): the SARIF document must disclose its own
+    display caps — a Code-Scanning consumer reads only the document, never
+    the JSON envelope where the pre-cap denominators already live."""
+
+    @staticmethod
+    def _two_family_project(tmp_path):
+        fam_a = (
+            "def {name}(items):\n"
+            "    results = []\n"
+            "    for item in items:\n"
+            "        if item.is_valid():\n"
+            "            value = item.calculate()\n"
+            "            results.append(value)\n"
+            "    return results\n"
+        )
+        fam_b = (
+            "def {name}(rows):\n"
+            "    totals = {{}}\n"
+            "    index = 0\n"
+            "    while index < len(rows):\n"
+            "        entry = rows[index]\n"
+            "        totals[entry.key] = entry.weight + index\n"
+            "        index += 1\n"
+            "    return totals\n"
+        )
+        src_a = "\n\n".join(fam_a.format(name=f"collect_{i}") for i in range(3))
+        src_b = "\n\n".join(fam_b.format(name=f"tally_{i}") for i in range(3))
+        return _make_project(tmp_path, {"fam_a.py": src_a, "fam_b.py": src_b})
+
+    @staticmethod
+    def _notification_texts(doc):
+        texts = []
+        for run in doc.get("runs", []):
+            for inv in run.get("invocations", []):
+                for note in inv.get("toolExecutionNotifications", []):
+                    texts.append(note.get("message", {}).get("text", ""))
+        return texts
+
+    def test_sarif_document_discloses_binding_cluster_cap(self, tmp_path):
+        import json
+        import re
+
+        proj = self._two_family_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            result = runner.invoke(cli, ["index"])
+            assert result.exit_code == 0, result.output
+
+            # Precondition: the corpus yields >= 2 clusters so --limit 1 binds.
+            result = runner.invoke(cli, ["--json", "clones", "--threshold", "0.5"])
+            assert result.exit_code == 0, result.output
+            summary = json.loads(getattr(result, "stdout", None) or result.output)["summary"]
+            assert summary["total_count"] >= 2, f"fixture must yield >=2 clusters, got {summary}"
+
+            result = runner.invoke(cli, ["--sarif", "clones", "--threshold", "0.5", "--limit", "1"])
+            assert result.exit_code == 0, result.output
+            doc = json.loads(getattr(result, "stdout", None) or result.output)
+            texts = self._notification_texts(doc)
+            assert any(re.search(r"clusters truncated to 1 of \d+", t) for t in texts), (
+                f"SARIF document must disclose the cluster cap; notifications: {texts}"
+            )
+        finally:
+            os.chdir(old_cwd)
+
+    def test_sarif_document_clean_when_no_cap_binds(self, tmp_path):
+        import json
+
+        proj = self._two_family_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            result = runner.invoke(cli, ["index"])
+            assert result.exit_code == 0, result.output
+
+            # Default --limit 0 shows all clusters; 6 pairs < the 50-pair cap.
+            result = runner.invoke(cli, ["--sarif", "clones", "--threshold", "0.5"])
+            assert result.exit_code == 0, result.output
+            doc = json.loads(getattr(result, "stdout", None) or result.output)
+            for text in self._notification_texts(doc):
+                assert "truncated" not in text
+        finally:
+            os.chdir(old_cwd)

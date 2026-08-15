@@ -637,7 +637,22 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                 },
             )
             _empty_state = empty_corpus_state(conn) if not clusters else None
-            _sarif_disclosures = list(_w607bq_warnings_out) + list(_w607dc_warnings_out)
+            # W1142-followup (cap-as-census, finding #61): the SARIF
+            # document mirrors the capped slices, and a Code-Scanning
+            # consumer reads ONLY the document — so the document itself
+            # must disclose both caps and their pre-cap denominators.
+            # Cap-hit disclosures first (UI-relevant), markers after.
+            _sarif_cap_disclosures: list[str] = []
+            if clusters_truncated:
+                _sarif_cap_disclosures.append(
+                    f"clusters truncated to {len(clusters)} of {total_clusters_full} — pass --limit larger to see more"
+                )
+            if total_pairs > len(pair_values):
+                _sarif_cap_disclosures.append(
+                    f"pair results truncated to {len(pair_values)} of {total_pairs} "
+                    f"(50-pair SARIF cap); summary.clone_pairs carries the full population"
+                )
+            _sarif_disclosures = _sarif_cap_disclosures + list(_w607bq_warnings_out) + list(_w607dc_warnings_out)
             if _empty_state:
                 _sarif_disclosures.append(
                     f"{_empty_state.get('state', 'empty_corpus')}: "
@@ -648,7 +663,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             # W1331: a SARIF document has nowhere to carry these, so a
             # Code-Scanning gate reads a detector that raised -- or a
             # corpus with nothing in it -- as a clean clone scan.
-            echo_text_warnings(list(_w607bq_warnings_out) + list(_w607dc_warnings_out))
+            echo_text_warnings(_sarif_cap_disclosures + list(_w607bq_warnings_out) + list(_w607dc_warnings_out))
             echo_text_empty_corpus(_empty_state)
             return
 
