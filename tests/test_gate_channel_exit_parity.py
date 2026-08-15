@@ -475,7 +475,11 @@ _AUTHORIZES_IN_AN_UNANALYZABLE_WORKSPACE: dict[tuple[str, str], tuple[str, str, 
         "not evidence that the repository satisfies its rules -- the same shape the "
         "taint --rule fix closed for a filter that matched nothing. 7ca433c1 fixed a "
         "different arm (a rule that EXISTS and could not be evaluated now refuses); "
-        "an absent rules directory still authorizes, measured here today.",
+        "an absent rules directory still authorizes, measured here today. "
+        "2026-08-15: the EXPLICIT arm was closed -- `--ci --rules-dir <absent>` now "
+        "refuses (exit 5, summary.scan_incomplete true). The arm measured HERE, the "
+        "implicit default (.roam/rules not configured), still authorizes by decision: "
+        "no configured rules is 'rules are not set up', reporting rather than gating.",
         (("summary.config_state", "missing"),),
     ),
 }

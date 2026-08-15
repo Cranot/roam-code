@@ -252,11 +252,31 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
         if bundled.is_dir():
             bundled_count = sum(1 for _ in bundled.rglob("*.yaml")) + sum(1 for _ in bundled.rglob("*.yml"))
         verdict = "no rules directory found"
+        # Absent-input disclosure + gate. No rules were evaluated, so every
+        # channel must say so: the JSON path already carried
+        # config_state="missing" and the text path said "no rules directory
+        # found", but the SARIF path emitted a bare zero-result document --
+        # a Code-Scanning consumer read a scan that never ran as a clean
+        # one. And when the caller EXPLICITLY pointed --rules-dir at a
+        # directory that does not exist, a --ci gate cannot certify clean
+        # on a measurement that never happened (gate_should_fail semantics:
+        # an absent measurement is UNKNOWN, never CLEAN). The implicit
+        # default arm (.roam/rules simply not configured) keeps exit 0 --
+        # that is "rules are not set up", reporting rather than gating,
+        # and is inventoried in test_gate_channel_exit_parity Law 3.
+        missing_note = f"rules directory not found: {rules_dir} -- no rules were evaluated"
+        gate_failed = gate_should_fail(
+            ci_mode and rules_dir_opt is not None,
+            findings=0,
+            scan_incomplete=True,
+        )
         if sarif_mode:
             from roam.output.sarif import rules_to_sarif, write_sarif
 
-            sarif = rules_to_sarif([])
+            sarif = rules_to_sarif([], emit_runtime_notifications=True, warnings_out=[missing_note])
             click.echo(write_sarif(sarif))
+            if gate_failed:
+                ctx.exit(EXIT_GATE_FAILURE)
             return
         if json_mode:
             # W1030-followup-F: missing rules directory is the "missing"
@@ -270,6 +290,8 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
                 "total": 0,
                 "config_state": "missing",
             }
+            if gate_failed:
+                missing_summary["scan_incomplete"] = True
             missing_facts = _build_config_state_facts("missing")
             click.echo(
                 to_json(
@@ -291,6 +313,10 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n, depth, max_nodes):
                     "Evaluate them with `roam rules --rules-dir rules/community`"
                     " or copy a subset into .roam/rules to keep eval fast."
                 )
+            if gate_failed:
+                click.echo(f"REFUSED: {missing_note}.")
+        if gate_failed:
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     from roam.rules.engine import evaluate_all_with_status
