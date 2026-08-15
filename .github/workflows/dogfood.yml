@@ -138,6 +138,18 @@ jobs:
               raise SystemExit(f"dogfood execution degraded: {failed}")
           PY
 
+      # The CI template shipped to customers (src/roam/templates/ci/
+      # agent-review.yml) runs `roam audit-trail-verify --gate` as a required
+      # step — yet until now no workflow in this repo ever ran that gate
+      # against our own trail. The dogfood step above appends this run's
+      # genesis record to .roam/audit-trail.jsonl, and it is the only trail
+      # writer in this workflow (the pr-analyze invocation below omits
+      # --audit-trail), so the chain is complete for the run right here.
+      # BLOCKING by design: a broken chain exits 5 and fails the job, exactly
+      # what the shipped template promises customers.
+      - name: Verify audit-trail chain integrity
+        run: .venv/bin/roam audit-trail-verify --gate
+
       # The retrieval numbers in bench/retrieve/{README,SUBMISSION}.md are
       # public claims that open with "run this command". They went stale for
       # three minor versions -- README published 0.503 recall@20 while the
