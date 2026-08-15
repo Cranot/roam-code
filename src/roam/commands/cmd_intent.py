@@ -26,6 +26,10 @@ from roam.output.formatter import abbrev_kind, json_envelope, to_json
 # was 1 of 3 divergent local copies before consolidation).
 _SKIP_DIRS = {"node_modules", ".roam", ".git", "__pycache__", "vendor", "dist", "build"}
 _MIN_NAME_LEN = 3  # skip very short names to avoid false positives
+# Performance guard: above this many DB symbols the scan universe is
+# sampled down to the top N by PageRank. Module-level so tests can pin
+# the bound and so the sampling disclosure cites one authoritative value.
+_MAX_SYMBOLS = 3000
 
 
 def _load_runtime_dependencies():
@@ -191,13 +195,18 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
 
     with open_db_fn(readonly=True) as conn:
         # Get all symbol names from DB (length >= _MIN_NAME_LEN)
-        _MAX_SYMBOLS = 3000
         all_syms = conn.execute(
             "SELECT DISTINCT name FROM symbols WHERE length(name) >= ?", (_MIN_NAME_LEN,)
         ).fetchall()
         symbol_names = set(s["name"] for s in all_syms)
 
-        # Performance guard: if too many symbols, sample top N by PageRank
+        # Performance guard: if too many symbols, sample top N by PageRank.
+        # Cap-as-census (finding #37): the sample silently narrows the
+        # universe that decides "symbol does not exist in codebase", so the
+        # bound is recorded here and disclosed wherever that existence
+        # verdict is published (drift mode).
+        symbol_universe_full = len(symbol_names)
+        symbol_universe_sampled = False
         if len(symbol_names) > _MAX_SYMBOLS:
             try:
                 top_syms = conn.execute(
@@ -209,6 +218,7 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
                     (_MIN_NAME_LEN, _MAX_SYMBOLS),
                 ).fetchall()
                 symbol_names = set(s["name"] for s in top_syms)
+                symbol_universe_sampled = True
             except Exception as _exc:  # noqa: BLE001 — defensive
                 # fall through with full set if query fails
                 log_swallowed("cmd_intent:pagerank_sample", _exc)
@@ -350,22 +360,49 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
                     if name not in symbol_names:
                         drift_refs.append({"doc": df, "symbol": name})
 
+            # Cap-as-census (finding #39): capture the pre-cap population
+            # BEFORE the --top display slice — drift_count is a population
+            # claim, not a display count.
+            total_drift_full = len(drift_refs)
             drift_refs = drift_refs[:top_n]
             n = len(drift_refs)
-            verdict = f"{n} drift reference{'s' if n != 1 else ''} found (symbols in docs that don't exist in codebase)"
+            drift_truncated = total_drift_full > n
+            verdict = (
+                f"{total_drift_full} drift reference{'s' if total_drift_full != 1 else ''} found "
+                f"(symbols in docs that don't exist in codebase)"
+            )
+            if symbol_universe_sampled:
+                # Finding #37: the existence verdict was decided against a
+                # PageRank sample, not the full symbol table — a "drift"
+                # row may exist outside the sampled universe.
+                verdict += (
+                    f" — existence checked against top {len(symbol_names)} of "
+                    f"{symbol_universe_full} symbols by PageRank"
+                )
 
             if json_mode:
+                summary = {
+                    "verdict": verdict,
+                    "doc_files": len(doc_files),
+                    "links": 0,
+                    "drift_count": total_drift_full,
+                    "undocumented_count": 0,
+                }
+                # Disclosure fields only when a bound actually binds so
+                # the un-truncated envelope stays byte-identical.
+                if drift_truncated:
+                    summary["drift_shown"] = n
+                    summary["truncated"] = True
+                    summary["limit"] = top_n
+                if symbol_universe_sampled:
+                    summary["symbol_universe"] = len(symbol_names)
+                    summary["symbol_universe_total"] = symbol_universe_full
+                    summary["symbol_universe_sampled"] = True
                 click.echo(
                     to_json(
                         json_envelope(
                             "intent",
-                            summary={
-                                "verdict": verdict,
-                                "doc_files": len(doc_files),
-                                "links": 0,
-                                "drift_count": n,
-                                "undocumented_count": 0,
-                            },
+                            summary=summary,
                             links=[],
                             by_doc={},
                             drift=drift_refs,
@@ -376,7 +413,7 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
                 return
 
             click.echo(f"VERDICT: {verdict}")
-            if not drift_refs:
+            if total_drift_full == 0:
                 click.echo("  No drift detected -- all backtick identifiers in docs exist in codebase.")
                 return
             click.echo()
@@ -387,6 +424,8 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
                 by_doc.setdefault(dr["doc"], []).append(dr["symbol"])
             for doc_f, syms in sorted(by_doc.items()):
                 click.echo(f"  {doc_f} references: {', '.join(syms)}")
+            if drift_truncated:
+                click.echo(f"  (+{total_drift_full - n} more -- pass --top larger to see all)")
             return
 
         # ------------------------------------------------------------------
