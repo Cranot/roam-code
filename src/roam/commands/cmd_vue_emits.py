@@ -17,7 +17,7 @@ import click
 from roam.capability import roam_capability
 from roam.db.connection import find_project_root
 from roam.index.parser import _preprocess_vue, extract_vue_template, read_source
-from roam.output.formatter import json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 _VUE_DIRS_TO_SKIP = frozenset({".git", ".roam", "node_modules"})
 _DEFAULT_IMPORT_RE = re.compile(r"\bimport\s+([A-Za-z_$][\w$]*)\s+from\s*(['\"])(\.\.?/[^'\"]+)\2")
@@ -209,9 +209,16 @@ def _scan(root: Path) -> dict:
     components: dict[Path, _ComponentEmits] = {}
     scripts: dict[Path, str] = {}
     templates: dict[Path, tuple[str, int] | None] = {}
+    unreadable_sources: list[str] = []
     for path in vue_files:
         source = read_source(path)
         if source is None:
+            # Absent-input disclosure: an unreadable .vue file used to
+            # vanish from the scan entirely -- the verdict then counted
+            # component usages it never measured as clean. Record it so
+            # the command can surface the bucket (warnings_out /
+            # partial_success in JSON, stderr in text).
+            unreadable_sources.append(path.relative_to(root).as_posix())
             continue
         processed, _ = _preprocess_vue(source)
         script = processed.decode("utf-8", errors="replace")
@@ -264,6 +271,7 @@ def _scan(root: Path) -> dict:
         "findings": findings,
         "components_scanned": len(components),
         "usages_checked": usages_checked,
+        "unreadable_sources": unreadable_sources,
     }
 
 
@@ -303,9 +311,24 @@ def vue_emits(ctx):
         "components_scanned": result["components_scanned"],
         "usages_checked": result["usages_checked"],
     }
+    # Absent-input disclosure: unreadable .vue sources were dropped from
+    # the scan, so a zero-finding verdict is partial, not proven clean.
+    # Empty bucket -> byte-identical output on the clean-and-measured path.
+    warnings_out = [f"vue_emits_source_unreadable:{path}:excluded from scan" for path in result["unreadable_sources"]]
+    if warnings_out:
+        summary["partial_success"] = True
+        summary["warnings_out"] = list(warnings_out)
     if json_mode:
-        click.echo(to_json(json_envelope("vue-emits", summary=summary, findings=findings, budget=token_budget)))
+        envelope_kwargs: dict = {}
+        if warnings_out:
+            envelope_kwargs["warnings_out"] = list(warnings_out)
+        click.echo(
+            to_json(
+                json_envelope("vue-emits", summary=summary, findings=findings, budget=token_budget, **envelope_kwargs)
+            )
+        )
         return
+    echo_text_warnings(warnings_out)
     click.echo(f"VERDICT: {verdict}")
     for finding in findings:
         click.echo(f"  {finding['parent']}:{finding['line']} {finding['message']} (child: {finding['child']})")

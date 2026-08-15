@@ -179,3 +179,67 @@ def test_vue_named_v_on_binding_is_not_an_object_binding(project_factory, cli_ru
     data = parse_json_output(_run(project, cli_runner), "vue-emits")
     assert data["summary"]["finding_count"] == 0
     assert data["findings"] == []
+
+
+def test_vue_unreadable_source_is_disclosed_not_dropped(project_factory, cli_runner, monkeypatch):
+    """An unreadable .vue file must surface, not silently vanish from the scan.
+
+    Pre-fix, ``read_source(path) is None`` hit a bare ``continue`` -- the file
+    left no trace anywhere and a zero-finding verdict read as a measured
+    clean. Disclosure rides warnings_out + partial_success in JSON and
+    stderr in text (stdout stays byte-identical).
+    """
+    project = project_factory(
+        {
+            "Child.vue": "<script setup>\nconst emit = defineEmits(['save'])\n</script>\n",
+            "Parent.vue": (
+                "<template><Child /></template>\n<script setup>\nimport Child from './Child.vue'\n</script>\n"
+            ),
+        }
+    )
+
+    from roam.commands import cmd_vue_emits
+
+    real_read_source = cmd_vue_emits.read_source
+
+    def _flaky_read_source(path):
+        if path.name == "Child.vue":
+            return None
+        return real_read_source(path)
+
+    monkeypatch.setattr(cmd_vue_emits, "read_source", _flaky_read_source)
+
+    data = parse_json_output(_run(project, cli_runner), "vue-emits")
+    summary = data["summary"]
+    assert summary["partial_success"] is True, summary
+    assert any(w.startswith("vue_emits_source_unreadable:") and "Child.vue" in w for w in summary["warnings_out"]), (
+        summary
+    )
+    assert any(w.startswith("vue_emits_source_unreadable:") for w in data["warnings_out"]), data
+    # The unmeasured child contributes nothing -- disclosed, not fabricated.
+    assert summary["finding_count"] == 0
+
+    text_result = _run_text(project, cli_runner)
+    assert text_result.exit_code == 0
+    assert "vue_emits_source_unreadable:" in text_result.stderr
+    assert "vue_emits_source_unreadable:" not in text_result.stdout
+
+
+def test_vue_clean_scan_carries_no_disclosure_keys(project_factory, cli_runner):
+    """Empty-bucket discipline: the measured-clean envelope is unchanged."""
+    project = project_factory(
+        {
+            "Child.vue": "<script setup>\nconst emit = defineEmits(['save'])\n</script>\n",
+            "Parent.vue": (
+                '<template><Child @save="onSave" /></template>\n'
+                "<script setup>\nimport Child from './Child.vue'\n</script>\n"
+            ),
+        }
+    )
+
+    data = parse_json_output(_run(project, cli_runner), "vue-emits")
+    assert "warnings_out" not in data
+    assert "warnings_out" not in data["summary"]
+    # json_envelope normalises an absent partial_success to False
+    # (formatter.py backstop) -- the clean scan must not flip it.
+    assert data["summary"]["partial_success"] is False
