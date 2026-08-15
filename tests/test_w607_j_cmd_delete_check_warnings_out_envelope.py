@@ -650,3 +650,51 @@ def test_w805_z_xfail_still_strict():
             f"degrade axis only — empty-corpus state disclosure is a "
             f"separate Pattern-2 fix."
         )
+
+
+# ---------------------------------------------------------------------------
+# (12) Git-failure SARIF arm discloses the non-measurement
+# ---------------------------------------------------------------------------
+
+
+def test_git_failure_sarif_discloses_non_measurement(delete_check_project, monkeypatch):
+    """When ``_git_diff`` fails, the SARIF arm must not read as a clean scan.
+
+    Pre-fix, the git-failure branch emitted
+    ``delete_check_to_sarif({"deletions": []})`` bare -- a valid zero-result
+    Code-Scanning document for a diff that was never read, while the JSON arm
+    of the SAME branch disclosed ``git_error`` + ``warnings_out`` and the
+    populated SARIF path at the bottom of the command already ran through
+    ``with_sarif_disclosures``. The disclosure rides
+    run.invocations[].toolExecutionNotifications[], the channel that
+    already exists for this (W1331).
+    """
+    from roam.commands import cmd_delete_check
+
+    def _fake_git_diff(*a, **kw):
+        return "", cmd_delete_check._GIT_MISSING
+
+    monkeypatch.setattr(cmd_delete_check, "_git_diff", _fake_git_diff)
+    monkeypatch.setenv("ROAM_GREP_ENGINE", "auto")
+    monkeypatch.chdir(delete_check_project)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--sarif", "delete-check"],
+        catch_exceptions=False,
+    )
+    # Without --ci this arm still exits 0 (reporting mode).
+    assert result.exit_code == 0, result.output
+    doc = json.loads(result.stdout)
+    notes = [
+        n["message"]["text"]
+        for inv in doc["runs"][0].get("invocations", [])
+        for n in inv.get("toolExecutionNotifications", [])
+    ]
+    assert any("delete_check_git_diff_failed:" in t for t in notes), (
+        f"git-failure SARIF must carry the delete_check_git_diff_failed disclosure; got {notes!r}"
+    )
+    # --ci on the same broken arm still refuses (unchanged gate).
+    ci_result = runner.invoke(cli, ["--sarif", "delete-check", "--ci"])
+    assert ci_result.exit_code == 5, ci_result.output
