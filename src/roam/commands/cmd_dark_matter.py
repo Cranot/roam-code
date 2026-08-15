@@ -463,7 +463,18 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
         )
         if pairs is None:
             pairs = []
+        # Cap-as-census discipline (cmd_clones W1142-followup pattern):
+        # record the full pre-truncation pair count BEFORE the ``-n``
+        # display cap so every channel (text / JSON / SARIF) publishes
+        # the real population, not the displayed slice. ``pairs`` itself
+        # stays capped — hypothesis-classification cost remains bounded
+        # by the displayed slice.
+        total_pairs_full = len(pairs)
         pairs = pairs[:limit]
+        pairs_truncated = total_pairs_full > len(pairs)
+        _cap_warnings_out: list[str] = []
+        if pairs_truncated:
+            _cap_warnings_out.append(f"truncated to {len(pairs)} of {total_pairs_full} — pass -n larger to see more")
 
         # Run hypothesis engine when needed.
         # --persist always classifies so the confidence tier is computed
@@ -543,15 +554,19 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                 sarif_findings,
                 default={"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": []},
             )
+            # Cap-hit disclosure first (UI-relevant), substrate +
+            # aggregation markers after (debug-relevant) — same ordering
+            # as cmd_clones. The SARIF document mirrors the ``-n`` slice,
+            # so the document itself must disclose the pre-cap population.
             sarif_doc = with_sarif_disclosures(
                 sarif_doc,
-                list(_w607bk_warnings_out) + list(_w607cz_warnings_out),
+                list(_cap_warnings_out) + list(_w607bk_warnings_out) + list(_w607cz_warnings_out),
             )
             click.echo(write_sarif(sarif_doc))
             # W1331: a SARIF document has nowhere to carry these markers,
             # so a Code-Scanning gate reads a floored co-change query as a
             # repo with no hidden coupling.
-            echo_text_warnings(list(_w607bk_warnings_out) + list(_w607cz_warnings_out))
+            echo_text_warnings(list(_cap_warnings_out) + list(_w607bk_warnings_out) + list(_w607cz_warnings_out))
             return
 
         if json_mode:
@@ -560,7 +575,11 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                 cat = p.get("hypothesis", {}).get("category", "UNKNOWN")
                 by_cat[cat] += 1
 
-            total = len(pairs)
+            # Cap-as-census: ``total`` is the PRE-cap population — the
+            # ``-n`` display cap bounds the pairs[] payload and the
+            # by-category histogram (classification cost), never the
+            # published population count.
+            total = total_pairs_full
             parts = [f"{v} {k}" for k, v in sorted(by_cat.items(), key=lambda x: -x[1])]
 
             # W607-CZ -- compute_predicate boundary. Wraps the dark-matter
@@ -738,6 +757,15 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                 # the key) -- NOT ``.get("state", expensive_default)``.
                 "run_state": _score_dict["state"],
             }
+            # W1142-followup (cap-as-census): cap-hit disclosure fields —
+            # ``count``/``total_count``/``truncated``/``limit`` mirror the
+            # cmd_clones _cap_summary naming. Emitted only when the cap
+            # binds so the un-truncated envelope stays byte-identical.
+            if pairs_truncated:
+                _summary["count"] = len(pairs)
+                _summary["total_count"] = total_pairs_full
+                _summary["truncated"] = True
+                _summary["limit"] = limit
             if total == 0 and cochange_count == 0:
                 _summary["partial_success"] = True
                 _summary["state"] = "no_cochange"
@@ -758,8 +786,14 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
             # markers. All three marker families share the
             # ``dark_matter_*`` prefix and coexist on the summary's
             # ``warnings_out`` field. Empty combined list omitted to keep
-            # the envelope tight (byte-identical happy path).
-            _combined_warnings = list(_dm_warnings_out) + list(_w607bk_warnings_out) + list(_w607cz_warnings_out)
+            # the envelope tight (byte-identical happy path). Cap-hit
+            # disclosure first (UI-relevant) — cmd_clones ordering.
+            _combined_warnings = (
+                list(_cap_warnings_out)
+                + list(_dm_warnings_out)
+                + list(_w607bk_warnings_out)
+                + list(_w607cz_warnings_out)
+            )
             if _combined_warnings:
                 _summary["warnings_out"] = list(_combined_warnings)
                 _summary["partial_success"] = True
@@ -836,7 +870,12 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
             # JSON output. Clean path -> envelope is the real
             # json_envelope return value, no rebuild needed.
             if _envelope is _envelope_floor and _w607cz_warnings_out:
-                _combined_warnings = list(_dm_warnings_out) + list(_w607bk_warnings_out) + list(_w607cz_warnings_out)
+                _combined_warnings = (
+                    list(_cap_warnings_out)
+                    + list(_dm_warnings_out)
+                    + list(_w607bk_warnings_out)
+                    + list(_w607cz_warnings_out)
+                )
                 _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings)
                 _envelope_floor["warnings_out"] = list(_combined_warnings)
                 _envelope = _envelope_floor
@@ -844,13 +883,16 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
             click.echo(to_json(_envelope))
             return
 
-        total = len(pairs)
+        # Cap-as-census: text mode publishes the PRE-cap population too;
+        # the displayed pair list below stays capped by ``-n``.
+        total = total_pairs_full
 
         # W1331: same disclosure for the human-readable branch. The
         # comment on the ``not pairs`` probe below used to say "text mode
         # does not surface warnings_out on stdout" -- it does now, on
-        # stderr, so stdout stays byte-identical.
-        echo_text_warnings(list(_w607bk_warnings_out) + list(_w607cz_warnings_out))
+        # stderr, so stdout stays byte-identical. Cap-hit disclosure
+        # rides the same stderr channel (cmd_clones ordering: cap first).
+        echo_text_warnings(list(_cap_warnings_out) + list(_w607bk_warnings_out) + list(_w607cz_warnings_out))
 
         # W641-followup-G — surface canonical W631 risk-LEVEL on the text
         # VERDICT line too (parity with the JSON envelope augmentation +
@@ -869,7 +911,7 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
         _dm_text_level = _dark_matter_risk_level(total, _dm_text_max_strength)
         risk_level_canonical_text = normalize_risk_level(_dm_text_level) or "low"
 
-        if not pairs:
+        if total_pairs_full == 0:
             # W805 (Pattern 2 propagation to text branch): the JSON branch
             # above already distinguishes "0 pairs from a populated
             # co-change graph" from "no co-change history to analyze".
@@ -903,22 +945,23 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                 click.echo(f"VERDICT: 0 dark-matter couplings found (risk_level {risk_level_canonical_text})")
             return
 
-        # Build verdict with category breakdown if hypotheses available
+        # Build verdict with category breakdown if hypotheses available.
+        # The histogram covers the DISPLAYED slice (classification is
+        # cap-bounded); guard the suffix so a fully-truncated display
+        # (``-n 0``) never prints empty parens.
         if need_hypotheses:
             by_cat = Counter()
             for p in pairs:
                 cat = p.get("hypothesis", {}).get("category", "UNKNOWN")
                 by_cat[cat] += 1
             parts = [f"{v} {k}" for k, v in sorted(by_cat.items(), key=lambda x: -x[1])]
-            click.echo(
-                f"VERDICT: {total} dark-matter coupling{'s' if total != 1 else ''} found "
-                f"({', '.join(parts)}) (risk_level {risk_level_canonical_text})"
-            )
         else:
-            click.echo(
-                f"VERDICT: {total} dark-matter coupling{'s' if total != 1 else ''} found "
-                f"(risk_level {risk_level_canonical_text})"
-            )
+            parts = []
+        _cat_suffix = f"({', '.join(parts)}) " if parts else ""
+        click.echo(
+            f"VERDICT: {total} dark-matter coupling{'s' if total != 1 else ''} found "
+            f"{_cat_suffix}(risk_level {risk_level_canonical_text})"
+        )
 
         click.echo()
 
