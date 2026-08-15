@@ -117,6 +117,36 @@ class TestVibeCheckEmptyCorpus:
             f"summary.state should be 'no_files_scanned', got {summary.get('state')!r}"
         )
 
+    def test_threshold_gate_refuses_on_empty_corpus(self, tmp_path):
+        """``--threshold`` over an unscanned corpus must refuse, not pass.
+
+        An empty corpus scores 0 on every detector and ``0 > threshold``
+        is False, so pre-fix the gate certified clean a measurement that
+        never happened (gate_should_fail doctrine: an absent measurement
+        is UNKNOWN, never CLEAN). Same exit 5 as a measured violation,
+        distinct reason in the envelope (scan_incomplete + state).
+        """
+        exit_code, payload = _run_cli_json(tmp_path, "vibe-check", "--threshold", "50")
+        assert exit_code == 5, payload
+        summary = payload.get("summary") or {}
+        assert summary.get("scan_incomplete") is True, summary
+        assert summary.get("state") == "no_files_scanned", summary
+
+        # Text channel: same refusal, distinct wording from a measured
+        # over-threshold score.
+        runner = CliRunner()
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            result = runner.invoke(cli, ["vibe-check", "--threshold", "50"], catch_exceptions=False)
+        finally:
+            os.chdir(cwd)
+        assert result.exit_code == 5, result.output
+        assert "GATE REFUSED" in result.output, result.output
+        assert "exceeds threshold" not in result.output, (
+            "an unmeasured refusal must not present itself as a measured over-threshold score"
+        )
+
 
 # ---------------------------------------------------------------------------
 # W805-followup-B: cmd_fingerprint

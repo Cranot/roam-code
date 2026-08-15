@@ -64,6 +64,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.output.formatter import echo_text_warnings, format_table, json_envelope, to_json
 from roam.quality.ai_rot import DEFINITION as AI_ROT_DEFINITION
 
@@ -2237,6 +2238,18 @@ def vibe_check(ctx, threshold, persist):
         else:
             verdict = f"AI rot score {score}/100 -- {severity}"
 
+        # Gate decision, made ONCE for both output channels
+        # (gate_should_fail doctrine). An unscanned corpus scores 0 on
+        # every detector, and ``0 > threshold`` is False -- so the old
+        # inline gate certified clean a measurement that never happened.
+        # Under --threshold, empty_corpus is scan_incomplete and must
+        # refuse, with a reason distinct from a real over-threshold score.
+        gate_failed = gate_should_fail(
+            threshold > 0,
+            findings=score > threshold,
+            scan_incomplete=empty_corpus,
+        )
+
         # --- JSON output ---
         if json_mode:
             _summary = {
@@ -2283,6 +2296,12 @@ def vibe_check(ctx, threshold, persist):
             if empty_corpus:
                 _summary["partial_success"] = True
                 _summary["state"] = "no_files_scanned"
+                # Law 2 vocabulary: the narrow companion to the broad
+                # partial_success -- an unscanned corpus is the state
+                # where the gate could not decide, so a caller reading
+                # only the summary can tell refusal-by-non-measurement
+                # from a measured over-threshold score.
+                _summary["scan_incomplete"] = True
             # W607-BS: surface the substrate-CALL marker bucket on BOTH
             # ``summary.warnings_out`` (so a consumer reading only the
             # summary block sees the degraded substrates) AND a top-level
@@ -2330,9 +2349,7 @@ def vibe_check(ctx, threshold, persist):
             click.echo(to_json(envelope))
 
             # Gate check
-            if threshold > 0 and score > threshold:
-                from roam.exit_codes import EXIT_GATE_FAILURE
-
+            if gate_failed:
                 ctx.exit(EXIT_GATE_FAILURE)
             return
 
@@ -2399,9 +2416,13 @@ def vibe_check(ctx, threshold, persist):
                 click.echo(f"    - {rec}")
 
         # Gate check
-        if threshold > 0 and score > threshold:
+        if gate_failed:
             click.echo()
-            click.echo(f"  GATE FAILED: score {score} exceeds threshold {threshold}")
-            from roam.exit_codes import EXIT_GATE_FAILURE
-
+            if score > threshold:
+                # Measured VIOLATION -- wording unchanged from pre-fix.
+                click.echo(f"  GATE FAILED: score {score} exceeds threshold {threshold}")
+            else:
+                # UNANALYZABLE -- distinct reason: the corpus was never
+                # measured, so a 0 score proves nothing under the gate.
+                click.echo(f"  GATE REFUSED: {verdict} — an unscanned corpus cannot pass threshold {threshold}")
             ctx.exit(EXIT_GATE_FAILURE)
