@@ -2048,7 +2048,16 @@ _SCHEMA_BATCH_SEARCH = _make_schema(
 )
 
 _SCHEMA_BATCH_GET = _make_schema(
-    {"symbols_resolved": {"type": "integer"}, "symbols_requested": {"type": "integer"}},
+    {
+        "symbols_resolved": {"type": "integer"},
+        "symbols_requested": {"type": "integer"},
+        # Cap-as-census disclosure fields — present only when the
+        # _MAX_BATCH_SYMBOLS cap binds; symbols_requested is always the
+        # PRE-cap request size.
+        "symbols_attempted": {"type": "integer"},
+        "truncated": {"type": "boolean"},
+        "batch_limit": {"type": "integer"},
+    },
     results={
         "type": "object",
         "description": "Map of symbol name -> symbol details dict",
@@ -7548,7 +7557,12 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     from roam.commands.resolve import ensure_index
     from roam.db.connection import StaleDbDirError, open_db
 
+    # Cap-as-census (finding #38): record the pre-cap request size BEFORE
+    # the batch cap so ``symbols_requested`` reports what the caller asked
+    # for — 50-of-50 and 50-of-200 must be distinguishable.
+    symbols_requested_full = len(symbols or [])
     symbols_list: list[str] = [str(s) for s in (symbols or [])][:_MAX_BATCH_SYMBOLS]
+    symbols_dropped = symbols_requested_full - len(symbols_list)
 
     if not symbols_list:
         return _batch_get_payload(
@@ -7574,7 +7588,7 @@ def batch_get(symbols: list, root: str = ".") -> dict:
         # Expected DB/config boundary failures get a structured MCP payload;
         # programmer-class failures propagate instead of looking like no data.
         return _batch_get_payload(
-            _batch_get_summary(f"batch get failed: {exc}", len(symbols_list), 0),
+            _batch_get_summary(f"batch get failed: {exc}", symbols_requested_full, 0),
             errors={"_fatal": str(exc)},
         )
 
@@ -7585,9 +7599,21 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     verdict = f"{resolved}/{len(symbols_list)} symbols resolved"
     if errors:
         verdict += f", {len(errors)} not found"
+    if symbols_dropped:
+        verdict += (
+            f", {symbols_dropped} of {symbols_requested_full} requested not attempted (batch cap {_MAX_BATCH_SYMBOLS})"
+        )
+
+    summary = _batch_get_summary(verdict, symbols_requested_full, resolved)
+    if symbols_dropped:
+        # Disclosure fields only when the cap binds — the un-truncated
+        # payload stays byte-identical.
+        summary["symbols_attempted"] = len(symbols_list)
+        summary["truncated"] = True
+        summary["batch_limit"] = _MAX_BATCH_SYMBOLS
 
     return _batch_get_payload(
-        _batch_get_summary(verdict, len(symbols_list), resolved),
+        summary,
         results=results,
         errors=errors if errors else None,
     )
