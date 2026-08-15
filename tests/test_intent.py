@@ -338,3 +338,62 @@ class TestIntentEdgeCases:
         # short names "go" and "fn" should NOT appear (length < 3)
         assert "go" not in sym_names, "Short symbol 'go' (len=2) should be filtered out, found in links"
         assert "fn" not in sym_names, "Short symbol 'fn' (len=2) should be filtered out, found in links"
+
+
+# ===========================================================================
+# Cap-as-census: --top and the PageRank sample must never fold into the
+# published drift population (findings #39 and #37).
+# ===========================================================================
+
+
+class TestIntentDriftCapDisclosure:
+    """--top display cap: drift_count stays the PRE-cap population."""
+
+    def test_drift_count_is_pre_cap_when_cap_binds(self, intent_project):
+        result = _invoke_intent(["--drift", "--top", "1"], cwd=intent_project, json_mode=True)
+        data = _parse_intent_json(result, "--drift --top 1")
+        summary = data["summary"]
+        # Fixture has 2 drift refs (calculate_tax_v2, old_handler).
+        assert summary["drift_count"] == 2
+        assert len(data["drift"]) == 1
+        assert summary["drift_shown"] == 1
+        assert summary["truncated"] is True
+        assert summary["limit"] == 1
+        assert summary["verdict"].startswith("2 drift references found")
+
+    def test_drift_unchanged_when_cap_does_not_bind(self, intent_project):
+        result = _invoke_intent(["--drift"], cwd=intent_project, json_mode=True)
+        data = _parse_intent_json(result, "--drift")
+        summary = data["summary"]
+        assert summary["drift_count"] == 2
+        assert len(data["drift"]) == 2
+        # No disclosure fields when neither bound binds.
+        assert "truncated" not in summary
+        assert "drift_shown" not in summary
+        assert "symbol_universe_sampled" not in summary
+
+    def test_drift_text_verdict_is_pre_cap(self, intent_project):
+        result = _invoke_intent(["--drift", "--top", "1"], cwd=intent_project)
+        assert result.exit_code == 0
+        assert "2 drift references found" in result.output
+        assert "(+1 more" in result.output
+
+
+class TestIntentSymbolUniverseSampleDisclosure:
+    """The PageRank sample narrows the existence universe — disclose it."""
+
+    def test_sampled_universe_disclosed_in_drift(self, intent_project, monkeypatch):
+        monkeypatch.setattr("roam.commands.cmd_intent._MAX_SYMBOLS", 1)
+        result = _invoke_intent(["--drift", "--top", "50"], cwd=intent_project, json_mode=True)
+        data = _parse_intent_json(result, "--drift (sampled)")
+        summary = data["summary"]
+        assert summary["symbol_universe_sampled"] is True
+        assert summary["symbol_universe"] == 1
+        assert summary["symbol_universe_total"] > 1
+        assert "existence checked against top 1 of" in summary["verdict"]
+
+    def test_sampled_universe_disclosed_in_drift_text(self, intent_project, monkeypatch):
+        monkeypatch.setattr("roam.commands.cmd_intent._MAX_SYMBOLS", 1)
+        result = _invoke_intent(["--drift", "--top", "50"], cwd=intent_project)
+        assert result.exit_code == 0
+        assert "existence checked against top 1 of" in result.output
