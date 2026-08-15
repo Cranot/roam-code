@@ -363,3 +363,123 @@ class TestHypothesisEngine:
         engine = HypothesisEngine(tmp_path)
         result = engine.hypothesize("a.js", "b.js")
         assert result["category"] != "SHARED_DB", f"JS imports must not classify as SHARED_DB; got {result}"
+
+
+# ===========================================================================
+# Cap-as-census: the -n display cap must never fold into the population
+# count (finding #59 — pre-cap total published in every channel; cap +
+# denominator disclosed when the cap binds; byte-identical otherwise).
+# ===========================================================================
+
+
+@pytest.fixture
+def multi_pair_project(project_factory, monkeypatch):
+    """Three files that always co-change together and share no imports.
+
+    Yields 3 hidden pairs (a<->b, a<->c, b<->c) so a ``-n 1`` display cap
+    genuinely binds.
+    """
+    a_v = ["def fa():\n    return %d\n" % i for i in range(3)]
+    b_v = ["def fb():\n    return %d\n" % i for i in range(3)]
+    c_v = ["def fc():\n    return %d\n" % i for i in range(3)]
+    proj = project_factory(
+        {"pa.py": a_v[0], "pb.py": b_v[0], "pc.py": c_v[0]},
+        extra_commits=[
+            ({"pa.py": a_v[1], "pb.py": b_v[1], "pc.py": c_v[1]}, "second"),
+            ({"pa.py": a_v[2], "pb.py": b_v[2], "pc.py": c_v[2]}, "third"),
+        ],
+    )
+    monkeypatch.chdir(proj)
+    return proj
+
+
+_LOOSE = ["--min-npmi", "0.0", "--min-cochanges", "2"]
+
+
+class TestDarkMatterCapDisclosure:
+    def test_json_population_is_pre_cap_when_cap_binds(self, multi_pair_project, cli_runner):
+        result = invoke_cli(
+            cli_runner,
+            ["dark-matter", "-n", "1", *_LOOSE],
+            cwd=multi_pair_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "dark-matter")
+        summary = data["summary"]
+        # Population count is PRE-cap; the displayed slice stays capped.
+        assert summary["total_dark_matter_edges"] == 3
+        assert len(data["dark_matter_pairs"]) == 1
+        # Cap-hit disclosure fields (cmd_clones _cap_summary naming).
+        assert summary["count"] == 1
+        assert summary["total_count"] == 3
+        assert summary["truncated"] is True
+        assert summary["limit"] == 1
+        # warnings_out carries the truncation marker; partial_success set.
+        assert any("truncated to 1 of 3" in w for w in summary.get("warnings_out", []))
+        assert summary.get("partial_success") is True
+        assert summary["verdict"].startswith("3 dark-matter couplings found")
+
+    def test_json_unchanged_when_cap_does_not_bind(self, multi_pair_project, cli_runner):
+        result = invoke_cli(
+            cli_runner,
+            ["dark-matter", *_LOOSE],
+            cwd=multi_pair_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "dark-matter")
+        summary = data["summary"]
+        assert summary["total_dark_matter_edges"] == 3
+        assert len(data["dark_matter_pairs"]) == 3
+        # No cap disclosure fields, no warnings: envelope byte-identical
+        # to the pre-disclosure shape on the happy path.
+        assert "truncated" not in summary
+        assert "total_count" not in summary
+        assert "warnings_out" not in summary
+
+    def test_text_verdict_is_pre_cap_when_cap_binds(self, multi_pair_project, cli_runner):
+        result = invoke_cli(
+            cli_runner,
+            ["dark-matter", "-n", "1", *_LOOSE],
+            cwd=multi_pair_project,
+        )
+        assert result.exit_code == 0
+        assert "3 dark-matter couplings found" in result.output
+        # Displayed list stays capped at 1 pair.
+        assert result.output.count("<->") == 1
+
+    def test_sarif_document_discloses_the_cap(self, multi_pair_project, cli_runner):
+        import json as _json
+
+        result = invoke_cli(
+            cli_runner,
+            ["--sarif", "dark-matter", "-n", "1", *_LOOSE],
+            cwd=multi_pair_project,
+        )
+        assert result.exit_code == 0
+        raw = getattr(result, "stdout", None) or result.output
+        doc = _json.loads(raw)
+        notifications = []
+        for run in doc.get("runs", []):
+            for inv in run.get("invocations", []):
+                notifications.extend(
+                    n.get("message", {}).get("text", "") for n in inv.get("toolExecutionNotifications", [])
+                )
+        assert any("truncated to 1 of 3" in n for n in notifications), (
+            f"SARIF document must disclose the -n cap; notifications: {notifications}"
+        )
+
+    def test_sarif_document_clean_when_cap_does_not_bind(self, multi_pair_project, cli_runner):
+        import json as _json
+
+        result = invoke_cli(
+            cli_runner,
+            ["--sarif", "dark-matter", *_LOOSE],
+            cwd=multi_pair_project,
+        )
+        assert result.exit_code == 0
+        raw = getattr(result, "stdout", None) or result.output
+        doc = _json.loads(raw)
+        for run in doc.get("runs", []):
+            for inv in run.get("invocations", []):
+                for n in inv.get("toolExecutionNotifications", []):
+                    assert "truncated" not in n.get("message", {}).get("text", "")
