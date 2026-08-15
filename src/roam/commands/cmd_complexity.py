@@ -538,6 +538,10 @@ def complexity(
         )
         if rows is None:
             rows = []
+        # Cap-as-census (finding #62): the ranking fetch is itself bounded
+        # by ``fetch_limit`` — when it fills up, the qualifying population
+        # extends beyond anything measured here.
+        _fetch_hit = fetch_limit > 0 and len(rows) >= fetch_limit
 
         rows = _run_check_bj(
             "apply_filters",
@@ -582,7 +586,14 @@ def complexity(
             except Exception as _emit_exc:  # noqa: BLE001 -- W607-BJ disclosure
                 _w607bj_warnings_out.append(f"complexity_emit_findings_failed:{type(_emit_exc).__name__}:{_emit_exc}")
 
+        # Cap-as-census (finding #62): record the post-filter, pre-cap row
+        # count BEFORE the display slice so the SARIF channel can disclose
+        # its own cap. When ``_fetch_hit`` is set the true qualifying
+        # population may be larger still, so the disclosure says "N+"
+        # rather than claiming an exact denominator it never measured.
+        total_rows_full = len(rows)
         rows = rows[:limit]
+        rows_truncated = total_rows_full > len(rows)
 
         # W607-BJ: merge substrate-CALL markers into the top-level
         # ``warnings`` axis (preserved-list-field discipline). The W607-BJ
@@ -668,6 +679,16 @@ def complexity(
                 for r in rows
             ]
             _all_w = _merged_warnings()
+            # Cap-as-census (finding #62): the SARIF document mirrors the
+            # -n display slice, and a Code-Scanning consumer reads only
+            # the document — disclose the cap and the pre-cap denominator
+            # in the document itself (via toolExecutionNotifications).
+            if rows_truncated:
+                _denominator = f"{total_rows_full}{'+' if _fetch_hit else ''}"
+                _all_w = [
+                    f"SARIF results truncated to top {len(rows)} of {_denominator} "
+                    f"qualifying symbols — pass -n larger to see more"
+                ] + _all_w
             _sarif_payload = _run_check_bj(
                 "serialize_to_sarif",
                 _complexity_to_sarif_payload,
