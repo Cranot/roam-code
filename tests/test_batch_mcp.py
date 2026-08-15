@@ -644,8 +644,29 @@ class TestBatchGet:
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=symbols, root=".")
-        # 60 requested but cap is 50 — all will be "not found" but only 50 attempted
-        assert result["summary"]["symbols_requested"] == 50
+        # Cap-as-census (finding #38): symbols_requested is the PRE-cap
+        # request size; the cap discloses itself via symbols_attempted /
+        # truncated / batch_limit so 50-of-50 and 50-of-60 differ.
+        summary = result["summary"]
+        assert summary["symbols_requested"] == 60
+        assert summary["symbols_attempted"] == 50
+        assert summary["truncated"] is True
+        assert summary["batch_limit"] == 50
+        assert "10 of 60 requested not attempted" in summary["verdict"]
+
+    def test_no_cap_disclosure_when_under_the_cap(self, tmp_db):
+        from roam.mcp_server import batch_get
+
+        p1, p2 = _patch_db(tmp_db)
+        with p1, p2:
+            result = batch_get(symbols=["authenticate", "User"], root=".")
+        summary = result["summary"]
+        # Un-truncated payload stays byte-identical: no disclosure fields.
+        assert summary["symbols_requested"] == 2
+        assert "symbols_attempted" not in summary
+        assert "truncated" not in summary
+        assert "batch_limit" not in summary
+        assert "not attempted" not in summary["verdict"]
 
     def test_not_found_symbol_in_errors(self, tmp_db):
         from roam.mcp_server import batch_get
