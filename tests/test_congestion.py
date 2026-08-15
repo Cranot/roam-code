@@ -88,3 +88,61 @@ class TestCongestionText:
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["congestion"], cwd=proj)
         assert result.exit_code == 0
+
+
+class TestCongestionMeasuredPopulation:
+    """Cap-as-census (finding #56): the published "files analysed" figure is
+    the measured population — distinct files with commit activity in the
+    window — never the global ``COUNT(*) FROM files`` table count."""
+
+    def test_json_summary_publishes_measured_population(self, cli_runner, congestion_project, monkeypatch):
+        monkeypatch.chdir(congestion_project)
+        result = invoke_cli(cli_runner, ["congestion"], cwd=congestion_project, json_mode=True)
+        data = parse_json_output(result, "congestion")
+        summary = data["summary"]
+        assert "files_analysed" in summary
+        # The window population can never exceed the indexed-file count,
+        # and every congested file was analysed.
+        assert 0 < summary["files_analysed"] <= summary["total_files"]
+        assert summary["congested_files"] <= summary["files_analysed"]
+
+    def test_zero_verdict_cites_window_population_not_table_count(self, cli_runner, congestion_project, monkeypatch):
+        monkeypatch.chdir(congestion_project)
+        # min-authors high enough that nothing is congested.
+        result = invoke_cli(
+            cli_runner,
+            ["congestion", "--min-authors", "99"],
+            cwd=congestion_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "congestion")
+        verdict = data["summary"]["verdict"]
+        assert "files with recent activity analysed" in verdict
+        cited = int(verdict.split(",")[-1].split()[0])
+        assert cited == data["summary"]["files_analysed"]
+
+    def test_limit_cap_disclosed_when_it_binds(self, cli_runner, congestion_project, monkeypatch):
+        monkeypatch.chdir(congestion_project)
+        result = invoke_cli(
+            cli_runner,
+            ["congestion", "--limit", "0"],
+            cwd=congestion_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "congestion")
+        summary = data["summary"]
+        # Fixture has 1 congested file; --limit 0 hides it from files[]
+        # but the population count stays pre-cap and the cap discloses.
+        assert summary["congested_files"] >= 1
+        assert data["files"] == []
+        assert summary["files_shown"] == 0
+        assert summary["truncated"] is True
+        assert summary["limit"] == 0
+
+    def test_no_cap_disclosure_when_cap_does_not_bind(self, cli_runner, congestion_project, monkeypatch):
+        monkeypatch.chdir(congestion_project)
+        result = invoke_cli(cli_runner, ["congestion"], cwd=congestion_project, json_mode=True)
+        data = parse_json_output(result, "congestion")
+        summary = data["summary"]
+        assert "files_shown" not in summary
+        assert "truncated" not in summary

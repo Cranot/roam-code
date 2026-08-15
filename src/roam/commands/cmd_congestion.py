@@ -24,6 +24,29 @@ from roam.output.formatter import format_table, json_envelope, to_json
 # ---------------------------------------------------------------------------
 
 
+def _count_files_in_window(conn, window_days: int) -> int:
+    """Count distinct files with any commit activity inside the window.
+
+    Cap-as-census (finding #56): this is the population the congestion
+    query actually measures — NOT ``COUNT(*) FROM files``, which counts
+    every indexed file including ones with no recent git activity at
+    all. Publishing the table count as "files analysed" overstated the
+    scan and made the congested/total ratio meaningless.
+    """
+    cutoff_ts = int(time.time()) - (window_days * 86400)
+    row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT gfc.file_id) AS cnt
+        FROM git_file_changes gfc
+        JOIN git_commits gc ON gfc.commit_id = gc.id
+        WHERE gc.timestamp >= ?
+          AND gfc.file_id IS NOT NULL
+        """,
+        (cutoff_ts,),
+    ).fetchone()
+    return int(row["cnt"]) if row and row["cnt"] is not None else 0
+
+
 def _compute_congestion(
     conn,
     window_days: int,
@@ -251,8 +274,13 @@ def congestion(ctx, window, min_authors, limit):
 
         entries = _compute_congestion(conn, window, min_authors)
 
-        # Summary statistics
+        # Summary statistics. ``total_files`` stays the indexed-file
+        # count under its honest name; ``files_analysed`` is the measured
+        # population — distinct files with commit activity in the window
+        # (finding #56: the verdict used to publish the global table
+        # count as "files analysed").
         total_files = conn.execute("SELECT COUNT(*) AS cnt FROM files").fetchone()["cnt"]
+        files_analysed = _count_files_in_window(conn, window)
         congested_count = len(entries)
         critical_count = sum(1 for e in entries if e["risk"] == "critical")
         high_count = sum(1 for e in entries if e["risk"] == "high")
@@ -261,7 +289,7 @@ def congestion(ctx, window, min_authors, limit):
             verdict = (
                 f"No congested files detected "
                 f"(window={window}d, min-authors={min_authors}, "
-                f"{total_files} files analysed)"
+                f"{files_analysed} files with recent activity analysed)"
             )
         elif critical_count > 0:
             verdict = (
@@ -286,23 +314,35 @@ def congestion(ctx, window, min_authors, limit):
 
         # --- JSON output ---
         if json_mode:
+            summary = {
+                "verdict": verdict,
+                "total_files": total_files,
+                # Measured population: distinct files with commit
+                # activity inside the window (what the congestion
+                # query actually touched).
+                "files_analysed": files_analysed,
+                "congested_files": congested_count,
+                "critical": critical_count,
+                "high": high_count,
+                "medium": sum(1 for e in entries if e["risk"] == "medium"),
+                "low": sum(1 for e in entries if e["risk"] == "low"),
+                "window_days": window,
+                "min_authors": min_authors,
+            }
+            files_shown = entries[:limit]
+            # Cap-hit disclosure only when the --limit display cap binds
+            # (congested_files above is already the pre-cap population).
+            if len(entries) > len(files_shown):
+                summary["files_shown"] = len(files_shown)
+                summary["truncated"] = True
+                summary["limit"] = limit
             click.echo(
                 to_json(
                     json_envelope(
                         "congestion",
                         budget=budget,
-                        summary={
-                            "verdict": verdict,
-                            "total_files": total_files,
-                            "congested_files": congested_count,
-                            "critical": critical_count,
-                            "high": high_count,
-                            "medium": sum(1 for e in entries if e["risk"] == "medium"),
-                            "low": sum(1 for e in entries if e["risk"] == "low"),
-                            "window_days": window,
-                            "min_authors": min_authors,
-                        },
-                        files=entries[:limit],
+                        summary=summary,
+                        files=files_shown,
                         recommendations=recommendations,
                     )
                 )
@@ -317,7 +357,7 @@ def congestion(ctx, window, min_authors, limit):
             click.echo(
                 f"  Window: {window} days  |  "
                 f"Min authors: {min_authors}  |  "
-                f"Congested: {congested_count}/{total_files} files"
+                f"Congested: {congested_count}/{files_analysed} files with recent activity"
             )
             click.echo()
 
