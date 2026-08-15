@@ -309,9 +309,16 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         warnings_out.append(f"delete_check_git_diff_failed:{git_err}:source={source!r} cannot read diff")
         verdict = f"diff unavailable: {git_err} — cannot gate"
         if sarif_mode:
-            from roam.output.sarif import delete_check_to_sarif, write_sarif
+            from roam.output.sarif import delete_check_to_sarif, with_sarif_disclosures, write_sarif
 
-            click.echo(write_sarif(delete_check_to_sarif({"command": "delete-check", "deletions": []})))
+            # W1331 parity with the populated SARIF path below: this arm
+            # previously emitted a bare zero-result document, so a
+            # Code-Scanning consumer read a diff that could NOT be read as
+            # a clean scan. The disclosure rides the same
+            # toolExecutionNotifications channel the normal path uses.
+            sarif_doc = delete_check_to_sarif({"command": "delete-check", "deletions": []})
+            click.echo(write_sarif(with_sarif_disclosures(sarif_doc, warnings_out)))
+            echo_text_warnings(warnings_out)
         elif json_mode:
             _summary: dict = {
                 "verdict": verdict,
