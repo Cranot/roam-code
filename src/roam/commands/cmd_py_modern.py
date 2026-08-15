@@ -31,7 +31,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.output.formatter import format_table, json_envelope, to_json
+from roam.output.formatter import echo_text_warnings, format_table, json_envelope, to_json
 
 # All length-preserving so we can attribute per-symbol.
 _WALRUS_RE = re.compile(r":=")
@@ -61,14 +61,21 @@ _FEATURE_KEYS = (
 )
 
 
-def _python_files_with_text(conn: sqlite3.Connection):
+def _python_files_with_text(conn: sqlite3.Connection, warnings_out: list[str] | None = None):
     rows = conn.execute("SELECT id, path FROM files WHERE language = 'python'").fetchall()
     for r in rows:
         path = r[1]
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
                 yield (int(r[0]), path, f.read())
-        except OSError:
+        except OSError as exc:
+            # Absent-input disclosure: an indexed file that cannot be read
+            # used to vanish from the scan (and from ``files_scanned``)
+            # with no trace, so the adoption ratios silently claimed a
+            # corpus they never measured. Record the drop; the command
+            # surfaces the bucket per channel.
+            if warnings_out is not None:
+                warnings_out.append(f"py_modern_source_unreadable:{type(exc).__name__}:{path} dropped from scan")
             continue
 
 
@@ -114,12 +121,13 @@ def _legacy_occurrences_for_file(path: str, text: str) -> list[dict]:
     return occurrences
 
 
-def _scan_modern_python(conn: sqlite3.Connection) -> tuple[dict[str, dict], dict[str, int], list[dict]]:
+def _scan_modern_python(conn: sqlite3.Connection) -> tuple[dict[str, dict], dict[str, int], list[dict], list[str]]:
     per_file: dict[str, dict] = {}
     totals = _empty_totals()
     legacy_occurrences: list[dict] = []
+    warnings_out: list[str] = []
 
-    for _file_id, path, text in _python_files_with_text(conn):
+    for _file_id, path, text in _python_files_with_text(conn, warnings_out):
         totals["files"] += 1
         counts = _feature_counts(text)
         _add_counts(totals, counts)
@@ -127,7 +135,7 @@ def _scan_modern_python(conn: sqlite3.Connection) -> tuple[dict[str, dict], dict
             per_file[path] = counts
         legacy_occurrences.extend(_legacy_occurrences_for_file(path, text))
 
-    return per_file, totals, legacy_occurrences
+    return per_file, totals, legacy_occurrences, warnings_out
 
 
 def _pct(numerator: int, denominator: int) -> int:
@@ -159,26 +167,38 @@ def _legacy_sample(legacy_occurrences: list[dict], limit: int) -> list[dict]:
     return sorted(legacy_occurrences, key=lambda item: (item["path"], item["line"]))[: limit * 5]
 
 
-def _py_modern_json(verdict, type_ratio, format_ratio, totals, per_file, legacy_occurrences, detail, limit):
+def _py_modern_json(
+    verdict, type_ratio, format_ratio, totals, per_file, legacy_occurrences, detail, limit, warnings_out=None
+):
+    summary = {
+        "verdict": verdict,
+        "type_modernisation_pct": type_ratio,
+        "fstring_pct": format_ratio,
+        **{key: value for key, value in totals.items() if key != "files"},
+        "files_scanned": totals["files"],
+    }
+    envelope_kwargs: dict = {}
+    if warnings_out:
+        # Unreadable files were dropped from the denominator; the ratios
+        # cover only what was measured. Empty bucket -> byte-identical
+        # envelope on the clean path.
+        summary["partial_success"] = True
+        summary["warnings_out"] = list(warnings_out)
+        envelope_kwargs["warnings_out"] = list(warnings_out)
     return json_envelope(
         "py-modern",
-        summary={
-            "verdict": verdict,
-            "type_modernisation_pct": type_ratio,
-            "fstring_pct": format_ratio,
-            **{key: value for key, value in totals.items() if key != "files"},
-            "files_scanned": totals["files"],
-        },
+        summary=summary,
         by_file=[{"path": path, **counts} for path, counts in _ranked_files(per_file, limit)],
         legacy_occurrences=_legacy_sample(legacy_occurrences, limit) if detail else [],
+        **envelope_kwargs,
     )
 
 
-def _py_modern_sarif(per_file, type_ratio):
-    from roam.output.sarif import py_modern_to_sarif, write_sarif
+def _py_modern_sarif(per_file, type_ratio, warnings_out=None):
+    from roam.output.sarif import py_modern_to_sarif, with_sarif_disclosures, write_sarif
 
     by_file_list = [{"path": path, **counts} for path, counts in _ranked_files(per_file)]
-    return write_sarif(py_modern_to_sarif(by_file_list, type_ratio))
+    return write_sarif(with_sarif_disclosures(py_modern_to_sarif(by_file_list, type_ratio), warnings_out))
 
 
 def _emit_py_modern_detail(per_file, legacy_occurrences, limit):
@@ -277,20 +297,22 @@ def py_modern(ctx, detail, limit):
     detail = bool(detail or (ctx.obj.get("detail", False) if ctx.obj else False))
     ensure_index()
     with open_db(readonly=True) as conn:
-        per_file, totals, legacy_occurrences = _scan_modern_python(conn)
+        per_file, totals, legacy_occurrences, warnings_out = _scan_modern_python(conn)
         type_ratio, format_ratio = _modern_ratios(totals)
         verdict = _modern_verdict(type_ratio, format_ratio)
 
         if json_mode:
             envelope = _py_modern_json(
-                verdict, type_ratio, format_ratio, totals, per_file, legacy_occurrences, detail, limit
+                verdict, type_ratio, format_ratio, totals, per_file, legacy_occurrences, detail, limit, warnings_out
             )
             click.echo(to_json(envelope))
             return
 
         sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
         if sarif_mode:
-            click.echo(_py_modern_sarif(per_file, type_ratio))
+            click.echo(_py_modern_sarif(per_file, type_ratio, warnings_out))
+            echo_text_warnings(warnings_out)
             return
 
+        echo_text_warnings(warnings_out)
         _emit_py_modern_text(verdict, totals, type_ratio, format_ratio, detail, per_file, legacy_occurrences, limit)
