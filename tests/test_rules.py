@@ -510,6 +510,91 @@ class TestNoRulesDir:
         assert "VERDICT:" in result.output
         assert "no rules" in result.output.lower()
 
+    @staticmethod
+    def _pristine_project(tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / ".gitignore").write_text(".roam/\n")
+        (proj / "app.py").write_text("def main():\n    pass\n")
+        git_init(proj)
+        index_in_process(proj)
+        return proj
+
+    def test_explicit_missing_rules_dir_refuses_under_ci(self, tmp_path, monkeypatch):
+        """``--ci --rules-dir <absent>`` cannot certify clean on an unread directory.
+
+        Zero rules out of an explicitly named directory that does not exist is
+        an absent measurement, not a clean run (gate_should_fail semantics).
+        All three channels exit 5; the JSON summary says why.
+        """
+        proj = self._pristine_project(tmp_path)
+        monkeypatch.chdir(proj)
+        runner = CliRunner()
+
+        text = runner.invoke(cli, ["rules", "--ci", "--rules-dir", "no/such/dir"], catch_exceptions=False)
+        assert text.exit_code == 5, text.output
+        assert "REFUSED" in text.output
+
+        as_json = runner.invoke(cli, ["--json", "rules", "--ci", "--rules-dir", "no/such/dir"], catch_exceptions=False)
+        assert as_json.exit_code == 5, as_json.output
+        payload = json.loads(as_json.output)
+        assert payload["summary"]["config_state"] == "missing"
+        assert payload["summary"]["scan_incomplete"] is True
+
+        as_sarif = runner.invoke(
+            cli, ["--sarif", "rules", "--ci", "--rules-dir", "no/such/dir"], catch_exceptions=False
+        )
+        assert as_sarif.exit_code == 5, as_sarif.output
+
+    def test_explicit_missing_rules_dir_without_ci_reports(self, tmp_path, monkeypatch):
+        """Reporting mode is untouched: no --ci, no refusal."""
+        proj = self._pristine_project(tmp_path)
+        monkeypatch.chdir(proj)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["rules", "--rules-dir", "no/such/dir"], catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+        assert "no rules directory found" in result.output
+
+    def test_implicit_missing_rules_dir_under_ci_still_reports(self, tmp_path, monkeypatch):
+        """The default arm (no --rules-dir, no .roam/rules) keeps exit 0.
+
+        Deliberate: an unconfigured default is "rules are not set up", not a
+        misconfigured gate. This arm is inventoried in
+        test_gate_channel_exit_parity Law 3 -- if this test starts failing,
+        that inventory entry must be deleted in the same commit.
+        """
+        proj = self._pristine_project(tmp_path)
+        monkeypatch.chdir(proj)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--json", "rules", "--ci"], catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["summary"]["config_state"] == "missing"
+        assert "scan_incomplete" not in payload["summary"]
+
+    def test_missing_rules_dir_sarif_discloses_non_measurement(self, tmp_path, monkeypatch):
+        """The missing-dir SARIF document must not read as a clean scan.
+
+        Pre-fix it was ``rules_to_sarif([])`` bare -- a valid zero-result
+        Code-Scanning document for a scan that never ran. The disclosure
+        rides run.invocations[].toolExecutionNotifications[], the same
+        channel the populated path uses for loader warnings (W1114).
+        """
+        proj = self._pristine_project(tmp_path)
+        monkeypatch.chdir(proj)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--sarif", "rules"], catch_exceptions=False)
+        assert result.exit_code == 0, result.output
+        doc = json.loads(result.stdout)
+        notes = [
+            n["message"]["text"]
+            for inv in doc["runs"][0].get("invocations", [])
+            for n in inv.get("toolExecutionNotifications", [])
+        ]
+        assert any("no rules were evaluated" in t for t in notes), (
+            f"missing-dir SARIF must carry a non-measurement notification; got {notes!r}"
+        )
+
 
 # ===========================================================================
 # 13. test_invalid_yaml
