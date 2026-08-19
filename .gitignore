@@ -111,3 +111,9 @@ tmp_surface.json
 
 # Cloudflare Workers dev cache (landing-page deploy artifacts)
 .wrangler/
+
+# Working-copy config for an external scanning gate that resolves its
+# per-repo exemption file at the scanned repo's root. It is not part of this
+# package's published surface, so it stays out of the public tree; the tool
+# that consumes it owns its content.
+.tracked-path-gate-allow
