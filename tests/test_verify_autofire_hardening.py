@@ -139,6 +139,85 @@ def test_pytest_protocol_failure_without_node_ids_is_not_pass(monkeypatch, tmp_p
     assert result["violations"][0]["hard_block"] is True
 
 
+def test_impacted_pytest_prefers_the_target_projects_own_venv(monkeypatch, tmp_path):
+    """roam commonly runs isolated from any one project (uv tool install,
+    pipx) — sys.executable is roam's own interpreter, which has neither
+    pytest nor the target project's dependencies. It must prefer a venv
+    that actually belongs to the project under test."""
+    from roam.commands import cmd_verify
+
+    bin_dir = "Scripts" if os.name == "nt" else "bin"
+    exe_name = "python.exe" if os.name == "nt" else "python"
+    venv_python = tmp_path / ".venv" / bin_dir / exe_name
+    venv_python.parent.mkdir(parents=True)
+    venv_python.touch()
+
+    class Result:
+        returncode = 0
+        stdout = "1 passed"
+        stderr = ""
+
+    captured = {}
+    monkeypatch.setattr(
+        cmd_verify.subprocess,
+        "run",
+        lambda cmd, **kwargs: captured.setdefault("cmd", cmd) and Result(),
+    )
+    cmd_verify._run_impacted_pytest(["tests/test_app.py"], tmp_path, timeout=1)
+
+    assert captured["cmd"][0] == str(venv_python)
+
+
+def test_impacted_pytest_prefers_a_venv_nested_under_the_target_file(monkeypatch, tmp_path):
+    """A monorepo subproject's own venv (e.g. a nested Python service in an
+    otherwise non-Python repo) must win over a repo-root venv, since that is
+    the interpreter that actually has the subproject's dependencies."""
+    from roam.commands import cmd_verify
+
+    bin_dir = "Scripts" if os.name == "nt" else "bin"
+    exe_name = "python.exe" if os.name == "nt" else "python"
+    root_venv = tmp_path / ".venv" / bin_dir / exe_name
+    root_venv.parent.mkdir(parents=True)
+    root_venv.touch()
+    nested_venv = tmp_path / "service" / ".venv" / bin_dir / exe_name
+    nested_venv.parent.mkdir(parents=True)
+    nested_venv.touch()
+
+    class Result:
+        returncode = 0
+        stdout = "1 passed"
+        stderr = ""
+
+    captured = {}
+    monkeypatch.setattr(
+        cmd_verify.subprocess,
+        "run",
+        lambda cmd, **kwargs: captured.setdefault("cmd", cmd) and Result(),
+    )
+    cmd_verify._run_impacted_pytest(["service/tests/test_app.py"], tmp_path, timeout=1)
+
+    assert captured["cmd"][0] == str(nested_venv)
+
+
+def test_impacted_pytest_falls_back_to_roams_own_interpreter_with_no_project_venv(monkeypatch, tmp_path):
+    from roam.commands import cmd_verify
+
+    class Result:
+        returncode = 0
+        stdout = "1 passed"
+        stderr = ""
+
+    captured = {}
+    monkeypatch.setattr(
+        cmd_verify.subprocess,
+        "run",
+        lambda cmd, **kwargs: captured.setdefault("cmd", cmd) and Result(),
+    )
+    cmd_verify._run_impacted_pytest(["tests/test_app.py"], tmp_path, timeout=1)
+
+    assert captured["cmd"][0] == sys.executable
+
+
 def test_capped_impacted_tests_are_disclosed_as_partial(monkeypatch, tmp_path):
     from roam.commands import cmd_verify
 

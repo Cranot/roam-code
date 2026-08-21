@@ -3716,14 +3716,44 @@ def _gather_and_rank_tests(conn, sym_ids, src_paths, changed_paths, root):
     return _existing_ranked_paths(ranked, root), None
 
 
+def _resolve_test_interpreter(root: Path, first_target: str) -> str:
+    """Find the interpreter that owns the target project's test dependencies.
+
+    roam is commonly installed isolated from any one project (``uv tool
+    install``, pipx), so ``sys.executable`` is roam's own interpreter, not
+    the project under test — it has neither pytest nor the project's
+    dependencies, so collection fails before any test runs. Walk up from the
+    first impacted test file (not just ``root``, so a venv nested under a
+    subdirectory of a monorepo is found before a repo-root one) looking for
+    a ``.venv``/``venv``. Falls back to ``sys.executable``, preserving
+    today's behaviour when no project venv is found (e.g. roam is already
+    running inside the project's own venv).
+    """
+    import sys
+
+    bin_dir = "Scripts" if os.name == "nt" else "bin"
+    exe_name = "python.exe" if os.name == "nt" else "python"
+
+    start = (root / first_target).parent
+    for directory in (start, *start.parents):
+        for venv_name in (".venv", "venv"):
+            candidate = directory / venv_name / bin_dir / exe_name
+            if candidate.exists():
+                return str(candidate)
+        if directory == root:
+            break
+
+    return sys.executable
+
+
 def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
     """Run pytest over the impacted (capped) test files and report failures."""
     import subprocess
-    import sys
 
     capped = len(ordered) > _MAX_TEST_FILES
     targets = ordered[:_MAX_TEST_FILES]
-    cmd = [sys.executable, "-B", "-m", "pytest", *targets, "--tb=line", "-q", "-p", "no:cacheprovider"]
+    interpreter = _resolve_test_interpreter(root, targets[0])
+    cmd = [interpreter, "-B", "-m", "pytest", *targets, "--tb=line", "-q", "-p", "no:cacheprovider"]
     try:
         proc = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
