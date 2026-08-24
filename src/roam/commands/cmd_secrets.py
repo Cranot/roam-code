@@ -431,6 +431,15 @@ def _shannon_entropy(s: str) -> float:
 _ENTROPY_THRESHOLD = 4.5
 
 
+# A candidate that contains a repeated regex atom describes a value shape; it
+# is not the value itself. This is deliberately content-based rather than a
+# filename allowlist, so redaction catalogues and validation schemas receive
+# the same treatment wherever they live. Requiring both an atom (``[...]`` or
+# ``\w``/``\d``-style class) and a quantifier keeps ordinary hardcoded values
+# on the normal detection path.
+_REPEATED_REGEX_ATOM_RE = re.compile(r"(?:\[(?:\\.|[^\]\\\n]){1,80}\]|\\[AbBdDsSwWZ])(?:\{\d+(?:,\d*)?\}|[+*?])")
+
+
 def _is_binary(file_path: str) -> bool:
     """Check if a file is likely binary by extension."""
     _, ext = os.path.splitext(file_path)
@@ -507,23 +516,29 @@ def _high_entropy_passes(pat: dict, match) -> bool:
     return _shannon_entropy(value) >= _ENTROPY_THRESHOLD
 
 
+def _is_pattern_definition_candidate(matched_text: str) -> bool:
+    """Return True when a matched value is regex syntax, not a credential."""
+    return _REPEATED_REGEX_ATOM_RE.search(matched_text) is not None
+
+
 def _match_pattern_to_finding(line: str, pat: dict, file_path: str, line_num: int, min_rank: int) -> dict | None:
     """Try one pattern against one line. Returns a finding dict or None."""
     if severity_rank(pat["severity"]) < min_rank:
         return None
-    match = pat["regex"].search(line)
-    if not match:
-        return None
-    if not _high_entropy_passes(pat, match):
-        return None
-    return {
-        "file": file_path,
-        "line": line_num,
-        "severity": pat["severity"],
-        "pattern_name": pat["name"],
-        "matched_text": mask_secret(match.group()),
-        "remediation": _REMEDIATION.get(pat["name"], "Move to environment variable or secrets manager"),
-    }
+    for match in pat["regex"].finditer(line):
+        if _is_pattern_definition_candidate(match.group()):
+            continue
+        if not _high_entropy_passes(pat, match):
+            continue
+        return {
+            "file": file_path,
+            "line": line_num,
+            "severity": pat["severity"],
+            "pattern_name": pat["name"],
+            "matched_text": mask_secret(match.group()),
+            "remediation": _REMEDIATION.get(pat["name"], "Move to environment variable or secrets manager"),
+        }
+    return None
 
 
 def scan_file(
