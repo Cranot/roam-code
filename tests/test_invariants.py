@@ -15,6 +15,7 @@ from conftest import (
     assert_json_envelope,
     git_init,
     index_in_process,
+    invoke_cli,
 )
 
 # ===========================================================================
@@ -103,6 +104,38 @@ def invariants_project(tmp_path):
     os.chdir(str(proj))
     index_in_process(proj)
     os.chdir(old)
+    return proj
+
+
+@pytest.fixture
+def invariants_budget_project(tmp_path):
+    """Neutral corpus whose complete invariants envelope is 30K-60K tokens."""
+    proj = tmp_path / "invariants_budget_project"
+    proj.mkdir()
+    (proj / ".gitignore").write_text(".roam/\n", encoding="utf-8")
+
+    symbols = ['"""Invented inventory symbols for output-budget coverage."""\n']
+    for index in range(180):
+        suffix = f"{index:04d}"
+        symbols.append(
+            "\n"
+            f"def inventory_record_{suffix}("
+            f"primary_identifier_{suffix}: str, "
+            f"secondary_identifier_{suffix}: str, "
+            f"tertiary_identifier_{suffix}: str, "
+            f"quaternary_identifier_{suffix}: str, "
+            f"quinary_identifier_{suffix}: str"
+            ") -> str:\n"
+            f'    """Return the deterministic invented inventory label {suffix}."""\n'
+            f"    return primary_identifier_{suffix} + secondary_identifier_{suffix} "
+            f"+ tertiary_identifier_{suffix} + quaternary_identifier_{suffix} "
+            f"+ quinary_identifier_{suffix}\n"
+        )
+    (proj / "inventory.py").write_text("".join(symbols), encoding="utf-8")
+
+    git_init(proj)
+    output, exit_code = index_in_process(proj)
+    assert exit_code == 0, output
     return proj
 
 
@@ -242,3 +275,88 @@ class TestInvariantsCommand:
             assert field in summary, f"Missing field '{field}' in summary"
         assert isinstance(summary["verdict"], str)
         assert summary["symbols_analyzed"] >= 1
+
+
+def test_invariants_global_budget_reaches_output_envelope(cli_runner, invariants_budget_project):
+    """Forward the global cap and recover a result capped by the default.
+
+    Before the wiring, all three calls used the formatter's 20,000-token
+    default: even explicit 30,000 and 60,000-token requests reported
+    ``budget_tokens: 20000`` and ``partial_success: true``.
+    """
+    command = ["invariants", "--public-api", "--top", "180"]
+
+    default_result = invoke_cli(
+        cli_runner,
+        command,
+        cwd=invariants_budget_project,
+        json_mode=True,
+    )
+    assert default_result.exit_code == 0, default_result.output
+    default_payload = json.loads(default_result.output)
+    default_summary = default_payload["summary"]
+    assert default_summary["budget_tokens"] == 20_000
+    assert default_summary["full_output_tokens"] > default_summary["budget_tokens"]
+    assert default_summary["truncated"] is True
+    assert default_summary["truncation_reason"] == "budget"
+    assert default_summary["partial_success"] is True
+
+    tight_result = invoke_cli(
+        cli_runner,
+        ["--budget", "30000", *command],
+        cwd=invariants_budget_project,
+        json_mode=True,
+    )
+    assert tight_result.exit_code == 0, tight_result.output
+    tight_summary = json.loads(tight_result.output)["summary"]
+    assert tight_summary["budget_tokens"] == 30_000
+    assert tight_summary["truncated"] is True
+
+    generous_result = invoke_cli(
+        cli_runner,
+        ["--budget", "60000", *command],
+        cwd=invariants_budget_project,
+        json_mode=True,
+    )
+    assert generous_result.exit_code == 0, generous_result.output
+    generous_payload = json.loads(generous_result.output)
+    assert generous_payload["summary"]["partial_success"] is False
+    assert generous_payload["summary"].get("truncated", False) is False
+    assert len(generous_payload["symbols"]) == 180
+
+
+def test_invariants_omitted_budget_is_byte_identical_to_pre_wiring(
+    invariants_project,
+    monkeypatch,
+):
+    """Adding ``budget=0`` must not alter the no-flag output bytes."""
+    from datetime import datetime, timezone
+
+    import roam.commands.cmd_invariants as command_module
+    import roam.output.formatter as formatter
+
+    fixed_now = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+
+    class FrozenDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    monkeypatch.setattr(formatter, "datetime", FrozenDateTime)
+    monkeypatch.setattr(formatter, "_index_age_seconds", lambda: 0)
+    monkeypatch.setattr(formatter, "_envelope_index_status", lambda: None)
+
+    wired_json_envelope = command_module.json_envelope
+
+    def pre_wiring_json_envelope(*args, **kwargs):
+        kwargs.pop("budget", None)
+        return wired_json_envelope(*args, **kwargs)
+
+    monkeypatch.setattr(command_module, "json_envelope", pre_wiring_json_envelope)
+    before = run_invariants(invariants_project, ["create_user"], json_mode=True)
+    assert before.exit_code == 0, before.output
+
+    monkeypatch.setattr(command_module, "json_envelope", wired_json_envelope)
+    after = run_invariants(invariants_project, ["create_user"], json_mode=True)
+    assert after.exit_code == 0, after.output
+    assert after.output == before.output
