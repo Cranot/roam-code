@@ -42,6 +42,7 @@ PUBLIC_ALLOWLIST = (
     ".gitattributes",
     ".gitignore",
     ".mailmap",
+    ".secretsallow",
     ".mcp.json",
     ".pre-commit-config.yaml",
     ".pre-commit-hooks.yaml",

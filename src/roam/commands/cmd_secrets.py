@@ -439,6 +439,42 @@ _ENTROPY_THRESHOLD = 4.5
 # on the normal detection path.
 _REPEATED_REGEX_ATOM_RE = re.compile(r"(?:\[(?:\\.|[^\]\\\n]){1,80}\]|\\[AbBdDsSwWZ])(?:\{\d+(?:,\d*)?\}|[+*?])")
 
+# Extend the content-based pattern-definition suppression above to the other
+# common redactor representation: a regex literal using dot-atoms inside a
+# pattern/replacement table. A dot-star alone is too weak to suppress -- real
+# DSNs can contain regex punctuation in their passwords -- so this arm also
+# requires an explicit redaction replacement marker. A marker on the same line
+# proves the pair directly; a nearby marker must sit inside a named redaction
+# table. The window is assembled by ``scan_file`` below.
+_REGEX_LITERAL_SIGNAL_RE = re.compile(r"(?:\.\*|\.\+|\\[/.:@]|\(\?:)")
+_REDACTION_REPLACEMENT_RE = re.compile(r"(?i)\[\s*redacted\s*\]")
+_REDACTION_TABLE_RE = re.compile(r"(?i)\bredact(?:ed|ion|ions|or|ors)?(?:[_\s-]*(?:patterns?|rules?|table))?\b")
+
+# Use the pre-push gate's established explicit-comment vocabulary. The marker
+# must terminate the line so prose such as ``secretsallow later`` cannot turn
+# into an accidental exemption.
+_ALLOWLIST_COMMENT_RE = re.compile(r"(?i)(?:#|//|;)\s*secretsallow\s*$")
+
+_GENERIC_ASSIGNMENT_PATTERN_NAMES = frozenset(
+    {
+        "Generic Password Assignment",
+        "Generic Secret Assignment",
+        "High Entropy String",
+    }
+)
+_QUOTED_ASSIGNMENT_VALUE_RE = re.compile(r"[=:]\s*(?P<quote>['\"])(?P<value>[^'\"]+)(?P=quote)")
+_PATH_SEGMENT = r"[A-Za-z0-9._-]+"
+_PATH_SHAPED_VALUE_RE = re.compile(
+    rf"^(?:/(?:{_PATH_SEGMENT}/)+{_PATH_SEGMENT}|\$(?:[A-Za-z_]\w*|\{{[A-Za-z_]\w*\}})/"
+    rf"(?:{_PATH_SEGMENT}/)*{_PATH_SEGMENT})/?$"
+)
+_SEMANTIC_TAG_RE = re.compile(r"^[a-z]+(?:[-_][a-z]+)+$")
+_SEMANTIC_TAG_MAX_LENGTH = 16
+_SEMANTIC_TAG_MAX_ENTROPY = 3.5
+
+_STANDALONE_TRIPLE_QUOTE_RE = re.compile(r"^\s*(?:[rRuUbBfF]{0,2})?(?P<quote>'''|\"\"\")")
+_LINE_COMMENT_PREFIXES = ("#", "//", "--")
+
 
 def _is_binary(file_path: str) -> bool:
     """Check if a file is likely binary by extension."""
@@ -464,6 +500,63 @@ def _is_env_var_line(line: str) -> bool:
     These are legitimate patterns, not hardcoded secrets.
     """
     return any(indicator in line for indicator in _ENV_VAR_INDICATORS)
+
+
+def _line_is_allowlisted(line: str) -> bool:
+    """Return True only for the repository's explicit end-of-line marker."""
+    return _ALLOWLIST_COMMENT_RE.search(line) is not None
+
+
+def _documentation_line_numbers(text: str) -> set[int]:
+    """Locate standalone docstrings and comment-block lines.
+
+    This intentionally recognises only standalone documentation regions. An
+    adjacent comment does not suppress the following code line, and an inline
+    comment cannot hide an assignment earlier on its line.
+    """
+    documented: set[int] = set()
+    triple_quote: str | None = None
+    block_end: str | None = None
+
+    for line_num, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+
+        if triple_quote is not None:
+            documented.add(line_num)
+            if triple_quote in line:
+                triple_quote = None
+            continue
+
+        if block_end is not None:
+            documented.add(line_num)
+            if block_end in line:
+                block_end = None
+            continue
+
+        if stripped.startswith(_LINE_COMMENT_PREFIXES):
+            documented.add(line_num)
+            continue
+
+        triple_match = _STANDALONE_TRIPLE_QUOTE_RE.match(line)
+        if triple_match is not None:
+            documented.add(line_num)
+            quote = triple_match.group("quote")
+            if quote not in line[triple_match.end() :]:
+                triple_quote = quote
+            continue
+
+        if stripped.startswith("/*"):
+            documented.add(line_num)
+            if "*/" not in stripped[2:]:
+                block_end = "*/"
+            continue
+
+        if stripped.startswith("<!--"):
+            documented.add(line_num)
+            if "-->" not in stripped[4:]:
+                block_end = "-->"
+
+    return documented
 
 
 def _is_test_or_doc_path(rel_path: str) -> bool:
@@ -516,19 +609,70 @@ def _high_entropy_passes(pat: dict, match) -> bool:
     return _shannon_entropy(value) >= _ENTROPY_THRESHOLD
 
 
-def _is_pattern_definition_candidate(matched_text: str) -> bool:
+def _is_pattern_definition_candidate(
+    matched_text: str,
+    line: str = "",
+    surrounding_context: str = "",
+) -> bool:
     """Return True when a matched value is regex syntax, not a credential."""
-    return _REPEATED_REGEX_ATOM_RE.search(matched_text) is not None
+    if _REPEATED_REGEX_ATOM_RE.search(matched_text) is not None:
+        return True
+    if _REGEX_LITERAL_SIGNAL_RE.search(matched_text) is None:
+        return False
+    if _REDACTION_REPLACEMENT_RE.search(line) is not None:
+        return True
+    return (
+        _REDACTION_REPLACEMENT_RE.search(surrounding_context) is not None
+        and _REDACTION_TABLE_RE.search(surrounding_context) is not None
+    )
 
 
-def _match_pattern_to_finding(line: str, pat: dict, file_path: str, line_num: int, min_rank: int) -> dict | None:
+def _quoted_assignment_value(match: re.Match[str]) -> str | None:
+    """Extract the quoted right-hand value from an assignment match."""
+    value_match = _QUOTED_ASSIGNMENT_VALUE_RE.search(match.group())
+    return value_match.group("value") if value_match is not None else None
+
+
+def _assignment_value_is_secret_candidate(pat: dict, match: re.Match[str]) -> bool:
+    """Distinguish opaque values from paths and short semantic tags."""
+    if pat["name"] not in _GENERIC_ASSIGNMENT_PATTERN_NAMES:
+        return True
+    value = _quoted_assignment_value(match)
+    if value is None:
+        return True
+    if _PATH_SHAPED_VALUE_RE.fullmatch(value) is not None:
+        return False
+    if (
+        pat["name"] == "Generic Secret Assignment"
+        and len(value) <= _SEMANTIC_TAG_MAX_LENGTH
+        and _SEMANTIC_TAG_RE.fullmatch(value) is not None
+        and _shannon_entropy(value) <= _SEMANTIC_TAG_MAX_ENTROPY
+    ):
+        return False
+    return True
+
+
+def _match_pattern_to_finding(
+    line: str,
+    pat: dict,
+    file_path: str,
+    line_num: int,
+    min_rank: int,
+    *,
+    surrounding_context: str,
+    documentation_context: bool,
+) -> dict | None:
     """Try one pattern against one line. Returns a finding dict or None."""
     if severity_rank(pat["severity"]) < min_rank:
         return None
     for match in pat["regex"].finditer(line):
-        if _is_pattern_definition_candidate(match.group()):
+        if _is_pattern_definition_candidate(match.group(), line, surrounding_context):
             continue
         if not _high_entropy_passes(pat, match):
+            continue
+        if not _assignment_value_is_secret_candidate(pat, match):
+            continue
+        if documentation_context and pat["name"] in _GENERIC_ASSIGNMENT_PATTERN_NAMES:
             continue
         return {
             "file": file_path,
@@ -581,11 +725,28 @@ def scan_file(
 
         seen: set[tuple] = set()
         for view in decode_views(Path(file_path).read_bytes()):
-            for line_num, line in enumerate(view.splitlines(), start=1):
-                if _is_placeholder_line(line) or _is_env_var_line(line):
+            lines = view.splitlines()
+            documentation_lines = _documentation_line_numbers(view)
+            has_redaction_markers = any(_REDACTION_REPLACEMENT_RE.search(line) is not None for line in lines)
+            for line_index, line in enumerate(lines):
+                line_num = line_index + 1
+                if _line_is_allowlisted(line) or _is_placeholder_line(line) or _is_env_var_line(line):
                     continue
+                surrounding_context = ""
+                if has_redaction_markers:
+                    context_start = max(0, line_index - 3)
+                    context_end = min(len(lines), line_index + 4)
+                    surrounding_context = "\n".join(lines[context_start:context_end])
                 for pat in patterns:
-                    finding = _match_pattern_to_finding(line, pat, file_path, line_num, min_rank)
+                    finding = _match_pattern_to_finding(
+                        line,
+                        pat,
+                        file_path,
+                        line_num,
+                        min_rank,
+                        surrounding_context=surrounding_context,
+                        documentation_context=line_num in documentation_lines,
+                    )
                     if finding is not None:
                         key = (
                             tuple(sorted(finding.items(), key=lambda kv: kv[0]))
