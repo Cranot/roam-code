@@ -564,6 +564,7 @@ def suggest_refactoring(ctx, limit, min_score):
     if json_mode:
         payload = json_envelope(
             "suggest-refactoring",
+            budget=token_budget,
             summary={
                 "verdict": verdict,
                 "considered_symbols": len(scored),

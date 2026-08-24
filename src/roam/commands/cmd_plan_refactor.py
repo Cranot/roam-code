@@ -349,6 +349,7 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
                     to_json(
                         json_envelope(
                             "plan-refactor",
+                            budget=token_budget,
                             summary={
                                 "verdict": f"Symbol '{symbol}' not found",
                                 "partial_success": True,
@@ -440,6 +441,7 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
     if json_mode:
         payload = json_envelope(
             "plan-refactor",
+            budget=token_budget,
             summary={
                 "verdict": verdict,
                 "risk_score": risk_score,

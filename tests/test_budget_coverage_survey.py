@@ -1,9 +1,9 @@
 """W22.3 follow-up — survey which commands honor the global ``--budget`` flag.
 
-W22.3's audit (2026-05-13) found that of the 221 commands that emit a JSON
-envelope, only 64 forward ``budget=token_budget`` into ``json_envelope(...)``
-so the central ``budget_truncate_json`` gate fires. The remaining ~157
-silently ignore ``--budget``.
+W22.3's audit (2026-05-13) found that of the 221 commands that emitted a JSON
+envelope, only 64 forwarded the global value into ``json_envelope(...)`` so
+the central ``budget_truncate_json`` gate fired. The remaining ~157 either
+ignored ``--budget`` or required a hand-audited fixed-shape exemption.
 
 For text-only commands and fixed-small envelopes (``version``, ``exit-codes``,
 ``surface``, ``schema``, etc.) ignoring ``--budget`` is correct — the
@@ -18,8 +18,9 @@ hard gate once the list-payload commands are wired.
 
 Three signals:
 
-1.  **forwards_budget** — module source contains a ``json_envelope(... budget=…)``
-    call (AST-derived). These commands respect the global flag.
+1.  **forwards_budget** — module source routes ``budget`` into
+    ``json_envelope(...)``, directly, through a kwargs carrier, or through a
+    checked-call wrapper (AST-derived). These commands respect the global flag.
 2.  **reads_only**     — module uses ``json_envelope`` but never forwards
     ``budget=`` to it. Real gap unless intrinsically small.
 3.  **no_envelope**    — module never calls ``json_envelope`` (text-only,
@@ -32,12 +33,14 @@ payload that ought to participate in the central budget gate. The current
 gap size is captured in ``_REAL_GAP_THRESHOLD`` and is expected to ratchet
 DOWN over time as the long-tail commands are wired.
 
-Discovered 2026-05-13. Baseline numbers (233 commands):
-    forwards_budget:   65
-    reads_only:       164
-    no_envelope:        4
-    exempt:            94 (small/fixed-shape envelopes — see ``_BUDGET_EXEMPT``)
-    real gap:          70 (list-payload commands missing forwarding)
+Re-audited 2026-08-24 after teaching the AST survey about kwargs carriers and
+checked-call wrappers (the earlier direct-keyword-only scan falsely called
+``uses`` and ``impact`` gaps):
+    forwards_budget:  100
+    reads_only:       180
+    no_envelope:        5
+    exempt:           123 (small/fixed/custom-bounded envelopes)
+    real gap:          57 (list-payload commands missing forwarding)
 """
 
 from __future__ import annotations
@@ -176,6 +179,7 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         "module",  # single-module card
         "file",  # single-file card
         "sketch",  # directory sketch (small)
+        "map",  # custom token-aware symbol selection reports token_budget + tokens_used
         "bisect",  # bisect run summary
         "simulate",  # what-if metrics (small)
         "mutate",  # transform changes (small)
@@ -231,7 +235,7 @@ _BUDGET_GAP_KNOWN: frozenset[str] = frozenset(
         "over-fetch",  # endpoint_findings + findings
         # --- High impact -----------------------------------------------------
         "partition",  # nodes + files + dependencies
-        "debt",  # items + files
+        # "debt" WIRED through envelope kwargs in both JSON exits.
         "alerts",  # alerts list
         "algo",
         "math",  # findings list (math is algo alias)
@@ -252,13 +256,14 @@ _BUDGET_GAP_KNOWN: frozenset[str] = frozenset(
         "relate",  # distance_matrix + shared_*
         "risk",  # items list
         "rules-validate",  # dry_run_violations + errors + warnings
-        "sbom",  # dependencies list
+        # "sbom" WIRED through envelope_kwargs in the W607-CG serializer.
         "semantic-diff",  # symbols_added/modified/removed
         "simulate-departure",  # affected_modules + key_symbols
-        "suggest-refactoring",  # recommendations + smells
+        # "suggest-refactoring" WIRED 2026-08-24 — its existing text-output
+        # token_budget now reaches the JSON envelope too.
         "suggest-reviewers",  # reviewers + coverage + files
         "syntax-check",  # files list
-        "taint",  # findings + warnings + errors
+        # "taint" WIRED through envelope_kwargs in the W607-CJ serializer.
         "test-scaffold",  # symbols + scaffold body
         # "verify" WIRED 2026-06-04 — forwards budget into its violations-list
         # envelope; promoted out of the gap (gap 84 → 83). See _REAL_GAP_THRESHOLD.
@@ -280,12 +285,17 @@ _BUDGET_GAP_KNOWN: frozenset[str] = frozenset(
         "diagnose",  # downstream + recent_commits + results
         "doc-staleness",  # stale list
         "docs-coverage",  # missing_docs + stale_docs
-        "invariants",  # symbol invariants
-        "map",  # node/edge list
+        # "invariants" WIRED 2026-08-24 — global output budget reaches both
+        # usage-error and ranked-result envelopes.
         "migration-safety",  # findings list
         "pr-diff",  # changed_files + edge_analysis
         "rules",  # rule results
         "test-map",  # callers + convention_tests
+        # 2026-08-24 re-audit: real gaps hidden by the old baseline's slack.
+        "at",  # callers + related symbol locations
+        "boundary",  # boundary edges + violations
+        "compatibility",  # surface additions/removals/renames
+        "test-hermeticity",  # findings list
     }
 )
 
@@ -317,7 +327,11 @@ assert not _OVERLAP, f"Commands in BOTH exempt and gap lists: {sorted(_OVERLAP)}
 # envelope (a real list payload) — that promotes verify out of the gap, dropping it
 # back to 83 and keeping the threshold honest. The remaining +N from new compiler/
 # guard commands stays a real gap; wire or exempt each as it lands.
-_REAL_GAP_THRESHOLD = 83
+# 2026-08-24: the census learned kwargs-carrier + checked-call-wrapper shapes,
+# removing false positives such as uses/impact and exposing four gaps hidden by
+# the old slack. Invariants plus the identical plan-refactor and
+# suggest-refactoring seams were wired; the exact remaining census is 57.
+_REAL_GAP_THRESHOLD = 57
 
 
 # ---------------------------------------------------------------------------
@@ -326,20 +340,63 @@ _REAL_GAP_THRESHOLD = 83
 
 
 def _forwards_budget(src: str) -> bool:
-    """Does this source call ``json_envelope(..., budget=...)``?"""
+    """Does this source route a budget into ``json_envelope``?
+
+    Besides direct calls, production commands commonly build an envelope
+    kwargs dict and dispatch ``json_envelope`` through a substrate-isolation
+    wrapper. The old direct-keyword-only scan classified both shapes as gaps
+    even though runtime calls such as ``uses`` and ``impact`` honoured the
+    flag.
+    """
     try:
         tree = ast.parse(src)
     except SyntaxError:
         return False
+
+    def _call_name(node: ast.expr) -> str | None:
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        if isinstance(node, ast.Name):
+            return node.id
+        return None
+
+    def _dispatches_json_envelope(node: ast.Call) -> bool:
+        if _call_name(node.func) == "json_envelope":
+            return True
+        return any(isinstance(arg, ast.Name) and arg.id == "json_envelope" for arg in node.args)
+
+    budget_kwargs_carriers: set[str] = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
-        if name == "json_envelope":
-            for kw in node.keywords:
-                if kw.arg == "budget":
-                    return True
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        value = node.value
+        carries_budget = False
+        if isinstance(value, ast.Call) and _call_name(value.func) == "dict":
+            carries_budget = any(kw.arg == "budget" for kw in value.keywords)
+        elif isinstance(value, ast.Dict):
+            carries_budget = any(isinstance(key, ast.Constant) and key.value == "budget" for key in value.keys)
+        if carries_budget:
+            budget_kwargs_carriers.update(target.id for target in targets if isinstance(target, ast.Name))
+        for target in targets:
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and isinstance(target.slice, ast.Constant)
+                and target.slice.value == "budget"
+            ):
+                budget_kwargs_carriers.add(target.value.id)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not _dispatches_json_envelope(node):
+            continue
+        if any(kw.arg == "budget" for kw in node.keywords):
+            return True
+        if any(
+            kw.arg is None and isinstance(kw.value, ast.Name) and kw.value.id in budget_kwargs_carriers
+            for kw in node.keywords
+        ):
+            return True
     return False
 
 
@@ -451,21 +508,20 @@ def test_budget_gap_known_list_only_contains_real_commands() -> None:
     )
 
 
-def test_budget_gap_known_subset_of_reads_only() -> None:
-    """Every known-gap command must classify as ``reads_only`` today.
-    If one classifies as ``forwards`` it has been WIRED — remove it from
-    ``_BUDGET_GAP_KNOWN`` and lower the threshold.
-    """
+def test_budget_gap_known_matches_reads_only_gap() -> None:
+    """The hand-audited gap list must equal the AST-derived real gap."""
     forwards, reads_only, no_envelope, errors = _classify_all()
-    classified_elsewhere = _BUDGET_GAP_KNOWN - reads_only
-    # We allow no_envelope crossover for compound recipes whose underlying
-    # module became text-only at some point — that's still a downgrade in
-    # gap status, just not the "forwards" status.
-    forwards_overlap = classified_elsewhere & forwards
+    real_gap = reads_only - _BUDGET_EXEMPT
+    forwards_overlap = _BUDGET_GAP_KNOWN & forwards
+    missing_from_census = real_gap - _BUDGET_GAP_KNOWN
     assert not forwards_overlap, (
         "These commands are now forwarding budget — promote them out of "
         "``_BUDGET_GAP_KNOWN`` and lower ``_REAL_GAP_THRESHOLD``:\n  " + "\n  ".join(sorted(forwards_overlap))
     )
+    assert not missing_from_census, "These budget gaps are missing from ``_BUDGET_GAP_KNOWN``:\n  " + "\n  ".join(
+        sorted(missing_from_census)
+    )
+    assert real_gap == _BUDGET_GAP_KNOWN
 
 
 def test_budget_coverage_baseline_numbers_reportable() -> None:

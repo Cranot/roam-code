@@ -208,6 +208,7 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
       DEPENDENCIES  What the symbol depends on
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     # W607-CU -- substrate-boundary plumbing for cmd_invariants.
@@ -506,7 +507,15 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                 if _w607cu_warnings_out:
                     usage_summary["warnings_out"] = list(_w607cu_warnings_out)
                     usage_envelope_kwargs["warnings_out"] = list(_w607cu_warnings_out)
-                click.echo(to_json(json_envelope("invariants", **usage_envelope_kwargs)))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "invariants",
+                            budget=token_budget,
+                            **usage_envelope_kwargs,
+                        )
+                    )
+                )
             else:
                 echo_text_warnings(_w607cu_warnings_out)
                 click.echo(verdict)
@@ -661,7 +670,15 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                 ranked_summary["partial_success"] = True
                 ranked_summary["warnings_out"] = list(_w607cu_warnings_out)
                 ranked_envelope_kwargs["warnings_out"] = list(_w607cu_warnings_out)
-            click.echo(to_json(json_envelope("invariants", **ranked_envelope_kwargs)))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "invariants",
+                        budget=token_budget,
+                        **ranked_envelope_kwargs,
+                    )
+                )
+            )
             return
 
         # Text output
