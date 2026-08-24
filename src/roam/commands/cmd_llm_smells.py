@@ -83,7 +83,9 @@ from roam.output.formatter import format_table, json_envelope, to_json
 #         tb2 (missing timeout), tb3 (missing max_retries),
 #         sm1 (no system message), re1 (no retry/backoff),
 #         cl1 (LLM call inside a loop). All heuristic tier.
-LLM_SMELLS_DETECTOR_VERSION: str = "1.1.0"
+# 1.2.0 — recognises Python and JavaScript/TypeScript import syntax for
+#         the current Anthropic API, Agent, and cloud-provider SDKs.
+LLM_SMELLS_DETECTOR_VERSION: str = "1.2.0"
 
 
 # ---------------------------------------------------------------------------
@@ -186,12 +188,61 @@ def _llm_smell_tier(kind: str) -> str:
 
 # Import fingerprint — file must contain at least one of these to be
 # considered "an LLM-using file." Avoids false positives on the >99% of
-# files in a typical repo that never touch an LLM SDK.
+# files in a typical repo that never touch an LLM SDK. Keep module/package
+# spellings explicit: matching the whole ``@anthropic-ai`` scope would make
+# unrelated tooling packages silently opt a file into the detector.
+_LLM_PYTHON_MODULES: tuple[str, ...] = (
+    "openai",
+    "anthropic",
+    "claude_agent_sdk",
+    "claude_code_sdk",  # pre-rename Agent SDK compatibility
+    "google.generativeai",
+    "google_generativeai",
+    "langchain",
+    "langchain_openai",
+    "langchain_anthropic",
+    "litellm",
+    "cohere",
+    "mistralai",
+    "together",
+    "groq",
+    "fireworks",
+    "llama_index",
+    "replicate",
+)
+
+_LLM_JAVASCRIPT_PACKAGES: tuple[str, ...] = (
+    "@anthropic-ai/claude-agent-sdk",
+    "@anthropic-ai/claude-code",  # pre-rename Agent SDK compatibility
+    "@anthropic-ai/sdk",
+    "@anthropic-ai/bedrock-sdk",
+    "@anthropic-ai/vertex-sdk",
+    "@anthropic-ai/aws-sdk",
+    "@anthropic-ai/foundry-sdk",
+    "openai",
+    "@google/generative-ai",
+    "@google/genai",
+    "langchain",
+    "@langchain/openai",
+    "@langchain/anthropic",
+    "@langchain/google-genai",
+    "cohere-ai",
+    "@mistralai/mistralai",
+    "together-ai",
+    "groq-sdk",
+    "@fireworks-ai/inference",
+    "llamaindex",
+    "replicate",
+)
+
+_LLM_PYTHON_MODULE_PATTERN = "|".join(re.escape(module) for module in _LLM_PYTHON_MODULES)
+_LLM_JAVASCRIPT_PACKAGE_PATTERN = "|".join(re.escape(package) for package in _LLM_JAVASCRIPT_PACKAGES)
 _LLM_IMPORT_RE = re.compile(
-    r"^\s*(?:import|from)\s+(?:openai|anthropic|google\.generativeai"
-    r"|google_generativeai|langchain|langchain_openai|langchain_anthropic"
-    r"|litellm|cohere|mistralai|together|groq|fireworks"
-    r"|llama_index|replicate)\b",
+    rf"(?:^\s*(?:import|from)\s+(?:{_LLM_PYTHON_MODULE_PATTERN})\b"
+    rf"|^\s*import(?:\s+type)?(?:\s+[^;\n]+?\s+from)?\s*[\"']"
+    rf"(?:{_LLM_JAVASCRIPT_PACKAGE_PATTERN})(?:/[^\"']*)?[\"']"
+    rf"|\b(?:require|import)\s*\(\s*[\"'](?:{_LLM_JAVASCRIPT_PACKAGE_PATTERN})"
+    rf"(?:/[^\"']*)?[\"']\s*\))",
     re.MULTILINE,
 )
 
@@ -943,8 +994,9 @@ def llm_smells(ctx, min_severity, persist):
     """Detect LLM-API integration anti-patterns.
 
     Scans every indexed file whose source imports a supported LLM SDK
-    (openai, anthropic, langchain, litellm, google.generativeai, cohere,
-    mistralai, together, groq, fireworks, llama_index, replicate) and
+    (including OpenAI, Anthropic API/Agent/cloud SDKs, LangChain, LiteLLM,
+    Google Generative AI, Cohere, Mistral, Together, Groq, Fireworks,
+    LlamaIndex, and Replicate) and
     flags ten high-value anti-patterns:
 
     Baseline (W415):

@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 
 from click.testing import CliRunner
 
@@ -50,6 +51,8 @@ from roam.db.connection import open_db
 from roam.db.findings import CONFIDENCE_HEURISTIC
 from tests.conftest import make_src_project as _make_project
 
+_DETECTOR_FIXTURES = Path(__file__).parent / "fixtures" / "detector_eval" / "llm-smells"
+
 # ---------------------------------------------------------------------------
 # Unit tests -- pure functions on synthetic source text
 # ---------------------------------------------------------------------------
@@ -63,15 +66,27 @@ def test_is_llm_file_recognises_openai_import():
 
 def test_is_llm_file_recognises_anthropic_and_langchain():
     """Multiple provider SDKs flip the gate."""
-    assert _is_llm_file("import anthropic\n") is True
-    assert _is_llm_file("from langchain.chat_models import ChatOpenAI\n") is True
-    assert _is_llm_file("import litellm\n") is True
+    sources = (
+        "import anthropic\n",
+        "from claude_agent_sdk import query\n",
+        'import { query } from "@anthropic-ai/claude-agent-sdk";\n',
+        'import Anthropic from "@anthropic-ai/sdk";\n',
+        'const Anthropic = require("@anthropic-ai/bedrock-sdk");\n',
+        'const sdk = await import("@anthropic-ai/vertex-sdk");\n',
+        'import AnthropicAws from "@anthropic-ai/aws-sdk";\n',
+        'import AnthropicFoundry from "@anthropic-ai/foundry-sdk";\n',
+        "from langchain.chat_models import ChatOpenAI\n",
+        "import litellm\n",
+    )
+    for source in sources:
+        assert _is_llm_file(source) is True, source
 
 
 def test_is_llm_file_negative_on_non_llm_imports():
     """Non-LLM imports leave the gate closed."""
     assert _is_llm_file("import os\n") is False
     assert _is_llm_file("from collections import defaultdict\n") is False
+    assert _is_llm_file('import utility from "@anthropic-ai-tools/parser";\n') is False
 
 
 def test_mp1_flags_unpinned_gpt4o():
@@ -467,6 +482,27 @@ def test_llm_smells_runs_end_to_end_and_emits_findings(tmp_path):
             evidence = json.loads(r["evidence_json"])
             assert "pattern" in evidence
             assert evidence["pattern"].startswith("llm_api_")
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_llm_smells_counts_anthropic_agent_sdk_file_end_to_end(tmp_path):
+    """The command must not report an empty scan for an Agent SDK project."""
+    source = (_DETECTOR_FIXTURES / "tp_anthropic_agent_sdk.ts").read_text(encoding="utf-8")
+    proj = _make_project(tmp_path, {"agent.ts": source})
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        indexed = runner.invoke(cli, ["index"])
+        assert indexed.exit_code == 0, indexed.output
+
+        result = runner.invoke(cli, ["--json", "llm-smells"])
+        assert result.exit_code == 0, result.output
+        envelope = json.loads(result.output)
+        assert envelope["summary"]["llm_files_scanned"] == 1
+        assert envelope["summary"].get("state") != "no_llm_files"
+        assert envelope["llm_files"] == ["src/agent.ts"]
     finally:
         os.chdir(old_cwd)
 
