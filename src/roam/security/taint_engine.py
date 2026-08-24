@@ -23,6 +23,7 @@ we never emit it. The legal strings are
 
 from __future__ import annotations
 
+import ast
 import re
 import sqlite3
 import warnings
@@ -127,25 +128,39 @@ class TaintFinding:
     # presentation layer rendered every one of them as "direct
     # source->sink reach". Exactly two values are legal:
     #
-    #   "dataflow"       — :func:`_bfs_path` returned a directed
-    #                      call/reference edge path from the source
-    #                      SYMBOL to the sink SYMBOL. ``path_symbols``
-    #                      is a real hop list and its length is a real
-    #                      hop count.
-    #   "co_occurrence"  — NO dataflow was computed. The finding rests
-    #                      on co-location only. ``path_symbols`` is a
-    #                      synthesised triple, NOT a path, and its
-    #                      length carries no information.
+    #   "dataflow"       — the Python AST pass tracked a rule source
+    #                      expression into a sink call argument.
+    #   "co_occurrence"  — no argument dataflow was computed. This
+    #                      compatibility value covers same-function
+    #                      co-location, common-caller links, and symbol
+    #                      reachability; ``basis`` names the exact kind.
     #
     # DEFAULT IS THE NON-CLAIMING VALUE ON PURPOSE: a construction site
     # that forgets to set this under-claims rather than fabricating a
     # dataflow proof.
     evidence: str = "co_occurrence"
     # The exact constructor, for consumers that need to tell the
-    # co-occurrence flavours apart. One of ``bfs_path``,
+    # evidence flavours apart. One of ``bfs_path``,
     # ``intraprocedural_co_call``, ``text_scan_same_function``,
+    # ``intraprocedural_argument_dataflow``,
     # ``bfs_path_text_anchors``, or ``unspecified``.
     evidence_detail: str = "unspecified"
+    # Human-readable evidence basis for envelope and SARIF consumers.
+    # Only the computed-dataflow literal authorizes an error-level
+    # finding; every unverified basis says so directly.
+    basis: str = "co-occurrence, dataflow unverified"
+
+
+_COMPUTED_DATAFLOW_BASIS = "computed dataflow: source expression reaches sink argument"
+_SAME_FUNCTION_UNVERIFIED_BASIS = "co-occurrence, dataflow unverified"
+_COMMON_CALLER_UNVERIFIED_BASIS = "common caller, dataflow unverified"
+_SYMBOL_REACH_UNVERIFIED_BASIS = "symbol graph reachability, argument dataflow unverified"
+_TEXT_ANCHOR_REACH_UNVERIFIED_BASIS = "text-anchor call reachability, dataflow unverified"
+
+
+def _unverified_severity(severity: str) -> str:
+    """Demote a rule's error severity when no value flow was computed."""
+    return "warning" if severity == "error" else severity
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +713,7 @@ def _collect_findings_for_rule_isolation(
         findings.append(
             TaintFinding(
                 rule_id=rule.rule_id,
-                severity=rule.severity,
+                severity=_unverified_severity(rule.severity),
                 cwe=rule.cwe,
                 source_symbol=co_call_path[0],
                 sink_symbol=co_call_path[-1],
@@ -712,6 +727,7 @@ def _collect_findings_for_rule_isolation(
                 # as one.
                 evidence="co_occurrence",
                 evidence_detail="intraprocedural_co_call",
+                basis=_COMMON_CALLER_UNVERIFIED_BASIS,
             )
         )
 
@@ -745,18 +761,17 @@ def _collect_findings_for_rule_isolation(
             }
 
     path_symbols = [sym_meta.get(pid, {"id": pid}) for pid in path_ids]
-    # R3: this IS a walked edge path — but only when both endpoints are
-    # real indexed symbols. A text-scan anchor's ``id`` is its ENCLOSING
-    # function, not the source/sink token itself, so a BFS between two
-    # such anchors proves a call chain between two functions that merely
-    # CONTAIN the tokens. That is co-location one level out, not
-    # source-to-sink dataflow.
+    # This is a walked SYMBOL edge path, not a value-flow proof. Even
+    # with real indexed endpoints the edges table records calls and
+    # references; it does not prove that the source expression reaches
+    # a sink argument. Text anchors weaken the claim one step further by
+    # proving only a call path between enclosing functions.
     endpoints_are_text_anchors = bool(path_symbols[0].get("_text_anchor")) or bool(path_symbols[-1].get("_text_anchor"))
     path_symbols = [_public_endpoint(p) for p in path_symbols]
     findings.append(
         TaintFinding(
             rule_id=rule.rule_id,
-            severity=rule.severity,
+            severity=_unverified_severity(rule.severity),
             cwe=rule.cwe,
             source_symbol=path_symbols[0],
             sink_symbol=path_symbols[-1],
@@ -764,8 +779,11 @@ def _collect_findings_for_rule_isolation(
             sanitizer_in_path=has_sanitizer,
             path_truncated=path_truncated,
             owasp_top10=rule.owasp_top10,
-            evidence="co_occurrence" if endpoints_are_text_anchors else "dataflow",
+            evidence="co_occurrence",
             evidence_detail=("bfs_path_text_anchors" if endpoints_are_text_anchors else "bfs_path"),
+            basis=(
+                _TEXT_ANCHOR_REACH_UNVERIFIED_BASIS if endpoints_are_text_anchors else _SYMBOL_REACH_UNVERIFIED_BASIS
+            ),
         )
     )
     return findings
@@ -783,14 +801,12 @@ def run_taint(
     per (rule, source, sink, path) tuple. When a rule's sources never
     reach its sinks, no findings are emitted for that rule.
 
-    Three passes:
-    1. Forward BFS for cross-procedural call chains where source and
-       sink connect via intermediate hops.
-    2. Intraprocedural co-call check for the
-       ``y = source(); sink(y)`` shape — functions that *call both* a
-       source and a sink are flagged even though no forward edge
-       connects them. Mirrors Semgrep's Feb 2026 assignment-propagation
-       improvement.
+    Four passes/evidence shapes:
+    1. Forward BFS records symbol reachability. Calls/references do not
+       prove argument flow, so this evidence is advisory.
+    2. A common-caller check records that one function calls both a
+       source and a sink. It is also advisory unless value passing is
+       established elsewhere.
     3. W1330 text-scan fallback (only when *project_root* is given AND
        a rule's DB-indexed sources or sinks came back empty): see
        :func:`_text_scan_rule_anchors`. Closes the W452 indexer gap for
@@ -801,6 +817,10 @@ def run_taint(
        that never pass *project_root* (every pre-existing direct
        ``run_taint(conn, rules)`` call site) get byte-identical
        behaviour — this is purely additive and opt-in.
+    4. For same-function Python text anchors, a path-sensitive AST pass
+       tracks source origins through local assignments and list mutation
+       to sink arguments. Only this shape is emitted as computed
+       ``dataflow`` and retains an error rule's severity.
 
     *anchor_stats*, when given an (initially empty) dict, is populated
     with ``{"rules_evaluated": int, "rules_zero_anchors": int,
@@ -814,7 +834,7 @@ def run_taint(
     that don't need it.
     """
     findings: list[TaintFinding] = []
-    text_scan_cache: dict[int, tuple[str, list[dict]]] = {}
+    text_scan_cache: dict[int, tuple[str, str, list[dict]]] = {}
     zero_anchor_rule_ids: list[str] = []
     for rule in rules:
         sources = _symbols_matching(conn, rule.sources, rule.languages, qualified_only=rule.qualified_only)
@@ -1013,8 +1033,8 @@ def _masked_text_and_symbols_for_file(
     project_root: str,
     file_id: int,
     path: str,
-    cache: dict[int, tuple[str, list[dict]]],
-) -> tuple[str, list[dict]] | None:
+    cache: dict[int, tuple[str, str, list[dict]]],
+) -> tuple[str, str, list[dict]] | None:
     """Read + mask a file's source once per ``run_taint`` call, cached by file id.
 
     Several python-* rules typically share the same fallback pass in one
@@ -1030,7 +1050,7 @@ def _masked_text_and_symbols_for_file(
         return None
     masked = _mask_strings_and_comments(text)
     candidates = _enclosing_candidates_for_file(conn, file_id)
-    entry = (masked, candidates)
+    entry = (text, masked, candidates)
     cache[file_id] = entry
     return entry
 
@@ -1166,6 +1186,223 @@ def _dotted_names_only(names: Iterable[str]) -> list[str]:
     return [n for n in names if n and "." in n]
 
 
+# ---------------------------------------------------------------------------
+# Cheap Python expression-to-argument dataflow
+# ---------------------------------------------------------------------------
+
+_OriginState = dict[str, set[int]]
+
+
+def _python_qualified_name(node: ast.AST | None) -> str | None:
+    """Return a dotted source spelling for a Name/Attribute expression."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _python_qualified_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def _qualified_name_matches(name: str | None, pattern: str, *, source: bool) -> bool:
+    if not name or not pattern:
+        return False
+    if name == pattern or name.endswith(f".{pattern}"):
+        return True
+    # A source often names the value-bearing receiver while code calls a
+    # getter on it: ``os.environ.get`` / ``request.args.get``.
+    return source and name.startswith(f"{pattern}.")
+
+
+def _source_lines_in_expr(expr: ast.AST | None, sources: tuple[str, ...]) -> set[int]:
+    """Locate rule-source expressions inside *expr*."""
+    if expr is None:
+        return set()
+    lines: set[int] = set()
+    for node in ast.walk(expr):
+        target: ast.AST | None
+        if isinstance(node, ast.Call):
+            target = node.func
+        elif isinstance(node, ast.Subscript):
+            target = node.value
+        elif isinstance(node, (ast.Name, ast.Attribute)):
+            target = node
+        else:
+            continue
+        name = _python_qualified_name(target)
+        if any(_qualified_name_matches(name, pattern, source=True) for pattern in sources):
+            lines.add(int(getattr(node, "lineno", 0) or 0))
+    lines.discard(0)
+    return lines
+
+
+def _expr_origins(expr: ast.AST | None, state: _OriginState, sources: tuple[str, ...]) -> set[int]:
+    """Return source-line origins that can reach *expr* in this state."""
+    if expr is None:
+        return set()
+    origins = _source_lines_in_expr(expr, sources)
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Name):
+            origins.update(state.get(node.id, ()))
+    return origins
+
+
+def _sink_proofs_in_expr(
+    expr: ast.AST | None,
+    state: _OriginState,
+    sources: tuple[str, ...],
+    sinks: tuple[str, ...],
+) -> set[tuple[int, int]]:
+    """Return ``(source_line, sink_line)`` argument-flow proofs."""
+    if expr is None:
+        return set()
+    proofs: set[tuple[int, int]] = set()
+    for node in ast.walk(expr):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _python_qualified_name(node.func)
+        if not any(_qualified_name_matches(callee, pattern, source=False) for pattern in sinks):
+            continue
+        origins: set[int] = set()
+        for arg in node.args:
+            origins.update(_expr_origins(arg, state, sources))
+        for keyword in node.keywords:
+            origins.update(_expr_origins(keyword.value, state, sources))
+        sink_line = int(getattr(node, "lineno", 0) or 0)
+        proofs.update((source_line, sink_line) for source_line in origins if source_line and sink_line)
+    return proofs
+
+
+def _assign_origin(state: _OriginState, target: ast.AST, origins: set[int]) -> None:
+    """Apply one simple assignment, clearing overwritten clean names."""
+    if isinstance(target, ast.Name):
+        if origins:
+            state[target.id] = set(origins)
+        else:
+            state.pop(target.id, None)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            _assign_origin(state, element, origins)
+
+
+def _apply_container_mutation(
+    call: ast.Call,
+    state: _OriginState,
+    sources: tuple[str, ...],
+) -> None:
+    """Model tainted values appended/extended/inserted into a local list."""
+    if not isinstance(call.func, ast.Attribute) or call.func.attr not in {"append", "extend", "insert"}:
+        return
+    if not isinstance(call.func.value, ast.Name):
+        return
+    origins: set[int] = set()
+    for arg in call.args:
+        origins.update(_expr_origins(arg, state, sources))
+    if origins:
+        state.setdefault(call.func.value.id, set()).update(origins)
+
+
+def _dedupe_origin_states(states: list[_OriginState]) -> list[_OriginState]:
+    seen: set[tuple] = set()
+    out: list[_OriginState] = []
+    for state in states:
+        key = tuple(sorted((name, tuple(sorted(origins))) for name, origins in state.items()))
+        if key not in seen:
+            seen.add(key)
+            out.append(state)
+    return out
+
+
+def _analyze_python_block(
+    statements: list[ast.stmt],
+    incoming: list[_OriginState],
+    rule: TaintRule,
+    proofs: set[tuple[int, int]],
+) -> list[_OriginState]:
+    """Path-sensitive straight-line analysis over one Python statement block."""
+    states = incoming
+    for statement in statements:
+        next_states: list[_OriginState] = []
+        for original in states:
+            state = {name: set(origins) for name, origins in original.items()}
+
+            expr: ast.AST | None = None
+            if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                expr = statement.value
+            elif isinstance(statement, (ast.Expr, ast.Return, ast.Raise)):
+                expr = statement.value if hasattr(statement, "value") else None
+            elif isinstance(statement, (ast.If, ast.While)):
+                expr = statement.test
+            elif isinstance(statement, (ast.For, ast.AsyncFor)):
+                expr = statement.iter
+            proofs.update(_sink_proofs_in_expr(expr, state, rule.sources, rule.sinks))
+
+            if isinstance(statement, ast.Assign):
+                origins = _expr_origins(statement.value, state, rule.sources)
+                for target in statement.targets:
+                    _assign_origin(state, target, origins)
+                next_states.append(state)
+            elif isinstance(statement, ast.AnnAssign):
+                _assign_origin(state, statement.target, _expr_origins(statement.value, state, rule.sources))
+                next_states.append(state)
+            elif isinstance(statement, ast.AugAssign):
+                origins = _expr_origins(statement.value, state, rule.sources)
+                if isinstance(statement.target, ast.Name):
+                    origins.update(state.get(statement.target.id, ()))
+                _assign_origin(state, statement.target, origins)
+                next_states.append(state)
+            elif isinstance(statement, ast.Expr):
+                if isinstance(statement.value, ast.Call):
+                    _apply_container_mutation(statement.value, state, rule.sources)
+                next_states.append(state)
+            elif isinstance(statement, ast.If):
+                next_states.extend(_analyze_python_block(statement.body, [state], rule, proofs))
+                if statement.orelse:
+                    next_states.extend(_analyze_python_block(statement.orelse, [state], rule, proofs))
+                else:
+                    next_states.append(state)
+            elif isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+                # Zero iterations and one representative iteration are
+                # separate paths; taint is never leaked from one branch
+                # into an exclusive sibling.
+                next_states.append(state)
+                next_states.extend(_analyze_python_block(statement.body, [state], rule, proofs))
+                if statement.orelse:
+                    next_states.extend(_analyze_python_block(statement.orelse, [state], rule, proofs))
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                next_states.extend(_analyze_python_block(statement.body, [state], rule, proofs))
+            elif isinstance(statement, ast.Try):
+                next_states.extend(_analyze_python_block(statement.body, [state], rule, proofs))
+                for handler in statement.handlers:
+                    next_states.extend(_analyze_python_block(handler.body, [state], rule, proofs))
+                if statement.orelse:
+                    next_states.extend(_analyze_python_block(statement.orelse, [state], rule, proofs))
+                if statement.finalbody:
+                    next_states = _analyze_python_block(statement.finalbody, next_states or [state], rule, proofs)
+            elif isinstance(statement, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+                # No state crosses an early exit. This is the mechanical
+                # guard for source-in-returning-branch vs sink-in-else.
+                continue
+            else:
+                next_states.append(state)
+        states = _dedupe_origin_states(next_states)
+        if not states:
+            break
+    return states
+
+
+def _python_argument_dataflow_pairs(source_text: str, rule: TaintRule) -> set[tuple[int, int]]:
+    """Compute source-expression to sink-argument line pairs for Python."""
+    try:
+        tree = ast.parse(source_text)
+    except (SyntaxError, ValueError):
+        return set()
+    proofs: set[tuple[int, int]] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            _analyze_python_block(node.body, [{}], rule, proofs)
+    return proofs
+
+
 def _hit_to_anchor(hit: tuple[str, int], enclosing: dict | None, path: str) -> dict | None:
     """Project one text hit to the ``_symbols_matching``-shaped anchor dict.
 
@@ -1214,7 +1451,7 @@ def _text_scan_rule_anchors(
     conn: sqlite3.Connection,
     project_root: str,
     rule: TaintRule,
-    cache: dict[int, tuple[str, list[dict]]],
+    cache: dict[int, tuple[str, str, list[dict]]],
 ) -> dict:
     """Text-scan indexed Python files for *rule*'s source/sink/sanitizer names.
 
@@ -1240,7 +1477,8 @@ def _text_scan_rule_anchors(
         loaded = _masked_text_and_symbols_for_file(conn, project_root, file_id, path, cache)
         if loaded is None:
             continue
-        masked, candidates = loaded
+        source_text, masked, candidates = loaded
+        argument_dataflow_pairs = _python_argument_dataflow_pairs(source_text, rule)
 
         src_hits = _scan_hits(masked, _dotted_names_only(rule.sources))
         sink_hits = _scan_hits(masked, rule.sinks)
@@ -1286,21 +1524,26 @@ def _text_scan_rule_anchors(
                 }
                 source_symbol = _public_text_anchor(src_anchor)
                 sink_symbol = _public_text_anchor(sink_anchor)
+                computed_dataflow = pair_key in argument_dataflow_pairs
                 co_findings.append(
                     TaintFinding(
                         rule_id=rule.rule_id,
-                        severity=rule.severity,
+                        severity=(rule.severity if computed_dataflow else _unverified_severity(rule.severity)),
                         cwe=rule.cwe,
                         source_symbol=source_symbol,
                         sink_symbol=sink_symbol,
                         path_symbols=[source_symbol, enclosing_dict, sink_symbol],
                         sanitizer_in_path=eid in sanitized_enclosing_ids,
                         owasp_top10=rule.owasp_top10,
-                        # R3: nothing was walked here. Two regexes matched
-                        # inside one function body. The triple below is a
-                        # literal three-element list, not a path.
-                        evidence="co_occurrence",
-                        evidence_detail="text_scan_same_function",
+                        # The AST pass proves only flows whose source
+                        # origin reaches a positional/keyword sink
+                        # argument. All other same-function pairs retain
+                        # an explicit co-occurrence basis below error.
+                        evidence=("dataflow" if computed_dataflow else "co_occurrence"),
+                        evidence_detail=(
+                            "intraprocedural_argument_dataflow" if computed_dataflow else "text_scan_same_function"
+                        ),
+                        basis=(_COMPUTED_DATAFLOW_BASIS if computed_dataflow else _SAME_FUNCTION_UNVERIFIED_BASIS),
                     )
                 )
 

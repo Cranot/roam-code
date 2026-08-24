@@ -56,7 +56,7 @@ from roam.security.taint_rules_lint import capture_qualified_only_lint, count_ba
 # :func:`_taint_confidence_tier` or the BFS / co-call predicates in
 # :mod:`roam.security.taint_engine` change meaningfully — both shape
 # the registry row's ``claim`` / ``confidence``.
-TAINT_DETECTOR_VERSION: str = "1.0.0"
+TAINT_DETECTOR_VERSION: str = "1.1.0"
 
 # W489-A: hoisted to ``roam.security.taint_rules_lint`` so cmd_cga (and
 # any future command loading taint rules out-of-band) can reuse the
@@ -89,9 +89,9 @@ def _taint_confidence_tier(finding_dump: dict) -> str:
     The taint engine produces three flow shapes; each gets a distinct
     registry tier per the W122 brief:
 
-    - **Forward BFS path** (real edges from source -> sink, possibly with
-      a sanitizer on the path): the engine proved an edge-by-edge call
-      chain through the indexed graph. Tier: ``static_analysis``.
+    - **Computed argument dataflow**: the Python AST pass tracked a
+      source expression through local values into a sink argument. Tier:
+      ``static_analysis``.
 
     - **Intraprocedural co-call** (the enclosing function calls BOTH
       the source AND the sink, but no forward edge connects them; the
@@ -100,15 +100,12 @@ def _taint_confidence_tier(finding_dump: dict) -> str:
       enclosing fn) but the engine did NOT prove dataflow between them.
       Tier: ``structural``.
 
-    - **Truncated forward path** (BFS hit ``max_hops`` or the per-node
-      fan-out cap): the returned path is still real edge-by-edge, just
-      one of many candidate paths the engine couldn't enumerate.
-      Tier: ``static_analysis`` (the path itself is concrete; the cap
-      affects search exhaustiveness, not flow validity).
+    - **Symbol reachability / common caller / co-occurrence**: the
+      analyser has structural evidence but no source-expression to
+      sink-argument proof. Tier: ``structural``.
 
-    Sanitizer presence does NOT downgrade the registry tier — a
-    sanitized flow is still a proven dataflow; the OpenVEX layer cites
-    the sanitizer separately via ``inline_mitigations_already_exist``.
+    Sanitizer presence does not downgrade the registry tier; the
+    OpenVEX layer cites the sanitizer separately.
 
     R3 makes the tier key off the engine's own ``evidence`` field rather
     than re-deriving the shape from the edges table: only ``dataflow``
@@ -296,10 +293,11 @@ def _emit_taint_findings(conn, findings_dump: list[dict], source_version: str) -
             # rather than dropping the row.
             "owasp_top10": f.get("owasp_top10", ""),
             "flow_shape": f.get("flow_shape"),
-            # R3: what the finding rests on. "dataflow" = a walked edge
-            # path; "co_occurrence" = co-location only, nothing computed.
+            # What the finding rests on. ``basis`` distinguishes
+            # co-location, common-caller, and symbol-reach evidence.
             "evidence": f.get("evidence"),
             "evidence_detail": f.get("evidence_detail"),
+            "basis": f.get("basis"),
             "source": {
                 "name": src.get("name"),
                 "file": src.get("file"),
@@ -368,6 +366,7 @@ _CO_OCCURRENCE_REASONS = {
         "call path connects the enclosing functions that contain the source and sink tokens, "
         "not the source and sink themselves"
     ),
+    "bfs_path": "symbol edges connect source and sink names without proving argument value flow",
     "unspecified": "the engine recorded no evidence class for this finding",
 }
 _NO_DATAFLOW_SUFFIX = "; no dataflow path was computed"
@@ -383,7 +382,7 @@ def _taint_classify(finding: dict) -> tuple[str, str]:
     evidence = finding.get("evidence") or "co_occurrence"
     if evidence != "dataflow":
         detail = finding.get("evidence_detail") or "unspecified"
-        reason = _CO_OCCURRENCE_REASONS.get(detail, _CO_OCCURRENCE_REASONS["unspecified"])
+        reason = finding.get("basis") or _CO_OCCURRENCE_REASONS.get(detail, _CO_OCCURRENCE_REASONS["unspecified"])
         return "low", reason + _NO_DATAFLOW_SUFFIX
     if severity == "error" and not sanitized:
         return "high", f"direct source→sink reach, no sanitiser; path_length={path_length}"
@@ -956,6 +955,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                     "sink": _public_symbol(f.sink_symbol),
                     "evidence": getattr(f, "evidence", "co_occurrence"),
                     "evidence_detail": getattr(f, "evidence_detail", "unspecified"),
+                    "basis": getattr(f, "basis", "co-occurrence, dataflow unverified"),
                     # R3: a hop count only exists when hops were walked.
                     # ``len(path_symbols)`` on a co-occurrence finding is
                     # the length of a synthesised triple and was rendered
@@ -1417,7 +1417,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         if f.get("path_length") is not None:
             click.echo(f"  path: {f['path_length']} hop(s)")
         else:
-            click.echo(f"  evidence: {f.get('evidence_detail') or 'unspecified'} -- no dataflow path computed")
+            click.echo(f"  basis: {f.get('basis') or 'co-occurrence, dataflow unverified'}")
         if f["sanitizer_in_path"]:
             click.echo(f"  sanitized: yes  (VEX: {f['vex_justification']})")
         click.echo()
