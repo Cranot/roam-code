@@ -1939,7 +1939,15 @@ def taint_to_sarif(
         # needs to judge it — the same three fields the JSON envelope
         # already ships. ``properties`` is the SARIF §3.27.17 bag Code
         # Scanning surfaces verbatim, so no schema change is involved.
-        props: dict = {"tags": list(tags)}
+        props: dict = {
+            "tags": list(tags),
+            "basis": f.get("basis")
+            or (
+                "computed dataflow: source expression reaches sink argument"
+                if evidence == "dataflow"
+                else "co-occurrence, dataflow unverified"
+            ),
+        }
         if disclaimed:
             props["evidence"] = evidence
             props["evidence_detail"] = f.get("evidence_detail")

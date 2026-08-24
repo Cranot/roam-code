@@ -104,8 +104,8 @@ def co_occurrence_taint_envelope(tmp_path_factory):
                 def handler():
                     name = request.args.get("name")
                     cursor = sqlite3.connect(":memory:").cursor()
-                    cursor.execute("SELECT * FROM t WHERE n = '" + name + "'")
-                    return "ok"
+                    cursor.execute("SELECT id FROM t ORDER BY id")
+                    return name
             """,
         },
     )

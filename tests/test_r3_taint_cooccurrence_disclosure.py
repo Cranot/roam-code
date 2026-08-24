@@ -45,9 +45,8 @@ def cli_runner():
 def taint_project(project_factory):
     """A project whose source and sink co-occur in one enclosing function.
 
-    ``os.environ`` feeding ``subprocess.run`` inside a single function
-    is the shape the bundled ``python-command-injection`` rule reports
-    on text-scan anchors, which yields ``evidence: co_occurrence``.
+    ``os.environ`` and a fixed-argv ``subprocess.run`` inside one function
+    are the shape the bundled rule reports as unverified co-occurrence.
     """
     return project_factory(
         {
@@ -56,7 +55,8 @@ def taint_project(project_factory):
                 "import subprocess\n"
                 "def launch():\n"
                 "    target = os.environ['TARGET']\n"
-                "    return subprocess.run(target, shell=True)\n"
+                "    print(target)\n"
+                "    return subprocess.run(['report-tool', '--summary'])\n"
             ),
         }
     )
