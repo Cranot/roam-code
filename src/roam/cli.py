@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 285 invokable command names (278 canonical commands + 7 alias names).
+# Total: 286 invokable command names (279 canonical commands + 7 alias names).
 # Guarded against registry drift by scripts/sync_surface_counts.py.
 # Deprecated commands map to a structured record. When a user invokes a
 # deprecated name we still resolve it (no breaking change) and print a
@@ -59,6 +59,7 @@ _SARIF_CONSUMERS: tuple[str, ...] = (
     "bus-factor",
     "check-rules",
     "clones",
+    "collapse",
     "complexity",
     "critique",
     "dark-matter",
@@ -380,6 +381,7 @@ _COMMANDS = {
     "syntax-check": ("roam.commands.cmd_syntax_check", "syntax_check"),
     "vibe-check": ("roam.commands.cmd_vibe_check", "vibe_check"),
     "llm-smells": ("roam.commands.cmd_llm_smells", "llm_smells"),
+    "collapse": ("roam.commands.cmd_collapse", "collapse"),
     "ai-readiness": ("roam.commands.cmd_ai_readiness", "ai_readiness"),
     "check-rules": ("roam.commands.cmd_check_rules", "check_rules_command"),
     "codeowners": ("roam.commands.cmd_codeowners", "codeowners"),
@@ -640,6 +642,7 @@ _CATEGORIES = {
         "compiler-corpus",
         "vibe-check",
         "llm-smells",
+        "collapse",
         "ai-readiness",
         "check-rules",
         "dict-consistency",

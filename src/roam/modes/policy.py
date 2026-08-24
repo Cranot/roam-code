@@ -99,6 +99,9 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "uses",
         "doctor",
         "health",
+        # collapse reads indexed paths and source text to report detector findings;
+        # it does not write source, index, evidence, or configuration.
+        "collapse",
         # verify-imports is a pure index/source diagnostic. It opens the index
         # read-only and never writes source, index, evidence, or configuration.
         "verify-imports",

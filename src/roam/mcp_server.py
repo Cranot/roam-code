@@ -11538,6 +11538,49 @@ def roam_llm_smells(
     return _run_roam(args, root)
 
 
+@_tool(
+    name="roam_collapse",
+    description=(
+        "Run the benign-default collapse detector. Find error paths that make "
+        "unreadable, invalid, or unavailable sources indistinguishable from "
+        "empty sources across Python, JavaScript, TypeScript, and shell."
+    ),
+    version="1.0.0",
+    read_only=True,
+    destructive=False,
+    idempotent=True,
+)
+def roam_collapse(
+    path: str = "",
+    include_tests: bool = False,
+    root: str = ".",
+) -> dict:
+    """Detect benign-default collapse at error and measurement boundaries.
+
+    WHEN TO USE: Run before changing persistence, parsing, measurement, or
+    recovery code where callers must distinguish unavailable data from empty
+    data.
+
+    Parameters
+    ----------
+    path:
+        Restrict the scan to one file or directory prefix.
+    include_tests:
+        Include test files and detector fixtures. Defaults to false.
+    root:
+        Repository root (default current directory).
+
+    Returns: five-rule counts and findings with file, line, collapsed facts,
+    severity, and repair direction.
+    """
+    args: list[str] = ["collapse"]
+    if path:
+        args.extend(["--file", path])
+    if include_tests:
+        args.append("--include-tests")
+    return _run_roam(args, root)
+
+
 # W421: roam_boundary -- public-by-accident exports + changed-range layer
 # violations. Closed-enum kinds: public_by_accident (warning),
 # wrong_direction_import (high). Pure read-only detector; --persist mirrors

@@ -204,7 +204,7 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
-          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 17 tools including the <code>roam_expand_toolset</code> meta-tool; 244 in <code>full</code>)</td></tr>
+          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 17 tools including the <code>roam_expand_toolset</code> meta-tool; 245 in <code>full</code>)</td></tr>
           <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Windsurf, VS Code, Gemini CLI, Codex CLI</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with conflict-aware partitions</td></tr>
@@ -435,6 +435,9 @@
       <tr><td><code>roam test-gaps</code></td><td>Map changed symbols to missing test coverage.</td></tr>
       <tr><td><code>roam affected</code></td><td>Identify affected files/modules from a git diff via depen...</td></tr>
       <tr><td><code>roam attest</code></td><td>Generate a proof-carrying PR attestation.</td></tr>
+      <tr><td><code>roam review-request</code></td><td>Emit the brief to hand a different-family reviewer.</td></tr>
+      <tr><td><code>roam review-accept</code></td><td>Record a review outcome as a receipt the verdict gate can...</td></tr>
+      <tr><td><code>roam review-verify</code></td><td>Re-derive the review verdict from the artifact's CURRENT ...</td></tr>
       <tr><td><code>roam adversarial</code></td><td>Adversarial architecture review -- challenge your changes.</td></tr>
       <tr><td><code>roam verify</code></td><td>Verify changed files follow codebase conventions.</td></tr>
       <tr><td><code>roam verify-imports</code></td><td>Validate import/require statements against the indexed sy...</td></tr>
@@ -492,6 +495,7 @@
       <tr><td><code>roam compiler-corpus</code></td><td>Compile every prompt in a corpus file and aggregate the p...</td></tr>
       <tr><td><code>roam vibe-check</code></td><td>Detect AI code anti-patterns and compute AI rot score.</td></tr>
       <tr><td><code>roam llm-smells</code></td><td>Detect LLM-API integration anti-patterns.</td></tr>
+      <tr><td><code>roam collapse</code></td><td>Detect unavailable sources collapsed into benign defaults.</td></tr>
       <tr><td><code>roam ai-readiness</code></td><td>Estimate how effectively AI agents can work on this codeb...</td></tr>
       <tr><td><code>roam check-rules</code></td><td>Run structural governance rules against the indexed codeb...</td></tr>
       <tr><td><code>roam dict-consistency</code></td><td>Audit string-keyed dicts in a Python file for cross-dict ...</td></tr>
@@ -601,6 +605,7 @@
       <tr><td><code>roam codeowners</code></td><td>Analyze CODEOWNERS coverage and ownership distribution.</td></tr>
       <tr><td><code>roam drift</code></td><td>Detect ownership drift: where declared owners differ from...</td></tr>
       <tr><td><code>roam secrets</code></td><td>Scan for hardcoded secrets, API keys, tokens, and passwords.</td></tr>
+      <tr><td><code>roam ignore-drift</code></td><td>Report files git tracks despite a `.gitignore` rule that ...</td></tr>
       <tr><td><code>roam supply-chain</code></td><td>Dependency risk dashboard: pin coverage, risk scoring, su...</td></tr>
       <tr><td><code>roam risk</code></td><td>Show domain-weighted risk ranking of symbols.</td></tr>
       <tr><td><code>roam migration-safety</code></td><td>Check migration files for non-idempotent (unsafe if run t...</td></tr>

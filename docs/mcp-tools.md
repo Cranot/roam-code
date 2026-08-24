@@ -6,7 +6,7 @@ server. This page is generated from the `@_tool` decorations in
 docstrings, not this file.
 
 <!-- BEGIN auto-count:mcp-tools-headline -->
-**244 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
+**245 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
 <!-- END auto-count:mcp-tools-headline -->
 
 ```bash
@@ -31,7 +31,7 @@ first-run flow and the canonical agent sequence, and the
 [README](../README.md#mcp-server) for the preset overview.
 
 <!-- BEGIN auto-count:mcp-tools-list-summary -->
-## MCP tool list (all 244)
+## MCP tool list (all 245)
 <!-- END auto-count:mcp-tools-list-summary -->
 
 <!-- BEGIN auto-count:mcp-tools-list-table -->
@@ -85,6 +85,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_closure` | Minimal set of changes needed for rename/delete/modify (exact files + lines). |
 | `roam_clusters` | Show Louvain code clusters and directory mismatches. Returns per-cluster size, cohesion, conductance, modularity Q, mega-cluster sub-group breakdowns, and inter-cluster coupling. Different from ``roam_layers`` (dependency-layer violations) -- this groups by community detection, not by topological depth. |
 | `roam_codeowners` | CODEOWNERS coverage, ownership distribution, unowned files, drift detection. |
+| `roam_collapse` | Run the benign-default collapse detector. Find error paths that make unreadable, invalid, or unavailable sources indistinguishable from empty sources across Python, JavaScript, TypeScript, and shell. |
 | `roam_commands` | List the repo's own runnable build/test/lint commands, classified by kind/scope/cost with evidence. |
 | `roam_compare` | Diff two roam indices structurally: reports symbols added/removed/moved, per-file complexity deltas above a threshold, language counts, and a one-line health verdict (improved / regressed / sideways). Different from ``roam_graph_diff`` (commit-range graph delta from one index) -- this is the cross-index structural delta for release-vs-release comparisons. |
 | `roam_compatibility` | Detect outbound surface regressions vs a baseline snapshot. Closed-enum verdicts: no regressions / surface additions / surface drift / baseline stale / breaking changes. Compares commands, flags, envelope summary fields, MCP tools, MCP tool parameters, and preset counts; does NOT compare parameter types, defaults, tool descriptions, command categories or runtime behavior. Capture the baseline via CLI: roam compatibility --write-baseline PATH. |
