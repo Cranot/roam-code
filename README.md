@@ -13,7 +13,7 @@
 <sub>Credential-free · local analysis with no automatic source-code or telemetry upload · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs on your machine</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>285 commands · 244 MCP tools (17 in the default `core` preset) · 28 languages</sub>
+<sub>286 commands · 245 MCP tools (17 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 <sub><a href="https://roam-code.com/pricing"><b>Paid layers →</b></a> &nbsp;<b>PR Replay</b> audit $2,500 Team / $6,000 Deep, available now &nbsp;·&nbsp; <b>Roam Review</b> from $99/mo flat — no per-seat pricing &nbsp;·&nbsp; <b>Roam Cloud</b> $19/repo/mo &nbsp;·&nbsp; Review and Cloud are early access. The CLI below is Apache 2.0 and free forever.</sub>
@@ -430,7 +430,7 @@ Roam's surfaces differ in how rigorously they've been validated — know which i
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~280 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **285 commands (278 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~281 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **286 commands (279 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -442,12 +442,12 @@ Roam's surfaces differ in how rigorously they've been validated — know which i
 | `roam critique` | Verify a patch against the graph: clones-not-edited + blast radius + intent vs semantic-diff. Pipe `git diff` in; exit 5 on high severity |
 
 <!-- BEGIN auto-count:readme-sarif-surface-mention -->
-The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 37 commands).
+The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 38 commands).
 <!-- END auto-count:readme-sarif-surface-mention -->
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 278)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 279)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 The complete, always-current list with flags and examples lives in the [Command Reference](https://roam-code.com/docs/command-reference).
@@ -570,7 +570,7 @@ Core preset tools: `roam_alerts`, `roam_ask`, `roam_batch_search`, `roam_couplin
 `roam_ask` (and `roam ask` on the CLI) is a natural-language codebase question dispatcher — 'is it safe to delete X?', 'where does login validate?', 'who owns module Y?' — that routes intent to one recipe in the graph-aware 31-recipe registry, replacing a Grep+Read round trip with one call.
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-link -->
-The full 244-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md).
+The full 245-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md).
 <!-- END auto-count:readme-mcp-tool-list-link -->
 
 <!-- MCP Registry ownership token. The registry scans the PUBLISHED PyPI
@@ -650,7 +650,7 @@ failure), `sarif` (upload to GitHub Code Scanning), `comment` (sticky PR
 comment), `cache`, and `changed-only` (incremental mode).
 
 <!-- BEGIN auto-count:readme-sarif-output-count -->
-**SARIF output.** 37 commands honour the global `--sarif` flag (health, complexity, dead, smells, clones, vulns, taint, secrets, n1, …). Minimal upload:
+**SARIF output.** 38 commands honour the global `--sarif` flag (health, complexity, dead, smells, clones, vulns, taint, secrets, n1, …). Minimal upload:
 <!-- END auto-count:readme-sarif-output-count -->
 
 ```yaml

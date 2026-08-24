@@ -5312,6 +5312,79 @@ def llm_smells_to_sarif(findings: list[dict], *, disclosures: list[str] | None =
     )
 
 
+# -- Benign-default collapse detector ---------------------------------
+
+_COLLAPSE_KIND_TO_RULE: dict[str, str] = {
+    "catch-to-benign-literal": "collapse/catch-to-benign-literal",
+    "enoent-conflation": "collapse/enoent-conflation",
+    "fallback-or-zero-on-measurement": "collapse/fallback-or-zero-on-measurement",
+    "shell-echo-fallback": "collapse/shell-echo-fallback",
+    "parse-failure-merges-with-empty": "collapse/parse-failure-merges-with-empty",
+}
+
+_COLLAPSE_RULE_DESCRIPTIONS: dict[str, str] = {
+    "collapse/catch-to-benign-literal": "Catch handler returns only a benign literal",
+    "collapse/enoent-conflation": "Unreadable file is treated as an absent file",
+    "collapse/fallback-or-zero-on-measurement": "Unavailable measurement is treated as numeric zero",
+    "collapse/shell-echo-fallback": "Failed shell command echoes a benign literal",
+    "collapse/parse-failure-merges-with-empty": "Invalid parsed input is treated as empty input",
+}
+
+
+def collapse_to_sarif(findings: list[dict], *, disclosures: list[str] | None = None) -> dict:
+    """Convert ``roam collapse`` findings to a closed five-rule SARIF catalog."""
+    rules = [
+        _rule_entry(
+            id=rule_id,
+            short_desc=_COLLAPSE_RULE_DESCRIPTIONS[rule_id],
+            help_uri=_HELP_BASE + "collapse",
+            default_level=(
+                "warning"
+                if rule_id
+                in {
+                    "collapse/catch-to-benign-literal",
+                    "collapse/enoent-conflation",
+                    "collapse/parse-failure-merges-with-empty",
+                }
+                else "note"
+            ),
+        )
+        for rule_id in sorted(_COLLAPSE_KIND_TO_RULE.values())
+    ]
+    results: list[dict] = []
+    for finding in findings or []:
+        if not isinstance(finding, dict):
+            continue
+        rule_id = _COLLAPSE_KIND_TO_RULE.get(str(finding.get("rule") or ""))
+        file_path = str(finding.get("file") or "")
+        if rule_id is None or not file_path:
+            continue
+        line = finding.get("line")
+        if not isinstance(line, int) or line <= 0:
+            line = None
+        collapsed = str(finding.get("collapsed_facts") or "").strip()
+        repair = str(finding.get("repair") or "").strip()
+        message = collapsed
+        if repair:
+            message = f"{message} Repair: {repair}" if message else f"Repair: {repair}"
+        results.append(
+            _result_entry(
+                rule_id=rule_id,
+                severity=str(finding.get("severity") or "medium"),
+                locations=[_location(file_path, line)],
+                message=message or rule_id.rsplit("/", 1)[-1],
+            )
+        )
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        rules,
+        results,
+        emit_runtime_notifications=bool(disclosures),
+        warnings_out=disclosures,
+    )
+
+
 # -- Fan detector (W1209) ---------------------------------------------
 
 

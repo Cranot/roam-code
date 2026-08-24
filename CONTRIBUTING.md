@@ -588,7 +588,7 @@ roam-code is organized into these key areas:
 | `src/roam/graph/` | NetworkX graph algorithms (PageRank, SCC, clustering, layers) |
 | `src/roam/bridges/` | Cross-language symbol resolution |
 | `src/roam/output/` | Formatting, JSON envelopes, SARIF output |
-| `src/roam/mcp_server.py` | MCP server with 244 tools (17 in the default `core` preset) |
+| `src/roam/mcp_server.py` | MCP server with 245 tools (17 in the default `core` preset) |
 | `tests/` | Test suite |
 
 For full architectural details, see the [Architecture Guide](https://roam-code.com/docs/architecture).
