@@ -70,5 +70,19 @@ verify-build: build
 publish: quality-strict verify-build
 	twine upload dist/*
 
+# roam-code.com goes out by hand on purpose (see CONTRIBUTING.md "Deploys"):
+# a human says when the site ships. These targets keep the step from being
+# lost: site-check names the drift the moment the live site falls behind the
+# declared version (measured 2026-08: a release sat undeployed for a month
+# because the command lived only in a doc), site-deploy is the one command.
+site-check:
+	@declared=$$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"); \
+	live=$$(curl -sL https://roam-code.com/changelog | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1); \
+	echo "declared=$$declared live=$$live"; \
+	[ "$$declared" = "$$live" ] || { echo "DRIFT: live roam-code.com is behind -- run 'make site-deploy'"; exit 1; }
+
+site-deploy:
+	npx wrangler pages deploy templates/distribution/landing-page --project-name roam-code --branch main --commit-dirty=true
+
 clean:
 	rm -rf build/ dist/ *.egg-info src/*.egg-info

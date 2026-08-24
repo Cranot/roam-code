@@ -528,7 +528,9 @@ same commit as the original change, not a follow-up PR:
 
 ## Deploys
 
-Cloudflare Pages goes out by hand:
+Cloudflare Pages goes out by hand (`make site-deploy`; `make site-check`
+compares the live changelog against the declared version and fails on
+drift -- run it after any release cut):
 
 ```bash
 wrangler pages deploy templates/distribution/landing-page \
