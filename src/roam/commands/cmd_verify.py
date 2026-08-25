@@ -2298,6 +2298,18 @@ def _composable_complexity_violation(row, cc: float) -> dict:
 def _standard_complexity_violation(row, cc: float, threshold: int) -> dict:
     rounded = round(cc)
     name = row["name"]
+    try:
+        from roam.index.complexity_extract import fix_hint_for_symbol
+
+        fix_hint = fix_hint_for_symbol(
+            row["file_path"],
+            int(row["line_start"]),
+            int(row["line_end"]),
+            threshold=threshold,
+        )
+    except Exception as exc:  # noqa: BLE001 — optional enrichment cannot break the verify gate
+        _swallow_verify("verify.complexity.fix_hint", exc)
+        fix_hint = None
     return {
         "category": "complexity",
         "severity": SEVERITY_FAIL if cc >= _COMPLEXITY_FAIL else SEVERITY_WARN,
@@ -2308,6 +2320,7 @@ def _standard_complexity_violation(row, cc: float, threshold: int) -> dict:
         "symbol": name,
         "cognitive_complexity": rounded,
         "fix": f"Decompose `{name}` — extract helpers / flatten nesting to lower cognitive load",
+        **({"fix_hint": fix_hint} if fix_hint is not None else {}),
     }
 
 
@@ -2474,6 +2487,7 @@ def _complexity_display_violations(violations: list[dict], root: Path) -> list[d
                 "functions": [item.get("symbol") for item in ordered],
                 "message": (f"{file_path} has {len(file_violations)} complex functions; target: {target_text}"),
                 "fix": fix,
+                **({"fix_hint": target_violation["fix_hint"]} if target_violation.get("fix_hint") is not None else {}),
             }
         )
     return displayed
@@ -4524,6 +4538,7 @@ def _check_clones(conn, target_paths):
                     f"`{other}` — likely reimplements existing code"
                 ),
                 "fix": "Extract the shared logic into one place instead of duplicating it",
+                **({"fix_hint": getattr(p, "fix_hint", None)} if getattr(p, "fix_hint", None) is not None else {}),
             }
         )
     return {"score": 100 if not violations else 80, "violations": violations}
@@ -6366,6 +6381,30 @@ def _verify_summary_priority_key(violation: dict) -> tuple:
     )
 
 
+def _compact_fix_hint(fix_hint: dict | None) -> str | None:
+    if not fix_hint:
+        return None
+    kind = fix_hint.get("kind")
+    if kind == "extract":
+        span = fix_hint.get("span") or {}
+        iterative = "; iterative" if fix_hint.get("iterative") else ""
+        return (
+            f"extract L{span.get('start_line', '?')}-{span.get('end_line', '?')} "
+            f"as {fix_hint.get('suggested_name', 'helper')}() "
+            f"(delta {float(fix_hint.get('expected_delta') or 0):.0f}, "
+            f"residual {float(fix_hint.get('residual_score') or 0):.0f}, "
+            f"auto_fixable={str(bool(fix_hint.get('auto_fixable'))).lower()}{iterative})"
+        )
+    if kind == "parameterize":
+        slots = fix_hint.get("varying_slots") or []
+        positions = sum(len(slot.get("positions") or []) for slot in slots if isinstance(slot, dict))
+        return (
+            f"parameterize {len(fix_hint.get('members') or [])} members at {positions} varying token positions "
+            f"(similarity {float(fix_hint.get('similarity') or 0):.0%}, auto_fixable=false)"
+        )
+    return None
+
+
 def _emit_verify_summary(violations: list[dict], files_checked: int) -> None:
     """Print one top finding per file/severity/category group."""
     groups = _verify_summary_groups(violations)
@@ -6385,6 +6424,9 @@ def _emit_verify_summary(violations: list[dict], files_checked: int) -> None:
             item_name = top.get("symbol") or top.get("message") or "unnamed finding"
             click.echo(f"  {severity} / {category}: {len(items)} finding{'s' if len(items) != 1 else ''}")
             click.echo(f"    TOP: {item_name} @ {loc(top.get('file'), top.get('line'))} -- {top.get('message', '')}")
+            compact_hint = _compact_fix_hint(top.get("fix_hint"))
+            if compact_hint:
+                click.echo(f"    FIX_HINT: {compact_hint}")
 
 
 def _verify_gate_failed(summary: dict, score: int, threshold: int, report: bool) -> bool:
@@ -6488,6 +6530,7 @@ def _emit_verify_text(
         ("IMPORTS", "imports"),
         ("ERROR HANDLING", "error_handling"),
         ("DUPLICATES", "duplicates"),
+        ("CLONES", _VERIFY_CLONES_CATEGORY),
         ("SYNTAX", "syntax"),
         ("COMPLEXITY", "complexity"),
         ("CYCLES", "cycles"),
@@ -6514,6 +6557,9 @@ def _emit_verify_text(
             scope = violation.get("finding_scope", "target-wave").upper()
             file_loc = loc(violation["file"], violation.get("line"))
             click.echo(f"  {severity} [{scope}]: {file_loc} -- {violation['message']}")
+            compact_hint = _compact_fix_hint(violation.get("fix_hint"))
+            if compact_hint:
+                click.echo(f"    FIX_HINT: {compact_hint}")
             if fix_suggestions and violation.get("fix"):
                 click.echo(f"    FIX: {violation['fix']}")
         click.echo("")
@@ -7200,6 +7246,9 @@ def _print_category(label: str, result: dict, fix_suggestions: bool, *, root: Pa
             sev = v.get("severity", "WARN")
             file_loc = loc(v["file"], v.get("line"))
             click.echo(f"  {sev}: {file_loc} -- {v['message']}")
+            compact_hint = _compact_fix_hint(v.get("fix_hint"))
+            if compact_hint:
+                click.echo(f"    FIX_HINT: {compact_hint}")
             if fix_suggestions and v.get("fix"):
                 click.echo(f"    FIX: {v['fix']}")
     click.echo("")
@@ -7303,6 +7352,9 @@ def _render_verify_report(
             f"[{v.get('severity', '?')}] {v.get('category')}  "
             f"{loc(v.get('file'), v.get('line'))}  {v.get('message', '')}"
         )
+        compact_hint = _compact_fix_hint(v.get("fix_hint"))
+        if compact_hint:
+            click.echo(f"      FIX_HINT: {compact_hint}")
         if v.get("fix"):
             click.echo(f"      fix: {v['fix']}")
     if total > cap:

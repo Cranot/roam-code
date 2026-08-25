@@ -593,6 +593,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     "pattern": c.pattern,
                     "suggestion": c.suggestion,
                     "role_bucket": _role_bucket_for_cluster([m.get("file") or "" for m in c.members]),
+                    **({"fix_hint": c.fix_hint} if c.fix_hint is not None else {}),
                 }
                 for c in clusters
             ]
@@ -609,6 +610,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     "line_b": p.line_b,
                     "similarity": p.similarity,
                     "role_bucket": _role_bucket_for_pair(p.file_a, p.file_b),
+                    **({"fix_hint": p.fix_hint} if p.fix_hint is not None else {}),
                 }
                 for p in pairs[:50]
             ]
@@ -718,6 +720,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     # consume the live envelope can filter without going
                     # through the registry.
                     "role_bucket": _role_bucket_for_cluster([m.get("file") or "" for m in c.members]),
+                    **({"fix_hint": c.fix_hint} if c.fix_hint is not None else {}),
                 }
                 for c in clusters
             ]
@@ -733,6 +736,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     "line_b": p.line_b,
                     "similarity": p.similarity,
                     "role_bucket": _role_bucket_for_pair(p.file_a, p.file_b),
+                    **({"fix_hint": p.fix_hint} if p.fix_hint is not None else {}),
                 }
                 for p in pairs[:50]  # Cap pair output
             ]
@@ -984,6 +988,14 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                 )
             click.echo(f"  Pattern: {c.pattern}")
             click.echo(f"  Suggestion: {c.suggestion}")
+            if c.fix_hint is not None:
+                slots = c.fix_hint.get("varying_slots") or []
+                positions = sum(len(slot.get("positions") or []) for slot in slots)
+                click.echo(
+                    f"  FIX_HINT: parameterize {len(c.fix_hint['members'])} members at "
+                    f"{positions} varying token positions "
+                    f"(similarity {c.fix_hint['similarity']:.0%}, auto_fixable=false)"
+                )
             click.echo()
 
         click.echo(
