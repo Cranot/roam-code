@@ -330,6 +330,7 @@ class TestComplexityDisplay:
         assert text_result.exit_code == 5, text_result.output
         assert "complex.py has 3 complex functions" in text_result.output
         assert text_result.output.count("fn `") == 0
+        assert "FIX_HINT: extract L" in text_result.output
 
         verbose_result = invoke_cli(
             cli_runner,
@@ -349,6 +350,7 @@ class TestComplexityDisplay:
         data = json.loads(json_result.stdout)
         complexity_findings = [item for item in data["violations"] if item.get("category") == "complexity"]
         assert len(complexity_findings) == 3
+        assert all(item["fix_hint"]["kind"] == "extract" for item in complexity_findings)
 
     def test_repeated_file_findings_use_smallest_extraction_target(self, tmp_path, monkeypatch):
         from roam.commands import cmd_verify

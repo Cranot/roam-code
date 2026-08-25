@@ -225,6 +225,10 @@ class TestCloneDetectEngine:
             assert "summary" in data
             assert "verdict" in data["summary"]
             assert "clusters" in data["summary"]
+            cluster_values = [entry["value"] for entry in data["clusters"]]
+            pair_values = [entry["value"] for entry in data["pairs"]]
+            assert all(value["fix_hint"]["kind"] == "parameterize" for value in cluster_values)
+            assert all(value["fix_hint"]["varying_slots"] for value in pair_values)
         finally:
             os.chdir(old_cwd)
 

@@ -32,7 +32,7 @@ from roam.output.metric_definitions import COGNITIVE_COMPLEXITY_DEFINITION
 # duplicating rows. Bump this when the threshold-to-severity mapping
 # in ``_severity`` changes meaningfully, since that's what the registry
 # row's ``claim`` and confidence tier are derived from.
-COMPLEXITY_DETECTOR_VERSION: str = "1.0.0"
+COMPLEXITY_DETECTOR_VERSION: str = "1.1.0"
 
 # Registry-emit threshold: only symbols with cognitive_complexity >= 15
 # are emitted as findings. This mirrors the existing ``_severity``
@@ -78,6 +78,8 @@ def _emit_complexity_findings(conn, rows) -> None:
         emit_finding,
     )
 
+    rows = list(rows)
+    fix_hints = _complexity_fix_hints(rows, threshold=COMPLEXITY_FINDING_THRESHOLD)
     for r in rows:
         symbol_id = r["symbol_id"]
         if symbol_id is None:
@@ -109,6 +111,7 @@ def _emit_complexity_findings(conn, rows) -> None:
             "halstead_difficulty": _safe_metric(r, "halstead_difficulty"),
             "halstead_effort": _safe_metric(r, "halstead_effort"),
             "halstead_bugs": _safe_metric(r, "halstead_bugs"),
+            **({"fix_hint": fix_hints[symbol_id]} if symbol_id in fix_hints else {}),
         }
         claim = (
             f"High cognitive complexity: {name} ({file_path}:{line_start}) — "
@@ -729,6 +732,7 @@ def complexity(
         # Opt-in — parses the shown files on demand — so it's off the happy
         # path and the envelope stays byte-identical when the flag is absent.
         hint_map = _complexity_extraction_hints(rows) if suggest else {}
+        fix_hint_map = _complexity_fix_hints(rows, threshold=COMPLEXITY_FINDING_THRESHOLD)
 
         # Compute distribution stats (W607-BJ: substrate boundary).
         # When a `target`/`threshold` filter is active, the distribution must
@@ -798,6 +802,7 @@ def complexity(
                     "halstead_effort": _safe_metric(r, "halstead_effort"),
                     "halstead_bugs": _safe_metric(r, "halstead_bugs"),
                     "severity": _severity(r["cognitive_complexity"]),
+                    **({"fix_hint": fix_hint_map[r["symbol_id"]]} if r["symbol_id"] in fix_hint_map else {}),
                     # --suggest only: extraction hints. Key omitted entirely
                     # when the flag is off so the envelope is byte-identical.
                     **({"extraction_hints": hint_map.get(r["symbol_id"], [])} if suggest else {}),
@@ -904,6 +909,17 @@ def complexity(
 
             click.echo(f"  {icon}{r['cognitive_complexity']:5.0f}  {name:<45s} {kind} {location}{factor_str}")
 
+            fix_hint = fix_hint_map.get(r["symbol_id"])
+            if fix_hint is not None:
+                span = fix_hint["span"]
+                iterative = "; iterative" if fix_hint.get("iterative") else ""
+                click.echo(
+                    f"         FIX_HINT: extract L{span['start_line']}-{span['end_line']} "
+                    f"as {fix_hint['suggested_name']}() (delta {fix_hint['expected_delta']:.0f}, "
+                    f"residual {fix_hint['residual_score']:.0f}, "
+                    f"auto_fixable={str(fix_hint['auto_fixable']).lower()}{iterative})"
+                )
+
             for h in hint_map.get(r["symbol_id"], []):
                 click.echo(
                     f"         ↳ extract {h['block']} "
@@ -969,6 +985,51 @@ def _complexity_extraction_hints(rows, *, max_per: int = 2) -> dict:
                 for h in hints
             ]
     return out
+
+
+def _complexity_fix_hints(rows, *, threshold: float) -> dict:
+    """Return ``{symbol_id: fix_hint}``, parsing each source file once."""
+    from roam.commands.changed_files import parse_source_with_grammar
+    from roam.index.complexity import _find_function_node
+    from roam.index.complexity_extract import build_complexity_fix_hint
+    from roam.index.parser import detect_language
+
+    parsed: dict[str, tuple] = {}
+    hints: dict = {}
+    for row in rows:
+        score = float(row["cognitive_complexity"] or 0)
+        if score <= threshold:
+            continue
+        path = row["file_path"]
+        line_start = row["line_start"]
+        line_end = row["line_end"]
+        if not path or line_start is None or line_end is None:
+            continue
+        if path not in parsed:
+            try:
+                with open(path, "rb") as handle:
+                    source = handle.read()
+                language = detect_language(path)
+                tree, parsed_source, _ = parse_source_with_grammar(source, language) if language else (None, None, None)
+                parsed[path] = (tree, parsed_source, language)
+            except OSError:
+                parsed[path] = (None, None, None)
+        tree, source, language = parsed[path]
+        if tree is None or source is None or language is None:
+            continue
+        function = _find_function_node(tree, line_start, line_end)
+        if function is None:
+            continue
+        try:
+            hint = build_complexity_fix_hint(function, source, threshold=threshold, language=language)
+        except Exception as exc:  # noqa: BLE001 — additive enrichment preserves the ranking
+            from roam.observability import log_swallowed
+
+            log_swallowed("complexity:fix_hint", exc)
+            continue
+        if hint is not None:
+            hints[row["symbol_id"]] = hint
+    return hints
 
 
 def _persist_complexity_findings(

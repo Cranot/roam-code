@@ -258,8 +258,36 @@ def test_complexity_finding_evidence_carries_metric_factors(tmp_path):
             "halstead_volume",
         ):
             assert k in evidence, f"evidence missing factor {k}"
+        fix_hint = evidence["fix_hint"]
+        assert fix_hint["kind"] == "extract"
+        assert fix_hint["expected_delta"] == evidence["cognitive_complexity"] - fix_hint["residual_score"]
+        assert fix_hint["span"]["start_line"] <= fix_hint["span"]["end_line"]
+        assert isinstance(fix_hint["auto_fixable"], bool)
         # The claim must name the symbol and the score in human form.
         assert "cognitive complexity" in (row["claim"] or "").lower()
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_complexity_json_and_text_render_fix_hint(tmp_path):
+    proj = _hotspot_project(tmp_path)
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+
+        json_result = runner.invoke(cli, ["--json", "complexity"])
+        assert json_result.exit_code == 0, json_result.output
+        values = [entry["value"] for entry in json.loads(json_result.output)["symbols"]]
+        hotspot = next(value for value in values if value["name"].endswith("messy_dispatcher"))
+        assert hotspot["fix_hint"]["kind"] == "extract"
+        simple = next(value for value in values if value["name"].endswith("simple_one"))
+        assert "fix_hint" not in simple
+
+        text_result = runner.invoke(cli, ["complexity"])
+        assert text_result.exit_code == 0, text_result.output
+        assert "FIX_HINT: extract L" in text_result.output
     finally:
         os.chdir(old_cwd)
 

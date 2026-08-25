@@ -94,7 +94,8 @@ def test_clones_emits_to_findings_registry(tmp_path):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(proj))
-        _persist_clones(proj)
+        result = _persist_clones(proj)
+        assert "FIX_HINT: parameterize" in result.output
 
         with open_db(readonly=True) as conn:
             rows = conn.execute(
@@ -172,6 +173,12 @@ def test_clones_finding_evidence_links_to_pair(tmp_path):
             assert "qname_b" in evidence
             assert "similarity" in evidence
             assert isinstance(evidence["similarity"], (int, float))
+            fix_hint = evidence["fix_hint"]
+            assert fix_hint["kind"] == "parameterize"
+            assert len(fix_hint["members"]) >= 2
+            assert fix_hint["varying_slots"]
+            assert fix_hint["similarity"] == evidence["similarity"]
+            assert fix_hint["auto_fixable"] is False
 
             # The qname pair stored in evidence_json should also be the
             # one persisted in clone_pairs (authoritative table).

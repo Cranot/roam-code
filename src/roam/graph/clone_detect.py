@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 # produced under an older clone-detection shape (e.g. before a Jaccard
 # tightening). Bump per the rules in roam.catalog.versions when the
 # detector shape changes meaningfully.
-CLONES_DETECTOR_VERSION: str = "1.0.1"
+CLONES_DETECTOR_VERSION: str = "1.1.0"
 
 # Node types whose text values are normalized (treated as equivalent)
 _NORMALIZED_LEAF_TYPES = frozenset(
@@ -99,6 +99,7 @@ class ClonePair:
     line_b: int
     line_end_b: int
     similarity: float
+    fix_hint: dict | None = None
 
 
 @dataclass
@@ -110,6 +111,7 @@ class CloneCluster:
     avg_similarity: float = 0.0
     pattern: str = ""
     suggestion: str = ""
+    fix_hint: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +277,145 @@ def _get_function_body(node):
             return child
     # Fallback: use the function node itself
     return node
+
+
+def _parameterizable_tokens(node, source: bytes) -> dict[int, tuple[str, str]]:
+    """Return raw leaf positions whose identifier/literal values may vary."""
+    tokens: dict[int, tuple[str, str]] = {}
+    position = 0
+
+    def walk(part) -> None:
+        nonlocal position
+        if part.type in _SKIP_TYPES:
+            return
+        if part.child_count == 0:
+            if part.type in _NORMALIZED_LEAF_TYPES:
+                text = source[part.start_byte : part.end_byte].decode("utf-8", errors="replace")
+                kind = "identifier" if "identifier" in part.type else "literal"
+                tokens[position] = (kind, text)
+            position += 1
+            return
+        for child in part.children:
+            walk(child)
+
+    walk(node)
+    return tokens
+
+
+def _member_tokens(
+    member: dict,
+    parse_cache: dict[str, tuple[object | None, bytes | None]] | None = None,
+) -> dict[int, tuple[str, str]] | None:
+    from roam.commands.changed_files import parse_source_with_grammar
+    from roam.index.parser import detect_language
+
+    path = str(member.get("file") or "")
+    if not path:
+        return None
+    cached = parse_cache.get(path) if parse_cache is not None else None
+    if cached is None:
+        try:
+            source = Path(path).read_bytes()
+        except OSError:
+            return None
+        language = detect_language(path)
+        if not language:
+            return None
+        tree, parsed, _ = parse_source_with_grammar(source, language)
+        if parse_cache is not None:
+            parse_cache[path] = (tree, parsed)
+    else:
+        tree, parsed = cached
+    if tree is None or parsed is None:
+        return None
+    wanted_start = int(member.get("line_start") or 0)
+    wanted_end = int(member.get("line_end") or wanted_start)
+    candidates = [
+        node
+        for node in _find_function_nodes(tree)
+        if abs(node.start_point[0] + 1 - wanted_start) <= 2 and abs(node.end_point[0] + 1 - wanted_end) <= 2
+    ]
+    if not candidates:
+        return None
+    function = min(
+        candidates,
+        key=lambda node: (
+            abs(node.start_point[0] + 1 - wanted_start),
+            abs(node.end_point[0] + 1 - wanted_end),
+        ),
+    )
+    return _parameterizable_tokens(_get_function_body(function), parsed)
+
+
+def _slot_parameter_name(kind: str, values: tuple[str, ...], position: int) -> str:
+    if kind == "identifier":
+        token_sets = [_name_tokens(value) - _STOP_WORDS for value in values]
+        common = set.intersection(*token_sets) if token_sets and all(token_sets) else set()
+        if common:
+            return sorted(common)[0]
+        return f"name_{position}"
+    return f"value_{position}"
+
+
+def build_clone_fix_hint(
+    members: list[dict],
+    similarity: float,
+    *,
+    _parse_cache: dict[str, tuple[object | None, bytes | None]] | None = None,
+) -> dict | None:
+    """Build a parameterization hint from aligned raw token positions.
+
+    Clone detection deliberately normalizes identifier and literal leaves.
+    Re-reading those same leaves without normalization exposes exactly which
+    slots differ across the family. Slots with the same member-value vector are
+    grouped because one shared-implementation parameter can replace every
+    repeated occurrence of that rename or literal variation.
+    """
+    if len(members) < 2:
+        return None
+    token_maps = [_member_tokens(member, _parse_cache) for member in members]
+    if any(tokens is None for tokens in token_maps):
+        return None
+    concrete_maps = [tokens for tokens in token_maps if tokens is not None]
+    all_positions = sorted(set().union(*(tokens.keys() for tokens in concrete_maps)))
+    grouped: dict[tuple[str, tuple[str, ...]], list[int]] = defaultdict(list)
+    for position in all_positions:
+        entries = [tokens.get(position) for tokens in concrete_maps]
+        if any(entry is None for entry in entries):
+            continue
+        kinds = {entry[0] for entry in entries if entry is not None}
+        values = tuple(entry[1] for entry in entries if entry is not None)
+        if len(kinds) != 1 or len(set(values)) <= 1:
+            continue
+        grouped[(next(iter(kinds)), values)].append(position)
+
+    varying_slots = []
+    for (kind, values), positions in sorted(grouped.items(), key=lambda item: item[1][0]):
+        varying_slots.append(
+            {
+                "positions": positions,
+                "kind": kind,
+                "values": list(values),
+                "suggested_parameter": _slot_parameter_name(kind, values, positions[0]),
+            }
+        )
+    return {
+        "kind": "parameterize",
+        "members": [
+            {
+                "file": str(member.get("file") or ""),
+                "span": {
+                    "start_line": int(member.get("line_start") or 0),
+                    "end_line": int(member.get("line_end") or member.get("line_start") or 0),
+                },
+            }
+            for member in members
+        ],
+        "varying_slots": varying_slots,
+        "similarity": round(float(similarity), 3),
+        "auto_fixable": False,
+        "reason": "parameterization changes multiple functions and requires semantic review",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +962,7 @@ def detect_clones(
     clusters: list[CloneCluster] = []
     cluster_id = 0
 
+    fix_hint_parse_cache: dict[str, tuple[object | None, bytes | None]] = {}
     for root, member_idxs in raw_clusters.items():
         if len(member_idxs) < 2:
             continue
@@ -858,6 +1000,11 @@ def detect_clones(
 
         pattern = _infer_clone_pattern([f.name for f in member_funcs])
         suggestion = _suggest_extraction([f.name for f in member_funcs])
+        try:
+            fix_hint = build_clone_fix_hint(members, avg_sim, _parse_cache=fix_hint_parse_cache)
+        except Exception as exc:  # noqa: BLE001 — additive enrichment must not break detection
+            log.warning("clone fix-hint enrichment failed for cluster %d: %s", cluster_id, exc)
+            fix_hint = None
 
         clusters.append(
             CloneCluster(
@@ -866,10 +1013,21 @@ def detect_clones(
                 avg_similarity=round(avg_sim, 3),
                 pattern=pattern,
                 suggestion=suggestion,
+                fix_hint=fix_hint,
             )
         )
 
     clusters.sort(key=lambda c: (-len(c.members), -c.avg_similarity))
+    hints_by_qname = {
+        member.get("qualified_name"): cluster.fix_hint
+        for cluster in clusters
+        if cluster.fix_hint is not None
+        for member in cluster.members
+    }
+    for pair in pairs:
+        hint_a = hints_by_qname.get(pair.qname_a)
+        if hint_a is not None and hint_a is hints_by_qname.get(pair.qname_b):
+            pair.fix_hint = hint_a
     return pairs, clusters
 
 
@@ -1161,6 +1319,7 @@ def _emit_clone_findings(conn, pairs: list[ClonePair]) -> None:
             "line_end_b": p.line_end_b,
             "similarity": p.similarity,
             "partner_symbol_id": partner_id,
+            **({"fix_hint": p.fix_hint} if p.fix_hint is not None else {}),
         }
         # Confidence threshold mirrors the cmd_clones _classify_similarity
         # contract: only structural-level confidence when Jaccard >= 0.70.
