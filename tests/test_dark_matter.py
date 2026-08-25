@@ -364,6 +364,27 @@ class TestHypothesisEngine:
         result = engine.hypothesize("a.js", "b.js")
         assert result["category"] != "SHARED_DB", f"JS imports must not classify as SHARED_DB; got {result}"
 
+    def test_markdown_stopwords_are_not_shared_tables(self, tmp_path):
+        (tmp_path / "guide.md").write_text(
+            "Choose a table. A table a reader can scan is useful, and the examples stay short.\n"
+        )
+        (tmp_path / "notes.md").write_text(
+            "The table a writer adds can summarize the alternatives for the next review.\n"
+        )
+
+        result = HypothesisEngine(tmp_path).hypothesize("guide.md", "notes.md")
+
+        assert result["category"] != "SHARED_DB", result
+
+    def test_orders_in_sql_context_remains_shared_db(self, tmp_path):
+        (tmp_path / "reader.py").write_text("rows = db.query('SELECT id FROM orders WHERE active = 1')\n")
+        (tmp_path / "writer.py").write_text("db.execute('UPDATE orders SET active = 0 WHERE id = ?', key)\n")
+
+        result = HypothesisEngine(tmp_path).hypothesize("reader.py", "writer.py")
+
+        assert result["category"] == "SHARED_DB", result
+        assert "orders" in result["detail"]
+
 
 # ===========================================================================
 # Cap-as-census: the -n display cap must never fold into the population

@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 # produced under an older clone-detection shape (e.g. before a Jaccard
 # tightening). Bump per the rules in roam.catalog.versions when the
 # detector shape changes meaningfully.
-CLONES_DETECTOR_VERSION: str = "1.0.0"
+CLONES_DETECTOR_VERSION: str = "1.0.1"
 
 # Node types whose text values are normalized (treated as equivalent)
 _NORMALIZED_LEAF_TYPES = frozenset(
@@ -649,7 +649,7 @@ def _pair_worker_compare_batch(idx_pairs: list[tuple[int, int]]) -> list[tuple]:
 
 
 def _enumerate_candidate_pairs(funcs: list[_FuncInfo]) -> list[tuple[int, int]]:
-    """Build the deduplicated (idx_a, idx_b) pair list from bucketed funcs."""
+    """Build clone candidates, excluding same-file containment intervals."""
     by_bucket = _bucket_funcs_by_size(funcs)
     seen: set[tuple[int, int]] = set()
     pairs: list[tuple[int, int]] = []
@@ -666,6 +666,14 @@ def _enumerate_candidate_pairs(funcs: list[_FuncInfo]) -> list[tuple[int, int]]:
                 if key in seen:
                     continue
                 seen.add(key)
+                # A nested closure's AST is physically contained in its
+                # parent's AST bag, which can yield near-perfect similarity
+                # without any copied implementation. Exclude overlapping
+                # source intervals before comparison and Union-Find
+                # clustering. Disjoint siblings and all cross-file pairs are
+                # still eligible.
+                if a.file_path == b.file_path and a.line_start <= b.line_end and b.line_start <= a.line_end:
+                    continue
                 pairs.append(key)
     return pairs
 

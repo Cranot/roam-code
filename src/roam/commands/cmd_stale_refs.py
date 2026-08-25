@@ -82,6 +82,10 @@ _SKIP_SCHEME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Source-location suffixes used in prose citations. The suffix identifies a
+# line (and optionally a column), not part of the filesystem path.
+_SOURCE_LOCATION_SUFFIX_RE = re.compile(r":\d+(?::\d+)?$")
+
 # Cheap content sniff — files with none of these characters cannot contain
 # any of the four reference shapes we look for. Skipping the regex pass on
 # such files (lock-files, manifests, generated YAML) cuts wall-clock by
@@ -215,6 +219,7 @@ def _strip_url_decorations(url: str) -> str:
         url = urllib.parse.unquote(url)
     except (ValueError, TypeError):
         pass
+    url = _SOURCE_LOCATION_SUFFIX_RE.sub("", url)
     return url
 
 

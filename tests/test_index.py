@@ -741,3 +741,31 @@ class TestRebuildAlias:
         assert res.exit_code == 0, res.output
         assert "--force" in res.output, "--force must remain documented"
         assert "--rebuild" not in res.output, "alias must stay hidden; --force is canonical"
+
+
+class TestIndexLockRefusal:
+    """A refused writer must never be rendered as a successful refresh."""
+
+    def test_hard_linked_index_lock_refuses_the_command(self, index_project):
+        out, rc = index_in_process(index_project)
+        assert rc == 0, out
+
+        lock_path = index_project / ".roam" / "index.lock"
+        alias_path = index_project / ".roam" / "index.lock.alias"
+        try:
+            os.link(lock_path, alias_path)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"hard links unavailable: {exc}")
+
+        out, rc = index_in_process(index_project)
+
+        assert rc != 0, f"refused index write was reported as success:\n{out}"
+        assert "index lock" in out.lower(), f"refusal did not name the index lock state:\n{out}"
+        assert any(word in out.lower() for word in ("refused", "unsafe", "unavailable")), out
+
+    def test_normal_index_still_prints_the_summary(self, index_project):
+        out, rc = index_in_process(index_project)
+
+        assert rc == 0, out
+        assert "VERDICT: indexed" in out
+        assert "Files:" in out and "Symbols:" in out and "Edges:" in out

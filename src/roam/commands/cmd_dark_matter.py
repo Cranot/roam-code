@@ -22,7 +22,7 @@ from roam.output.risk import normalize_risk_level, risk_rank
 # version stamp and a deterministic ``finding_id_str`` so re-runs upsert
 # instead of duplicating rows. Bump this when the engine's category
 # vocabulary, NPMI / lift formulas, or hypothesis output shape changes.
-DARK_MATTER_DETECTOR_VERSION: str = "1.0.0"
+DARK_MATTER_DETECTOR_VERSION: str = "1.0.1"
 
 
 # W154 — category-driven confidence tier mapping.
