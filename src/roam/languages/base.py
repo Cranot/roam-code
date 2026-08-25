@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping
 
 
 class LanguageExtractor(ABC):
@@ -81,6 +82,67 @@ class LanguageExtractor(ABC):
         if text.startswith("(") and text.endswith(")"):
             return text[1:-1]
         return text
+
+    def _extract_class_skeleton(
+        self,
+        node,
+        source: bytes,
+        symbols: list[dict],
+        *,
+        name: str,
+        kind: str,
+        parent_name: str | None,
+        signature: str,
+        visibility: str,
+        is_exported: bool,
+        child_handlers: Mapping[str, Callable[[object, str], str | None]],
+        trailing_signature: str = "",
+        on_qualified: Callable[[str], None] | None = None,
+        after_symbol: Callable[[str], None] | None = None,
+        body_walker: Callable[[object, str], None] | None = None,
+    ) -> None:
+        """Shape a class symbol while language-owned handlers parse its syntax.
+
+        The language modules declare which child node types matter and retain
+        their inheritance/modifier semantics. This helper owns only the shared
+        iteration, first-match filtering, symbol shaping, and body handoff.
+        """
+        qualified = f"{parent_name}.{name}" if parent_name else name
+        if on_qualified is not None:
+            on_qualified(qualified)
+
+        handled_types: set[str] = set()
+        for child in node.children:
+            handler = child_handlers.get(child.type)
+            if handler is None or child.type in handled_types:
+                continue
+            handled_types.add(child.type)
+            suffix = handler(child, qualified)
+            if suffix:
+                signature += suffix
+        signature += trailing_signature
+
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=signature,
+                docstring=self.get_docstring(node, source),
+                visibility=visibility,
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
+
+        if after_symbol is not None:
+            after_symbol(qualified)
+
+        body = node.child_by_field_name("body")
+        if body is not None and body_walker is not None:
+            body_walker(body, qualified)
 
     def _make_symbol(
         self,

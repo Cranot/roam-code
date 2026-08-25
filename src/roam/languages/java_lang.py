@@ -100,58 +100,54 @@ class JavaExtractor(LanguageExtractor):
         vis = self._get_visibility(node, source)
         annotations = self._get_annotations(node, source)
 
-        qualified = f"{parent_name}.{name}" if parent_name else name
         sig = f"{kind} {name}"
         type_params = node.child_by_field_name("type_parameters")
         if type_params:
             sig += self.node_text(type_params, source)
 
-        # Check superclass
         superclass = node.child_by_field_name("superclass")
-        if superclass:
-            sig += f" {self.node_text(superclass, source)}"
-            # Emit inherits reference
-            for child in superclass.children:
-                if child.type == "type_identifier":
+        interfaces = node.child_by_field_name("interfaces")
+
+        def handle_superclass(superclass_node, qualified):
+            for superclass_child in superclass_node.children:
+                if superclass_child.type == "type_identifier":
                     self._pending_inherits.append(
                         self._make_reference(
-                            target_name=self.node_text(child, source),
+                            target_name=self.node_text(superclass_child, source),
                             kind="inherits",
                             line=node.start_point[0] + 1,
                             source_name=qualified,
                         )
                     )
                     break
+            return f" {self.node_text(superclass_node, source)}"
 
-        # Check interfaces
-        interfaces = node.child_by_field_name("interfaces")
-        if interfaces:
-            sig += f" {self.node_text(interfaces, source)}"
-            # Emit implements references (type_identifiers may be nested in type_list)
-            self._collect_type_refs(interfaces, source, "implements", node.start_point[0] + 1, qualified)
+        def handle_interfaces(interfaces_node, qualified):
+            self._collect_type_refs(interfaces_node, source, "implements", node.start_point[0] + 1, qualified)
+            return f" {self.node_text(interfaces_node, source)}"
 
         if annotations:
             sig = "\n".join(annotations) + "\n" + sig
 
-        symbols.append(
-            self._make_symbol(
-                name=name,
-                kind=kind,
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                docstring=self.get_docstring(node, source),
-                visibility=vis,
-                is_exported=vis == "public",
-                parent_name=parent_name,
-            )
-        )
+        child_handlers = {}
+        if superclass is not None:
+            child_handlers[superclass.type] = handle_superclass
+        if interfaces is not None:
+            child_handlers[interfaces.type] = handle_interfaces
 
-        # Walk class body
-        body = node.child_by_field_name("body")
-        if body:
-            self._walk_symbols(body, source, symbols, qualified)
+        self._extract_class_skeleton(
+            node,
+            source,
+            symbols,
+            name=name,
+            kind=kind,
+            parent_name=parent_name,
+            signature=sig,
+            visibility=vis,
+            is_exported=vis == "public",
+            child_handlers=child_handlers,
+            body_walker=lambda body, qualified: self._walk_symbols(body, source, symbols, qualified),
+        )
 
     def _extract_enum(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
