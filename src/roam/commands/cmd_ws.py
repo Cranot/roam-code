@@ -649,57 +649,16 @@ def ws_resolve(ctx) -> None:
 @click.pass_context
 def ws_understand_command(ctx) -> None:
     """Full workspace overview: repos, stats, cross-repo connections."""
-    json_mode = ctx.obj.get("json") if ctx.obj else False
-
     from roam.workspace.aggregator import aggregate_understand
 
-    config, data = _read_consistent_workspace_view(ctx, "ws-understand", aggregate_understand)
-
-    if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "ws-understand",
-                    summary={
-                        "workspace": config["workspace"],
-                        "repos": len(data["repos"]),
-                        "total_files": data["total_files"],
-                        "total_symbols": data["total_symbols"],
-                        "cross_repo_edges": data["cross_repo_edges"],
-                        "verdict": (
-                            f"{len(data['repos'])} repos, {data['total_files']} files, "
-                            f"{data['total_symbols']} symbols, "
-                            f"{data['cross_repo_edges']} cross-repo edges"
-                        ),
-                    },
-                    **data,
-                )
-            )
-        )
-        return
-
-    click.echo(
-        f"WORKSPACE: {config['workspace']} "
-        f"({len(data['repos'])} repos, {data['total_files']} files, "
-        f"{data['total_symbols']} symbols)"
+    _run_workspace_view_command(
+        ctx,
+        command_name="ws-understand",
+        aggregate_fn=aggregate_understand,
+        aggregate_args=(),
+        summary_builder=_ws_understand_summary,
+        text_renderer=_ws_understand_text,
     )
-    click.echo()
-
-    for repo in data["repos"]:
-        langs = ", ".join(f"{l['language']}" for l in repo.get("languages", [])[:3])
-        click.echo(f"=== {repo['name']} ({langs}) ===")
-        click.echo(f"  {repo['files']} files, {repo['symbols']} symbols, {repo['edges']} edges")
-        if repo.get("key_symbols"):
-            keys = ", ".join(s["name"] for s in repo["key_symbols"][:5])
-            click.echo(f"  Key: {keys}")
-        click.echo()
-
-    if data["cross_repo_connections"]:
-        click.echo(f"=== Cross-Repo Connections ({data['cross_repo_edges']} edges) ===")
-        for conn_info in data["cross_repo_connections"]:
-            click.echo(f"  {conn_info['source_repo']} -> {conn_info['target_repo']} ({conn_info['edge_count']} edges)")
-            for sample in conn_info.get("samples", [])[:3]:
-                click.echo(f"    {sample.get('http_method', ''):6s} {sample.get('url_pattern', '')}")
 
 
 # ---------------------------------------------------------------------------
@@ -768,60 +727,16 @@ def ws_context_cmd(ctx, symbol: str) -> None:
 
     Searches all repos in the workspace and shows cross-repo callers/callees.
     """
-    json_mode = ctx.obj.get("json") if ctx.obj else False
-
     from roam.workspace.aggregator import cross_repo_context
 
-    _config, data = _read_consistent_workspace_view(ctx, "ws-context", cross_repo_context, symbol)
-
-    if json_mode:
-        found_repos = [f["repo"] for f in data["found_in"]]
-        click.echo(
-            to_json(
-                json_envelope(
-                    "ws-context",
-                    summary={
-                        "symbol": symbol,
-                        "found_in_repos": found_repos,
-                        "cross_repo_edges": len(data["cross_repo_edges"]),
-                        "verdict": (
-                            f"Found in {len(found_repos)} repo(s), {len(data['cross_repo_edges'])} cross-repo edges"
-                        ),
-                    },
-                    **data,
-                )
-            )
-        )
-        return
-
-    if not data["found_in"]:
-        click.echo(f"Symbol '{symbol}' not found in any workspace repo.")
-        return
-
-    for entry in data["found_in"]:
-        click.echo(
-            f"[{entry['repo']}] {entry['kind']} {entry['name']}  {entry['file_path']}:{entry.get('line_start', '?')}"
-        )
-        if entry.get("signature"):
-            click.echo(f"  {entry['signature']}")
-        if entry["callers"]:
-            click.echo("  Callers:")
-            for c in entry["callers"][:5]:
-                click.echo(f"    {c['name']}  {c['file']}:{c.get('line', '?')}")
-        if entry["callees"]:
-            click.echo("  Callees:")
-            for c in entry["callees"][:5]:
-                click.echo(f"    {c['name']}  {c['file']}:{c.get('line', '?')}")
-        click.echo()
-
-    if data["cross_repo_edges"]:
-        click.echo("Cross-repo connections:")
-        for edge in data["cross_repo_edges"]:
-            click.echo(
-                f"  {edge['source_repo']} -> {edge['target_repo']}  "
-                f"{edge.get('http_method', '')} {edge.get('url_pattern', '')}  "
-                f"({edge['kind']})"
-            )
+    _run_workspace_view_command(
+        ctx,
+        command_name="ws-context",
+        aggregate_fn=cross_repo_context,
+        aggregate_args=(symbol,),
+        summary_builder=_ws_context_summary,
+        text_renderer=_ws_context_text,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -838,57 +753,168 @@ def ws_trace(ctx, source: str, target: str) -> None:
 
     Shows how SOURCE connects to TARGET, including cross-repo API edges.
     """
-    json_mode = ctx.obj.get("json") if ctx.obj else False
-
     from roam.workspace.aggregator import cross_repo_trace
 
-    _config, data = _read_consistent_workspace_view(ctx, "ws-trace", cross_repo_trace, source, target)
+    _run_workspace_view_command(
+        ctx,
+        command_name="ws-trace",
+        aggregate_fn=cross_repo_trace,
+        aggregate_args=(source, target),
+        summary_builder=_ws_trace_summary,
+        text_renderer=_ws_trace_text,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_workspace_view_command(
+    ctx,
+    *,
+    command_name: str,
+    aggregate_fn,
+    aggregate_args: tuple,
+    summary_builder,
+    text_renderer,
+) -> None:
+    """Run one readonly workspace view with parameterized output policies."""
+    config, data = _read_consistent_workspace_view(ctx, command_name, aggregate_fn, *aggregate_args)
+    json_mode = bool(ctx.obj and ctx.obj.get("json"))
 
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
-                    "ws-trace",
-                    summary={
-                        "source": source,
-                        "target": target,
-                        "bridge_edges": len(data["bridge_edges"]),
-                        "same_repo": data["same_repo"],
-                        "verdict": data["verdict"],
-                    },
+                    command_name,
+                    summary=summary_builder(config, data, *aggregate_args),
                     **data,
                 )
             )
         )
         return
 
+    text_renderer(config, data, *aggregate_args)
+
+
+def _ws_understand_summary(config: dict, data: dict) -> dict:
+    repo_count = len(data["repos"])
+    return {
+        "workspace": config["workspace"],
+        "repos": repo_count,
+        "total_files": data["total_files"],
+        "total_symbols": data["total_symbols"],
+        "cross_repo_edges": data["cross_repo_edges"],
+        "verdict": (
+            f"{repo_count} repos, {data['total_files']} files, "
+            f"{data['total_symbols']} symbols, {data['cross_repo_edges']} cross-repo edges"
+        ),
+    }
+
+
+def _ws_understand_text(config: dict, data: dict) -> None:
+    click.echo(
+        f"WORKSPACE: {config['workspace']} "
+        f"({len(data['repos'])} repos, {data['total_files']} files, "
+        f"{data['total_symbols']} symbols)"
+    )
+    click.echo()
+
+    for repo in data["repos"]:
+        langs = ", ".join(f"{language['language']}" for language in repo.get("languages", [])[:3])
+        click.echo(f"=== {repo['name']} ({langs}) ===")
+        click.echo(f"  {repo['files']} files, {repo['symbols']} symbols, {repo['edges']} edges")
+        if repo.get("key_symbols"):
+            keys = ", ".join(symbol["name"] for symbol in repo["key_symbols"][:5])
+            click.echo(f"  Key: {keys}")
+        click.echo()
+
+    if data["cross_repo_connections"]:
+        click.echo(f"=== Cross-Repo Connections ({data['cross_repo_edges']} edges) ===")
+        for connection in data["cross_repo_connections"]:
+            click.echo(
+                f"  {connection['source_repo']} -> {connection['target_repo']} ({connection['edge_count']} edges)"
+            )
+            for sample in connection.get("samples", [])[:3]:
+                click.echo(f"    {sample.get('http_method', ''):6s} {sample.get('url_pattern', '')}")
+
+
+def _ws_context_summary(_config: dict, data: dict, symbol: str) -> dict:
+    found_repos = [found["repo"] for found in data["found_in"]]
+    edge_count = len(data["cross_repo_edges"])
+    return {
+        "symbol": symbol,
+        "found_in_repos": found_repos,
+        "cross_repo_edges": edge_count,
+        "verdict": f"Found in {len(found_repos)} repo(s), {edge_count} cross-repo edges",
+    }
+
+
+def _ws_context_text(_config: dict, data: dict, symbol: str) -> None:
+    if not data["found_in"]:
+        click.echo(f"Symbol '{symbol}' not found in any workspace repo.")
+        return
+
+    for entry in data["found_in"]:
+        click.echo(
+            f"[{entry['repo']}] {entry['kind']} {entry['name']}  {entry['file_path']}:{entry.get('line_start', '?')}"
+        )
+        if entry.get("signature"):
+            click.echo(f"  {entry['signature']}")
+        if entry["callers"]:
+            click.echo("  Callers:")
+            for caller in entry["callers"][:5]:
+                click.echo(f"    {caller['name']}  {caller['file']}:{caller.get('line', '?')}")
+        if entry["callees"]:
+            click.echo("  Callees:")
+            for callee in entry["callees"][:5]:
+                click.echo(f"    {callee['name']}  {callee['file']}:{callee.get('line', '?')}")
+        click.echo()
+
+    if data["cross_repo_edges"]:
+        click.echo("Cross-repo connections:")
+        for edge in data["cross_repo_edges"]:
+            click.echo(
+                f"  {edge['source_repo']} -> {edge['target_repo']}  "
+                f"{edge.get('http_method', '')} {edge.get('url_pattern', '')}  "
+                f"({edge['kind']})"
+            )
+
+
+def _ws_trace_summary(_config: dict, data: dict, source: str, target: str) -> dict:
+    return {
+        "source": source,
+        "target": target,
+        "bridge_edges": len(data["bridge_edges"]),
+        "same_repo": data["same_repo"],
+        "verdict": data["verdict"],
+    }
+
+
+def _ws_trace_text(_config: dict, data: dict, source: str, target: str) -> None:
     click.echo(f"VERDICT: {data['verdict']}")
     click.echo()
 
     if data["source"]["locations"]:
         click.echo(f"Source: {source}")
-        for loc in data["source"]["locations"][:3]:
-            click.echo(f"  [{loc['repo']}] {loc['kind']} {loc['name']}  {loc['file']}")
+        for location in data["source"]["locations"][:3]:
+            click.echo(f"  [{location['repo']}] {location['kind']} {location['name']}  {location['file']}")
 
     if data["target"]["locations"]:
         click.echo(f"Target: {target}")
-        for loc in data["target"]["locations"][:3]:
-            click.echo(f"  [{loc['repo']}] {loc['kind']} {loc['name']}  {loc['file']}")
+        for location in data["target"]["locations"][:3]:
+            click.echo(f"  [{location['repo']}] {location['kind']} {location['name']}  {location['file']}")
 
     if data["bridge_edges"]:
         click.echo()
         click.echo("Cross-repo bridges:")
-        for b in data["bridge_edges"]:
+        for bridge in data["bridge_edges"]:
             click.echo(
-                f"  {b['source_repo']} -> {b['target_repo']}  "
-                f"{b.get('http_method', '')} {b.get('url_pattern', '')}  "
-                f"({b['kind']})"
+                f"  {bridge['source_repo']} -> {bridge['target_repo']}  "
+                f"{bridge.get('http_method', '')} {bridge.get('url_pattern', '')}  "
+                f"({bridge['kind']})"
             )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _read_consistent_workspace_view(ctx, command_name: str, aggregate_fn, *aggregate_args):

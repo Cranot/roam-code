@@ -224,8 +224,6 @@ class _CSharpTypeSymbolExtractor(_CSharpCommon):
         parent_kind = self._symbol_kinds.get(parent_name) if parent_name else None
         vis = self._get_visibility(node, source, parent_kind)
         class_mods = self._get_class_modifiers(node, source)
-        qualified = f"{parent_name}.{name}" if parent_name else name
-        self._symbol_kinds[qualified] = kind
 
         # build signature
         keyword = sig_keyword or kind
@@ -237,42 +235,27 @@ class _CSharpTypeSymbolExtractor(_CSharpCommon):
         if type_params:
             sig += type_params
 
-        # base_list (superclass + interfaces combined)
-        for child in node.children:
-            if child.type == "base_list":
-                sig += f" {self.node_text(child, source)}"
-                self._collect_base_list_refs(child, source, node.start_point[0] + 1, qualified)
-                break
-
         constraints = self._get_constraints(node, source)
-        if constraints:
-            sig += constraints
-
         is_file_scoped = "file" in class_mods
-        symbols.append(
-            self._make_symbol(
-                name=name,
-                kind=kind,
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                docstring=self.get_docstring(node, source),
-                visibility=vis,
-                is_exported=not is_file_scoped and vis == "public",
-                parent_name=parent_name,
-            )
-        )
 
-        # primary constructor (C# 12): parameter_list directly on class/struct/record
-        # not a named field in tree-sitter, so find by iterating children
-        primary_params = None
-        for child in node.children:
-            if child.type == "parameter_list":
-                primary_params = child
-                break
-        if primary_params:
-            ctor_sig = f"{name}({self._params_text(primary_params, source)})"
+        primary_params = []
+
+        def handle_base_list(child, qualified):
+            self._collect_base_list_refs(child, source, node.start_point[0] + 1, qualified)
+            return f" {self.node_text(child, source)}"
+
+        def capture_primary_constructor(child, _qualified):
+            primary_params.append(child)
+            return None
+
+        def register_kind(qualified):
+            self._symbol_kinds[qualified] = kind
+
+        def append_primary_constructor(qualified):
+            if not primary_params:
+                return
+            parameters = primary_params[0]
+            ctor_sig = f"{name}({self._params_text(parameters, source)})"
             symbols.append(
                 self._make_symbol(
                     name=name,
@@ -287,10 +270,25 @@ class _CSharpTypeSymbolExtractor(_CSharpCommon):
                 )
             )
 
-        # walk body for nested types and members
-        body = node.child_by_field_name("body")
-        if body:
-            self._walk_symbols(body, source, symbols, qualified)
+        self._extract_class_skeleton(
+            node,
+            source,
+            symbols,
+            name=name,
+            kind=kind,
+            parent_name=parent_name,
+            signature=sig,
+            visibility=vis,
+            is_exported=not is_file_scoped and vis == "public",
+            child_handlers={
+                "base_list": handle_base_list,
+                "parameter_list": capture_primary_constructor,
+            },
+            trailing_signature=constraints,
+            on_qualified=register_kind,
+            after_symbol=append_primary_constructor,
+            body_walker=lambda body, qualified: self._walk_symbols(body, source, symbols, qualified),
+        )
 
     def _extract_enum(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")

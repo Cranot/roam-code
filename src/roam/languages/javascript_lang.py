@@ -106,67 +106,59 @@ class JavaScriptExtractor(LanguageExtractor):
         else:
             name = self.node_text(name_node, source)
         sig = f"class {name}"
-        qualified = f"{parent_name}.{name}" if parent_name else name
 
-        # Check for extends/implements
-        for child in node.children:
-            if child.type == "class_heritage":
-                sig += f" {self.node_text(child, source)}"
-                for sub in child.children:
-                    if sub.type == "extends_clause":
-                        # TS: extends_clause > identifier or type_identifier
-                        for exn in sub.children:
-                            if exn.type in ("identifier", "type_identifier"):
-                                self._pending_inherits.append(
-                                    self._make_reference(
-                                        target_name=self.node_text(exn, source),
-                                        kind="inherits",
-                                        line=node.start_point[0] + 1,
-                                        source_name=qualified,
-                                    )
+        def handle_class_heritage(child, qualified):
+            for sub in child.children:
+                if sub.type == "extends_clause":
+                    # TS: extends_clause > identifier or type_identifier
+                    for extends_node in sub.children:
+                        if extends_node.type in ("identifier", "type_identifier"):
+                            self._pending_inherits.append(
+                                self._make_reference(
+                                    target_name=self.node_text(extends_node, source),
+                                    kind="inherits",
+                                    line=node.start_point[0] + 1,
+                                    source_name=qualified,
                                 )
-                                break
-                    elif sub.type == "implements_clause":
-                        # TS: implements_clause > type_identifier (can be multiple)
-                        for imp in sub.children:
-                            if imp.type in ("type_identifier", "identifier"):
-                                self._pending_inherits.append(
-                                    self._make_reference(
-                                        target_name=self.node_text(imp, source),
-                                        kind="implements",
-                                        line=node.start_point[0] + 1,
-                                        source_name=qualified,
-                                    )
-                                )
-                    elif sub.type == "identifier":
-                        # Plain JS: class_heritage > identifier (no extends_clause wrapper)
-                        self._pending_inherits.append(
-                            self._make_reference(
-                                target_name=self.node_text(sub, source),
-                                kind="inherits",
-                                line=node.start_point[0] + 1,
-                                source_name=qualified,
                             )
+                            break
+                elif sub.type == "implements_clause":
+                    # TS: implements_clause > type_identifier (can be multiple)
+                    for implementation in sub.children:
+                        if implementation.type in ("type_identifier", "identifier"):
+                            self._pending_inherits.append(
+                                self._make_reference(
+                                    target_name=self.node_text(implementation, source),
+                                    kind="implements",
+                                    line=node.start_point[0] + 1,
+                                    source_name=qualified,
+                                )
+                            )
+                elif sub.type == "identifier":
+                    # Plain JS: class_heritage > identifier (no extends_clause wrapper)
+                    self._pending_inherits.append(
+                        self._make_reference(
+                            target_name=self.node_text(sub, source),
+                            kind="inherits",
+                            line=node.start_point[0] + 1,
+                            source_name=qualified,
                         )
-                break
-        symbols.append(
-            self._make_symbol(
-                name=name,
-                kind="class",
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                docstring=self.get_docstring(node, source),
-                is_exported=is_exported,
-                parent_name=parent_name,
-            )
-        )
+                    )
+            return f" {self.node_text(child, source)}"
 
-        # Walk class body for methods
-        body = node.child_by_field_name("body")
-        if body:
-            self._extract_class_members(body, source, symbols, qualified)
+        self._extract_class_skeleton(
+            node,
+            source,
+            symbols,
+            name=name,
+            kind="class",
+            parent_name=parent_name,
+            signature=sig,
+            visibility="public",
+            is_exported=is_exported,
+            child_handlers={"class_heritage": handle_class_heritage},
+            body_walker=lambda body, qualified: self._extract_class_members(body, source, symbols, qualified),
+        )
 
     def _extract_class_members(self, body_node, source, symbols, class_name):
         for child in body_node.children:
