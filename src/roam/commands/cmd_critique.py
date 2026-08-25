@@ -1,8 +1,10 @@
 """roam critique — graph-grounded patch verifier (A.2).
 
-Reads a unified diff (stdin) and runs roam-grounded checks against it:
+Reads a unified diff and runs roam-grounded checks against it. With no
+explicit input, it reviews the working tree or falls back to the last commit:
 
     git diff | roam critique
+    roam critique
     git diff main..HEAD | roam critique --json
 
 The killer signal is *clones-not-edited*: for every changed symbol that
@@ -35,7 +37,7 @@ from roam.critique.checks import (
     looks_like_unified_diff,
     parse_diff,
 )
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -184,6 +186,100 @@ _CHECK_TO_KIND: dict[str, str] = {
     "impact": "patch.high_blast",
     "intent": "patch.intent_mismatch",
 }
+
+
+_GIT_DIFF_TIMEOUT_SECONDS = 10
+
+
+def _run_git_diff(repo_root: Path, revision: str) -> tuple[str, str | None]:
+    """Return a bounded git diff and an error detail, without invoking a shell."""
+    from roam.git_utils import worktree_git_env
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", revision],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_DIFF_TIMEOUT_SECONDS,
+            check=False,
+            env=worktree_git_env(repo_root),
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        return "", f"{type(exc).__name__}: {exc}"
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"git diff exited {result.returncode}"
+        return "", detail[:300]
+    return result.stdout, None
+
+
+def _git_revision_exists(repo_root: Path, revision: str) -> tuple[bool, str | None]:
+    """Return whether *revision* resolves and disclose invocation failures."""
+    from roam.git_utils import worktree_git_env
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", revision],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_DIFF_TIMEOUT_SECONDS,
+            check=False,
+            env=worktree_git_env(repo_root),
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return result.returncode == 0, None
+
+
+def _read_implicit_review_diff() -> tuple[str, str, str, str]:
+    """Select the working-tree diff, then the last commit, for an empty stdin."""
+    from roam.output.errors import EMPTY_INPUT, RUN_FAILED, structured_usage_error
+
+    repo_root = find_project_root()
+    working_diff, working_error = _run_git_diff(repo_root, "HEAD")
+    if working_error is not None:
+        raise structured_usage_error(
+            RUN_FAILED,
+            f"could not read working-tree diff against HEAD: {working_error}",
+        )
+    if working_diff.strip():
+        return (
+            working_diff,
+            "working_tree",
+            "HEAD",
+            "REVIEWED: working tree (base: HEAD)",
+        )
+
+    last_diff, last_error = _run_git_diff(repo_root, "HEAD~1..HEAD")
+    if last_error is not None:
+        parent_exists, parent_check_error = _git_revision_exists(repo_root, "HEAD~1")
+        if parent_check_error is not None:
+            raise structured_usage_error(
+                RUN_FAILED,
+                f"could not determine whether HEAD has a parent: {parent_check_error}",
+            )
+        if parent_exists:
+            raise structured_usage_error(
+                RUN_FAILED,
+                f"could not read last-commit diff against HEAD~1: {last_error}",
+            )
+    if last_diff.strip():
+        return (
+            last_diff,
+            "last_commit",
+            "HEAD~1",
+            "REVIEWED: last commit (base: HEAD~1; no working-tree changes; reviewing last commit)",
+        )
+
+    raise structured_usage_error(
+        EMPTY_INPUT,
+        "nothing to review: working tree clean and no prior commit diff",
+    )
 
 
 def _diff_sha(
@@ -774,10 +870,12 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
 def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     """Verify a patch against the indexed graph.
 
-    Pipe a unified diff in via stdin (``git diff | roam critique``) or
-    pass a file with ``--input``. The output is a ranked list of
-    findings: clone siblings that may need the same change, symbols
-    with high blast radius, and intent / dark-matter checks.
+    Pipe a unified diff in via stdin (``git diff | roam critique``),
+    pass a file with ``--input``, or invoke it without input to review
+    ``git diff HEAD``. A clean working tree falls back to
+    ``git diff HEAD~1..HEAD``. The output is a ranked list of findings:
+    clone siblings that may need the same change, symbols with high
+    blast radius, and intent / dark-matter checks.
 
     Returns exit code 5 when at least one *high* severity finding is
     present (mirrors ``cmd_rules`` ``EXIT_GATE_FAILURE``) so CI can
@@ -792,6 +890,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
 
     \b
     Examples:
+      roam critique
       git diff | roam critique
       git diff | roam critique --json
       roam critique --input my.patch
@@ -816,15 +915,22 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     if input_path:
         with open(input_path, encoding="utf-8") as fh:
             diff_text = fh.read()
+        review_source = "input_file"
+        review_base = "caller-supplied"
+        review_disclosure = "REVIEWED: input file (base: caller-supplied; not computed by roam)"
     else:
-        if sys.stdin.isatty():
-            from roam.output.errors import MISSING_REQUIRED_ARG, structured_usage_error
-
-            raise structured_usage_error(
-                MISSING_REQUIRED_ARG,
-                "no diff on stdin and no --input — pipe `git diff` in or pass --input PATH",
-            )
-        diff_text = sys.stdin.read()
+        diff_text = "" if sys.stdin.isatty() else sys.stdin.read()
+        if diff_text.strip():
+            review_source = "piped_diff"
+            review_base = "caller-supplied"
+            review_disclosure = "REVIEWED: piped diff (base: caller-supplied; not computed by roam)"
+        else:
+            (
+                diff_text,
+                review_source,
+                review_base,
+                review_disclosure,
+            ) = _read_implicit_review_diff()
 
     from roam.output.errors import EMPTY_INPUT, INVALID_DIFF, structured_usage_error
 
@@ -990,8 +1096,13 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         if persist:
             try:
                 file_list_for_id = sorted({r.file_path for r in regions})
+                diff_label = (
+                    "input:" + input_path
+                    if input_path
+                    else ("stdin" if review_source == "piped_diff" else review_source)
+                )
                 diff_sha_val = _diff_sha(
-                    label=("input:" + input_path) if input_path else "stdin",
+                    label=diff_label,
                     intent_text=effective_intent,
                     file_paths=file_list_for_id,
                 )
@@ -1002,7 +1113,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
                     result["findings"],
                     {
                         "diff_sha": diff_sha_val,
-                        "label": ("input:" + input_path) if input_path else "stdin",
+                        "label": diff_label,
                         "intent_text": effective_intent,
                         "file_list": file_list_for_id,
                     },
@@ -1147,6 +1258,9 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         "severity_classification": _severity_classification_state,
         "intent": effective_intent,
         "bench_hint": bench_hint or None,
+        "review_source": review_source,
+        "review_base": review_base,
+        "review_disclosure": review_disclosure,
         # W832 — disclose per-check status so consumers can tell
         # "0 concerns because clean" apart from "0 concerns because
         # nothing ran". ``state`` is closed-enum:
@@ -1195,6 +1309,9 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         top_finding=result["top_finding"],
         bench_hint=bench_hint,
         check_status=result.get("check_status", {}),
+        review_source=review_source,
+        review_base=review_base,
+        review_disclosure=review_disclosure,
         # W641-followup-B — top-level mirrors of summary.risk_level_canonical
         # / summary.risk_rank so consumers that read the top-level envelope
         # directly (without descending into ``summary``) see the canonical
@@ -1305,6 +1422,14 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
 
         sarif = critique_to_sarif(result["findings"])
         sarif = with_sarif_disclosures(sarif, _combined_warnings_out)
+        sarif_run = sarif["runs"][0]
+        sarif_run.setdefault("properties", {}).update(
+            {
+                "review_source": review_source,
+                "review_base": review_base,
+                "review_disclosure": review_disclosure,
+            }
+        )
         click.echo(write_sarif(sarif))
         # W1331: a SARIF document has nowhere to carry these markers, so a
         # gate reads a critique whose risk classifier raised -- and was
@@ -1313,6 +1438,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     elif json_mode:
         click.echo(to_json(critique_envelope))
     else:
+        click.echo(review_disclosure)
         # W1331: same disclosure for the human-readable branch.
         echo_text_warnings(_combined_warnings_out)
         # W641-followup-B — the text-mode verdict also carries the
