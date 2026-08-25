@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201 -- CLI orchestration output is intentional.
 """
 Run evaluation for all completed workspaces and generate comparison report.
 
@@ -11,14 +12,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from prompts import TASKS, get_prompt
-
 
 AGENTS = ["claude-code", "claude-code-sonnet", "codex", "gemini-cli"]
 MODES = ["vanilla", "roam-cli", "roam-mcp"]
@@ -141,7 +139,7 @@ def evaluate_all(force: bool = False):
                     else:
                         print(f"  FAILED (exit code {result.returncode})")
                 except subprocess.TimeoutExpired:
-                    print(f"  TIMEOUT")
+                    print("  TIMEOUT")
 
     print(f"\nDone. Evaluated: {evaluated}, Skipped (already done): {skipped}")
 

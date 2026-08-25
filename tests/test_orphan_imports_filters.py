@@ -242,6 +242,15 @@ def _orphan_count(proj: Path, runner: CliRunner) -> int:
     return envelope["summary"]["count"]
 
 
+def _orphan_modules(proj: Path, runner: CliRunner) -> set[str]:
+    """Index *proj* and return the actionable orphan module names."""
+    assert runner.invoke(cli, ["index"]).exit_code == 0
+    result = runner.invoke(cli, ["--json", "orphan-imports"])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.output)
+    return {finding["value"]["module"] for finding in envelope["orphans"]}
+
+
 def test_conftest_import_does_not_surface_as_orphan(tmp_path):
     """A ``from tests.conftest import …`` in a real-shape project resolves cleanly."""
     proj = _make_project(
@@ -621,6 +630,111 @@ def test_dev_script_bare_sibling_import_resolves(tmp_path):
         os.chdir(str(proj))
         runner = CliRunner()
         assert _orphan_count(proj, runner) == 0
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_detector_fixture_imports_are_not_actionable(tmp_path):
+    """Imports in detector input corpora are data, not runtime dependencies."""
+    proj = _make_project(tmp_path, {"pkg/__init__.py": ""})
+    _write_pyproject(proj, optional_groups={"fixture": ["fixture-optional-dependency-xyzzy"]})
+    fixture = proj / "tests" / "fixtures" / "detector_eval" / "sample.py"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text(
+        "from absent_framework_used_only_as_detector_input_xyzzy import Framework\n"
+        "import fixture_optional_dependency_xyzzy\n"
+        "app = Framework()\n",
+        encoding="utf-8",
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        modules = _orphan_modules(proj, runner)
+        assert "absent_framework_used_only_as_detector_input_xyzzy" not in modules
+        result = runner.invoke(cli, ["--json", "orphan-imports"])
+        assert result.exit_code == 0, result.output
+        optional_modules = {finding["module"] for finding in json.loads(result.output)["optional_unresolved"]}
+        assert "fixture_optional_dependency_xyzzy" in optional_modules
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_explicit_dynamic_import_is_dependency_evidence(tmp_path):
+    """A guarded dynamic loader proves a script-only package is intentional."""
+    proj = _make_project(tmp_path, {"pkg/__init__.py": ""})
+    dev = proj / "dev"
+    dev.mkdir()
+    (dev / "loader.py").write_text(
+        "from importlib import import_module\n"
+        "\n"
+        "def load():\n"
+        "    return import_module('script_only_dependency_xyzzy')\n",
+        encoding="utf-8",
+    )
+    (dev / "consumer.py").write_text(
+        "from script_only_dependency_xyzzy import Client\nclient = Client()\n",
+        encoding="utf-8",
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        modules = _orphan_modules(proj, CliRunner())
+        assert "script_only_dependency_xyzzy" not in modules
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_sys_path_inserted_module_root_resolves(tmp_path):
+    """Model a test's explicit Python search path before judging its imports."""
+    proj = _make_project(tmp_path, {"pkg/__init__.py": ""})
+    scripts = proj / "scripts"
+    scripts.mkdir()
+    (scripts / "project_scanner.py").write_text("VALUE = 1\n", encoding="utf-8")
+    tests = proj / "tests"
+    tests.mkdir()
+    (tests / "test_scanner.py").write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "\n"
+        "SCRIPTS = str(Path(__file__).resolve().parents[1] / 'scripts')\n"
+        "sys.path.insert(0, SCRIPTS)\n"
+        "import project_scanner\n"
+        "\n"
+        "assert project_scanner.VALUE == 1\n",
+        encoding="utf-8",
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        modules = _orphan_modules(proj, CliRunner())
+        assert "project_scanner" not in modules
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_import_in_conditionally_skipped_test_is_not_actionable(tmp_path):
+    """A skipif-gated private dependency is unavailable by design."""
+    proj = _make_project(tmp_path, {"pkg/__init__.py": ""})
+    tests = proj / "tests"
+    tests.mkdir()
+    (tests / "test_private_feature.py").write_text(
+        "import pytest\n"
+        "\n"
+        "HAS_PRIVATE = False\n"
+        "requires_private = pytest.mark.skipif(not HAS_PRIVATE, reason='private corpus absent')\n"
+        "\n"
+        "@requires_private\n"
+        "def test_private_feature():\n"
+        "    import private_corpus_xyzzy.oracle as oracle\n"
+        "    assert oracle\n",
+        encoding="utf-8",
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        modules = _orphan_modules(proj, CliRunner())
+        assert "private_corpus_xyzzy.oracle" not in modules
     finally:
         os.chdir(old_cwd)
 

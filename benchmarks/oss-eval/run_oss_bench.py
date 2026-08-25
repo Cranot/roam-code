@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201 -- CLI artifact reporting is intentional.
 """Run roam quality snapshots across a local OSS repository corpus.
 
 A reproducible harness for cross-repo benchmarking. Repositories must

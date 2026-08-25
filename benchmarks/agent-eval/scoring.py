@@ -76,8 +76,6 @@ def compute_aqs(result: dict) -> dict:
         arch_score -= min(crit * 3, 10)
 
     # File structure bonus: well-organized projects get full points
-    # Check if there are subdirectories (components/, utils/, hooks/, etc.)
-    extensions = file_stats.get("by_extension", {})
     total_files = file_stats.get("total_files", 0)
     if total_files < 5:
         arch_score -= 3  # too few files = probably not well-structured

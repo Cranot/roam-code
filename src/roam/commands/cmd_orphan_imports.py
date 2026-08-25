@@ -42,7 +42,7 @@ from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 # ``finding_id_str`` so re-runs upsert instead of duplicating rows.
 # Bump this when the orphan-classifier predicates / kind enumeration /
 # claim shape changes meaningfully.
-ORPHAN_IMPORTS_DETECTOR_VERSION: str = "1.0.0"
+ORPHAN_IMPORTS_DETECTOR_VERSION: str = "1.1.0"
 
 
 # W132 — per-orphan-kind confidence tier mapping.
@@ -804,7 +804,7 @@ def _is_conftest_path(
     return False
 
 
-def _optional_import_line_set(source: str) -> set[int]:
+def _optional_import_line_set(source: str, *, tree: ast.Module | None = None) -> set[int]:
     """Return the set of source lines that sit inside a try/except ImportError block.
 
     Python's optional-dependency idiom is::
@@ -825,10 +825,11 @@ def _optional_import_line_set(source: str) -> set[int]:
     shouldn't crash the scan; the regex-based orphan detection on that
     file continues to surface whatever it finds.
     """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return set()
+    if tree is None:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return set()
 
     optional_lines: set[int] = set()
     _OPTIONAL_NAMES = {"ImportError", "ModuleNotFoundError", "Exception"}
@@ -903,6 +904,226 @@ def _resolve_relative_import(dotted: str, importing_file: Path, project_root: Pa
     return None
 
 
+def _is_detector_fixture_path(rel_path: str) -> bool:
+    """Return whether *rel_path* is code-shaped input under a test fixture.
+
+    Detector fixtures intentionally contain imports for frameworks that the
+    host project neither installs nor declares.  They are parsed as source so
+    other detectors can inspect them, but they are data rather than modules
+    imported by the project's runtime or test suite.
+    """
+    parts = Path(rel_path.replace("\\", "/")).parts
+    for index, part in enumerate(parts[:-1]):
+        if part in {"test", "tests"} and "fixtures" in parts[index + 1 : -1]:
+            return True
+    return False
+
+
+def _explicit_dynamic_python_imports(rows) -> frozenset[str]:
+    """Collect package heads named by explicit dynamic-import calls.
+
+    ``import_module('pkg')`` and ``__import__('pkg')`` are dependency
+    declarations even though the regex scanner only sees static import
+    statements.  Treating the same package as unknown in a sibling script is
+    internally inconsistent, especially for tool-specific environments.
+    """
+    modules: set[str] = set()
+    for row in rows:
+        path = Path(row[0])
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        if "import_module" not in source and "__import__" not in source:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+            module_arg = node.args[0]
+            if (
+                name in {"import_module", "__import__"}
+                and isinstance(module_arg, ast.Constant)
+                and isinstance(module_arg.value, str)
+                and module_arg.value
+            ):
+                modules.add(module_arg.value.split(".", 1)[0])
+    return frozenset(modules)
+
+
+def _eval_static_python_path(
+    node: ast.AST,
+    names: dict[str, Path],
+    importing_file: Path,
+    project_root: Path,
+) -> Path | None:
+    """Evaluate the small path-expression subset used in ``sys.path`` setup."""
+    if isinstance(node, ast.Name):
+        if node.id == "__file__":
+            return importing_file.resolve()
+        return names.get(node.id)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return Path(node.value)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        left = _eval_static_python_path(node.left, names, importing_file, project_root)
+        right = _eval_static_python_path(node.right, names, importing_file, project_root)
+        if left is not None and right is not None:
+            return left / right
+        return None
+    if isinstance(node, ast.Attribute):
+        base = _eval_static_python_path(node.value, names, importing_file, project_root)
+        if base is not None and node.attr == "parent":
+            return base.parent
+        return None
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
+        base = _eval_static_python_path(node.value.value, names, importing_file, project_root)
+        index = node.slice
+        if base is not None and isinstance(index, ast.Constant) and isinstance(index.value, int):
+            try:
+                return base.parents[index.value]
+            except IndexError:
+                return None
+        return None
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    func_name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+    if func_name in {"repo_root", "_repo_root"}:
+        return project_root
+    if func_name in {"str", "Path"} and node.args:
+        return _eval_static_python_path(node.args[0], names, importing_file, project_root)
+    if func_name in {"cwd", "getcwd"}:
+        return project_root
+    if func_name in {"resolve", "absolute"} and isinstance(func, ast.Attribute):
+        base = _eval_static_python_path(func.value, names, importing_file, project_root)
+        if base is not None:
+            try:
+                return base.resolve()
+            except OSError:
+                return base
+    return None
+
+
+def _runtime_python_search_roots(
+    source: str,
+    importing_file: Path,
+    project_root: Path,
+    *,
+    tree: ast.Module | None = None,
+) -> tuple[Path, ...]:
+    """Extract project-local directories explicitly added to ``sys.path``."""
+    if tree is None:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return ()
+    names: dict[str, Path] = {}
+    for statement in tree.body:
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            value = statement.value
+            if value is None:
+                continue
+            resolved = _eval_static_python_path(value, names, importing_file, project_root)
+            if resolved is None:
+                continue
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    names[target.id] = resolved
+
+    project_resolved = project_root.resolve()
+    roots: set[Path] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in {"insert", "append"}:
+            continue
+        owner = node.func.value
+        if not (
+            isinstance(owner, ast.Attribute)
+            and owner.attr == "path"
+            and isinstance(owner.value, ast.Name)
+            and owner.value.id == "sys"
+        ):
+            continue
+        arg_index = 1 if node.func.attr == "insert" else 0
+        if len(node.args) <= arg_index:
+            continue
+        resolved = _eval_static_python_path(node.args[arg_index], names, importing_file, project_root)
+        if resolved is None:
+            continue
+        if not resolved.is_absolute():
+            resolved = project_resolved / resolved
+        try:
+            resolved = resolved.resolve()
+            resolved.relative_to(project_resolved)
+        except (OSError, ValueError):
+            continue
+        if resolved.is_dir():
+            roots.add(resolved)
+    return tuple(sorted(roots, key=lambda path: path.as_posix()))
+
+
+def _python_modules_from_search_root(search_root: Path) -> set[str]:
+    """Return module names importable when *search_root* is on ``sys.path``."""
+    modules: set[str] = set()
+    try:
+        files = search_root.rglob("*.py")
+        for path in files:
+            _modules_from_path(path.relative_to(search_root).as_posix(), modules)
+    except (OSError, ValueError):
+        return set()
+    return modules
+
+
+def _conditionally_skipped_import_line_set(source: str, *, tree: ast.Module | None = None) -> set[int]:
+    """Return import lines inside tests guarded by pytest skip decorators."""
+    if tree is None:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return set()
+
+    skip_markers: set[str] = set()
+    for statement in tree.body:
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)) or statement.value is None:
+            continue
+        value = statement.value
+        if not isinstance(value, ast.Call):
+            continue
+        func = value.func
+        name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+        if name not in {"skip", "skipif"}:
+            continue
+        targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+        skip_markers.update(target.id for target in targets if isinstance(target, ast.Name))
+
+    def _is_skip_decorator(decorator: ast.AST) -> bool:
+        if isinstance(decorator, ast.Name):
+            return decorator.id in skip_markers
+        if isinstance(decorator, ast.Call):
+            func = decorator.func
+            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+            return name in {"skip", "skipif"}
+        return False
+
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(_is_skip_decorator(decorator) for decorator in node.decorator_list):
+            continue
+        for child in ast.walk(node):
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                lines.update(range(child.lineno, (child.end_lineno or child.lineno) + 1))
+    return lines
+
+
 def _scan_python(conn) -> tuple[list[dict], int]:
     indexed = _indexed_python_modules(conn)
     # W161 — subtree-scoped indexed-modules sets. Test-to-test and
@@ -915,6 +1136,8 @@ def _scan_python(conn) -> tuple[list[dict], int]:
     project_root = Path(".").resolve()
     optional_or_self = _optional_or_self_python_dependencies(project_root)
     rows = conn.execute("SELECT path FROM files WHERE language = 'python' ORDER BY path").fetchall()
+    dynamic_imports = _explicit_dynamic_python_imports(rows)
+    search_root_modules: dict[Path, set[str]] = {}
     orphans: list[dict] = []
     files_scanned = 0
     for r in rows:
@@ -927,6 +1150,10 @@ def _scan_python(conn) -> tuple[list[dict], int]:
         except OSError:
             continue
         files_scanned += 1
+        try:
+            python_tree = ast.parse(text)
+        except SyntaxError:
+            python_tree = None
         # W161 — choose the per-file indexed set. Lazy: only build the
         # subtree sets if we actually scan a file in that subtree.
         norm_path = rel_path.replace("\\", "/")
@@ -951,6 +1178,16 @@ def _scan_python(conn) -> tuple[list[dict], int]:
         except OSError:
             sibling_modules = set()
         scoped_indexed = set(scoped_indexed) | sibling_modules
+        runtime_modules: set[str] = set()
+        runtime_roots = (
+            _runtime_python_search_roots(text, full, project_root, tree=python_tree) if "sys.path" in text else ()
+        )
+        for search_root in runtime_roots:
+            root_modules = search_root_modules.get(search_root)
+            if root_modules is None:
+                root_modules = _python_modules_from_search_root(search_root)
+                search_root_modules[search_root] = root_modules
+            runtime_modules.update(root_modules)
         # W159: scan a copy with triple-quoted strings + comments masked
         # so prose like "...not visible from any\nimport or call edge..."
         # inside a docstring doesn't produce phantom ``or`` orphans. Line
@@ -960,7 +1197,12 @@ def _scan_python(conn) -> tuple[list[dict], int]:
         # W160 fix 2 — pre-compute optional-import line set per file.
         # AST parses the original (unmasked) source so ``try``/``except``
         # structure is preserved; the cost is bounded and per-file.
-        optional_lines = _optional_import_line_set(text)
+        optional_lines = _optional_import_line_set(text, tree=python_tree)
+        skipped_test_lines = (
+            _conditionally_skipped_import_line_set(text, tree=python_tree)
+            if "skipif" in text or "pytest.mark.skip" in text
+            else set()
+        )
         for m in _PY_IMPORT_RE.finditer(scan_text):
             line_start = m.start()
             line_end = scan_text.find("\n", line_start)
@@ -1009,6 +1251,17 @@ def _scan_python(conn) -> tuple[list[dict], int]:
                         "hint": "declared optional extra or project self-import; unavailable from the source index",
                     }
                 )
+                continue
+            # Precision filters below intentionally run only after the
+            # optional-unresolved branch.  Existing optional classifications
+            # are a separate disclosure surface and must remain unchanged.
+            if (
+                _is_detector_fixture_path(rel_path)
+                or line_no in skipped_test_lines
+                or head in dynamic_imports
+                or mod in runtime_modules
+                or head in runtime_modules
+            ):
                 continue
             if _is_external_python_package(mod, project_root):
                 continue

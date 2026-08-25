@@ -93,7 +93,7 @@ def test_error_handling_respects_noqa(tmp_path) -> None:
         os.chdir(old)
     d = json.loads(res.output[res.output.index("{") :])
     broad = [v for v in d["categories"]["error_handling"]["violations"] if "broad" in v.get("message", "")]
-    # fn_a's broad-except carries `# noqa: BLE001` → skipped; only fn_b's is flagged.
+    # fn_a's broad-except carries a BLE001 suppression, so only fn_b's is flagged.
     assert len(broad) == 1, broad
     fn_b_except_line = next(
         i + 1 for i, ln in enumerate(_SRC.split("\n")) if "except Exception:" in ln and "noqa" not in ln

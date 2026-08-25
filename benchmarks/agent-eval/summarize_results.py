@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201 -- CLI artifact reporting is intentional.
 """Summarize agent-eval JSON outputs into publishable artifacts.
 
 Usage:
@@ -10,7 +11,6 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
-
 
 EXPECTED_AGENTS = ["claude-code", "claude-code-sonnet", "codex", "gemini-cli"]
 EXPECTED_MODES = ["vanilla", "roam-cli", "roam-mcp"]
