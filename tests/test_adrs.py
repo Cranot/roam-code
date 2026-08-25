@@ -90,6 +90,24 @@ class TestAdrsJSON:
             assert "status" in adr
             assert "file" in adr or "path" in adr
 
+    def test_dated_measurement_document_is_not_classified_as_adr(self, cli_runner, tmp_path, monkeypatch):
+        project = tmp_path / "measurement_docs"
+        (project / "docs" / "adr").mkdir(parents=True)
+        (project / ".gitignore").write_text(".roam/\n")
+        (project / "main.py").write_text("def main():\n    return 0\n")
+        (project / "docs" / "adr" / "2026-08-19-cleanup-and-fork-measurement.md").write_text(
+            "# Cleanup and fork measurement\n\nSample captured at `2026-08-20T08:09:50.399Z`.\n"
+        )
+        git_init(project)
+        index_in_process(project)
+        monkeypatch.chdir(project)
+
+        result = invoke_cli(cli_runner, ["adrs"], cwd=project, json_mode=True)
+        data = parse_json_output(result, "adrs")
+
+        assert data["summary"]["adr_count"] == 0
+        assert data["adrs"] == []
+
 
 class TestAdrsText:
     def test_verdict_line(self, cli_runner, adr_project, monkeypatch):

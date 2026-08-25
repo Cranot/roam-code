@@ -34,6 +34,9 @@ WHERE s.kind IN ('function', 'class', 'method', 'interface', 'struct', 'enum')
   AND s.line_start IS NOT NULL
   AND s.line_end IS NOT NULL
   AND s.line_end >= s.line_start
+  AND COALESCE(f.file_role, 'source') NOT IN ('test', 'tests')
+  AND f.path NOT LIKE 'tests/%'
+  AND f.path NOT LIKE 'test/%'
   AND f.path NOT LIKE '%/tests/%'
   AND f.path NOT LIKE '%/test/%'
   AND f.path NOT LIKE '%test\\_%' ESCAPE '\\'

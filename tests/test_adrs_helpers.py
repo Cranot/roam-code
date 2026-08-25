@@ -140,6 +140,9 @@ class TestExtractFileRefs:
         out = m._extract_file_refs("`src/db.py` then again `src/db.py` and zzz/a.py")
         assert out == ["src/db.py", "zzz/a.py"]
 
+    def test_iso_timestamp_is_not_a_file_reference(self):
+        assert m._extract_file_refs("Measured at `2026-08-20T08:09:50.399Z`.") == []
+
 
 # ---------------------------------------------------------------------------
 # _git_ls_files
@@ -245,6 +248,16 @@ class TestParseAdr:
         assert rec["number"] == 12
         assert rec["title"] == "Foo Choice"
         assert rec["status"] == "rejected"
+
+    def test_real_adr_0042_filename_parses_number_42(self, tmp_path):
+        adr = tmp_path / "docs" / "adr"
+        adr.mkdir(parents=True)
+        (adr / "ADR-0042-use-queues.md").write_text("# ADR-0042: Use queues\n\nStatus: accepted\n")
+
+        rec = m._parse_adr(tmp_path, "docs/adr/ADR-0042-use-queues.md")
+
+        assert rec is not None
+        assert rec["number"] == 42
 
     def test_missing_file_returns_none(self, tmp_path):
         assert m._parse_adr(tmp_path, "docs/adr/does-not-exist.md") is None
