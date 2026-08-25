@@ -476,6 +476,31 @@ class TestStaleRefsBacktickFallback:
         assert data["summary"]["missing_targets"] == 0
 
 
+class TestStaleRefsLineCitations:
+    def test_existing_worktree_target_with_line_suffix_is_live(self, cli_runner, tmp_path, monkeypatch):
+        """``path:N`` and ``path:N:M`` cite locations, not filename bytes."""
+        proj = tmp_path / "line_citations"
+        proj.mkdir()
+        (proj / "README.md").write_text(
+            "[line](src/widget.js:651)\n[column](src/widget.js:12:4)\n[missing](src/absent.js:9)\n"
+        )
+        git_init(proj)
+
+        # Add the live target after the commit. stale-refs must consult the
+        # current working tree rather than requiring a stale index snapshot.
+        target = proj / "src" / "widget.js"
+        target.parent.mkdir()
+        target.write_text("export const widget = 1;\n")
+        monkeypatch.chdir(proj)
+
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        targets = {item["target"] for item in data["targets"]}
+
+        assert not any("widget.js" in item for item in targets), targets
+        assert targets == {"src/absent.js"}
+
+
 class TestStaleRefsTimingAndShape:
     def test_scan_seconds_in_summary(self, cli_runner, dangling_project, monkeypatch):
         monkeypatch.chdir(dangling_project)

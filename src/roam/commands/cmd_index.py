@@ -81,13 +81,44 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
 
     t0 = time.monotonic()
     indexer = Indexer()
-    indexer.run(
+    index_completed = indexer.run(
         force=force,
         verbose=verbose,
         include_excluded=include_excluded,
         quiet=suppress_progress,
     )
     elapsed = time.monotonic() - t0
+
+    # ``Indexer.run`` returns False when it cannot safely claim the writer
+    # lock. Do not inspect and summarize the old database in that case: those
+    # rows describe the previous successful run, not the refresh the user just
+    # requested. In particular, a held, replaced, or hard-linked lock fails
+    # the indexer's ownership proof and must stay a refusal at the CLI boundary.
+    if not index_completed:
+        verdict = "indexing refused: the index lock is unavailable or has an unsafe ownership/identity state"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "index",
+                        summary={
+                            "verdict": verdict,
+                            "state": "write_refused",
+                            "reason": "index_lock_unavailable",
+                            "partial_success": True,
+                            "resolution": "unresolved",
+                        },
+                        elapsed_s=round(elapsed, 1),
+                    )
+                )
+            )
+        else:
+            # Failure disclosure is never hidden by --quiet.
+            click.echo(f"VERDICT: {verdict}")
+            click.echo("  Hint: wait for the active writer or run `roam doctor` to inspect the index lock state.")
+        from roam.exit_codes import EXIT_ERROR
+
+        ctx.exit(EXIT_ERROR)
 
     # Show summary stats. ``index_failed`` carries the W1502 refusal past the
     # reporting branches so there is exactly one non-zero exit at the bottom.

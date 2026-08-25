@@ -499,9 +499,33 @@ def co_change_score_to_seed_set(
 # Hypothesis Engine
 # ---------------------------------------------------------------------------
 
-_RE_TABLE = re.compile(
-    r'\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+[`"\']?(\w+)[`"\']?',
+_SQL_IDENTIFIER = r'[`"\']?([A-Za-z_]\w*)[`"\']?'
+_RE_SQL_FROM_OR_JOIN = re.compile(rf"\b(?:FROM|JOIN)\s+{_SQL_IDENTIFIER}", re.IGNORECASE)
+_RE_SQL_INSERT = re.compile(rf"\bINSERT\s+INTO\s+{_SQL_IDENTIFIER}", re.IGNORECASE)
+_RE_SQL_UPDATE = re.compile(
+    rf"\bUPDATE\s+{_SQL_IDENTIFIER}(?=[^;\n]{{0,500}}\bSET\b)",
     re.IGNORECASE,
+)
+_SQL_IDENTIFIER_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "of",
+        "on",
+        "or",
+        "the",
+        "this",
+        "to",
+        "with",
+    }
 )
 # Negative filter: Python `from X import` and JS/TS `import ... from "X"` look
 # identical to the SQL `FROM` verb under a naive regex. Drop lines that match
@@ -513,9 +537,12 @@ _RE_JS_IMPORT_LINE = re.compile(r'^\s*import\b[^;\n]*\bfrom\s+[`"\']', re.MULTIL
 
 
 def _extract_sql_tables(text: str) -> set[str]:
-    """Extract candidate SQL table names from `text`, excluding lines that are
-    Python `from X import` or JS/TS `import ... from "X"` statements (which the
-    naive _RE_TABLE regex would otherwise classify as SQL).
+    """Extract table identifiers only from SQL reference contexts.
+
+    Python/JavaScript imports are removed first. The remaining scanner accepts
+    ``FROM``/``JOIN``, ``INSERT INTO``, and ``UPDATE ... SET`` contexts, then
+    rejects bare natural-language stopwords. In particular, prose such as
+    ``table a`` or ``from the`` cannot become a SHARED_DB hypothesis.
     """
     if not text:
         return set()
@@ -527,7 +554,11 @@ def _extract_sql_tables(text: str) -> set[str]:
         if _RE_JS_IMPORT_LINE.match(line):
             continue
         stripped_lines.append(line)
-    return set(_RE_TABLE.findall("\n".join(stripped_lines)))
+    stripped = "\n".join(stripped_lines)
+    candidates: set[str] = set()
+    for pattern in (_RE_SQL_FROM_OR_JOIN, _RE_SQL_INSERT, _RE_SQL_UPDATE):
+        candidates.update(pattern.findall(stripped))
+    return {name for name in candidates if name.lower() not in _SQL_IDENTIFIER_STOPWORDS}
 
 
 _RE_EVENT_EMIT = re.compile(

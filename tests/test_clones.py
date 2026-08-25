@@ -97,6 +97,94 @@ class TestCloneDetectEngine:
         finally:
             os.chdir(old_cwd)
 
+    def test_nested_function_is_not_a_clone_of_its_container(self, tmp_path):
+        """Containment can make AST bags almost identical without duplication."""
+        repeated = "\n".join("        total += value" for _ in range(80))
+        source = (
+            "def outer(value):\n"
+            "    def nested(value):\n"
+            "        total = 0\n"
+            f"{repeated}\n"
+            "        return total\n"
+            "    return nested(value)\n"
+        )
+        proj = _make_project(tmp_path, {"nested.py": source})
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(proj)
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+
+            from roam.db.connection import open_db
+            from roam.graph.clone_detect import detect_clones
+
+            with open_db(readonly=True) as conn:
+                pairs, _clusters = detect_clones(conn, min_similarity=0.90, min_lines=5)
+
+            nested_pair = [p for p in pairs if {p.func_a, p.func_b} == {"outer", "nested"}]
+            assert not nested_pair, f"overlapping parent/closure pair leaked through: {nested_pair}"
+        finally:
+            os.chdir(old_cwd)
+
+    def test_disjoint_same_file_siblings_still_cluster(self, tmp_path):
+        body_a = "\n".join("    total += value" for _ in range(12))
+        body_b = "\n".join("    amount += item" for _ in range(12))
+        source = (
+            "def first(value):\n"
+            "    total = 0\n"
+            f"{body_a}\n"
+            "    return total\n\n"
+            "def second(item):\n"
+            "    amount = 0\n"
+            f"{body_b}\n"
+            "    return amount\n"
+        )
+        proj = _make_project(tmp_path, {"siblings.py": source})
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(proj)
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+
+            from roam.db.connection import open_db
+            from roam.graph.clone_detect import detect_clones
+
+            with open_db(readonly=True) as conn:
+                pairs, _clusters = detect_clones(conn, min_similarity=0.90, min_lines=5)
+
+            assert any({p.func_a, p.func_b} == {"first", "second"} for p in pairs), pairs
+        finally:
+            os.chdir(old_cwd)
+
+    def test_cross_file_clones_still_cluster(self, tmp_path):
+        body_a = "\n".join("    total += value" for _ in range(12))
+        body_b = "\n".join("    amount += item" for _ in range(12))
+        proj = _make_project(
+            tmp_path,
+            {
+                "left.py": f"def first(value):\n    total = 0\n{body_a}\n    return total\n",
+                "right.py": f"def second(item):\n    amount = 0\n{body_b}\n    return amount\n",
+            },
+        )
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(proj)
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+
+            from roam.db.connection import open_db
+            from roam.graph.clone_detect import detect_clones
+
+            with open_db(readonly=True) as conn:
+                pairs, _clusters = detect_clones(conn, min_similarity=0.90, min_lines=5)
+
+            assert any(p.file_a != p.file_b for p in pairs), pairs
+        finally:
+            os.chdir(old_cwd)
+
     def test_json_output(self, tmp_path):
         """JSON output should follow envelope format."""
         proj = _make_project(
