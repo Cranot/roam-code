@@ -1,0 +1,46 @@
+{
+  "detector": "delete-check",
+  "fixtures": [
+    {
+      "case": "same_file_live_caller",
+      "file": "tp_same_file_live_caller.py",
+      "deleted_symbol": "function_a",
+      "expected_overall": "BREAK-RISK",
+      "expected_callers": ["function_b"],
+      "rationale": "function_b survives in the changed file and remains reachable from main"
+    },
+    {
+      "case": "recursive_only",
+      "file": "tn_recursive_only.py",
+      "deleted_symbol": "recursive_target",
+      "expected_overall": "SAFE",
+      "expected_callers": [],
+      "rationale": "the recursive reference disappears with the deleted function body"
+    },
+    {
+      "case": "unreferenced",
+      "file": "tn_unreferenced.py",
+      "deleted_symbol": "unreferenced_target",
+      "expected_overall": "SAFE",
+      "expected_callers": [],
+      "rationale": "the deleted function has no references"
+    },
+    {
+      "case": "cross_file_live_caller",
+      "files": ["tp_cross_file_target.py", "tp_cross_file_caller.py"],
+      "delete_from": "tp_cross_file_target.py",
+      "deleted_symbol": "cross_file_target",
+      "expected_overall": "BREAK-RISK",
+      "expected_callers": ["cross_file_caller"],
+      "rationale": "a reachable caller in another file remains a blocking survivor"
+    },
+    {
+      "case": "same_file_dead_caller",
+      "file": "tn_same_file_dead_caller.py",
+      "deleted_symbol": "dead_target",
+      "expected_overall": "LIKELY-SAFE",
+      "expected_callers": ["dead_caller"],
+      "rationale": "the command preserves its existing non-blocking verdict for references enclosed by orphan symbols"
+    }
+  ]
+}

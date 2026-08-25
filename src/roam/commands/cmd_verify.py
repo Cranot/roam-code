@@ -4251,18 +4251,28 @@ def _build_deleted_symbol_candidates(conn, deleted_lines):
     return [n for n in names if n not in still_defined]
 
 
-def _collect_deleted_reference_hits(matches, changed, reference_rx, candidate_lookup):
+def _collect_deleted_reference_hits(matches, changed, reference_rx, candidate_lookup, interval_idx, orphans):
     """Group surviving references to deleted symbols by symbol name.
 
-    Filters out matches inside the changed set, test files, or non-source
-    surfaces, then uses a compiled regex + set lookup to avoid a per-candidate
-    list scan.
+    Search results come from the post-edit filesystem, so a hit in a changed
+    file is surviving text rather than deleted text. Preserve delete-check's
+    existing liveness policy for that formerly excluded surface: changed-file
+    hits block only when enclosed by a non-orphan symbol. Unchanged production
+    hits keep the verifier's existing conservative blocking semantics.
     """
     by_name = {}
     for m in matches or []:
         mp = (m.get("path") or "").replace("\\", "/")
-        if not mp or mp in changed or is_test_file(mp) or not _is_import_resolution_source_path(mp):
+        if not mp or is_test_file(mp) or not _is_import_resolution_source_path(mp):
             continue
+        if mp in changed:
+            line = m.get("line") or 0
+            enclosing = next(
+                (symbol for start, end, symbol in interval_idx.get(mp, []) if start <= line <= end),
+                None,
+            )
+            if enclosing is None or enclosing["id"] in orphans:
+                continue
         content = m.get("content") or ""
         for nm in _deleted_reference_hits_without_list_scan(content, reference_rx, candidate_lookup):
             by_name.setdefault(nm, []).append((mp, m.get("line")))
@@ -4284,9 +4294,9 @@ def _build_delete_check_violations(by_name):
                 "line": next((ln for _, ln in locs), None),
                 "message": (
                     f"deleted symbol `{nm}` is still referenced by {len(files)} "
-                    f"un-edited file(s) ({sample}) — they will break"
+                    f"surviving source file(s) ({sample}) — they will break"
                 ),
-                "fix": "Restore the symbol, update the surviving references in this change, or stage a deprecation",
+                "fix": "Restore the symbol, update the surviving references, or stage a deprecation",
             }
         )
     return violations
@@ -4303,7 +4313,7 @@ def _check_delete_safety(conn, target_paths, root):
         return {"score": 100, "violations": []}
     try:
         from roam.commands.cmd_delete_check import _git_diff, _parse_deletions
-        from roam.commands.grep_helpers import indexed_file_scan
+        from roam.commands.grep_helpers import build_interval_index, build_orphan_set, indexed_file_scan
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.delete_check.import", exc)
         return _verify_check_incomplete(_VERIFY_DELETE_CATEGORY, f"delete-check import failed: {exc!r}")
@@ -4332,10 +4342,12 @@ def _check_delete_safety(conn, target_paths, root):
         # reads STDIN under a non-interactive Stop hook and silently finds none.
         reference_rx = _compile_deleted_reference_lookup(candidate_lookup)
         matches = indexed_file_scan([reference_rx], conn, root)
+        interval_idx = build_interval_index(conn, changed)
+        orphans = build_orphan_set(conn)
     except Exception as exc:  # noqa: BLE001
         _swallow_verify("verify.delete_check.search", exc)
         return _verify_check_incomplete(_VERIFY_DELETE_CATEGORY, f"delete-check search failed: {exc!r}")
-    by_name = _collect_deleted_reference_hits(matches, changed, reference_rx, candidate_lookup)
+    by_name = _collect_deleted_reference_hits(matches, changed, reference_rx, candidate_lookup, interval_idx, orphans)
     violations = _build_delete_check_violations(by_name)
     return {"score": 0 if violations else 100, "violations": violations}
 

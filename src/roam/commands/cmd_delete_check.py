@@ -73,6 +73,10 @@ _JS_CONST_RE = re.compile(r"^\s*(?:export\s+)?const\s+(\w+)\s*=")
 _GO_FN_RE = re.compile(r"^\s*func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(")
 _GO_TYPE_RE = re.compile(r"^\s*type\s+(\w+)\s+(?:struct|interface)\b")
 _TS_TYPE_RE = re.compile(r"^\s*(?:export\s+)?(?:type|interface)\s+(\w+)\b")
+_DIFF_HUNK_RE = re.compile(
+    r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? "
+    r"\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
+)
 
 
 def _extract_symbol_names(line: str) -> list[str]:
@@ -196,6 +200,65 @@ def _parse_deletions(diff_text: str) -> tuple[list[str], list[tuple[str, int, st
                 deleted_files.append(current_file)
 
     return deleted_files, deleted_lines
+
+
+def _parse_diff_hunks(diff_text: str) -> dict[str, list[tuple[int, int, int, int]]]:
+    """Return old/new hunk coordinates keyed by the diff's old file path.
+
+    ``delete-check`` searches the post-edit working tree while symbol intervals
+    come from the pre-edit index. These coordinates let a surviving match in a
+    changed file be joined to the symbol that enclosed it when the index was
+    built, rather than to whichever stale interval now occupies its line.
+    """
+    hunks: dict[str, list[tuple[int, int, int, int]]] = {}
+    current_file: str | None = None
+    for raw in diff_text.splitlines():
+        if raw.startswith("diff --git "):
+            current_file = None
+        elif raw.startswith("--- a/"):
+            current_file = raw[6:].replace("\\", "/")
+        elif current_file is not None and (match := _DIFF_HUNK_RE.match(raw)):
+            old_count = int(match.group("old_count") or 1)
+            new_count = int(match.group("new_count") or 1)
+            hunks.setdefault(current_file, []).append(
+                (
+                    int(match.group("old_start")),
+                    old_count,
+                    int(match.group("new_start")),
+                    new_count,
+                )
+            )
+    return hunks
+
+
+def _pre_edit_line_number(
+    path: str,
+    post_edit_line: int,
+    hunks_by_path: dict[str, list[tuple[int, int, int, int]]],
+) -> int:
+    """Map a post-edit match line onto the pre-edit index coordinates."""
+    offset = 0
+    for old_start, old_count, new_start, new_count in hunks_by_path.get(path, []):
+        if new_count == 0:
+            # For a pure deletion, new_start is the line immediately before
+            # the removed block (zero when deletion starts at line one).
+            if post_edit_line <= new_start:
+                return post_edit_line + offset
+            offset += old_count
+            continue
+
+        new_end = new_start + new_count - 1
+        if post_edit_line < new_start:
+            return post_edit_line + offset
+        if post_edit_line <= new_end:
+            # Replacement/addition lines have no exact old coordinate. Anchor
+            # them inside the replaced span so an edited surviving caller is
+            # still attributed to its indexed enclosing symbol.
+            if old_count:
+                return old_start + min(post_edit_line - new_start, old_count - 1)
+            return max(1, old_start)
+        offset += old_count - new_count
+    return post_edit_line + offset
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +437,7 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         return
 
     deleted_files, deleted_lines = _parse_deletions(diff)
+    diff_hunks = _parse_diff_hunks(diff)
     fully_deleted = set(deleted_files)
 
     # Build gate targets — symbols first (cheap, precise), files second.
@@ -480,7 +544,8 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         match_paths = {m["path"] for m in surviving}
         interval_idx = build_interval_index(conn, match_paths)
         for m in surviving:
-            sym = find_enclosing(interval_idx, m["path"], m["line"])
+            index_line = _pre_edit_line_number(m["path"], m["line"], diff_hunks)
+            sym = find_enclosing(interval_idx, m["path"], index_line)
             m["_enclosing"] = sym
             m["enclosing_symbol"] = sym["qualified_name"] if sym else None
             m["enclosing_kind"] = sym["kind"] if sym else None
