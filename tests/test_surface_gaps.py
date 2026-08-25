@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.commands import cmd_surface_gaps
+from tests.conftest import git_init
 
 
 def _invoke_with_layers(monkeypatch, *, implementation, mcp_exposed, documented):
@@ -96,3 +98,35 @@ def test_surface_gaps_skips_comparison_when_a_layer_is_unresolved():
     )
 
     assert findings == []
+
+
+def test_documentation_layer_uses_analyzed_repository(tmp_path, monkeypatch):
+    project = tmp_path / "analyzed-repository"
+    docs = project / "docs"
+    docs.mkdir(parents=True)
+    (docs / "COMMANDS.md").write_text(
+        "| Command | Maturity | MCP | Aliases |\n"
+        "|---------|----------|-----|---------|\n"
+        "| `surface-gaps` | stable | — | — |\n"
+    )
+    git_init(project)
+    monkeypatch.chdir(project)
+
+    # Reproduce an installed-package/out-of-tree invocation: the analyzed
+    # repository is not an ancestor of the module that supplies the detector.
+    import roam.surface_counts as surface_counts
+
+    monkeypatch.setattr(surface_counts, "__file__", str(Path("/opt/site-packages/roam/surface_counts.py")))
+
+    result = CliRunner().invoke(cli, ["--json", "surface-gaps"], catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+
+    assert data["layers"]["documentation"] is True
+    assert "implementation:documentation" in data["comparisons_run"]
+    assert "documentation:implementation" in data["comparisons_run"]
+    assert not any("documentation layer unavailable" in warning for warning in data["warnings"])
+    assert not any(
+        finding["command"] == "surface-gaps" and finding["gap"] == "undocumented_command"
+        for finding in data["findings"]
+    )

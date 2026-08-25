@@ -71,9 +71,9 @@ def _parse_documented_commands(text: str) -> set[str]:
 def _resolve_documented_commands() -> tuple[set[str] | None, str | None]:
     """Return public commands named in the generated documentation index."""
     try:
-        from roam.surface_counts import _repo_root
+        from roam.surface_counts import _analyzed_repo_root
 
-        doc_path = Path(_repo_root()) / "docs" / "COMMANDS.md"
+        doc_path = Path(_analyzed_repo_root()) / "docs" / "COMMANDS.md"
         commands = _parse_documented_commands(doc_path.read_text(encoding="utf-8"))
     except _RESOLUTION_ERRORS as exc:
         return None, f"documentation layer unavailable: {exc.__class__.__name__}: {exc}"

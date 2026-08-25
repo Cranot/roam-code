@@ -30,6 +30,18 @@ def _repo_root() -> Path:
     raise RuntimeError("Could not locate repository root from surface_counts.py")
 
 
+def _analyzed_repo_root(start: str = ".") -> Path:
+    """Resolve the repository being analyzed, independently of package layout.
+
+    Runtime documentation comparisons operate on the invocation target. The
+    source-tree-only :func:`_repo_root` remains available for development files
+    shipped outside the Python package.
+    """
+    from roam.db.connection import find_project_root
+
+    return find_project_root(start)
+
+
 def _package_file(filename: str) -> Path:
     """Resolve a file inside the installed ``roam`` package, wheel-safe.
 

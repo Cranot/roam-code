@@ -141,6 +141,16 @@ _TITLE_RE = re.compile(r"^#\s+(.+)", re.MULTILINE)
 _STATUS_HEADING_RE = re.compile(r"^#+\s*status\s*\n+\s*(\w+)", re.IGNORECASE | re.MULTILINE)
 _STATUS_INLINE_RE = re.compile(r"(?:^|\n)\s*\*?\*?status\*?\*?\s*:\s*(\w+)", re.IGNORECASE)
 
+# Classification and numbering are deliberately separate. A numeric filename
+# is only an ADR candidate; it becomes an ADR after a filename/body marker is
+# present. Date-prefixed measurement notes must never donate their year as an
+# ADR number.
+_ADR_TOKEN_RE = re.compile(r"(?:^|[^a-z0-9])adr(?:[^a-z0-9]|$)", re.IGNORECASE)
+_ADR_NUMBER_RE = re.compile(r"(?:^|[^a-z0-9])adr[-_\s]*(\d+)", re.IGNORECASE)
+_LEADING_NUMBER_RE = re.compile(r"^(\d+)(?:[-_])")
+_LEADING_DATE_RE = re.compile(r"^\d{4}[-_]\d{2}[-_]\d{2}(?:[-_]|\.)")
+_ADR_DATE_RE = re.compile(r"(?:^|[^a-z0-9])adr[-_\s]*\d{4}[-_]\d{2}[-_]\d{2}(?:[-_]|\.)", re.IGNORECASE)
+
 # Date patterns
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
@@ -156,6 +166,13 @@ _MODULE_REF_RE = re.compile(
     r"(?:`([\w.]+)`)"  # backtick-quoted dotted names
 )
 
+# Timestamp tokens contain a dot before fractional seconds, so the generic
+# backtick path matcher otherwise mistakes them for source/module references.
+_ISO_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$",
+    re.IGNORECASE,
+)
+
 
 def _parse_simple_yaml(text: str) -> dict[str, str]:
     """Extract key-value pairs from simple YAML frontmatter."""
@@ -165,6 +182,30 @@ def _parse_simple_yaml(text: str) -> dict[str, str]:
         value = m.group(2).strip().strip('"').strip("'")
         result[key] = value
     return result
+
+
+def _has_adr_marker(filename: str, frontmatter: dict[str, str], body: str) -> bool:
+    """Return whether a Markdown candidate explicitly identifies as an ADR."""
+    if _ADR_TOKEN_RE.search(filename):
+        return True
+    if "status" in frontmatter:
+        return True
+    return bool(_STATUS_HEADING_RE.search(body) or _STATUS_INLINE_RE.search(body))
+
+
+def _extract_adr_number(filename: str) -> int | None:
+    """Extract an ADR sequence number without treating a date year as one."""
+    if _ADR_DATE_RE.search(filename):
+        return None
+
+    adr_match = _ADR_NUMBER_RE.search(filename)
+    if adr_match:
+        return int(adr_match.group(1))
+
+    if _LEADING_DATE_RE.match(filename):
+        return None
+    leading_match = _LEADING_NUMBER_RE.match(filename)
+    return int(leading_match.group(1)) if leading_match else None
 
 
 def _extract_status(frontmatter: dict[str, str], body: str) -> str:
@@ -239,7 +280,7 @@ def _extract_file_refs(body: str) -> list[str]:
         if ref:
             ref = ref.strip().replace("\\", "/")
             # Skip very short or URL-like refs
-            if len(ref) > 3 and "://" not in ref:
+            if len(ref) > 3 and "://" not in ref and not _ISO_TIMESTAMP_RE.fullmatch(ref):
                 refs.add(ref)
 
     for m in _MODULE_REF_RE.finditer(body):
@@ -276,9 +317,14 @@ def _parse_adr(project_root: Path, rel_path: str) -> dict | None:
 
     filename = os.path.basename(rel_path)
 
+    # Directory location and a numeric/date prefix only make this Markdown a
+    # candidate. Require an ADR token or an explicit status declaration before
+    # including it in the inventory.
+    if not _has_adr_marker(filename, frontmatter, body):
+        return None
+
     # Extract ADR number from filename
-    num_match = re.match(r"(?:adr[-_]?)?(\d+)", filename, re.IGNORECASE)
-    number = int(num_match.group(1)) if num_match else None
+    number = _extract_adr_number(filename)
 
     title = _extract_title(frontmatter, body, filename)
     status = _extract_status(frontmatter, body)
@@ -462,13 +508,17 @@ def adrs(ctx, filter_status, limit):
         parsed = [a for a in parsed if a["status"] == filter_lower]
 
     if not parsed:
+        if filter_status:
+            verdict = f"no ADRs with status '{filter_status}'"
+        else:
+            verdict = "no ADRs found"
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "adrs",
                         summary={
-                            "verdict": f"no ADRs with status '{filter_status}'",
+                            "verdict": verdict,
                             "adr_count": 0,
                             "linked_count": 0,
                             "filter_status": filter_status,
@@ -478,8 +528,11 @@ def adrs(ctx, filter_status, limit):
                 )
             )
         else:
-            click.echo(f"No ADRs found with status '{filter_status}'.")
-            click.echo(f"  Found {len(adr_files)} ADR file(s) total.")
+            if filter_status:
+                click.echo(f"No ADRs found with status '{filter_status}'.")
+                click.echo(f"  Found {len(adr_files)} ADR file candidate(s) total.")
+            else:
+                click.echo("VERDICT: No Architecture Decision Records found")
         return
 
     # Sort by number (if available), then by path

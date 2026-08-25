@@ -40,6 +40,21 @@ def docs_project(tmp_path):
     return proj
 
 
+@pytest.fixture
+def docs_project_with_nested_test_fixture(tmp_path):
+    """Project whose test fixture contains an exported-looking symbol."""
+    proj = tmp_path / "docs_nested_test_fixture"
+    (proj / "src").mkdir(parents=True)
+    (proj / "tests" / "fixtures" / "ops_nonroot_owner").mkdir(parents=True)
+    (proj / ".gitignore").write_text(".roam/\n")
+    (proj / "src" / "public_api.py").write_text("def real_public_symbol():\n    return 1\n")
+    (proj / "tests" / "fixtures" / "ops_nonroot_owner" / "sitecustomize.py").write_text("def stat():\n    return 2\n")
+
+    git_init(proj)
+    index_in_process(proj)
+    return proj
+
+
 class TestDocsCoverageSmoke:
     def test_exits_zero(self, cli_runner, docs_project, monkeypatch):
         monkeypatch.chdir(docs_project)
@@ -73,6 +88,24 @@ class TestDocsCoverageJSON:
         summary = data["summary"]
         # Should have coverage percentage
         assert "coverage" in summary or "coverage_pct" in summary or "documented" in summary
+
+    def test_nested_test_fixture_is_excluded_from_public_denominator(
+        self,
+        cli_runner,
+        docs_project_with_nested_test_fixture,
+        monkeypatch,
+    ):
+        project = docs_project_with_nested_test_fixture
+        monkeypatch.chdir(project)
+
+        result = invoke_cli(cli_runner, ["docs-coverage"], cwd=project, json_mode=True)
+        data = parse_json_output(result, "docs-coverage")
+
+        assert data["summary"]["public_symbols"] == 1
+        assert data["summary"]["missing_docs"] == 1
+        assert [(item["name"], item["file"]) for item in data["missing_docs"]] == [
+            ("real_public_symbol", "src/public_api.py")
+        ]
 
 
 class TestDocsCoverageText:
