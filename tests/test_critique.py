@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import textwrap
 
 import pytest
@@ -576,14 +577,85 @@ _DIFF_REFRESH_ONLY = textwrap.dedent(
     """
 )
 
+_PIPED_DIFF_OUTPUT_SNAPSHOT = (
+    "VERDICT: 0 concerns from 2 of 3 checks (1 skipped) (risk_level low)\n"
+    "\n"
+    "  changed files:   1\n"
+    "  changed symbols: 2\n"
+    "\n"
+    "NEXT STEPS:\n"
+    "  1. Run `roam diff` to confirm the structural delta of what you actually changed\n"
+)
+
 
 class TestCriticueCLI:
+    def test_piped_diff_conservation_snapshot(self, critique_project):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["critique"], input=_DIFF_REFRESH_ONLY)
+        assert result.exit_code in (0, 5), result.output
+        header = "REVIEWED: piped diff (base: caller-supplied; not computed by roam)\n"
+        assert result.output == header + _PIPED_DIFF_OUTPUT_SNAPSHOT
+
+    def test_empty_stdin_dirty_tree_reviews_working_diff(self, critique_project):
+        auth_path = critique_project / "src" / "auth.py"
+        auth_path.write_text(auth_path.read_text(encoding="utf-8") + "\n# working-tree edit\n", encoding="utf-8")
+        subprocess.run(["git", "add", "src/auth.py"], cwd=critique_project, check=True)
+        billing_path = critique_project / "src" / "billing.py"
+        billing_path.write_text(
+            billing_path.read_text(encoding="utf-8") + "\n# unstaged working-tree edit\n",
+            encoding="utf-8",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["critique"], input="")
+
+        assert result.exit_code in (0, 5), result.output
+        assert result.output.startswith("REVIEWED: working tree (base: HEAD)\n")
+        assert "changed files:   2" in result.output
+
+    def test_empty_stdin_clean_tree_reviews_last_commit(self, critique_project):
+        auth_path = critique_project / "src" / "auth.py"
+        auth_path.write_text(auth_path.read_text(encoding="utf-8") + "\n# committed edit\n", encoding="utf-8")
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        subprocess.run(["git", "add", "src/auth.py"], cwd=critique_project, check=True, env=env)
+        subprocess.run(
+            ["git", "commit", "-m", "second commit"],
+            cwd=critique_project,
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+
+        runner = CliRunner()
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+        result = runner.invoke(cli, ["critique"], input="")
+
+        assert result.exit_code in (0, 5), result.output
+        assert result.output.startswith(
+            "REVIEWED: last commit (base: HEAD~1; no working-tree changes; reviewing last commit)\n"
+        )
+        assert "changed files:   1" in result.output
+
+    def test_empty_stdin_clean_tree_without_prior_diff_is_typed_no_input(self, critique_project):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["critique"], input="")
+
+        assert result.exit_code == 2
+        assert "EMPTY_INPUT: nothing to review: working tree clean and no prior commit diff" in result.output
+
     def test_text_output_via_input_flag(self, critique_project, tmp_path):
         diff_path = tmp_path / "patch.diff"
         diff_path.write_text(_DIFF_REFRESH_ONLY, encoding="utf-8")
         runner = CliRunner()
         result = runner.invoke(cli, ["critique", "--input", str(diff_path)])
         assert result.exit_code in (0, 5), result.output
+        assert result.output.startswith("REVIEWED: input file (base: caller-supplied; not computed by roam)\n")
         assert "VERDICT:" in result.output
 
     def test_json_envelope(self, critique_project, tmp_path):
@@ -598,6 +670,11 @@ class TestCriticueCLI:
         assert "findings" in data
         assert "severity_breakdown" in data
         assert isinstance(data["summary"]["high_severity"], int)
+        assert data["review_source"] == "input_file"
+        assert data["review_base"] == "caller-supplied"
+        assert data["summary"]["review_disclosure"] == (
+            "REVIEWED: input file (base: caller-supplied; not computed by roam)"
+        )
 
     def test_empty_diff_usage_error(self, critique_project, tmp_path):
         empty = tmp_path / "empty.diff"
