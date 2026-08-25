@@ -1477,6 +1477,28 @@ class TestBroadExceptSwallow:
             hits = detect_broad_except_swallow(conn)
             assert hits == []
 
+    def test_skips_when_handler_records_error_in_result(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "svc.py": (
+                    "def collect(items):\n"
+                    "    result = {'errors': []}\n"
+                    "    for item in items:\n"
+                    "        try:\n"
+                    "            process(item)\n"
+                    "        except Exception as exc:\n"
+                    "            result['errors'].append(str(exc))\n"
+                    "    return result\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_broad_except_swallow
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_broad_except_swallow(conn) == []
+
 
 class TestUseEffectMissingDeps:
     """React useEffect without deps array."""
@@ -2010,6 +2032,58 @@ class TestDetectorsTier2:
             hits = detect_loop_invariant_call(conn)
             assert len(hits) == 0
 
+    @pytest.mark.parametrize("clock", ["time.monotonic", "time.time"])
+    def test_loop_invariant_suppresses_clock_reads(self, project_factory, monkeypatch, clock):
+        proj = project_factory(
+            {
+                "work.py": (
+                    "import time\n"
+                    "def collect(items):\n"
+                    "    stamps = []\n"
+                    "    for item in items:\n"
+                    f"        stamps.append({clock}())\n"
+                    "    return stamps\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_loop_invariant_call
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_loop_invariant_call(conn) == []
+
+    def test_exception_constructor_on_raise_path_is_not_hoistable(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "work.py": (
+                    "def require_all(items):\n"
+                    "    for item in items:\n"
+                    "        if item is None:\n"
+                    "            raise ValueError('missing item')\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_loop_invariant_call
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_loop_invariant_call(conn) == []
+
+    def test_real_hoistable_call_remains_positive(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "work.py": "def work(items):\n    for item in items:\n        cfg = load_config()\n        use(item, cfg)\n"
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_loop_invariant_call
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            assert detect_loop_invariant_call(conn)
+
     def test_bounded_loop_lowers_confidence(self, project_factory, monkeypatch):
         """Nested loops over range(3) should get confidence lowered."""
         proj = project_factory(
@@ -2033,6 +2107,47 @@ class TestDetectorsTier2:
             for f in findings:
                 if f["symbol_name"] == "check_grid" or "check_grid" in f.get("symbol_name", ""):
                     assert f["confidence"] != "high", f"Bounded loop finding should not be high confidence: {f}"
+
+
+def test_append_then_join_is_not_loop_concat(project_factory, monkeypatch):
+    proj = project_factory(
+        {
+            "builder.py": (
+                "def render(items):\n"
+                "    parts = []\n"
+                "    for item in items:\n"
+                "        parts.append(str(item))\n"
+                "    return ''.join(parts)\n"
+            ),
+        }
+    )
+    monkeypatch.chdir(proj)
+    from roam.catalog.detectors import detect_string_concat_loop
+    from roam.db.connection import open_db
+
+    with open_db(readonly=True, project_root=proj) as conn:
+        assert detect_string_concat_loop(conn) == []
+
+
+def test_deadline_bounded_sleep_loop_is_not_busy_wait(project_factory, monkeypatch):
+    proj = project_factory(
+        {
+            "waiter.py": (
+                "import time\n"
+                "def consume(flag, timeout):\n"
+                "    deadline = time.monotonic() + timeout\n"
+                "    while not flag.value and time.monotonic() < deadline:\n"
+                "        time.sleep(0.01)\n"
+                "    return flag.value\n"
+            ),
+        }
+    )
+    monkeypatch.chdir(proj)
+    from roam.catalog.detectors import detect_busy_wait
+    from roam.db.connection import open_db
+
+    with open_db(readonly=True, project_root=proj) as conn:
+        assert detect_busy_wait(conn) == []
 
 
 # ============================================================================

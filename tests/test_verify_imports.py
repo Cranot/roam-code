@@ -9,6 +9,46 @@ import click
 import pytest
 from click.testing import CliRunner
 
+
+def test_windows_stdlib_table_is_platform_independent():
+    from roam.commands.cmd_verify_imports import _is_stdlib_module
+
+    assert _is_stdlib_module("msvcrt")
+    assert _is_stdlib_module("winreg")
+    assert _is_stdlib_module("_winapi")
+
+
+def test_nonsense_name_is_not_promoted_to_stdlib():
+    from roam.commands.cmd_verify_imports import _is_stdlib_module
+
+    assert not _is_stdlib_module("definitely_missing_roam_precision_pkg")
+
+
+def test_optional_extra_and_uninstalled_self_import_are_optional_unresolved(project_factory, monkeypatch):
+    proj = project_factory(
+        {
+            "app.py": "import optional_accelerator\nimport demo_pkg\n",
+            "pyproject.toml": (
+                "[project]\n"
+                'name = "demo-pkg"\n'
+                'version = "1.0"\n'
+                "[project.optional-dependencies]\n"
+                'fast = ["optional-accelerator>=1"]\n'
+            ),
+        }
+    )
+    monkeypatch.chdir(proj)
+    from roam.commands.cmd_verify_imports import verify_imports_for_connection
+    from roam.db.connection import open_db
+
+    with open_db(readonly=True, project_root=proj) as conn:
+        result = verify_imports_for_connection(conn, str(proj))
+    statuses = {row["name"]: row["status"] for row in result["imports"]}
+    assert statuses["optional_accelerator"] == "optional-unresolved"
+    assert statuses["demo_pkg"] == "optional-unresolved"
+    assert result["unresolved"] == 0
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

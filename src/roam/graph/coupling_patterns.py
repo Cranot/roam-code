@@ -107,6 +107,20 @@ def classify_pair(path_a: str, path_b: str) -> str:
     """
     a = path_a.replace("\\", "/")
     b = path_b.replace("\\", "/")
+
+    def _test_subject(path: str) -> str | None:
+        base = os.path.splitext(os.path.basename(path))[0]
+        parts = path.lower().split("/")
+        if "tests" in parts or "test" in parts or base.startswith("test_"):
+            return base[5:] if base.startswith("test_") else base.removesuffix("_test")
+        return None
+
+    test_a, test_b = _test_subject(a), _test_subject(b)
+    source_a = os.path.splitext(os.path.basename(a))[0]
+    source_b = os.path.splitext(os.path.basename(b))[0]
+    if (test_a is not None and test_a == source_b) or (test_b is not None and test_b == source_a):
+        return "expected_test_pair"
+
     dir_a, base_a = os.path.dirname(a), os.path.basename(a)
     dir_b, base_b = os.path.dirname(b), os.path.basename(b)
     if dir_a != dir_b:

@@ -14,8 +14,10 @@ plan + W1224-audit memo.
 
 from __future__ import annotations
 
+import ast
 import sqlite3
 from collections import Counter, deque
+from pathlib import Path
 
 import click
 
@@ -225,6 +227,34 @@ def _build_tested_set(conn):
         test_file_id_list,
     ):
         tested.add(r["id"])
+
+    # The index may retain only the module import edge for a direct assertion
+    # such as ``assert helpers._normalise(x) == y``. Parse test calls once and
+    # map their qualified attribute names back to production symbols.
+    production_by_name: dict[str, set[int]] = {}
+    for row in conn.execute("SELECT s.id, s.name FROM symbols s JOIN files f ON s.file_id = f.id"):
+        production_by_name.setdefault(row["name"], set()).add(row["id"])
+    paths_by_id = {row["id"]: row["path"] for row in test_file_rows}
+    for file_id in test_file_ids:
+        try:
+            tree = ast.parse(Path(paths_by_id[file_id]).read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        aliases = {
+            alias.asname or alias.name.split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            func = call.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            root = func.value
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id in aliases:
+                tested.update(production_by_name.get(func.attr, ()))
 
     return tested
 

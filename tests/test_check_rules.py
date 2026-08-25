@@ -246,6 +246,38 @@ def test_no_circular_imports_none_graph():
     assert _check_no_circular_imports(None, None, 0) == []
 
 
+def test_no_circular_imports_ignores_non_actionable_constant_cycle(tmp_project):
+    from roam.rules.builtin import _check_no_circular_imports
+
+    conn = _make_db(tmp_project)
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'a.py')")
+    conn.execute("INSERT INTO files (id, path) VALUES (2, 'b.py')")
+    conn.execute("INSERT INTO symbols (id, file_id, name, kind) VALUES (1, 1, 'run', 'function')")
+    conn.execute("INSERT INTO symbols (id, file_id, name, kind) VALUES (2, 2, 'MODE', 'constant')")
+    conn.commit()
+    graph = nx.DiGraph()
+    graph.add_node(1, name="run", file_path="a.py", kind="function")
+    graph.add_node(2, name="MODE", file_path="b.py", kind="constant")
+    graph.add_edges_from([(1, 2), (2, 1)])
+    assert _check_no_circular_imports(conn, graph, 0) == []
+
+
+def test_no_circular_imports_keeps_actionable_function_cycle(tmp_project):
+    from roam.rules.builtin import _check_no_circular_imports
+
+    conn = _make_db(tmp_project)
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'a.py')")
+    conn.execute("INSERT INTO files (id, path) VALUES (2, 'b.py')")
+    conn.execute("INSERT INTO symbols (id, file_id, name, kind) VALUES (1, 1, 'run_a', 'function')")
+    conn.execute("INSERT INTO symbols (id, file_id, name, kind) VALUES (2, 2, 'run_b', 'function')")
+    conn.commit()
+    graph = nx.DiGraph()
+    graph.add_node(1, name="run_a", file_path="a.py", kind="function")
+    graph.add_node(2, name="run_b", file_path="b.py", kind="function")
+    graph.add_edges_from([(1, 2), (2, 1)])
+    assert _check_no_circular_imports(conn, graph, 0)
+
+
 # ---------------------------------------------------------------------------
 # Rule 2: max-fan-out
 # ---------------------------------------------------------------------------

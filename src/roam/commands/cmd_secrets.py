@@ -640,6 +640,8 @@ def _assignment_value_is_secret_candidate(pat: dict, match: re.Match[str]) -> bo
     value = _quoted_assignment_value(match)
     if value is None:
         return True
+    if re.fullmatch(r"[A-Z_]+", value):
+        return False
     if _PATH_SHAPED_VALUE_RE.fullmatch(value) is not None:
         return False
     if (
@@ -664,6 +666,8 @@ def _match_pattern_to_finding(
 ) -> dict | None:
     """Try one pattern against one line. Returns a finding dict or None."""
     if severity_rank(pat["severity"]) < min_rank:
+        return None
+    if documentation_context and re.search(r"\{[A-Za-z_]\w*\}", line):
         return None
     for match in pat["regex"].finditer(line):
         if _is_pattern_definition_candidate(match.group(), line, surrounding_context):

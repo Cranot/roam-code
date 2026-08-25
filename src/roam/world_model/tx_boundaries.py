@@ -68,6 +68,7 @@ from pathlib import Path
 from typing import Optional
 
 from roam.db.connection import find_project_root
+from roam.index.relations import _mask_strings_and_comments
 from roam.observability import log_swallowed
 from roam.world_model.side_effects import (
     SideEffectClassification,
@@ -148,6 +149,16 @@ _BEGIN_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     # Explicit begin calls
     (re.compile(r"\b\w+\.begin_transaction\s*\("), "begin_transaction()"),
     (re.compile(r"\b\w+\.begin_nested\s*\("), "begin_nested()"),
+    # Project helpers often centralise the explicit BEGIN operation.  A
+    # call whose function name says ``begin`` is a transaction opener even
+    # when the SQL lives in that helper rather than this consumer body.
+    (
+        re.compile(
+            r"(?<!def\s)\b(?:[A-Za-z_]\w*\.)?(?:begin\w*|[A-Za-z_]\w*begin\w*)\s*\(",
+            re.IGNORECASE,
+        ),
+        "begin helper call",
+    ),
     # Plain `obj.begin()` — tightened to known transaction-y receivers
     # (db / conn / connection / engine / session / trans / tx / cnx)
     # to avoid matching `vector::begin()` / iterator `.begin()` in C++,
@@ -339,18 +350,24 @@ _BODY_BEGIN_PATTERNS: tuple[tuple[re.Pattern, str], ...] = tuple(
 # ---------------------------------------------------------------------------
 
 
-def _first_match(patterns: tuple[tuple[re.Pattern, str], ...], line: str) -> Optional[str]:
+def _first_match(
+    patterns: tuple[tuple[re.Pattern, str], ...],
+    line: str,
+    code_line: str | None = None,
+) -> Optional[str]:
     """Return the label of the first pattern matching ``line``, else None."""
     for pat, label in patterns:
-        if pat.search(line):
+        match = pat.search(line)
+        if match and (code_line is None or any(not char.isspace() for char in code_line[match.start() : match.end()])):
             return label
     return None
 
 
-def _line_mutates(line: str) -> bool:
+def _line_mutates(line: str, code_line: str | None = None) -> bool:
     """True if ``line`` matches any mutation pattern (one hit is enough)."""
     for pat in _MUTATION_LINE_PATTERNS:
-        if pat.search(line):
+        match = pat.search(line)
+        if match and (code_line is None or any(not char.isspace() for char in code_line[match.start() : match.end()])):
             return True
     return False
 
@@ -411,7 +428,8 @@ def _scan_body(body_lines: list[str], body_line_start: int) -> dict:
     # decorator, which the caller hands us already-included.
     for offset, raw_line in enumerate(body_lines):
         line = _strip_comment(raw_line).rstrip("\n")
-        if not line.strip():
+        code_line = _mask_strings_and_comments(raw_line).rstrip("\n")
+        if not code_line.strip():
             continue
         line_no = body_line_start + offset
         indent = _line_indent(raw_line)
@@ -426,39 +444,39 @@ def _scan_body(body_lines: list[str], body_line_start: int) -> dict:
         # _LINE_MARKER_TOKENS is a strict superset of every pattern's
         # literal anchors (see its definition). The tx_stack dedent-pop
         # above already ran, so depth tracking stays correct.
-        if not _line_has_marker_token(line):
+        if not _line_has_marker_token(code_line):
             continue
 
         # Decorator on the symbol itself. Treat it as a non-stack tx scope
         # (depth always 1 inside): push a sentinel indent so the rest of
         # the body counts as inside.
-        if _ATOMIC_DECORATOR_RE.search(line):
+        if _ATOMIC_DECORATOR_RE.search(code_line):
             decorator_atomic = True
             begin_markers.append({"line": line_no, "pattern": _ATOMIC_LABEL})
             tx_stack.append((-1, _ATOMIC_LABEL))
 
         # Begin markers
-        begin_hit = _first_match(_BODY_BEGIN_PATTERNS, line)
+        begin_hit = _first_match(_BODY_BEGIN_PATTERNS, line, code_line)
         if begin_hit:
             begin_markers.append({"line": line_no, "pattern": begin_hit})
-            tx_stack.append((indent, begin_hit))
+            tx_stack.append((indent if begin_hit.startswith("with ") else -1, begin_hit))
 
         # Commit markers — only one per line, prefer the most-specific
-        commit_hit = _first_match(_COMMIT_PATTERNS, line)
+        commit_hit = _first_match(_COMMIT_PATTERNS, line, code_line)
         if commit_hit:
             commit_markers.append({"line": line_no, "pattern": commit_hit})
             if tx_stack:
                 tx_stack.pop()
 
         # Rollback markers
-        rollback_hit = _first_match(_ROLLBACK_PATTERNS, line)
+        rollback_hit = _first_match(_ROLLBACK_PATTERNS, line, code_line)
         if rollback_hit:
             rollback_markers.append({"line": line_no, "pattern": rollback_hit})
             if tx_stack:
                 tx_stack.pop()
 
         # Mutation markers — one mutation per line max
-        if _line_mutates(line):
+        if _line_mutates(line, code_line):
             if tx_stack:
                 mutations_inside += 1
             else:
@@ -483,11 +501,12 @@ def _classify_one(
     """Classify a single symbol from its side-effects record + source body."""
     kinds = set(se.kinds or [])
     has_mutation_kind = bool(kinds & {"io_write", "mutation"})
+    code_text = _mask_strings_and_comments(body_text) if body_text else ""
 
     # Fast path: pure or read-only with no body-level transaction markers ⇒
     # non_transactional. Avoids the per-line scan on the (large) majority
     # of pure helpers.
-    if kinds <= {"none", "io_read"} and (not body_text or not _PRE_FILTER_RE.search(body_text)):
+    if kinds <= {"none", "io_read"} and (not code_text or not _PRE_FILTER_RE.search(code_text)):
         return TxBoundary(
             symbol=se.symbol,
             file=se.file,
@@ -502,7 +521,7 @@ def _classify_one(
 
     # Cheap exit: mutation-bearing symbols without any pre-filter hit in
     # the body (resolved from call-edges only) ⇒ unsafe_mutation.
-    if not body_text or not _PRE_FILTER_RE.search(body_text):
+    if not code_text or not _PRE_FILTER_RE.search(code_text):
         cls = "non_transactional" if not has_mutation_kind else "unsafe_mutation"
         return TxBoundary(
             symbol=se.symbol,
@@ -533,6 +552,26 @@ def _classify_one(
 
     n_begin = len(begin_markers)
     n_close = len(commit_markers) + len(rollback_markers)
+
+    # Python DB-API connections (including sqlite3) and common ORM sessions
+    # begin implicitly on first DML. A method-level ``conn.commit()`` or
+    # ``session.commit()`` therefore does not require a textual BEGIN in the
+    # same function. Raw SQL ``COMMIT`` remains actionable: it explicitly
+    # claims a SQL transaction that this body never opened.
+    implicit_commit = (
+        n_close
+        and not n_begin
+        and commit_markers
+        and not rollback_markers
+        and all(marker["pattern"] != "execute('COMMIT')" for marker in commit_markers)
+        and re.search(r"\b(?:conn|connection|cnx)\.commit\s*\(", code_text)
+    )
+    if implicit_commit:
+        begin_markers.append({"line": commit_markers[0]["line"], "pattern": "implicit DB-API transaction"})
+        n_begin = 1
+        if has_mutation_kind:
+            mutations_inside += mutations_outside or 1
+            mutations_outside = 0
 
     # The side-effects classifier may detect a mutation that our cheap
     # per-line scan missed (e.g. ``.save()`` via a call edge the

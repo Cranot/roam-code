@@ -25,7 +25,22 @@ Regression coverage:
 
 from __future__ import annotations
 
+import ast
+
 from roam.output.formatter import json_envelope
+from tests._helpers.repo_root import repo_root
+
+
+def test_formatter_does_not_import_cli_for_deprecation_notice():
+    tree = ast.parse((repo_root() / "src/roam/output/formatter.py").read_text(encoding="utf-8"))
+    imports = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "roam.cli"
+        for alias in node.names
+    }
+    assert "_get_active_deprecation_notice" not in imports
+
 
 # ---------------------------------------------------------------------------
 # Core humanizer behavior

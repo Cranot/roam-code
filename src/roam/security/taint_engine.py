@@ -159,8 +159,8 @@ _TEXT_ANCHOR_REACH_UNVERIFIED_BASIS = "text-anchor call reachability, dataflow u
 
 
 def _unverified_severity(severity: str) -> str:
-    """Demote a rule's error severity when no value flow was computed."""
-    return "warning" if severity == "error" else severity
+    """Report observations without computed value flow as informational."""
+    return "note"
 
 
 # ---------------------------------------------------------------------------
@@ -1262,6 +1262,12 @@ def _sink_proofs_in_expr(
         callee = _python_qualified_name(node.func)
         if not any(_qualified_name_matches(callee, pattern, source=False) for pattern in sinks):
             continue
+        # A fixed argv vector executed without a shell is data, not an
+        # injectable command surface.  In particular, a tainted ``env=``
+        # mapping changes the child's environment but cannot alter which
+        # executable/arguments Python passes to execve().
+        if _is_static_subprocess_argv(node, callee):
+            continue
         origins: set[int] = set()
         for arg in node.args:
             origins.update(_expr_origins(arg, state, sources))
@@ -1270,6 +1276,34 @@ def _sink_proofs_in_expr(
         sink_line = int(getattr(node, "lineno", 0) or 0)
         proofs.update((source_line, sink_line) for source_line in origins if source_line and sink_line)
     return proofs
+
+
+def _is_static_subprocess_argv(call: ast.Call, callee: str) -> bool:
+    if callee not in {
+        "subprocess.run",
+        "subprocess.Popen",
+        "subprocess.call",
+        "subprocess.check_call",
+        "subprocess.check_output",
+    }:
+        return False
+    command = (
+        call.args[0]
+        if call.args
+        else next(
+            (kw.value for kw in call.keywords if kw.arg == "args"),
+            None,
+        )
+    )
+    if not isinstance(command, (ast.List, ast.Tuple)):
+        return False
+    if not all(isinstance(item, ast.Constant) and isinstance(item.value, (str, bytes)) for item in command.elts):
+        return False
+    shell = next((kw.value for kw in call.keywords if kw.arg == "shell"), None)
+    if shell is not None and not (isinstance(shell, ast.Constant) and shell.value is False):
+        return False
+    executable = next((kw.value for kw in call.keywords if kw.arg == "executable"), None)
+    return executable is None or (isinstance(executable, ast.Constant) and isinstance(executable.value, (str, bytes)))
 
 
 def _assign_origin(state: _OriginState, target: ast.AST, origins: set[int]) -> None:

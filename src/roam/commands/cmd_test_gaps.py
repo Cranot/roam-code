@@ -14,7 +14,7 @@ W1224-audit memo.
 from __future__ import annotations
 
 import os
-from collections import deque
+from collections import defaultdict
 
 import click
 
@@ -46,39 +46,37 @@ def _bfs_to_test_files(conn, start_ids):
     """
     # BFS state
     visited = {}  # symbol_id -> (hops, set_of_origin_start_ids)
-    queue = deque()  # (symbol_id, hops, origin_start_id)
-
+    frontier: dict[int, set[int]] = {}
     for sid in start_ids:
         visited[sid] = (0, {sid})
-        queue.append((sid, 0, sid))
+        frontier[sid] = {sid}
 
-    while queue:
-        current_id, hops, origin = queue.popleft()
-        if hops >= _MAX_HOPS:
-            continue
-
-        callers = conn.execute(
-            "SELECT e.source_id, s.name, s.file_id "
-            "FROM edges e "
-            "JOIN symbols s ON e.source_id = s.id "
-            "WHERE e.target_id = ?",
-            (current_id,),
-        ).fetchall()
-
+    for hops in range(_MAX_HOPS):
+        if not frontier:
+            break
+        callers = batched_in(
+            conn,
+            "SELECT e.target_id, e.source_id, s.name, s.file_id "
+            "FROM edges e JOIN symbols s ON e.source_id = s.id "
+            "WHERE e.target_id IN ({ph})",
+            list(frontier),
+        )
+        next_frontier: dict[int, set[int]] = defaultdict(set)
         for row in callers:
+            origins_from_target = frontier.get(row["target_id"], set())
             caller_id = row["source_id"]
             new_hops = hops + 1
-
             if caller_id not in visited:
-                visited[caller_id] = (new_hops, {origin})
-                queue.append((caller_id, new_hops, origin))
+                visited[caller_id] = (new_hops, set(origins_from_target))
+                next_frontier[caller_id].update(origins_from_target)
             else:
                 old_hops, origins = visited[caller_id]
-                if origin not in origins:
-                    origins.add(origin)
-                    # Re-enqueue only if we haven't explored deeper from here
+                unseen_origins = origins_from_target - origins
+                if unseen_origins:
+                    origins.update(unseen_origins)
                     if new_hops <= old_hops:
-                        queue.append((caller_id, new_hops, origin))
+                        next_frontier[caller_id].update(unseen_origins)
+        frontier = dict(next_frontier)
 
     return visited
 
@@ -141,12 +139,18 @@ def _detect_stale_tests(conn, symbol_ids, coverage_map):
     """
     stale = []
 
+    source_rows = batched_in(
+        conn,
+        "SELECT s.id, f.path, f.mtime FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+        list(symbol_ids),
+    )
+    sources = {row["id"]: row for row in source_rows}
+    test_paths = sorted({path for paths in coverage_map.values() for path in paths})
+    test_rows = batched_in(conn, "SELECT path, mtime FROM files WHERE path IN ({ph})", test_paths)
+    test_mtimes = {row["path"]: row["mtime"] for row in test_rows}
+
     for sid, test_files in coverage_map.items():
-        # Get the source file mtime for this symbol
-        row = conn.execute(
-            "SELECT f.path, f.mtime FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
-            (sid,),
-        ).fetchone()
+        row = sources.get(sid)
         if not row or row["mtime"] is None:
             continue
 
@@ -154,16 +158,15 @@ def _detect_stale_tests(conn, symbol_ids, coverage_map):
         source_path = row["path"]
 
         for tf in test_files:
-            tf_row = conn.execute("SELECT mtime FROM files WHERE path = ?", (tf,)).fetchone()
-            if tf_row and tf_row["mtime"] is not None:
-                if source_mtime > tf_row["mtime"]:
-                    stale.append(
-                        {
-                            "symbol_id": sid,
-                            "source_file": source_path,
-                            "test_file": tf,
-                        }
-                    )
+            test_mtime = test_mtimes.get(tf)
+            if test_mtime is not None and source_mtime > test_mtime:
+                stale.append(
+                    {
+                        "symbol_id": sid,
+                        "source_file": source_path,
+                        "test_file": tf,
+                    }
+                )
 
     return stale
 

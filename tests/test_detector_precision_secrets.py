@@ -99,3 +99,24 @@ def test_low_entropy_tags_are_suppressed_and_mixed_entropy_token_fires(tmp_path)
 
     findings = _scan_fixture(tmp_path, "tp_mixed_entropy_token.py")
     assert any(finding["pattern_name"] == "Generic Secret Assignment" for finding in findings)
+
+
+def test_all_caps_secret_name_value_is_not_a_secret(tmp_path):
+    target = tmp_path / "names.py"
+    target.write_text('SECRET_NAME = "GITHUB_TOKEN"\n', encoding="utf-8")
+    assert scan_file(str(target)) == []
+
+
+def test_template_placeholder_in_comment_and_docstring_is_not_a_secret(tmp_path):
+    target = tmp_path / "examples.py"
+    target.write_text(
+        '"""Example: f"Authorization: Bearer {API_TOKEN}"."""\n# example = f"sk-{PROJECT_KEY}"\n',
+        encoding="utf-8",
+    )
+    assert scan_file(str(target)) == []
+
+
+def test_real_secret_value_remains_detectable(tmp_path):
+    target = tmp_path / "real.py"
+    target.write_text('API_KEY = "sk-proj-abcdefghijklmnopqrstuvwx"\n', encoding="utf-8")
+    assert scan_file(str(target))

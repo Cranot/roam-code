@@ -70,6 +70,8 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.index.relations import _mask_strings_and_comments
+from roam.index.test_conventions import is_test_file
 from roam.output._severity import severity_rank as _severity_rank
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -359,7 +361,19 @@ _EXPLICIT_BOUND_RE = re.compile(r"\brange\s*\(|\[\s*:\s*\d+\s*\]|\bMAX_[A-Z_]+\b
 
 def _is_llm_file(text: str) -> bool:
     """Cheap up-front filter — does this file import any LLM SDK?"""
-    return _LLM_IMPORT_RE.search(text) is not None
+    return next(_iter_code_matches(_LLM_IMPORT_RE, text), None) is not None
+
+
+def _iter_code_matches(pattern: re.Pattern, text: str):
+    """Yield raw-source regex matches whose first token is executable code."""
+    masked = _mask_strings_and_comments(text)
+    for match in pattern.finditer(text):
+        if any(not char.isspace() for char in masked[match.start() : match.end()]):
+            yield match
+
+
+def _first_code_match(pattern: re.Pattern, text: str):
+    return next(_iter_code_matches(pattern, text), None)
 
 
 def _line_number(text: str, offset: int) -> int:
@@ -465,7 +479,7 @@ def _function_blocks(text: str) -> list[tuple[int, int, str]]:
 def _detect_no_model_pinning(file_path: str, text: str) -> list[dict]:
     """Flag every ``model="<moving-alias>"`` literal."""
     out: list[dict] = []
-    for m in _UNPINNED_MODEL_RE.finditer(text):
+    for m in _iter_code_matches(_UNPINNED_MODEL_RE, text):
         line = _line_number(text, m.start())
         snippet = m.group(0)
         out.append(
@@ -487,7 +501,7 @@ def _detect_no_model_pinning(file_path: str, text: str) -> list[dict]:
 def _detect_missing_max_tokens(file_path: str, text: str) -> list[dict]:
     """Flag every completion call whose window lacks a max_tokens-style kwarg."""
     out: list[dict] = []
-    for m in _COMPLETION_CALL_RE.finditer(text):
+    for m in _iter_code_matches(_COMPLETION_CALL_RE, text):
         # m.end() - 1 is the opening paren — _call_window scans from there.
         open_paren_offset = m.end() - 1
         window, _ = _call_window(text, open_paren_offset)
@@ -512,7 +526,7 @@ def _detect_missing_max_tokens(file_path: str, text: str) -> list[dict]:
 def _detect_temperature_not_set(file_path: str, text: str) -> list[dict]:
     """Flag every completion call whose window lacks ``temperature=``."""
     out: list[dict] = []
-    for m in _COMPLETION_CALL_RE.finditer(text):
+    for m in _iter_code_matches(_COMPLETION_CALL_RE, text):
         open_paren_offset = m.end() - 1
         window, _ = _call_window(text, open_paren_offset)
         if _TEMPERATURE_KWARG_RE.search(window):
@@ -543,7 +557,7 @@ def _detect_no_json_validation(file_path: str, text: str) -> list[dict]:
     """
     out: list[dict] = []
     lines = text.split("\n")
-    for m in _JSON_LOADS_RE.finditer(text):
+    for m in _iter_code_matches(_JSON_LOADS_RE, text):
         line = _line_number(text, m.start())
         # Walk back up to 5 lines looking for a ``try:`` at the same or
         # lower indent than the json.loads call.
@@ -597,14 +611,14 @@ def _detect_pi_concat(file_path: str, text: str) -> list[dict]:
     Heuristic tier (no AST taint pass; W415b will promote).
     """
     out: list[dict] = []
-    for start, end, header in _function_blocks(text):
+    for start, end, header in _function_blocks(_mask_strings_and_comments(text)):
         body = text[start:end]
-        if not _COMPLETION_CALL_RE.search(body):
+        if _first_code_match(_COMPLETION_CALL_RE, body) is None:
             continue
-        user_match = _USER_INPUT_NAME_RE.search(body)
+        user_match = _first_code_match(_USER_INPUT_NAME_RE, body)
         if user_match is None:
             continue
-        concat_match = _FSTRING_OR_CONCAT_RE.search(body)
+        concat_match = _first_code_match(_FSTRING_OR_CONCAT_RE, body)
         if concat_match is None:
             continue
         if _PROMPT_KEYWORD_RE.search(body) is None:
@@ -644,7 +658,7 @@ def _detect_missing_timeout(file_path: str, text: str) -> list[dict]:
     timeout-bearing kwargs (rare).
     """
     out: list[dict] = []
-    for m in _CLIENT_CONSTRUCT_RE.finditer(text):
+    for m in _iter_code_matches(_CLIENT_CONSTRUCT_RE, text):
         open_paren_offset = m.end() - 1
         window, _ = _call_window(text, open_paren_offset)
         if _TIMEOUT_KWARG_RE.search(window):
@@ -674,7 +688,7 @@ def _detect_missing_max_retries(file_path: str, text: str) -> list[dict]:
     than implicit.
     """
     out: list[dict] = []
-    for m in _CLIENT_CONSTRUCT_RE.finditer(text):
+    for m in _iter_code_matches(_CLIENT_CONSTRUCT_RE, text):
         open_paren_offset = m.end() - 1
         window, _ = _call_window(text, open_paren_offset)
         if _MAX_RETRIES_KWARG_RE.search(window):
@@ -706,7 +720,7 @@ def _detect_no_system_message(file_path: str, text: str) -> list[dict]:
     documented in module docstring.
     """
     out: list[dict] = []
-    for m in _CHAT_COMPLETION_CALL_RE.finditer(text):
+    for m in _iter_code_matches(_CHAT_COMPLETION_CALL_RE, text):
         open_paren_offset = m.end() - 1
         window, _ = _call_window(text, open_paren_offset)
         # Only flag when ``messages=`` literally appears in the window —
@@ -750,9 +764,9 @@ def _detect_no_retry_backoff(file_path: str, text: str) -> list[dict]:
     call we don't bother — re1 only matters when there is an actual
     LLM API surface to retry.
     """
-    if _RETRY_INDICATOR_RE.search(text):
+    if _first_code_match(_RETRY_INDICATOR_RE, text) is not None:
         return []
-    call_match = _COMPLETION_CALL_RE.search(text)
+    call_match = _first_code_match(_COMPLETION_CALL_RE, text)
     if call_match is None:
         return []
     line = _line_number(text, call_match.start())
@@ -797,7 +811,7 @@ def _detect_call_in_loop(file_path: str, text: str) -> list[dict]:
         line_offsets.append(cur)
         cur += len(ln) + 1
 
-    for loop_m in _LOOP_HEADER_RE.finditer(text):
+    for loop_m in _iter_code_matches(_LOOP_HEADER_RE, text):
         loop_start = loop_m.start()
         loop_line = _line_number(text, loop_start)
         # Determine the loop body span: from the line after the header
@@ -809,7 +823,7 @@ def _detect_call_in_loop(file_path: str, text: str) -> list[dict]:
         window = text[loop_start:end_offset]
         if _EXPLICIT_BOUND_RE.search(window):
             continue
-        for call_m in _COMPLETION_CALL_RE.finditer(window):
+        for call_m in _iter_code_matches(_COMPLETION_CALL_RE, window):
             absolute_offset = loop_start + call_m.start()
             call_line = _line_number(text, absolute_offset)
             if call_line in seen_call_lines:
@@ -931,6 +945,8 @@ def _iter_indexed_files(conn, project_root: Path) -> list[tuple[str, Path]]:
     out: list[tuple[str, Path]] = []
     for r in rows:
         rel = r["path"] if isinstance(r, sqlite3.Row) else r[0]
+        if is_test_file(rel):
+            continue
         full = project_root / rel
         if not full.exists():
             continue

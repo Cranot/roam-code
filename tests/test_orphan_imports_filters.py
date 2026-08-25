@@ -22,6 +22,7 @@ behaviour.
 
 from __future__ import annotations
 
+import json
 import os
 import textwrap
 from pathlib import Path
@@ -481,6 +482,10 @@ def test_w161_declared_optional_dependency_is_not_orphan(tmp_path):
         runner = CliRunner()
         count = _orphan_count(proj, runner)
         assert count == 0, f"expected 0 orphans (optional-deps); got {count}"
+        result = runner.invoke(cli, ["--json", "orphan-imports"])
+        envelope = json.loads(result.output)
+        assert envelope["summary"]["optional_unresolved_count"] == 1
+        assert envelope["optional_unresolved"][0]["kind"] == "optional_unresolved"
     finally:
         os.chdir(old_cwd)
 
@@ -584,6 +589,49 @@ def test_w161_bare_sibling_import_in_tests_resolves(tmp_path):
         runner = CliRunner()
         count = _orphan_count(proj, runner)
         assert count == 0, f"expected 0 orphans (bare sibling import in tests); got {count}"
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_platform_conditional_windows_stdlib_is_not_orphan(tmp_path):
+    """Windows-only stdlib names stay known when scanned on Linux/macOS."""
+    proj = _make_project(
+        tmp_path,
+        {
+            "pkg/platform.py": ("import sys\nif sys.platform == 'win32':\n    import msvcrt\n    import winreg\n"),
+        },
+    )
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        assert _orphan_count(proj, runner) == 0
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_dev_script_bare_sibling_import_resolves(tmp_path):
+    """A directly executed script gets its own directory on ``sys.path``."""
+    proj = _make_project(tmp_path, {"pkg/__init__.py": ""})
+    (proj / "dev").mkdir()
+    (proj / "dev" / "shared.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (proj / "dev" / "release.py").write_text("from shared import VALUE\n", encoding="utf-8")
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        assert _orphan_count(proj, runner) == 0
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_genuine_missing_import_remains_an_orphan(tmp_path):
+    proj = _make_project(tmp_path, {"pkg/broken.py": "import definitely_missing_roam_precision_pkg\n"})
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        runner = CliRunner()
+        assert _orphan_count(proj, runner) == 1
     finally:
         os.chdir(old_cwd)
 

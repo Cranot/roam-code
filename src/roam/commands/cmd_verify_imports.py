@@ -35,7 +35,9 @@ from roam.output.formatter import format_table, json_envelope, to_json
 
 # sys.stdlib_module_names ships in Python 3.10+; pyproject.toml pins
 # requires-python = ">=3.10", so this attribute is always present.
-_PYTHON_STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names)
+_PYTHON_STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names) | frozenset(
+    {"_msi", "_overlapped", "_winapi", "msvcrt", "winreg", "winsound"}
+)
 
 
 def _is_stdlib_module(name: str) -> bool:
@@ -222,6 +224,25 @@ def _declared_dependency_modules(project_root: str) -> frozenset[str]:
     """
     reqs = _pyproject_requirements(project_root) + _requirements_txt_requirements(project_root)
     return frozenset(name.lower() for req in reqs if (name := _import_name_for_requirement(req)))
+
+
+def _optional_or_self_dependency_modules(project_root: str) -> frozenset[str]:
+    """Names that are legitimate for this package but may be uninstalled."""
+    pyproject = os.path.join(project_root, "pyproject.toml")
+    if not os.path.isfile(pyproject):
+        return frozenset()
+    try:
+        project = _load_toml(pyproject).get("project") or {}
+    except Exception as exc:  # noqa: BLE001 - malformed metadata is disclosed elsewhere
+        from roam.observability import log_swallowed
+
+        log_swallowed("verify_imports.optional_deps.pyproject", exc)
+        return frozenset()
+    requirements = [req for group in (project.get("optional-dependencies") or {}).values() for req in (group or [])]
+    names = {name.lower() for req in requirements if (name := _import_name_for_requirement(str(req)))}
+    if project.get("name"):
+        names.add(str(project["name"]).lower().replace("-", "_"))
+    return frozenset(names)
 
 
 # Node.js built-in modules — the JS analog of _PYTHON_STDLIB. 42 entries
@@ -1306,6 +1327,7 @@ def _scan_import_entry(
     symbol_qnames: set[str] | None,
     file_index: _FilePathIndex | None,
     declared_deps: frozenset[str] | None,
+    optional_or_self_deps: frozenset[str] | None = None,
 ) -> dict:
     """Validate one extracted import name and return its scan row.
 
@@ -1344,6 +1366,21 @@ def _scan_import_entry(
         return entry
 
     probe_name = _probe_name_for_import(name, js_deps)
+    if optional_or_self_deps and is_py and name.split(".")[0].lower() in optional_or_self_deps:
+        resolved = _check_name_exists(
+            conn,
+            probe_name,
+            symbol_names=symbol_names,
+            symbol_qnames=symbol_qnames,
+            file_index=file_index,
+        )
+        return _import_scan_entry(
+            file_path,
+            line_num,
+            name,
+            resolved=resolved,
+            status=None if resolved else "optional-unresolved",
+        )
     if declared_deps and is_py and name.split(".")[0].lower() in declared_deps:
         return _import_scan_entry(file_path, line_num, name, resolved=True)
 
@@ -1382,6 +1419,7 @@ def _scan_file_imports(
     lang_by_path: dict[str, str | None] | None = None,
     file_index: _FilePathIndex | None = None,
     declared_deps: frozenset[str] | None = None,
+    optional_or_self_deps: frozenset[str] | None = None,
     unreadable: set[str] | None = None,
 ) -> list[dict]:
     """Scan a source file for import statements and validate each one.
@@ -1468,6 +1506,7 @@ def _scan_file_imports(
                     symbol_qnames=symbol_qnames,
                     file_index=file_index,
                     declared_deps=declared_deps,
+                    optional_or_self_deps=optional_or_self_deps,
                 )
             )
 
@@ -1615,6 +1654,7 @@ def verify_imports_for_connection(
     # are identical to the SQL (see _FilePathIndex docstring).
     file_index = _build_file_path_index(conn)
     declared_deps = _declared_dependency_modules(project_root)
+    optional_or_self_deps = _optional_or_self_dependency_modules(project_root)
 
     # 2. Scan each file
     all_imports: list[dict] = []
@@ -1631,6 +1671,7 @@ def verify_imports_for_connection(
             lang_by_path=lang_by_path,
             file_index=file_index,
             declared_deps=declared_deps,
+            optional_or_self_deps=optional_or_self_deps,
             unreadable=files_unreadable,
         )
         if file_imports:
@@ -1684,12 +1725,21 @@ def verify_imports_for_connection(
         # Same three-valued rule as the source-scan pass: an unresolved import
         # in a language this command has no dependency model for is UNKNOWN,
         # not a hallucination.
-        edge_unverifiable = not resolved and _import_is_unverifiable(edge_lang, fp)
+        edge_optional = (
+            not resolved
+            and _is_python_file(edge_lang, fp)
+            and target_name.split(".")[0].lower() in optional_or_self_deps
+        )
+        edge_unverifiable = not resolved and not edge_optional and _import_is_unverifiable(edge_lang, fp)
         entry: dict = {
             "file": fp,
             "line": line,
             "name": target_name,
-            "status": "unverifiable" if edge_unverifiable else ("resolved" if resolved else "unresolved"),
+            "status": (
+                "optional-unresolved"
+                if edge_optional
+                else ("unverifiable" if edge_unverifiable else ("resolved" if resolved else "unresolved"))
+            ),
             "suggestions": [],
         }
         if not resolved and not edge_unverifiable:
@@ -1701,7 +1751,8 @@ def verify_imports_for_connection(
     total = len(all_imports)
     resolved = sum(1 for i in all_imports if i["status"] == "resolved")
     unverifiable_imports = sum(1 for i in all_imports if i["status"] == "unverifiable")
-    unresolved = total - resolved - unverifiable_imports
+    optional_unresolved_imports = sum(1 for i in all_imports if i["status"] == "optional-unresolved")
+    unresolved = total - resolved - unverifiable_imports - optional_unresolved_imports
     # Name the languages, so a consumer sees WHICH coverage hole produced the
     # bucket rather than having to infer it from the file extensions.
     unverifiable_langs = sorted(
@@ -1724,6 +1775,7 @@ def verify_imports_for_connection(
         "resolved": resolved,
         "unresolved": unresolved,
         "unverifiable_imports": unverifiable_imports,
+        "optional_unresolved_imports": optional_unresolved_imports,
         "unverifiable_languages": unverifiable_langs,
         "files_checked": len(files_checked),
         "files_in_scope": len(file_paths),
@@ -1855,6 +1907,7 @@ def verify_imports_cmd(ctx, file_path, include_docs):
     unverifiable_files = list(result.get("files_unreadable", []))
     unverifiable = len(unverifiable_files)
     unverifiable_imports = result.get("unverifiable_imports", 0)
+    optional_unresolved_imports = result.get("optional_unresolved_imports", 0)
     unverifiable_languages = result.get("unverifiable_languages", [])
     # A row this command had no dependency model for is a coverage hole, not a
     # finding. It leaves the ``unresolved`` numerator and gets named here.
@@ -1896,6 +1949,11 @@ def verify_imports_cmd(ctx, file_path, include_docs):
         if unverifiable_imports:
             # NOT "all resolved": some were never decided.
             verdict = f"{resolved} of {total} imports resolved across {files_checked} files; {unverifiable_note}"
+        elif optional_unresolved_imports:
+            verdict = (
+                f"{resolved} of {total} imports resolved across {files_checked} files; "
+                f"{optional_unresolved_imports} optional-unresolved imports"
+            )
         else:
             verdict = f"All {total} imports resolved across {files_checked} files"
     else:
@@ -1923,6 +1981,7 @@ def verify_imports_cmd(ctx, file_path, include_docs):
             "total_imports": total,
             "resolved": resolved,
             "unresolved": unresolved,
+            "optional_unresolved": optional_unresolved_imports,
             "files_checked": files_checked,
             # The population the scan was asked about, published alongside
             # the numerator so a consumer can see the shortfall directly
@@ -1972,12 +2031,18 @@ def verify_imports_cmd(ctx, file_path, include_docs):
         click.echo()
         click.echo("  Tip: Run `roam search <name>` for more details on a symbol.")
         click.echo("       If recently added, run `roam index` to refresh.")
-    elif not unverifiable and not unverifiable_imports:
+    elif not unverifiable and not unverifiable_imports and not optional_unresolved_imports:
         # Only claim success when nothing was left unexamined.
         if total > 0:
             click.echo(f"  All {total} imports verified successfully.")
         else:
             click.echo("  No import statements found in indexed files.")
+
+    if optional_unresolved_imports:
+        click.echo()
+        click.echo(f"  {optional_unresolved_imports} optional/self imports are not installed in this environment:")
+        for item in (row for row in imports if row["status"] == "optional-unresolved"):
+            click.echo(f"    - {item['file']}:{item['line']}  {item['name']}")
 
     if unverifiable_imports:
         click.echo()

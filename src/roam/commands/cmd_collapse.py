@@ -77,6 +77,7 @@ _SUPPRESSION_RE = re.compile(
 )
 _BEST_EFFORT_RE = re.compile(r"best[ -]effort", re.IGNORECASE)
 _CACHE_RE = re.compile(r"\bcach(?:e|ed|ing)\b", re.IGNORECASE)
+_INTENTIONAL_FAIL_SOFT_RE = re.compile(r"\bintentional(?:ly)?[ -]+fail[ -]+soft\b", re.IGNORECASE)
 
 _PY_FILE_CALLS = frozenset(
     {
@@ -153,6 +154,9 @@ def _suppressed(text: str, line: int, rule: str, *extra_lines: int) -> bool:
             rules = {part.strip() for part in raw.split(",") if part.strip()}
             if rule.lower() in rules or "*" in rules:
                 return True
+        annotation = lines[candidate - 1]
+        if "# noqa" in annotation.lower() or _INTENTIONAL_FAIL_SOFT_RE.search(annotation):
+            return True
     return False
 
 
@@ -299,6 +303,73 @@ def _enclosing_function(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.A
     return None
 
 
+def _fail_closed_branch(statements: list[ast.stmt]) -> bool:
+    if any(isinstance(node, ast.Raise) for statement in statements for node in ast.walk(statement)):
+        return True
+    refusal_words = {"unverifiable", "refused", "rejected", "invalid", "failed", "denied"}
+    for statement in statements:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Return):
+                continue
+            values = {child.value for child in ast.walk(node) if isinstance(child, ast.Constant)}
+            if False in values or any(isinstance(value, str) and value.lower() in refusal_words for value in values):
+                return True
+    return False
+
+
+def _test_refuses_sentinel(test: ast.AST, name: str, default: str) -> bool:
+    if default == "None" and isinstance(test, ast.Compare):
+        operands = [test.left, *test.comparators]
+        return any(isinstance(node, ast.Name) and node.id == name for node in operands) and any(
+            isinstance(node, ast.Constant) and node.value is None for node in operands
+        )
+    if default in {"None", "False", "0", "''", "[]", "{}"} and isinstance(test, ast.UnaryOp):
+        return isinstance(test.op, ast.Not) and isinstance(test.operand, ast.Name) and test.operand.id == name
+    return False
+
+
+def _all_consumers_fail_closed(
+    tree: ast.AST,
+    producer: ast.AST | None,
+    default: str,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    """Return true only when every visible call rejects the sentinel."""
+    if not isinstance(producer, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    consumers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == producer.name
+        and _enclosing_function(node, parents) is not producer
+    ]
+    if not consumers:
+        return False
+    for call in consumers:
+        parent = parents.get(call)
+        if not isinstance(parent, (ast.Assign, ast.AnnAssign)) or getattr(parent, "value", None) is not call:
+            return False
+        target = (
+            parent.target
+            if isinstance(parent, ast.AnnAssign)
+            else (parent.targets[0] if len(parent.targets) == 1 else None)
+        )
+        if not isinstance(target, ast.Name):
+            return False
+        consumer = _enclosing_function(call, parents)
+        if consumer is None or not any(
+            isinstance(node, ast.If)
+            and node.lineno > call.lineno
+            and _test_refuses_sentinel(node.test, target.id, default)
+            and _fail_closed_branch(node.body)
+            for node in ast.walk(consumer)
+        ):
+            return False
+    return True
+
+
 def _python_catch_findings(file_path: str, text: str, tree: ast.AST) -> list[dict]:
     findings: list[dict] = []
     parents = _parents(tree)
@@ -316,6 +387,8 @@ def _python_catch_findings(file_path: str, text: str, tree: ast.AST) -> list[dic
             if _has_existence_guard(function, try_node.lineno):
                 continue
             if _is_best_effort_cache(text, try_node.lineno, getattr(handler, "end_lineno", return_node.lineno)):
+                continue
+            if _all_consumers_fail_closed(tree, function, default, parents):
                 continue
 
             file_io = any(

@@ -91,6 +91,11 @@ def dark_matter_edges(conn, *, min_cochanges: int = 3, min_npmi: float = 0.3) ->
 
         path_a = id_to_path.get(fid_a, f"file_id={fid_a}")
         path_b = id_to_path.get(fid_b, f"file_id={fid_b}")
+        expected_pattern = classify_pair(path_a, path_b)
+        # A source and its conventionally named test are linked by design;
+        # their co-change is direct test ownership, not hidden coupling.
+        if expected_pattern == "expected_test_pair":
+            continue
         results.append(
             {
                 "file_id_a": fid_a,
@@ -105,7 +110,7 @@ def dark_matter_edges(conn, *, min_cochanges: int = 3, min_npmi: float = 0.3) ->
                 # roam.graph.coupling_patterns): expected locale/doc-hub
                 # siblings are TAGGED, never dropped — the pair still
                 # participates in every count / verdict / risk projection.
-                "expected_pattern": classify_pair(path_a, path_b) or None,
+                "expected_pattern": expected_pattern or None,
             }
         )
 

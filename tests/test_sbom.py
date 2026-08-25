@@ -76,6 +76,23 @@ class TestSbomJSON:
         data = parse_json_output(result, "sbom")
         assert "verdict" in data["summary"]
 
+    def test_python_only_repo_facts_name_phantom_not_package_json(self, cli_runner, tmp_path, monkeypatch):
+        proj = tmp_path / "python_sbom"
+        proj.mkdir()
+        (proj / "pyproject.toml").write_text(
+            '[project]\nname = "python-sbom"\nversion = "1.0"\ndependencies = ["unused-phantom-package>=1"]\n',
+            encoding="utf-8",
+        )
+        (proj / "app.py").write_text("def main(): return 1\n", encoding="utf-8")
+        git_init(proj)
+        index_in_process(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["sbom"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "sbom")
+        facts = " | ".join(data.get("agent_contract", {}).get("facts", []))
+        assert "package.json" not in facts
+        assert "unused-phantom-package" in facts
+
     def test_json_has_sbom_data(self, cli_runner, sbom_project, monkeypatch):
         monkeypatch.chdir(sbom_project)
         result = invoke_cli(cli_runner, ["sbom"], cwd=sbom_project, json_mode=True)

@@ -169,3 +169,51 @@ def test_help_contains_when_to_use_line() -> None:
     result = CliRunner().invoke(cli, ["collapse", "--help"])
     assert result.exit_code == 0
     assert "WHEN TO USE:" in result.output
+
+
+def test_fail_closed_sentinel_consumers_suppress_collapse() -> None:
+    """Unreadable digest -> None is intentional when every caller refuses it."""
+    source = """
+from pathlib import Path
+
+def _digest(path):
+    try:
+        return Path(path).read_bytes()
+    except OSError:
+        return None
+
+def verify(path):
+    digest = _digest(path)
+    if digest is None:
+        return {"state": "unverifiable", "accepted": False}
+    return {"state": "verified", "accepted": True}
+"""
+    assert scan_source("guard.py", source) == []
+
+
+def test_mixed_polarity_sentinel_consumer_remains_a_positive() -> None:
+    """Conservation: a caller that accepts the benign default keeps the finding."""
+    source = """
+from pathlib import Path
+
+def _digest(path):
+    try:
+        return Path(path).read_bytes()
+    except OSError:
+        return None
+
+def display(path):
+    return _digest(path)
+"""
+    assert scan_source("guard.py", source)
+
+
+def test_inline_fail_soft_intent_annotation_suppresses_collapse() -> None:
+    source = """
+def optional_preview(client):
+    try:
+        return client.fetch()
+    except Exception:
+        return []  # Intentional fail-soft: preview is advisory
+"""
+    assert scan_source("preview.py", source) == []

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import os
@@ -861,6 +862,54 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
                     entry["test_files"].add(path)
 
 
+def _augment_module_qualified_consumers(conn, rows, consumer_meta):
+    """Recover Python ``module.export(...)`` uses missed by symbol edges."""
+    by_name: dict[str, list] = defaultdict(list)
+    for row in rows:
+        by_name[row["name"]].append(row)
+    if not by_name:
+        return
+    project_root = find_project_root()
+    for file_row in conn.execute("SELECT id, path FROM files WHERE language = 'python'"):
+        path = file_row["path"]
+        if _is_test_path(path):
+            continue
+        try:
+            tree = ast.parse((project_root / path).read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        aliases = {
+            alias.asname or alias.name.split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        aliases.update(
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        )
+        matched: set[str] = set()
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            func = call.func
+            if not isinstance(func, ast.Attribute) or func.attr not in by_name:
+                continue
+            root = func.value
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id in aliases:
+                matched.add(func.attr)
+        for name in matched:
+            for row in by_name[name]:
+                if row["file_id"] == file_row["id"]:
+                    continue
+                entry = consumer_meta[row["id"]]
+                if path not in entry["production_files"]:
+                    entry["production_consumers"] += 1
+                    entry["production_files"].add(path)
+
+
 _BARREL_BASENAMES = frozenset({"index.ts", "index.tsx", "index.js", "index.jsx", "index.mjs", "__init__.py"})
 
 
@@ -1104,6 +1153,11 @@ def _analyze_dead(conn, disclosures: list[str] | None = None):
         return [], [], set(), {}, {}, {}
 
     consumer_meta = _dead_consumer_meta(conn, [r["id"] for r in rows])
+    _augment_module_qualified_consumers(
+        conn,
+        [r for r in rows if consumer_meta.get(r["id"], {}).get("production_consumers", 0) == 0],
+        consumer_meta,
+    )
     from roam.commands.dead_public_surface import public_surface_evidence
 
     _ps_reasons, _ps_unreadable = public_surface_evidence(rows, find_project_root())

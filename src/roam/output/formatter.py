@@ -1517,9 +1517,9 @@ def _inject_deprecation_warning(summary: dict) -> None:
     # cleared at the start of each new invocation. Defensive try/except: this
     # injection must never break envelope generation for non-CLI callers.
     try:
-        from roam.cli import _get_active_deprecation_notice
+        from roam.deprecation import get_active_deprecation_notice
 
-        _depr_notice = _get_active_deprecation_notice()
+        _depr_notice = get_active_deprecation_notice()
         if _depr_notice and "deprecation_warning" not in summary:
             summary["deprecation_warning"] = _depr_notice
     except (ImportError, AttributeError):

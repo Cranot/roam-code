@@ -55,6 +55,7 @@ from roam.commands.cmd_stale_refs import (
     _extract_refs,
     _resolve_target,
     _rewrite_is_safe,
+    _should_skip_url,
 )
 from roam.commands.stale_refs_anchors import (
     _strip_inline_markup,
@@ -121,6 +122,33 @@ class TestStaleRefsUsesUrlNotDisplay:
         refs = _extract_refs(content, prose_mode=True, scan_bare_backticks=True)
         # Only the URL surfaces.
         assert refs == [(1, "md_inline", "../code-map/16-X.md")]
+
+    @pytest.mark.parametrize(
+        "path",
+        ["Lib/asyncio/base_events.py", "/usr/lib/python/os.py", "site-packages/pkg/mod.py"],
+    )
+    def test_well_known_external_tree_paths_are_not_repo_refs(self, path):
+        assert _should_skip_url(path)
+
+
+def test_backtick_paths_in_test_fixture_sources_are_not_scanned(tmp_path):
+    from roam.commands.cmd_stale_refs import _scan_project
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_fixture.py").write_text(
+        'SYNTHETIC = "example: `missing/synthetic.py`"\n',
+        encoding="utf-8",
+    )
+    stale, *_rest = _scan_project(tmp_path, include_excluded=True)
+    assert stale == {}
+
+
+def test_real_markdown_link_remains_a_stale_ref(tmp_path):
+    from roam.commands.cmd_stale_refs import _scan_project
+
+    (tmp_path / "README.md").write_text("[missing](docs/missing.md)\n", encoding="utf-8")
+    stale, *_rest = _scan_project(tmp_path, include_excluded=True)
+    assert any("docs/missing.md" in target for target in stale)
 
 
 class TestStaleRefsFixSafetyAgainstDoublePrefix:
