@@ -82,7 +82,7 @@ from tests._helpers.repo_root import repo_root
 #       PackageNotFoundError) and ANNOTATED ~21 deliberate safety-boundary
 #       guards (telemetry "must never break the command", finally-cleanup
 #       close(), echo-failure handlers, optional-import probes) with
-#       `# noqa: BLE001` + rationale. cmd_bench's 3 are narrow/best-effort.
+#       BLE001 suppressions plus rationale. cmd_bench's 3 are narrow/best-effort.
 #   Ratchet DOWN from here as the loud-fallback cleanup continues.
 #
 # 2026-07-03: ratcheted DOWN to 116. The single remaining WAL helper in

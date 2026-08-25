@@ -1,3 +1,4 @@
+# ruff: noqa: T201 -- CLI diagnostics and artifact reporting are intentional.
 """Render a codebase-architecture audit report from roam-code outputs.
 
 Usage:

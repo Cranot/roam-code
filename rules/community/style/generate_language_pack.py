@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201 -- CLI generation summary is intentional.
 """Generate language-scoped style rules for the community pack.
 
 This script writes deterministic YAML rule files into:
@@ -13,7 +14,6 @@ Rule families per (language, scope):
 from __future__ import annotations
 
 from pathlib import Path
-
 
 LANGUAGES = [
     ("python", "py"),

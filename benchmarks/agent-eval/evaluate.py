@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201 -- CLI progress and result output is intentional.
 """
 Evaluate a single agent workspace using roam-code.
 
@@ -13,7 +14,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import os
 import subprocess
 import sys
 import time
@@ -21,7 +21,6 @@ from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 from types import ModuleType
-
 
 # Agent CLI version + model signatures
 AGENT_SIGNATURES = {
@@ -283,7 +282,7 @@ def evaluate_workspace(workspace: Path) -> dict:
         return results
 
     # --- Roam init ---
-    print(f"  Running roam init...")
+    print("  Running roam init...")
     init_result = run_roam_init(workspace)
     results["roam"]["init"] = init_result
     if not init_result.get("success"):
@@ -424,7 +423,7 @@ def main():
     # Print AQS
     aqs = results.get("aqs", {})
     if aqs:
-        print(f"\n=== AGENT QUALITY SCORE ===")
+        print("\n=== AGENT QUALITY SCORE ===")
         scoring = _load_scoring_module()
         print(scoring.format_aqs_report(aqs))
 

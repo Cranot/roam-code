@@ -178,8 +178,7 @@ def main() -> int:
         return 0
 
     print(
-        "[internal-index] internal/INDEX.md catalogue has drifted.\n"
-        "  fix: python dev/build_internal_index.py --write",
+        "[internal-index] internal/INDEX.md catalogue has drifted.\n  fix: python dev/build_internal_index.py --write",
         file=sys.stderr,
     )
     return 1

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201 -- CLI report output is the script's behavior.
 """
 Compare evaluation results across agents, modes, and tasks.
 
@@ -13,7 +14,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-
 
 AGENTS = ["claude-code", "claude-code-sonnet", "codex", "gemini-cli"]
 MODES = ["vanilla", "roam-cli", "roam-mcp"]
