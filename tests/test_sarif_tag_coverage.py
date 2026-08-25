@@ -168,6 +168,7 @@ _TAG_COVERAGE_EXEMPT: dict[str, str] = {
     "dark_matter_to_sarif": "compound aggregator — hidden co-change coupling derived from git history",
     "duplicates_to_sarif": "compound aggregator — exact-string duplicates derived from FTS5 scan",
     # ── CLI-mode / invocation-scoped signal ──────────────────────────
+    "collapse_to_sarif": "orthogonal subject vocabulary — closed five-rule benign-default-collapse catalog, no family band",
     "algo_to_sarif": "invocation-scoped — algorithm-catalog detector findings, task_id-keyed",
     "partition_to_sarif": "invocation-scoped — multi-agent work partition output (Louvain bisection)",
     "delete_check_to_sarif": "invocation-scoped — diff-time surviving-reference gate, transient",
