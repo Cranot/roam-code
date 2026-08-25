@@ -898,12 +898,17 @@ def sbom_cmd(ctx, fmt, output_path, no_reachability, aibom):
     # the auto-derived facts cover the no-data branch.
     explicit_facts: list[str] | None = None
     if reachability is not None and total_deps > 0:
+        phantom_names = sorted({dep.name for dep in deps if not reachability.get(dep.name, {}).get("reachable")})
         explicit_facts = [
             verdict,
             f"{reachable_direct_count} packages directly imported from source",
             f"{reachable_heuristic_count} packages reached via heuristic (config files, scripts, loaders)",
-            f"{phantom_count} phantom packages (deps in package.json with no consumer)",
         ]
+        if phantom_names:
+            named = ", ".join(phantom_names[:5])
+            explicit_facts.append(f"{named} are {phantom_count} phantom packages")
+        else:
+            explicit_facts.append("0 phantom packages")
 
     # Output
     if json_mode:

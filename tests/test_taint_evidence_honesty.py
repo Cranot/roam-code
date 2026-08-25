@@ -203,6 +203,68 @@ def test_risk_score_counts_only_proven_dataflow(co_occurrence_taint_envelope):
             f"risk_score must be 0 when no dataflow finding exists (pre-fix baseline on roam-code: "
             f"risk_score={PRE_FIX_BASELINE['risk_score']} off 0 dataflow findings); got {summary['risk_score']}"
         )
+        assert summary["errors"] == 0
+        assert summary["warnings"] == 0
+        assert summary["infos"] == summary["findings"]
+
+
+def test_unverified_co_occurrence_uses_informational_severity():
+    """A zero-dataflow observation cannot remain an error/warning finding."""
+    from roam.security.taint_engine import _unverified_severity
+
+    assert _unverified_severity("error") == "note"
+    assert _unverified_severity("warning") == "note"
+
+
+def test_static_subprocess_argv_does_not_create_argument_dataflow():
+    """Environment data passed as the child env is not command injection.
+
+    This mirrors ``scripts/prepush_check.py``: fixed argv, no ``shell=True``,
+    and a separately constructed environment mapping.
+    """
+    from roam.security.taint_engine import TaintRule, _python_argument_dataflow_pairs
+
+    source = """
+import os
+import subprocess
+
+def run_check():
+    child_env = os.environ.copy()
+    child_env["PYTHONPATH"] = "src"
+    return subprocess.run(
+        ["python", "-m", "pytest", "tests/test_smoke.py"],
+        env=child_env,
+        check=False,
+    )
+"""
+    rule = TaintRule(
+        rule_id="python-command-injection",
+        description="dynamic input reaches subprocess command",
+        sources=("os.environ",),
+        sinks=("subprocess.run",),
+    )
+    assert _python_argument_dataflow_pairs(source, rule) == set()
+
+
+def test_dynamic_subprocess_command_remains_a_taint_positive():
+    """Conservation: an interpolated command with ``shell=True`` still fires."""
+    from roam.security.taint_engine import TaintRule, _python_argument_dataflow_pairs
+
+    source = """
+import os
+import subprocess
+
+def run_check():
+    target = os.environ["TARGET"]
+    return subprocess.run(f"check {target}", shell=True)
+"""
+    rule = TaintRule(
+        rule_id="python-command-injection",
+        description="dynamic input reaches subprocess command",
+        sources=("os.environ",),
+        sinks=("subprocess.run",),
+    )
+    assert _python_argument_dataflow_pairs(source, rule)
 
 
 def test_findings_carry_no_engine_private_keys(co_occurrence_taint_envelope):

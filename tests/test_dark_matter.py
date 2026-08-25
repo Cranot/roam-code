@@ -271,6 +271,30 @@ class TestDarkMatterExpectedPatternAnnotation:
         assert locale is not None
         assert locale["expected_pattern"] == "expected_locale", locale
 
+    def test_source_and_its_own_test_are_expected_coupling(self):
+        from roam.graph.coupling_patterns import classify_pair
+
+        assert classify_pair("src/roam/cache.py", "tests/test_cache.py") == "expected_test_pair"
+        assert classify_pair("src/roam/cache.py", "src/roam/store.py") == ""
+
+    def test_source_and_its_own_test_are_removed_from_dark_matter(self):
+        conn = self._make_conn()
+        conn.executemany(
+            "INSERT INTO files (id, path) VALUES (?, ?)",
+            [(7, "src/roam/cache.py"), (8, "tests/test_cache.py")],
+        )
+        conn.executemany(
+            "INSERT INTO file_stats (file_id, commit_count) VALUES (?, ?)",
+            [(7, 5), (8, 5)],
+        )
+        conn.execute(
+            "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (?, ?, ?)",
+            (7, 8, 5),
+        )
+        edges = dark_matter_edges(conn, min_cochanges=3, min_npmi=0.3)
+        pairs = {frozenset((edge["path_a"], edge["path_b"])) for edge in edges}
+        assert frozenset(("src/roam/cache.py", "tests/test_cache.py")) not in pairs
+
 
 # ===========================================================================
 # Unit tests: HypothesisEngine

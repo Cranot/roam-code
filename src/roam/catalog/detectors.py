@@ -15,6 +15,7 @@ Design principles (informed by research):
 
 from __future__ import annotations
 
+import ast
 import functools
 import json
 import logging
@@ -1485,6 +1486,13 @@ def _is_busy_wait_candidate(row) -> bool:
         return False
     name_lower = (row["name"] or "").lower()
     if any(kw in name_lower for kw in _POLL_NAMES):
+        return False
+    snippet = _read_symbol_source(
+        row["file_path"],
+        _row_value(row, "line_start", None),
+        _row_value(row, "line_end", None),
+    )
+    if re.search(r"\b(?:while|for)\b[^\n]*(?:deadline|timeout)\b", snippet, re.IGNORECASE):
         return False
     return not _is_operator_paced_sleep(row)
 
@@ -2957,6 +2965,30 @@ _RE_BROAD_EXCEPT = re.compile(
 _RE_RERAISE = re.compile(r"^\s*raise(?:\s|$)", re.MULTILINE)
 
 
+def _broad_handler_records_error(snippet: str) -> bool:
+    """Recognise catch blocks that preserve their exception as result data."""
+    try:
+        tree = ast.parse(snippet)
+    except (SyntaxError, ValueError):
+        return False
+    for handler in (node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)):
+        exc_name = handler.name
+        if not exc_name or not any(isinstance(node, ast.Name) and node.id == exc_name for node in ast.walk(handler)):
+            continue
+        for statement in handler.body:
+            rendered = ast.unparse(statement).lower()
+            preserves_exception = any(
+                isinstance(node, ast.Name) and node.id == exc_name for node in ast.walk(statement)
+            )
+            if (
+                preserves_exception
+                and re.search(r"\b(?:result|results|errors?|findings|outcome)\b", rendered)
+                and (".append(" in rendered or "[" in rendered and "=" in rendered)
+            ):
+                return True
+    return False
+
+
 @algorithm_detector(
     task_id="broad-except-swallow",
     languages=("python",),
@@ -3011,6 +3043,8 @@ def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
         # treat it as intentional log-and-rethrow.
         post = snippet[broad_match.end() :]
         if _RE_RERAISE.search(post):
+            continue
+        if _broad_handler_records_error(snippet):
             continue
         # Find the matched line number for precise location reporting.
         line_offset = snippet[: broad_match.start()].count("\n")
@@ -3617,7 +3651,7 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.loop_invariant_calls "
+        "s.line_start, s.line_end, ms.loop_invariant_calls "
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "JOIN math_signals ms ON ms.symbol_id = s.id "
@@ -3743,19 +3777,37 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
         "cbor",
         "dateutil",
     }
+    _CLOCK_READS = {"time.monotonic", "time.time", "time.perf_counter", "monotonic", "perf_counter"}
 
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
         inv_calls = json.loads(r["loop_invariant_calls"]) if r["loop_invariant_calls"] else []
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        raised_constructors: set[str] = set()
+        try:
+            tree = ast.parse(snippet)
+        except (SyntaxError, ValueError):
+            tree = None
+        if tree is not None:
+            for raise_node in (node for node in ast.walk(tree) if isinstance(node, ast.Raise)):
+                if isinstance(raise_node.exc, ast.Call):
+                    rendered = ast.unparse(raise_node.exc.func).lower()
+                    raised_constructors.update({rendered, rendered.rsplit(".", 1)[-1]})
         # Filter out intentional per-iteration calls
         flagged = []
         heavyweight_hits = []
         for c in inv_calls:
             call_full = (c or "").lower()
             call_leaf = _call_leaf(c).lower()
-            if call_full in _INTENTIONAL_CALLS or call_leaf in _INTENTIONAL_CALLS:
+            if (
+                call_full in _INTENTIONAL_CALLS
+                or call_leaf in _INTENTIONAL_CALLS
+                or call_full in _CLOCK_READS
+                or call_full in raised_constructors
+                or call_leaf in raised_constructors
+            ):
                 continue
             flagged.append(c)
             # V3 — escalate when the call is a parse/deserialize on a
@@ -4338,7 +4390,7 @@ def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, ms.loop_depth, ms.calls_in_loops, ms.loop_with_accumulator "
+        "s.line_start, s.line_end, ms.loop_depth, ms.calls_in_loops, ms.loop_with_accumulator "
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "JOIN math_signals ms ON ms.symbol_id = s.id "
@@ -4350,6 +4402,9 @@ def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if re.search(r"\.append\s*\(", snippet) and re.search(r"\.join\s*\(", snippet):
             continue
         calls = _iter_loop_calls(r)
         # Structural signal: calls to string concat/append methods

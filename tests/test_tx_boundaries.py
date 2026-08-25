@@ -366,3 +366,56 @@ def test_command_registered_in_cli(cli_runner, indexed_project, monkeypatch):
     # Always emit a non-empty envelope (Pattern 1: never empty stdout).
     assert "summary" in data
     assert "verdict" in data["summary"]
+
+
+def _classify_body(body: str, *, kinds=None):
+    from roam.world_model.side_effects import SideEffectClassification
+    from roam.world_model.tx_boundaries import _classify_one
+
+    se = SideEffectClassification(
+        symbol="subject",
+        file="subject.py",
+        kinds=list(kinds or ["mutation"]),
+        line_start=1,
+        line_end=len(body.splitlines()),
+    )
+    return _classify_one(se, body, 1)
+
+
+def test_sqlite_bare_commit_is_not_an_unmatched_commit():
+    boundary = _classify_body(
+        "def save():\n    conn = sqlite3.connect('state.db')\n    conn.commit()\n",
+        kinds=["mutation"],
+    )
+    assert boundary.classification != "unmatched_commit"
+
+
+def test_dbapi_connection_commit_uses_implicit_transaction():
+    boundary = _classify_body("def save(conn):\n    conn.execute('INSERT INTO t VALUES (1)')\n    conn.commit()\n")
+    assert boundary.classification == "transactional"
+
+
+def test_begin_helper_pairs_with_commit_in_consumer():
+    boundary = _classify_body(
+        "def save(conn):\n    begin_write_transaction(conn)\n    conn.execute('INSERT INTO t VALUES (1)')\n    conn.commit()\n"
+    )
+    assert boundary.classification == "transactional"
+
+
+def test_transaction_words_in_docstrings_and_literals_are_ignored():
+    boundary = _classify_body(
+        '''def explain():
+    """Example: conn.begin(); conn.commit()."""
+    text = "conn.rollback()"
+    return text
+''',
+        kinds=["none"],
+    )
+    assert boundary.classification == "non_transactional"
+    assert boundary.begin_markers == []
+    assert boundary.commit_markers == []
+
+
+def test_real_unmatched_begin_remains_actionable():
+    boundary = _classify_body("def save(conn):\n    conn.begin()\n    conn.execute('INSERT INTO t VALUES (1)')\n")
+    assert boundary.classification == "unmatched_begin"

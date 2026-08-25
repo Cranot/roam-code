@@ -28,6 +28,36 @@ from conftest import (
     index_in_process,
 )
 
+
+class _CountingConnection:
+    def __init__(self, connection):
+        self._connection = connection
+        self.execute_calls = 0
+
+    def execute(self, *args, **kwargs):
+        self.execute_calls += 1
+        return self._connection.execute(*args, **kwargs)
+
+
+def test_reverse_bfs_batches_queries_by_frontier_not_node():
+    import sqlite3
+
+    from roam.commands.cmd_test_gaps import _bfs_to_test_files
+
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    raw.executescript(
+        "CREATE TABLE symbols (id INTEGER PRIMARY KEY, name TEXT, file_id INTEGER);"
+        "CREATE TABLE edges (source_id INTEGER, target_id INTEGER);"
+    )
+    raw.executemany("INSERT INTO symbols VALUES (?, ?, ?)", [(i, f"s{i}", i) for i in range(1, 31)])
+    raw.executemany("INSERT INTO edges VALUES (?, ?)", [(i + 10, i) for i in range(1, 11)])
+    conn = _CountingConnection(raw)
+    reachable = _bfs_to_test_files(conn, list(range(1, 11)))
+    assert set(range(11, 21)) <= set(reachable)
+    assert conn.execute_calls <= 2
+
+
 # ---------------------------------------------------------------------------
 # Local helper: invoke test-gaps directly (bypasses CLI group)
 # ---------------------------------------------------------------------------

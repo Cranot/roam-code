@@ -234,9 +234,11 @@ def find_cycle_violations(G: nx.DiGraph, conn: sqlite3.Connection, min_size: int
     if not cycles:
         return []
 
-    formatted = format_cycles(cycles, conn)
+    formatted = mark_actionable_cycles(format_cycles(cycles, conn))
     violations = []
     for cyc in formatted:
+        if not cyc.get("actionable", False):
+            continue
         files = cyc.get("files", [])
         names = [s["name"] for s in cyc.get("symbols", [])]
         reason = "cycle of {} symbols: {}".format(cyc["size"], ", ".join(names[:5]))
@@ -263,7 +265,11 @@ def mark_actionable_cycles(formatted_cycles: list[dict]) -> list[dict]:
         cyc["file_count"] = len(unique_files)
         cyc["local_only"] = len(unique_files) <= 1
         cyc["has_test_file"] = any(is_test_file(f) for f in files)
-        cyc["actionable"] = not cyc["local_only"] and not cyc["has_test_file"]
+        cyc["has_non_import_symbol"] = any(
+            symbol.get("kind") in {"constant", "variable", "property", "parameter", "local"}
+            for symbol in cyc.get("symbols", [])
+        )
+        cyc["actionable"] = not cyc["local_only"] and not cyc["has_test_file"] and not cyc["has_non_import_symbol"]
     return formatted_cycles
 
 

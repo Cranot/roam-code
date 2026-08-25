@@ -12,6 +12,9 @@ if sys.platform == "win32" and not os.environ.get("PYTHONIOENCODING"):
 
 import click
 
+from roam.deprecation import get_active_deprecation_notice as _get_active_deprecation_notice  # noqa: F401
+from roam.deprecation import set_active_deprecation_notice as _set_active_deprecation_notice
+
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
 # Total: 286 invokable command names (279 canonical commands + 7 alias names).
@@ -37,12 +40,6 @@ _DEPRECATED_COMMANDS: dict[str, dict] = {
     "onboard": {"replacement": "understand", "reason": "alias for 'understand'"},
     "churn": {"replacement": "weather", "reason": "alias for 'weather'"},
 }
-
-# Module-level cross-talk slot read by `roam.output.formatter.json_envelope`
-# to inject `summary.deprecation_warning` when a deprecated alias was the
-# invoked name. Reset on each cli() entry. Lives at module level (not on
-# ctx.obj) so the formatter — which has no Click context — can read it.
-_ACTIVE_DEPRECATION_NOTICE: str | None = None
 
 # Canonical, alphabetically-sorted list of commands that honour the global
 # `--sarif` flag. Surfaced in help text (avoids the "lists 7, supports 14"
@@ -91,17 +88,6 @@ _SARIF_CONSUMERS: tuple[str, ...] = (
     "verify-imports",
     "vulns",
 )
-
-
-def _set_active_deprecation_notice(text: str | None) -> None:
-    """Set the deprecation-notice string visible to the JSON envelope builder."""
-    global _ACTIVE_DEPRECATION_NOTICE
-    _ACTIVE_DEPRECATION_NOTICE = text
-
-
-def _get_active_deprecation_notice() -> str | None:
-    """Return the active deprecation notice (or None) for the current invocation."""
-    return _ACTIVE_DEPRECATION_NOTICE
 
 
 def _format_deprecation_notice(name: str, record: dict) -> str:
@@ -1813,14 +1799,16 @@ def _short_help_source_path(module_path: str) -> str:
     return os.path.join(pkg_root, rel)
 
 
-def _source_mtime(src_path: str) -> float:
+def _source_mtime(src_path: str) -> float | None:
     try:
         return os.path.getmtime(src_path)
     except OSError:
-        return 0.0
+        return None
 
 
-def _cached_short_help(cache: dict, cache_key: str, mtime: float) -> str | None:
+def _cached_short_help(cache: dict, cache_key: str, mtime: float | None) -> str | None:
+    if mtime is None:
+        return None
     cached = cache.get(cache_key)
     if cached and cached.get("mtime") == mtime:
         return cached.get("text") or None
@@ -1885,6 +1873,8 @@ def _short_help_via_ast(cmd_name: str) -> str | None:
         return None
 
     mtime = _source_mtime(src_path)
+    if mtime is None:
+        return None
     cache = _load_short_help_cache()
     cache_key = f"{module_path}:{attr_name}"
     cached_text = _cached_short_help(cache, cache_key, mtime)

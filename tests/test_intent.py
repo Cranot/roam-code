@@ -339,6 +339,32 @@ class TestIntentEdgeCases:
         assert "go" not in sym_names, "Short symbol 'go' (len=2) should be filtered out, found in links"
         assert "fn" not in sym_names, "Short symbol 'fn' (len=2) should be filtered out, found in links"
 
+    def test_nontechnical_docs_and_common_words_do_not_create_links_or_drift(self, tmp_path):
+        from roam.commands.cmd_intent import (
+            _find_doc_files,
+            _scan_doc_for_potential_symbols,
+            _scan_doc_for_symbols,
+        )
+
+        (tmp_path / "CODE_OF_CONDUCT.md").write_text(
+            "Members should respect every body and level. `members` `body` `level`\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "docs.md").write_text(
+            "The members body has a level. Use `real_api_symbol`.\n",
+            encoding="utf-8",
+        )
+        assert "CODE_OF_CONDUCT.md" not in _find_doc_files(tmp_path)
+        assert _scan_doc_for_symbols(tmp_path, "docs.md", {"members", "body", "level"}) == []
+        assert _scan_doc_for_potential_symbols(tmp_path, "CODE_OF_CONDUCT.md") == set()
+        assert _scan_doc_for_potential_symbols(tmp_path, "docs.md") == {"real_api_symbol"}
+
+    def test_technical_symbol_link_remains_positive(self, tmp_path):
+        from roam.commands.cmd_intent import _scan_doc_for_symbols
+
+        (tmp_path / "api.md").write_text("Call `render_invoice` to emit the report.\n", encoding="utf-8")
+        assert _scan_doc_for_symbols(tmp_path, "api.md", {"render_invoice"})
+
 
 # ===========================================================================
 # Cap-as-census: --top and the PageRank sample must never fold into the

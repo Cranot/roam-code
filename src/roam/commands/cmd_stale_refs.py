@@ -51,6 +51,7 @@ from roam.commands.stale_refs_hints import HintContext, best_hint
 from roam.db.connection import find_project_root
 from roam.exit_codes import gate_should_fail
 from roam.index.discovery import discover_files, discover_files_with_skips
+from roam.index.test_conventions import is_test_file
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -264,6 +265,15 @@ def _should_skip_url(cleaned: str) -> bool:
         return True
     if cleaned.startswith("#"):
         return True
+    external_norm = cleaned.replace("\\", "/")
+    external_lower = external_norm.lower()
+    if (
+        external_norm.startswith("Lib/")
+        or external_lower.startswith("/usr/")
+        or external_lower.startswith("site-packages/")
+        or "/site-packages/" in external_lower
+    ):
+        return True
     # Placeholders (``<project_root>/foo``) and globs (``docs/*.html``,
     # ``prompts/{task}_{mode}.txt``) are documentation patterns, not
     # concrete paths.
@@ -453,6 +463,7 @@ def _extract_refs(
     """
     refs: list[tuple[int, str, str]] = []
     for lineno, line in enumerate(content.splitlines(), start=1):
+        synthetic_path_constant = not prose_mode and bool(re.match(r"^\s*[A-Z][A-Z0-9_]*\s*(?::[^=]+)?=", line))
         # Collect markdown inline link spans first so we can suppress
         # any nested backtick matches that fall inside their display
         # text. Each span is a half-open ``(text_start, text_end)`` over
@@ -482,6 +493,8 @@ def _extract_refs(
         # the noise there.
         if scan_bare_backticks or not prose_mode:
             for m in _BACKTICK_PATH_RE.finditer(line):
+                if synthetic_path_constant:
+                    continue
                 # Bug 1 suppression: skip backticks whose match falls
                 # ENTIRELY within a markdown-link's display text. The
                 # URL half is the source of truth for liveness; the
@@ -934,6 +947,8 @@ def _scan_project(
             prose_mode=prose_mode,
             scan_bare_backticks=scan_bare_backticks,
         ):
+            if kind == "backtick" and is_test_file(rel):
+                continue
             refs_seen += 1
             _process_one_ref(
                 rel,

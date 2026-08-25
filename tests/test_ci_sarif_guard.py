@@ -134,3 +134,40 @@ def test_main_writes_output_and_summary(tmp_path, monkeypatch):
     assert len(payload["runs"]) == 2
     assert info["valid_input_files"] == 2
     assert info["truncated"] is False
+
+
+def test_main_fails_closed_on_unreadable_input(tmp_path, monkeypatch, capsys):
+    mod = _load_sarif_guard_module()
+    good = tmp_path / "health.sarif"
+    unreadable = tmp_path / "missing.sarif"
+    out = tmp_path / "merged.sarif"
+    good.write_text(json.dumps(_make_sarif(1)), encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "sarif_guard.py",
+            "--output",
+            str(out),
+            str(good),
+            str(unreadable),
+        ],
+    )
+    rc = mod.main()
+    captured = capsys.readouterr().out
+    assert rc != 0
+    assert "Unreadable SARIF input" in captured
+    assert not out.exists()
+
+
+def test_invalid_but_readable_sarif_keeps_distinct_invalid_message(tmp_path, monkeypatch, capsys):
+    mod = _load_sarif_guard_module()
+    invalid = tmp_path / "invalid.sarif"
+    invalid.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["sarif_guard.py", "--output", str(tmp_path / "out.sarif"), str(invalid)],
+    )
+    assert mod.main() != 0
+    assert "No valid SARIF inputs" in capsys.readouterr().out

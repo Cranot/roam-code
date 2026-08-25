@@ -925,6 +925,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         def _classify_scores(_findings) -> dict:
             _high = sum(1 for f in _findings if f.severity == "error")
             _med = sum(1 for f in _findings if f.severity == "warning")
+            _info = sum(1 for f in _findings if f.severity == "note")
             _san = sum(1 for f in _findings if f.sanitizer_in_path)
             # R3: the risk score is the headline number a human or a gate
             # reads. Only findings the engine PROVED a dataflow path for
@@ -974,6 +975,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             return {
                 "high_count": _high,
                 "medium_count": _med,
+                "info_count": _info,
                 "sanitized_count": _san,
                 "risk_score": _score,
                 "dataflow_count": len(_flow),
@@ -988,6 +990,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             default={
                 "high_count": 0,
                 "medium_count": 0,
+                "info_count": 0,
                 "sanitized_count": 0,
                 "risk_score": 0,
                 "dataflow_count": 0,
@@ -997,6 +1000,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
         )
         high_count = _score_dict["high_count"]
         medium_count = _score_dict["medium_count"]
+        info_count = _score_dict["info_count"]
         sanitized_count = _score_dict["sanitized_count"]
         risk_score = _score_dict["risk_score"]
         dataflow_count = _score_dict["dataflow_count"]
@@ -1021,6 +1025,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             _findings,
             _h: int,
             _m: int,
+            _i: int,
             _s: int,
             _rules,
             _risk: int,
@@ -1030,7 +1035,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             if _findings_len:
                 return (
                     f"{_findings_len} finding(s) "
-                    f"({_h} error, {_m} warning, "
+                    f"({_h} error, {_m} warning, {_i} info, "
                     f"{_s} sanitized) across {_rules_len} rule(s); "
                     f"risk_score={_risk}"
                 )
@@ -1042,6 +1047,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             findings,
             high_count,
             medium_count,
+            info_count,
             sanitized_count,
             rules,
             risk_score,
@@ -1215,6 +1221,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             _findings,
             _h: int,
             _m: int,
+            _i: int,
             _s: int,
             _risk: int,
         ) -> dict:
@@ -1223,6 +1230,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 "findings": len(_findings),
                 "errors": _h,
                 "warnings": _m,
+                "infos": _i,
                 "sanitized": _s,
                 "risk_score": _risk,
             }
@@ -1234,6 +1242,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             findings,
             high_count,
             medium_count,
+            info_count,
             sanitized_count,
             risk_score,
             default={
@@ -1241,6 +1250,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
                 "findings": 0,
                 "errors": 0,
                 "warnings": 0,
+                "infos": 0,
                 "sanitized": 0,
                 "risk_score": 0,
             },
@@ -1268,6 +1278,7 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             "findings": _pred_fields.get("findings", 0),
             "errors": _pred_fields.get("errors", 0),
             "warnings": _pred_fields.get("warnings", 0),
+            "infos": _pred_fields.get("infos", 0),
             "sanitized": _pred_fields.get("sanitized", 0),
             "risk_score": _pred_fields.get("risk_score", 0),
             "findings_confidence_distribution": distribution,
@@ -1289,9 +1300,9 @@ def taint_command(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack, pe
             },
             # R3: what the risk_score above is actually computed from.
             # ``risk_score`` counts ONLY findings the engine proved a
-            # dataflow path for; ``errors`` / ``warnings`` above still
-            # count every finding, so the two numbers legitimately
-            # disagree and a consumer must be able to see why.
+            # dataflow path for. Co-occurrence-only observations are
+            # counted under ``infos`` and therefore cannot contradict a
+            # zero risk score with an error-level headline.
             "evidence_mix": {
                 "dataflow": dataflow_count,
                 "co_occurrence": co_occurrence_count,

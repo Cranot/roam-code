@@ -19,9 +19,12 @@ import copy
 import json
 from pathlib import Path
 
-
 _SARIF_VERSION = "2.1.0"
 _SARIF_SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
+
+
+class SarifInputUnreadableError(OSError):
+    """A requested SARIF input could not be read from disk."""
 
 
 def _json_size_bytes(data: dict) -> int:
@@ -31,8 +34,12 @@ def _json_size_bytes(data: dict) -> int:
 
 def _read_sarif(path: Path) -> dict | None:
     try:
-        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except Exception:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise SarifInputUnreadableError(f"{path}: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None
 
     if not isinstance(data, dict):
@@ -288,7 +295,11 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     in_paths = [Path(p) for p in args.sarif_files]
-    merged, skipped = merge_sarif_files(in_paths)
+    try:
+        merged, skipped = merge_sarif_files(in_paths)
+    except SarifInputUnreadableError as exc:
+        print(f"::error::Unreadable SARIF input: {exc}")
+        return 4
     if not merged["runs"]:
         print("::warning::No valid SARIF inputs; nothing to upload.")
         return 2

@@ -30,6 +30,66 @@ _MIN_NAME_LEN = 3  # skip very short names to avoid false positives
 # sampled down to the top N by PageRank. Module-level so tests can pin
 # the bound and so the sampling disclosure cites one authoritative value.
 _MAX_SYMBOLS = 3000
+_NONTECHNICAL_DOC_NAMES = frozenset(
+    {"code_of_conduct", "license", "licence", "copying", "notice", "authors", "contributors"}
+)
+_COMMON_ENGLISH_SYMBOLS = frozenset(
+    {
+        "about",
+        "above",
+        "after",
+        "again",
+        "also",
+        "another",
+        "before",
+        "below",
+        "body",
+        "both",
+        "change",
+        "code",
+        "common",
+        "community",
+        "each",
+        "every",
+        "first",
+        "from",
+        "good",
+        "help",
+        "into",
+        "level",
+        "member",
+        "members",
+        "more",
+        "must",
+        "other",
+        "people",
+        "project",
+        "same",
+        "should",
+        "such",
+        "their",
+        "there",
+        "these",
+        "this",
+        "those",
+        "under",
+        "value",
+        "values",
+        "when",
+        "where",
+        "which",
+        "while",
+        "with",
+        "without",
+        "work",
+        "would",
+    }
+)
+
+
+def _is_nontechnical_doc(path: str) -> bool:
+    stem = os.path.basename(path).split(".", 1)[0].lower()
+    return stem in _NONTECHNICAL_DOC_NAMES
 
 
 def _load_runtime_dependencies():
@@ -59,6 +119,8 @@ def _find_doc_files(root):
                 path = line.strip().replace("\\", "/")
                 if not path:
                     continue
+                if _is_nontechnical_doc(path):
+                    continue
                 if any(skip in path.split("/") for skip in _SKIP_DIRS):
                     continue
                 ext = os.path.splitext(path)[1].lower()
@@ -74,7 +136,8 @@ def _find_doc_files(root):
                 ext = os.path.splitext(f)[1].lower()
                 if ext in _DOC_EXTENSIONS:
                     rel = os.path.relpath(os.path.join(dirpath, f), str(root)).replace("\\", "/")
-                    doc_files.append(rel)
+                    if not _is_nontechnical_doc(rel):
+                        doc_files.append(rel)
     return sorted(doc_files)
 
 
@@ -92,7 +155,9 @@ def _scan_doc_for_symbols(root, doc_path, symbol_names):
     re.search calls) with one findall + cheap set lookups.
     """
     refs = []
-    eligible = [n for n in symbol_names if len(n) >= _MIN_NAME_LEN]
+    if _is_nontechnical_doc(doc_path):
+        return refs
+    eligible = [n for n in symbol_names if len(n) >= _MIN_NAME_LEN and n.lower() not in _COMMON_ENGLISH_SYMBOLS]
     if not eligible:
         return refs
     pattern = re.compile("|".join(r"\b" + re.escape(n) + r"\b" for n in eligible))
@@ -111,7 +176,7 @@ def _scan_doc_for_symbols(root, doc_path, symbol_names):
         # ``hits`` only contains eligible (>= _MIN_NAME_LEN) names, so iterating
         # symbol_names and testing membership reproduces the old loop exactly.
         for name in symbol_names:
-            if name in hits:
+            if name in hits and name.lower() not in _COMMON_ENGLISH_SYMBOLS:
                 refs.append(
                     {
                         "symbol": name,
@@ -128,6 +193,8 @@ def _scan_doc_for_potential_symbols(root, doc_path):
     Returns set of potential names (for drift detection).
     """
     potential = set()
+    if _is_nontechnical_doc(doc_path):
+        return potential
     full_path = os.path.join(str(root), doc_path)
     try:
         with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
@@ -138,7 +205,7 @@ def _scan_doc_for_potential_symbols(root, doc_path):
     # Find identifiers in code blocks/backticks
     for match in re.finditer(r"`([a-zA-Z_]\w+)`", content):
         name = match.group(1)
-        if len(name) >= _MIN_NAME_LEN:
+        if len(name) >= _MIN_NAME_LEN and name.lower() not in _COMMON_ENGLISH_SYMBOLS:
             potential.add(name)
 
     return potential

@@ -336,6 +336,10 @@ _JS_BUILTIN_PREFIXES = (
     "process",
 )
 
+# ``sys.stdlib_module_names`` is build/platform-specific.  A Linux roam
+# process still needs to understand imports guarded for Windows execution.
+_CROSS_PLATFORM_PYTHON_STDLIB = frozenset({"_msi", "_overlapped", "_winapi", "msvcrt", "winreg", "winsound"})
+
 # Style/asset imports (``import './styles.css'``) resolve to a real on-disk
 # file, not to an indexed JS/TS module — the indexer never registers CSS as a
 # JS-family language, so a naive ``target in indexed`` check flags every
@@ -626,6 +630,41 @@ def _declared_python_dependencies(project_root: Path) -> frozenset[str]:
     return frozenset(names)
 
 
+def _optional_or_self_python_dependencies(project_root: Path) -> frozenset[str]:
+    """Return optional-extra and project-self import names from metadata."""
+    pyproject = project_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return frozenset()
+    try:
+        import tomllib  # type: ignore[import-not-found]
+
+        with pyproject.open("rb") as handle:
+            project = tomllib.load(handle).get("project") or {}
+    except ImportError:
+        try:
+            import tomli  # type: ignore[import-not-found]
+        except ImportError:
+            return frozenset()
+        try:
+            with pyproject.open("rb") as handle:
+                project = tomli.load(handle).get("project") or {}
+        except (OSError, tomli.TOMLDecodeError):
+            return frozenset()
+    except (OSError, tomllib.TOMLDecodeError):
+        return frozenset()
+
+    names: set[str] = set()
+    for group in (project.get("optional-dependencies") or {}).values():
+        for req in group or []:
+            name = re.split(r"[\s\[\(=<>!~;]", str(req).strip(), maxsplit=1)[0].strip().lower()
+            if not name:
+                continue
+            names.update(_PEP621_DIST_TO_IMPORT_NAME.get(name, (name.replace("-", "_"),)))
+    if project.get("name"):
+        names.add(str(project["name"]).lower().replace("-", "_"))
+    return frozenset(names)
+
+
 # Module-level cache so repeated calls in the same scan don't re-read +
 # re-parse pyproject.toml. Keyed on the resolved project root so the
 # cache stays valid when tests run with chdir'd CWDs.
@@ -634,7 +673,7 @@ _DECLARED_DEPS_CACHE: dict[Path, frozenset[str]] = {}
 
 def _is_external_python_package(module: str, project_root: Path | None = None) -> bool:
     head = module.split(".", 1)[0]
-    if head in sys.builtin_module_names:
+    if head in sys.builtin_module_names or head in sys.stdlib_module_names or head in _CROSS_PLATFORM_PYTHON_STDLIB:
         return True
     # W161 — trust the project's declared dependencies before falling
     # back to ``importlib.util.find_spec``. This catches the case where
@@ -874,6 +913,7 @@ def _scan_python(conn) -> tuple[list[dict], int]:
     tests_modules: set[str] | None = None
     benchmarks_modules: set[str] | None = None
     project_root = Path(".").resolve()
+    optional_or_self = _optional_or_self_python_dependencies(project_root)
     rows = conn.execute("SELECT path FROM files WHERE language = 'python' ORDER BY path").fetchall()
     orphans: list[dict] = []
     files_scanned = 0
@@ -900,6 +940,17 @@ def _scan_python(conn) -> tuple[list[dict], int]:
             scoped_indexed = indexed | benchmarks_modules
         else:
             scoped_indexed = indexed
+        # Executable scripts put their own directory on ``sys.path``.
+        # Model that ordinary Python rule for every script directory, not
+        # only the historically special-cased tests/benchmarks trees.
+        try:
+            sibling_modules = {path.stem for path in full.parent.glob("*.py")}
+            sibling_modules.update(
+                path.name for path in full.parent.iterdir() if path.is_dir() and (path / "__init__.py").is_file()
+            )
+        except OSError:
+            sibling_modules = set()
+        scoped_indexed = set(scoped_indexed) | sibling_modules
         # W159: scan a copy with triple-quoted strings + comments masked
         # so prose like "...not visible from any\nimport or call edge..."
         # inside a docstring doesn't produce phantom ``or`` orphans. Line
@@ -944,6 +995,18 @@ def _scan_python(conn) -> tuple[list[dict], int]:
                         "module": mod,
                         "kind": "internal_typo",
                         "hint": f"top-level package '{head}' is indexed but '{mod}' is not",
+                    }
+                )
+                continue
+            if head.lower() in optional_or_self or head in optional_or_self:
+                orphans.append(
+                    {
+                        "language": "python",
+                        "file": rel_path,
+                        "line": line_no,
+                        "module": mod,
+                        "kind": "optional_unresolved",
+                        "hint": "declared optional extra or project self-import; unavailable from the source index",
                     }
                 )
                 continue
@@ -1124,6 +1187,7 @@ def orphan_imports(ctx, lang, persist) -> None:
     ensure_index()
     targets = ["python", "javascript", "go"] if lang.lower() == "all" else [lang.lower()]
     all_orphans: list[dict] = []
+    optional_unresolved: list[dict] = []
     files_scanned = 0
 
     # W607-CR -- substrate-boundary plumbing for cmd_orphan_imports.
@@ -1184,6 +1248,9 @@ def orphan_imports(ctx, lang, persist) -> None:
             all_orphans.extend(orphans)
             files_scanned += n
 
+        optional_unresolved = [row for row in all_orphans if row.get("kind") == "optional_unresolved"]
+        all_orphans = [row for row in all_orphans if row.get("kind") != "optional_unresolved"]
+
         # --- W132: mirror into the central findings registry ---
         # Runs ONLY with --persist. The persisted set is the full orphan
         # list for the selected --lang targets — the JSON-mode cap of
@@ -1217,6 +1284,8 @@ def orphan_imports(ctx, lang, persist) -> None:
         if not all_orphans
         else f"{len(all_orphans)} orphan import(s) across {files_scanned} file(s)"
     )
+    if optional_unresolved:
+        verdict += f"; {len(optional_unresolved)} optional-unresolved import(s)"
 
     # --- SARIF output (W1218) ---
     # Branches BEFORE json/text so the pre-existing paths stay
@@ -1278,6 +1347,7 @@ def orphan_imports(ctx, lang, persist) -> None:
         summary_block = {
             "verdict": verdict_with_conf,
             "count": len(all_orphans),
+            "optional_unresolved_count": len(optional_unresolved),
             "files_scanned": files_scanned,
             "languages": targets,
             "findings_confidence_distribution": distribution,
@@ -1285,6 +1355,7 @@ def orphan_imports(ctx, lang, persist) -> None:
         envelope_kwargs: dict = {
             "summary": summary_block,
             "orphans": orphan_triples,
+            "optional_unresolved": optional_unresolved[:200],
         }
         if _w607cr_warnings_out:
             summary_block["warnings_out"] = list(_w607cr_warnings_out)
@@ -1303,6 +1374,10 @@ def orphan_imports(ctx, lang, persist) -> None:
     # W1331: same disclosure for the human-readable branch.
     echo_text_warnings(_w607cr_warnings_out)
     click.echo(f"VERDICT: {verdict}")
+    if optional_unresolved:
+        click.echo()
+        for row in optional_unresolved[:20]:
+            click.echo(f"OPTIONAL-UNRESOLVED: {row['file']}:{row['line']}  {row['module']}")
     if not all_orphans:
         return
     click.echo()

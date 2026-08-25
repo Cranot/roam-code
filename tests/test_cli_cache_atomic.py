@@ -32,6 +32,13 @@ from roam import atomic_io
 from roam import cli as cli_mod
 
 
+def test_source_mtime_failure_never_matches_cached_zero(monkeypatch):
+    monkeypatch.setattr(cli_mod.os.path, "getmtime", lambda _path: (_ for _ in ()).throw(OSError("gone")))
+    mtime = cli_mod._source_mtime("gone.py")
+    assert mtime is None
+    assert cli_mod._cached_short_help({"k": {"mtime": 0.0, "text": "stale"}}, "k", mtime) is None
+
+
 @pytest.fixture
 def tmp_cache_path(tmp_path, monkeypatch):
     """Redirect _SHORT_HELP_CACHE_PATH at a tmp file for the test."""
