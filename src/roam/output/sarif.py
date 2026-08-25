@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib as _hashlib
 import json as _json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -204,6 +205,108 @@ def _result_entry(
     if extras:
         result.update(extras)
     return result
+
+
+@dataclass(frozen=True)
+class _ParameterizedRule:
+    """Rule catalogue entry consumed by the shared detector converter."""
+
+    rule_id: str
+    short_description: str
+    default_level: str
+    tags: tuple[str, ...] | None = None
+
+
+def _identity_level(severity: str) -> str:
+    """Return an already-normalized SARIF level unchanged."""
+    return severity
+
+
+def _convert_parameterized_findings(
+    findings: list[dict],
+    *,
+    help_slug: str,
+    rule_parameters: tuple[_ParameterizedRule, ...],
+    rule_selector: Callable[[dict], tuple[str, str] | None],
+    location_mapper: Callable[[dict], list[dict]],
+    message_mapper: Callable[[dict, Any], str],
+    level_mapper: Callable[[str], str],
+    result_extras_mapper: Callable[[dict, str], dict[str, Any]] | None = None,
+    context: Any = None,
+    emit_runtime_notifications: bool = False,
+    warnings_out: list[str] | None = None,
+) -> dict:
+    """Project one detector's findings through the shared SARIF template.
+
+    The nine detector converters below vary only in their rule catalogue,
+    closed-enum rule/severity selection, location mapping, message shape,
+    optional result properties, and disclosure plumbing. Keeping those as
+    explicit parameters preserves each detector's vocabulary while this
+    function owns the common validation, result construction, and envelope.
+    """
+    rules: list[dict] = []
+    for parameters in rule_parameters:
+        rule_extras: dict[str, Any] = {}
+        if parameters.tags is not None:
+            rule_extras["properties"] = {"tags": list(parameters.tags)}
+        rules.append(
+            _rule_entry(
+                id=parameters.rule_id,
+                short_desc=parameters.short_description,
+                help_uri=_HELP_BASE + help_slug,
+                default_level=parameters.default_level,
+                **rule_extras,
+            )
+        )
+
+    results: list[dict] = []
+    for finding in findings or []:
+        if not isinstance(finding, dict):
+            continue
+        selection = rule_selector(finding)
+        if selection is None:
+            continue
+        rule_id, severity = selection
+        locations = location_mapper(finding)
+        if not locations:
+            continue
+        result_extras = result_extras_mapper(finding, severity) if result_extras_mapper else {}
+        results.append(
+            _result_entry(
+                rule_id=rule_id,
+                severity=severity,
+                locations=locations,
+                message=message_mapper(finding, context),
+                level_mapper=level_mapper,
+                **result_extras,
+            )
+        )
+
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        rules,
+        results,
+        emit_runtime_notifications=emit_runtime_notifications,
+        warnings_out=warnings_out,
+    )
+
+
+def _rules_with_tags(
+    rule_parameters: tuple[_ParameterizedRule, ...],
+    tags: list[str],
+) -> tuple[_ParameterizedRule, ...]:
+    """Copy a rule declaration set with one shared derived tag tuple."""
+    tag_tuple = tuple(tags)
+    return tuple(
+        _ParameterizedRule(
+            parameters.rule_id,
+            parameters.short_description,
+            parameters.default_level,
+            tag_tuple,
+        )
+        for parameters in rule_parameters
+    )
 
 
 # -- Dashboard-filtering tag derivation (W1062) -----------------------
@@ -2574,6 +2677,56 @@ def impact_to_sarif(impact_data: dict) -> dict:
 # -- Affected tests ---------------------------------------------------
 
 
+_AFFECTED_TESTS_RULES = (
+    _ParameterizedRule(
+        "affected-tests/direct",
+        "Test directly exercises the changed symbol",
+        "error",
+    ),
+    _ParameterizedRule(
+        "affected-tests/transitive",
+        "Test reaches the changed symbol through intermediate callers",
+        "warning",
+    ),
+    _ParameterizedRule(
+        "affected-tests/colocated",
+        "Test file is colocated with a changed source file",
+        "note",
+    ),
+)
+
+_AFFECTED_TESTS_KIND_TO_RULE_LEVEL = {
+    "DIRECT": ("affected-tests/direct", "error"),
+    "TRANSITIVE": ("affected-tests/transitive", "warning"),
+    "COLOCATED": ("affected-tests/colocated", "note"),
+}
+
+
+def _affected_tests_rule(entry: dict) -> tuple[str, str] | None:
+    return _AFFECTED_TESTS_KIND_TO_RULE_LEVEL.get(entry.get("kind") or "")
+
+
+def _affected_tests_locations(entry: dict) -> list[dict]:
+    file_path = entry.get("file") or ""
+    return [_location(file_path, None)] if file_path else []
+
+
+def _affected_tests_message(entry: dict, target: Any) -> str:
+    kind = entry.get("kind") or ""
+    file_path = entry.get("file") or ""
+    symbol = entry.get("symbol")
+    hops = entry.get("hops")
+    via = entry.get("via")
+    if kind == "DIRECT":
+        symbol_suffix = f"::{symbol}" if symbol else ""
+        return f"Direct test ({hops} hop) for '{target}': {file_path}{symbol_suffix}"
+    if kind == "TRANSITIVE":
+        symbol_suffix = f"::{symbol}" if symbol else ""
+        via_suffix = f" via {via}" if via else ""
+        return f"Transitive test ({hops} hops{via_suffix}) for '{target}': {file_path}{symbol_suffix}"
+    return f"Colocated test (same directory) for '{target}': {file_path}"
+
+
 def affected_tests_to_sarif(data: dict) -> dict:
     """Convert ``roam affected-tests`` output to SARIF.
 
@@ -2604,78 +2757,17 @@ def affected_tests_to_sarif(data: dict) -> dict:
     Empty ``tests[]`` produces a valid SARIF envelope with zero results
     (rules catalogue is always emitted).
     """
-    rules = [
-        _rule_entry(
-            id="affected-tests/direct",
-            short_desc=("Test directly exercises the changed symbol"),
-            help_uri=_HELP_BASE + "affected-tests",
-            default_level="error",
-        ),
-        _rule_entry(
-            id="affected-tests/transitive",
-            short_desc=("Test reaches the changed symbol through intermediate callers"),
-            help_uri=_HELP_BASE + "affected-tests",
-            default_level="warning",
-        ),
-        _rule_entry(
-            id="affected-tests/colocated",
-            short_desc=("Test file is colocated with a changed source file"),
-            help_uri=_HELP_BASE + "affected-tests",
-            default_level="note",
-        ),
-    ]
-
     target = str(((data.get("summary") or {}).get("target")) or "<unknown>")
-    _kind_to_rule = {
-        "DIRECT": ("affected-tests/direct", "error"),
-        "TRANSITIVE": ("affected-tests/transitive", "warning"),
-        "COLOCATED": ("affected-tests/colocated", "note"),
-    }
-
-    results: list[dict] = []
-    for entry in data.get("tests", []) or []:
-        if not isinstance(entry, dict):
-            continue
-        fpath = entry.get("file") or ""
-        if not fpath:
-            continue
-        kind = entry.get("kind") or ""
-        rule_info = _kind_to_rule.get(kind)
-        if rule_info is None:
-            # Unknown kind — skip rather than crash.  Closed-enum
-            # discipline: if a 4th kind ships, both this mapping and
-            # the rules catalogue need to grow in lockstep.
-            continue
-        rule_id, level = rule_info
-
-        symbol = entry.get("symbol")
-        hops = entry.get("hops")
-        via = entry.get("via")
-
-        if kind == "DIRECT":
-            sym_str = f"::{symbol}" if symbol else ""
-            text = f"Direct test ({hops} hop) for '{target}': {fpath}{sym_str}"
-        elif kind == "TRANSITIVE":
-            sym_str = f"::{symbol}" if symbol else ""
-            via_str = f" via {via}" if via else ""
-            text = f"Transitive test ({hops} hops{via_str}) for '{target}': {fpath}{sym_str}"
-        else:  # COLOCATED
-            text = f"Colocated test (same directory) for '{target}': {fpath}"
-
-        # affected-tests pre-resolves the level via the closed-enum
-        # _kind_to_rule lookup above; pass an identity ``level_mapper``
-        # so the helper doesn't translate again.
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=level,
-                locations=[_location(fpath, None)],
-                message=text,
-                level_mapper=lambda s: s,
-            )
-        )
-
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return _convert_parameterized_findings(
+        data.get("tests", []) or [],
+        help_slug="affected-tests",
+        rule_parameters=_AFFECTED_TESTS_RULES,
+        rule_selector=_affected_tests_rule,
+        location_mapper=_affected_tests_locations,
+        message_mapper=_affected_tests_message,
+        level_mapper=_identity_level,
+        context=target,
+    )
 
 
 # -- Test impact ------------------------------------------------------
@@ -3374,6 +3466,61 @@ def clones_to_sarif(data: dict) -> dict:
 _DELETE_CHECK_MAX_SECONDARY_LOCS = 10
 
 
+_DELETE_CHECK_RULES = (
+    _ParameterizedRule(
+        "delete-check/break-risk",
+        "Deletion target has surviving reachable code references — deleting it will break the build",
+        "error",
+    ),
+    _ParameterizedRule(
+        "delete-check/likely-safe",
+        "Deletion target has surviving references only in tests / docs / unreachable code — review recommended",
+        "warning",
+    ),
+    _ParameterizedRule(
+        "delete-check/safe",
+        "Deletion target has no surviving references — safe to delete",
+        "note",
+    ),
+)
+
+_DELETE_CHECK_VERDICT_TO_RULE_LEVEL = {
+    "BREAK-RISK": ("delete-check/break-risk", "error"),
+    "LIKELY-SAFE": ("delete-check/likely-safe", "warning"),
+    "SAFE": ("delete-check/safe", "note"),
+}
+
+
+def _delete_check_rule(entry: dict) -> tuple[str, str] | None:
+    return _DELETE_CHECK_VERDICT_TO_RULE_LEVEL.get(entry.get("verdict") or "")
+
+
+def _delete_check_locations(entry: dict) -> list[dict]:
+    from_file = entry.get("from_file") or ""
+    if not from_file:
+        return []
+    locations = [_location(from_file, entry.get("from_line"))]
+    survivors = entry.get("survivors") or []
+    if not isinstance(survivors, list):
+        survivors = []
+    for survivor in survivors[:_DELETE_CHECK_MAX_SECONDARY_LOCS]:
+        if not isinstance(survivor, dict):
+            continue
+        survivor_path = survivor.get("path") or ""
+        if survivor_path:
+            locations.append(_location(survivor_path, survivor.get("line")))
+    return locations
+
+
+def _delete_check_message(entry: dict, _context: Any) -> str:
+    verdict = entry.get("verdict") or ""
+    kind = entry.get("kind") or "symbol"
+    name = entry.get("name") or "?"
+    reason = entry.get("reason") or ""
+    reason_suffix = f" — {reason}" if reason else ""
+    return f"{verdict} {kind} '{name}'{reason_suffix}"
+
+
 def delete_check_to_sarif(data: dict) -> dict:
     """Convert ``roam delete-check`` deletion-safety gate output to SARIF.
 
@@ -3417,99 +3564,18 @@ def delete_check_to_sarif(data: dict) -> dict:
     zero results (rules catalogue is always emitted so consumers can
     introspect the rule vocabulary even on a clean run).
     """
-    rules = [
-        _rule_entry(
-            id="delete-check/break-risk",
-            short_desc=("Deletion target has surviving reachable code references — deleting it will break the build"),
-            help_uri=_HELP_BASE + "delete-check",
-            default_level="error",
-        ),
-        _rule_entry(
-            id="delete-check/likely-safe",
-            short_desc=(
-                "Deletion target has surviving references only in tests / docs / unreachable code — review recommended"
-            ),
-            help_uri=_HELP_BASE + "delete-check",
-            default_level="warning",
-        ),
-        _rule_entry(
-            id="delete-check/safe",
-            short_desc=("Deletion target has no surviving references — safe to delete"),
-            help_uri=_HELP_BASE + "delete-check",
-            default_level="note",
-        ),
-    ]
-
-    _VERDICT_TO_RULE_LEVEL = {
-        "BREAK-RISK": ("delete-check/break-risk", "error"),
-        "LIKELY-SAFE": ("delete-check/likely-safe", "warning"),
-        "SAFE": ("delete-check/safe", "note"),
-    }
-
-    results: list[dict] = []
-
     deletions = data.get("deletions") or []
     if not isinstance(deletions, list):
         deletions = []
-
-    for entry in deletions:
-        if not isinstance(entry, dict):
-            continue
-
-        verdict = entry.get("verdict") or ""
-        rule_level = _VERDICT_TO_RULE_LEVEL.get(verdict)
-        if rule_level is None:
-            # Unknown verdict — skip rather than mint a rule on the fly
-            # (LAW 8 — closed enumeration over free-string composition).
-            continue
-        rule_id, level = rule_level
-
-        from_file = entry.get("from_file") or ""
-        if not from_file:
-            # Without a primary anchor we cannot surface the row
-            # meaningfully — skip rather than emit an anchorless result.
-            continue
-        from_line = entry.get("from_line")
-        # ``from_line`` is 0 for full-file deletions (no specific line
-        # within the file); :func:`_physical_location` drops the
-        # ``region`` key when ``line <= 0`` so SARIF stays valid.
-
-        # PRIMARY = the deletion site itself. SECONDARY = up to
-        # _DELETE_CHECK_MAX_SECONDARY_LOCS survivors[] (each with
-        # path + line).
-        locations: list[dict] = [_location(from_file, from_line)]
-        survivors = entry.get("survivors") or []
-        if not isinstance(survivors, list):
-            survivors = []
-        for s in survivors[:_DELETE_CHECK_MAX_SECONDARY_LOCS]:
-            if not isinstance(s, dict):
-                continue
-            spath = s.get("path") or ""
-            sline = s.get("line")
-            if not spath:
-                continue
-            locations.append(_location(spath, sline))
-
-        kind = entry.get("kind") or "symbol"
-        name = entry.get("name") or "?"
-        reason = entry.get("reason") or ""
-        reason_suffix = f" — {reason}" if reason else ""
-        message_text = f"{verdict} {kind} '{name}'{reason_suffix}"
-
-        # delete-check uses an identity ``level_mapper``: the verdict
-        # already maps 1:1 to a SARIF level via _VERDICT_TO_RULE_LEVEL,
-        # so we pass the literal level through directly.
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=level,
-                locations=locations,
-                message=message_text,
-                level_mapper=lambda s: s,
-            )
-        )
-
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return _convert_parameterized_findings(
+        deletions,
+        help_slug="delete-check",
+        rule_parameters=_DELETE_CHECK_RULES,
+        rule_selector=_delete_check_rule,
+        location_mapper=_delete_check_locations,
+        message_mapper=_delete_check_message,
+        level_mapper=_identity_level,
+    )
 
 
 # -- Auth gaps (PHP / Laravel endpoint authentication & authorization) -
@@ -3764,6 +3830,76 @@ def _n1_confidence_level(confidence: str) -> str:
     return "note"
 
 
+_N1_RULE_TAGS = tuple(_derive_finding_tags(family="performance", extra=["n1-query"]))
+_N1_RULES = (
+    _ParameterizedRule(
+        "n1/high-confidence",
+        "Implicit N+1: model accessor triggers per-item I/O and the model is used in a collection / pagination context",
+        "error",
+        _N1_RULE_TAGS,
+    ),
+    _ParameterizedRule(
+        "n1/medium-confidence",
+        "Implicit N+1: model accessor triggers a relationship lazy-load with no strong collection-context evidence",
+        "warning",
+        _N1_RULE_TAGS,
+    ),
+    _ParameterizedRule(
+        "n1/low-confidence",
+        "Implicit N+1: heuristic match — accessor pattern without supporting collection-context evidence",
+        "note",
+        _N1_RULE_TAGS,
+    ),
+)
+_N1_CONFIDENCE_TO_RULE = {
+    "high": "n1/high-confidence",
+    "medium": "n1/medium-confidence",
+    "low": "n1/low-confidence",
+}
+
+
+def _n1_rule(finding: dict) -> tuple[str, str] | None:
+    confidence = (finding.get("confidence") or "").lower()
+    rule_id = _N1_CONFIDENCE_TO_RULE.get(confidence)
+    return (rule_id, confidence) if rule_id is not None else None
+
+
+def _n1_locations(finding: dict) -> list[dict]:
+    accessor_location = finding.get("accessor_location") or ""
+    if not accessor_location:
+        return []
+    file_path, line = _parse_loc_string(accessor_location)
+    return [_location(file_path, line)] if file_path else []
+
+
+def _n1_message(finding: dict, _context: Any) -> str:
+    model_name = finding.get("model_name") or ""
+    accessor_name = finding.get("accessor_name") or ""
+    appended = finding.get("appended_attribute") or ""
+    relationship = finding.get("relationship") or ""
+    io_type = finding.get("io_type") or ""
+    suggestion = finding.get("suggestion") or ""
+    parts = [f"Implicit N+1: {model_name}.{accessor_name}"]
+    if appended:
+        parts.append(f"appended via ${appended}")
+    if relationship:
+        io_suffix = f" ({io_type})" if io_type else ""
+        parts.append(f"triggers {relationship}{io_suffix}")
+    message = " — ".join(parts)
+    if suggestion:
+        message += f" — Fix: {suggestion}"
+    return message
+
+
+def _n1_result_extras(_finding: dict, confidence: str) -> dict[str, Any]:
+    tags = _derive_finding_tags(
+        family="performance",
+        extra=["n1-query"],
+        severity=_n1_confidence_level(confidence),
+    )
+    return {"properties": {"tags": list(tags)}}
+
+
 def n1_to_sarif(findings: list[dict]) -> dict:
     """Convert ``roam n1`` implicit N+1 findings to SARIF.
 
@@ -3817,112 +3953,17 @@ def n1_to_sarif(findings: list[dict]) -> dict:
     is per-result; the rule descriptor carries only family + category
     so dashboards grouping by rule still see the chips on a clean run.
     """
-    # W1062-followup-4: rule-level tags carry the family + category
-    # axes so dashboards grouping by rule still get the filter chips
-    # even before any specific result lands. Severity is per-result and
-    # stamped below from the resolved SARIF level.
-    _N1_RULE_TAGS = _derive_finding_tags(family="performance", extra=["n1-query"])
-    rules = [
-        _rule_entry(
-            id="n1/high-confidence",
-            short_desc=(
-                "Implicit N+1: model accessor triggers per-item I/O "
-                "and the model is used in a collection / pagination "
-                "context"
-            ),
-            help_uri=_HELP_BASE + "n1",
-            default_level="error",
-            properties={"tags": list(_N1_RULE_TAGS)},
-        ),
-        _rule_entry(
-            id="n1/medium-confidence",
-            short_desc=(
-                "Implicit N+1: model accessor triggers a relationship "
-                "lazy-load with no strong collection-context evidence"
-            ),
-            help_uri=_HELP_BASE + "n1",
-            default_level="warning",
-            properties={"tags": list(_N1_RULE_TAGS)},
-        ),
-        _rule_entry(
-            id="n1/low-confidence",
-            short_desc=(
-                "Implicit N+1: heuristic match — accessor pattern without supporting collection-context evidence"
-            ),
-            help_uri=_HELP_BASE + "n1",
-            default_level="note",
-            properties={"tags": list(_N1_RULE_TAGS)},
-        ),
-    ]
-
-    _CONFIDENCE_TO_RULE = {
-        "high": "n1/high-confidence",
-        "medium": "n1/medium-confidence",
-        "low": "n1/low-confidence",
-    }
-
-    results: list[dict] = []
-    for f in findings or []:
-        if not isinstance(f, dict):
-            continue
-        accessor_loc = f.get("accessor_location") or ""
-        if not accessor_loc:
-            # Without an anchor we cannot surface the finding
-            # meaningfully — skip rather than emit an anchorless row.
-            continue
-        fpath, line = _parse_loc_string(accessor_loc)
-        if not fpath:
-            continue
-
-        confidence = (f.get("confidence") or "").lower()
-        rule_id = _CONFIDENCE_TO_RULE.get(confidence)
-        if rule_id is None:
-            # Future confidence label that hasn't landed in the closed
-            # enumeration above — skip (matches LAW 8 closed-enum
-            # discipline).
-            continue
-
-        model_name = f.get("model_name") or ""
-        accessor_name = f.get("accessor_name") or ""
-        appended = f.get("appended_attribute") or ""
-        relationship = f.get("relationship") or ""
-        io_type = f.get("io_type") or ""
-        suggestion = f.get("suggestion") or ""
-
-        # Message body — surface enough context for triage without a
-        # JSON-envelope round-trip. Order: subject (model.accessor) ->
-        # mechanism (appended attribute -> relationship via io_type) ->
-        # fix.
-        parts = [f"Implicit N+1: {model_name}.{accessor_name}"]
-        if appended:
-            parts.append(f"appended via ${appended}")
-        if relationship:
-            io_suffix = f" ({io_type})" if io_type else ""
-            parts.append(f"triggers {relationship}{io_suffix}")
-        message_text = " — ".join(parts)
-        if suggestion:
-            message_text += f" — Fix: {suggestion}"
-
-        # W1062-followup-4: per-result tags add the SARIF-level axis
-        # (resolved from confidence via the level-mapper) so dashboards
-        # can filter by severity chip without re-running the mapper.
-        result_tags = _derive_finding_tags(
-            family="performance",
-            extra=["n1-query"],
-            severity=_n1_confidence_level(confidence),
-        )
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=confidence,
-                locations=[_location(fpath, line)],
-                message=message_text,
-                level_mapper=_n1_confidence_level,
-                properties={"tags": list(result_tags)},
-            )
-        )
-
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    rule_tags = _derive_finding_tags(family="performance", extra=["n1-query"])
+    return _convert_parameterized_findings(
+        findings,
+        help_slug="n1",
+        rule_parameters=_rules_with_tags(_N1_RULES, rule_tags),
+        rule_selector=_n1_rule,
+        location_mapper=_n1_locations,
+        message_mapper=_n1_message,
+        level_mapper=_n1_confidence_level,
+        result_extras_mapper=_n1_result_extras,
+    )
 
 
 # -- Missing-index detector (unindexed query columns) -----------------
@@ -3957,6 +3998,83 @@ def _missing_index_confidence_level(confidence: str) -> str:
         return "warning"
     # low or unknown -> "note"
     return "note"
+
+
+_MISSING_INDEX_RULE_TAGS = tuple(
+    _derive_finding_tags(
+        family="performance",
+        extra=["missing-index"],
+    )
+)
+_MISSING_INDEX_RULES = (
+    _ParameterizedRule(
+        "missing-index/high-confidence",
+        "Missing index: WHERE on an unindexed column in a paginated query (guaranteed table scan)",
+        "error",
+        _MISSING_INDEX_RULE_TAGS,
+    ),
+    _ParameterizedRule(
+        "missing-index/medium-confidence",
+        "Missing index: orderBy on a non-indexed column, or paginated WHERE without composite coverage",
+        "warning",
+        _MISSING_INDEX_RULE_TAGS,
+    ),
+    _ParameterizedRule(
+        "missing-index/low-confidence",
+        "Sub-optimal index: column has an individual index but no composite covering filter + sort",
+        "note",
+        _MISSING_INDEX_RULE_TAGS,
+    ),
+)
+_MISSING_INDEX_CONFIDENCE_TO_RULE = {
+    "high": "missing-index/high-confidence",
+    "medium": "missing-index/medium-confidence",
+    "low": "missing-index/low-confidence",
+}
+
+
+def _missing_index_rule(finding: dict) -> tuple[str, str] | None:
+    confidence = (finding.get("confidence") or "").lower()
+    rule_id = _MISSING_INDEX_CONFIDENCE_TO_RULE.get(confidence)
+    return (rule_id, confidence) if rule_id is not None else None
+
+
+def _missing_index_locations(finding: dict) -> list[dict]:
+    query_location = finding.get("query_location") or ""
+    if not query_location:
+        return []
+    file_path, line = _parse_loc_string(query_location)
+    return [_location(file_path, line)] if file_path else []
+
+
+def _missing_index_message(finding: dict, _context: Any) -> str:
+    table = finding.get("table") or "?"
+    columns = finding.get("columns") or []
+    pattern_type = finding.get("pattern_type") or ""
+    has_paginate = bool(finding.get("has_paginate"))
+    issue = finding.get("issue") or ""
+    suggestion = finding.get("suggestion") or ""
+    columns_part = " + ".join(columns) if columns else "?"
+    parts = [f"Missing index: {table}.{columns_part}"]
+    if pattern_type:
+        parts.append(f"pattern={pattern_type}")
+    if has_paginate:
+        parts.append("paginated query")
+    message = " — ".join(parts)
+    if issue:
+        message += f" — {issue}"
+    if suggestion:
+        message += f" — Fix: {suggestion}"
+    return message
+
+
+def _missing_index_result_extras(_finding: dict, confidence: str) -> dict[str, Any]:
+    tags = _derive_finding_tags(
+        family="performance",
+        extra=["missing-index"],
+        severity=_missing_index_confidence_level(confidence),
+    )
+    return {"properties": {"tags": list(tags)}}
 
 
 def missing_index_to_sarif(findings: list[dict]) -> dict:
@@ -4015,110 +4133,17 @@ def missing_index_to_sarif(findings: list[dict]) -> dict:
     descriptor carries only family + category so dashboards grouping
     by rule still see the chips on a clean run.
     """
-    # W1062-followup-4: rule-level tags carry the family + category
-    # axes so dashboards grouping by rule still get the filter chips
-    # even before any specific result lands. Severity is per-result and
-    # stamped below from the resolved SARIF level.
-    _MISSING_INDEX_RULE_TAGS = _derive_finding_tags(
-        family="performance",
-        extra=["missing-index"],
+    rule_tags = _derive_finding_tags(family="performance", extra=["missing-index"])
+    return _convert_parameterized_findings(
+        findings,
+        help_slug="missing-index",
+        rule_parameters=_rules_with_tags(_MISSING_INDEX_RULES, rule_tags),
+        rule_selector=_missing_index_rule,
+        location_mapper=_missing_index_locations,
+        message_mapper=_missing_index_message,
+        level_mapper=_missing_index_confidence_level,
+        result_extras_mapper=_missing_index_result_extras,
     )
-    rules = [
-        _rule_entry(
-            id="missing-index/high-confidence",
-            short_desc=("Missing index: WHERE on an unindexed column in a paginated query (guaranteed table scan)"),
-            help_uri=_HELP_BASE + "missing-index",
-            default_level="error",
-            properties={"tags": list(_MISSING_INDEX_RULE_TAGS)},
-        ),
-        _rule_entry(
-            id="missing-index/medium-confidence",
-            short_desc=(
-                "Missing index: orderBy on a non-indexed column, or paginated WHERE without composite coverage"
-            ),
-            help_uri=_HELP_BASE + "missing-index",
-            default_level="warning",
-            properties={"tags": list(_MISSING_INDEX_RULE_TAGS)},
-        ),
-        _rule_entry(
-            id="missing-index/low-confidence",
-            short_desc=("Sub-optimal index: column has an individual index but no composite covering filter + sort"),
-            help_uri=_HELP_BASE + "missing-index",
-            default_level="note",
-            properties={"tags": list(_MISSING_INDEX_RULE_TAGS)},
-        ),
-    ]
-
-    _CONFIDENCE_TO_RULE = {
-        "high": "missing-index/high-confidence",
-        "medium": "missing-index/medium-confidence",
-        "low": "missing-index/low-confidence",
-    }
-
-    results: list[dict] = []
-    for f in findings or []:
-        if not isinstance(f, dict):
-            continue
-        query_loc = f.get("query_location") or ""
-        if not query_loc:
-            # Without an anchor we cannot surface the finding
-            # meaningfully — skip rather than emit an anchorless row.
-            continue
-        fpath, line = _parse_loc_string(query_loc)
-        if not fpath:
-            continue
-
-        confidence = (f.get("confidence") or "").lower()
-        rule_id = _CONFIDENCE_TO_RULE.get(confidence)
-        if rule_id is None:
-            # Future confidence label that hasn't landed in the closed
-            # enumeration above — skip (matches LAW 8 closed-enum
-            # discipline).
-            continue
-
-        table = f.get("table") or "?"
-        columns = f.get("columns") or []
-        pattern_type = f.get("pattern_type") or ""
-        has_paginate = bool(f.get("has_paginate"))
-        issue = f.get("issue") or ""
-        suggestion = f.get("suggestion") or ""
-
-        cols_part = " + ".join(columns) if columns else "?"
-
-        # Message body — surface enough context for triage without a
-        # JSON-envelope round-trip. Order: subject (table.cols) ->
-        # mechanism (pattern_type, paginated?) -> issue -> fix.
-        parts = [f"Missing index: {table}.{cols_part}"]
-        if pattern_type:
-            parts.append(f"pattern={pattern_type}")
-        if has_paginate:
-            parts.append("paginated query")
-        message_text = " — ".join(parts)
-        if issue:
-            message_text += f" — {issue}"
-        if suggestion:
-            message_text += f" — Fix: {suggestion}"
-
-        # W1062-followup-4: per-result tags add the SARIF-level axis
-        # (resolved from confidence via the level-mapper) so dashboards
-        # can filter by severity chip without re-running the mapper.
-        result_tags = _derive_finding_tags(
-            family="performance",
-            extra=["missing-index"],
-            severity=_missing_index_confidence_level(confidence),
-        )
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=confidence,
-                locations=[_location(fpath, line)],
-                message=message_text,
-                level_mapper=_missing_index_confidence_level,
-                properties={"tags": list(result_tags)},
-            )
-        )
-
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
 # -- Internal helpers -------------------------------------------------
@@ -4209,6 +4234,83 @@ def _orphan_imports_kind_level(kind: str) -> str:
     return "note"
 
 
+_ORPHAN_IMPORTS_RULE_TAGS = {
+    "orphan-imports/internal-typo": tuple(
+        _derive_finding_tags(
+            family="hygiene",
+            extra=["orphan-imports", "internal-typo"],
+        )
+    ),
+    "orphan-imports/missing-package": tuple(
+        _derive_finding_tags(
+            family="hygiene",
+            extra=["orphan-imports", "missing-package"],
+        )
+    ),
+    "orphan-imports/missing-local": tuple(
+        _derive_finding_tags(
+            family="hygiene",
+            extra=["orphan-imports", "missing-local"],
+        )
+    ),
+}
+_ORPHAN_IMPORTS_RULES = (
+    _ParameterizedRule(
+        "orphan-imports/internal-typo",
+        "Orphan import: top-level package is indexed but the full dotted path is not — almost certainly a typo or stale import",
+        "error",
+        _ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/internal-typo"],
+    ),
+    _ParameterizedRule(
+        "orphan-imports/missing-package",
+        "Orphan import: module resolves neither in the index nor via importlib — likely typo or uninstalled dependency",
+        "warning",
+        _ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/missing-package"],
+    ),
+    _ParameterizedRule(
+        "orphan-imports/missing-local",
+        "Orphan import: path-style import did not resolve to an indexed file / package",
+        "warning",
+        _ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/missing-local"],
+    ),
+)
+_ORPHAN_IMPORTS_KIND_TO_RULE = {
+    "internal_typo": "orphan-imports/internal-typo",
+    "missing_package": "orphan-imports/missing-package",
+    "missing_local": "orphan-imports/missing-local",
+}
+
+
+def _orphan_imports_rule(finding: dict) -> tuple[str, str] | None:
+    kind = (finding.get("kind") or "").lower()
+    rule_id = _ORPHAN_IMPORTS_KIND_TO_RULE.get(kind)
+    return (rule_id, kind) if rule_id is not None else None
+
+
+def _orphan_imports_locations(finding: dict) -> list[dict]:
+    file_path = finding.get("file") or ""
+    return [_location(file_path, finding.get("line"))] if file_path else []
+
+
+def _orphan_imports_message(finding: dict, _context: Any) -> str:
+    language = finding.get("language") or ""
+    module = finding.get("module") or ""
+    hint = finding.get("hint") or ""
+    parts = [f"Orphan import: {language} module {module!r}"]
+    if hint:
+        parts.append(hint)
+    return " — ".join(parts)
+
+
+def _orphan_imports_result_extras(_finding: dict, kind: str) -> dict[str, Any]:
+    tags = _derive_finding_tags(
+        family="hygiene",
+        extra=["orphan-imports", kind],
+        severity=_orphan_imports_kind_level(kind),
+    )
+    return {"properties": {"tags": list(tags)}}
+
+
 def orphan_imports_to_sarif(findings: list[dict]) -> dict:
     """Convert ``roam orphan-imports`` findings to SARIF.
 
@@ -4264,115 +4366,26 @@ def orphan_imports_to_sarif(findings: list[dict]) -> dict:
     (``internal_typo`` / ``missing_package`` / ``missing_local``)
     collapse to the URL-safe hyphen form via ``_normalize_tag``.
     """
-    # W1062-followup-4: rule-level tags carry the family + category +
-    # kind axes so dashboards grouping by rule still get the filter
-    # chips even before any specific result lands. Severity is
-    # per-result and stamped below.
-    _ORPHAN_IMPORTS_RULE_TAGS: dict[str, list[str]] = {
-        "orphan-imports/internal-typo": _derive_finding_tags(
-            family="hygiene",
-            extra=["orphan-imports", "internal-typo"],
-        ),
-        "orphan-imports/missing-package": _derive_finding_tags(
-            family="hygiene",
-            extra=["orphan-imports", "missing-package"],
-        ),
-        "orphan-imports/missing-local": _derive_finding_tags(
-            family="hygiene",
-            extra=["orphan-imports", "missing-local"],
-        ),
-    }
-    rules = [
-        _rule_entry(
-            id="orphan-imports/internal-typo",
-            short_desc=(
-                "Orphan import: top-level package is indexed but the "
-                "full dotted path is not — almost certainly a typo or "
-                "stale import"
-            ),
-            help_uri=_HELP_BASE + "orphan-imports",
-            default_level="error",
-            properties={"tags": list(_ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/internal-typo"])},
-        ),
-        _rule_entry(
-            id="orphan-imports/missing-package",
-            short_desc=(
-                "Orphan import: module resolves neither in the index "
-                "nor via importlib — likely typo or uninstalled "
-                "dependency"
-            ),
-            help_uri=_HELP_BASE + "orphan-imports",
-            default_level="warning",
-            properties={"tags": list(_ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/missing-package"])},
-        ),
-        _rule_entry(
-            id="orphan-imports/missing-local",
-            short_desc=("Orphan import: path-style import did not resolve to an indexed file / package"),
-            help_uri=_HELP_BASE + "orphan-imports",
-            default_level="warning",
-            properties={"tags": list(_ORPHAN_IMPORTS_RULE_TAGS["orphan-imports/missing-local"])},
-        ),
-    ]
-
-    _KIND_TO_RULE = {
-        "internal_typo": "orphan-imports/internal-typo",
-        "missing_package": "orphan-imports/missing-package",
-        "missing_local": "orphan-imports/missing-local",
-    }
-
-    results: list[dict] = []
-    for f in findings or []:
-        if not isinstance(f, dict):
-            continue
-        fpath = f.get("file") or ""
-        if not fpath:
-            # Without an anchor we cannot surface the finding
-            # meaningfully — skip rather than emit an anchorless row.
-            continue
-        line = f.get("line")
-        kind = (f.get("kind") or "").lower()
-        rule_id = _KIND_TO_RULE.get(kind)
-        if rule_id is None:
-            # Future kind label that hasn't landed in the closed
-            # enumeration above — skip (matches LAW 8 closed-enum
-            # discipline).
-            continue
-
-        language = f.get("language") or ""
-        module = f.get("module") or ""
-        hint = f.get("hint") or ""
-
-        # Message body — surface enough context for triage without a
-        # JSON-envelope round-trip. Order: subject (language: module) ->
-        # kind -> resolution hint.
-        parts = [f"Orphan import: {language} module {module!r}"]
-        if hint:
-            parts.append(hint)
-        message_text = " — ".join(parts)
-
-        # W1062-followup-4: per-result tags add the SARIF-level axis
-        # (resolved from kind via the level-mapper) so dashboards can
-        # filter by severity chip without re-running the mapper.
-        # Producer-side underscore (``internal_typo``) collapses to
-        # the URL-safe hyphen form (``internal-typo``) via
-        # ``_normalize_tag``.
-        result_tags = _derive_finding_tags(
-            family="hygiene",
-            extra=["orphan-imports", kind],
-            severity=_orphan_imports_kind_level(kind),
+    base_rule_tags = _derive_finding_tags(family="hygiene", extra=["orphan-imports"])
+    rule_parameters = tuple(
+        _ParameterizedRule(
+            parameters.rule_id,
+            parameters.short_description,
+            parameters.default_level,
+            (*base_rule_tags, parameters.tags[-1]),
         )
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=kind,
-                locations=[_location(fpath, line)],
-                message=message_text,
-                level_mapper=_orphan_imports_kind_level,
-                properties={"tags": list(result_tags)},
-            )
-        )
-
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+        for parameters in _ORPHAN_IMPORTS_RULES
+    )
+    return _convert_parameterized_findings(
+        findings,
+        help_slug="orphan-imports",
+        rule_parameters=rule_parameters,
+        rule_selector=_orphan_imports_rule,
+        location_mapper=_orphan_imports_locations,
+        message_mapper=_orphan_imports_message,
+        level_mapper=_orphan_imports_kind_level,
+        result_extras_mapper=_orphan_imports_result_extras,
+    )
 
 
 # -- Over-fetch detector (W1219) --------------------------------------
@@ -4409,6 +4422,88 @@ def _over_fetch_severity_level(severity: str) -> str:
         return "warning"
     # m / medium / l / low / unknown -> "note"
     return "note"
+
+
+_OVER_FETCH_RULE_TAGS = tuple(
+    _derive_finding_tags(
+        family="performance",
+        extra=["over-fetch"],
+    )
+)
+_OVER_FETCH_RULE_ID = "over-fetch/select-star-or-wide-query"
+_OVER_FETCH_RULES = (
+    _ParameterizedRule(
+        _OVER_FETCH_RULE_ID,
+        "Over-fetch: model serializes more fields than necessary, or query loads columns/relations the response does not need",
+        "warning",
+        _OVER_FETCH_RULE_TAGS,
+    ),
+)
+
+
+def _over_fetch_rule(finding: dict) -> tuple[str, str] | None:
+    if finding.get("state"):
+        return _OVER_FETCH_RULE_ID, finding.get("severity") or ""
+    confidence = (finding.get("confidence") or "").lower()
+    if confidence not in ("high", "medium", "low"):
+        return None
+    return _OVER_FETCH_RULE_ID, confidence
+
+
+def _over_fetch_locations(finding: dict) -> list[dict]:
+    if finding.get("state"):
+        file_path = finding.get("file") or ""
+        return [_location(file_path, finding.get("line"))] if file_path else []
+
+    model_path = finding.get("model_path") or ""
+    model_location = finding.get("model_location") or ""
+    line_anchor: int | None = None
+    if model_location:
+        parsed_path, parsed_line = _parse_loc_string(model_location)
+        if parsed_path:
+            model_path = parsed_path
+        line_anchor = parsed_line
+    return [_location(model_path, line_anchor)] if model_path else []
+
+
+def _over_fetch_message(finding: dict, _context: Any) -> str:
+    state = finding.get("state")
+    if state:
+        endpoint = finding.get("endpoint") or ""
+        evidence_text = finding.get("evidence") or ""
+        recommendation = finding.get("recommendation") or ""
+        parts = [f"Over-fetch endpoint: {endpoint} [state={state}]"]
+        if evidence_text:
+            parts.append(f"Evidence: {evidence_text}")
+        if recommendation:
+            parts.append(f"Fix: {recommendation}")
+        return " — ".join(parts)
+
+    confidence = (finding.get("confidence") or "").lower()
+    model_name = finding.get("model_name") or ""
+    fillable = finding.get("fillable_count")
+    hidden = finding.get("hidden_count")
+    exposed = finding.get("exposed_count")
+    reasons = finding.get("reasons") or []
+    parts = [f"Over-fetch model: {model_name} [confidence={confidence}]"]
+    if fillable is not None:
+        parts.append(f"{fillable} fillable, {hidden} hidden, {exposed} exposed")
+    if reasons:
+        parts.append(str(reasons[0]))
+    return " — ".join(str(part) for part in parts)
+
+
+def _over_fetch_result_extras(finding: dict, severity: str) -> dict[str, Any]:
+    if finding.get("state"):
+        extra = ["over-fetch", "endpoint"]
+    else:
+        extra = ["over-fetch", "model", severity]
+    tags = _derive_finding_tags(
+        family="performance",
+        extra=extra,
+        severity=_over_fetch_severity_level(severity),
+    )
+    return {"properties": {"tags": list(tags)}}
 
 
 def over_fetch_to_sarif(findings: list[dict]) -> dict:
@@ -4452,145 +4547,17 @@ def over_fetch_to_sarif(findings: list[dict]) -> dict:
     the concatenation of the JSON envelope's ``findings`` (model-level)
     and ``endpoint_findings`` (3-state) lists.
     """
-    # W1062-followup-3: rule-level tags carry the family + category
-    # axes so dashboards grouping by rule still get the filter chips
-    # even before any specific result lands. Severity is per-result and
-    # stamped below from the resolved SARIF level. Over-fetch is a
-    # performance / data-exposure concern with no CWE / OWASP anchor —
-    # family + category + scope + severity is the canonical filter
-    # shape.
-    _OVER_FETCH_RULE_TAGS = _derive_finding_tags(
-        family="performance",
-        extra=["over-fetch"],
+    rule_tags = _derive_finding_tags(family="performance", extra=["over-fetch"])
+    return _convert_parameterized_findings(
+        findings,
+        help_slug="over-fetch",
+        rule_parameters=_rules_with_tags(_OVER_FETCH_RULES, rule_tags),
+        rule_selector=_over_fetch_rule,
+        location_mapper=_over_fetch_locations,
+        message_mapper=_over_fetch_message,
+        level_mapper=_over_fetch_severity_level,
+        result_extras_mapper=_over_fetch_result_extras,
     )
-    rules = [
-        _rule_entry(
-            id="over-fetch/select-star-or-wide-query",
-            short_desc=(
-                "Over-fetch: model serializes more fields than "
-                "necessary, or query loads columns/relations the "
-                "response does not need"
-            ),
-            help_uri=_HELP_BASE + "over-fetch",
-            default_level="warning",
-            properties={"tags": list(_OVER_FETCH_RULE_TAGS)},
-        ),
-    ]
-
-    rule_id = "over-fetch/select-star-or-wide-query"
-    results: list[dict] = []
-
-    for f in findings or []:
-        if not isinstance(f, dict):
-            continue
-
-        # Endpoint findings carry ``file`` + ``line`` + ``state`` +
-        # ``severity``; model findings carry ``model_path`` +
-        # ``model_location`` + ``confidence``. We branch on the
-        # presence of ``state`` (endpoint discriminator) so a future
-        # third finding shape doesn't silently fall through.
-        state = f.get("state")
-        if state:
-            # Endpoint-level finding.
-            fpath = f.get("file") or ""
-            line = f.get("line")
-            if not fpath:
-                # Without an anchor we cannot surface the finding
-                # meaningfully — skip rather than emit an anchorless
-                # row (matches Pattern 1 / LAW 6 disclosure rules).
-                continue
-            severity_label = f.get("severity") or ""
-            endpoint = f.get("endpoint") or ""
-            evidence_text = f.get("evidence") or ""
-            recommendation = f.get("recommendation") or ""
-
-            parts = [f"Over-fetch endpoint: {endpoint} [state={state}]"]
-            if evidence_text:
-                parts.append(f"Evidence: {evidence_text}")
-            if recommendation:
-                parts.append(f"Fix: {recommendation}")
-            message_text = " — ".join(parts)
-
-            # W1062-followup-3: per-result tags add the scope
-            # (``endpoint``) + resolved SARIF-level axes so dashboards
-            # can slice on actionable bands without re-running the
-            # mapper. Producer-side ``H`` / ``L`` severity letters
-            # converge to ``warning`` / ``note`` via the helper's
-            # ``_normalize_tag`` chokepoint.
-            endpoint_tags = _derive_finding_tags(
-                family="performance",
-                extra=["over-fetch", "endpoint"],
-                severity=_over_fetch_severity_level(severity_label),
-            )
-            results.append(
-                _result_entry(
-                    rule_id=rule_id,
-                    severity=severity_label,
-                    locations=[_location(fpath, line)],
-                    message=message_text,
-                    level_mapper=_over_fetch_severity_level,
-                    properties={"tags": list(endpoint_tags)},
-                )
-            )
-            continue
-
-        # Model-level finding.
-        model_path = f.get("model_path") or ""
-        # Parse model_location ("path:line") for the line anchor; fall
-        # back to the raw model_path when location is malformed.
-        model_loc_str = f.get("model_location") or ""
-        line_anchor: int | None = None
-        if model_loc_str:
-            parsed_path, parsed_line = _parse_loc_string(model_loc_str)
-            if parsed_path:
-                model_path = parsed_path
-            line_anchor = parsed_line
-        if not model_path:
-            continue
-
-        confidence = (f.get("confidence") or "").lower()
-        if confidence not in ("high", "medium", "low"):
-            # Future confidence label that hasn't landed in the closed
-            # enumeration above — skip (matches LAW 8 closed-enum
-            # discipline).
-            continue
-
-        model_name = f.get("model_name") or ""
-        fillable = f.get("fillable_count")
-        hidden = f.get("hidden_count")
-        exposed = f.get("exposed_count")
-        reasons = f.get("reasons") or []
-
-        parts = [f"Over-fetch model: {model_name} [confidence={confidence}]"]
-        if fillable is not None:
-            parts.append(f"{fillable} fillable, {hidden} hidden, {exposed} exposed")
-        if reasons:
-            # Cap to first reason — message body stays terse so SARIF
-            # consumers don't blow past viewer rendering limits.
-            parts.append(str(reasons[0]))
-        message_text = " — ".join(str(p) for p in parts)
-
-        # W1062-followup-3: per-result tags add the scope (``model``) +
-        # confidence + resolved SARIF-level axes so dashboards can
-        # isolate the model-level rows from the endpoint-level rows
-        # under the same rule.
-        model_tags = _derive_finding_tags(
-            family="performance",
-            extra=["over-fetch", "model", confidence],
-            severity=_over_fetch_severity_level(confidence),
-        )
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=confidence,
-                locations=[_location(model_path, line_anchor)],
-                message=message_text,
-                level_mapper=_over_fetch_severity_level,
-                properties={"tags": list(model_tags)},
-            )
-        )
-
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
 # -- Bus factor (knowledge-loss / single-owner risk) ------------------
@@ -4931,6 +4898,66 @@ _LAWS_KIND_TO_RULE: dict[str, str] = {
 }
 
 
+_LAWS_RULES = (
+    _ParameterizedRule(
+        "laws/naming",
+        "Naming-convention violation against a mined law (symbol name does not follow the dominant style for its kind)",
+        "note",
+    ),
+    _ParameterizedRule(
+        "laws/import-layering",
+        "Import-layering violation against a mined law (directory-to-directory import edge breaks the discovered architectural rule)",
+        "note",
+    ),
+    _ParameterizedRule(
+        "laws/test-coverage",
+        "Test-coverage violation against a mined law (new public symbol added without a matching test file)",
+        "note",
+    ),
+    _ParameterizedRule(
+        "laws/error-handling",
+        "Error-handling-pattern violation against a mined law (stub kind — reserved for future wiring)",
+        "note",
+    ),
+    _ParameterizedRule(
+        "laws/co-change",
+        "Co-change violation against a mined law (stub kind — reserved for future wiring)",
+        "note",
+    ),
+)
+
+
+def _laws_rule(finding: dict) -> tuple[str, str] | None:
+    kind = (finding.get("kind") or "").lower()
+    rule_id = _LAWS_KIND_TO_RULE.get(kind)
+    if rule_id is None:
+        return None
+    return rule_id, finding.get("severity") or "advisory"
+
+
+def _laws_locations(finding: dict) -> list[dict]:
+    file_path = finding.get("file") or ""
+    if not file_path:
+        return []
+    line = finding.get("line") or None
+    if isinstance(line, int) and line <= 0:
+        line = None
+    return [_location(file_path, line)]
+
+
+def _laws_message(finding: dict, _context: Any) -> str:
+    law_id = finding.get("law_id") or ""
+    message = finding.get("message") or ""
+    severity = finding.get("severity") or "advisory"
+    parts = []
+    if law_id:
+        parts.append(f"[{law_id}]")
+    if message:
+        parts.append(message)
+    parts.append(f"(severity={severity})")
+    return " ".join(parts)
+
+
 def laws_to_sarif(findings: list[dict], *, disclosures: list[str] | None = None) -> dict:
     """Convert ``roam laws check`` violations to SARIF.
 
@@ -4983,105 +5010,14 @@ def laws_to_sarif(findings: list[dict], *, disclosures: list[str] | None = None)
     zero results — mirrors :func:`bus_factor_to_sarif` (W1215) and
     :func:`orphan_imports_to_sarif` (W1218).
     """
-    rules = [
-        _rule_entry(
-            id="laws/naming",
-            short_desc=(
-                "Naming-convention violation against a mined law "
-                "(symbol name does not follow the dominant style for "
-                "its kind)"
-            ),
-            help_uri=_HELP_BASE + "laws",
-            default_level="note",
-        ),
-        _rule_entry(
-            id="laws/import-layering",
-            short_desc=(
-                "Import-layering violation against a mined law "
-                "(directory-to-directory import edge breaks the "
-                "discovered architectural rule)"
-            ),
-            help_uri=_HELP_BASE + "laws",
-            default_level="note",
-        ),
-        _rule_entry(
-            id="laws/test-coverage",
-            short_desc=(
-                "Test-coverage violation against a mined law (new public symbol added without a matching test file)"
-            ),
-            help_uri=_HELP_BASE + "laws",
-            default_level="note",
-        ),
-        _rule_entry(
-            id="laws/error-handling",
-            short_desc=(
-                "Error-handling-pattern violation against a mined law (stub kind — reserved for future wiring)"
-            ),
-            help_uri=_HELP_BASE + "laws",
-            default_level="note",
-        ),
-        _rule_entry(
-            id="laws/co-change",
-            short_desc=("Co-change violation against a mined law (stub kind — reserved for future wiring)"),
-            help_uri=_HELP_BASE + "laws",
-            default_level="note",
-        ),
-    ]
-
-    results: list[dict] = []
-    for f in findings or []:
-        if not isinstance(f, dict):
-            continue
-        fpath = f.get("file") or ""
-        if not fpath:
-            # Without an anchor we cannot surface the finding
-            # meaningfully — skip rather than emit an anchorless row.
-            continue
-        kind = (f.get("kind") or "").lower()
-        rule_id = _LAWS_KIND_TO_RULE.get(kind)
-        if rule_id is None:
-            # Future kind that hasn't landed in the closed enumeration
-            # above — skip (LAW 8 closed-enum discipline).
-            continue
-
-        line = f.get("line") or None
-        # The SARIF region key is dropped when no line is supplied
-        # (see :func:`_physical_location`); pass ``None`` rather than
-        # the integer 0 so empty-line violations don't anchor to the
-        # synthetic ``startLine: 0``.
-        if isinstance(line, int) and line <= 0:
-            line = None
-
-        law_id = f.get("law_id") or ""
-        message = f.get("message") or ""
-        severity = f.get("severity") or "advisory"
-
-        # Message body — surface enough context for triage without a
-        # JSON-envelope round-trip. Order: law id -> message body ->
-        # severity band.
-        parts = []
-        if law_id:
-            parts.append(f"[{law_id}]")
-        if message:
-            parts.append(message)
-        parts.append(f"(severity={severity})")
-        message_text = " ".join(parts)
-
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=severity,
-                locations=[_location(fpath, line)],
-                message=message_text,
-                level_mapper=_laws_severity_level,
-            )
-        )
-
-    return to_sarif(
-        _TOOL_NAME,
-        _get_version(),
-        rules,
-        results,
+    return _convert_parameterized_findings(
+        findings,
+        help_slug="laws",
+        rule_parameters=_LAWS_RULES,
+        rule_selector=_laws_rule,
+        location_mapper=_laws_locations,
+        message_mapper=_laws_message,
+        level_mapper=_laws_severity_level,
         emit_runtime_notifications=bool(disclosures),
         warnings_out=disclosures,
     )
@@ -5446,6 +5382,61 @@ _FAN_FLAG_TO_RULE: dict[str, str] = {
 }
 
 
+_FAN_RULES = (
+    _ParameterizedRule(
+        "fan/hub",
+        "Architectural hub: high cross-file fan-in (many distinct files import / call this symbol or file)",
+        "note",
+    ),
+    _ParameterizedRule(
+        "fan/spreader",
+        "Architectural spreader: high cross-file fan-out (this symbol or file reaches into many distinct files — changes here propagate outward)",
+        "warning",
+    ),
+    _ParameterizedRule(
+        "fan/high-risk",
+        "Architectural high-risk: both cross-file fan-in AND fan-out over threshold (hub AND spreader concurrently — amplifies blast radius in both directions)",
+        "error",
+    ),
+)
+
+
+def _fan_rule(finding: dict) -> tuple[str, str] | None:
+    flag = finding.get("flag") or ""
+    rule_id = _FAN_FLAG_TO_RULE.get(flag)
+    return (rule_id, flag) if rule_id is not None else None
+
+
+def _fan_locations(finding: dict) -> list[dict]:
+    file_path = finding.get("file_path") or finding.get("path") or ""
+    line = finding.get("line_start")
+    if not file_path:
+        location = finding.get("location") or ""
+        if location:
+            file_path, parsed_line = _parse_loc_string(location)
+            if line is None:
+                line = parsed_line
+    if not file_path:
+        return []
+    if isinstance(line, int) and line <= 0:
+        line = None
+    return [_location(file_path, line)]
+
+
+def _fan_message(finding: dict, _context: Any) -> str:
+    flag = finding.get("flag") or ""
+    file_path = finding.get("file_path") or finding.get("path") or ""
+    if not file_path:
+        location = finding.get("location") or ""
+        if location:
+            file_path, _line = _parse_loc_string(location)
+    symbol_name = finding.get("symbol_name") or finding.get("name") or ""
+    fan_in = finding.get("fan_in")
+    fan_out = finding.get("fan_out")
+    parts = [f"[{flag}]", symbol_name or file_path, f"(fan_in={fan_in}, fan_out={fan_out})"]
+    return " ".join(parts)
+
+
 def fan_to_sarif(findings: list[dict]) -> dict:
     """Convert ``roam fan`` cross-file fan-in/out findings to SARIF.
 
@@ -5506,96 +5497,15 @@ def fan_to_sarif(findings: list[dict]) -> dict:
     emitted (closed enum of 3 rules) so consumers can introspect the
     rule vocabulary even on a clean run.
     """
-    rules = [
-        _rule_entry(
-            id="fan/hub",
-            short_desc=(
-                "Architectural hub: high cross-file fan-in (many distinct files import / call this symbol or file)"
-            ),
-            help_uri=_HELP_BASE + "fan",
-            default_level="note",
-        ),
-        _rule_entry(
-            id="fan/spreader",
-            short_desc=(
-                "Architectural spreader: high cross-file fan-out (this "
-                "symbol or file reaches into many distinct files — "
-                "changes here propagate outward)"
-            ),
-            help_uri=_HELP_BASE + "fan",
-            default_level="warning",
-        ),
-        _rule_entry(
-            id="fan/high-risk",
-            short_desc=(
-                "Architectural high-risk: both cross-file fan-in AND "
-                "fan-out over threshold (hub AND spreader concurrently — "
-                "amplifies blast radius in both directions)"
-            ),
-            help_uri=_HELP_BASE + "fan",
-            default_level="error",
-        ),
-    ]
-
-    results: list[dict] = []
-    for f in findings or []:
-        if not isinstance(f, dict):
-            continue
-        flag = f.get("flag") or ""
-        rule_id = _FAN_FLAG_TO_RULE.get(flag)
-        if rule_id is None:
-            # Empty / local-hub / local-spreader / future flag — skip
-            # (LAW 8 closed-enum discipline; W150 audit non-architectural
-            # filter).
-            continue
-
-        # Resolve the anchor. Symbol mode prefers explicit
-        # file_path / line_start fields but falls back to parsing the
-        # "path:line" ``location`` string the JSON envelope emits.
-        # File mode carries ``path`` (file-level fan output) OR
-        # ``file_path`` (registry-evidence shape).
-        file_path = f.get("file_path") or f.get("path") or ""
-        line = f.get("line_start")
-        if not file_path:
-            location_str = f.get("location") or ""
-            if location_str:
-                file_path, parsed_line = _parse_loc_string(location_str)
-                if line is None:
-                    line = parsed_line
-        if not file_path:
-            # Without an anchor we cannot surface the finding
-            # meaningfully — skip rather than emit an anchorless row.
-            continue
-        if isinstance(line, int) and line <= 0:
-            line = None
-
-        symbol_name = f.get("symbol_name") or f.get("name") or ""
-        fan_in = f.get("fan_in")
-        fan_out = f.get("fan_out")
-
-        # Message body — surface the flag, identity, and the raw
-        # fan_in / fan_out numbers so SARIF consumers can triage
-        # without a JSON-envelope round-trip. Order: flag -> identity
-        # -> metrics.
-        parts = [f"[{flag}]"]
-        if symbol_name:
-            parts.append(symbol_name)
-        else:
-            parts.append(file_path)
-        parts.append(f"(fan_in={fan_in}, fan_out={fan_out})")
-        message_text = " ".join(parts)
-
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=flag,
-                locations=[_location(file_path, line)],
-                message=message_text,
-                level_mapper=_fan_flag_level,
-            )
-        )
-
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return _convert_parameterized_findings(
+        findings,
+        help_slug="fan",
+        rule_parameters=_FAN_RULES,
+        rule_selector=_fan_rule,
+        location_mapper=_fan_locations,
+        message_mapper=_fan_message,
+        level_mapper=_fan_flag_level,
+    )
 
 
 # -- Duplicates (semantic-duplicate function detection) ---------------
@@ -6169,6 +6079,69 @@ def _flag_dead_staleness_level(staleness: str) -> str:
 _FLAG_DEAD_MAX_SECONDARY_LOCS = 10
 
 
+_FLAG_DEAD_RULES = (
+    _ParameterizedRule(
+        "flag-staleness",
+        "Known-stale feature flag: listed in --config known-stale file (operator-confirmed for removal)",
+        "warning",
+    ),
+    _ParameterizedRule(
+        "flag-single-reference",
+        "Feature flag with a single call site: likely leftover code, advisory review band",
+        "note",
+    ),
+    _ParameterizedRule(
+        "flag-suspect",
+        "Suspect feature flag: same constant default at every call site OR all references concentrate in a single file",
+        "warning",
+    ),
+)
+_FLAG_DEAD_STALENESS_TO_RULE = {
+    "stale": "flag-staleness",
+    "likely_stale": "flag-single-reference",
+    "suspect": "flag-suspect",
+}
+
+
+def _flag_dead_rule(finding: dict) -> tuple[str, str] | None:
+    if not (finding.get("flag_name") or ""):
+        return None
+    staleness = (finding.get("staleness") or "").lower()
+    rule_id = _FLAG_DEAD_STALENESS_TO_RULE.get(staleness)
+    return (rule_id, staleness) if rule_id is not None else None
+
+
+def _flag_dead_locations(finding: dict) -> list[dict]:
+    raw_locations = finding.get("locations") or []
+    if not isinstance(raw_locations, list):
+        raw_locations = []
+    locations: list[dict] = []
+    for raw_location in raw_locations[: _FLAG_DEAD_MAX_SECONDARY_LOCS + 1]:
+        if not isinstance(raw_location, dict):
+            continue
+        file_path = raw_location.get("file") or ""
+        if not file_path:
+            continue
+        line = raw_location.get("line")
+        if isinstance(line, int) and line <= 0:
+            line = None
+        locations.append(_location(file_path, line))
+    return locations
+
+
+def _flag_dead_message(finding: dict, _context: Any) -> str:
+    flag_name = finding.get("flag_name") or ""
+    staleness = (finding.get("staleness") or "").lower()
+    provider = finding.get("provider") or "unknown"
+    count = finding.get("count") or 0
+    reasons = finding.get("reasons") or []
+    reasons_text = "; ".join(str(reason) for reason in reasons if reason) if reasons else ""
+    message = f"Feature flag '{flag_name}' ({staleness}): provider={provider}, refs={count}"
+    if reasons_text:
+        message += f" — {reasons_text}"
+    return message
+
+
 def flag_dead_to_sarif(
     findings: list[dict],
     *,
@@ -6248,124 +6221,14 @@ def flag_dead_to_sarif(
     of 3 rules) so consumers can introspect the rule vocabulary even
     on a clean run without any flag activity.
     """
-    rules = [
-        _rule_entry(
-            id="flag-staleness",
-            short_desc=(
-                "Known-stale feature flag: listed in --config known-stale file (operator-confirmed for removal)"
-            ),
-            help_uri=_HELP_BASE + "flag-dead",
-            default_level="warning",
-        ),
-        _rule_entry(
-            id="flag-single-reference",
-            short_desc=("Feature flag with a single call site: likely leftover code, advisory review band"),
-            help_uri=_HELP_BASE + "flag-dead",
-            default_level="note",
-        ),
-        _rule_entry(
-            id="flag-suspect",
-            short_desc=(
-                "Suspect feature flag: same constant default at every "
-                "call site OR all references concentrate in a single file"
-            ),
-            help_uri=_HELP_BASE + "flag-dead",
-            default_level="warning",
-        ),
-    ]
-
-    # Closed-enum staleness -> rule id mapping. Mirrors the producer-
-    # side ``analyze_flags`` vocabulary in cmd_flag_dead.py. The ``ok``
-    # bucket has no staleness indicators and is not actionable, so it
-    # is deliberately not in this map (rows with ``staleness == "ok"``
-    # are filtered out upstream of the per-result loop).
-    _STALENESS_TO_RULE = {
-        "stale": "flag-staleness",
-        "likely_stale": "flag-single-reference",
-        "suspect": "flag-suspect",
-    }
-
-    results: list[dict] = []
-
-    for f in findings or []:
-        if not isinstance(f, dict):
-            continue
-
-        flag_name = f.get("flag_name") or ""
-        if not flag_name:
-            # Without a flag-name subject we cannot surface the finding
-            # meaningfully — skip rather than emit a subject-less row
-            # (Pattern 1 / LAW 6 disclosure discipline).
-            continue
-
-        staleness = (f.get("staleness") or "").lower()
-        rule_id = _STALENESS_TO_RULE.get(staleness)
-        if rule_id is None:
-            # ``ok`` / unknown classification — drop. ``ok`` has no
-            # staleness indicators (not actionable); unknown labels
-            # drop per closed-enum discipline (LAW 8 / CLAUDE.md
-            # Constraint 8).
-            continue
-
-        locations_raw = f.get("locations") or []
-        if not isinstance(locations_raw, list):
-            locations_raw = []
-
-        # Build the SARIF locations list. PRIMARY = first call site
-        # (file + line); SECONDARY = up to
-        # ``_FLAG_DEAD_MAX_SECONDARY_LOCS`` additional sites. Mirrors
-        # the W1172 / W1213 SECONDARY-location discipline.
-        sarif_locations: list[dict] = []
-        for loc in locations_raw[: _FLAG_DEAD_MAX_SECONDARY_LOCS + 1]:
-            if not isinstance(loc, dict):
-                continue
-            loc_file = loc.get("file") or ""
-            loc_line = loc.get("line")
-            if not loc_file:
-                continue
-            if isinstance(loc_line, int) and loc_line <= 0:
-                loc_line = None
-            sarif_locations.append(_location(loc_file, loc_line))
-
-        if not sarif_locations:
-            # Without any anchor we cannot surface the finding
-            # meaningfully — skip rather than emit an anchorless row.
-            continue
-
-        provider = f.get("provider") or "unknown"
-        count = f.get("count") or 0
-        reasons_raw = f.get("reasons") or []
-        reasons_str = "; ".join(str(r) for r in reasons_raw if r) if reasons_raw else ""
-
-        # Message body — flag name first (LAW 4 concrete-noun anchor),
-        # then classification, provider, count, and the joined reasons.
-        # The reasons text is what distinguishes the two ``suspect``
-        # sub-causes (constant default vs all-in-single-file) under the
-        # shared ``flag-suspect`` rule id.
-        message_parts = [
-            f"Feature flag '{flag_name}' ({staleness}):",
-            f"provider={provider},",
-            f"refs={count}",
-        ]
-        message = " ".join(message_parts)
-        if reasons_str:
-            message += f" — {reasons_str}"
-
-        results.append(
-            _result_entry(
-                rule_id=rule_id,
-                severity=staleness,
-                locations=sarif_locations,
-                message=message,
-                level_mapper=_flag_dead_staleness_level,
-            )
-        )
-
-    return to_sarif(
-        _TOOL_NAME,
-        _get_version(),
-        rules,
-        results,
+    return _convert_parameterized_findings(
+        findings,
+        help_slug="flag-dead",
+        rule_parameters=_FLAG_DEAD_RULES,
+        rule_selector=_flag_dead_rule,
+        location_mapper=_flag_dead_locations,
+        message_mapper=_flag_dead_message,
+        level_mapper=_flag_dead_staleness_level,
         emit_runtime_notifications=emit_runtime_notifications,
         warnings_out=warnings_out,
     )
