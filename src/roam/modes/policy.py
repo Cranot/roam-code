@@ -251,6 +251,7 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "dev-profile",
         "dict-consistency",
         "disambiguate",
+        "doc-drift",
         "doc-staleness",
         "docs-coverage",
         "dogfood-aggregate",

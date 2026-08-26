@@ -15,7 +15,7 @@
             "environmentVariables": [
                 {
                     "name": "ROAM_MCP_PRESET",
-                    "description": "Tool preset: core (default, 17 — lean prompt surface), review (73), refactor (73), debug (72), architecture (74), compliance (14), compile-curated (9), full (245)",
+                    "description": "Tool preset: core (default, 17 — lean prompt surface), review (74), refactor (73), debug (72), architecture (74), compliance (14), compile-curated (9), full (246)",
                     "isRequired": false,
                     "default": "core"
                 }

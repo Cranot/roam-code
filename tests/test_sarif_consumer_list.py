@@ -173,18 +173,18 @@ def test_sarif_consumers_tuple_matches_actual_consumers() -> None:
     assert not msg_parts, "\n\n".join(msg_parts)
 
 
-def test_sarif_consumers_count_is_thirty_eight() -> None:
+def test_sarif_consumers_count_is_thirty_nine() -> None:
     """Spot-check the count W22.3 audited + W1146 + W1165 + W1160 + W1159
     + W1171 + W1172 + W1192 + W1195 + W1203 + W1208 + W1218 + W1217
     + W1219 + W1215 + W1216 + W1209 + W1213 + W1207 + W1211 + W1210
     + W1226 + W1227 + W1229.
 
-    If a 38th consumer is added intentionally this assertion needs to be
+    If a 40th consumer is added intentionally this assertion needs to be
     bumped — that's deliberate friction to force the author to confirm the
-    count actually changed (and re-run the audit). If it drops to 36 the
+    count actually changed (and re-run the audit). If it drops to 38 the
     same applies in reverse.
     """
-    assert len(_SARIF_CONSUMERS) == 38, (
+    assert len(_SARIF_CONSUMERS) == 39, (
         f"_SARIF_CONSUMERS has {len(_SARIF_CONSUMERS)} entries; "
         "W22.3 audited 14, W1146 added critique = 15, W1165 added "
         "impact = 16, W1160 added affected-tests = 17, W1159 added "
@@ -198,7 +198,8 @@ def test_sarif_consumers_count_is_thirty_eight() -> None:
         "llm-smells = 32, W1211 added dark-matter = 33, W1210 "
         "added hotspots = 34, W1226 added flag-dead = 35, W1227 "
         "added orphan-routes = 36, W1229 added verify-imports = 37, "
-        "and collapse added the benign-default detector = 38. "
+        "collapse added the benign-default detector = 38, and doc-drift "
+        "added Markdown claim locations = 39. "
         "If the count changed intentionally, bump this assertion "
         "and re-audit the help text."
     )

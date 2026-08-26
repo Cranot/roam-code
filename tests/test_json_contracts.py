@@ -57,6 +57,7 @@ COMMANDS_WITH_JSON = [
     "breaking",
     "safe-zones",
     "doc-staleness",
+    "doc-drift",
     "docs-coverage",
     "fn-coupling",
     "alerts",

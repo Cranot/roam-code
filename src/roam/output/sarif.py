@@ -1547,6 +1547,49 @@ def stale_refs_to_sarif(targets: list[dict]) -> dict:
     )
 
 
+# -- Prose documentation drift --------------------------------------
+
+
+def doc_drift_to_sarif(findings: list[dict]) -> dict:
+    """Convert drifted Markdown claims into per-location SARIF results."""
+    rule_descriptions = {
+        "path": "Documented repository path does not exist",
+        "count": "Documented repository count disagrees with its mechanical authority",
+        "version": "Documented project version disagrees with project metadata",
+    }
+    rules: list[dict] = []
+    results: list[dict] = []
+    seen_kinds: set[str] = set()
+    for finding in findings:
+        if finding.get("status") != "drifted":
+            continue
+        kind = str(finding.get("kind") or "claim")
+        rule_id = f"doc-drift/{kind}"
+        if kind not in seen_kinds:
+            seen_kinds.add(kind)
+            rules.append(
+                _rule_entry(
+                    id=rule_id,
+                    short_desc=rule_descriptions.get(kind, "Documentation claim disagrees with repository state"),
+                    help_uri=_HELP_BASE + "doc-drift",
+                    default_level="warning",
+                )
+            )
+        results.append(
+            _result_entry(
+                rule_id=rule_id,
+                severity="warning",
+                locations=[_location(str(finding.get("doc") or ""), finding.get("line"))],
+                message=(
+                    f"Documentation claim {finding.get('claim_text')!r} expected "
+                    f"{finding.get('expected')!r}; repository authority reports {finding.get('actual')!r}"
+                ),
+                level_mapper=lambda level: level,
+            )
+        )
+    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+
+
 # -- Complexity -------------------------------------------------------
 
 

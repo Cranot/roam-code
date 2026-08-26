@@ -17,7 +17,7 @@ from roam.deprecation import set_active_deprecation_notice as _set_active_deprec
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 286 invokable command names (279 canonical commands + 7 alias names).
+# Total: 287 invokable command names (280 canonical commands + 7 alias names).
 # Guarded against registry drift by scripts/sync_surface_counts.py.
 # Deprecated commands map to a structured record. When a user invokes a
 # deprecated name we still resolve it (no breaking change) and print a
@@ -62,6 +62,7 @@ _SARIF_CONSUMERS: tuple[str, ...] = (
     "dark-matter",
     "dead",
     "delete-check",
+    "doc-drift",
     "duplicates",
     "fan",
     "flag-dead",
@@ -226,6 +227,7 @@ _COMMANDS = {
     "breaking": ("roam.commands.cmd_breaking", "breaking"),
     "safe-zones": ("roam.commands.cmd_safe_zones", "safe_zones"),
     "doc-staleness": ("roam.commands.cmd_doc_staleness", "doc_staleness"),
+    "doc-drift": ("roam.commands.cmd_doc_drift", "doc_drift"),
     "stale-refs": ("roam.commands.cmd_stale_refs", "stale_refs"),
     "lsp": ("roam.commands.cmd_lsp", "lsp"),
     "docs-coverage": ("roam.commands.cmd_docs_coverage", "docs_coverage"),
@@ -757,6 +759,7 @@ _CATEGORIES = {
         "delete-check",
         "split",
         "fn-coupling",
+        "doc-drift",
         "doc-staleness",
         "docs-coverage",
         "docs-index",

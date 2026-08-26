@@ -197,5 +197,6 @@ def test_w907_audit_baseline_unchanged() -> None:
     assert "roam.commands.cmd_pr_bundle" not in _top_level_roam_imports("src/roam/permits/store.py")
     cli_imports = _top_level_roam_imports("src/roam/cli.py")
     assert "roam.mcp_server" not in cli_imports
-    # roam.cli has effectively no top-level roam imports — pin that floor.
-    assert len(cli_imports) == 0, f"roam.cli top-level roam imports drifted: {cli_imports}"
+    # Re-audited 2026-08-26 after the CLI surface grew: deprecation state is
+    # the sole top-level roam dependency and does not reach mcp_server.
+    assert cli_imports == {"roam.deprecation"}, f"roam.cli top-level roam imports drifted: {cli_imports}"
