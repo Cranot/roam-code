@@ -38,7 +38,10 @@ def test_cli_help_advertises_every_registered_mcp_preset():
 
 
 def test_public_docs_advertise_every_registered_mcp_preset():
+    from roam.surface_counts import mcp_preset_counts
+
     names = _preset_names()
+    full_count = mcp_preset_counts()["full"]
     markdown_inventory = ", ".join(f"`{name}`" for name in names)
     slash_inventory = " / ".join(names)
 
@@ -51,4 +54,4 @@ def test_public_docs_advertise_every_registered_mcp_preset():
 
     usage = (ROOT / "templates/distribution/landing-page/docs/mcp-usage.html").read_text(encoding="utf-8")
     assert f"Switch the active preset ({slash_inventory})." in usage
-    assert f"244 MCP tools, {len(names)} presets" in usage
+    assert f"{full_count} MCP tools, {len(names)} presets" in usage

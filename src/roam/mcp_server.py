@@ -251,6 +251,7 @@ _PRESETS: dict[str, set[str]] = {
         "roam_rules_check",
         "roam_weather",
         "roam_debt",
+        "roam_doc_drift",
         "roam_symbol",
         "roam_algo",
         "roam_secrets",
@@ -430,9 +431,9 @@ if FastMCP is not None:
             # the server starts. The tool lists what other presets contain and
             # returns the env var to restart with; its own description says
             # "discover", which is accurate. This instruction used to say it
-            # would "scope tools to your task", which sent an agent to spend a
-            # turn on a call that cannot do that and returns an action only the
-            # human operator can take. Say what it does instead.
+            # implied dynamic task-based scoping, which sent an agent to spend
+            # a turn on a call that cannot do that and returns an action only
+            # the human operator can take. Say what it does instead.
             "The tool surface is fixed at server start and is intentionally "
             "narrow to keep the prompt tight; `roam_expand_toolset` lists what "
             "the other presets (core / review / refactor / debug / "
@@ -13772,6 +13773,39 @@ def roam_docs_coverage(limit: int = 20, days: int = 90, threshold: int = 0, root
     """
     args = ["docs-coverage", "--limit", str(limit), "--days", str(days)]
     if threshold > 0:
+        args.extend(["--threshold", str(threshold)])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_doc_drift",
+    description=(
+        "Run a mechanical prose-doc gate over Markdown path, count, and project-version claims. "
+        "Use it before release or in CI to find objective documentation drift without model calls."
+    ),
+    read_only=True,
+    destructive=False,
+    idempotent=True,
+)
+def roam_doc_drift(ci: bool = False, threshold: int = -1, root: str = ".") -> dict:
+    """Verify prose documentation claims against repository authorities.
+
+    Parameters
+    ----------
+    ci:
+        Fail when any objective drift is found and refuse an unscanned corpus.
+    threshold:
+        Maximum allowed drifted claims. Negative means no threshold gate.
+    root:
+        Working directory (project root).
+
+    Returns: ``{summary: {verdict, docs_scanned, claims_total, verified,
+    drifted, unverifiable}, findings: [...]}``.
+    """
+    args = ["doc-drift"]
+    if ci:
+        args.append("--ci")
+    if threshold >= 0:
         args.extend(["--threshold", str(threshold)])
     return _run_roam(args, root)
 

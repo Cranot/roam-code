@@ -153,6 +153,7 @@ _TAG_COVERAGE_EXEMPT: dict[str, str] = {
     # ── Thin advisory bands (note-severity, no triage filter) ────────
     "fitness_to_sarif": "thin advisory — single fitness-violation rule, no family band",
     "stale_refs_to_sarif": "thin advisory — broken-link kinds (md_inline/anchor/...), not a finding family",
+    "doc_drift_to_sarif": "thin advisory — mechanical Markdown claim mismatch, not a detector-family finding",
     "complexity_to_sarif": "thin advisory — per-symbol cyclomatic band, advisory-only",
     "py_types_to_sarif": "thin advisory — single coverage-pct rule, note-severity only",
     "py_modern_to_sarif": "thin advisory — legacy-typing + dot-format hints, note-severity",

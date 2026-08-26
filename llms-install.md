@@ -7,7 +7,7 @@ A cold parser cache retrieves one checksum-verified grammar bundle; prewarm it
 before air-gap use. Explicit network features are inventoried in
 `docs/network-boundary.md`.
 <!-- BEGIN auto-count:llms-install-headline -->
-286 commands, 245 MCP tools, 28 languages, local analysis, zero API keys.
+287 commands, 246 MCP tools, 28 languages, local analysis, zero API keys.
 <!-- END auto-count:llms-install-headline -->
 
 ## Cross-references
@@ -270,5 +270,5 @@ and `roam surface --json` for the machine-readable inventory.
   <https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163>
 
 <!-- BEGIN auto-count:llms-install-footer -->
-Run `roam --help-all` for all 286 commands (+ alias pairs).
+Run `roam --help-all` for all 287 commands (+ alias pairs).
 <!-- END auto-count:llms-install-footer -->

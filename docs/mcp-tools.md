@@ -6,7 +6,7 @@ server. This page is generated from the `@_tool` decorations in
 docstrings, not this file.
 
 <!-- BEGIN auto-count:mcp-tools-headline -->
-**245 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
+**246 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
 <!-- END auto-count:mcp-tools-headline -->
 
 ```bash
@@ -31,7 +31,7 @@ first-run flow and the canonical agent sequence, and the
 [README](../README.md#mcp-server) for the preset overview.
 
 <!-- BEGIN auto-count:mcp-tools-list-summary -->
-## MCP tool list (all 245)
+## MCP tool list (all 246)
 <!-- END auto-count:mcp-tools-list-summary -->
 
 <!-- BEGIN auto-count:mcp-tools-list-table -->
@@ -113,6 +113,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_diagnose_issue` | Root-cause triage for a failing symbol. Pass the suspect symbol. Ranks upstream / downstream callers by risk + lists side effects + transactional boundaries. Replaces manual call-graph Grep+Read. Triggers: 'X is broken', 'test Y fails', 'why does Z return null?'. |
 | `roam_diff` | Show the blast radius of your edits BEFORE you commit. Run after Edit/Write tools to see affected symbols, files, tests, plus coupling and fitness warnings. Use when user asks 'what did my change break?', 'safe to commit?'. Replaces ad-hoc `git diff --stat` inspection with graph-aware impact data. For PR-level risk verdict, use roam_pr_risk. |
 | `roam_disambiguate` | List every symbol matching a name with file/line/kind/signature/PageRank — pick the right overload. |
+| `roam_doc_drift` | Run a mechanical prose-doc gate over Markdown path, count, and project-version claims. Use it before release or in CI to find objective documentation drift without model calls. |
 | `roam_doc_intent` | Link documentation to code: find drift, dead refs, undocumented symbols. |
 | `roam_doc_staleness` | Run a semantic docstring-drift audit: flag documented parameters, returns, or raises that no longer match code. Pass ``include_prose_drift`` to include optional blame-only summary drift. Different from ``roam_docs_coverage`` (missing docs ranked by PageRank) and ``roam_stale_refs`` (dangling doc links) -- this audits concrete claims in existing docs. |
 | `roam_docs_coverage` | Doc coverage + stale-doc drift with PageRank-ranked missing docs. |
