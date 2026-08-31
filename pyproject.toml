@@ -40,7 +40,7 @@ dependencies = [
     # cache population atomic and cross-process safe. The 1.13 minor range
     # is intentional: earlier releases race under pytest-xdist; later minor
     # versions must re-pass Roam's 28-language grammar-drift matrix.
-    "tree-sitter-language-pack>=1.13.3,<1.14",
+    "tree-sitter-language-pack>=1.13.3,<1.16",
     "networkx>=3.0",
     # tomllib is stdlib on 3.11+. On 3.10 (our floor) we need the tomli
     # backport so commands that parse pyproject.toml (orphan-imports
