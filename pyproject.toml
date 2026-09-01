@@ -162,7 +162,7 @@ ci = [
     # published against 6.14.2 on 2026-08-07. CI-only, like pillow above, and
     # like pillow it must still audit clean: the dependency-audit lane fails on
     # ANY known vulnerability in the locked graph, which is what caught this.
-    "pypdf==6.15.0",
+    "pypdf==6.16.1",
     "setuptools==83.0.0",
     "wheel==0.47.0",
 ]
