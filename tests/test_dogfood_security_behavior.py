@@ -238,16 +238,92 @@ def test_taint_flags_obvious_sqli(ro_repo):
     )
 
 
-def test_taint_ci_exits_nonzero_on_obvious_sqli(ro_repo):
-    """The literal bug shape (task #285): `roam taint --ci` must exit 5 —
-    not 0 — on a repo containing an unambiguous SQLi flow. A CI gate
-    wired to `taint --ci` silently passing a vulnerable repo was the
-    credibility-critical defect; this locks the actual exit code, not
-    just the JSON findings list."""
-    proc = _run_roam(ro_repo, "taint", "--ci", "--rules-pack", "sqli")
-    assert proc.returncode == 5, (
-        f"taint --ci must exit 5 on an obvious SQLi flow, got {proc.returncode}: stdout={proc.stdout[-500:]!r}"
-    )
+def _finding_value(finding: dict) -> dict:
+    """Unwrap one R22 ``{"value": {...}}`` finding to its real fields."""
+    value = finding.get("value")
+    return value if isinstance(value, dict) else finding
+
+
+def test_taint_ci_exit_code_tracks_finding_severity(ro_repo):
+    """`taint --ci` must gate on measured severity — in BOTH directions.
+
+    This replaces an assertion that demanded exit 5 from the `sqli` pack.
+    That expectation went stale on 2026-08-24 ("taint reserves error
+    severity for computed dataflow"): a production run had returned 144
+    error-level findings of which expert triage found ZERO real — all were
+    text co-occurrence, common-caller links, or text-anchor BFS, none with a
+    computed source-to-sink path — so error severity now REQUIRES a computed
+    dataflow, and everything else is reported as a `note`.
+
+    The two fixture flows land on opposite sides of that line, which is what
+    makes them a usable pair:
+
+      * command-injection — `ping()` reads request.args and calls os.system
+        in ONE function body, so the intraprocedural AST pass computes the
+        path. evidence=dataflow, severity=error, gate exits 5.
+      * sqli — `search()` (web.py:24) reads request.args and hands it to
+        `run_query()` (web.py:33), which builds the SQL. The dataflow pass is
+        intraprocedural, so this one-hop flow is only reachable by the
+        text-anchor fallback. evidence=co_occurrence, severity=note, and the
+        gate exits 0 because nothing reached error.
+
+    So the product did not stop FINDING the SQLi; it stopped CLAIMING it at
+    error severity. Demanding exit 5 there now asserts the fabricated-proof
+    behaviour that change deleted. What must still hold — and what task #285
+    was really about — is that the gate never silently blesses a repo:
+
+      (a) the interprocedural SQLi flow is still REPORTED, not dropped;
+      (b) every finding's severity is exactly what its evidence authorizes —
+          no co-occurrence promoted to error, no computed dataflow demoted;
+      (c) the exit code tracks the error count in both directions, checked
+          against a SEPARATE CLI invocation rather than read off the same
+          envelope it is compared to.
+
+    (c) is the original defect's shape: a pack that produces an error-level
+    finding and still exits 0 fails here on the command-injection leg.
+    """
+    saw_error_pack = False
+    saw_note_pack = False
+
+    for pack, rule_id in (("sqli", "python-sqli"), ("command-injection", "python-command-injection")):
+        env = _run_json(ro_repo, "taint", "--rules-pack", pack)
+        findings = env.get("findings", [])
+        assert any(_finding_rule_id(f) == rule_id for f in findings), (
+            f"{pack}: {rule_id} produced no finding on an obvious flow — "
+            f"the flow must be reported even when its severity is only a note: {findings}"
+        )
+
+        # (b) severity is exactly what the evidence authorizes.
+        errors = []
+        for f in findings:
+            v = _finding_value(f)
+            sev, evidence = v.get("severity"), v.get("evidence")
+            basis = v.get("basis") or ""
+            if evidence == "dataflow":
+                assert sev in {"error", "warning"}, f"{pack}: computed dataflow demoted to {sev!r}: {v}"
+                assert "unverified" not in basis, f"{pack}: computed dataflow calls itself unverified: {v}"
+            else:
+                assert evidence == "co_occurrence", f"{pack}: unknown evidence class {evidence!r}: {v}"
+                assert sev == "note", f"{pack}: co-occurrence claims {sev!r} without a computed path: {v}"
+                assert "unverified" in basis, f"{pack}: an unproven finding must say so in its basis: {v}"
+            if sev == "error":
+                errors.append(v)
+
+        # (c) the gate keys off the error count (cmd_taint `high_count`),
+        # measured by a second, independent invocation.
+        proc = _run_roam(ro_repo, "taint", "--ci", "--rules-pack", pack)
+        expected = 5 if errors else 0
+        assert proc.returncode == expected, (
+            f"{pack}: taint --ci must exit {expected} with {len(errors)} error-severity "
+            f"finding(s), got {proc.returncode}: stdout={proc.stdout[-500:]!r}"
+        )
+        saw_error_pack |= bool(errors)
+        saw_note_pack |= not errors
+
+    # Neither leg may quietly become vacuous: this test only proves the gate
+    # tracks severity if it actually exercised an exit-5 case AND an exit-0 one.
+    assert saw_error_pack, "no pack produced an error-severity finding — the exit-5 direction went untested"
+    assert saw_note_pack, "no pack produced a note-only result — the exit-0 direction went untested"
 
 
 def test_taint_flags_obvious_command_injection(ro_repo):
