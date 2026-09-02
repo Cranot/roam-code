@@ -55,10 +55,18 @@ def test_inner_probe_bounded_caps_runaway(monkeypatch):
     """The synchronous procedure probe (inner_probe) must be wall-capped too.
 
     After the always_on budget was made effective, inner_probe became the last
-    uncapped synchronous call on the compile critical path. `_probe_for_procedure_bounded`
-    runs it with a hard timeout, degrading to {} on a runaway (the compile keeps
-    the rest of the prefetch). Pins: a blocking probe is capped at the budget and
-    a fast one passes through unchanged.
+    uncapped synchronous call on the compile critical path.
+    `_probe_for_procedure_bounded` runs it with a hard timeout, discarding the
+    runaway's payload (the compile keeps the rest of the prefetch). Pins: a
+    blocking probe is capped at the budget, its result never ships, the drop is
+    DISCLOSED, and a fast one passes through unchanged.
+
+    The disclosure is the half that used to be missing. Returning a bare {} put
+    "the probe was cut off" and "this procedure has no probe" into the same
+    envelope shape, so a consumer read an absent key as "nothing to report"
+    when the truth was "we never measured". Every failure branch inside a probe
+    body already emits `<procedure>_unavailable`; the wall cap now says the same
+    thing in the same shape.
     """
     release = threading.Event()
 
@@ -72,7 +80,13 @@ def test_inner_probe_bounded_caps_runaway(monkeypatch):
         out = compiler._probe_for_procedure_bounded("freeform_explore", [], None, "t", 0.8)
         elapsed = time.monotonic() - t0
         assert elapsed < 4.0, f"inner_probe not capped: {elapsed:.1f}s"
-        assert out == {}, "runaway probe result must be discarded"
+        assert "runaway" not in out, f"runaway probe payload must be discarded: {out}"
+        assert set(out) == {"freeform_explore_unavailable"}, (
+            f"a capped probe must disclose the drop under its procedure key, got {sorted(out)}"
+        )
+        disclosure = out["freeform_explore_unavailable"]
+        assert "0.8s wall budget" in disclosure, disclosure
+        assert "unknown, not as empty" in disclosure, disclosure
     finally:
         release.set()
 
