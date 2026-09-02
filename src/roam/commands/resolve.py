@@ -8,7 +8,15 @@ import subprocess
 
 import click
 
-from roam.db.connection import batched_in, db_exists, find_project_root, open_db
+from roam.db.connection import (
+    StaleDbDirError,
+    batched_in,
+    db_exists,
+    find_project_root,
+    get_index_lock_path,
+    get_index_state_path,
+    open_db,
+)
 from roam.db.queries import SEARCH_SYMBOLS, SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED
 
 
@@ -249,9 +257,18 @@ def _existing_index_recovery_state() -> str | None:
         log_swallowed("resolve:index_recovery_state:find_project_root", exc)
         return None
 
-    roam_dir = root / ".roam"
-    lock_path = roam_dir / "index.lock"
-    state_path = roam_dir / "index.state"
+    # Read the sidecars from the store directory the indexer writes them
+    # to. Reading a fixed ``<root>/.roam`` while the writer honours a
+    # redirect would report every redirected index as having no
+    # lifecycle record at all.
+    try:
+        lock_path = get_index_lock_path(root)
+        state_path = get_index_state_path(root)
+    except (OSError, StaleDbDirError) as exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("resolve:index_recovery_state:store_dir", exc)
+        return None
 
     from roam.index.indexer import (
         _decode_index_lock,
@@ -302,7 +319,29 @@ def _existing_index_recovery_state() -> str | None:
     return None
 
 
-def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False) -> None:
+def auto_index_disabled() -> bool:
+    """Return ``True`` when the caller opted out of automatic indexing.
+
+    Read-only consumers ask roam questions about a checkout they do not own
+    and have no mandate to write to. Every analysis command auto-indexes on
+    a cold start, which turns "answer this question" into "build an index
+    first" — minutes of work and a store the caller never asked for.
+    Setting ``ROAM_NO_AUTO_INDEX`` to a truthy value (``1``/``true``/``yes``/
+    ``on``) makes those commands refuse with the typed
+    :class:`roam.exit_codes.IndexMissingError` (exit 3) instead, so the
+    caller can build the index deliberately with ``roam init`` — under its
+    own ``ROAM_DB_DIR`` if it wants the store elsewhere.
+
+    Unset (the default) preserves the historical auto-index behaviour.
+    """
+    return os.environ.get("ROAM_NO_AUTO_INDEX", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def ensure_index(
+    quiet: bool = False,
+    suppress_cold_start_advisory: bool = False,
+    explicit_build: bool = False,
+) -> None:
     """Build the index if it doesn't exist yet.
 
     Args:
@@ -312,6 +351,15 @@ def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False
             commands whose PURPOSE is to build the index (``roam init``) — the
             user just asked to create the index, so recommending they run the
             command they're already running is confusing first-time UX (W1291).
+        explicit_build: If True, the caller IS the build command (``roam init``)
+            and ``ROAM_NO_AUTO_INDEX`` does not apply to it. The opt-out exists
+            so a read-only consumer's ANALYSIS call refuses instead of writing;
+            applying it to the escape hatch the refusal recommends would leave
+            the caller with no way to build an index at all. This is a separate
+            argument rather than a reuse of ``suppress_cold_start_advisory``
+            because the two answer different questions (what to print vs.
+            whether writing is permitted), and a shared flag would silently
+            couple them.
     """
     index_exists = db_exists()
     recovery_state = _existing_index_recovery_state() if index_exists else None
@@ -320,6 +368,20 @@ def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False
             "The roam index is currently being built by another process. Retry after that index run completes."
         )
     if not index_exists or recovery_state == "incomplete":
+        if auto_index_disabled() and not explicit_build:
+            from roam.exit_codes import IndexMissingError
+
+            missing = (
+                "no usable roam index"
+                if not index_exists
+                else "the roam index is incomplete after an interrupted build"
+            )
+            raise IndexMissingError(
+                f"Refusing to index: {missing}, and ROAM_NO_AUTO_INDEX is set. "
+                "Run `roam init` to build one (set ROAM_DB_DIR first to keep the store "
+                "outside this repository), or unset ROAM_NO_AUTO_INDEX to let this "
+                "command index."
+            )
         if not quiet and not suppress_cold_start_advisory:
             if recovery_state == "incomplete":
                 click.echo("Incomplete roam index detected after an interrupted build. Rebuilding it before analysis.")

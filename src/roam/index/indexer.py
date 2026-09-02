@@ -19,7 +19,15 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 from roam.atomic_io import atomic_write_text
-from roam.db.connection import batched_in, find_project_root, get_db_path, open_db
+from roam.db.connection import (
+    INDEX_STATE_NAME,
+    batched_in,
+    find_project_root,
+    get_db_path,
+    get_index_lock_path,
+    get_index_state_path,
+    open_db,
+)
 from roam.index.discovery import discover_files
 
 # Static reference to the Django post-resolver entry point. It is invoked
@@ -609,7 +617,7 @@ def _claim_index_lock(lock_path: Path) -> _IndexLockClaim | None:
         except (OSError, UnicodeError):
             _log("Could not read the held index lock generation. Exiting.")
             return None
-        recovery = _recovery_requirement(lock_path.with_name("index.state"), prior_lock_raw)
+        recovery = _recovery_requirement(lock_path.with_name(INDEX_STATE_NAME), prior_lock_raw)
         if recovery is None:
             _log("An index lifecycle owner is live or cannot be proven stale. Exiting.")
             return None
@@ -1788,12 +1796,15 @@ class Indexer:
         _quiet_mode = quiet
         self._log(f"Indexing {self.root}")
 
-        # Lock file to prevent concurrent indexing
-        lock_path = self.root / ".roam" / "index.lock"
+        # Lock file to prevent concurrent indexing. The lock and the
+        # lifecycle marker are sidecars of the DATABASE, not of the
+        # analysed tree, so both resolve from the store directory: a
+        # redirected store leaves the indexed repository untouched.
+        lock_path = get_index_lock_path(self.root)
         claim = _claim_index_lock(lock_path)
         if claim is None:
             return False
-        state_path = self.root / ".roam" / "index.state"
+        state_path = get_index_state_path(self.root)
         effective_force = force or claim.recovery_required
         effective_light = light and not claim.recovery_required
         if claim.recovery_required:

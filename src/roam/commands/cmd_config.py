@@ -704,7 +704,10 @@ def config(
 
     The setting is saved to ``.roam/config.json`` and takes precedence over
     the default ``.roam/index.db`` location (but the ``ROAM_DB_DIR`` env-var
-    still wins if set).
+    still wins if set). Either override moves the WHOLE index store: the
+    database and the indexer's ``index.lock`` / ``index.state`` sidecars all
+    resolve from the configured directory, so analysing a repository with a
+    redirected store writes nothing into that repository.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()

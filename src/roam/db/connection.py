@@ -25,6 +25,13 @@ WarningsOut = list[str] | None
 
 DEFAULT_DB_DIR = ".roam"
 DEFAULT_DB_NAME = "index.db"
+#: Control sidecars of the index database. They are part of the same
+#: store as ``index.db``: the indexer takes ``index.lock`` for mutual
+#: exclusion and publishes its lifecycle in ``index.state``. Resolving
+#: them anywhere other than the database's own directory splits one
+#: store across two locations — see :func:`get_db_dir`.
+INDEX_LOCK_NAME = "index.lock"
+INDEX_STATE_NAME = "index.state"
 
 
 class StaleDbDirError(RuntimeError):
@@ -223,8 +230,8 @@ def write_project_config(config: dict, project_root: Path | None = None) -> Path
     return config_path
 
 
-def get_db_path(project_root: Path | None = None) -> Path:
-    """Get the path to the index database.
+def get_db_dir(project_root: Path | None = None, *, create: bool = True) -> Path:
+    """Get the directory that holds the index database and its sidecars.
 
     Resolution order (first match wins):
 
@@ -232,21 +239,57 @@ def get_db_path(project_root: Path | None = None) -> Path:
        useful when the project lives on OneDrive/Dropbox or a network drive.
     2. ``.roam/config.json`` → ``"db_dir"`` key — persistent per-project
        alternative to the env-var (write once with ``roam config``).
-    3. Default: ``<project_root>/.roam/index.db``.
+    3. Default: ``<project_root>/.roam``.
+
+    This is the ONE resolver for the whole store. ``index.db`` and every
+    control sidecar (``index.lock``, ``index.state``) are derived from the
+    directory returned here, so a redirect moves the complete store and a
+    sidecar added later follows it without a second edit.
+
+    ``create=False`` resolves the path without materialising the directory.
+    A pure predicate must not have a filesystem side effect: ``db_exists``
+    only ASKS whether an index is there, and creating the store directory to
+    answer that put a ``.roam/`` into every repository a read-only caller so
+    much as looked at. Writers keep the default ``create=True`` because they
+    are about to put a file in the directory they are asking for.
+
+    Before this function existed the database honoured the redirect while
+    the indexer hard-coded ``<project_root>/.roam/index.lock`` and
+    ``<project_root>/.roam/index.state``. A caller that redirected the store
+    precisely so it would not write into a repository it does not own still
+    got a ``.roam/`` directory created there — and because read-only
+    commands auto-index on a cold start, that was the default outcome rather
+    than an edge case.
     """
+
+    def _resolved(candidate: Path | str, source: str) -> Path:
+        return _safe_mkdir(candidate, source=source) if create else Path(candidate)
+
     override = os.environ.get("ROAM_DB_DIR")
     if override:
-        db_dir = _safe_mkdir(override, source="ROAM_DB_DIR env")
-        return db_dir / DEFAULT_DB_NAME
+        return _resolved(override, "ROAM_DB_DIR env")
     if project_root is None:
         project_root = find_project_root()
     # Check .roam/config.json for a db_dir override
     config = _load_project_config(project_root)
     if config.get("db_dir"):
-        db_dir = _safe_mkdir(config["db_dir"], source=".roam/config.json db_dir")
-        return db_dir / DEFAULT_DB_NAME
-    db_dir = _safe_mkdir(project_root / DEFAULT_DB_DIR, source="<project default>")
-    return db_dir / DEFAULT_DB_NAME
+        return _resolved(config["db_dir"], ".roam/config.json db_dir")
+    return _resolved(project_root / DEFAULT_DB_DIR, "<project default>")
+
+
+def get_db_path(project_root: Path | None = None, *, create: bool = True) -> Path:
+    """Get the path to the index database (``index.db`` inside :func:`get_db_dir`)."""
+    return get_db_dir(project_root, create=create) / DEFAULT_DB_NAME
+
+
+def get_index_lock_path(project_root: Path | None = None) -> Path:
+    """Get the path to the indexer's mutual-exclusion lock sidecar."""
+    return get_db_dir(project_root) / INDEX_LOCK_NAME
+
+
+def get_index_state_path(project_root: Path | None = None) -> Path:
+    """Get the path to the indexer's lifecycle-marker sidecar."""
+    return get_db_dir(project_root) / INDEX_STATE_NAME
 
 
 def _is_cloud_synced(path: Path) -> bool:
@@ -1022,8 +1065,15 @@ def __getattr__(name: str):
 
 
 def db_exists(project_root: Path | None = None) -> bool:
-    """Check if an index database exists."""
-    path = get_db_path(project_root)
+    """Check if an index database exists.
+
+    Resolves with ``create=False``: a question about the store must not
+    build part of it. A stale or unwritable configured directory therefore
+    answers ``False`` here instead of raising ``StaleDbDirError``; the
+    structured error still fires on the next real write, which is where a
+    remediation hint belongs.
+    """
+    path = get_db_path(project_root, create=False)
     return path.exists() and path.stat().st_size > 0
 
 
