@@ -536,6 +536,15 @@
       "function": "codeowners",
       "module": "roam.commands.cmd_codeowners"
     },
+    "collapse": {
+      "flags": [
+        "--fail-on-found",
+        "--file",
+        "--include-tests"
+      ],
+      "function": "collapse",
+      "module": "roam.commands.cmd_collapse"
+    },
     "commands": {
       "flags": [
         "--kind",
@@ -933,6 +942,14 @@
       ],
       "function": "dispatch_trace",
       "module": "roam.commands.cmd_dispatch_trace"
+    },
+    "doc-drift": {
+      "flags": [
+        "--ci",
+        "--threshold"
+      ],
+      "function": "doc_drift",
+      "module": "roam.commands.cmd_doc_drift"
     },
     "doc-staleness": {
       "flags": [
@@ -2925,9 +2942,9 @@
     "compliance": 14,
     "core": 17,
     "debug": 72,
-    "full": 244,
+    "full": 246,
     "refactor": 73,
-    "review": 73
+    "review": 74
   },
   "mcp_preset_members": {
     "architecture": [
@@ -3175,6 +3192,7 @@
       "roam_closure",
       "roam_clusters",
       "roam_codeowners",
+      "roam_collapse",
       "roam_commands",
       "roam_compare",
       "roam_compatibility",
@@ -3202,6 +3220,7 @@
       "roam_diagnose_issue",
       "roam_diff",
       "roam_disambiguate",
+      "roam_doc_drift",
       "roam_doc_intent",
       "roam_doc_staleness",
       "roam_docs_coverage",
@@ -3472,6 +3491,7 @@
       "roam_diagnose_issue",
       "roam_diff",
       "roam_disambiguate",
+      "roam_doc_drift",
       "roam_docs_coverage",
       "roam_dogfood",
       "roam_effects",
@@ -3793,6 +3813,11 @@
       "root",
       "unowned"
     ],
+    "roam_collapse": [
+      "include_tests",
+      "path",
+      "root"
+    ],
     "roam_commands": [
       "kind",
       "root",
@@ -3956,6 +3981,11 @@
       "limit",
       "root",
       "symbol"
+    ],
+    "roam_doc_drift": [
+      "ci",
+      "root",
+      "threshold"
     ],
     "roam_doc_intent": [
       "doc",
