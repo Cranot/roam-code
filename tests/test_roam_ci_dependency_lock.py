@@ -132,11 +132,15 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
     }
     assert pyproject["dependency-groups"]["ci"] == [
         f"pip-audit=={PIP_AUDIT_VERSION}",
-        # 6.15.0 since CVE-2026-71852 and CVE-2026-71870 were published against
-        # 6.14.2 on 2026-08-07. This literal is the point of the test: bumping a
-        # pinned CI tool must be a deliberate two-file edit, so a version that
-        # drifts in pyproject alone fails here rather than passing silently.
-        "pypdf==6.15.0",
+        # 6.16.1 since CVE-2026-84309 (fixed in 6.16.0), CVE-2026-84310 and
+        # CVE-2026-84311 (both fixed in 6.16.1) were published against 6.15.0.
+        # This literal is the point of the test: bumping a pinned CI tool must
+        # be a deliberate edit here too, so a version that drifts in pyproject
+        # alone fails rather than passing silently. That is also why Dependabot
+        # cannot land these on its own -- its pip-ecosystem PRs edit pyproject
+        # and nothing else, so they are red by construction and must be
+        # reproduced as a pyproject + uv.lock + test change in one commit.
+        "pypdf==6.16.1",
         "setuptools==83.0.0",
         "wheel==0.47.0",
     ]
@@ -148,6 +152,6 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
 
     versions = {package["name"]: package["version"] for package in lock["package"]}
     assert versions["pip-audit"] == PIP_AUDIT_VERSION
-    assert versions["pypdf"] == "6.15.0"
+    assert versions["pypdf"] == "6.16.1"
     assert versions["setuptools"] == "83.0.0"
     assert versions["wheel"] == "0.47.0"
