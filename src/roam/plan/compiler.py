@@ -10990,12 +10990,42 @@ _W42_ALWAYS_ON_BUDGET_MS = int(os.environ.get("ROAM_ALWAYS_ON_BUDGET_MS", "2500"
 _INNER_PROBE_TIMEOUT_S = float(os.environ.get("ROAM_INNER_PROBE_TIMEOUT_S", "8"))
 
 
+def _inner_probe_unavailable(procedure: str, why: str) -> dict:
+    """Remediation envelope for an inner probe that produced no result.
+
+    Every failure branch INSIDE a probe body already emits a
+    `<procedure>_unavailable` string so the agent knows the fact is missing
+    and what to run instead. The two branches that discard the probe from
+    the OUTSIDE — the wall cap and the catch-all — used to return `{}`, which
+    in the envelope is indistinguishable from "this procedure has no probe
+    at all". A consumer then reads an absent key as "nothing to report" when
+    the truth is "we did not measure", which is the one reading that is never
+    safe. Same key convention and same actionable shape as the in-probe
+    branches, so no consumer needs a second code path.
+
+    Empty/unknown procedures keep returning `{}`: there is no command to name
+    and `None_unavailable` would be worse than silence.
+    """
+    if not procedure:
+        return {}
+    return {
+        f"{procedure}_unavailable": (
+            f"The `{procedure}` compile-time probe {why}, so no prefetched result is "
+            f"embedded in this envelope. Nothing was measured — treat the absent "
+            f"facts as unknown, not as empty, and run the matching roam command "
+            f"directly if you need them."
+        )
+    }
+
+
 def _probe_for_procedure_bounded(
     procedure: str, named_paths: list[str], cwd: str | None, task: str | None, timeout_s: float
 ) -> dict:
-    """Run `_probe_for_procedure` with a hard wall cap. On timeout, return {} —
-    the compile proceeds with whatever else was prefetched (graceful degrade).
-    The orphaned thread finishes in the background (`shutdown(wait=False)`)."""
+    """Run `_probe_for_procedure` with a hard wall cap. On timeout, discard the
+    probe's own result and return the `<procedure>_unavailable` remediation —
+    the compile proceeds with whatever else was prefetched (graceful degrade)
+    while the envelope still says the measurement did not happen. The orphaned
+    thread finishes in the background (`shutdown(wait=False)`)."""
     from concurrent.futures import ThreadPoolExecutor
     from concurrent.futures import TimeoutError as _CFTimeout
 
@@ -11006,10 +11036,10 @@ def _probe_for_procedure_bounded(
             return fut.result(timeout=timeout_s) or {}
         except _CFTimeout:
             log_swallowed("compile.inner_probe.timeout", Exception(f"inner_probe {procedure} exceeded {timeout_s}s"))
-            return {}
+            return _inner_probe_unavailable(procedure, f"exceeded its {timeout_s:g}s wall budget")
         except Exception as exc:  # noqa: BLE001
             log_swallowed(f"compile.inner_probe.{procedure}", exc)
-            return {}
+            return _inner_probe_unavailable(procedure, "failed with an internal error")
     finally:
         pool.shutdown(wait=False)
 
