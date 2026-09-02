@@ -881,6 +881,9 @@ Yes, after installation and parser prewarming. Run `roam index --force` once whi
 **Does Roam modify my source code?**
 Read-only by default. Creates `.roam/` with an index database. `roam mutate` (move/rename/extract) defaults to `--dry-run`; pass `--apply` explicitly to write changes.
 
+**Can Roam analyse a repository without writing anything into it?**
+Yes. `ROAM_DB_DIR=/path/to/store` (or `roam config --set-db-dir`) redirects the whole index store — the SQLite database *and* its `index.lock` / `index.state` sidecars — so the analysed repository is left byte-identical and no `.roam/` directory appears in it. If the caller must also never trigger a build, set `ROAM_NO_AUTO_INDEX=1`: commands that would otherwise index a repository with no index exit `3` (`INDEX_MISSING`) with a message naming the variable, instead of building one. `roam init` and `roam index` still build normally — the opt-out covers the implicit cold-start build, not the commands you ran on purpose.
+
 **How does Roam handle monorepos and multi-repo projects?**
 Monorepos: indexes from the root; batched SQL handles 100k+ symbols. Multi-repo: `roam ws init <repo1> <repo2>` builds a workspace overlay DB for cross-repo API edges, then `roam ws resolve` / `ws context` / `ws trace` work across repos.
 
@@ -906,7 +909,7 @@ The CLI is Apache 2.0, runs its analysis engine locally, and never expires. Roam
 | Problem | Solution |
 |---------|----------|
 | `roam: command not found` | Ensure install location is on PATH. For `uv`: `uv tool update-shell` |
-| `Another indexing process owns the workspace` | Wait for the other `roam index` to finish. If nothing else is running, the lock is unprovable-stale (`An index lifecycle owner is live or cannot be proven stale`) — delete `.roam/index.lock` and retry |
+| `Another indexing process owns the workspace` | Wait for the other `roam index` to finish. If nothing else is running, the lock is unprovable-stale (`An index lifecycle owner is live or cannot be proven stale`) — delete `index.lock` from the index store (`.roam/` by default, or the `ROAM_DB_DIR` / `--set-db-dir` directory) and retry |
 | `database is locked` | `roam index --force` to rebuild |
 | Unicode errors on Windows | `chcp 65001` for UTF-8 |
 | Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` |
@@ -923,7 +926,7 @@ pipx upgrade roam-code        # or: uv tool upgrade roam-code / pip install --up
 pipx uninstall roam-code      # or: uv tool uninstall roam-code / pip uninstall roam-code
 ```
 
-Delete `.roam/` from your project root to clean up local data.
+Delete `.roam/` from your project root to clean up local data (plus the `ROAM_DB_DIR` / `--set-db-dir` directory if the index store was redirected).
 
 ## Contributing
 

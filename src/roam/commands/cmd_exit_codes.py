@@ -22,12 +22,15 @@ _DESCRIPTIONS = {
     "EXIT_ERROR": "Generic failure (unhandled exception, missing file, etc.).",
     "EXIT_USAGE": "Bad arguments or flags. Check `--help`.",
     # The two index rows described an intention, not the program. Verified by
-    # measurement and by grep: `require_index` (the only raiser of
-    # IndexMissingError) is called by nothing, and IndexStaleError is never
-    # raised outside tests -- while the guard family really does return 4 for
-    # `needs_review`. A CI script or agent branching on this table was being
-    # told to `roam index` in response to a human-judgment gate.
-    "EXIT_INDEX_MISSING": "Reserved. No command returns this -- roam auto-indexes instead of refusing.",
+    # measurement and by grep: IndexStaleError is never raised outside tests,
+    # while the guard family really does return 4 for `needs_review`. A CI
+    # script or agent branching on this table was being told to `roam index`
+    # in response to a human-judgment gate. The index-missing row is now
+    # reachable, but only on the opt-out path named in its text.
+    "EXIT_INDEX_MISSING": (
+        "No index and auto-indexing was refused (ROAM_NO_AUTO_INDEX set). "
+        "Run `roam init`. Without that env var roam auto-indexes and never returns this."
+    ),
     "EXIT_INDEX_STALE": (
         "needs_review: a guard verdict (`verdict`, `guard-pr`, `proof-bundle`) requires "
         "a human. Re-running produces the same answer. NOT a stale index."

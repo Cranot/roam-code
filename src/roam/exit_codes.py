@@ -15,12 +15,15 @@ REACHABILITY -- what a caller branching on this table will actually receive.
 This section exists because the table above was, for two of its rows, a
 description of an intention rather than of the program.
 
-* 3 (INDEX_MISSING) is returned by NO shipped command. The only helper that
-  raises ``IndexMissingError`` is ``roam.commands.resolve.require_index``,
-  which nothing in ``src/roam`` calls: commands auto-index instead of
-  refusing, so a repo with no ``.roam/index.db`` gets an index, not exit 3.
-  Measured in a fresh repo: ``roam search`` / ``roam health`` / ``roam dead``
-  all exit 0.
+* 3 (INDEX_MISSING) is returned only when a caller has opted out of
+  automatic indexing. By default commands auto-index instead of refusing,
+  so a repo with no index gets one, not exit 3: measured in a fresh repo,
+  ``roam search`` / ``roam health`` / ``roam dead`` all exit 0. With
+  ``ROAM_NO_AUTO_INDEX`` set to a truthy value,
+  ``roam.commands.resolve.ensure_index`` raises ``IndexMissingError`` on a
+  cold start and every analysis command exits 3 instead of building an
+  index. ``roam.commands.resolve.require_index`` raises the same error and
+  is still called by nothing in ``src/roam``.
 
 * 4 (INDEX_STALE) is returned by NO command with that meaning --
   ``IndexStaleError`` is never raised outside tests. The integer 4 IS
@@ -82,7 +85,9 @@ DESCRIPTIONS: dict[int, str] = {
     EXIT_SUCCESS: "success",
     EXIT_ERROR: "unexpected error",
     EXIT_USAGE: "invalid usage (bad arguments or flags)",
-    EXIT_INDEX_MISSING: "index not found -- run `roam init` (reserved; no command returns this)",
+    EXIT_INDEX_MISSING: (
+        "index not found -- run `roam init` (returned only when ROAM_NO_AUTO_INDEX disables the auto-index path)"
+    ),
     EXIT_INDEX_STALE: "needs_review -- a guard verdict requires a human; re-running will not change it",
     EXIT_GATE_FAILURE: "quality gate failed",
     EXIT_PARTIAL: "partial results (completed with warnings)",
