@@ -601,7 +601,7 @@ server exits with `command not found` before it can report anything more useful.
 **Which preset ships where.** The Claude Code plugin (`.claude-plugin/plugin.json`) pins
 `ROAM_MCP_PRESET=core` — a consumer wants a tight prompt surface. This repo's own
 `.mcp.json` pins `full` on purpose: agents working *on* roam-code dogfood the entire
-244-tool surface. The two files name the same server and disagree deliberately; the split
+246-tool surface. The two files name the same server and disagree deliberately; the split
 is pinned by `tests/test_distribution_manifests.py` so neither drifts into the other.
 
 </details>
@@ -841,7 +841,7 @@ roam-code combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), 
 | Git churn / co-change | Yes | No | No | No |
 | Architecture simulation | Yes | No | No | No |
 | Multi-agent partitioning | Yes | No | No | No |
-| MCP tools for agents | 244 (17 in default core preset) | Client only | Client only | 34 (SonarQube) |
+| MCP tools for agents | 246 (17 in default core preset) | Client only | Client only | 34 (SonarQube) |
 | Languages | 28 | 70+ | 50+ | 12-42 |
 | Local source analysis, zero API keys | Yes | No | No | Partial |
 | Open source | Apache 2.0 | No | Partial | Partial |
