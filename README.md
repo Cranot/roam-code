@@ -555,7 +555,7 @@ roam mcp
 **Default preset:** `core` (17 tools: 16 core + `roam_expand_toolset` meta-tool).
 <!-- END auto-count:readme-default-preset -->
 
-244 MCP tools span 8 selectable presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
+246 MCP tools span 8 selectable presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
 
 **Cold-start envelope.** Any wrapper that can't complete normally — missing index, stale index, partial failure — returns one canonical structured envelope (`status`, `error_code`, `summary.verdict`, `hint`, `next_command`) instead of hanging or emitting empty output. Agents always get an actionable signal, never a silent failure.
 
