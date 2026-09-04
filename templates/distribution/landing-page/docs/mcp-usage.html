@@ -102,7 +102,8 @@
 <pre><code>pip install "roam-code[mcp]"   # Python 3.10+; pulls fastmcp + tree-sitter
 cd /path/to/repo
 roam init                       # creates .roam/index.db + fitness rules; CI is opt-in
-roam health                     # verify the index is healthy (0-100 score)
+roam doctor                     # environment and index readiness
+roam health --explain            # architectural score and contributors
 roam mcp-setup claude-code --write  # write/merge one supported client config</code></pre>
       <p>
         Why this is a manual step: indexing can take long enough to
@@ -177,7 +178,7 @@ roam mcp-setup claude-code --write  # write/merge one supported client config</c
           <tr><td><code>roam_reindex</code></td><td>Rebuild the index (incremental by default).</td></tr>
           <tr><td><code>roam_doctor</code></td><td>Diagnose the install — Python, extras, grammars, schema version, stale index.</td></tr>
           <tr><td><code>roam_catalog</code></td><td>Machine-readable list of every registered MCP tool plus capability flags.</td></tr>
-          <tr><td><code>roam_expand_toolset</code></td><td>Switch the active preset (core / review / refactor / debug / architecture / compliance / compile-curated / full).</td></tr>
+          <tr><td><code>roam_expand_toolset</code></td><td>Inspect preset contents (core / review / refactor / debug / architecture / compliance / compile-curated / full). Changing the active toolset requires a server restart.</td></tr>
           <tr><td><code>roam_session_metrics</code></td><td>Per-session counters for the current MCP connection.</td></tr>
           <tr><td><code>roam_evidence_doctor</code></td><td>Validate a <code>ChangeEvidence</code> packet passed in by the caller.</td></tr>
           <tr><td><code>roam_fetch_handle</code></td><td>Fetch all or part of a large MCP payload by handle (byte slice, section pick, jq projection).</td></tr>
@@ -319,6 +320,12 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
         preset and receive the exact restart instruction, then set
         <code>ROAM_MCP_PRESET=full</code> in the server environment and restart
         it to expose all 246 tools.
+      </p>
+      <p>
+        Set the variable in the editor's MCP server configuration. For a manual
+        PowerShell launch, run <code>$env:ROAM_MCP_PRESET = "full"</code>, then
+        <code>roam mcp</code>. Confirm the connection in the client's tool list;
+        local diagnostics inspect their own process, not the editor's connection.
       </p>
 
       <h3>Server returns stale data after a <code>git pull</code></h3>

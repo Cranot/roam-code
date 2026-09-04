@@ -53,5 +53,6 @@ def test_public_docs_advertise_every_registered_mcp_preset():
     assert f"Presets (env var `ROAM_MCP_PRESET`): {markdown_inventory}." in llms_install
 
     usage = (ROOT / "templates/distribution/landing-page/docs/mcp-usage.html").read_text(encoding="utf-8")
-    assert f"Switch the active preset ({slash_inventory})." in usage
+    assert f"Inspect preset contents ({slash_inventory})." in usage
+    assert "Changing the active toolset requires a server restart." in usage
     assert f"{full_count} MCP tools, {len(names)} presets" in usage

@@ -99,7 +99,7 @@ jobs:
 ```
 
 For production, pin `Cranot/roam-code` to the reviewed 40-character commit SHA
-behind `v13.10.0`; a release tag is human-readable but remains movable. Keep the
+behind the chosen release tag; a tag is human-readable but remains movable. Keep the
 version comment beside the SHA so Dependabot can propose reviewable updates.
 
 That is all you need. The action installs roam-code, indexes your codebase,

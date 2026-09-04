@@ -7,35 +7,46 @@ everything you need to get started.
 
 1. Fork the repository
 2. Clone your fork: `git clone https://github.com/<you>/roam-code.git`
-3. Install in development mode: `pip install -e ".[mcp,dev]"`
-4. Run tests: `pytest tests/`
+3. Create the locked development environment: `uv sync --locked --no-default-groups --extra dev --group ci --python 3.12`
+4. Run the relevant tests: `uv run --no-sync pytest tests/test_basic.py -n 0`
 5. Create a branch, make changes, submit a PR
 
 ## Development Setup
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.10+; Python 3.12 is the standard local development interpreter
 - Git
+- uv (use the version pinned in `.github/workflows/roam-ci.yml` for CI parity)
 
 ### Installation
 
 ```bash
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
-pip install -e ".[dev]"      # core + pytest, pytest-xdist, ruff
-pip install -e ".[mcp,dev]"  # also includes fastmcp for MCP server work
+uv sync --locked --no-default-groups --extra dev --group ci --python 3.12
+uv run --no-sync python --version
+uv run --no-sync roam --version
 
 # Enable the commit-msg hook (rejects Co-Authored-By trailers + AI attribution)
 git config core.hooksPath .githooks
 
-# (Optional) Install the local pre-commit hooks for fast-fail count-drift +
-# Co-Authored-By rejection. CI runs the same checks independently.
-pre-commit install                            # pre-commit stage: count-drift
-pre-commit install --hook-type commit-msg     # commit-msg stage: no-coauthor
 ```
 
-The local hooks live in `.pre-commit-config.yaml` and mirror two CI gates:
+`uv sync` installs this checkout in editable mode from `uv.lock`. The `dev`
+extra includes the MCP and test dependencies; the `ci` group adds the pinned
+audit and documentation tools. Use `uv run --no-sync` for subsequent commands
+so an invocation does not silently change the dependency selection. Run the
+same sync command again after pulling a lockfile change. The
+[repository maintenance guide](docs/repository-maintenance.md) covers package
+repair, index freshness, and a repeatable health baseline.
+
+An unlocked `python -m pip install -e ".[dev]"` is useful for compatibility
+experiments, but it does not reproduce the dependency graph used by CI.
+
+The separate `.pre-commit-config.yaml` exposes two checks for users of the
+pre-commit framework. This clone uses `.githooks/`; do not install a second
+hook manager over that configured hooks path.
 
 - **`count-drift`** runs `scripts/sync_surface_counts.py` and blocks the commit
   when README / pyproject / landing-page counts diverge from the live CLI
@@ -56,8 +67,8 @@ That single command activates all three tracked hooks:
 
 | Hook | When | What it does |
 |---|---|---|
-| `pre-commit` | every `git commit` | **Anti-leak scan** of the *staged* changes (`scripts/scan_internal_language.py --staged`) + count-drift checks. Blocks the commit on any internal-language leak (day-job customer name, session markers, sales-positioning shorthand, personal paths, etc.). |
-| `pre-push` | every `git push` | **Anti-leak scan** of *every tracked file* (`--all`) as a `--no-verify` backstop + the structural-gate bundle (`scripts/prepush_check.py`). |
+| `pre-commit` | every `git commit` | Scan staged content for internal-language leaks; check generated counts, changelog, and the local internal-document index; lint and format-check staged Python files. |
+| `pre-push` | every `git push` | Scan the exact pushed history for secrets and internal language, then run the FAST structural bundle and its whole-tree language scan. |
 | `commit-msg` | every `git commit` | Rejects `Co-Authored-By:` trailers and AI-attribution lines (single-author project policy). |
 
 **Why required:** the anti-leak gate used to run *only* in CI. With no
@@ -75,23 +86,41 @@ tighten the offending regex — do not bypass with `--no-verify`.
 
 ```bash
 # Full test suite
-pytest tests/
+uv run --no-sync pytest tests/
 
 # Parallel execution (faster, requires pytest-xdist)
-pytest tests/ -n auto
+uv run --no-sync pytest tests/ -n 4 --dist loadgroup
 
 # Skip timing-sensitive performance tests
-pytest tests/ -m "not slow"
+uv run --no-sync pytest tests/ -m "not slow" -n 4 --dist loadgroup
 
 # Single test file
-pytest tests/test_comprehensive.py -x -v
+uv run --no-sync pytest tests/test_comprehensive.py -x -v -n 0
 
 # Single test class or method
-pytest tests/test_comprehensive.py::TestHealth -x -v -n 0
+uv run --no-sync pytest tests/test_comprehensive.py::TestHealth -x -v -n 0
 
 # Sequential execution (useful for debugging)
-pytest tests/ -n 0
+uv run --no-sync pytest tests/ -n 0
 ```
+
+Local pytest is sequential unless you pass `-n`. The `roam.testing.ci_xdist`
+plugin enables `-n auto --dist loadgroup` when `CI` is set and no explicit
+worker option is supplied. Use a bounded worker count locally to control memory,
+native-library threads, and temporary disk usage. Runtime depends on the machine
+and suite; the full non-slow suite can take hours on Windows.
+
+Run focused tests while editing, then the appropriate repository gate:
+
+```bash
+uv run --no-sync python scripts/prepush_check.py --full --workers 4
+# Before a release or an accumulated release-sized batch:
+uv run --no-sync python scripts/prepush_check.py --release --workers 4
+```
+
+`--full` adds documentation checks to the FAST tier. Only `--release` runs the
+entire non-slow suite. The release gate prints which CI lanes remain unproven;
+wait for CI on the exact pushed commit before attaching a release tag.
 
 #### Running tests on Windows
 
@@ -113,9 +142,10 @@ the index still builds and the preflight gate behaves on a known
 symbol:
 
 ```bash
-roam init                                  # build the SQLite index
-roam health                                # composite health score
-roam preflight ensure_index                # blast radius + tests + fitness on a real symbol
+uv run --no-sync roam index                 # refresh the existing checkout index
+uv run --no-sync roam doctor                # environment and index diagnostics
+uv run --no-sync roam health --explain       # architectural score and its contributors
+uv run --no-sync roam preflight ensure_index # impact and tests for a real symbol
 ```
 
 If `roam health` drops sharply or `roam preflight` fails the fitness
@@ -126,7 +156,8 @@ to change code" rehearsal documented in `AGENTS.md`.
 ### Linting
 
 ```bash
-ruff check src/ tests/
+uv run --no-sync ruff format --check src/ tests/
+uv run --no-sync ruff check src/ tests/
 ```
 
 The project uses ruff with `target-version = "py310"` and `line-length = 120`.
@@ -196,9 +227,8 @@ Before picking up work, skim:
 - `AGENTS.md` — the agent-OS substrate, the 12 substrate packages, and the
   canonical 4-mode loop (`read_only` / `safe_edit` / `migration` /
   `autonomous_pr`).
-- `CLAUDE.md` — Claude-specific operator guide; mirrors AGENTS.md plus quality
-  discipline and the LAW-4 concrete-noun anchor rules enforced by
-  `tests/test_law4_lint.py`.
+- [Documentation map](docs/README.md) — maintained public guides, generated
+  references, and the source of truth for each documentation surface.
 - GitHub Issues — the public queue for community contributions. Comment on an issue before starting non-trivial work so we can coordinate scope.
 
 ### Reporting Bugs
@@ -262,7 +292,7 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
    the same `(module, function)` tuple in `_COMMANDS` go into `_DEPRECATED_COMMANDS` instead.
 
 5. Anchor any `agent_contract.facts` strings on concrete-noun terminals (LAW 4); the
-   `tests/test_law4_lint.py` lint blocks merges on un-anchored facts. See CLAUDE.md
+   `tests/test_law4_lint.py` lint blocks merges on un-anchored facts. See AGENTS.md
    "Concrete-noun anchor vocabulary" for the accepted terminal tokens.
 
 6. Add tests in `tests/`
@@ -271,7 +301,9 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
    `llms-install.md`, and the MCP server cards:
 
    ```bash
-   python dev/build_readme_counts.py --apply
+   uv run --no-sync python scripts/sync_surface_counts.py --write
+   uv run --no-sync python dev/build_readme_counts.py --apply
+   uv run --no-sync python scripts/build_commands_doc.py
    ```
 
    CI runs `python dev/build_readme_counts.py --check` in the `doc-hygiene`
@@ -281,10 +313,11 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
 #### MCP boundary security
 
 roam's MCP boundary is where agent-emitted tool calls meet the assurance
-substrate. Three guarantees ship today: (a) egress redaction prevents secret
-leak on output; (b) 4-mode policy enforcement gates state-mutating calls; (c)
-every receipt is HMAC-linked to a signed run-ledger event for tamper-evident
-audit. These map to compliance evidence; they do not by themselves make any
+substrate. It applies egress redaction to recognized secret patterns, enforces
+the four-mode policy for tool calls, and links receipts to signed run-ledger
+events when that ledger is available. Inspect the policy decision and receipt
+integrity fields to distinguish linked, missing, tampered, or unlinked evidence.
+These mechanisms support compliance evidence; they do not by themselves make any
 project compliant.
 
 **When you'd touch this:**
@@ -301,7 +334,7 @@ string at the call site):
 - `policy_decision` (6 at the MCP boundary — `allow`, `deny`, `escalate`,
   `redact`, `not_evaluated`, `would_deny_dry_run`): `src/roam/evidence/mcp_receipt.py`
   (strict subset of the 9-member `POLICY_DECISIONS` in `_vocabulary.py`).
-- `redactions[]` reasons (9): `src/roam/evidence/_vocabulary.py:REDACTION_REASONS`.
+- `redactions[]` reasons: `src/roam/evidence/_vocabulary.py:REDACTION_REASONS`.
 - `receipt_integrity` (4 — `ok`, `missing`, `tampered`, `not_linked`):
   `src/roam/runs/signing.py:RECEIPT_INTEGRITY_STATES`.
 
@@ -427,16 +460,22 @@ CI lints generated reports AND commit messages / docs for over-claim wording:
 
 ## Version + release cadence
 
-Single source of truth: `pyproject.toml` → `version`. Two scripts propagate
-it, and between them they cover every **derived** occurrence:
+Package identity comes from `pyproject.toml` → `version`. Install instructions
+have a separate authority: the highest published `v*` tag, so documentation
+does not tell users to fetch an unreleased version. The synchronization scripts
+preserve that distinction:
 
 | Script                             | Owns                                                                                                                                                              |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `scripts/sync_surface_counts.py`   | Release **pins** — `roam-code==X`, `Cranot/roam-code@vX`, `action.yml`'s `version` input default, `server.json` (server + PyPI package pin), `docs/COMMANDS.md`, `docs/ci-integration.md`, the shipped CI templates, `templates/examples/`, landing-page version stamps. Plus all surface counts. |
 | `dev/build_readme_counts.py`       | The `mcp-server-card.json` family (bundled + 3 public mirrors) and the marker-protected count blocks in README / CLAUDE / AGENTS / llms-install.                     |
 
-Both run in dry-run/check mode as CI gates, so a derived occurrence that
-disagrees with `pyproject.toml` fails the build; `--write` fixes them.
+Both run in dry-run/check mode as CI gates. Identity drift is checked against
+`pyproject.toml`; install-pin drift is checked against the published tag.
+Repair surface pins with
+`scripts/sync_surface_counts.py --write` and generated blocks/cards with
+`dev/build_readme_counts.py --apply`. Regenerate the command index with
+`scripts/build_commands_doc.py` when its registry changes.
 
 Not every version literal is derived, and a find-replace across the repo is
 wrong. Three other classes exist and each is deliberate:
@@ -444,7 +483,7 @@ wrong. Three other classes exist and each is deliberate:
 - **Historical** — a record of what was measured or built at a past version:
   `CHANGELOG.md` and its rendered `changelog.html`, `benchmarks/cross-repo-l1/`,
   `templates/audit-report/sample-redacted.md`, and the narrative comments in
-  `roam/plan/compiler.py`, `roam/plan/plan_cache.py`, `roam/verdict.py`.
+  `src/roam/plan/compiler.py`, `src/roam/plan/plan_cache.py`, `src/roam/verdict.py`.
   Rewriting one falsifies a result. Never sync these.
 - **Deliberately lagging** — `.github/workflows/roam.yml` consumes this repo's
   *own published* action, so it can only pin a tag/SHA that already exists. It
@@ -464,16 +503,20 @@ controls are pinned by `tests/test_w1501_release_version_pins.py`.
    2. rename `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`, add a fresh empty
       `[Unreleased]` block;
    3. run `python scripts/sync_surface_counts.py --write` and
-      `python dev/build_readme_counts.py` — this is the whole mechanical
-      propagation, and re-running them in check mode must then be clean;
-   4. run `python scripts/build_changelog_html.py` to re-render
+      `python dev/build_readme_counts.py --apply`, followed by
+      `python scripts/build_commands_doc.py`; re-running their check modes
+      must then be clean;
+   4. run `python scripts/build_changelog_html.py --write` to re-render
       `changelog.html` from the new `CHANGELOG.md` section (authoring the
       section is the one genuinely manual step);
    5. `uv lock` so `uv.lock`'s own `roam-code` row follows — CI's
       `uv sync --locked` fails otherwise;
    6. tag and publish to PyPI.
-3. **After** the tag exists, bump `.github/workflows/roam.yml` to the new
-   release SHA in a follow-up commit. It cannot be done before.
+3. **After** the tag and package are published, rerun the surface-sync script
+   so install examples follow the newly available release, and check the targets
+   with `python scripts/check_install_targets.py --network`. Update the dormant
+   `.github/workflows/roam.yml` reference to a reviewed release SHA in a follow-up
+   commit when refreshing that example.
 4. Aim for **weekly to bi-weekly** releases. Patches (`X.Y.Z`) for
    hotfixes only. Don't bump version per commit.
 
@@ -487,7 +530,7 @@ controls are pinned by `tests/test_w1501_release_version_pins.py`.
 
 ## Doc-hygiene gates (automatic)
 
-The `doc-hygiene` job in `.github/workflows/roam-ci.yml` runs six gates on
+The `doc-hygiene` job in `.github/workflows/roam-ci.yml` runs these gates on
 every push. If your change fails one, fix the underlying drift; don't bypass
 it.
 
@@ -505,18 +548,21 @@ it.
    or anchor 404s.
 6. `scripts/strip_metadata.py` — fails if a tracked PDF / PNG / SVG carries
    identifying metadata.
+7. `scripts/check_install_targets.py` — verifies that documented installation
+   targets exist. The generated command index is additionally checked by
+   `tests/test_commands_doc_synced.py` in the test suite.
 
 ### Drift-guard discipline
 
 Four rules that consistently surface as fix-forward causes — fold them into the
 same commit as the original change, not a follow-up PR:
 
-- **When a count changes, ship a structural drift-guard the same session.** Run
-  `python dev/build_readme_counts.py --apply` AND add a test asserting the new
-  count in the same commit. The test stops the next agent from silently reverting
-  your bump.
+- **When a count changes, refresh its generated surfaces in the same change.**
+  Compare documentation against the authoritative registry in tests; a second
+  hard-coded count can become stale independently. Existing surface and command
+  index guards should cover routine additions.
 - **Render `changelog.html` immediately after editing `CHANGELOG.md`** via
-  `python scripts/build_changelog_html.py`. The drift gate hard-fails on stale
+  `python scripts/build_changelog_html.py --write`. The drift gate hard-fails on stale
   renders, so a "doc-only" CHANGELOG edit will block the PR otherwise.
 - **Phantom-annotate when a test pins a missing doc.** Use `skip` / `xfail` with
   a reason and a TODO pointing at the producing task. Silent-pass via

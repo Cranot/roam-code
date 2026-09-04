@@ -125,25 +125,31 @@ Before merging a new `cmd_X.py`:
 ## Quick reference
 
 ```bash
+# Reproduce the locked development and documentation environment
+uv sync --locked --no-default-groups --extra dev --group ci --python 3.12
+
 # Run tests
-pytest tests/
+uv run --no-sync pytest tests/
 
 # Run tests in parallel (requires pytest-xdist)
-pytest tests/ -n auto
+uv run --no-sync pytest tests/ -n 4 --dist loadgroup
 
 # Skip timing-sensitive perf tests
-pytest tests/ -m "not slow"
+uv run --no-sync pytest tests/ -m "not slow" -n 4 --dist loadgroup
 
 # Run a single test file
-pytest tests/test_comprehensive.py -x -v
-
-# Install in dev mode
-pip install -e .
+uv run --no-sync pytest tests/test_comprehensive.py -x -v -n 0
 
 # Index roam itself
-roam init
-roam health
+uv run --no-sync roam index
+uv run --no-sync roam doctor
+uv run --no-sync roam health --explain
 ```
+
+Use [CONTRIBUTING.md](CONTRIBUTING.md) for development and release procedures,
+[docs/repository-maintenance.md](docs/repository-maintenance.md) for Git,
+environment, and index checks, and [docs/README.md](docs/README.md) for the
+maintained documentation map.
 
 ## Architecture
 
@@ -624,7 +630,9 @@ Full typed surface lives in `src/roam/plugins/registry.py`. Tests live in
 ## Testing
 
 - All tests must pass before committing (run `pytest tests/` to verify)
-- **Parallel by default:** pytest-xdist runs auto workers (`-n auto --dist loadgroup`)
+- **CI parallelism:** the `roam.testing.ci_xdist` plugin enables auto workers
+  (`-n auto --dist loadgroup`) when `CI` is set. Local runs are sequential unless
+  `-n` is supplied; prefer `-n 4 --dist loadgroup` for bounded local parallelism.
 - Use `-n 0` to run sequentially when debugging
 - Use `-m "not slow"` to skip timing-sensitive performance tests
 - Tests create temporary project directories with fixture files
@@ -690,7 +698,8 @@ bundles):
 1. **Any push that precedes a tag runs `python scripts/prepush_check.py
    --release` first.** The release tier = FULL gates + the ENTIRE test suite
    (`-m "not slow"`, exactly CI's surface) + commit-message leak scan +
-   doc-consistency + landing-page `linkcheck --strict` (~15-25 min). That is
+   doc-consistency + landing-page `linkcheck --strict`. Runtime varies with the
+   machine and suite; allow hours for a full local Windows run. That is
    CI's test, ruff and doc-hygiene surface — not every CI lane. **Read the
    note the tier prints on success; do not read a list from here.** The
    uncovered lanes are `_RELEASE_UNPROVEN_LANES` in `scripts/prepush_check.py`,

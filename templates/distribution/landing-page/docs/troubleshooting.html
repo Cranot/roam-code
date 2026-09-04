@@ -78,9 +78,9 @@
         Troubleshooting.
       </h1>
       <p class="hero-subhead">
-        Eight things that go wrong with Roam, and the one command that
-        usually fixes each one. Start with <code>roam doctor</code> —
-        it diagnoses six of the eight.
+        Diagnose installation, index, and integration problems. Start with
+        <code>roam doctor</code> for environment and index checks, then use
+        the matching recovery steps below.
       </p>
       <p class="hero-trust-strip">
         Run <code>roam doctor --json</code> if you need to send us output.
@@ -107,38 +107,53 @@
           installed roam-code version.
         </p>
         <p>
-          <strong>Fix.</strong> Rebuild from scratch.
+          <strong>Fix.</strong> Refresh the index. Normal indexing also refreshes
+          Git metadata after a commit whose file contents were already indexed.
+          Use a forced rebuild for damaged derived data or a requested full refresh.
         </p>
-<pre class="terminal" aria-label="Rebuild stale index"><span class="t-prompt">$</span> <span class="t-cmd">roam doctor</span>
+<pre class="terminal" aria-label="Refresh stale index"><span class="t-prompt">$</span> <span class="t-cmd">roam index</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam doctor</span>
+<span class="t-comment"># Full rebuild, if needed:</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam index --force</span></pre>
+        <p>
+          Doctor exits 0 for advisory-only results and 2 for blocking failures.
+          <code>roam doctor --strict</code> also exits 2 on advisory failures.
+          Review the named check: template drift and changed manifest inputs
+          can reflect intentional configuration, while a missing or incomplete
+          index requires recovery.
+        </p>
       </div>
     </section>
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2 id="db-locked">2. OneDrive / Dropbox / iCloud sync conflicts</h2>
+        <h2 id="db-locked">2. Database locks and cloud-sync conflicts</h2>
         <p>
           <strong>Symptom.</strong> Random
           <code>database is locked</code> errors, partial writes,
           ghost <code>conflict</code> copies of <code>.roam/index.db</code>,
-          or commands hanging on the first SQLite open. The cloud-sync
-          client is racing the indexer for the file.
+          or commands hanging on the first SQLite open. Another indexer,
+          watcher, database tool, or file-sync client may hold the database.
         </p>
         <p>
-          <strong>Diagnose.</strong> Check whether your project lives
+          <strong>Diagnose.</strong> Check for an active writer using this
+          checkout, run <code>roam doctor</code>, and check whether the project lives
           inside a synced folder. On macOS / Windows the path will
           contain <code>iCloud Drive</code>, <code>OneDrive</code>, or
           <code>Dropbox</code>.
         </p>
         <p>
-          <strong>Fix.</strong> Either move the project off the synced
-          drive entirely, or exclude <code>.roam/</code> from sync. On
-          OneDrive: right-click the folder, "Always keep on this device"
-          off, then add <code>.roam/</code> to the unsync list. On
-          Dropbox: <code>dropbox exclude add .roam/</code>. On iCloud:
-          rename to <code>.roam.nosync/</code> and update
-          <code>ROAM_DB_DIR</code>, or move the repo out of
-          <code>~/Documents</code>.
+          <strong>Fix.</strong> Let the active writer finish or stop it normally,
+          then retry <code>roam index</code>. Keep the checkout on a local,
+          writable filesystem outside cloud-sync folders. A forced rebuild
+          cannot bypass a live SQLite writer lock.
+        </p>
+        <p>
+          If Roam reports that an index lifecycle owner is live or cannot be
+          proven stale, preserve <code>.roam/index.lock</code> and the lifecycle
+          marker while investigating the owner. Roam recovers proven abandoned
+          generations itself. Deleting ownership records can allow conflicting
+          writers to run against the same index.
         </p>
       </div>
     </section>
@@ -208,6 +223,12 @@
 <pre class="terminal" aria-label="Refresh tree-sitter grammars"><span class="t-prompt">$</span> <span class="t-cmd">pip install --force-reinstall "roam-code==14.0.0"</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam doctor</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam index --force</span></pre>
+        <p>
+          In a roam-code source checkout, use the locked development environment:
+          <code>uv sync --locked --no-default-groups --extra dev --group ci --python 3.12 --reinstall-package tree-sitter-language-pack</code>.
+          Stop the MCP server or watcher using that environment before replacing
+          a loaded native parser library, then restart the integration.
+        </p>
       </div>
     </section>
 
@@ -227,6 +248,7 @@
         </p>
 <pre class="terminal" aria-label="Verify MCP server"><span class="t-prompt">$</span> <span class="t-cmd">roam mcp --list-tools</span>
 <span class="t-prompt">$</span> <span class="t-cmd">which roam   # path the editor needs</span></pre>
+        <p>In PowerShell, use <code>Get-Command roam</code> to inspect the executable path.</p>
         <p>
           <strong>Fix.</strong> See the per-editor walkthrough in
           <a href="/docs/integration-tutorials">/docs/integration-tutorials</a>
@@ -255,13 +277,17 @@
           <code>icacls .roam</code> on Windows shows the owner.
         </p>
         <p>
-          <strong>Fix.</strong> Reclaim ownership or wipe the cache.
+          <strong>Fix.</strong> Restore access for the account running Roam.
+          Confirm ownership of the affected paths before changing permissions.
         </p>
 <pre class="terminal" aria-label="Reclaim cache ownership"><span class="t-prompt">#</span> <span class="t-cmd">macOS / Linux</span>
-<span class="t-prompt">$</span> <span class="t-cmd">sudo chown -R "$(whoami)" .roam .pytest_cache</span>
-
-<span class="t-prompt">#</span> <span class="t-cmd">or wipe and re-init</span>
-<span class="t-prompt">$</span> <span class="t-cmd">rm -rf .roam &amp;&amp; roam init</span></pre>
+<span class="t-prompt">$</span> <span class="t-cmd">sudo chown -R "$(whoami)" .roam .pytest_cache</span></pre>
+        <p>
+          Preserve project state before a reset. <code>.roam/</code> contains
+          rules, annotations, memory, signed run ledgers, keys, and proof bundles
+          as well as the rebuildable index. Fixing permissions or running
+          <code>roam index --force</code> after writers stop avoids deleting that state.
+        </p>
       </div>
     </section>
 
@@ -277,8 +303,10 @@
         </p>
         <p>
           <strong>Diagnose.</strong>
-          <code>roam doctor</code> reports the file count and estimated
-          parse-set size before you commit.
+          Inspect process memory while indexing and use <code>roam index-stats</code>
+          to inspect an existing index. Review which generated and vendored files
+          are included; <code>roam doctor</code> checks environment and index
+          readiness but does not predict peak indexing memory.
         </p>
         <p>
           <strong>Fix.</strong> Exclude what you don't need to index —

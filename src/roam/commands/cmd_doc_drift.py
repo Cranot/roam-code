@@ -23,7 +23,7 @@ from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 
 _INLINE_CODE_RE = re.compile(r"(?<!`)`(?P<value>[^`\n]+)`(?!`)")
-_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,})(?P<tail>.*)$")
+_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})(?P<tail>.*)$")
 _KNOWN_PREFIX_PATH_RE = re.compile(r"^(?:src|tests|dev|scripts|templates|docs)/[A-Za-z0-9_./-]+$")
 _EXTENSION_PATH_RE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)+\.[A-Za-z0-9]+$")
 _COUNT_RE = re.compile(
@@ -110,7 +110,17 @@ def _discover_docs(root: Path, git_ignore: _GitIgnore) -> tuple[list[Path], list
         walk_errors.append(f"could not scan {filename}: {exc.__class__.__name__}")
 
     for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False, onerror=_onerror):
-        dirnames[:] = sorted(name for name in dirnames if name != ".git")
+        retained = []
+        for name in sorted(dirnames):
+            if name == ".git":
+                continue
+            relative_dir = (Path(directory) / name).relative_to(root).as_posix()
+            # Git cannot re-include a file beneath an excluded directory.
+            # Only prune a proven exclusion; an unavailable ignore authority
+            # must still allow discovery and its existing warning path.
+            if git_ignore.matches(relative_dir) is not True:
+                retained.append(name)
+        dirnames[:] = retained
         for filename in sorted(filenames):
             if not filename.endswith(".md"):
                 continue
@@ -131,14 +141,21 @@ def _discover_docs(root: Path, git_ignore: _GitIgnore) -> tuple[list[Path], list
 def _non_fenced_lines(text: str) -> list[tuple[int, str]]:
     output: list[tuple[int, str]] = []
     open_width = 0
+    open_char = ""
     for line_number, line in enumerate(text.splitlines(), start=1):
         fence = _FENCE_RE.match(line)
         if open_width:
-            if fence and len(fence.group("fence")) >= open_width and not fence.group("tail").strip():
+            if (
+                fence
+                and fence.group("fence")[0] == open_char
+                and len(fence.group("fence")) >= open_width
+                and not fence.group("tail").strip()
+            ):
                 open_width = 0
             continue
         if fence:
             open_width = len(fence.group("fence"))
+            open_char = fence.group("fence")[0]
             continue
         output.append((line_number, line))
     return output
@@ -230,8 +247,27 @@ def _count_metric_key(first: str, second: str | None) -> tuple[str | None, int]:
     if second_noun in _RESOLVABLE_NOUNS:
         if first_noun in {"source", "test"} and second_noun in {"file", "files"}:
             return f"{first_noun} files", 2
-        return second_noun, 2
+        if first_noun == "indexed" or (first_noun == "cli" and second_noun == "command"):
+            return second_noun, 2
+        # A modifier changes the population: public symbols, supported
+        # languages, and subcommands are not whole-index totals.
+        return f"{first_noun} {second_noun}", 2
     return None, 1
+
+
+def _count_scope_reason(line: str, match: re.Match[str], metric_key: str | None) -> str | None:
+    """Disclose explicit example/capability scopes instead of comparing totals."""
+    if any(code.start() <= match.start() < code.end() for code in _INLINE_CODE_RE.finditer(line)):
+        return "count occurs in an inline code fragment; its population is not established"
+    # Keep another sentence or Markdown table cell from changing this claim's
+    # scope. Numeric text after an abbreviation such as e.g. stays in context.
+    prefix = re.split(r"(?<=[.!?;])\s+(?=[A-Z])|\|", line[: match.start()])[-1]
+    if re.search(r"\b(?:for example\b|e\.g\.|example:|sample output\b|illustrative\b)", prefix, re.IGNORECASE):
+        return "illustrative count has no established whole-repository population"
+    suffix = re.split(r"(?<=[.!?;])\s+(?=[A-Z])|\|", line[match.start() :])[0]
+    if metric_key == "language" and re.search(r"\bsupport(?:s|ed|ing)?\b", prefix + suffix, re.IGNORECASE):
+        return "supported languages are a product capability, not languages present in the index"
+    return None
 
 
 def _extract_count_claims(line: str, *, doc: str, line_number: int) -> list[dict[str, Any]]:
@@ -256,6 +292,7 @@ def _extract_count_claims(line: str, *, doc: str, line_number: int) -> list[dict
                 "_qualifier": qualifier,
                 "_metric_key": metric_key,
                 "_noun": _normalized_noun(match.group("second") if token_count == 2 else match.group("first")),
+                "_scope_reason": _count_scope_reason(line, match, metric_key),
             }
         )
     return claims
@@ -386,11 +423,20 @@ def _metric_for_claim(metric_key: str | None, metrics: dict[str, _Metric], noun:
         normalized = "languages"
     elif normalized in {"command", "commands"}:
         normalized = "commands"
-    return metrics[normalized]
+    return metrics.get(
+        normalized,
+        _Metric(
+            None,
+            f"no built-in metric is defined for population '{metric_key}'",
+            f"population '{metric_key}' has no resolver",
+        ),
+    )
 
 
 def _evaluate_count_claim(claim: dict[str, Any], metrics: dict[str, _Metric]) -> dict[str, Any]:
     metric = _metric_for_claim(claim["_metric_key"], metrics, claim["_noun"])
+    if claim.get("_scope_reason"):
+        metric = _Metric(None, "count population must match the measurement authority", claim["_scope_reason"])
     expected = claim["_number"]
     finding = {
         **claim,
@@ -428,6 +474,17 @@ def _evaluate_path_claim(claim: dict[str, Any], root: Path, git_ignore: _GitIgno
             "status": "unverifiable",
             "reason": "path does not resolve inside the project root",
         }
+    if not target.exists():
+        # README files commonly name siblings (for example a rule pack next
+        # to that README), while code guides use repository-root paths. Keep
+        # root precedence and accept an existing document-relative target.
+        doc_target = (root / claim["doc"]).parent / relative
+        try:
+            doc_relative = doc_target.resolve(strict=False).relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            doc_relative = None
+        if doc_relative is not None and doc_target.exists():
+            relative, target = doc_relative, doc_target
     ignored = git_ignore.matches(relative)
     if ignored is True:
         return {
@@ -447,7 +504,13 @@ def _evaluate_path_claim(claim: dict[str, Any], root: Path, git_ignore: _GitIgno
             "_authority_unavailable": True,
         }
     if target.exists():
-        return {**claim, "expected": "path exists", "actual": "path exists", "status": "verified"}
+        return {
+            **claim,
+            "expected": "path exists",
+            "actual": "path exists",
+            "resolved_path": relative,
+            "status": "verified",
+        }
     return {**claim, "expected": "path exists", "actual": "path missing", "status": "drifted"}
 
 
@@ -572,6 +635,11 @@ def doc_drift(ctx, ci: bool, threshold: int | None) -> None:
     with the filesystem, roam index, and static project metadata. This
     displaces combining Bash ``find``, Grep claim searches, and repeated Read
     calls to check every documented path/count/version by hand.
+
+    Counts describe the indexed repository, not product capabilities or
+    examples. Explicit example counts, inline code counts, and unsupported
+    population modifiers are reported as unverifiable. Inspect each finding's
+    metric_definition; a passing gate does not verify skipped claims.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False

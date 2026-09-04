@@ -192,7 +192,7 @@ Membership is validated at receipt construction; unknown reasons raise
 OpenAI/Anthropic `sk-` keys, AWS AKIA, Bearer tokens, PEM private-key
 markers, JWT, and explicit prompt-control smuggling markers. Other reasons are reserved for producer paths
 that already populate them (`pii`, `machine_local_path`, etc. — see
-`evidence/collector.py`).
+`src/roam/evidence/collector.py`).
 
 **Per-pattern detail** rides in `extra["redaction_details"]` as a
 `{pattern_id: hit_count}` map. The closed-enum invariant on `redactions`

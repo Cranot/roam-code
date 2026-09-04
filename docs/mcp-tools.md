@@ -1,9 +1,9 @@
 # Roam MCP tools — full reference
 
 The complete tool list for Roam's [Model Context Protocol](https://modelcontextprotocol.io/)
-server. This page is generated from the `@_tool` decorations in
-`src/roam/mcp_server.py` by `dev/build_readme_counts.py` — edit the tool
-docstrings, not this file.
+server. The inventory and marked count blocks are generated from the `@_tool`
+decorations in `src/roam/mcp_server.py` by `dev/build_readme_counts.py`. Edit
+tool docstrings in source before regenerating the inventory.
 
 <!-- BEGIN auto-count:mcp-tools-headline -->
 **246 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
@@ -15,8 +15,14 @@ roam mcp
 ```
 
 Most tools are read-only index queries; side-effect tools are explicitly
-annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset, or
-call `roam_expand_toolset` mid-session to widen from `core` without a restart.
+annotated. Set `ROAM_MCP_PRESET=full` in the server environment and restart
+`roam mcp` for the complete toolset. `roam_expand_toolset` reports preset
+contents and restart instructions; it does not change the running server's
+registered tools.
+
+For a POSIX shell, use `ROAM_MCP_PRESET=full roam mcp`. In PowerShell, set
+`$env:ROAM_MCP_PRESET = "full"` before starting `roam mcp`. For an editor
+integration, set the variable in its MCP server configuration.
 
 <!-- BEGIN auto-count:mcp-tools-default-preset -->
 **Default preset:** `core` (17 tools: 16 core + `roam_expand_toolset` meta-tool).
