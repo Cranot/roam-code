@@ -12,8 +12,9 @@ before air-gap use. Explicit network features are inventoried in
 
 ## Cross-references
 
-- `CLAUDE.md` — codebase/agent rules: quality discipline, 12 behavioral laws, adding commands, schema/test discipline. Read first when modifying roam-code itself.
-- `AGENTS.md` — sister file to this one for tools using the AGENTS.md convention.
+- [AGENTS.md](AGENTS.md) — codebase/agent rules, quality discipline, adding commands, and schema/test conventions. Read first when modifying roam-code itself.
+- [Documentation map](docs/README.md) — maintained guides, generated references, and their authorities.
+- [Repository maintenance](docs/repository-maintenance.md) — locked development setup, Git checks, index recovery, and validation gates.
 - `README.md` — human-facing overview, install matrix, headline counts.
 - Live docs: <https://roam-code.com/docs/getting-started>, <https://roam-code.com/docs/command-reference>, <https://roam-code.com/docs/architecture>.
 
@@ -26,14 +27,17 @@ pipx install "roam-code[mcp]"  # isolated env
 uv tool install "roam-code[mcp]"
 ```
 
-Requirements: Python 3.10+. No native deps. Linux / macOS / Windows.
+Requirements: Python 3.10+ on Linux, macOS, or Windows. Supported platforms
+use packaged native tree-sitter binaries; first use can retrieve the verified
+grammar bundle described in the network-boundary inventory.
 
 ## First-time setup (in a project)
 
 ```bash
 cd /path/to/your/project
 roam init             # index + fitness rules (creates .roam/; CI is opt-in)
-roam health           # 0-100 sanity check
+roam doctor           # installation and index readiness
+roam health --explain # architectural score and its contributors
 roam understand       # one-screen tour of the codebase
 ```
 
@@ -41,6 +45,16 @@ roam understand       # one-screen tour of the codebase
 (architectural rules). Add `--with-ci=github` to create
 `.github/workflows/roam.yml`, or run
 `roam ci-setup --platform github --write` later.
+
+After a pull, branch switch, or commit, run `roam index`. Full indexing checks
+Git history even when source files are unchanged. Use `roam index --force` for
+a full rebuild after active writers have stopped. Preserve the ownership lock,
+lifecycle marker, and other `.roam/` project state during recovery; see the
+[maintenance guide](docs/repository-maintenance.md#recover-from-a-writer-or-interrupted-index).
+
+`roam doctor` exits 0 for advisory-only results and 2 for blocking failures.
+`--strict` promotes advisories to exit 2. `roam health` reports architecture;
+it does not establish that tests passed.
 
 ## MCP server setup
 
@@ -73,7 +87,10 @@ Fallback manual config (any MCP client that accepts a JSON command block):
 }
 ```
 
-After setup, run `roam doctor` to verify the server is registered and reachable.
+After setup, run `roam doctor` for local environment diagnostics and
+`roam mcp --list-tools` to check which tools load in that process. Confirm the
+connection from the MCP client's own tool list or connection log; a local
+diagnostic does not establish that an editor launched the intended server.
 
 ## Agent-OS modes (declare the action surface)
 

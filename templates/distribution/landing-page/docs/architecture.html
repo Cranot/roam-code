@@ -184,10 +184,32 @@ similarity != relevance      |  PageRank == importance</code></pre>
         <li><strong>Extraction</strong> — symbols (classes, functions, methods, fields), signatures, docstrings, references.</li>
         <li><strong>Resolution</strong> — convert references into graph edges (caller&rarr;callee, import chains, inheritance).</li>
         <li><strong>Metrics</strong> — cognitive complexity, centrality (PageRank, betweenness), churn, co-change, cognitive load.</li>
-        <li><strong>Persistence</strong> — upsert into SQLite with incremental diffing; only changed files re-parse.</li>
+        <li><strong>Persistence</strong> — upsert into SQLite with incremental diffing; reprocess changed files and affected neighbors.</li>
       </ol>
 <pre><code>discover -&gt; parse -&gt; extract -&gt; resolve -&gt; metrics -&gt; persist
-                 (incremental path executes only changed files)</code></pre>
+                 (reuse unchanged data; refresh affected neighbors)</code></pre>
+      <h3 id="index-freshness">Source freshness and Git freshness</h3>
+      <p>
+        File hashes and Git history have separate freshness checks. A normal
+        full index run checks Git metadata even if every source file is unchanged:
+        a new commit may contain content already indexed from the working tree.
+        Skipping Git-stat collection requires both an unchanged manifest HEAD and
+        that exact commit in the indexed Git history.
+      </p>
+      <p>
+        <code>roam index --force</code> rebuilds derived source data and forces
+        Git-stat collection within the configured history window. Internal light
+        indexing can omit expensive analysis; use a full <code>roam index</code>
+        before relying on history-sensitive metrics. Run manifests record
+        invocation options separately from persistent configuration identity.
+      </p>
+      <p>
+        Index ownership and lifecycle markers prevent concurrent writers and
+        distinguish a completed generation from an interrupted one. Recovery
+        requires proving an abandoned owner before rebuilding. See
+        <a href="/docs/troubleshooting#db-locked">writer-lock recovery</a> for
+        operational guidance.
+      </p>
     </section>
 
     <section id="command-to-data-flow">

@@ -1030,8 +1030,13 @@ def test_release_docs_track_current_mcp_security_and_setup_contracts():
     network_boundary = (ROOT / "docs" / "network-boundary.md").read_text(encoding="utf-8")
     procurement = (ROOT / "templates" / "legal" / "security-procurement-packet.md").read_text(encoding="utf-8")
 
-    assert "246 (17 in default core preset)" in readme
-    assert "287 commands / 246 MCP tools, 17 in the default `core`" in procurement
+    from roam.surface_counts import mcp_surface_counts
+
+    command_count = _truth_cli_command_count()
+    tool_count = _truth_mcp_tool_count()
+    core_count = mcp_surface_counts()["preset_counts"]["core"]
+    assert f"{tool_count} ({core_count} in default core preset)" in readme
+    assert f"{command_count} commands / {tool_count} MCP tools, {core_count} in the default `core`" in procurement
     assert "14-tool AI-governance subset" in mcp_usage
     assert "exposes 14 tools focused on AI-governance" in setup
     assert "roam ci-setup gitlab" not in init

@@ -802,7 +802,7 @@ Every figure includes CLI process startup, which is host- and platform-dependent
 on a slow Windows host `roam --version` alone can cost ~1.5s, putting a floor
 under every row above. Measure on your own machine before gating on these.
 
-After the first full index, `roam index` only re-processes changed files (mtime + SHA-256 hash). The OSS benchmark harness in [`benchmarks/oss-eval/`](benchmarks/oss-eval/) tracks 14 repositories (Express, Axios, Vue, Laravel, Svelte, React, Django, cpython, Linux, …); the committed snapshot in `results/latest.md` records which targets completed and which failed or were not present locally.
+After the first full index, `roam index` reuses unchanged source data (mtime + SHA-256 hash), reprocesses changed files and affected neighbors, and checks Git history even when file contents are unchanged. The OSS benchmark harness in [`benchmarks/oss-eval/`](benchmarks/oss-eval/) tracks 14 repositories (Express, Axios, Vue, Laravel, Svelte, React, Django, cpython, Linux, …); the [committed snapshot](benchmarks/oss-eval/results/latest.md) records which targets completed and which failed or were not present locally.
 
 Compiler A/B results, the per-task gallery, routing stats, and the
 version-keyed eval history live in [The Compiler](#the-compiler--your-agents-first-token-already-knows-the-answer)
@@ -831,44 +831,29 @@ Exclude paths with a `.roamignore` file (full gitignore syntax) or `roam config 
 
 roam-code combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), git archaeology, architecture simulation, and multi-agent partitioning in a single local CLI with zero API keys.
 
-| Capability | roam-code | AI IDEs (Cursor, Windsurf) | AI Agents (Claude Code, Codex) | SAST (SonarQube, CodeQL) |
-|---|---|---|---|---|
-| Persistent local index | SQLite | Cloud embeddings | None | Per-scan |
-| Call graph analysis | Yes | No | No | Yes (CodeQL) |
-| PageRank / centrality | Yes | No | No | No |
-| Cycle detection (Tarjan) | Yes | No | No | Deprecated (SonarQube) |
-| Community detection (Louvain) | Yes | No | No | No |
-| Git churn / co-change | Yes | No | No | No |
-| Architecture simulation | Yes | No | No | No |
-| Multi-agent partitioning | Yes | No | No | No |
-| MCP tools for agents | 246 (17 in default core preset) | Client only | Client only | 34 (SonarQube) |
-| Languages | 28 | 70+ | 50+ | 12-42 |
-| Local source analysis, zero API keys | Yes | No | No | Partial |
-| Open source | Apache 2.0 | No | Partial | Partial |
-| Interprocedural taint depth | shallow (OpenVEX-shaped) | n/a | n/a | **deep (CodeQL)** |
-| Built-in rule packs | 11 taint packs, 10 governance rules | n/a | n/a | **2,000+ (Semgrep community)** |
-| Cross-repo at GitHub scale | workspace overlay (sibling repos) | n/a | n/a | **native (Sourcegraph)** |
+| Capability | Roam behavior | How to evaluate it |
+|---|---|---|
+| Persistent local index | SQLite symbols, references, and Git history | Index your repository and inspect the edges behind an answer |
+| Architecture analysis | Centrality, cycles, communities, churn, and co-change | Review `roam health --explain` and the underlying findings |
+| Change planning | Blast radius, simulation, and work partitioning | Compare predicted affected files with actual tests and changes |
+| MCP tools for agents | 246 (17 in default core preset) | Choose a preset and inspect `roam mcp --list-tools` |
+| Languages | 28 | Check the extraction tier and resolution limits for your language |
+| Local analysis | No API keys for the local engine | Review explicit network features in the network-boundary inventory |
+| Open source | Apache 2.0 | Inspect the implementation and reproduce results on your own code |
+| Security integration | Taint heuristics and SARIF evidence | Pair findings with your security scanner and review false positives |
+| Cross-repository analysis | Workspace overlay for sibling repositories | Validate the supported bridges for your project boundaries |
 
-### Key Differentiators
+Roam supplies structural context to editors and agents through CLI and MCP,
+and exports evidence to existing review and security workflows. Evaluate the
+combination on your repository: supported syntax, edge resolution, false
+positives, latency, and the decisions the output helps you make. Capabilities
+and prices of other products depend on their current version and plan.
 
-- **vs AI IDEs** (Cursor, Windsurf, Augment): roam-code provides deterministic structural analysis. AI IDEs use probabilistic embeddings that can't guarantee reproducible results.
-- **vs AI Agents** (Claude Code, Codex CLI, Gemini CLI): these agents read files one at a time. roam-code pre-computes relationships so agents get instant answers about architecture, blast radius, and dependencies.
-- **vs SAST Tools** (SonarQube, CodeQL, Semgrep): SAST tools find bugs and vulnerabilities. roam-code understands architecture — how code is structured, where it's coupled, and what breaks when you change it. Complementary, not competitive.
-- **vs Code Search** (Sourcegraph/Amp, Greptile): text search finds where code is. roam-code understands why code matters — which functions are central, which modules are tangled, which files are high-risk.
-
-<details>
-<summary><strong>For teams — cost comparison</strong></summary>
-
-| Tool | Annual cost (20-dev team) | Infrastructure | Setup time |
-|------|--------------------------|----------------|------------|
-| SonarQube Server (paid tier) | $15,000-$45,000 | Self-hosted server | Days |
-| CodeScene | $20,000-$60,000 | SaaS or on-prem | Hours |
-| Code Climate | $12,000-$36,000 | SaaS | Hours |
-| **Roam (free CLI)** | **$0 (Apache 2.0)** | **None (local)** | **5 minutes** |
-
-The comparison is against the paid tiers a 20-dev team usually buys, not free Community editions. Roam complements either tier — pipe its SARIF output into the same Code Scanning surface. Rollout: pilot on one repo, add `roam health --gate` to CI as non-blocking, then tighten thresholds and track trajectory with `roam trends`.
-
-</details>
+The local CLI has no license fee. Budget separately for indexing time, CI
+compute, integration work, and any optional hosted service. Start with a report
+on one repository, review the findings, and enable `roam health --gate` when
+the configured checks match your team's expectations. Save snapshots with
+`roam trends --save` to track change over time.
 
 ## FAQ
 
@@ -906,12 +891,16 @@ The CLI is Apache 2.0, runs its analysis engine locally, and never expires. Roam
 | Problem | Solution |
 |---------|----------|
 | `roam: command not found` | Ensure install location is on PATH. For `uv`: `uv tool update-shell` |
-| `Another indexing process owns the workspace` | Wait for the other `roam index` to finish. If nothing else is running, the lock is unprovable-stale (`An index lifecycle owner is live or cannot be proven stale`) — delete `.roam/index.lock` and retry |
-| `database is locked` | `roam index --force` to rebuild |
+| `Another indexing process owns the workspace` | Wait for the active writer and run `roam doctor`. A live or unprovable owner requires investigation; preserve `.roam/index.lock` and the lifecycle marker. Proven abandoned generations are recovered by the indexer. |
+| `database is locked` | Finish the active indexer or watcher, close other database writers, and check for cloud-sync interference. Then retry `roam index`; rebuilding does not bypass a live SQLite lock. |
 | Unicode errors on Windows | `chcp 65001` for UTF-8 |
 | Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` |
-| Health score seems wrong | `roam --json health` for factor breakdown |
-| Index stale after `git pull` | `roam index` (incremental). After major refactors: `roam index --force` |
+| Health score seems wrong | `roam health --explain` for score contributions; use `roam --json health` for structured findings. The architectural score is separate from test and environment health. |
+| Index stale after `git pull` or a commit | `roam index` refreshes source and Git metadata, including commits with unchanged file contents. Use `roam index --force` to rebuild derived index data. |
+
+See the [troubleshooting guide](https://roam-code.com/docs/troubleshooting) and
+[repository maintenance guide](docs/repository-maintenance.md) for environment
+repair, index recovery, and the meaning of doctor advisories.
 
 ## Update / Uninstall
 
@@ -923,16 +912,22 @@ pipx upgrade roam-code        # or: uv tool upgrade roam-code / pip install --up
 pipx uninstall roam-code      # or: uv tool uninstall roam-code / pip uninstall roam-code
 ```
 
-Delete `.roam/` from your project root to clean up local data.
+Before removing `.roam/`, back up any rules, annotations, memory, signed run
+ledgers, keys, or proof bundles you need to retain. That directory contains
+project state as well as the rebuildable index; uninstalling the package does
+not require deleting it.
 
 ## Contributing
 
 ```bash
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
-pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # all test cases must pass
+uv sync --locked --no-default-groups --extra dev --group ci --python 3.12
+uv run --no-sync pytest tests/test_basic.py -n 0
 ```
+
+Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the full test/release gates and
+[the documentation map](docs/README.md) for maintained guides and references.
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools. Please open an issue first to discuss larger changes.
 

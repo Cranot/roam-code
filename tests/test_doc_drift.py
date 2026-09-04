@@ -82,6 +82,7 @@ def test_count_claims_compare_exact_plus_and_approximate_qualifiers(tmp_path, cl
         docs={
             "README.md": (
                 "The index has 11 functions.\n"
+                "The index has 11 indexed functions.\n"
                 "An old note says 12 functions.\n"
                 "The project has 10+ functions.\n"
                 "The project has ~10 functions.\n"
@@ -96,8 +97,27 @@ def test_count_claims_compare_exact_plus_and_approximate_qualifiers(tmp_path, cl
     assert _finding(payload, "12 functions")["status"] == "drifted"
     assert _finding(payload, "10+ functions")["status"] == "verified"
     assert _finding(payload, "~10 functions")["status"] == "verified"
-    for text in ("11 functions", "12 functions", "10+ functions", "~10 functions"):
+    assert _finding(payload, "11 indexed functions")["status"] == "verified"
+    for text in ("11 functions", "11 indexed functions", "12 functions", "10+ functions", "~10 functions"):
         assert _finding(payload, text)["metric_definition"] == "indexed symbols whose kind is 'function'"
+
+
+def test_path_claims_resolve_document_relative_siblings_and_keep_ignore_policy(tmp_path, cli_runner):
+    project = _make_project(
+        tmp_path,
+        docs={"docs/README.md": "Use `examples/demo.py`, `private/result.json`, and `src/app.py`.\n"},
+        extra_files={"docs/examples/demo.py": "pass\n", "docs/private/result.json": "{}\n"},
+        gitignore="docs/private/\n",
+    )
+
+    result, payload = _invoke_json(cli_runner, project, "--ci")
+
+    assert result.exit_code == 0
+    sibling = _finding(payload, "examples/demo.py")
+    assert sibling["status"] == "verified"
+    assert sibling["resolved_path"] == "docs/examples/demo.py"
+    assert _finding(payload, "src/app.py")["resolved_path"] == "src/app.py"
+    assert _finding(payload, "private/result.json")["status"] == "unverifiable"
 
 
 def test_unresolvable_count_noun_is_unverifiable_and_ci_passes(tmp_path, cli_runner):
@@ -125,6 +145,88 @@ def test_fenced_code_blocks_are_excluded_from_all_claims(tmp_path, cli_runner):
     assert payload["summary"]["claims_total"] == 0
     assert payload["findings"] == []
     assert "zero claims extracted" in payload["summary"]["verdict"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The product supports 28 languages.\n",
+        "There are 28 languages supported.\n",
+        "28 supported languages.\n",
+        "The API contains 99 public symbols.\n",
+        "For example, a project has 99 functions.\n",
+        "Example: 99 functions.\n",
+        "An illustration, e.g. 99 functions.\n",
+        "Sample output: 99 functions.\n",
+        "The response is `99 functions`.\n",
+    ],
+)
+def test_scoped_counts_are_disclosed_without_comparing_index_totals(tmp_path, cli_runner, text):
+    project = _make_project(tmp_path, docs={"README.md": text})
+
+    result, payload = _invoke_json(cli_runner, project, "--ci")
+
+    assert result.exit_code == 0
+    assert payload["summary"]["drifted"] == 0
+    assert payload["summary"]["partial_success"] is True
+    counts = [item for item in payload["findings"] if item["kind"] == "count"]
+    assert len(counts) == 1
+    assert counts[0]["status"] == "unverifiable"
+    assert counts[0]["actual"] is None
+    assert counts[0]["reason"]
+
+
+def test_tilde_fences_and_mismatched_closers_do_not_create_claims(tmp_path, cli_runner):
+    project = _make_project(
+        tmp_path,
+        docs={"README.md": "~~~text\n999 functions\n```\nsrc/missing.py\n~~~\nThe index has 1 functions.\n"},
+    )
+
+    result, payload = _invoke_json(cli_runner, project, "--ci")
+
+    assert result.exit_code == 0
+    assert payload["summary"]["claims_total"] == 1
+    assert _finding(payload, "1 functions")["status"] == "verified"
+
+
+def test_example_on_same_line_does_not_hide_separate_repository_claims(tmp_path, cli_runner):
+    project = _make_project(
+        tmp_path,
+        docs={"README.md": "The index has 99 functions. For example, 3 functions. The index has 98 functions.\n"},
+    )
+
+    result, payload = _invoke_json(cli_runner, project, "--ci")
+
+    assert result.exit_code == 5
+    assert _finding(payload, "99 functions")["status"] == "drifted"
+    assert _finding(payload, "98 functions")["status"] == "drifted"
+    assert _finding(payload, "3 functions")["status"] == "unverifiable"
+
+
+def test_doc_discovery_prunes_ignored_trees_and_preserves_reincluded_docs(tmp_path, monkeypatch):
+    from roam.commands import cmd_doc_drift as mod
+
+    project = _make_project(
+        tmp_path,
+        docs={"README.md": "Read the guide.\n", "docs/keep.md": "Public guide.\n"},
+        extra_files={".venv/nested/private.md": "999 functions\n", "docs/skip.md": "999 functions\n"},
+        gitignore=".venv/\ndocs/*\n!docs/keep.md\n",
+    )
+    walked = []
+    real_walk = mod.os.walk
+
+    def record_walk(*args, **kwargs):
+        for entry in real_walk(*args, **kwargs):
+            walked.append(Path(entry[0]).relative_to(project).as_posix())
+            yield entry
+
+    with monkeypatch.context() as patch:
+        patch.setattr(mod.os, "walk", record_walk)
+        paths, errors, unknown = mod._discover_docs(project, mod._GitIgnore(project))
+
+    assert {path.relative_to(project).as_posix() for path in paths} == {"README.md", "docs/keep.md"}
+    assert not any(path.startswith(".venv") for path in walked)
+    assert errors == unknown == []
 
 
 def test_gitignored_path_claim_is_unverifiable_not_drifted(tmp_path, cli_runner):

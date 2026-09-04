@@ -114,13 +114,13 @@
           <h3>Step 2: Index the repo</h3>
 <pre><code>cd /path/to/your/repo
 roam init</code></pre>
-          <p>One-time, ~30 seconds on most repos. Creates <code>.roam/index.db</code> and fitness rules. Add <code>--with-ci=github</code> or run <code>roam ci-setup --platform github --write</code> to generate CI explicitly.</p>
+          <p>Creates <code>.roam/index.db</code>, fitness rules, and a starter ignore file when absent. Initial runtime depends on repository size, history, and the parser cache. Add <code>--with-ci=github</code> or run <code>roam ci-setup --platform github --write</code> to generate CI explicitly.</p>
         </article>
 
         <article class="step">
           <h3>Step 3: Check repo health</h3>
 <pre><code>roam health</code></pre>
-          <p>Composite 0-100 score across complexity, cycles, Codebase Dark Matter, dead code, and architecture drift. Add <code>--sarif</code> for GitHub Code Scanning, <code>--gate</code> to fail CI below a threshold.</p>
+          <p>Architectural score with cycle, component, and coupling findings. Run <code>roam health --explain</code> for score contributions and <code>roam doctor</code> for installation and index checks. Add <code>--sarif</code> for GitHub Code Scanning or <code>--gate</code> to enforce configured quality checks. These commands do not run your test suite.</p>
         </article>
 
         <article class="step">
@@ -133,13 +133,28 @@ roam init</code></pre>
       <p><strong>Verify it yourself.</strong> <a href="https://github.com/Cranot/roam-code/blob/main/docs/fresh-install-smoke.md">Fresh-install smoke transcript</a> &mdash; a verbatim capture of these four commands run against a clean venv and a three-file synthetic project. Copy-paste reproducible; no synthetic output.</p>
     </section>
 
+    <section id="keep-index-current">
+      <h2>Keep the index current</h2>
+<pre><code>roam index                   # refresh source and Git metadata
+roam doctor                  # check environment and index readiness
+roam health --explain         # inspect architectural score contributions</code></pre>
+      <p>
+        Run <code>roam index</code> after a pull, branch switch, or commit.
+        Unchanged files reuse existing source data, while Git history is checked
+        even when a commit leaves file contents unchanged. For a full rebuild,
+        use <code>roam index --force</code>. Preserve <code>.roam/</code> project
+        state and let an active writer finish before recovery; see
+        <a href="/docs/troubleshooting#index-stale">index troubleshooting</a>.
+      </p>
+    </section>
+
     <section id="whats-next">
       <h2>What's next</h2>
       <p>Pick the path that matches your role:</p>
       <ul>
         <li><strong>See it run end-to-end:</strong> <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; signed <code>ChangeEvidence</code> packet, the moat arc in one sitting.</li>
         <li><strong>Agent integration:</strong> <code>roam mcp-setup claude-code</code> (or <code>cursor</code>, <code>windsurf</code>, <code>vscode</code>, <code>gemini-cli</code>, <code>codex-cli</code>) — then see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope and canonical agent loop.</li>
-        <li><strong>Full surface reference:</strong> <a href="/docs/command-reference">Command Reference</a> — every command, every flag, every JSON envelope.</li>
+        <li><strong>Command workflows:</strong> <a href="/docs/command-reference">Command Reference</a> — examples and command families. Use <code>roam &lt;command&gt; --help</code> for exact flags and <code>roam surface --json</code> for the complete inventory.</li>
         <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> — how the <a href="/docs/architecture#pipeline">index pipeline</a>, <a href="/docs/architecture#findings-registry">findings registry</a>, <a href="/docs/architecture#agent-os-substrate">agent-OS substrate</a>, and <a href="/docs/architecture#evidence-compiler">evidence compiler</a> fit together.</li>
         <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> — context before edit, impact before delete, critique before merge, simulate before refactor, math before optimise.</li>
         <li><strong>Want a worked example on your own repo?</strong> <a href="/audit">Run a paid PR Replay</a> — we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>

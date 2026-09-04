@@ -528,11 +528,10 @@ commitments.
 > [`roam-code.com/trust`](https://roam-code.com/trust) framework table.
 
 > **Can you sign our standard infosec questionnaire (CAIQ / SIG / VSAQ)?**
-> Yes for planned Roam Review Business and Scale customers; the
-> response template is at
-> [`templates/legal/sig-lite-response.md`](https://github.com/Cranot/roam-code/blob/main/templates/legal/sig-lite-response.md)
-> (v1 draft). PR Replay buyers can request a written response at
-> `hello@roam-code.com`.
+> Send the questionnaire and requested scope to `hello@roam-code.com` to
+> confirm what can be answered and signed for the engagement. This packet
+> contains the public security information; a separate SIG-lite response
+> template is not currently shipped in the repository.
 
 > **Can you run on-prem or in our VPC?**
 > Yes for the **CLI** today — it runs locally by default (Apache 2.0;
@@ -647,7 +646,7 @@ can consume them.
 ### 11.4 OSCAL v1.2 control mapping export
 
 `roam evidence-oscal` projects the `ChangeEvidence` packet plus the
-`templates/audit-report/control-mapping.yaml` registry into an
+`src/roam/templates/audit_report/control-mapping.yaml` registry into an
 OSCAL-shaped JSON document (component definition + assessment plan +
 assessment results fragments). This is the canonical format for a
 customer's GRC tooling to ingest Provider evidence. As with §7, the
