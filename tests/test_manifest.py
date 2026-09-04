@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process
 
-from roam.db.connection import USER_VERSION, ensure_schema
+from roam.db.connection import USER_VERSION, ensure_schema, open_db
 from roam.index.manifest import (
     collect_manifest,
     latest_manifest,
@@ -296,3 +297,28 @@ def test_indexer_writes_manifest_row(manifest_project):
             "force": False,
             "include_excluded": False,
         }
+
+
+def test_head_only_change_refreshes_git_cache_and_manifest(manifest_project):
+    """A commit after a working-tree index must not leave git data stale."""
+    output, exit_code = index_in_process(manifest_project, "--force")
+    assert exit_code == 0, output
+
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "advance HEAD only"],
+        cwd=manifest_project,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=manifest_project, text=True).strip()
+
+    output, exit_code = index_in_process(manifest_project)
+    assert exit_code == 0, output
+    assert "Index is up to date" in output
+
+    with open_db(project_root=manifest_project, readonly=True) as conn:
+        manifest = latest_manifest(conn)
+        assert manifest is not None
+        assert manifest["git_head"] == head
+        assert conn.execute("SELECT 1 FROM git_commits WHERE hash = ?", (head,)).fetchone() is not None
