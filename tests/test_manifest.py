@@ -284,3 +284,15 @@ def test_indexer_writes_manifest_row(manifest_project):
         parsers = json.loads(row["parser_versions"])
         assert "tree_sitter" in parsers
         assert int(row["schema_version"]) >= 1
+
+        # A successful index and doctor's live-state probe must hash the
+        # same configuration bytes. Execution choices such as force vs.
+        # incremental are recorded explicitly in notes instead of changing
+        # config_hash and creating an immediate false drift advisory.
+        current = collect_manifest(manifest_project, profile="all", conn=conn)
+        assert row["config_hash"] == current["config_hash"]
+        notes = json.loads(row["notes"])
+        assert notes["index_options"] == {
+            "force": False,
+            "include_excluded": False,
+        }

@@ -186,7 +186,7 @@ similarity != relevance      |  PageRank == importance</code></pre>
         <li><strong>Metrics</strong> — cognitive complexity, centrality (PageRank, betweenness), churn, co-change, cognitive load.</li>
         <li><strong>Persistence</strong> — upsert into SQLite with incremental diffing; only changed files re-parse.</li>
       </ol>
-<pre><code>discover -> parse -> extract -> resolve -> metrics -> persist
+<pre><code>discover -&gt; parse -&gt; extract -&gt; resolve -&gt; metrics -&gt; persist
                  (incremental path executes only changed files)</code></pre>
     </section>
 
@@ -194,24 +194,24 @@ similarity != relevance      |  PageRank == importance</code></pre>
       <h2>Command-to-Data Flow</h2>
       <h3>Example: <code>roam preflight AuthService</code></h3>
 <pre><code>CLI cmd_preflight
-  -> ensure_index()
-  -> query symbols/edges/metrics
-  -> run health/rule checks
-  -> aggregate verdict + risk factors
-  -> render text or JSON envelope</code></pre>
+  -&gt; ensure_index()
+  -&gt; query symbols/edges/metrics
+  -&gt; run health/rule checks
+  -&gt; aggregate verdict + risk factors
+  -&gt; render text or JSON envelope</code></pre>
 
       <h3>Example: <code>roam cga emit --include-taint --sign</code></h3>
 <pre><code>CLI cmd_cga
-  -> ensure_index()
-  -> attest.cga.build_statement()
-       -> _symbol_fingerprints()       # Merkle root over (qname, kind, sig, path)
-       -> _edge_bundle_digest()        # graph snapshot fingerprint
-       -> security.taint_engine.run()  # graph-reach BFS, sanitizer stops
-            -> _finding_to_vex_claim() # OpenVEX status + justification
-  -> in-toto v1 Statement
+  -&gt; ensure_index()
+  -&gt; attest.cga.build_statement()
+       -&gt; _symbol_fingerprints()       # Merkle root over (qname, kind, sig, path)
+       -&gt; _edge_bundle_digest()        # graph snapshot fingerprint
+       -&gt; security.taint_engine.run()  # graph-reach BFS, sanitizer stops
+            -&gt; _finding_to_vex_claim() # OpenVEX status + justification
+  -&gt; in-toto v1 Statement
        (predicateType: https://roam-code.com/spec/CodeGraph/v1)
-  -> cosign sign-blob --bundle         # optional, graceful skip if absent
-  -> .roam/attestations/&lt;sha&gt;.intoto.json + .sig</code></pre>
+  -&gt; cosign sign-blob --bundle         # optional, graceful skip if absent
+  -&gt; .roam/attestations/&lt;sha&gt;.intoto.json + .sig</code></pre>
       <p>
         <strong>Property</strong>: the CGA chain is reproducible — same source tree + same git HEAD &rarr;
         same Merkle root &rarr; same predicate digest. Signing layers identity onto a deterministic fingerprint.

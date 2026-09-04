@@ -119,7 +119,12 @@ def _resolve_default_since(conn: sqlite3.Connection) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def collect_git_stats(conn: sqlite3.Connection, project_root: Path):
+def collect_git_stats(
+    conn: sqlite3.Connection,
+    project_root: Path,
+    *,
+    force: bool = False,
+):
     """Collect all git statistics and store them in the database.
 
     Silently skips if *project_root* is not inside a git repository.
@@ -140,7 +145,7 @@ def collect_git_stats(conn: sqlite3.Connection, project_root: Path):
         log.info("Not a git repository — skipping git stats")
         return
 
-    if _head_unchanged_since_last_run(conn, project_root):
+    if not force and _head_unchanged_since_last_run(conn, project_root):
         # W985-followup: surface BOTH the recorded HEAD AND the --force opt-out
         # so an operator running `roam health` / `roam index` and expecting
         # fresh metrics can disambiguate "nothing to do" from "broken / stale
@@ -258,7 +263,23 @@ def _head_unchanged_since_last_run(conn: sqlite3.Connection, project_root: Path)
     if not live_head:
         return False
 
-    return live_head == recorded_head
+    if live_head != recorded_head:
+        return False
+
+    # A manifest can advance without the O(repo) git-analysis phase. Light
+    # reindexes intentionally skip that phase but still record the live HEAD,
+    # and an interrupted/previously degraded run can leave the same shape.
+    # Treat the cache as reusable only when the manifest HEAD is represented
+    # in git_commits; otherwise the next full index must refill git-derived
+    # metrics instead of trusting a timestamp-only claim.
+    try:
+        cached = conn.execute(
+            "SELECT 1 FROM git_commits WHERE hash = ? LIMIT 1",
+            (recorded_head,),
+        ).fetchone()
+    except sqlite3.DatabaseError:
+        return False
+    return cached is not None
 
 
 # ---------------------------------------------------------------------------

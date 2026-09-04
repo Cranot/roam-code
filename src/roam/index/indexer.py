@@ -2480,7 +2480,7 @@ class Indexer:
             elapsed_ms = (time.monotonic() - start) * 1000.0
             self._record_step(name, rec.status, error=rec.error, duration_ms=elapsed_ms)
 
-    def _run_git_analysis(self, conn) -> None:
+    def _run_git_analysis(self, conn, *, force: bool = False) -> None:
         analyze_git = _try_import_git_stats()
         if analyze_git is None:
             self._log("Skipping git analysis (module not available)")
@@ -2490,7 +2490,10 @@ class Indexer:
         # Phase header emitted by _begin_phase in _do_run.
         start = time.monotonic()
         try:
-            analyze_git(conn, self.root)
+            if force:
+                analyze_git(conn, self.root, force=True)
+            else:
+                analyze_git(conn, self.root)
             self._record_step(
                 "git_analysis",
                 "ok",
@@ -2747,17 +2750,20 @@ class Indexer:
             from roam.index.manifest import record_indexer_run
         except ImportError:
             return
-        # Mix the CLI flags that affect indexing into the config hash so a
-        # flag flip invalidates the manifest comparison even when the
-        # config files themselves are unchanged.
-        flags = [
-            f"force={1 if force else 0}",
-            f"include_excluded={1 if include_excluded else 0}",
-        ]
         step_status = getattr(self, "_step_status", None) or None
         cluster_sig = getattr(self, "_cluster_signature", None)
         phase_timings = self._phase_timer.timings if self._phase_timer else None
-        notes_payload: dict = {}
+        # Execution options belong in explicit manifest metadata. Mixing them
+        # into config_hash made `roam doctor` compare unlike values: the
+        # indexer hashed force/include-excluded while the live-state probe
+        # correctly hashes only .roam/config.json + .roamignore. That produced
+        # a false config-drift warning immediately after every healthy index.
+        notes_payload: dict = {
+            "index_options": {
+                "force": bool(force),
+                "include_excluded": bool(include_excluded),
+            }
+        }
         if cluster_sig:
             notes_payload["cluster_signature"] = cluster_sig
         if phase_timings:
@@ -2773,7 +2779,6 @@ class Indexer:
             conn,
             self.root,
             profile="all",
-            extra_config_inputs=flags,
             notes=notes,
             steps_status=step_status,
         )
@@ -2802,7 +2807,7 @@ class Indexer:
         self._phase_timer.begin_phase(3, "Computing graph metrics...")
         G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn, force=force)
         self._phase_timer.begin_phase(4, "Analyzing git history...")
-        self._run_git_analysis(conn)
+        self._run_git_analysis(conn, force=force)
         self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters, force=force)
         self._phase_timer.begin_phase(5, "Computing effects & taint flow...")
         self._run_effect_analysis(conn, G, changed_paths=changed_paths)

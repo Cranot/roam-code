@@ -136,9 +136,9 @@ VERDICT: 3 high-confidence findings
       <p><strong>What Roam does.</strong> <code>roam n1</code> walks the call graph and matches DB-call patterns inside loops; <code>roam missing-index</code> matches WHERE-clause shapes against the schema's index list.</p>
       <pre class="terminal" aria-label="N+1 demo"><span class="t-prompt">$</span> <span class="t-cmd">roam n1</span>
 VERDICT: 2 N+1 hotspots
-[1] OrderList.render_rows -> Customer.find_by_id  (loop in render_rows:42)
+[1] OrderList.render_rows -&gt; Customer.find_by_id  (loop in render_rows:42)
     Hint: prefetch with .includes(:customer) in the query at line 30.
-[2] InvoiceExport.export -> LineItem.tax_for_country  (loop in export:88)
+[2] InvoiceExport.export -&gt; LineItem.tax_for_country  (loop in export:88)
     Hint: batch-load tax rates for the unique country set.</pre>
 
       <h2>5. The layer violation that quietly couples your domain to your HTTP stack</h2>
@@ -147,7 +147,7 @@ VERDICT: 2 N+1 hotspots
       <pre class="terminal" aria-label="Layers/fitness demo"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
 VERDICT: BLOCK
 [1] layer-violation (HIGH)
-    Edge added: domain/billing.py -> http/retry.py
+    Edge added: domain/billing.py -&gt; http/retry.py
     Rule: domain/* MUST NOT import from http/* (.roam-gates.yml:18)
     Suggestion: route through application/retry_policy or pass an injected client.</pre>
 
