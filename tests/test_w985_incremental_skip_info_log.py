@@ -36,12 +36,14 @@ Invariants asserted here:
    preserved.
 5. Cross-check: the W985-followup HEAD-unchanged log in git_stats.py is
    a sibling on a different namespace and stays untouched by this wave.
+6. A full unchanged-file run still checks Git history and records a new
+   manifest, so committing an already-indexed working tree cannot leave the
+   Git cache on the previous HEAD. Light mode preserves its cheap skip.
 
-Scope discipline: stderr log content ONLY. No change to the mtime cache,
-hash cache, ``--force`` flag plumbing, manifest schema, or the
-``up_to_date`` summary field. The W985 and W985-followup logs in
-git_stats.py live on disjoint branches and are not exercised by these
-tests.
+Scope discipline: no change to the mtime cache, hash cache, manifest schema,
+or the ``up_to_date`` summary field. The source graph remains a no-op; only
+Git history and manifest evidence refresh on a full run. The W985 and
+W985-followup logs in git_stats.py live on disjoint branches.
 """
 
 from __future__ import annotations

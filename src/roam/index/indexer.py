@@ -2929,6 +2929,17 @@ class Indexer:
                     f"({_format_count(file_count)} files unchanged by mtime+hash) "
                     f"— pass --force to re-index anyway"
                 )
+                if not light:
+                    # The working tree may have been indexed before its changes
+                    # were committed. In that case a later commit advances HEAD
+                    # without changing any file hashes, so the source fast path
+                    # still has Git metadata to refresh. collect_git_stats keeps
+                    # the unchanged-HEAD case cheap and re-runs only when the
+                    # manifest/cache proof is incomplete.
+                    self._phase_timer.begin_phase(4, "Checking git history...")
+                    self._run_git_analysis(conn)
+                    self._phase_timer.close_open_phase()
+                    self._record_manifest(conn, force=force, include_excluded=include_excluded)
                 self.summary = {
                     "files": 0,
                     "symbols": 0,
