@@ -62,10 +62,17 @@ def git_project(tmp_path):
     return proj
 
 
-def _record_manifest(conn: sqlite3.Connection, project_root: Path) -> dict:
-    """Build + persist a manifest pointing at the current HEAD."""
+def _record_manifest(
+    conn: sqlite3.Connection,
+    project_root: Path,
+    *,
+    cache_head: bool = True,
+) -> dict:
+    """Persist a manifest and, by default, its matching git cache row."""
     manifest = collect_manifest(project_root, conn=conn, profile="all")
     write_manifest(conn, manifest)
+    if cache_head and manifest.get("git_head"):
+        conn.execute("INSERT OR IGNORE INTO git_commits (hash) VALUES (?)", (manifest["git_head"],))
     conn.commit()
     return manifest
 
@@ -104,6 +111,15 @@ class TestHeadUnchangedHelper:
             # Land a new commit -> live HEAD moves; recorded HEAD stale.
             (git_project / "app.py").write_text("def hello():\n    return 'world!'\n")
             git_commit(git_project, msg="update hello")
+            assert _head_unchanged_since_last_run(conn, git_project) is False
+        finally:
+            conn.close()
+
+    def test_recorded_head_missing_from_git_cache_invalidates_skip(self, tmp_path, git_project):
+        """A light/degraded manifest must not authorize stale git metrics."""
+        conn = _fresh_db(tmp_path)
+        try:
+            _record_manifest(conn, git_project, cache_head=False)
             assert _head_unchanged_since_last_run(conn, git_project) is False
         finally:
             conn.close()
@@ -220,6 +236,28 @@ class TestCollectGitStatsSkip:
                 assert spy.call_count == 1, (
                     f"After a new commit, parse_git_log should be invoked again; got {spy.call_count} calls."
                 )
+        finally:
+            conn.close()
+
+    def test_missing_manifest_head_in_cache_re_runs_full_pass(self, tmp_path, git_project):
+        """A current light-index manifest cannot shadow stale git tables."""
+        conn = _fresh_db(tmp_path)
+        try:
+            _record_manifest(conn, git_project, cache_head=False)
+            with mock.patch.object(git_stats, "parse_git_log", wraps=git_stats.parse_git_log) as spy:
+                collect_git_stats(conn, git_project)
+                assert spy.call_count == 1
+        finally:
+            conn.close()
+
+    def test_force_re_runs_even_when_manifest_and_cache_match(self, tmp_path, git_project):
+        """The documented --force opt-out bypasses the warm-cache skip."""
+        conn = _fresh_db(tmp_path)
+        try:
+            _record_manifest(conn, git_project)
+            with mock.patch.object(git_stats, "parse_git_log", wraps=git_stats.parse_git_log) as spy:
+                collect_git_stats(conn, git_project, force=True)
+                assert spy.call_count == 1
         finally:
             conn.close()
 

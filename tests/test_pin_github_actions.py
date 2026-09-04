@@ -12,6 +12,11 @@ ROOT = repo_root()
 PINNER = ROOT / "dev" / "pin_github_actions.sh"
 
 
+def _bash_path(path: Path, cwd: Path) -> str:
+    """Return a cwd-relative path consumable by Linux, WSL, or Git Bash."""
+    return path.resolve().relative_to(cwd.resolve()).as_posix()
+
+
 def test_check_finds_unpinned_action_in_external_template(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     script = repo / "dev" / "pin_github_actions.sh"
@@ -28,7 +33,7 @@ def test_check_finds_unpinned_action_in_external_template(tmp_path: Path) -> Non
     composite.write_text("name: child\nruns:\n  using: composite\n  steps:\n    - uses: actions/setup-python@v5\n")
 
     result = subprocess.run(
-        ["bash", str(script), "--check"],
+        ["bash", _bash_path(script, repo), "--check"],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -72,7 +77,9 @@ def test_check_ignores_vendored_trees_but_still_sees_composite_actions(tmp_path:
     _git(repo, "init", "-q")
     _git(repo, "add", "dev/pin_github_actions.sh", ".gitignore", "action.yml")
 
-    result = subprocess.run(["bash", str(script), "--check"], cwd=repo, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        ["bash", _bash_path(script, repo), "--check"], cwd=repo, capture_output=True, text=True, check=False
+    )
 
     assert result.returncode != 0, "the tracked composite action is unpinned and must be reported"
     assert "action.yml:5: uses: actions/setup-python@v5" in result.stdout
@@ -81,7 +88,7 @@ def test_check_ignores_vendored_trees_but_still_sees_composite_actions(tmp_path:
 
 def test_check_passes_on_current_tree() -> None:
     result = subprocess.run(
-        ["bash", str(PINNER), "--check"],
+        ["bash", _bash_path(PINNER, ROOT), "--check"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -124,7 +131,9 @@ def _two_file_repo(tmp_path: Path, name: str) -> tuple[Path, Path]:
 
 
 def _check(repo: Path, script: Path):
-    return subprocess.run(["bash", str(script), "--check"], cwd=repo, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        ["bash", _bash_path(script, repo), "--check"], cwd=repo, capture_output=True, text=True, check=False
+    )
 
 
 def test_baseline_reports_both_floating_refs(tmp_path: Path) -> None:

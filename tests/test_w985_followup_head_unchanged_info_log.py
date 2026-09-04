@@ -26,9 +26,9 @@ Invariants asserted here:
    manifest is missing / empty / lacks a ``git_head``, never raises.
 
 Scope discipline (per the wave description): INFO log ONLY, no
-envelope-warning, no Pattern-2 disclosure, no change to ``--force`` flag
-behaviour, no change to the unchanged-detection logic, no new logger
-namespace. The W985 shallow-history log on the same logger
+envelope-warning, no Pattern-2 disclosure, no new logger namespace. The
+``--force`` hint is executable and bypasses the unchanged-HEAD cache. The
+W985 shallow-history log on the same logger
 (``roam.index.git_stats``) stays intact and is not triggered by this path
 (``parse_git_log`` is not called when the HEAD-unchanged skip fires).
 """
