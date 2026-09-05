@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **Reproducible retrieval benchmarks.** Refresh the public self-benchmark from a fresh full-history checkout and regenerate its candidate export. Name the minimal CI dependency profile and publish the separate NumPy/SciPy control, which changes ranking on the same index. Retain historical measurements and the existing drift tolerance; do not present cross-profile differences as an overall retrieval improvement.
 - **Search errors no longer authorize deletion.** Preserve partial matches when ripgrep or git grep fails, disclose missing/timed-out engines, and qualify empty-search verdicts. Reference audits require review after an incomplete search; `delete-check --ci` refuses consistently in text, JSON and SARIF instead of emitting a clean-looking success.
 - **Fresh-install MCP and offline container safety.** Bound MCP/FastMCP to the supported major versions and refresh their locked maintenance releases. Build containers from `uv.lock` and preload/seal production grammars so a non-root, network-isolated first index does not download parsers.
 - **Container dependency scope.** Move the image to the current stable Debian base, apply available OS updates during builds, and remove bootstrap installers and their build cache from the runtime layer. Document that image-wide OS findings require a separate audit from the Python lock; no vulnerability-free image claim is made.
