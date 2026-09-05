@@ -441,9 +441,14 @@ def _detect_empty_handlers(conn, project_root: Path) -> tuple[int, int, list[dic
             total_try_blocks += len(re.findall(r"\brescue\b", source, re.MULTILINE))
 
         file_count = 0
+        locations = set()
         for pat in patterns:
-            matches = pat.findall(source)
-            file_count += len(matches)
+            for match in pat.finditer(source):
+                # Leading whitespace can include newlines; anchor at the
+                # first token of the handler, not the previous blank line.
+                start = match.start() + len(match.group()) - len(match.group().lstrip())
+                locations.add(source.count("\n", 0, start) + 1)
+        file_count = len(locations)
 
         if file_count > 0:
             found += file_count
@@ -451,6 +456,7 @@ def _detect_empty_handlers(conn, project_root: Path) -> tuple[int, int, list[dic
                 {
                     "file": f["path"],
                     "count": file_count,
+                    "lines": sorted(locations),
                     "pattern": "empty_handler",
                 }
             )
@@ -2336,6 +2342,7 @@ def vibe_check(ctx, threshold, persist):
                 ],
                 "worst_files": worst_files,
                 "recommendations": recommendations,
+                "empty_handler_locations": p3_details,
                 # LAW 11: surface the aggregate command so an agent
                 # holding only the vibe-check envelope discovers
                 # ``roam dashboard`` for the project-level summary.
@@ -2393,6 +2400,11 @@ def vibe_check(ctx, threshold, persist):
             )
 
         click.echo(format_table(headers, rows))
+        if p3_details:
+            click.echo("\n  Empty handler locations:")
+            for item in p3_details[:20]:
+                for line in item.get("lines", [])[:10]:
+                    click.echo(f"    {item['file']}:{line}")
         click.echo()
         click.echo(f"  {score}/100 AI rot score (0=pristine, 100=severe)")
         click.echo(

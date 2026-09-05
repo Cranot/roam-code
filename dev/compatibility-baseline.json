@@ -1255,6 +1255,7 @@
         "--ignore-case",
         "--max-packet-lines",
         "--max-packets",
+        "--max-results",
         "--missing-pattern",
         "--no-bridges",
         "--no-clones",
@@ -1267,7 +1268,6 @@
         "--unreachable",
         "--whole-symbol",
         "--word",
-        "-n",
         "positional"
       ],
       "function": "grep_cmd",

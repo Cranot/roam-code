@@ -300,7 +300,7 @@ def _build_steps(
 )
 @click.pass_context
 def plan_refactor(ctx, symbol, operation, target_file, max_steps):
-    """Build an ordered refactoring plan with risk, test, and impact context.
+    """Build an ordered refactoring plan for a symbol (use split for a file).
 
     Unlike ``suggest-refactoring`` (which screens for refactoring
     candidates), this command builds a detailed execution plan with
@@ -336,6 +336,26 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
     layer_cap = 20 if detail else 8
 
     with open_db(readonly=True) as conn:
+        file_target = conn.execute("SELECT path FROM files WHERE path = ?", (symbol.replace("\\", "/"),)).fetchone()
+        if file_target is not None:
+            import shlex
+
+            followup = f"roam split {shlex.quote(file_target[0])}"
+            verdict = f"Expected a symbol; use {followup} for this file"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "plan-refactor",
+                            summary={"verdict": verdict, "partial_success": True, "state": "not_found"},
+                            next_commands=[followup],
+                            **resolution_disclosure("unresolved", target=symbol),
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {verdict}")
+            return
         sym = find_symbol(conn, symbol)
         if sym is None:
             # W1280 — Pattern-2c Convention (c): unresolved exits 0 with a

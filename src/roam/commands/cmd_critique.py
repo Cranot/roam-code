@@ -1448,6 +1448,9 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         click.echo()
         click.echo(f"  changed files:   {len(regions)}")
         click.echo(f"  changed symbols: {len(changed_symbols)}")
+        for check_name, status in result.get("check_status", {}).items():
+            if status != "ran":
+                click.echo(f"  {check_name}: {status}")
         if result["findings"]:
             click.echo()
             for f in result["findings"]:

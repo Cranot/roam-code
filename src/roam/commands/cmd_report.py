@@ -471,8 +471,16 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
         if data and isinstance(data, dict):
             summary = data.get("summary", {})
             if summary:
-                parts = [f"{k}={v}" for k, v in summary.items()]
-                click.echo(f"  {', '.join(parts)}")
+                click.echo(f"  {summary.get('verdict', '(completed)')}")
+                parts = [
+                    f"{k}={v}"
+                    for k, v in summary.items()
+                    if k != "verdict" and not k.endswith("definition") and isinstance(v, (int, float, bool))
+                ]
+                if parts:
+                    click.echo(f"  {', '.join(parts[:6])}")
+                if summary.get("partial_success"):
+                    click.echo("  Partial result; use --json for coverage and diagnostic details.")
             else:
                 click.echo("  (completed)")
         else:

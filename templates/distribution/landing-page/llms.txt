@@ -7,15 +7,15 @@ engine. It parses your repo once, stores structural facts in a local SQLite
 graph (symbols, dependencies, call graphs, architecture layers, git history,
 runtime traces), and exposes the graph through 287 CLI commands and 246 MCP
 tools (17 in the default `core` preset) across 28 languages. AI agents
-(Claude Code, Cursor, Codex, Aider, your own) call it before, during, and
-after every change.
+(Claude Code, Cursor, Codex, Aider, your own) can call it before, during, and
+after a change when their workflow is configured to do so.
 
-Every AI-assisted change compiles into one portable `ChangeEvidence` packet
+Configured evidence workflows can emit a portable `ChangeEvidence` packet
 (HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle)
 that answers the eight evidence questions: *who acted, what authority
 existed, what context was read, what changed, what could break, what policy
-applied, what verified it, who accepted risk*. Cursor logs the run; Roam
-proves the change.
+applied, what verified it, who accepted risk*. The packet records supplied
+evidence; it does not by itself prove semantic correctness or merge approval.
 
 The senses Roam gives an agent — each tied to one engineering question
 agents miss:
@@ -30,13 +30,20 @@ agents miss:
 - **Multi-agent coordination**: "Can agents work in parallel?" -> fleet, partition, orchestrate, agent-plan
 - **Evidence + compliance**: "Can we prove what was checked?" -> attest, cga, audit-trail-export, audit-trail-verify, --sarif
 
-The differentiator: roam math (alias roam algo) detects code that is
-"correct but computationally wrong" — accidental O(n^2) nested-loop
+roam math (alias roam algo) reports candidate algorithmic risks — O(n^2) nested-loop
 lookups, N+1 queries, regex compiled inside hot loops, repeated JSON
 parsing, quadratic string concatenation, branching recursion without
-memoisation, expensive work in request/render loops. This is exactly the
-class of pattern AI agents ship that pass tests and fail at scale, and
-nothing else in the AI-code-review space catches it deterministically.
+memoisation, expensive work in request/render loops. Inspect the matched source,
+language context, loop inputs, receiver identity, and ordering requirements;
+run tests and measure before applying advice. Pattern matches are not proof
+that an optimization is correct or beneficial.
+
+Evidence limits: safe-delete emits SAFE / REVIEW / UNSAFE; unresolved use needs
+review. Test mappings and path-coverage are static, not runtime coverage.
+AI-ratio is an uncalibrated pattern score, not an authorship percentage.
+CLI partition defaults to two through eight agents; roam_partition over MCP
+defaults to four. Read scope, partial_success, truncation, and skipped checks.
+Guide: https://roam-code.com/docs/command-reference#evidence-limits
 
 Roam complements linters, SAST, and AI semantic reviewers — it answers
 graph-aware change questions they don't.

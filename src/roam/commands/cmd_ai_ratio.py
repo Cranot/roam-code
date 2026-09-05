@@ -752,7 +752,7 @@ def analyse_ai_ratio(conn, since_days: int = 90) -> dict:
 def _ai_ratio_verdict(result: dict) -> str:
     ai_pct = round(result["ai_ratio"] * 100)
     confidence = result["confidence"]
-    return f"~{ai_pct}% estimated AI-generated code (confidence: {confidence})"
+    return f"AI-associated pattern score {ai_pct}/100 (sample strength: {confidence}); not an authorship estimate"
 
 
 def _ai_ratio_json_payload(result: dict, verdict: str, since: int) -> dict:
@@ -764,8 +764,12 @@ def _ai_ratio_json_payload(result: dict, verdict: str, since: int) -> dict:
             "ai_ratio": result["ai_ratio"],
             "confidence": confidence,
             "commits_analyzed": result["commits_analyzed"],
+            "ai_ratio_definition": "uncalibrated composite heuristic on git/source patterns, not a measured fraction of AI-authored code",
+            "confidence_definition": "commit sample-size band, not authorship certainty",
         },
         ai_ratio=result["ai_ratio"],
+        attribution_supported=False,
+        legacy_field_notice="ai_ratio and top_ai_files[].probability are normalized heuristic scores, not calibrated probabilities",
         confidence=confidence,
         commits_analyzed=result["commits_analyzed"],
         since_days=since,
@@ -777,7 +781,7 @@ def _ai_ratio_json_payload(result: dict, verdict: str, since: int) -> dict:
 
 def _emit_gini_signal(signals: dict) -> None:
     gini = signals["gini"]
-    click.echo(f"  Change concentration (Gini): {gini['raw_value']:.2f} -> suggests {round(gini['score'] * 100)}% AI")
+    click.echo(f"  Change concentration (Gini): {gini['raw_value']:.2f} -> heuristic {round(gini['score'] * 100)}/100")
 
 
 def _emit_burst_signal(signals: dict) -> None:
@@ -786,7 +790,7 @@ def _emit_burst_signal(signals: dict) -> None:
     burst_pct = round(burst["burst_commits"] / total_commits * 100)
     click.echo(
         f"  Burst additions: {burst['burst_commits']}/{burst['total_commits']} commits "
-        f"({burst_pct}%) are burst-adds -> suggests {round(burst['score'] * 100)}% AI"
+        f"({burst_pct}%) are burst-adds -> heuristic {round(burst['score'] * 100)}/100"
     )
 
 
@@ -834,7 +838,7 @@ def _top_file_limit(detail: bool) -> int:
 def _format_top_file_line(file_info: dict) -> str:
     reasons = ", ".join(file_info["reasons"]) if file_info["reasons"] else "heuristic"
     probability = round(file_info["probability"] * 100)
-    return f"  {file_info['path']:<60s} ({probability}% AI probability -- {reasons})"
+    return f"  {file_info['path']:<60s} (heuristic {probability}/100 -- {reasons})"
 
 
 def _emit_more_top_files_hint(top_files: list[dict], limit: int) -> None:
@@ -849,7 +853,7 @@ def _emit_top_ai_files(top_files: list[dict], detail: bool) -> None:
 
     click.echo()
     limit = _top_file_limit(detail)
-    click.echo("TOP AI-LIKELY FILES:")
+    click.echo("TOP PATTERN-SCORE FILES (not authorship labels):")
     for file_info in top_files[:limit]:
         click.echo(_format_top_file_line(file_info))
     _emit_more_top_files_hint(top_files, limit)
@@ -860,7 +864,7 @@ def _trend_is_renderable(trend: dict) -> bool:
 
 
 def _format_trend_point(point: dict) -> str:
-    return f"{round(point['ai_ratio'] * 100)}% ({point['days_ago']}d ago)"
+    return f"{round(point['ai_ratio'] * 100)}/100 ({point['days_ago']}d ago)"
 
 
 def _emit_ai_ratio_trend(trend: dict) -> None:
@@ -869,7 +873,7 @@ def _emit_ai_ratio_trend(trend: dict) -> None:
 
     click.echo()
     parts = [_format_trend_point(point) for point in trend["data_points"]]
-    click.echo(f"TREND: AI ratio {trend['direction']} -- " + " -> ".join(parts))
+    click.echo(f"TREND: heuristic score {trend['direction']} -- " + " -> ".join(parts))
 
 
 def _emit_ai_ratio_text(result: dict, verdict: str, detail: bool) -> None:
@@ -893,7 +897,7 @@ def _emit_ai_ratio_text(result: dict, verdict: str, detail: bool) -> None:
 @roam_capability(
     name="ai-ratio",
     category="health",
-    summary="Estimate the percentage of AI-generated code from git patterns",
+    summary="Inspect AI-associated git patterns as an uncalibrated heuristic score",
     maturity="stable",
     mcp_expose=True,
     mcp_preset=("core",),
@@ -909,13 +913,14 @@ def _emit_ai_ratio_text(result: dict, verdict: str, detail: bool) -> None:
 @click.option("--detail", is_flag=True, help="Show per-file breakdown")
 @click.pass_context
 def ai_ratio(ctx, since, detail):
-    """Estimate the percentage of AI-generated code from git patterns.
+    """Inspect AI-associated patterns; this is not an authorship detector.
 
     Unlike ``vibe-check`` (which detects AI-generated source-code patterns)
     and ``dev-profile`` (which profiles individual developer commit behavior),
-    this command estimates the codebase-wide AI-generated code ratio from
-    commit history signals: co-author tags, burst additions, and temporal
-    patterns.
+    this command combines commit history signals: co-author tags, burst
+    additions, and temporal patterns. Bulk imports, formatting and ordinary
+    human work can produce the same signals. Scores are uncalibrated;
+    use explicit provenance to establish authorship.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = bool(detail or (ctx.obj.get("detail", False) if ctx.obj else False))

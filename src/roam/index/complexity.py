@@ -585,12 +585,60 @@ def _enter_loop(node, source: bytes, loop_depth: int, loop_vars: set[str], state
         state.has_nested = True
     if _is_bounded_loop(node, source):
         state.loop_bound_small = True
-    return new_depth, loop_vars | _extract_loop_vars(node, source)
+    return new_depth, loop_vars | _extract_loop_vars(node, source) | _loop_written_names(node, source)
+
+
+def _loop_written_names(node, source: bytes) -> set[str]:
+    """Treat loop-local writes as varying, including derived temporaries.
+
+    This is deliberately conservative: even an assignment of a constant
+    inside the loop is not proof that hoisting its consumers is safe.
+    """
+    names: set[str] = set()
+    stack = list(node.named_children)
+    while stack:
+        child = stack.pop()
+        if child.type in _FUNCTION_NODES:
+            continue
+        if child.type in {
+            "assignment",
+            "augmented_assignment",
+            "assignment_expression",
+            "augmented_assignment_expression",
+            "variable_declarator",
+            "update_expression",
+        }:
+            target = (
+                child.child_by_field_name("left")
+                or child.child_by_field_name("name")
+                or child.child_by_field_name("argument")
+            )
+            if target is not None:
+                # Include the receiver of a field/subscript write: mutating
+                # obj.x also invalidates calls consuming obj or obj.x.
+                pending = [target]
+                while pending:
+                    item = pending.pop()
+                    if item.type in {"identifier", "shorthand_property_identifier_pattern"}:
+                        names.add(source[item.start_byte : item.end_byte].decode("utf-8", errors="replace"))
+                    pending.extend(item.named_children)
+        stack.extend(child.named_children)
+    return names
+
+
+def _is_same_function_call(node, source: bytes, state: _MathSignalState) -> bool:
+    name = _call_target_name(node, source)
+    if not name or name.lower() != state.symbol_lower:
+        return False
+    receiver = _call_receiver_node(node)
+    if receiver is None:
+        return True
+    return source[receiver.start_byte : receiver.end_byte].decode("utf-8", errors="replace") in {"self", "this", "cls"}
 
 
 def _record_self_call(node, source: bytes, state: _MathSignalState) -> None:
     name = _call_target_name(node, source)
-    if name and state.symbol_lower and name.lower() == state.symbol_lower:
+    if name and state.symbol_lower and _is_same_function_call(node, source, state):
         state.has_self_call = True
         state.self_call_count += 1
 
@@ -600,7 +648,7 @@ def _record_loop_call(node, source: bytes, loop_vars: set[str], state: _MathSign
     qualified = _call_target_qualified(node, source)
     if name:
         state.calls_in_loops.append(name)
-        if state.symbol_lower and name.lower() == state.symbol_lower:
+        if state.symbol_lower and _is_same_function_call(node, source, state):
             state.has_self_call = True
             state.self_call_count += 1
     if qualified:

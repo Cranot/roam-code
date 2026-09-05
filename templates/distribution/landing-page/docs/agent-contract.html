@@ -123,7 +123,10 @@
         symbol, transitively, weighted by churn and runtime hotness.
         If the answer surfaces a caller the agent didn't know about,
         the deletion is unsafe. Pair with
-        <code>roam safe-delete &lt;symbol&gt;</code> for the binary verdict.
+        <code>roam safe-delete &lt;symbol&gt;</code> for a
+        <code>SAFE</code>, <code>REVIEW</code>, or <code>UNSAFE</code> verdict.
+        Unresolved use in an imported file requires review; an absent graph edge
+        does not prove that dynamic or external consumers do not exist.
       </p>
 
       <h2>3. Before merging — ask for critique</h2>
@@ -131,37 +134,42 @@
       <p>
         Patch-level structural review. Catches <strong>clones-not-edited</strong>
         (the agent updated one of three near-identical implementations),
-        layer violations (the diff just imported HTTP into the domain
-        layer), and blast-radius spikes. Exits 5 on
-        <code>BLOCK</code> findings — wire into CI directly.
+        caller-impact spikes, and intent mismatch. Exits 5 when high-severity
+        findings are present. Inspect <code>check_status</code> and skipped-check
+        reasons: a partial critique is not merge approval. Clone comparison
+        requires persisted clone-pair data.
       </p>
 
       <h2>4. Before refactoring — simulate first</h2>
       <pre class="terminal" aria-label="Roam simulate command"><span class="t-prompt">$</span> <span class="t-cmd">roam simulate move &lt;symbol&gt; &lt;new-file&gt;</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam simulate extract &lt;file&gt; &lt;line-range&gt;</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam simulate extract &lt;symbol&gt; &lt;new-file&gt;</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam simulate delete &lt;symbol&gt;</span></pre>
       <p>
-        Clone the graph, apply the transform, report what breaks before
-        any source file changes. <code>roam mutate</code> applies the
-        transform after the simulation passes; <code>roam plan-refactor</code>
-        produces a step-by-step plan with caller-update ordering.
+        Clone the graph, apply the transform, and inspect predicted metric
+        changes before editing source. A simulation does not establish semantic
+        correctness. <code>roam mutate</code> is a separate source-change workflow;
+        <code>roam plan-refactor</code> plans a symbol refactor, while
+        <code>roam split &lt;file&gt;</code> proposes file-level decomposition.
       </p>
 
       <h2>5. Before optimising — ask for algorithmic risk</h2>
       <pre class="terminal" aria-label="Roam math command"><span class="t-prompt">$</span> <span class="t-cmd">roam math</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam algo --confidence high</span></pre>
       <p>
-        The differentiator. Detects <strong>code that is correct but
-        computationally wrong</strong> — exactly the class of patterns
-        agents ship that pass tests and fail at scale: nested-loop
+        Inspect <strong>candidate algorithmic risks</strong> that ordinary
+        syntax/style checks can miss: nested-loop
         lookups becoming O(n²), N+1 queries, regex compiled inside hot
         loops, repeated JSON parsing, quadratic string concatenation,
-        branching recursion without memoisation.
+        branching recursion without memoisation. Check the matched source,
+        varying loop inputs, receiver identity, call ordering, and measured cost
+        before applying advice; a matching pattern is not a performance proof.
       </p>
       <p>
         Pairs with <code>roam n1</code>, <code>roam missing-index</code>,
-        and <code>roam hotspots</code> for the full performance-shape
-        sweep.
+        and <code>roam hotspots</code> for ingested runtime evidence.
+        <code>hotspots</code> requires runtime traces; static churn/complexity
+        rankings are a different metric. See the
+        <a href="/docs/command-reference#evidence-limits">evidence limits</a>.
       </p>
 
       <h2>The whole contract, in one block</h2>

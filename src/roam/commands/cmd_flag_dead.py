@@ -58,7 +58,7 @@ _FLAG_PATTERN_DEFS: list[dict] = [
     # --- Generic flag functions ---
     {
         "provider": "generic",
-        "pattern": r"""(?:feature_flag|is_feature_enabled|isFeatureEnabled|has_feature|check_feature|toggle|is_on|isOn)\s*\(\s*['"]([\w.:-]+)['"]""",
+        "pattern": r"""(?:feature_flag|is_feature_enabled|isFeatureEnabled|has_feature|check_feature|toggle_feature|is_on|isOn)\s*\(\s*['"]([\w.:-]+)['"]""",
     },
     {
         "provider": "generic",

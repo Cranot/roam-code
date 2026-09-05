@@ -197,7 +197,7 @@ def test_sbom_and_release_manifest_are_digest_bound_and_verified() -> None:
     assert "Verified all six immutable release-evidence assets byte-for-byte" in text
 
 
-def test_oidc_is_granted_only_to_publish_and_sign_evidence() -> None:
+def test_oidc_is_granted_only_to_publish_signing_and_container() -> None:
     text = _text()
     global_scope = text[: text.index("jobs:\n")]
     resolve = _job(text, "resolve-ref", "build")
@@ -206,7 +206,8 @@ def test_oidc_is_granted_only_to_publish_and_sign_evidence() -> None:
     publish = _job(text, "publish", "sign-evidence")
     signing = _job(text, "sign-evidence", "release-evidence")
     evidence = _job(text, "release-evidence", "smoke")
-    smoke = _job(text, "smoke", None)
+    smoke = _job(text, "smoke", "container")
+    container = _job(text, "container", None)
     assert "id-token" not in global_scope
     assert "id-token" not in resolve
     assert "id-token" not in build
@@ -215,7 +216,10 @@ def test_oidc_is_granted_only_to_publish_and_sign_evidence() -> None:
     assert "id-token: write" in signing
     assert "id-token" not in evidence
     assert "id-token" not in smoke
-    assert text.count("id-token: write") == 2
+    assert "id-token: write" in container
+    assert "needs: [resolve-ref, smoke]" in container
+    assert "uses: ./.github/workflows/container.yml" in container
+    assert text.count("id-token: write") == 3
 
 
 def test_dispatch_input_is_env_mapped_and_strictly_allowlisted() -> None:
@@ -330,6 +334,9 @@ def test_all_actions_are_immutable_sha_pinned() -> None:
     uses = [line.strip() for line in _text().splitlines() if line.strip().startswith("uses:")]
     assert uses
     for line in uses:
+        if line == "uses: ./.github/workflows/container.yml":
+            # Local reusable workflows are bound to the caller's exact commit.
+            continue
         assert re.fullmatch(r"uses: [^@\s]+@[0-9a-f]{40}(?: # .+)?", line), line
 
 

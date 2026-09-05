@@ -1243,13 +1243,10 @@ def _import_scan_entry(file_path: str, line_num: int, name: str, *, resolved: bo
     }
 
 
-# 7 extensions: the Node/TypeScript module-resolution set tried for extensionless
-# relative imports (.js/.ts/.jsx/.tsx/.mjs/.cjs/.json), matching Node + tsc resolution.
-_JS_RESOLUTION_EXTENSIONS = (".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".json")
-
-
 def _js_relative_import_resolves(project_root: str, file_path: str, specifier: str) -> bool:
     """Resolve a relative JS/TS specifier from the importing file's directory."""
+    from roam.languages.js_resolution import source_path_candidates
+
     if not specifier.startswith(("./", "../")):
         return False
 
@@ -1262,10 +1259,7 @@ def _js_relative_import_resolves(project_root: str, file_path: str, specifier: s
     except ValueError:
         return False
 
-    candidates = [base]
-    candidates.extend(base + extension for extension in _JS_RESOLUTION_EXTENSIONS)
-    candidates.extend(os.path.join(base, f"index{extension}") for extension in _JS_RESOLUTION_EXTENSIONS)
-    return any(os.path.isfile(candidate) for candidate in candidates)
+    return any(os.path.isfile(candidate) for candidate in source_path_candidates(base))
 
 
 def _js_directory_import_resolves(conn: sqlite3.Connection, probe: str) -> bool:

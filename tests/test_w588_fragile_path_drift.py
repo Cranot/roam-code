@@ -92,7 +92,6 @@ _PRE_W594_PENDING: dict[str, str] = {
     "test_demo_fixtures.py": "W594 backlog",
     "test_demo_gif_asset.py": "W594 backlog",
     "test_detail_flag_hints.py": "W594 backlog",
-    "test_docker_assets.py": "W594 backlog",
     "test_docs_site_quality.py": "W594 backlog",
     "test_dogfood_dedup_check.py": "W594 backlog",
     "test_dogfood_dedup_check_e2e.py": "W594 backlog",

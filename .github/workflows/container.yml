@@ -1,0 +1,164 @@
+name: Publish verified container
+
+# Called only after the canonical release's package/evidence smoke tests pass.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: pypi
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      - name: Validate the immutable source and release
+        id: identity
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ inputs.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+([.][0-9]+)+$ ]] || { echo 'Stable numeric releases only'; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ && "$(git rev-parse HEAD)" == "$SHA" ]] || exit 1
+          [[ "$REPO" == Cranot/roam-code ]] || { echo 'Official registry publication is repository-bound'; exit 1; }
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          [[ "v$version" == "$TAG" ]] || exit 1
+          gh api "repos/$REPO/releases/tags/$TAG" --jq '{draft,immutable,tag_name}' \
+            | jq -e --arg tag "$TAG" '.draft == false and .immutable == true and .tag_name == $tag'
+          printf 'image=ghcr.io/cranot/roam-code\nversion=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preserve an existing version instead of rebuilding it
+        id: existing
+        env:
+          IMAGE: ${{ steps.identity.outputs.image }}
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' > manifest.json 2> manifest.err; then
+            digest=$(jq -er '.digest' manifest.json)
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+            printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          elif grep -Eiq 'manifest unknown|not found' manifest.err; then
+            echo 'Version not published yet; build a candidate.'
+          else
+            cat manifest.err >&2
+            exit 1
+          fi
+
+      - name: Build candidate with SBOM and provenance
+        id: build
+        if: steps.existing.outputs.digest == ''
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.identity.outputs.image }}:build-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.identity.outputs.version }}
+            org.opencontainers.image.revision=${{ inputs.sha }}
+
+      - name: Test the exact candidate digest
+        id: tested
+        env:
+          IMAGE: ${{ steps.identity.outputs.image }}
+          DIGEST: ${{ steps.existing.outputs.digest || steps.build.outputs.digest }}
+          VERSION: ${{ steps.identity.outputs.version }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          ref="$IMAGE@$DIGEST"
+          docker pull "$ref"
+          revision=$(docker image inspect "$ref" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          [[ "$revision" == "$SHA" ]] || { echo 'Existing image has a different source commit'; exit 1; }
+          docker run --rm --network none "$ref" --version | grep -Fx "roam, version $VERSION"
+          docker run --rm --network none "$ref" mcp --compat-profile all > compatibility.json
+          jq -e '.protocol.available == true and (.protocol.supported_versions | length > 0)' compatibility.json
+          fixture=$(mktemp -d)
+          printf 'def greet(name):\n    return "hello " + name\n' > "$fixture/example.py"
+          docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$fixture:/workspace" "$ref" index
+          docker run --rm --network none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$fixture:/workspace" "$ref" --json search greet > search.json
+          jq -e '.summary.total > 0 and any(.results[]; .name == "greet")' search.json
+          [[ -f "$fixture/.roam/index.db" ]] || exit 1
+          printf 'digest=%s\n' "$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        with:
+          cosign-release: v2.5.2
+
+      - name: Sign and verify the tested digest
+        env:
+          REF: ${{ steps.identity.outputs.image }}@${{ steps.tested.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$EXISTING_DIGEST" ]]; then
+            cosign sign --yes "$REF"
+          fi
+          # Reusable-workflow certificates bind the caller workflow identity.
+          cosign verify --certificate-identity-regexp \
+            '^https://github[.]com/Cranot/roam-code/[.]github/workflows/(publish|container)[.]yml@refs/(tags/v[0-9.]+|heads/main)$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$REF"
+
+      - name: Require an anonymous pull before publishing release aliases
+        env:
+          IMAGE: ${{ steps.identity.outputs.image }}
+          DIGEST: ${{ steps.tested.outputs.digest }}
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          public_config=$(mktemp -d)
+          if ! docker --config "$public_config" pull "$IMAGE@$DIGEST"; then
+            echo '::error::Set the roam-code GHCR package visibility to public, then rerun this job.'
+            exit 1
+          fi
+
+      - name: Promote the verified digest without moving an older release to latest
+        env:
+          IMAGE: ${{ steps.identity.outputs.image }}
+          DIGEST: ${{ steps.tested.outputs.digest }}
+          VERSION: ${{ steps.identity.outputs.version }}
+          TAG: ${{ inputs.tag }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --tag "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
+          latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name)
+          if [[ "$latest" == "$TAG" ]]; then
+            docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$DIGEST"
+          fi
+          printf 'Published `%s:%s` from `%s` (linux/amd64).\n' "$IMAGE" "$VERSION" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"

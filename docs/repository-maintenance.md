@@ -169,13 +169,45 @@ registry-derived count gates above for the public product surface.
 
 ## Finish a change
 
+For a field report, reproduce each claim you intend to fix before editing.
+Use small positive and negative fixtures: the false positive must disappear
+while a genuine instance remains detectable. Then invoke the affected CLI
+commands on this repository as a larger integration check. Save exact arguments,
+stdout/stderr, exit status, timing, source revision, and index state under
+`internal/dogfood/`. Keep third-party source and identifying report details
+private; public regressions should use generic fixtures.
+
+Record timeouts, missing prerequisites, unsupported scopes, and heuristic
+disagreements separately. A help invocation proves syntax availability, not a
+successful analysis. Do not bulk-apply detector recommendations or invoke write,
+publish, export, or network commands merely to increase command coverage.
+Read [detector evidence](concepts/detector-evidence.md) for cross-command metric
+differences and the remaining static-analysis limits.
+
 Run focused tests and the gate appropriate to the change, review `git diff`,
 and update the Unreleased changelog for user-visible behavior. A full local
 non-slow run can take hours, particularly on Windows. Use a persistent
 terminal or a detached process with saved output and an explicit completion
 status for long runs.
 
+At handoff, separate the source revision and worktree changes from index state,
+test evidence, remote synchronization, and deployment state. Keep a dated private
+note linking the detailed audit and exact result files; record pending checks
+and unresolved findings without promoting them to completed work. Regenerate
+the private catalogue with `uv run --no-sync python dev/build_internal_index.py --write`
+after adding or changing notes. Preserve historical measurements as historical;
+do not replace earlier results with current counts or sum overlapping test runs.
+
 Before a release, wait for all required CI jobs on the exact pushed commit.
 A successful FAST or FULL gate is not evidence that the entire test matrix
 passed. Record which checks completed and which remain pending. Follow
 [CONTRIBUTING.md](../CONTRIBUTING.md#deploys) for tagging and website publishing.
+
+The [container release path](containers.md) runs only after package/evidence
+verification. Check its exact digest, signature and anonymous pull as separate
+release evidence; a green PyPI upload does not prove a public image exists.
+For issue triage, reproduce protocol claims against the installed advertised
+revision ([MCP compatibility](mcp-protocol-compatibility.md)) and CLI examples
+against current help ([agent CLI guide](agent-cli.md)). Reply with what was
+measured, the release containing a fix, and any remaining scope; leave broader
+requests open when only part is addressed.

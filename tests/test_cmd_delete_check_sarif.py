@@ -43,11 +43,12 @@ def test_empty_delete_check_envelope_produces_valid_sarif_with_zero_results() ->
     assert "runs" in doc and len(doc["runs"]) == 1
     run = doc["runs"][0]
     assert run["results"] == []
-    # The rule catalogue is always present (closed enum of 3 rules).
+    # The rule catalogue includes the incomplete-search review verdict.
     rules = run["tool"]["driver"]["rules"]
     rule_ids = {r["id"] for r in rules}
     assert rule_ids == {
         "delete-check/break-risk",
+        "delete-check/review",
         "delete-check/likely-safe",
         "delete-check/safe",
     }
@@ -55,6 +56,7 @@ def test_empty_delete_check_envelope_produces_valid_sarif_with_zero_results() ->
     # SARIF's ``defaultConfiguration.level`` by ``_build_rule``).
     by_id = {r["id"]: r for r in rules}
     assert by_id["delete-check/break-risk"]["defaultConfiguration"]["level"] == "error"
+    assert by_id["delete-check/review"]["defaultConfiguration"]["level"] == "error"
     assert by_id["delete-check/likely-safe"]["defaultConfiguration"]["level"] == "warning"
     assert by_id["delete-check/safe"]["defaultConfiguration"]["level"] == "note"
 

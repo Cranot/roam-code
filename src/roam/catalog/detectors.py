@@ -474,6 +474,18 @@ def _js_source_findings_preserving_evidence_lines(
         first_pos: int | None = None
         for pattern, label in patterns:
             match = pattern.search(snippet)
+            if task_id == "spread-accumulator":
+                from roam.catalog.js_idioms import _strip_js_strings_and_comments
+
+                searchable = _strip_js_strings_and_comments(snippet)
+                match = next(
+                    (
+                        m
+                        for m in pattern.finditer(searchable)
+                        if label.startswith("reduce ") or _match_is_in_loop(snippet, m.start(), "typescript")
+                    ),
+                    None,
+                )
             if match is None:
                 continue
             matched.append(label)
@@ -495,6 +507,24 @@ def _js_source_findings_preserving_evidence_lines(
             )
         )
     return results
+
+
+def _match_is_in_loop(snippet: str, offset: int, language: str) -> bool:
+    """Require the matched expression to be in a loop body, not just nearby."""
+    from roam.index.complexity import _FUNCTION_NODES, _LOOP_NODES, _resolve_loop_body
+    from roam.parser_pack import get_parser
+
+    source = snippet.encode("utf-8")
+    start = len(snippet[:offset].encode("utf-8"))
+    node = get_parser(language).parse(source).root_node.descendant_for_byte_range(start, start)
+    while node is not None:
+        if node.type in _LOOP_NODES:
+            body = _resolve_loop_body(node)
+            return body is not None and body.start_byte <= start < body.end_byte
+        if node.type in _FUNCTION_NODES:
+            return False
+        node = node.parent
+    return False
 
 
 # M4 — recognise DEV-only / DEBUG-only gates so production-impact
@@ -911,10 +941,10 @@ _RE_STORED_TASK = re.compile(
     re.MULTILINE,
 )
 _RE_SPREAD_ACC = re.compile(
-    r"\b(\w+)\s*=\s*\[\s*\.\.\.\s*\1\s*,",  # name = [...name,
+    r"(?<![\w.])(\w+)\s*=\s*\[\s*\.\.\.\s*\1\s*,",  # name = [...name,
 )
 _RE_SPREAD_OBJ_ACC = re.compile(
-    r"\b(\w+)\s*=\s*\{\s*\.\.\.\s*\1\s*[,}]",  # name = {...name,
+    r"(?<![\w.])(\w+)\s*=\s*\{\s*\.\.\.\s*\1\s*[,}]",  # name = {...name,
 )
 _RE_REDUCE_SPREAD = re.compile(
     r"\.\s*reduce\s*\(\s*\(\s*(\w+)[^)]*\)\s*=>\s*\[\s*\.\.\.\s*\1\s*,",
@@ -1036,7 +1066,7 @@ def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
     try:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-            "s.line_start, ms.loop_depth, ms.loop_with_multiplication, "
+            "s.line_start, s.line_end, f.language, ms.loop_depth, ms.loop_with_multiplication, "
             "ms.calls_in_loops, ms.calls_in_loops_qualified "
             "FROM symbols s "
             "JOIN files f ON s.file_id = f.id "
@@ -1051,7 +1081,7 @@ def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
     except sqlite3.Error:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-            "s.line_start, ms.loop_depth, 0 as loop_with_multiplication, "
+            "s.line_start, s.line_end, f.language, ms.loop_depth, 0 as loop_with_multiplication, "
             "ms.calls_in_loops, '' as calls_in_loops_qualified "
             "FROM symbols s "
             "JOIN files f ON s.file_id = f.id "
@@ -1071,6 +1101,16 @@ def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
         calls = _iter_loop_calls(r)
         if _call_in(calls, {"pow", "Math.pow", "std::pow", "math.pow", "BigInteger.modPow"}):
             continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        pattern = re.compile(r"\b(\w+)\s*(?:\*=|=\s*\1\s*\*)")
+        language = r["language"]
+        # A product is not exponentiation. Require repeated multiplication of
+        # the same accumulator in a loop, not a single per-item calculation.
+        if language not in {"python", "javascript", "typescript", "tsx", "go", "rust", "java", "c", "cpp"}:
+            continue
+        match = next((m for m in pattern.finditer(snippet) if _match_is_in_loop(snippet, m.start(), language)), None)
+        if match is None:
+            continue
         conf = "high" if _row_value(r, "loop_with_multiplication", 0) else "medium"
         results.append(
             _finding(
@@ -1079,6 +1119,9 @@ def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
                 r,
                 "Loop multiplication used for exponentiation",
                 conf,
+                match_line=(r["line_start"] or 1) + snippet[: match.start()].count("\n"),
+                snippet=snippet,
+                matched_patterns=[match.group(0)],
             )
         )
     return results
@@ -2848,7 +2891,17 @@ def detect_serial_await_loop(conn: sqlite3.Connection) -> list[dict]:
         # await Promise.resolve, await new Promise(...)). Conservative: only
         # fire when the awaited callee is a method/function name on a value,
         # not a literal Promise constructor call.
-        if not re.search(r"\bawait\s+(?!new\s+Promise|Promise\.|setTimeout|setImmediate)[\w$.]+\s*\(", snippet):
+        awaited = next(
+            (
+                m
+                for m in re.finditer(
+                    r"\bawait\s+(?!new\s+Promise|Promise\.|setTimeout|setImmediate)[\w$.]+\s*\(", snippet
+                )
+                if _match_is_in_loop(snippet, m.start(), "typescript")
+            ),
+            None,
+        )
+        if awaited is None:
             continue
         results.append(
             _finding(
@@ -2857,8 +2910,9 @@ def detect_serial_await_loop(conn: sqlite3.Connection) -> list[dict]:
                 r,
                 "for-of loop with serial `await` — each iteration waits for the previous "
                 "(use Promise.all for parallel I/O)",
-                "high",
+                "medium",
                 snippet=snippet,
+                match_line=(r["line_start"] or 1) + snippet[: awaited.start()].count("\n"),
                 matched_patterns=["for-of header", "await-call in body", "no Promise.all batch"],
             )
         )
@@ -3819,7 +3873,7 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
         if not flagged:
             continue
         confidence = "high" if heavyweight_hits else "medium"
-        matched_patterns = ["hoistable call(s) detected"]
+        matched_patterns = [f"candidate: {call}" for call in flagged[:4]]
         if heavyweight_hits:
             matched_patterns.append(f"heavyweight parse: {', '.join(heavyweight_hits[:2])}")
         results.append(
@@ -3831,6 +3885,10 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
                 + (f" — heavyweight parse ({', '.join(heavyweight_hits[:2])})" if heavyweight_hits else ""),
                 confidence,
                 matched_patterns=matched_patterns,
+                match_line=_find_first_keyword_line(
+                    snippet, tuple(_call_leaf(call) + "(" for call in flagged), r["line_start"]
+                ),
+                snippet=snippet,
             )
         )
     return results

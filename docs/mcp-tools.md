@@ -20,6 +20,12 @@ annotated. Set `ROAM_MCP_PRESET=full` in the server environment and restart
 contents and restart instructions; it does not change the running server's
 registered tools.
 
+Read [detector evidence and limitations](concepts/detector-evidence.md) before
+acting on a verdict. MCP arguments/defaults are defined by each tool schema;
+they need not match a bare CLI invocation. In particular, `roam_partition`
+defaults to four partitions. Static analysis, partial results, and heuristic
+scores do not establish runtime coverage, authorship, or permission to delete.
+
 For a POSIX shell, use `ROAM_MCP_PRESET=full roam mcp`. In PowerShell, set
 `$env:ROAM_MCP_PRESET = "full"` before starting `roam mcp`. For an editor
 integration, set the variable in its MCP server configuration.
@@ -53,7 +59,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_agent_opt` | Detect weak agent-contract shape in roam's tool descriptions and envelopes and recommend the stronger shape. |
 | `roam_agent_plan` | Decompose partitions into dependency-ordered multi-agent tasks: per-task write scope, read-only dependencies, interface contracts, phase schedule, and merge sequencing. Supports ``plain`` / ``json`` / ``claude-teams`` output formats. Different from ``roam_partition`` (raw analytical manifest) and ``roam_orchestrate`` (operational dispatch) -- this is the dependency-ordered phase schedule. |
 | `roam_agent_score` | Aggregate runs from the local ledger and score each agent on a 0..100 composite (run completion, gate adherence, preflight compliance, blast accuracy, replay survival). Empty state (no runs / no matching runs) returns a clean envelope with ``state: "no_data"`` -- never empty stdout, never a crash. Different from the CLI ``roam runs verify`` (HMAC ledger tamper-detection -- CLI-only, there is no MCP tool for it) -- this is the per-agent quality score across runs. |
-| `roam_ai_ratio` | Estimate AI-generated code percentage from git commit heuristics. |
+| `roam_ai_ratio` | Inspect AI-associated source/Git patterns as an uncalibrated score, not an authorship estimate. |
 | `roam_ai_readiness` | AI readiness score (0-100): how effectively AI agents can work on this codebase. |
 | `roam_alerts` | Active health alerts: thresholds breached on tangle, complexity, churn, or coverage. |
 | `roam_algo` | Detect suboptimal algorithms with better alternatives and complexity analysis. |
@@ -111,7 +117,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_dashboard` | Unified single-screen codebase status: health, hotspots, bus factor, dead code, AI rot. |
 | `roam_dead_code` | Use for: 'what can I safely delete?' / 'find dead code' / 'list unused exports'. Pick over manual grep sweeps — filters out entry points and framework lifecycle hooks, ranks candidates by deletion safety. Pair with roam_safe_delete for per-symbol deletion verdicts. |
 | `roam_debt` | Rank files by tech-debt score with SQALE remediation-cost estimates. Triggers: 'where's the worst debt?', 'what should we refactor next?', 'estimate cleanup cost'. Pair with roam_complexity_report for per-function brain-method targeting. |
-| `roam_delete_check` | Gate the diff (working / staged / PR / HEAD) on surviving references to deleted symbols and files. Per-deletion verdict: SAFE (no surviving references), LIKELY-SAFE (survivors only in tests / docs / unreachable code), or BREAK-RISK (survivors in reachable code). Different from ``roam_critique`` (PR-wide diff review) -- this targets the deletion surface specifically with CI-gate semantics (overall BREAK-RISK trips the gate). |
+| `roam_delete_check` | Gate the diff (working / staged / PR / HEAD) on surviving references to deleted symbols and files. Per-deletion verdict: SAFE (no surviving references), LIKELY-SAFE (survivors only in tests / docs / unreachable code), or BREAK-RISK (survivors in reachable code); REVIEW means a check is incomplete. Different from ``roam_critique`` (PR-wide diff review) -- this targets the deletion surface specifically with CI-gate semantics (BREAK-RISK and incomplete checks trip the gate). |
 | `roam_deps` | Use for: 'what does file X import?' / 'which files depend on module Y?' / 'show me the importers of Z'. Pick this for file/module-level coupling before refactors; symbol-level lookups belong in roam_uses. Set multi=True to get imports + importers + git co-change coupling in ONE envelope (do this instead of shelling out to `roam deps --multi` or hand-querying the index). Run in parallel with roam_coupling for the biggest token win. |
 | `roam_describe` | Auto-generate a project description for AI coding agents: multi-section Markdown report covering overview, directories, entry points, key abstractions, architecture, and testing. Different from ``roam_understand`` (compact codebase overview) -- this is the comprehensive prose description for CLAUDE.md / AGENTS.md / .cursor/rules. The wrapper emits to stdout; on-disk writes are deferred to the CLI (``roam describe --write``) so the MCP surface stays read-only. |
 | `roam_dev_profile` | Developer behavioral profiling: commit time patterns, change scatter (Gini), burst detection. |
@@ -204,7 +210,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_orphan_routes` | Find backend routes lacking a frontend consumer — the dead-endpoint surface. Triggers: 'which routes can we delete?', 'find unused endpoints', 'audit API surface coverage'. Pair with roam_dead_code for symbol-level dead-export detection. |
 | `roam_over_fetch` | Models serializing too many fields (data over-exposure risk). |
 | `roam_owner` | Show code ownership computed from git blame: per-author line counts, percentages, last-active dates, and a fragmentation index. Works on a file or a directory prefix. Different from ``roam_codeowners`` (which reads the CODEOWNERS file) -- this measures actual ownership. |
-| `roam_partition` | Multi-agent work partitioning: split codebase into independent work zones. |
+| `roam_partition` | Plan conflict-aware work partitions; inspect shared files, dependencies, and merge order before assigning agents. |
 | `roam_path_coverage` | Critical call paths with zero test protection, ranked by risk. |
 | `roam_patterns` | Detect positive architectural patterns: Singleton, Factory, Observer, Repository, Middleware, Strategy, and Decorator. Different from ``roam_smells`` (negative anti-patterns) -- this discovers intentional design patterns. |
 | `roam_plan` | Generate a structured execution plan for modifying code: read-order (call-graph BFS), invariants (mined contracts), blast-radius preview, and per-task heuristics. Five task types: ``refactor`` / ``debug`` / ``extend`` / ``review`` / ``understand``. Different from ``roam_plan_refactor`` (refactoring-specific simulation) and ``roam_preflight`` (blast-radius gate) -- this is the general-purpose work plan for any task type. |
@@ -223,7 +229,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_pytest_fixtures` | pytest fixture chain: top fixtures by dependent count, or per-symbol dependency walk. |
 | `roam_reachability_triage` | Classify vulnerability-flow findings as reachable or not reachable from entrypoints through local call-graph evidence. This MCP tool is read-only: it does not write or move the reachability baseline; use the CLI for baseline management. |
 | `roam_recommend` | Surface symbols related to a given symbol via three signal sources combined: call-graph neighbours (1-hop in + out), git co-change (other symbols whose files changed in the same commits), and persisted clone siblings (when ``roam clones --persist`` was run). Each candidate gets a score that's the normalised sum of the three contributions. Different from ``roam_impact`` (transitive blast radius) -- this fuses co-change + clones into the ranking. |
-| `roam_refs_text` | Audit literal strings across the project and emit a per-string verdict: SAFE-TO-REMOVE / REVIEW / LOAD-BEARING. Groups every reference by surface (code, test, docs, config, generated, vendored) and annotates reachability for code hits. |
+| `roam_refs_text` | Audit literal strings across the project and emit a per-string verdict: SAFE-TO-REMOVE / REVIEW / LOAD-BEARING. Groups every reference by surface (code, test, docs, config, generated, vendored) and annotates reachability for code hits. Require REVIEW when a failed search leaves reference absence unconfirmed. |
 | `roam_reindex` | Incremental or force reindex. Task-mode + elicited confirmation for force runs. |
 | `roam_relate` | How symbols connect: shared deps, call chains, conflicts, cohesion score. |
 | `roam_repo_map` | Compact project skeleton with key symbols per file, by PageRank. |
@@ -235,7 +241,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_rules_check` | Evaluate custom governance rules from .roam/rules/ YAML files. |
 | `roam_rules_validate` | Lint a `.roam/rules.yml` for shippability before customers see it. |
 | `roam_runtime_hotspots` | Runtime hotspots where static and runtime rankings disagree (UPGRADE/DOWNGRADE). |
-| `roam_safe_delete` | Fuse dead-code, blast-radius, and test-coverage signals into a single deletion verdict: SAFE / REVIEW / UNSAFE. Reports direct callers (non-test), transitive dependents, affected files, and a public-API bump that flips SAFE -> REVIEW for exported symbols whose name matches a common public-API prefix. Different from ``roam_dead_code`` (all unreferenced symbols) and ``roam_impact`` (transitive blast radius) -- this is the single go/no-go gate. |
+| `roam_safe_delete` | Fuse dead-code, blast-radius, and test-coverage signals into a single deletion verdict: SAFE / REVIEW / UNSAFE. Reports direct callers (non-test), transitive dependents, affected files, and a public-API bump that flips SAFE -> REVIEW for exported symbols whose name matches a common public-API prefix. Different from ``roam_dead_code`` (all unreferenced symbols) and ``roam_impact`` (transitive blast radius) -- this is the focused deletion review. Imported files with unresolved symbol use require REVIEW; absent indexed references do not prove absence of use. |
 | `roam_safe_zones` | Classify the refactor containment zone around a symbol or file: ISOLATED (no external connections), CONTAINED (<=5 boundary symbols), or EXPOSED (>5). Reports strictly-internal vs boundary symbols and external caller / callee counts per boundary. Different from ``roam_impact`` (unbounded reverse blast radius) and ``roam_closure`` (exact locations needing modification) -- this maps the bounded zone where it is safe to refactor freely. |
 | `roam_sbom` | Emit a Software Bill of Materials (CycloneDX 1.7 by default, or SPDX 2.3) enriched with call-graph reachability — distinguishes phantom dependencies from those actually exercised. Pair with --aibom for the AIBOM extension required by EU AI Act Art. 50. |
 | `roam_search_semantic` | Find symbols by natural language query (hybrid BM25 + vector + framework packs). |

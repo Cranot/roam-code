@@ -35,6 +35,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.grep_helpers import (
+    SearchEngineError,
     build_bridge_index,
     build_clone_index,
     build_interval_index,
@@ -284,7 +285,7 @@ def refs_text_cmd(
             warnings_out.append(f"refs_text_git_grep_failed:{type(exc).__name__}:{exc}")
         else:
             warnings_out.append(f"refs_text_engine_failed:{type(exc).__name__}:{exc}")
-        all_matches = []
+        all_matches = exc.matches if isinstance(exc, SearchEngineError) else []
 
     # Engine fallback to indexed-file scan.
     # W1010 lineage: when ``detect_engine`` returns ``"fallback"`` (no rg/git
@@ -432,7 +433,7 @@ def refs_text_cmd(
         )
         return
     echo_text_warnings(warnings_out)
-    _emit_text(analyses, targets, reachable_from)
+    _emit_text(analyses, targets, reachable_from, warnings_out=warnings_out)
 
 
 # ---------------------------------------------------------------------------
@@ -481,16 +482,19 @@ def _emit_empty(json_mode, targets, budget, engine, *, warnings_out=None):
     results = [
         {
             "string": s,
-            "verdict": "SAFE-TO-REMOVE",
-            "reason": "no references in source code",
+            "verdict": "REVIEW" if warnings_out else "SAFE-TO-REMOVE",
+            "reason": "search incomplete; absence is unconfirmed" if warnings_out else "no references in source code",
             "total": 0,
             "by_surface": {},
         }
         for s in targets
     ]
+    verdict = f"{len(targets)} string(s) checked, 0 load-bearing"
+    if warnings_out:
+        verdict = f"Search incomplete: review {len(targets)} string(s)"
     if json_mode:
         _summary: dict = {
-            "verdict": f"{len(targets)} string(s) checked, 0 load-bearing",
+            "verdict": verdict,
             "load_bearing": 0,
             "engine": engine,
         }
@@ -513,9 +517,9 @@ def _emit_empty(json_mode, targets, budget, engine, *, warnings_out=None):
         )
     else:
         echo_text_warnings(warnings_out)
-        click.echo(f"VERDICT: {len(targets)} string(s) checked, 0 load-bearing")
-        for s in targets:
-            click.echo(f"--- {s} — SAFE-TO-REMOVE (no references in source code) ---")
+        click.echo(f"VERDICT: {verdict}")
+        for result in results:
+            click.echo(f"--- {result['string']} — {result['verdict']} ({result['reason']}) ---")
             click.echo("  total references: 0")
             click.echo()
 
@@ -534,6 +538,8 @@ def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_deta
     for s in targets:
         a = analyses[s]
         verdict, reason = _verdict_for(a)
+        if warnings_out and verdict == "SAFE-TO-REMOVE":
+            verdict, reason = "REVIEW", "search incomplete; absence is unconfirmed"
         if verdict == "LOAD-BEARING":
             overall_load += 1
         per_surface = {k: len(v) for k, v in a["surfaces"].items()}
@@ -557,6 +563,7 @@ def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_deta
     }
     extra: dict = {}
     if warnings_out:
+        summary["verdict"] = f"Partial search: {summary['verdict']}; review before removal"
         summary["warnings_out"] = list(warnings_out)
         summary["partial_success"] = True
         extra["warnings_out"] = list(warnings_out)
@@ -601,15 +608,18 @@ def _emit_surface_items(items, surface):
         click.echo(f"    ... +{len(items) - 3} more")
 
 
-def _emit_text(analyses, targets, reachable_from):
+def _emit_text(analyses, targets, reachable_from, *, warnings_out=None):
     overall_load = sum(1 for s in targets if _verdict_for(analyses[s])[0] == "LOAD-BEARING")
-    click.echo(f"VERDICT: {len(targets)} string(s) checked, {overall_load} load-bearing")
+    prefix = "Partial search: " if warnings_out else ""
+    click.echo(f"VERDICT: {prefix}{len(targets)} string(s) checked, {overall_load} load-bearing")
     if reachable_from:
         click.echo(f"  reachability anchored at entry: {reachable_from}")
     click.echo()
     for s in targets:
         a = analyses[s]
         verdict, reason = _verdict_for(a)
+        if warnings_out and verdict == "SAFE-TO-REMOVE":
+            verdict, reason = "REVIEW", "search incomplete; absence is unconfirmed"
         click.echo(f"--- {s} — {verdict} ({reason}) ---")
         click.echo(f"  total references: {a['total']}")
         for surface, items in sorted(a["surfaces"].items()):

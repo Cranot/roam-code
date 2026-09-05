@@ -156,14 +156,16 @@ def safe_delete(ctx, name):
         # --- Verdict ---
         if len(non_test_callers) == 0 and dependent_count == 0:
             if file_imported and sibling_refs > 0:
-                verdict = "SAFE"
+                verdict = "REVIEW"
                 reason = (
-                    f"No references. File is imported but {sibling_refs} "
-                    f"sibling symbols are used — this one is skipped."
+                    f"No indexed references; {sibling_refs} sibling symbols are used. "
+                    "Importers were not checked for this export; dynamic/member access may be unresolved."
                 )
             elif file_imported:
-                verdict = "SAFE"
-                reason = "No references. File is imported but no one uses this symbol."
+                verdict = "REVIEW"
+                reason = (
+                    "No indexed references; the file is imported. Verify namespace and dynamic access before deletion."
+                )
             else:
                 verdict = "SAFE"
                 reason = "No references and file is not imported by anyone."

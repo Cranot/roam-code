@@ -20,6 +20,7 @@ Authoritative counts (AST-derived, env-independent): `command_count: 287 · cano
 - Getting started tutorial: `templates/distribution/landing-page/docs/getting-started.html`
 - Command reference with examples: `templates/distribution/landing-page/docs/command-reference.html`
 - Architecture guide and diagram: `templates/distribution/landing-page/docs/architecture.html`
+- Detector evidence and limitations: [docs/concepts/detector-evidence.md](docs/concepts/detector-evidence.md) — static graph coverage, language context, confidence semantics, and command-scope differences.
 - Live URL: https://roam-code.com/docs/
 
 ## Where files go (private vs public)
@@ -106,6 +107,14 @@ The single hardest-earned lesson from the 212-eval corpus. Three commands were m
 **When adding tests / dogfooding / triaging: run every command at least once.** Empty output is itself signal; non-empty output on a "no X" project is the strongest signal of all. See `internal/dogfood/EVALS-HOW-TO.md` for the full lesson.
 
 ### Adding-a-command checklist (informed by patterns 1-6 above)
+
+For detector corrections, add paired positive/negative controls: remove the
+reported false positive while retaining a genuine finding. Inspect matched
+source, receiver identity, loop placement, and language/framework applicability;
+method names alone do not establish database effects, recursion, or safe
+optimization. Reuse shared resolution helpers and document their limitations.
+Use the [detector evidence guide](docs/concepts/detector-evidence.md) as the
+cross-command interpretation reference; keep dated audit results in `internal/`.
 
 Before merging a new `cmd_X.py`:
 
@@ -685,7 +694,7 @@ distinct object).
 - tree-sitter >= 0.23 (AST parsing)
 - tree-sitter-language-pack >= 1.13.3, < 1.14 (cross-process-safe parser cache)
 - networkx >= 3.0 (graph algorithms)
-- Optional: fastmcp >= 2.0 (MCP server — `pip install "roam-code[mcp]"`)
+- Optional: fastmcp >= 2.0, < 4 and mcp >= 1.28.1, < 2 (MCP server — `pip install "roam-code[mcp]"`; newer major APIs require migration)
 - Dev: pytest >= 7.0, pytest-xdist >= 3.0, ruff >= 0.4
 
 ## Release discipline — green BEFORE the push, always
@@ -767,7 +776,7 @@ Additional commands: `roam health` (0-100 score), `roam impact <name>` (what bre
 Index-aware text search (added on top of grep / refs):
 - `roam grep <pattern> [--reachable-from <entry>] [--unreachable] [--co-occur] [--missing-pattern P] [--rank-by importance] [--group-by symbol] [--blame] [--heat]` — grep + reachability + PageRank + clones + bridges. Supports `-e` repeatable, `--patterns-from FILE`, `-g` repeatable, `-F`. Engine: ripgrep > git grep > fallback (pin via `ROAM_GREP_ENGINE`).
 - `roam refs-text <string>...` — string audit with verdict (SAFE-TO-REMOVE / REVIEW / LOAD-BEARING). Groups refs by surface (code/test/docs/config/dead) and annotates reachability.
-- `roam delete-check [--source working|staged|pr|head] [--ci]` — gates the diff on surviving references; exits 5 on BREAK-RISK with `--ci`.
+- `roam delete-check [--source working|staged|pr|head] [--ci]` — gates the diff on surviving references; exits 5 on BREAK-RISK or incomplete search with `--ci`.
 - `roam history-grep <pattern> [--polarity]` — git pickaxe (-S/-G) with author/date and introduced/removed annotation.
 
 Run `roam --help` for the 5-verb core; `roam --help-all` for all 287 command names; `roam surface --json` for the machine-readable inventory. Use `roam --json <cmd>` for structured output.

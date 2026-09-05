@@ -430,7 +430,7 @@ class TestAIRatioCommand:
         result = _invoke(["ai-ratio"], cwd=ai_ratio_project)
         assert result.exit_code == 0
         assert "VERDICT:" in result.output
-        assert "estimated AI-generated code" in result.output
+        assert "not an authorship estimate" in result.output
 
     def test_signals_section(self, ai_ratio_project):
         result = _invoke(["ai-ratio"], cwd=ai_ratio_project)

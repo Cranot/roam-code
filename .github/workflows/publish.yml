@@ -37,7 +37,7 @@ concurrency:
   cancel-in-progress: false
 
 # Build and resolution jobs never receive an OIDC token. Privileged permissions
-# are granted only to the two jobs that need them.
+# are granted only to publishing/signing jobs and the verified container call.
 permissions:
   contents: read
 
@@ -1531,3 +1531,15 @@ jobs:
 
       - name: Verify production security headers
         run: python scripts/verify_release.py --headers
+
+  container:
+    name: Publish the verified container
+    needs: [resolve-ref, smoke]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/container.yml
+    with:
+      tag: ${{ needs.resolve-ref.outputs.tag }}
+      sha: ${{ needs.resolve-ref.outputs.sha }}

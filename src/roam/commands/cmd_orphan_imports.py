@@ -499,7 +499,7 @@ def _indexed_js_modules(conn) -> set[str]:
         # Strip extension and `index` filename so extension-less imports
         # (`./utils/format`) match too. Includes .vue / .svelte for
         # bundlers that allow omitting those extensions.
-        without_ext = re.sub(r"\.(js|jsx|ts|tsx|mjs|cjs|vue|svelte)$", "", path)
+        without_ext = re.sub(r"\.(js|jsx|ts|tsx|mts|cts|mjs|cjs|vue|svelte)$", "", path)
         out.add(without_ext)
         if without_ext.endswith("/index"):
             out.add(without_ext[: -len("/index")])
@@ -1279,10 +1279,12 @@ def _scan_python(conn) -> tuple[list[dict], int]:
 
 
 def _scan_javascript(conn) -> tuple[list[dict], int]:
+    from roam.languages.js_resolution import source_path_candidates
+
     indexed = _indexed_js_modules(conn)
     ph = ",".join("?" * len(JS_FAMILY_LANGUAGES))
     rows = conn.execute(
-        f"SELECT path FROM files WHERE language IN ({ph}) ORDER BY path",
+        f"SELECT path, language FROM files WHERE language IN ({ph}) ORDER BY path",
         JS_FAMILY_LANGUAGES,
     ).fetchall()
     orphans: list[dict] = []
@@ -1321,7 +1323,7 @@ def _scan_javascript(conn) -> tuple[list[dict], int]:
                     else:
                         stack.append(p)
                 target = "/".join(stack)
-            if target in indexed:
+            if any(candidate in indexed for candidate in source_path_candidates(target)):
                 continue
             # CSS/SCSS/etc. imports resolve to an on-disk asset the indexer
             # doesn't register as a JS module — check the filesystem before
@@ -1330,7 +1332,7 @@ def _scan_javascript(conn) -> tuple[list[dict], int]:
                 continue
             orphans.append(
                 {
-                    "language": "javascript",
+                    "language": r[1] or "javascript",
                     "file": rel_path,
                     "line": line_no,
                     "module": spec,

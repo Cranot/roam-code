@@ -9,6 +9,9 @@ __pycache__
 .mypy_cache
 .ruff_cache
 .roam
+internal
+.env
+.env.*
 benchmarks
 docs
 reports

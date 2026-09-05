@@ -136,11 +136,17 @@ def _analyze_cycle(
     imported_names_cache: dict[str, set[str] | None],
     crossing_symbols_cache: dict[tuple[int, int], list[dict]],
 ) -> dict:
+    # SCC membership is not an ordered cycle. Show only edges that actually
+    # exist when rendering arrows; keep the full component separately.
+    cycle_edges = nx.find_cycle(graph.subgraph(members))
+    cycle_path_nodes = [edge[0] for edge in cycle_edges] + [cycle_edges[-1][1]]
+    cycle_paths = [_path(graph, node) for node in cycle_path_nodes]
     candidates = find_minimum_cycle_break_edge_sets(graph, members)
     if not candidates:
         ordered = sorted(members, key=lambda file_id: _path(graph, file_id))
         return {
             "members": [{"id": file_id, "file": _path(graph, file_id)} for file_id in ordered],
+            "cycle_path": cycle_paths,
             "closing_edges": [],
             "recommendations": [],
             "recommendation_state": "minimum_break_not_computed",
@@ -162,8 +168,7 @@ def _analyze_cycle(
         ),
         key=lambda item: item[0],
     )
-    ordered_paths = [_path(graph, file_id) for file_id in ordered]
-    cycle_path = " → ".join([*ordered_paths, ordered_paths[0]])
+    cycle_path = " → ".join(cycle_paths)
     recommendations = []
     if resolved:
         for edge in edges:
@@ -172,6 +177,7 @@ def _analyze_cycle(
 
     return {
         "members": [{"id": file_id, "file": _path(graph, file_id)} for file_id in ordered],
+        "cycle_path": cycle_paths,
         "closing_edges": edges,
         "recommendations": recommendations,
         "recommendation_state": "resolved" if resolved else "unresolved_crossing_symbols",
@@ -274,7 +280,10 @@ def cycle_break(ctx, json_output):
         click.echo(f"VERDICT: {verdict}")
         for index, finding in enumerate(findings, 1):
             members = [member["file"] for member in finding["members"]]
-            click.echo(f"\n  cycle {index}: {' → '.join([*members, members[0]])}")
+            click.echo(f"\n  component {index}: {len(members)} files")
+            click.echo(f"    cycle: {' → '.join(finding['cycle_path'])}")
+            if finding.get("recommendation_reason"):
+                click.echo(f"    {finding['recommendation_reason']}")
             for edge in finding["closing_edges"]:
                 click.echo(f"    closing edge: {edge['source']['file']} → {edge['target']['file']}")
                 names = ", ".join(symbol["name"] for symbol in edge["symbols"])

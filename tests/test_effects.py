@@ -208,7 +208,7 @@ class TestJavaScriptEffects:
         assert NETWORK in effects
 
     def test_db_write_create(self):
-        body = "await User.create({ name, email })"
+        body = "await prisma.user.create({ name, email })"
         effects = classify_symbol_effects(body, "javascript")
         assert WRITES_DB in effects
 

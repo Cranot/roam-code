@@ -108,13 +108,11 @@ VERDICT: BLOCK
 
       <h2>2. The deletion that breaks production</h2>
       <p><strong>Scenario.</strong> The agent is "cleaning up dead code" and deletes <code>resolve_legacy_token()</code>. Tests pass — there are no direct callers in source. The function is reached at runtime through a string lookup in a dispatcher map. Production breaks the next morning.</p>
-      <p><strong>What Roam does.</strong> <code>roam impact</code> follows static + bridge edges (REST, template, config, ORM, dispatcher tables). <code>roam safe-delete</code> returns a binary verdict.</p>
+      <p><strong>What Roam does.</strong> <code>roam impact</code> follows indexed static and supported bridge edges. <code>roam safe-delete</code> returns <code>SAFE</code>, <code>REVIEW</code>, or <code>UNSAFE</code> with evidence. Dynamic dispatch may remain unresolved; an imported file without resolved use requires review, not automatic deletion. The example below illustrates that unresolved case, not a measured runtime trace.</p>
       <pre class="terminal" aria-label="Safe-delete demo"><span class="t-prompt">$</span> <span class="t-cmd">roam safe-delete resolve_legacy_token</span>
-VERDICT: UNSAFE
-reachable_from: 3 entry points (login_handler, sso_callback, mobile_v1)
-indirect callers: 1 (dispatcher_map['legacy_token'] in src/auth/dispatch.py:67)
-runtime hits: 1,247 in last 7 days
-recommendation: do not delete. Add deprecation warning instead.</pre>
+VERDICT: REVIEW
+No indexed references; the file is imported. Verify namespace and dynamic access before deletion.</pre>
+      <p>Read the <a href="/docs/command-reference#evidence-limits">evidence limits</a> before treating a static finding as deletion clearance or an optimization instruction.</p>
 
       <h2>3. The accidental O(n²) the linter approved</h2>
       <p><strong>Scenario.</strong> The agent rewrites a list-deduplication loop. It's clean, idiomatic, and uses <code>list.append</code> + <code>if x not in seen</code>. Linters love it. At 100 records it runs in 2 ms; at 50,000 records it takes 18 seconds and the request times out.</p>

@@ -228,6 +228,41 @@
       </table>
     </section>
 
+    <section id="evidence-limits">
+      <h2>Interpret evidence before acting</h2>
+      <p>Read the verdict together with scope, resolution, metric definitions,
+        <code>partial_success</code>, truncation, and skipped-check reasons.
+        Exit zero does not mean every check ran or every finding is resolved.</p>
+      <ul>
+        <li><code>safe-delete</code> emits <code>SAFE / REVIEW / UNSAFE</code>.
+          Missing indexed references do not prove absence of dynamic, member,
+          or external use; imported-but-unresolved cases require review.</li>
+        <li><code>algo</code> reports candidate patterns. Inspect the exact source,
+          loop inputs, receiver identity, and ordering requirements; test and
+          measure before applying an optimization.</li>
+        <li><code>test-map</code>, <code>ai-readiness</code>, and
+          <code>path-coverage</code> use static relationships, not runtime coverage.
+          Depth-pruned paths and empty input cannot establish a clean result.</li>
+        <li><code>ai-ratio</code> is an uncalibrated pattern score, not an AI-written
+          percentage. Legacy JSON score keys do not establish authorship.</li>
+        <li><code>taint</code> distinguishes dataflow evidence from co-occurrence.
+          Inspect the sink argument, sanitizers, and execution context; even a
+          high-confidence graph finding is not exploitability proof.</li>
+        <li><code>partition</code> chooses two through eight agents by default;
+          the MCP <code>roam_partition</code> default is explicitly four. Review
+          shared files and merge order; the manifest does not enforce ownership.</li>
+      </ul>
+      <p>Global flags go before the command: <code>roam --detail algo</code> or
+        <code>roam --json ai-readiness</code>. Compare Git structure with
+        <code>roam semantic-diff --base HEAD~1</code>. Use
+        <code>roam plan-refactor SymbolName</code> for a symbol and
+        <code>roam split path/to/file.ts</code> for a file.</p>
+      <p><code>magic-numbers</code> defaults to the current directory, respects
+        discovery exclusions, and includes monorepo workspaces. Relative
+        JavaScript imports can resolve to TypeScript source through extension
+        substitution; this is not a complete compiler or bundler resolver.</p>
+    </section>
+
     <section id="mutate">
       <h2>Mutate &mdash; probabilistic intent, deterministic compiler</h2>
       <p>
@@ -499,7 +534,7 @@
       <tr><td><code>roam ai-readiness</code></td><td>Estimate how effectively AI agents can work on this codeb...</td></tr>
       <tr><td><code>roam check-rules</code></td><td>Run structural governance rules against the indexed codeb...</td></tr>
       <tr><td><code>roam dict-consistency</code></td><td>Audit string-keyed dicts in a Python file for cross-dict ...</td></tr>
-      <tr><td><code>roam ai-ratio</code></td><td>Estimate the percentage of AI-generated code from git pat...</td></tr>
+      <tr><td><code>roam ai-ratio</code></td><td>Inspect AI-associated patterns as an uncalibrated score, not an authorship estimate.</td></tr>
       <tr><td><code>roam trends</code></td><td>Health trend timeline, anomaly detection, per-metric trac...</td></tr>
       <tr><td><code>roam weather</code></td><td>Rank files by churn x complexity score (highest-leverage ...</td></tr>
       <tr><td><code>roam timeline</code></td><td>Show commits that touched the file owning &lt;symbol&gt;.</td></tr>
@@ -571,7 +606,7 @@
       <tr><td><code>roam batch-search</code></td><td>Search up to 10 symbol-name patterns in a single command.</td></tr>
       <tr><td><code>roam complete</code></td><td>Return left-anchored prefix completions for the given par...</td></tr>
       <tr><td><code>roam grep</code></td><td>Context-enriched grep with reachability, clone, and bridg...</td></tr>
-      <tr><td><code>roam refs-text</code></td><td>Audit literal strings across the project: per-surface ref...</td></tr>
+      <tr><td><code>roam refs-text</code></td><td>Audit string references; require REVIEW when the search is incomplete.</td></tr>
       <tr><td><code>roam history-grep</code></td><td>Through-history search using git pickaxe (-S / -G).</td></tr>
       <tr><td><code>roam file</code></td><td>Show file skeleton: all definitions with signatures.</td></tr>
       <tr><td><code>roam symbol</code></td><td>Show definition, callers, and callees for SYMBOL.</td></tr>
@@ -631,7 +666,7 @@
       <tr><td><code>roam flag-dead</code></td><td>Detect potentially stale feature flag code (conditionally...</td></tr>
       <tr><td><code>roam duplicates</code></td><td>Detect semantically duplicate functions via structural si...</td></tr>
       <tr><td><code>roam safe-delete</code></td><td>Check if SYMBOL can be safely deleted.</td></tr>
-      <tr><td><code>roam delete-check</code></td><td>Gate the working diff on surviving references to deleted ...</td></tr>
+      <tr><td><code>roam delete-check</code></td><td>Check surviving references; --ci refuses break risks and incomplete searches.</td></tr>
       <tr><td><code>roam split</code></td><td>Analyze a file's internal structure and suggest how to sp...</td></tr>
       <tr><td><code>roam fn-coupling</code></td><td>Show function-level temporal coupling (hidden dependencies).</td></tr>
       <tr><td><code>roam doc-staleness</code></td><td>Detect concrete docstring claims that no longer match the...</td></tr>

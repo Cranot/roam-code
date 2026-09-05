@@ -318,6 +318,7 @@ def _score_test_signal(conn) -> tuple[int, dict]:
 
     Measures % of source files that have a matching test file.
     """
+    from roam.commands.changed_files import is_test_file
     from roam.index.test_conventions import get_conventions
 
     # Get all source files
@@ -334,6 +335,17 @@ def _score_test_signal(conn) -> tuple[int, dict]:
         all_paths.add(r["path"].replace("\\", "/"))
 
     conventions = get_conventions()
+    # Test-map also uses indexed file dependencies. A naming-only score
+    # misses differently named suites and workspace test directories.
+    mapped_paths = {
+        row["target_path"].replace("\\", "/")
+        for row in conn.execute(
+            "SELECT source.path AS test_path, target.path AS target_path "
+            "FROM file_edges fe JOIN files source ON source.id = fe.source_file_id "
+            "JOIN files target ON target.id = fe.target_file_id"
+        )
+        if is_test_file(row["test_path"])
+    }
     source_count = 0
     with_test = 0
 
@@ -351,8 +363,10 @@ def _score_test_signal(conn) -> tuple[int, dict]:
         source_count += 1
 
         # Check each convention for a matching test file
-        found_test = False
+        found_test = path in mapped_paths
         for conv in conventions:
+            if found_test:
+                break
             if lang and lang not in conv.languages:
                 continue
             candidates = conv.source_to_test_paths(path)
@@ -378,6 +392,7 @@ def _score_test_signal(conn) -> tuple[int, dict]:
         "source_files": source_count,
         "with_tests": with_test,
         "coverage_rate": round(coverage_rate * 100, 1),
+        "coverage_definition": "source files matched by test naming conventions or indexed test-file dependencies; not runtime coverage",
     }
 
 

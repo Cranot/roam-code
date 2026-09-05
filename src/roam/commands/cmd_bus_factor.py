@@ -1442,7 +1442,9 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                     f"last active: {primary_time}"
                 )
                 if r["stale_primary"]:
-                    click.echo(f"    ** STALE: primary author inactive >{stale_months} months **")
+                    click.echo(
+                        f"    ** STALE: primary author's last change in this directory >{stale_months} months ago **"
+                    )
             else:
                 # Multiple contributors: show top authors
                 top_parts = []
@@ -1451,7 +1453,9 @@ def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode, persist
                 dir_time = _format_relative_time(r["dir_last_active"])
                 click.echo(f"    Top: {', '.join(top_parts)}, last active: {dir_time}")
                 if r["stale_primary"]:
-                    click.echo(f"    ** STALE: primary author inactive >{stale_months} months **")
+                    click.echo(
+                        f"    ** STALE: primary author's last change in this directory >{stale_months} months ago **"
+                    )
 
             click.echo()
 

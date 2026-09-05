@@ -1916,11 +1916,12 @@ class TestContext:
 
 class TestSafeDelete:
     def test_safe_delete_unused(self, polyglot):
-        """roam safe-delete on an unused symbol should show SAFE."""
-        # _internal is a private method in Animal with no callers
+        """An imported file prevents zero indexed callers from proving safety."""
+        # _internal has no resolved callers, but its containing file is imported.
         out, rc = roam("safe-delete", "_internal", cwd=polyglot)
         assert rc == 0
-        assert "SAFE" in out
+        assert "VERDICT: REVIEW" in out
+        assert "File imported: yes" in out
 
     def test_safe_delete_used(self, polyglot):
         """roam safe-delete on a used symbol should show UNSAFE or REVIEW."""
@@ -1948,14 +1949,15 @@ class TestSafeDelete:
         assert "transitive_dependents" in data
 
     def test_safe_delete_json_unused(self, polyglot):
-        """roam --json safe-delete on unused symbol should return SAFE verdict."""
+        """JSON discloses the same imported-file uncertainty as text."""
         import json
 
         out, rc = roam("--json", "safe-delete", "_internal", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
-        assert data["verdict"] == "SAFE"
+        assert data["verdict"] == "REVIEW"
         assert data["direct_callers"] == 0
+        assert data["file_imported"] is True
 
     def test_safe_delete_not_found(self, polyglot):
         """roam safe-delete with nonexistent symbol must communicate failure.

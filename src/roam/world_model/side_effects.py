@@ -298,6 +298,34 @@ _SOURCE_PATTERNS: tuple[tuple[re.Pattern, str, str], ...] = (
     (re.compile(r"\b(?:fs\.)?readFile(?:Sync)?\s*\("), "io_read", "fs.readFile"),
     (re.compile(r"\bBun\.serve\s*\(|\bcreateServer\s*\("), "process", "http.server"),
     (re.compile(r"\bset(?:Interval|Timeout)\s*\("), "process", "timer"),
+    (
+        re.compile(r"\b(?:window\.)?(?:localStorage|sessionStorage)\.(?:setItem|removeItem|clear)\s*\("),
+        "io_write",
+        "browser.storage.write",
+    ),
+    (
+        re.compile(r"\b(?:window\.)?(?:localStorage|sessionStorage)\.(?:getItem|key)\s*\("),
+        "io_read",
+        "browser.storage.read",
+    ),
+    (
+        re.compile(r"\bdocument\.(?:querySelector(?:All)?|getElementById|getElementsBy\w+)\s*\("),
+        "io_read",
+        "browser.dom.read",
+    ),
+    (
+        re.compile(r"\.(?:appendChild|removeChild|replaceChild|insertAdjacentHTML|setAttribute|removeAttribute)\s*\("),
+        "mutation",
+        "browser.dom.mutation",
+    ),
+    (re.compile(r"\.classList\.(?:add|remove|toggle|replace)\s*\("), "mutation", "browser.classList.mutation"),
+    (re.compile(r"\.(?:innerHTML|textContent)\s*="), "mutation", "browser.dom.assignment"),
+    (re.compile(r"\bnew\s+WebSocket\s*\("), "io_write", "browser.websocket"),
+    (
+        re.compile(r"\.(?:drawArrays|drawElements|clearColor|bufferData|texImage2D)\s*\("),
+        "mutation",
+        "browser.webgl.mutation",
+    ),
 )
 
 # `open(path, 'w'|'a'|'x'|'r+')` ⇒ io_write; `open(path, 'r')` or 1-arg
@@ -318,7 +346,9 @@ _PRE_FILTER_RE = re.compile(
     r"Path\.|"
     # JS/TS sink anchors (gate Layer-2 patterns above for TypeScript bodies)
     r"fetch|axios|Database|\.query|\.exec|\.prepare|writeFile|readFile|"
-    r"Bun\.|createServer|setInterval|setTimeout"
+    r"Bun\.|createServer|setInterval|setTimeout|localStorage|sessionStorage|document|"
+    r"appendChild|removeChild|replaceChild|insertAdjacentHTML|setAttribute|removeAttribute|"
+    r"classList|innerHTML|textContent|WebSocket|drawArrays|drawElements|clearColor|bufferData|texImage2D"
     r")"
 )
 

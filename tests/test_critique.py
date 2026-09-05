@@ -582,6 +582,7 @@ _PIPED_DIFF_OUTPUT_SNAPSHOT = (
     "\n"
     "  changed files:   1\n"
     "  changed symbols: 2\n"
+    "  clones-not-edited: skipped:no_clone_pairs (run `roam clones --persist`)\n"
     "\n"
     "NEXT STEPS:\n"
     "  1. Run `roam diff` to confirm the structural delta of what you actually changed\n"

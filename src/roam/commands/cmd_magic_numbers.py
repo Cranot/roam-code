@@ -402,9 +402,12 @@ def _discover_files(root: Path) -> list[Path]:
         if root.suffix in _PY_EXTS or root.suffix in _TS_LANG_EXTS:
             return [root]
         return []
+    from roam.index.discovery import discover_files
+
     out: list[Path] = []
     exts = _PY_EXTS | _TS_LANG_EXTS
-    for p in root.rglob("*"):
+    for rel_path in discover_files(root):
+        p = root / rel_path
         if not p.is_file():
             continue
         if p.suffix not in exts:
@@ -638,7 +641,7 @@ def _build_clusters(findings: list[dict]) -> dict[str, dict]:
     outputs=("findings_envelope",),
 )
 @click.command(name="magic-numbers")
-@click.argument("path", required=False, default="src/", type=click.Path(file_okay=True, dir_okay=True))
+@click.argument("path", required=False, default=".", type=click.Path(file_okay=True, dir_okay=True))
 @click.option("--threshold", type=int, default=2, help="Flag numbers appearing >= N times (default 2).")
 @click.option("--include-trivial", is_flag=True, help="Also flag 0, 1, -1, 2 (skipped by default).")
 @click.option(
@@ -651,7 +654,8 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
     """Scan source for hardcoded numeric constants that should be
     named constants. Python via ``ast``; JS/TS/Go/Rust/Java/Ruby/C/C#
     via tree-sitter (with a regex fallback when the grammar isn't
-    available)."""
+    available). Defaults to the current directory, including monorepo
+    workspaces; respects discovery exclusions and skips test files."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = Path(path)
 
@@ -689,13 +693,13 @@ def magic_numbers(ctx, path, threshold, include_trivial, cluster):
             language = get_language_for_file(str(f)) or ""
             occs, status = _scan_ts_file_status(f, language, include_trivial)
         if status == _UNREADABLE:
-            files_unreadable.append(str(f))
+            files_unreadable.append(f.as_posix())
         elif status == _UNPARSEABLE:
-            files_unparseable.append(str(f))
+            files_unparseable.append(f.as_posix())
         for value, lineno, snippet in occs:
             by_value[value].append(
                 {
-                    "file": str(f),
+                    "file": f.as_posix(),
                     "line": lineno,
                     "context_snippet": snippet,
                 }
