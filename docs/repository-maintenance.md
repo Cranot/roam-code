@@ -205,6 +205,13 @@ registry-derived count gates above for the public product surface.
 
 ## Finish a change
 
+For evidence-sensitive changes, read the
+[verification evidence guide](concepts/verification-evidence.md). Keep the
+regression fixture fixed across the unfixed/fixed comparison and test the real
+consumer after serialization or dispatch. A valid record from the wrong
+subject, a failed prerequisite, or a test selector that ran no relevant cases
+does not establish the claimed repair.
+
 For a field report, reproduce each claim you intend to fix before editing.
 Use small positive and negative fixtures: the false positive must disappear
 while a genuine instance remains detectable. Then invoke the affected CLI

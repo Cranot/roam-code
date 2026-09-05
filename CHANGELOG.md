@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Saved-proof input checks.** `roam verdict` refuses duplicate JSON keys, non-finite numbers, and malformed evidence fields before they can be mistaken for absent checks or review. UTF-8 files are read consistently across platforms; unreadable input and unknown review statuses return matching structured errors instead of tracebacks or inconsistent error codes. Valid legacy bundles remain supported.
+- **A clearer introduction.** The README now starts with practical questions, plain-language command descriptions, and explicit limits. Historical benchmark results remain available in an expandable section; generated command counts use the same simpler wording.
+
 ### Fixed
+- **Proof-bundle review continuity.** Preserve review obligations and verifier results through composition and JSON serialization, so re-reading a blocked bundle cannot silently drop review failures or coverage warnings. Keep absent and explicitly empty review evidence distinct; this does not authenticate self-reported evidence.
+- **Complete change-scan disclosure.** Treat failed untracked-file enumeration as an incomplete Git fallback scan, retaining already discovered paths. Read filenames as NUL-delimited UTF-8 records instead of quoted or whitespace-stripped lines.
+- **Truthful benchmark accounting.** Retain invalid and unreadable saved cells, report observed metric denominators, keep missing measurements unknown, and separate timeout estimates from recorded costs. The live harness rejects unsuccessful result envelopes, preserves assigned/dispatched/reused counts, refuses stale output after failed dispatch, and discloses cell-record persistence failures. Saved artifacts alone do not prove dispatches or verified task success.
+- **Verification guidance.** Document fixed bad/good regression controls, actual consumer round trips, evidence scope, protected evaluation outcomes, and narrower interpretation of historical prompt-design observations.
 - **Published installation pins.** Update copied installation instructions and generated CI templates to verified 14.0.2 artifacts, independently pin the dormant Action example to the release commit, and explain how immutable Action defaults and bundled templates retain their original versions.
 - **Release draft read-back.** After creating one GitHub release draft, retry only its read-only visibility check within a fixed budget. Keep lookup errors, ambiguous drafts, identity mismatches, asset mismatches and signature failures blocking; never create another draft as a retry.
 - **Private smoke evidence.** Keep the developer command-smoke harness's raw JSONL beside its report under ignored `internal/smoke/`, matching the documented output location. Preserve older logs rather than overwriting a public-directory copy.

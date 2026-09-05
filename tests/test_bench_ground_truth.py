@@ -199,6 +199,7 @@ def test_bench_compile_default_off_no_oracle_calls(
             json.dumps(
                 {
                     "type": "result",
+                    "subtype": "success",
                     "num_turns": 1,
                     "duration_ms": 100,
                     "total_cost_usd": 0.001,
@@ -255,6 +256,7 @@ def test_bench_compile_ground_truth_records_score(
             json.dumps(
                 {
                     "type": "result",
+                    "subtype": "success",
                     "num_turns": 1,
                     "duration_ms": 100,
                     "total_cost_usd": 0.001,
@@ -312,6 +314,7 @@ def test_bench_compile_ground_truth_unsupported_shape_empty_score(
             json.dumps(
                 {
                     "type": "result",
+                    "subtype": "success",
                     "num_turns": 1,
                     "duration_ms": 100,
                     "total_cost_usd": 0.001,

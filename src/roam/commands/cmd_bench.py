@@ -20,6 +20,7 @@ explicitly with `--tasks-file` + `--runs`.
 from __future__ import annotations
 
 import json
+import math
 import os
 import statistics
 import subprocess
@@ -105,11 +106,13 @@ def _run_claude_p(prompt: str, out_path: Path, timeout_sec: int, model: str | No
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_sec,
             stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
-        out_path.write_text(json.dumps({"type": "error", "reason": "timeout"}))
+        out_path.write_text(json.dumps({"type": "error", "reason": "timeout"}), encoding="utf-8")
         return {"error": "timeout", "elapsed": time.time() - started}
     if proc.returncode != 0 or not proc.stdout.strip():
         out_path.write_text(
@@ -119,10 +122,11 @@ def _run_claude_p(prompt: str, out_path: Path, timeout_sec: int, model: str | No
                     "stderr": proc.stderr[:500],
                     "returncode": proc.returncode,
                 }
-            )
+            ),
+            encoding="utf-8",
         )
         return {"error": "no_output", "elapsed": time.time() - started}
-    out_path.write_text(proc.stdout)
+    out_path.write_text(proc.stdout, encoding="utf-8")
     return {"ok": True, "elapsed": time.time() - started}
 
 
@@ -166,27 +170,51 @@ def _vanilla_cache_store(task: str, model: str | None, source_path: Path) -> Non
 
 
 def _parse_cell(path: Path) -> dict | None:
-    text = path.read_text()
-    j = text[text.find("{") :]
     try:
+        text = path.read_text(encoding="utf-8")
+        j = text[text.find("{") :]
         d = json.loads(j)
-    except json.JSONDecodeError:
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return None
-    if d.get("type") == "error":
+    if (
+        not isinstance(d, dict)
+        or d.get("type") == "error"
+        or d.get("subtype") != "success"
+        or d.get("is_error", False) is not False
+        or not isinstance(d.get("result", ""), str)
+        or not isinstance(d.get("usage", {}), dict)
+    ):
         return None
     u = d.get("usage", {})
+    input_counts = [
+        _observed_number(u.get(key, None if key == "input_tokens" else 0))
+        for key in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+    ]
     return {
-        "num_turns": d.get("num_turns"),
-        "duration_ms": d.get("duration_ms"),
-        "cost_usd": d.get("total_cost_usd"),
-        "input_tokens": u.get("input_tokens", 0)
-        + u.get("cache_read_input_tokens", 0)
-        + u.get("cache_creation_input_tokens", 0),
-        "output_tokens": u.get("output_tokens", 0),
+        "num_turns": _observed_number(d.get("num_turns")),
+        "duration_ms": _observed_number(d.get("duration_ms")),
+        "cost_usd": _observed_number(d.get("total_cost_usd")),
+        "input_tokens": sum(input_counts) if u and all(n is not None for n in input_counts) else None,
+        "output_tokens": _observed_number(u.get("output_tokens")),
         "result_len": len(d.get("result", "")),
         # W62 fix — include the result text so --judge can score it.
         "result": d.get("result", ""),
     }
+
+
+def _observed_number(value: object) -> int | float | None:
+    """Keep absent or malformed benchmark measurements unknown, including bools."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return value if value >= 0 and math.isfinite(value) else None
+    except OverflowError:
+        return None
+
+
+def _mean_text(stats: dict | None) -> str:
+    """Render a measured mean without treating a missing measurement as zero."""
+    return "unknown" if stats is None else f"{stats['mean']:.4g}"
 
 
 def _agg(values: list[float]) -> dict | None:
@@ -636,8 +664,9 @@ def bench_compile(
         for c in cells:
             if c["cond"] == "vanilla":
                 cached = _vanilla_cache_lookup(c["task"], model)
-                if cached:
+                if cached and _parse_cell(Path(cached)) is not None:
                     shutil.copyfile(cached, c["out_path"])
+                    c["reused"] = True
                     reused_count += 1
                     continue
             live_cells.append(c)
@@ -660,10 +689,11 @@ def bench_compile(
             try:
                 r = f.result()
                 # W65 — write fresh vanilla results to the cache for next time.
-                if cell["cond"] == "vanilla" and r.get("ok"):
+                if cell["cond"] == "vanilla" and r.get("ok") and _parse_cell(cell["out_path"]) is not None:
                     _vanilla_cache_store(cell["task"], model, cell["out_path"])
             except Exception as e:  # noqa: BLE001
                 r = {"error": str(e)}
+            cell["dispatch_error"] = not bool(r.get("ok"))
             if not json_mode:
                 marker = "OK" if r.get("ok") else f"FAIL ({r.get('error', '?')})"
                 click.echo(f"  {cell['task_id']}_{cell['cond']}_{cell['run']}: {marker} {r.get('elapsed', 0):.1f}s")
@@ -673,7 +703,9 @@ def bench_compile(
     by_cond: dict[str, list[dict]] = {c: [] for c in cond_list}
     tsv_rows: list[dict] = []  # ordered per-cell rows for TSV emission
     for c in cells:
-        parsed = _parse_cell(c["out_path"])
+        # A failed dispatch must not consume a stale artifact from an earlier
+        # invocation that happened to reuse the same output directory.
+        parsed = None if c.get("dispatch_error") else _parse_cell(c["out_path"])
         gt_score: str = ""
         if parsed and ground_truth:
             gt_score = _ground_truth_score(
@@ -701,23 +733,27 @@ def bench_compile(
     # Emit per-cell TSV with `ground_truth_score` APPENDED at end (back-compat
     # readers ignore extra cols). Written next to the raw JSON cells.
     tsv_path = work_dir / "cells.tsv"
+    persistence_failed = False
     try:
         lines = ["task_id\tcond\trun\tground_truth_score"]
         for r in tsv_rows:
             lines.append(f"{r['task_id']}\t{r['cond']}\t{r['run']}\t{r['ground_truth_score']}")
         tsv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     except OSError:
-        pass  # best-effort
+        persistence_failed = True
 
     per_condition = {}
     for cond, rows in by_cond.items():
         per_condition[cond] = {
             "n": len(rows),
+            "assigned_cells": sum(c["cond"] == cond for c in cells),
+            "dispatched_cells": sum(c["cond"] == cond for c in live_cells),
+            "reused_cells": sum(c["cond"] == cond and bool(c.get("reused")) for c in cells),
             "turns": _agg([r["num_turns"] for r in rows if r["num_turns"] is not None]),
             "duration_ms": _agg([r["duration_ms"] for r in rows if r["duration_ms"] is not None]),
             "cost_usd": _agg([r["cost_usd"] for r in rows if r["cost_usd"] is not None]),
-            "output_tokens": _agg([r["output_tokens"] for r in rows]),
-            "input_tokens": _agg([r["input_tokens"] for r in rows]),
+            "output_tokens": _agg([r["output_tokens"] for r in rows if r["output_tokens"] is not None]),
+            "input_tokens": _agg([r["input_tokens"] for r in rows if r["input_tokens"] is not None]),
         }
         # W62 — judge score aggregate
         if judge_enabled:
@@ -725,15 +761,23 @@ def bench_compile(
             per_condition[cond]["judge_score"] = _agg(judge_scores)
 
     summary = {
-        "verdict": (f"{len(cells)} cells, {sum(len(r) for r in by_cond.values())} parsed, {total_elapsed:.0f}s wall"),
+        "verdict": (
+            f"{len(cells)} cells, {sum(len(r) for r in by_cond.values())} parsed, {total_elapsed:.0f}s wall"
+            + ("; cell record persistence failed" if persistence_failed else "")
+        ),
         "cells": len(cells),
+        "dispatched_cells": len(live_cells),
+        "reused_cells": reused_count,
         "parsed_cells": sum(len(r) for r in by_cond.values()),
         "elapsed_seconds": round(total_elapsed, 2),
         "out_dir": str(work_dir),
-        "partial_success": sum(len(r) for r in by_cond.values()) < len(cells),
+        "partial_success": persistence_failed or sum(len(r) for r in by_cond.values()) < len(cells),
+        "cell_records_persisted": not persistence_failed,
+        "metric_definition": "conditional_on_parsed_successful_result_envelopes",
     }
     facts = [
-        f"Dispatched {len(cells)} benchmark cells",
+        f"Dispatched {len(live_cells)} benchmark cells",
+        f"Reused {reused_count} cached cells",
         f"Parsed {summary['parsed_cells']} benchmark cells",
         f"Elapsed wall time {round(total_elapsed, 1)} seconds",
         f"raw JSON in {work_dir}",
@@ -773,10 +817,10 @@ def bench_compile(
             continue
         line = (
             f"{cond:<10} {s['n']:<4} "
-            f"{s['turns']['mean']:<8} "
-            f"{s['duration_ms']['mean']:<10.0f} "
-            f"{s['output_tokens']['mean']:<10.0f} "
-            f"${s['cost_usd']['mean']:.4f}"
+            f"{_mean_text(s['turns']):<8} "
+            f"{_mean_text(s['duration_ms']):<10} "
+            f"{_mean_text(s['output_tokens']):<10} "
+            f"{_mean_text(s['cost_usd'])}"
         )
         if judge_enabled and s.get("judge_score") and s["judge_score"].get("mean") is not None:
             line += f"  {s['judge_score']['mean']:.2f}"

@@ -23,6 +23,7 @@ the next website deployment; a Git push alone does not publish the site.
 | Understand data leaving the machine | [Network boundary](network-boundary.md) |
 | Interpret caller counts | [Caller metrics](concepts/caller-metrics.md) |
 | Evaluate findings and avoid overclaiming | [Detector evidence and limitations](concepts/detector-evidence.md) |
+| Verify a repair, proof bundle, or benchmark claim | [Verification evidence and accounting](concepts/verification-evidence.md) |
 | Reproduce an installation example | [Fresh-install smoke transcript](fresh-install-smoke.md) |
 | Review changes by release | [Changelog](../CHANGELOG.md) |
 
