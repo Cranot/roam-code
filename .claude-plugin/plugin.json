@@ -1,7 +1,7 @@
 {
     "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
     "name": "roam-code",
-    "version": "14.0.1",
+    "version": "14.0.2",
     "description": "Local codebase intelligence + change-safety gates for coding agents. REQUIRES Python 3.10+ and `pip install roam-code` first — this plugin launches the `roam` binary from your PATH, and its MCP server cannot start without it. Pre-indexes your repo's symbols, call graph, deps, and git history into SQLite (28 languages, 100% local, zero API keys), then exposes a lean `core` MCP preset: graph-precise search, callers/impact blast radius, coupling, dead code, taint reachability, and pre-merge verify/critique gates that catch regressions, broken references, AI-slop duplication, and convention drift before they ship.",
     "author": {
         "name": "Cranot",

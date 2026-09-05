@@ -76,10 +76,25 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[14.0.2] — 2026-09-05</h2>
+<h3>Added</h3>
+<ul>
+<li><strong>Explicit cold-start control.</strong> Set <code>ROAM_NO_AUTO_INDEX=1</code> to refuse implicit builds of missing or incomplete indexes with exit 3. Explicit <code>roam init</code> and <code>roam index</code> still build. JSON refusals preserve actionable state without opening the index or persisting response evidence; MCP bridges retain the corresponding structured error. Incorporates the cold-start/store direction proposed in <a href="https://github.com/Cranot/roam-code/pull/113">#113</a>.</li>
+</ul>
 <h3>Fixed</h3>
 <ul>
+<li><strong>One index store.</strong> <code>ROAM_DB_DIR</code> and configured <code>db_dir</code> now place the database, ownership lock and recovery marker together. Existence and recovery-path probes do not create directories. This redirects index storage, not configuration, ledgers or other requested artifacts; stop older writers before upgrading or moving a store.</li>
+<li><strong>Parseable cold-start output.</strong> Automatic-build progress stays on stderr, leaving JSON stdout parseable on the first analysis command.</li>
+<li><strong>Scoped workspace declarations.</strong> Import verification recognizes shared root development tools for declared npm/Yarn workspace members without leaking sibling runtime dependencies. Malformed manifests, escaping workspace paths and stale per-process dependency caches are handled conservatively.</li>
+<li><strong>More precise loop advice.</strong> Known collection mutations, including mutations through <code>this</code>, invalidate invariant-receiver assumptions. JavaScript positional lookups require a membership comparison before set advice; partial-range searches and dynamically produced receivers are excluded, and an empty modern signal is no longer overridden by legacy name matching. Clock/random reads and calls derived from them are not hoisting candidates, and remaining advice explicitly requires purity and evaluation-order review.</li>
+<li><strong>Bounded complexity-hint matching.</strong> Rewritten-function lookup prunes unrelated AST spans and uses an iterative walk while preserving matching order, row tolerance and final hint selection. Deep syntax nesting no longer exhausts Python recursion in this lookup.</li>
+<li><strong>Detector provenance.</strong> Stamp the tightened loop rules with new predicate versions and derive built-in detector-list versions from the same canonical map as findings and index manifests. Explicit external detector versions remain supported.</li>
 <li><strong>Traceable site deployments.</strong> Refuse the production deployment shortcut when Git status fails or the checkout has modified or untracked files. Record the exact clean commit in Pages deployment metadata.</li>
 <li><strong>CI and installation documentation.</strong> Pin the package version independently in copied Action examples, document the public gate states and the Action's narrower automatic SARIF selection, and guard input/output and SARIF lists against drift. Keep the old fresh-install transcript explicitly historical and separate functional smoke evidence from network or security assurance.</li>
+</ul>
+<h3>Security</h3>
+<ul>
+<li><strong>Pinned build-tool update.</strong> Upgrade wheel to 0.48.0 in the build, CI and hash-locked release environments, incorporating <a href="https://github.com/Cranot/roam-code/pull/108">#108</a>. Upstream fixes a <code>wheel convert</code> path-traversal issue; Roam's release build does not invoke that conversion command. Other signing-environment dependency versions remain unchanged.</li>
 </ul>
 <h2>[14.0.1] — 2026-09-05</h2>
 <h3>Fixed</h3>

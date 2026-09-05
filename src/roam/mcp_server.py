@@ -6184,6 +6184,10 @@ def _annotate_stale(result: dict, command: str) -> dict:
         return result
     if not isinstance(result, dict):
         return result
+    if result.get("isError") is True and result.get("error_code") in {"INDEX_NOT_FOUND", "INDEX_STALE"}:
+        # The index refusal is already actionable. A freshness probe here can
+        # create an absent store or open an incomplete SQLite generation.
+        return result
     is_stale, reason = _check_stale_with_cache()
     if not is_stale:
         return result
@@ -6210,6 +6214,7 @@ def _annotate_stale(result: dict, command: str) -> dict:
 # audit verified — the prior "Imported lazily to avoid a circular import on
 # cold-start" comment was a false cycle claim).
 from roam.exit_codes import EXIT_GATE_FAILURE as _EXIT_GATE_FAILURE
+from roam.exit_codes import EXIT_INDEX_MISSING as _EXIT_INDEX_MISSING
 from roam.exit_codes import EXIT_SUCCESS as _EXIT_SUCCESS
 
 _SUCCESS_EXIT_CODES: frozenset[int] = frozenset({_EXIT_SUCCESS, _EXIT_GATE_FAILURE})
@@ -6269,6 +6274,14 @@ def _maybe_pass_through_structured_json(output: str, exit_code: int) -> dict | N
         parsed["_meta"] = meta
     meta.setdefault("cli_exit_code", exit_code)
     parsed.setdefault("isError", True)
+    if exit_code == _EXIT_INDEX_MISSING and parsed.get("error_code") == "INDEX_MISSING":
+        # Preserve the CLI vocabulary while using the MCP boundary's existing
+        # closed error/status vocabulary. No generic COMMAND_FAILED downgrade.
+        meta["cli_error_code"] = "INDEX_MISSING"
+        summary = parsed.get("summary")
+        incomplete = isinstance(summary, dict) and summary.get("state") == "incomplete"
+        parsed["error_code"] = "INDEX_STALE" if incomplete else "INDEX_NOT_FOUND"
+        parsed["status"] = "stale_index" if incomplete else "index_not_built"
     return parsed
 
 

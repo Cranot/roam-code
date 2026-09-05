@@ -530,6 +530,53 @@ _LOOP_LOOKUP_CALLS = {
     "IndexOf",
 }
 
+# A known mutating collection method invalidates invariance of its receiver,
+# even when the call has no arguments. This is not alias/purity analysis.
+_COLLECTION_MUTATORS = {
+    "push",
+    "pop",
+    "shift",
+    "unshift",
+    "splice",
+    "sort",
+    "reverse",
+    "fill",
+    "copyWithin",
+    "add",
+    "set",
+    "delete",
+    "clear",
+    "append",
+    "extend",
+    "insert",
+    "remove",
+    "discard",
+    "update",
+}
+
+# Lowercase qualified calls whose result can change without changing arguments.
+# Shared with the detector so older indexed leaf signals are also filtered.
+_VOLATILE_LOOP_CALLS = frozenset(
+    {
+        "time.monotonic",
+        "time.time",
+        "time.perf_counter",
+        "monotonic",
+        "perf_counter",
+        "random.random",
+        "random.randrange",
+        "random.randint",
+        "random.uniform",
+        "date.now",
+        "performance.now",
+        "math.random",
+        "crypto.randomuuid",
+        "crypto.getrandomvalues",
+        "process.hrtime",
+        "process.hrtime.bigint",
+    }
+)
+
 
 @dataclass
 class _MathSignalState:
@@ -600,6 +647,14 @@ def _loop_written_names(node, source: bytes) -> set[str]:
         child = stack.pop()
         if child.type in _FUNCTION_NODES:
             continue
+        if child.type in {"call", "call_expression"} and _call_target_name(child, source) in _COLLECTION_MUTATORS:
+            receiver = _call_receiver_node(child)
+            pending = [receiver] if receiver is not None else []
+            while pending:
+                item = pending.pop()
+                if item.type in {"identifier", "this", "super"}:
+                    names.add(source[item.start_byte : item.end_byte].decode("utf-8", errors="replace"))
+                pending.extend(item.named_children)
         if child.type in {
             "assignment",
             "augmented_assignment",
@@ -619,7 +674,7 @@ def _loop_written_names(node, source: bytes) -> set[str]:
                 pending = [target]
                 while pending:
                     item = pending.pop()
-                    if item.type in {"identifier", "shorthand_property_identifier_pattern"}:
+                    if item.type in {"identifier", "this", "super", "shorthand_property_identifier_pattern"}:
                         names.add(source[item.start_byte : item.end_byte].decode("utf-8", errors="replace"))
                     pending.extend(item.named_children)
         stack.extend(child.named_children)
@@ -643,6 +698,69 @@ def _record_self_call(node, source: bytes, state: _MathSignalState) -> None:
         state.self_call_count += 1
 
 
+def _lookup_is_membership_test(node, source: bytes, name: str) -> bool:
+    """JS indexOf produces a position; only a sentinel comparison proves membership.
+
+    Assigning/returning the index (or comparing it to an arbitrary position)
+    requires its numeric value, which Set.has cannot preserve. Keep this
+    conservative rather than assuming dataflow through derived temporaries.
+    """
+    if name in {"includes", "indexOf", "lastIndexOf"}:
+        args = _call_args_node(node)
+        if args is None or len([child for child in args.named_children if child.type != "comment"]) != 1:
+            # fromIndex searches a subrange, not the whole collection.
+            return False
+        receiver = _call_receiver_node(node)
+        pending = [receiver] if receiver is not None else []
+        while pending:
+            child = pending.pop()
+            if child.type in {"call", "call_expression", "new_expression"}:
+                # A fresh/dynamic receiver may differ on every iteration.
+                return False
+            pending.extend(child.named_children)
+    if name not in {"indexOf", "lastIndexOf"}:
+        return True
+    expression = node
+    while expression.parent is not None and expression.parent.type == "parenthesized_expression":
+        expression = expression.parent
+    parent = expression.parent
+    if parent is None or parent.type != "binary_expression":
+        return False
+    left = parent.child_by_field_name("left")
+    right = parent.child_by_field_name("right")
+    if left is None or right is None:
+        return False
+    operators = _operator_tokens(parent, source)
+    if len(operators) != 1:
+        return False
+    operator = operators[0]
+    if left == expression:
+        sentinel = source[right.start_byte : right.end_byte].decode("utf-8", errors="replace").replace(" ", "")
+    elif right == expression:
+        sentinel = source[left.start_byte : left.end_byte].decode("utf-8", errors="replace").replace(" ", "")
+        operator = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}.get(operator, operator)
+    else:
+        return False
+    return (sentinel == "-1" and operator in {"==", "===", "!=", "!==", ">", "<="}) or (
+        sentinel == "0" and operator in {">=", "<"}
+    )
+
+
+def _call_has_volatile_input(node, source: bytes) -> bool:
+    """Include nested receivers/arguments: Math.random().toString() varies too."""
+    stack = [node]
+    while stack:
+        child = stack.pop()
+        if child.type in _FUNCTION_NODES:
+            continue
+        if child.type in {"call", "call_expression"}:
+            qualified = _call_target_qualified(child, source) or ""
+            if qualified.lower() in _VOLATILE_LOOP_CALLS:
+                return True
+        stack.extend(child.named_children)
+    return False
+
+
 def _record_loop_call(node, source: bytes, loop_vars: set[str], state: _MathSignalState) -> None:
     name = _call_target_name(node, source)
     qualified = _call_target_qualified(node, source)
@@ -658,9 +776,15 @@ def _record_loop_call(node, source: bytes, loop_vars: set[str], state: _MathSign
 
     receiver_uses_loop = _call_receiver_uses_loop_vars(node, source, loop_vars)
     args_use_loop = _call_args_use_loop_vars(node, source, loop_vars)
-    if loop_vars and not (receiver_uses_loop or args_use_loop):
+    if loop_vars and not (receiver_uses_loop or args_use_loop) and not _call_has_volatile_input(node, source):
         state.loop_invariant_calls.append(qualified or name)
-    if name in _LOOP_LOOKUP_CALLS and loop_vars and not receiver_uses_loop and args_use_loop:
+    if (
+        name in _LOOP_LOOKUP_CALLS
+        and loop_vars
+        and not receiver_uses_loop
+        and args_use_loop
+        and _lookup_is_membership_test(node, source, name)
+    ):
         state.loop_lookup_calls.append(qualified or name)
     if _is_front_operation_call(node, source, name):
         state.front_ops_in_loop = True
@@ -1079,7 +1203,7 @@ def _node_has_loop_var(node, source: bytes, loop_vars: set[str]) -> bool:
     identifier text without the ``$`` sigil.
     """
     ntype = node.type
-    if ntype == "identifier":
+    if ntype in {"identifier", "this", "super"}:
         name = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
         if name in loop_vars:
             return True

@@ -37,7 +37,8 @@ DEFAULT_VERSION: str = "1.0.0"
 # Bumping a value below makes the change visible to the manifest writer
 # and any future ``roam doctor`` drift check.
 DETECTOR_VERSION_OVERRIDES: dict[str, str] = {
-    "loop-invariant-call": "2.0.0",
+    "loop-invariant-call": "2.0.1",
+    "loop-lookup": "1.0.1",
     "branching-recursion": "1.0.1",
     "manual-power": "2.0.0",
     "spread-accumulator": "1.0.1",

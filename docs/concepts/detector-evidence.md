@@ -50,8 +50,14 @@ They do not implement all compiler options, package `exports`, project reference
 or custom loader behavior. Keep `tsc --noEmit` and the project's actual build in
 the validation loop.
 
-`verify-imports` recognizes declared Node dependencies, including workspace
-manifests, separately from local imports. `orphan-imports` treats bare package
+`verify-imports` recognizes the nearest package's declared Node dependencies
+separately from local imports. Explicit npm/Yarn workspace members also inherit
+root `devDependencies` for shared tools; sibling runtime dependencies do not
+silently become declarations for every package. Non-members and nested Git
+repositories do not inherit those root tools. Malformed manifest objects or
+dependency sections are not declarations, and each verification run refreshes
+its manifest cache. This is declaration checking, not an installed-package or
+package-manager resolution proof. `orphan-imports` treats bare package
 specifiers as external. These commands answer different questions; identical
 finding totals are not an invariant. A genuinely absent relative module must
 still be reported after extension substitution.
@@ -75,7 +81,17 @@ a database transaction is missing.
 3. Measure and run the project's tests before applying the proposed change.
 
 The index distinguishes calls on other objects from direct self-calls and treats
-loop-local assignments as varying inputs. Spread-accumulator and serial-await
+loop-local assignments and known collection-mutating receivers (including `this`)
+as varying inputs.
+JavaScript `indexOf` / `lastIndexOf` results must be used in a recognized membership
+comparison before set advice is offered; numeric positions used by `splice`,
+returned, or stored are not interchangeable with `Set.has`. Searches with a
+`fromIndex` argument and receivers produced by a call are not whole-collection
+membership candidates. An explicit empty
+modern signal is not replaced by legacy name-only matching. Known clock and
+random-number reads are not hoisting candidates; other callees still require
+purity and evaluation-order review. Alias mutation and arbitrary user-defined
+side effects remain outside this heuristic's proof. Spread-accumulator and serial-await
 checks require the matched operation inside the loop body. A power-like name and
 ordinary multiplication are not sufficient for repeated-exponentiation advice.
 These checks reduce false positives; they do not prove loop invariance, purity,

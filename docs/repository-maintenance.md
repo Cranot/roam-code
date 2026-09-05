@@ -103,6 +103,15 @@ manifests may still reflect real edits or environment changes.
 
 ## Recover from a writer or interrupted index
 
+`ROAM_DB_DIR` and the `db_dir` project setting keep the database and its
+`index.lock` / `index.state` control files together. They do not relocate project
+configuration, agent ledgers, or response evidence. Stop older indexers before
+upgrading or moving an existing store; mixed-version writers are not supported.
+For an explicit build policy, set `ROAM_NO_AUTO_INDEX=1`: analysis refuses a
+missing or incomplete index with exit 3, while `roam index` and `roam init`
+remain intentional build commands. JSON refusals distinguish those states
+without opening the index. `init` still creates project configuration.
+
 An ownership error means another writer is active, or Roam cannot prove that
 the recorded owner is stale. Wait for the writer, inspect the process that
 owns this checkout, and stop it through its normal shutdown path if needed.

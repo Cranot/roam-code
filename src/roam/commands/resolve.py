@@ -8,7 +8,14 @@ import subprocess
 
 import click
 
-from roam.db.connection import batched_in, db_exists, find_project_root, open_db
+from roam.db.connection import (
+    batched_in,
+    db_exists,
+    find_project_root,
+    get_index_lock_path,
+    get_index_state_path,
+    open_db,
+)
 from roam.db.queries import SEARCH_SYMBOLS, SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED
 
 
@@ -249,9 +256,8 @@ def _existing_index_recovery_state() -> str | None:
         log_swallowed("resolve:index_recovery_state:find_project_root", exc)
         return None
 
-    roam_dir = root / ".roam"
-    lock_path = roam_dir / "index.lock"
-    state_path = roam_dir / "index.state"
+    lock_path = get_index_lock_path(root, create=False)
+    state_path = get_index_state_path(root, create=False)
 
     from roam.index.indexer import (
         _decode_index_lock,
@@ -302,7 +308,42 @@ def _existing_index_recovery_state() -> str | None:
     return None
 
 
-def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False) -> None:
+def auto_index_disabled() -> bool:
+    """Honor an explicit opt-out of implicit builds; explicit init/index still work."""
+    return os.environ.get("ROAM_NO_AUTO_INDEX", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _refuse_implicit_index(recovery_state: str | None) -> None:
+    from roam.exit_codes import EXIT_INDEX_MISSING, IndexMissingError
+    from roam.output.formatter import json_envelope, to_json
+
+    state = "incomplete" if recovery_state == "incomplete" else "not_initialized"
+    reason = "The existing index is incomplete" if state == "incomplete" else "No index exists"
+    message = (
+        f"{reason}; ROAM_NO_AUTO_INDEX disables automatic indexing. Run `roam index` to build the index explicitly."
+    )
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.obj and ctx.obj.get("json"):
+        click.echo(
+            to_json(
+                json_envelope(
+                    ctx.command.name or "index",
+                    persist_response=False,
+                    include_index_metadata=False,
+                    summary={"verdict": message, "state": state, "partial_success": True},
+                    error_code="INDEX_MISSING",
+                    error=message,
+                    next_command="roam index",
+                )
+            )
+        )
+        ctx.exit(EXIT_INDEX_MISSING)
+    raise IndexMissingError(message)
+
+
+def ensure_index(
+    quiet: bool = False, suppress_cold_start_advisory: bool = False, *, explicit_build: bool = False
+) -> None:
     """Build the index if it doesn't exist yet.
 
     Args:
@@ -312,6 +353,7 @@ def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False
             commands whose PURPOSE is to build the index (``roam init``) — the
             user just asked to create the index, so recommending they run the
             command they're already running is confusing first-time UX (W1291).
+        explicit_build: Bypass ROAM_NO_AUTO_INDEX for an intentional init build.
     """
     index_exists = db_exists()
     recovery_state = _existing_index_recovery_state() if index_exists else None
@@ -320,15 +362,21 @@ def ensure_index(quiet: bool = False, suppress_cold_start_advisory: bool = False
             "The roam index is currently being built by another process. Retry after that index run completes."
         )
     if not index_exists or recovery_state == "incomplete":
+        if auto_index_disabled() and not explicit_build:
+            _refuse_implicit_index(recovery_state)
         if not quiet and not suppress_cold_start_advisory:
             if recovery_state == "incomplete":
-                click.echo("Incomplete roam index detected after an interrupted build. Rebuilding it before analysis.")
+                click.echo(
+                    "Incomplete roam index detected after an interrupted build. Rebuilding it before analysis.",
+                    err=True,
+                )
             else:
                 click.echo(
                     "No roam index found. Run `roam init` to create one.\n"
                     "  Tip: If you already ran `roam init`, your current directory may be\n"
                     "       outside the project root. cd into the project root and retry.\n"
-                    "  If this looks unexpected, run `roam doctor` to diagnose your install."
+                    "  If this looks unexpected, run `roam doctor` to diagnose your install.",
+                    err=True,
                 )
         from roam.index.indexer import Indexer
 

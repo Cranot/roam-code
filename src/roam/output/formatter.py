@@ -1581,7 +1581,7 @@ def _add_agent_contract(out: dict, summary: dict, explicit_contract: Any) -> Non
     out["agent_contract"] = auto_contract
 
 
-def _stamp_core_meta(out: dict, command: str, version: str) -> None:
+def _stamp_core_meta(out: dict, command: str, version: str, *, include_index_metadata: bool = True) -> None:
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     # Non-deterministic metadata in _meta — kept separate so content
     # keys produce identical JSON across invocations (LLM cache-friendly).
@@ -1601,10 +1601,13 @@ def _stamp_core_meta(out: dict, command: str, version: str) -> None:
     # this addition does not affect those golden hashes.
     out["_meta"] = {
         "timestamp": ts,
-        "index_age_s": _index_age_seconds(),
+        "index_age_s": _index_age_seconds() if include_index_metadata else None,
         "roam_version": version,
     }
-    _add_staleness_meta(out["_meta"], command)
+    if include_index_metadata:
+        _add_staleness_meta(out["_meta"], command)
+    else:
+        out["_meta"]["index_metadata"] = "not_read"
 
 
 def _add_staleness_meta(meta: dict, command: str) -> None:
@@ -1690,6 +1693,7 @@ def json_envelope(
     *,
     uncapped: bool = False,
     persist_response: bool = True,
+    include_index_metadata: bool = True,
     **payload,
 ) -> dict:
     """Wrap command output in a self-describing envelope.
@@ -1709,6 +1713,9 @@ def json_envelope(
 
     Set ``persist_response=False`` for refusals that must not write a response
     sidecar even when an agent run or proof bundle is active.
+    Also set ``include_index_metadata=False`` when a refusal must not open
+    an absent/incomplete database for freshness metadata: even readonly SQLite
+    connections can change WAL shared-memory sidecars.
 
     Returns a dict with at minimum::
 
@@ -1742,7 +1749,10 @@ def json_envelope(
     out = _base_json_envelope(command, version, summary)
     out.update(payload)
     _add_agent_contract(out, summary, explicit_contract)
-    _stamp_core_meta(out, command, version)
+    if include_index_metadata:
+        _stamp_core_meta(out, command, version)
+    else:
+        _stamp_core_meta(out, command, version, include_index_metadata=False)
     _stamp_response_meta(out, command)
 
     # Best-effort side-car write to `.roam/responses/` so `pr-bundle

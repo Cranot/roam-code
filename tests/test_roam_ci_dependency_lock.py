@@ -127,7 +127,7 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
     lock = tomllib.loads(UV_LOCK.read_text(encoding="utf-8"))
 
     assert pyproject["build-system"] == {
-        "requires": ["setuptools==83.0.0", "wheel==0.47.0"],
+        "requires": ["setuptools==83.0.0", "wheel==0.48.0"],
         "build-backend": "setuptools.build_meta",
     }
     assert pyproject["dependency-groups"]["ci"] == [
@@ -142,7 +142,7 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
         # reproduced as a pyproject + uv.lock + test change in one commit.
         "pypdf==6.16.1",
         "setuptools==83.0.0",
-        "wheel==0.47.0",
+        "wheel==0.48.0",
     ]
     assert pyproject["dependency-groups"]["ci-fallback"] == [
         "pytest==9.0.3",
@@ -154,4 +154,4 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
     assert versions["pip-audit"] == PIP_AUDIT_VERSION
     assert versions["pypdf"] == "6.16.1"
     assert versions["setuptools"] == "83.0.0"
-    assert versions["wheel"] == "0.47.0"
+    assert versions["wheel"] == "0.48.0"

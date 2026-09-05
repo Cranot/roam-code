@@ -350,6 +350,8 @@ refactors, never lose entries).
 
 ## What's New
 
+**v14.0.2 (2026-09-05) — controlled cold starts and more precise loop advice.** Keep index control files with a redirected database, opt out of implicit indexing, and receive parseable JSON even on cold starts. Workspace import checks recognize shared development tools without hiding undeclared sibling dependencies. Loop advice accounts for collection mutation, positional lookups, clocks and randomness; complexity-hint matching avoids unrelated AST work. The pinned wheel build tool also receives its path-traversal fix. Full notes: [CHANGELOG.md](CHANGELOG.md).
+
 **v14.0.1 (2026-09-05) — more precise findings and clearer verification.** Browser and TypeScript checks distinguish lifecycle calls from database operations, resolve NodeNext source extensions, and show stronger evidence for algorithm advice. Incomplete searches require review instead of authorizing deletion. MCP compatibility is tested against the supported SDK generation, retrieval benchmarks name their dependency profiles, and release checks enforce their stated worker budget. Official container publication remains on hold pending image-wide security review. Full notes: [CHANGELOG.md](CHANGELOG.md).
 
 <details>
@@ -881,6 +883,9 @@ Yes, after installation and parser prewarming. Run `roam index --force` once whi
 **Does Roam modify my source code?**
 Read-only by default. Creates `.roam/` with an index database. `roam mutate` (move/rename/extract) defaults to `--dry-run`; pass `--apply` explicitly to write changes.
 
+**Can I control where and when the index is built?**
+Set `ROAM_DB_DIR` to redirect the SQLite database and its `index.lock` / `index.state` sidecars together, or save a per-project location with `roam config --set-db-dir`. Set `ROAM_NO_AUTO_INDEX=1` to refuse implicit builds: an analysis command needing a missing or incomplete index exits `3` and emits a structured refusal in JSON mode. `roam index` and `roam init` still build when explicitly invoked. Use `roam index` if you only want to build the index; `init` intentionally also creates project configuration. The storage override does not redirect agent ledgers, response evidence, or other requested artifacts. Stop older indexers before upgrading or changing store locations; do not run mixed-version writers against one store.
+
 **How does Roam handle monorepos and multi-repo projects?**
 Monorepos: indexes from the root; batched SQL handles 100k+ symbols. Multi-repo: `roam ws init <repo1> <repo2>` builds a workspace overlay DB for cross-repo API edges, then `roam ws resolve` / `ws context` / `ws trace` work across repos.
 
@@ -908,6 +913,7 @@ The CLI is Apache 2.0, runs its analysis engine locally, and never expires. Roam
 | `roam: command not found` | Ensure install location is on PATH. For `uv`: `uv tool update-shell` |
 | `Another indexing process owns the workspace` | Wait for the active writer and run `roam doctor`. A live or unprovable owner requires investigation; preserve `.roam/index.lock` and the lifecycle marker. Proven abandoned generations are recovered by the indexer. |
 | `database is locked` | Finish the active indexer or watcher, close other database writers, and check for cloud-sync interference. Then retry `roam index`; rebuilding does not bypass a live SQLite lock. |
+| `ROAM_NO_AUTO_INDEX` refusal (exit 3) | Run `roam index` explicitly after selecting the intended project and store, or unset the opt-out to restore automatic cold-start builds. JSON refusals distinguish missing and incomplete indexes without opening the database. |
 | Unicode errors on Windows | `chcp 65001` for UTF-8 |
 | Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` |
 | Health score seems wrong | `roam health --explain` for score contributions; use `roam --json health` for structured findings. The architectural score is separate from test and environment health. |
