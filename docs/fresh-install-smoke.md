@@ -1,17 +1,17 @@
-# Fresh-install smoke transcript
+# Fresh-install smoke transcript (historical v13.2)
 
 A clean-environment install and end-to-end run on a three-file synthetic
-project, captured verbatim. Anyone with Python 3.10+ and `pip` can replay
-these commands and reproduce the output. The transcript proves three claims
-from the README's "Install + first four commands" section without taking
-Roam's word for it:
+project, captured on 2026-05-18 with Roam v13.2. The excerpts below preserve
+that run; they are not expected output for today's release. For current
+installation commands, use the [getting-started guide](../templates/distribution/landing-page/docs/getting-started.html).
+This historical smoke exercised three aspects of the first-run workflow:
 
 1. **Zero accounts, zero API keys, zero cloud logins.** Install is one
    `pip install`; nothing else is configured before commands run.
-2. **No repository-content egress.** Indexing, health, preflight, and impact
-   read and write a local SQLite DB under `.roam/`; no source, index, finding,
-   or evidence content is transmitted. A cold parser cache may retrieve one
-   checksum-verified grammar bundle before analysis begins.
+2. **Local analysis.** Indexing, health, preflight, and impact use a local
+   SQLite DB under `.roam/`. This functional transcript is not a network
+   capture or independent proof of no repository-content egress. A cold parser
+   cache may retrieve one checksum-verified grammar bundle before analysis begins.
 3. **The "first four commands" actually do what they claim.** A new repo
    reaches a working `preflight` verdict in under a minute on a synthetic
    project, with real blast-radius, tests-affected, complexity, and fitness
@@ -89,7 +89,7 @@ The counts above are the captured v13.2 smoke output, not a hand-maintained
 headline. For the current count, run `roam surface --json` in the checkout
 or `python dev/build_readme_counts.py --check`. The
 `summary.mcp_tool_count_by_preset` field on the same envelope breaks the
-MCP-tool total down per preset (`core: 57`, `review: 70`, `refactor: 70`,
+MCP-tool total down per preset (the historical v13.2 values were `core: 57`, `review: 70`, `refactor: 70`,
 `debug: 69`, `architecture: 71`, `compliance: 13`, `full: 227`).
 
 ---
@@ -142,8 +142,12 @@ Created:
   .roamignore
 ```
 
-`.roam/index.db` (~392 KB SQLite) is the entire on-disk state. No
-credentials, no remote, no cloud handle.
+The captured index was `.roam/index.db` (~392 KB SQLite). It was not the entire
+on-disk state: the command also reported `.roam/fitness.yaml` and `.roamignore`.
+Current releases can also keep lock/lifecycle files and other project state;
+see [repository maintenance](repository-maintenance.md#recover-from-a-writer-or-interrupted-index)
+before cleaning up a real checkout. This synthetic run required no credentials
+or configured Git remote.
 
 ### 2b. `roam health`
 
@@ -239,15 +243,14 @@ two tests import it directly).
 
 ## 3. Teardown
 
-The smoke run lives entirely under the system temp directory. Cleanup is
-two `Remove-Item` calls (POSIX: `rm -rf`):
-
-```powershell
-Remove-Item -Recurse -Force $env:TEMP\roam-smoke-fresh, $env:TEMP\roam-smoke-venv
-```
+The synthetic project and virtual environment used temporary directories.
+Before cleanup, resolve and inspect the exact `roam-smoke-fresh` and
+`roam-smoke-venv` paths under the system temp directory and confirm that they
+belong solely to your reproduction. Remove only those verified literal paths.
+A temporary location does not make pre-existing files disposable.
 
 No system-wide state was touched. `pip install` only writes into the venv;
-`roam init` only writes `.roam/` inside the synthetic project; no PATH,
+`roam init` wrote project-local state and `.roamignore`; no PATH,
 registry, or user config is modified.
 
 ---
@@ -258,8 +261,8 @@ The four commands above ran on a freshly created venv against a project the
 indexer had never seen, with no account, no API key, a prewarmed parser cache,
 and no human-in-the-loop intervention. Each verdict is
 backed by data Roam can point to inside `.roam/index.db` — a SQLite file
-the operator owns. That is the moat the README claims: **local codebase
-intelligence that produces verifiable evidence without leaving the machine.**
+the operator owns. This demonstrates the local first-run analysis workflow,
+not exhaustive network, security, or current-version conformance.
 If a CTO or CISO wants to verify the air-gap path, prewarm with
 `roam index --force`, disable egress, and replay this transcript. The same loop scales to larger repositories;
 the `preflight` / `impact` envelope shape is identical.
@@ -276,7 +279,8 @@ regression tests or generated-count checks:
    extras installed.** *RESOLVED (W1290).* The CLI-side surface reads the
    MCP tool count via AST scan of `src/roam/mcp_server.py`, env-independent
    and resilient to optional-extras import errors. Fresh installs now
-   report `mcp tool count 227`.
+   reported `mcp tool count 227` in the captured v13.2 environment. Run
+   `roam surface --json` for the installed release's current inventory.
 2. **`roam mcp-status` raises `KeyError: 'symbol'` on a fresh install with
    no built index.** *RESOLVED (W1289).* The command now emits a structured
    Pattern-1A prerequisite envelope instead of a traceback.

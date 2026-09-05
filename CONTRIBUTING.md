@@ -576,12 +576,22 @@ same commit as the original change, not a follow-up PR:
 
 Cloudflare Pages goes out by hand (`make site-deploy`; `make site-check`
 compares the live changelog against the declared version and fails on
-drift -- run it after any release cut):
+drift -- run it after any release cut). The deployment target refuses a dirty
+checkout and records its exact commit. The equivalent direct command is:
 
 ```bash
+set -eu
+site_status="$(git status --porcelain=v1 --untracked-files=all)"
+test -z "$site_status"
+site_sha="$(git rev-parse --verify HEAD)"
 wrangler pages deploy templates/distribution/landing-page \
-  --project-name roam-code --branch main --commit-dirty=true
+  --project-name roam-code --branch main --commit-dirty=false --commit-hash="$site_sha"
 ```
+
+Use a clean, reviewed revision whose required checks passed. After deployment,
+verify the served changelog/content and security headers, not just HTTP 200.
+The package tag, installed package, and Pages deployment are separate release
+surfaces; record each exact version or source commit.
 
 PyPI publishes from a tag (`.github/workflows/publish.yml`). Run the exact
 release gate before pushing the version-bump commit:

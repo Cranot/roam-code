@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Traceable site deployments.** Refuse the production deployment shortcut when Git status fails or the checkout has modified or untracked files. Record the exact clean commit in Pages deployment metadata.
+- **CI and installation documentation.** Pin the package version independently in copied Action examples, document the public gate states and the Action's narrower automatic SARIF selection, and guard input/output and SARIF lists against drift. Keep the old fresh-install transcript explicitly historical and separate functional smoke evidence from network or security assurance.
+
 ## [14.0.1] — 2026-09-05
 
 ### Fixed

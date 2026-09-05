@@ -62,7 +62,7 @@ detector-only plugins (see `roam_plugin_rails/`).
 ## Plugin commands and the headline count (W319)
 
 Commands a plugin registers via `ctx.register_command()` do **not**
-roll into roam's headline "281 commands" count. The auto-count
+roll into roam's core-command headline count. The auto-count
 scripts (`dev/build_readme_counts.py`, `roam.surface_counts`) are
 AST-only and scope to commands shipped in the `roam-code` wheel.
 

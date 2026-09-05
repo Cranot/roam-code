@@ -36,7 +36,7 @@ roam-analysis:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
-    - python -m pip install --quiet "roam-code==14.0.0"
+    - python -m pip install --quiet "roam-code==14.0.1"
   script:
     - |
       set -eu

@@ -2,10 +2,10 @@
 
 Two supported paths:
 
-1. **Plain pip** -- `pip install "roam-code==14.0.0"`, run any commands, upload SARIF
+1. **Plain pip** -- `pip install "roam-code==14.0.1"`, run any commands, upload SARIF
    yourself. Works on every CI platform (GitHub Actions, GitLab CI, Jenkins,
    Azure Pipelines, BitBucket, CircleCI, ...).
-2. **Composite GitHub Action** -- `uses: Cranot/roam-code@v14.0.0`. Adds sticky
+2. **Composite GitHub Action** -- `uses: Cranot/roam-code@v14.0.1`. Adds sticky
    PR comments, guardrail-enforced SARIF upload, and quality gates with one
    block.
 
@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: |
-          python -m pip install --disable-pip-version-check "roam-code==14.0.0"
+          python -m pip install --disable-pip-version-check "roam-code==14.0.1"
           python -m pip check
       - run: roam init
       - run: roam --sarif health > roam-health.sarif
@@ -88,9 +88,9 @@ jobs:
 
       # The readable tag is shown here. For production,
       # replace the tag with its reviewed 40-character SHA (see below).
-      - uses: Cranot/roam-code@v14.0.0
+      - uses: Cranot/roam-code@v14.0.1
         with:
-          version: '14.0.0'
+          version: '14.0.1'
           allow-latest: 'false'
           commands: 'health pr-risk'
           sarif: 'true'
@@ -99,8 +99,11 @@ jobs:
 ```
 
 For production, pin `Cranot/roam-code` to the reviewed 40-character commit SHA
-behind the chosen release tag; a tag is human-readable but remains movable. Keep the
-version comment beside the SHA so Dependabot can propose reviewable updates.
+behind the chosen release tag. Keep the version comment beside the SHA so
+Dependabot can propose reviewable updates. GitHub protects the tag of an
+[immutable release](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
+from being moved while that release exists; an ordinary tag does not provide
+that protection by itself.
 
 That is all you need. The action installs roam-code, indexes your codebase,
 runs the requested analysis commands, posts a sticky PR comment with results,
@@ -110,24 +113,29 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `14.0.0` | Exact roam-code version to install from PyPI. The explicit `source` mode installs from the selected action checkout; `latest` requires `allow-latest: true`. URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
+| `version` | `14.0.1` | Exact roam-code version to install from PyPI. The explicit `source` mode installs from the selected action checkout; `latest` requires `allow-latest: true`. URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
 | `allow-latest` | `false` | Explicit opt-in required when `version: latest` is requested. This keeps the mutable package path visible in review. |
 | `commands` | `health` | Space-separated roam commands to run. Each command produces JSON output that feeds into the PR comment and quality gate. |
 | `changed-only` | `false` | Incremental CI mode. Adapts supported commands to changed files and transitive dependents (when detectable). |
 | `changed-depth` | `3` | Dependency depth used when computing changed+dependent file scope in `changed-only` mode. |
 | `base-ref` | _(auto)_ | Optional explicit base ref/SHA for incremental mode. Default is PR base SHA (or push `before` SHA). |
 | `sarif` | `false` | When `true`, exports SARIF for the selected SARIF command set and uploads a guarded combined SARIF file to GitHub Code Scanning. Requires `security-events: write` permission. |
-| `sarif-commands` | `auto` | Space-separated commands to export via `--sarif`. `auto` picks the SARIF-capable subset of `commands` (any command in `_SARIF_CONSUMERS` -- see "Commands that emit SARIF" below). |
+| `sarif-commands` | `auto` | Space-separated commands to export via `--sarif`. `auto` selects from the Action's reviewed auto-upload subset of `commands`, falling back to `health` when none match. An explicit list can select other CLI SARIF emitters; see "Composite-action SARIF mode" below. |
 | `sarif-category` | `roam-code` | Base SARIF upload category. The action appends job/runtime suffixes to reduce collisions. |
 | `sarif-max-runs` | `20` | Pre-upload guardrail: maximum runs kept in combined SARIF. Extra runs are dropped from the tail with a warning. |
 | `sarif-max-results` | `25000` | Pre-upload guardrail: maximum results per run. Extra results are dropped from the tail with a warning. |
 | `sarif-max-bytes` | `10000000` | Pre-upload guardrail: maximum SARIF JSON bytes (conservative cap before upload). |
 | `comment` | `true` | When `true` and running on a pull request, upserts one marker-managed sticky PR comment (idempotent) and removes duplicate sticky comments if they exist. Requires `pull-requests: write` permission. |
 | `gate` | _(empty)_ | Quality gate expression. Supports scalar checks (`key>=value`) and trend-aware functions (`velocity(metric)<=0`, `direction(metric)!=worsening`). The action exits with code 5 when the gate fails. |
+| `gate-strict` | `false` | Make an unevaluated gate fail the job with exit 5. An unevaluated gate is always disclosed; without strict mode it is advisory. |
 | `cache` | `true` | Cache pip packages and the `.roam/` SQLite index between runs for faster incremental analysis. |
 | `python-version` | `3.11` | Python version to use. Supports 3.10 through 3.13 (roam-code requires Python 3.10+). |
 
-The exact default pins the first-party roam-code artifact for a release. Its
+The default shown here describes `action.yml` on the current main branch.
+An older or immutable Action revision keeps the default committed in that
+revision: selecting an Action tag does not automatically select the same PyPI
+package version. Every copied example therefore sets `with.version` explicitly.
+The exact package pin selects the first-party roam-code artifact. Its
 transitive dependencies still follow that package version's declared PyPI
 ranges, because a copied downstream action cannot consume this repository's
 `uv.lock`. Repositories requiring a byte-for-byte dependency graph should
@@ -153,6 +161,7 @@ still follow declared package ranges rather than this repository's `uv.lock`.
 | `changed-only` | Whether incremental mode was enabled. |
 | `base-ref` | Resolved base ref/SHA used for incremental mode. |
 | `affected-count` | Number of changed+dependent files detected for incremental mode. |
+| `gate-state` | `passed`, `failed`, or `unevaluated` when a configured gate runs; empty when no gate was requested. An evaluated failure takes precedence over an unchecked expression. |
 
 ## Quality Gates
 
@@ -166,6 +175,7 @@ key operator value
 ```
 
 Where:
+
 - `key` is any field in the JSON summary (e.g., `health_score`, `tangle_ratio`, `risk_score`, `issue_count`)
 - `operator` is one of: `>=`, `<=`, `>`, `<`, `=`
 - `value` is a number
@@ -206,6 +216,7 @@ gate: 'direction(health_score)!=worsening'
 ### Gate failure behavior
 
 When a gate fails, the action:
+
 1. Prints an error annotation with the actual vs required value
 2. Exits with code **5** (distinct from code 1 for crashes)
 3. Marks the check as failed in the PR
@@ -216,11 +227,11 @@ A gate expression naming a metric none of the commands you ran produced —
 or a trend function on a repository with fewer than two stored snapshots —
 cannot be evaluated at all. That is a third outcome, not a pass:
 
-| `gate-state` | `gate-passed` | Meaning |
-|---|---|---|
-| `passed` | `true` | Every expression was evaluated and satisfied |
-| `failed` | `false` | At least one expression was evaluated and violated |
-| `unevaluated` | `unknown` | At least one expression matched no payload |
+| `gate-state` | Meaning |
+|---|---|
+| `passed` | Every expression was evaluated and satisfied |
+| `failed` | At least one expression was evaluated and violated, even if another could not be evaluated |
+| `unevaluated` | No evaluated expression failed, but at least one expression matched no compatible payload |
 
 `unevaluated` always prints an `::error::` annotation naming the expression,
 and the PR comment reads `Quality Gate: NOT EVALUATED`. It does **not** fail
@@ -230,15 +241,19 @@ the repository, and blocking there would be red on a run where nothing is
 wrong. Set `gate-strict: true` to make an unevaluable gate exit 5 as well:
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.0
+- uses: Cranot/roam-code@v14.0.1
   with:
+    version: '14.0.1'
     gate: 'direction(health_score)!=worsening'
     gate-strict: 'true'
 ```
 
-Read `gate-state` rather than `gate-passed` when you need to tell a gate that
-passed from one that was never computed — `gate-passed` is a boolean and
-cannot express the third state.
+Read the public `steps.<id>.outputs.gate-state` output to distinguish an
+evaluated pass from an unevaluated gate. `gate-passed` is an internal step
+output, not a public composite-Action output; its internal tokens are `true`,
+`false`, and `unknown`, not a boolean contract for downstream workflows.
+When the `gate` input is empty, the gate step is skipped and `gate-state` is
+empty; that is not a passed check.
 
 ## SARIF Integration
 
@@ -256,8 +271,9 @@ The current set (alphabetical):
 
 ```
 affected-tests, algo, audit-trail-conformance-check, auth-gaps, bus-factor,
-check-rules, clones, complexity, critique, dark-matter, dead, delete-check,
-duplicates, fan, flag-dead, health, hotspots, impact, laws, llm-smells,
+check-rules, clones, collapse, complexity, critique, dark-matter, dead,
+delete-check, doc-drift, duplicates, fan, flag-dead, health, hotspots,
+impact, laws, llm-smells,
 missing-index, n1, orphan-imports, orphan-routes, over-fetch, partition,
 py-modern, py-types, rules, secrets, smells, stale-refs, supply-chain,
 taint, test-impact, verify-imports, vulns
@@ -283,20 +299,28 @@ alerts**, get auto-deduplicated across pushes via SARIF's `partialFingerprints`,
 and can block merges when severity gates trip (configure via repo Security
 settings > Code scanning > Tool configuration).
 
-Requires `security-events: write` permission. Free for public repos and
-GitHub Advanced Security customers; on private repos without GHAS the upload
-step no-ops gracefully.
+Requires `security-events: write` permission and a repository with Code
+Scanning available. Check the upload step's result; an unavailable or skipped
+upload does not establish that findings reached GitHub.
 
 ### Composite-action SARIF mode
 
 When using the composite action with `sarif: 'true'` it performs the
 equivalent flow with extra guardrails:
 
-1. Generates SARIF per command from `sarif-commands` (or `auto` subset)
+1. Generates SARIF per command from `sarif-commands` (or the Action's `auto` subset)
 2. Merges SARIF runs into one payload
 3. Applies upload guardrails (`sarif-max-runs`, `sarif-max-results`, `sarif-max-bytes`)
 4. Uploads via `github/codeql-action/upload-sarif` using resolved `sarif-category`
 5. Emits truncation warning metadata when guardrails drop findings
+
+`auto` uses `_SUPPORTED_SARIF` in `action.yml`, an intentionally narrower
+reviewed list than the CLI's `_SARIF_CONSUMERS`. If none of the requested
+analysis commands are on that list, the Action generates `health` SARIF.
+Set an explicit `sarif-commands` list to select other CLI SARIF emitters, and
+check generation warnings and upload outputs: an empty or invalid result is
+not an uploaded finding set. These choices affect SARIF generation, not which
+commands supplied JSON to the quality gate.
 
 #### Guardrail Notes
 
@@ -338,8 +362,9 @@ When `cache: 'true'` (default), the action caches:
    source files change, the cache misses and `roam init` rebuilds only the
    changed files (incremental indexing).
 
-Cache hits reduce analysis time from 30-60s to under 10s on typical
-codebases.
+Cache hits can avoid repeated downloads and reuse unchanged index data.
+Actual analysis time depends on repository size, changed files, and the
+commands selected; a cache hit is not a fixed runtime guarantee.
 
 ## Changed-only Mode
 
@@ -357,8 +382,9 @@ Set `changed-only: 'true'` to run incremental PR analysis.
 Example:
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.0
+- uses: Cranot/roam-code@v14.0.1
   with:
+    version: '14.0.1'
     commands: 'verify pr-risk api-changes'
     changed-only: 'true'
     changed-depth: '3'
@@ -402,8 +428,9 @@ can read it instead of copying it.
 ### Multiple commands with strict gate
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.0
+- uses: Cranot/roam-code@v14.0.1
   with:
+    version: '14.0.1'
     commands: 'health complexity dead'
     sarif-commands: 'health complexity dead'
     sarif-category: 'roam-code-pr-${{ github.ref_name }}-${{ matrix.python-version }}'
@@ -414,9 +441,10 @@ can read it instead of copying it.
 ### PR risk only, no comment
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.0
+- uses: Cranot/roam-code@v14.0.1
   id: roam
   with:
+    version: '14.0.1'
     commands: 'pr-risk'
     comment: 'false'
 
@@ -428,9 +456,9 @@ can read it instead of copying it.
 ### Exact release without caching
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.0
+- uses: Cranot/roam-code@v14.0.1
   with:
-    version: '14.0.0'
+    version: '14.0.1'
     cache: 'false'
     commands: 'health'
 ```
@@ -438,9 +466,10 @@ can read it instead of copying it.
 ### Use outputs in subsequent steps
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.0
+- uses: Cranot/roam-code@v14.0.1
   id: analysis
   with:
+    version: '14.0.1'
     commands: 'health'
 
 - name: Report health score
