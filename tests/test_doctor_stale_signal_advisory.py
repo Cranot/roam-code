@@ -109,9 +109,10 @@ class TestStaleMathSignalAdvisory:
         assert check["passed"] is False
         assert check["_state"] == "stale"
         assert check["_row_count"] == 5
-        assert "loop_eq_with_dependent_write" in check["detail"]
+        assert "dependent-write loop signals" in check["detail"]
         assert "roam index --force" in check["detail"]
-        assert "migration #51" in check["detail"].lower()
+        assert "does not prove stale" in check["detail"]
+        assert "migration #51" not in check["detail"].lower()
 
     def test_advisory_does_not_fire_when_column_populated(self, tmp_path):
         """If any row has a non-zero value, the advisory must NOT fire."""

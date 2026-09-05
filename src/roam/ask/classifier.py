@@ -137,7 +137,7 @@ def classify(query: str, recipes: list[Recipe] | None = None) -> list[tuple[Reci
         kw_bonus = 0.0
         lower_query = query.lower()
         for kw in r.keywords:
-            if kw in lower_query:
+            if _keyword_matches(kw, lower_query):
                 kw_bonus += 0.25
         kw_bonus = min(kw_bonus, 0.5)
 
@@ -148,12 +148,17 @@ def classify(query: str, recipes: list[Recipe] | None = None) -> list[tuple[Reci
     return scored
 
 
+def _keyword_matches(keyword: str, query: str) -> bool:
+    """Match intent words/phrases without firing inside code identifiers."""
+    return re.search(r"(?<!\w)" + re.escape(keyword) + r"(?!\w)", query) is not None
+
+
 def _keyword_only_score(lower_query: str, pool: list[Recipe]) -> list[tuple[Recipe, float]]:
     out = []
     for r in pool:
         bonus = 0.0
         for kw in r.keywords:
-            if kw in lower_query:
+            if _keyword_matches(kw, lower_query):
                 bonus += 0.25
         out.append((r, min(1.0, bonus)))
     out.sort(key=lambda x: -x[1])

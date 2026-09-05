@@ -502,7 +502,7 @@ def compute_partition_manifest(
     conn:
         Open (readonly) connection to the roam index DB.
     n_agents:
-        Number of agents.  ``None`` means auto-detect from cluster count.
+        Number of agents. ``None`` uses natural clusters, bounded to 2..8.
 
     Returns
     -------
@@ -532,7 +532,7 @@ def compute_partition_manifest(
 
     # Auto-detect agent count from natural cluster count
     if n_agents is None:
-        n_agents = max(2, len(groups))
+        n_agents = min(8, max(2, len(groups)))
 
     partitions = _adjust_cluster_count(G, groups, n_agents)
 
@@ -747,7 +747,7 @@ def _to_claude_teams(manifest: dict) -> dict:
     "n_agents",
     type=int,
     default=None,
-    help="Number of agents (default: auto-detect from cluster count)",
+    help="Number of agents (default: natural cluster count, bounded to 2..8)",
 )
 @click.option(
     "--format",

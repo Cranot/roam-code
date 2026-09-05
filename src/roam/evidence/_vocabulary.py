@@ -740,7 +740,7 @@ GITHUB_REVIEW_STATES: frozenset[str] = frozenset(
 # reachability question, not a policy question.
 #
 # cmd_refs_text emits: safe_to_remove / review / load_bearing
-# cmd_delete_check emits: safe / likely_safe / break_risk
+# cmd_delete_check emits: safe / likely_safe / break_risk / review
 # Both subsets share the closed-enum invariant.
 #
 # Canonical form: lowercase + underscore (matches POLICY_DECISIONS

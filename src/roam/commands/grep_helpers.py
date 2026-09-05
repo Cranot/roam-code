@@ -30,6 +30,14 @@ from typing import Iterable
 # ---------------------------------------------------------------------------
 
 
+class SearchEngineError(RuntimeError):
+    """An incomplete search, retaining any matches emitted before failure."""
+
+    def __init__(self, message: str, matches: list[dict] | None = None):
+        super().__init__(message)
+        self.matches = matches or []
+
+
 def _which(name: str) -> str | None:
     """Cached PATH lookup for executables."""
     return shutil.which(name)
@@ -71,8 +79,9 @@ def run_search(
     ripgrep and git grep). Multi-glob via repeated ``-g`` (ripgrep) or
     pathspec (git grep). ``fixed_string`` toggles literal mode.
 
-    Returns an empty list on engine failure or no matches; callers fall
-    back to ``indexed_file_scan`` if needed.
+    Return an empty list for a completed search with no matches. Raise
+    SearchEngineError on execution failure; its matches are partial evidence,
+    never a complete absence-of-references claim.
     """
     if not patterns:
         return []
@@ -141,11 +150,9 @@ def _run_and_parse(cmd, root, timeout):
             encoding="utf-8",
             errors="replace",
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return matches
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SearchEngineError(f"{cmd[0]} search did not complete: {type(exc).__name__}") from exc
     # 0 = matches, 1 = no matches (both engines)
-    if result.returncode > 1:
-        return matches
     for line in result.stdout.splitlines():
         parts = line.split(":", 2)
         if len(parts) < 3:
@@ -167,6 +174,9 @@ def _run_and_parse(cmd, root, timeout):
             )
         except ValueError:
             continue
+    if result.returncode not in (0, 1):
+        detail = (result.stderr or "").strip()[:500]
+        raise SearchEngineError(f"{cmd[0]} search exited {result.returncode}: {detail}", matches)
     return matches
 
 

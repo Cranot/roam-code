@@ -289,8 +289,11 @@
         <p>
           Hand three agents the same repo and they collide on the same
           files. Roam partitions the graph into low-coupling clusters,
-          assigns one cluster per agent, and emits a fleet plan with
-          conflict-free file ownership and a recommended merge order.
+          proposes bounded work partitions, and reports shared files,
+          cross-partition dependencies, and a recommended merge order.
+          A partition manifest does not enforce exclusive write access;
+          review ownership conflicts before assigning agents. The CLI's
+          automatic partition count is bounded to two through eight.
         </p>
         <p>
           Commands: <code>roam fleet</code> ·

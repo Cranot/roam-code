@@ -21,6 +21,7 @@ EXPECTED_WORKFLOWS = {
     "actions-pinning.yml",
     "architecture-guardian.yml",
     "cga-attestation.yml",
+    "container.yml",
     "dogfood.yml",
     "publish.yml",
     "repo-description-drift.yml",

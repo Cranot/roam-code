@@ -105,10 +105,10 @@ pipx install roam-code                                   # isolated environment 
 uv tool install roam-code                                # uv-managed tool
 pip install git+https://github.com/Cranot/roam-code.git  # from source
 
-# Docker (python:3.12-slim-bookworm base)
+# Docker (local build; CLI + MCP dependencies)
 docker build -t roam-code .
-docker run --rm -v "$PWD:/workspace" roam-code index
-docker run --rm -v "$PWD:/workspace" roam-code health
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" roam-code index
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" roam-code health
 ```
 
 Works on Linux, macOS, and Windows. **Windows:** if `roam` is not found after installing with `uv`, run `uv tool update-shell` and restart your terminal.
@@ -335,7 +335,7 @@ roam verify --off / --on               # pause / resume the loop repo-wide
 | Command | Role in the loop |
 |---|---|
 | `roam verify-imports --path src/roam/cli.py` | The hallucination firewall, standalone — validates every import resolves |
-| `roam delete-check --ci` | Gates a deletion diff on surviving references (exit 5 on BREAK-RISK) |
+| `roam delete-check --ci` | Gates a deletion diff on surviving references (exit 5 on BREAK-RISK or an incomplete check) |
 | `git diff \| roam critique` | Clones-not-edited check + blast radius on the patch (exit 5 on high severity) |
 | `roam verify --report --persist` | Writes findings to the registry so the **compiler** embeds them as `known_findings` in future envelopes — debt gets fixed opportunistically |
 
@@ -545,6 +545,8 @@ This teaches the agent which command fits each situation: `roam preflight` befor
 ## MCP Server
 
 Roam includes a [Model Context Protocol](https://modelcontextprotocol.io/) server for direct integration with MCP-aware tools.
+See [protocol compatibility](docs/mcp-protocol-compatibility.md), the [agent CLI guide](docs/agent-cli.md),
+and [container installation and release evidence](docs/containers.md) for supported versions and bounded examples.
 
 ```bash
 pip install "roam-code[mcp]"
@@ -848,6 +850,11 @@ and exports evidence to existing review and security workflows. Evaluate the
 combination on your repository: supported syntax, edge resolution, false
 positives, latency, and the decisions the output helps you make. Capabilities
 and prices of other products depend on their current version and plan.
+
+Read [detector evidence and limitations](docs/concepts/detector-evidence.md)
+before acting on deletion, algorithm, effect, test-mapping, or security findings.
+Static graph coverage and heuristic scores are not runtime coverage, authorship
+proof, or permission to apply a suggested change.
 
 The local CLI has no license fee. Budget separately for indexing time, CI
 compute, integration work, and any optional hosted service. Start with a report

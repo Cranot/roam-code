@@ -1,7 +1,8 @@
 # Installing roam-code
 
-roam-code is the local CLI that runs pre-change gates before every agent edit
-and compiles tamper-evident, content-hashed evidence packets after every change.
+roam-code is a local CLI for pre-change checks and tamper-evident,
+content-hashed evidence packets. Configure the agent workflow to invoke these
+checks and record evidence; installation alone does not gate every edit.
 Local analysis, no API keys, and no automatic source-code or telemetry upload.
 A cold parser cache retrieves one checksum-verified grammar bundle; prewarm it
 before air-gap use. Explicit network features are inventoried in
@@ -15,6 +16,7 @@ before air-gap use. Explicit network features are inventoried in
 - [AGENTS.md](AGENTS.md) — codebase/agent rules, quality discipline, adding commands, and schema/test conventions. Read first when modifying roam-code itself.
 - [Documentation map](docs/README.md) — maintained guides, generated references, and their authorities.
 - [Repository maintenance](docs/repository-maintenance.md) — locked development setup, Git checks, index recovery, and validation gates.
+- [Detector evidence](docs/concepts/detector-evidence.md) — static-analysis limits, deletion review, score semantics, and CLI/MCP scope differences.
 - `README.md` — human-facing overview, install matrix, headline counts.
 - Live docs: <https://roam-code.com/docs/getting-started>, <https://roam-code.com/docs/command-reference>, <https://roam-code.com/docs/architecture>.
 

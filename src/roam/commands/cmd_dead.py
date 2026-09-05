@@ -479,7 +479,7 @@ def _dead_action(r, file_imported, tested=False, external_facing=False):
     # 2 of 14 hand-verified true (THEME 6). REVIEW until the
     # sibling-import graph walk exists and actually runs.
     if file_imported:
-        return "REVIEW", 70
+        return "REVIEW", 30
 
     # Private naming conventions (_, single underscore prefix) = higher confidence
     if name.startswith("_") and not name.startswith("__"):

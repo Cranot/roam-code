@@ -111,7 +111,9 @@ def test_context(roam_project):
 def test_safe_delete(roam_project):
     result = _run_roam(["safe-delete", "multiply"], roam_project)
     assert result.returncode == 0
-    assert "SAFE" in result.stdout
+    # helper.py is imported: zero resolved callers do not prove no consumers.
+    assert "VERDICT: REVIEW" in result.stdout
+    assert "File imported: yes" in result.stdout
 
 
 def test_split(roam_project):

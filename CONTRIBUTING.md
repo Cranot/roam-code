@@ -617,6 +617,13 @@ Do not create the tag from a dirty tree or before the commit CI run is green.
 
 ## Testing Tips
 
+- For a detector correction, add both a false-positive regression and a genuine
+  positive control. Use generic fixtures in public tests; keep private reports,
+  source excerpts, command logs, and dated verification notes under `internal/`.
+- Verify the affected CLI behavior and MCP description, then regenerate the
+  references listed in the [documentation map](docs/README.md#documentation-authorities).
+  Read [detector evidence](docs/concepts/detector-evidence.md) for scope and
+  confidence semantics. A passing focused bundle is not a full-suite result.
 - Tests create temporary project directories with fixture files
 - Use `CliRunner` from Click for command tests
 - Mark tests that need sequential execution with `@pytest.mark.xdist_group("groupname")`

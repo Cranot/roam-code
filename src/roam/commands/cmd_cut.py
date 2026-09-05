@@ -87,9 +87,8 @@ def cut(ctx, between, leak_edges, top_n):
             # cap clause first so the sentence ends on "symbols".
             verdict = f"Skipped cut above cap {_MAX_GRAPH_SYMBOLS:,}: graph has {sym_count:,} symbols"
             hint = (
-                "Index a subdirectory with `roam index <path>` to narrow the "
-                "analyzed subset, or raise `_MAX_GRAPH_SYMBOLS` in "
-                "src/roam/commands/cmd_cut.py."
+                "Run `roam clusters` to choose two cluster names, then "
+                "run `roam cut --between <cluster-a> <cluster-b>` for a focused boundary."
             )
             if json_mode:
                 click.echo(

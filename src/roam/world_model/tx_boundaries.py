@@ -150,11 +150,11 @@ _BEGIN_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\b\w+\.begin_transaction\s*\("), "begin_transaction()"),
     (re.compile(r"\b\w+\.begin_nested\s*\("), "begin_nested()"),
     # Project helpers often centralise the explicit BEGIN operation.  A
-    # call whose function name says ``begin`` is a transaction opener even
-    # when the SQL lives in that helper rather than this consumer body.
+    # Require transaction vocabulary as well as begin: graphics beginPath,
+    # gameplay beginRound and iterator begin are unrelated operations.
     (
         re.compile(
-            r"(?<!def\s)\b(?:[A-Za-z_]\w*\.)?(?:begin\w*|[A-Za-z_]\w*begin\w*)\s*\(",
+            r"(?<!def\s)\b(?:[A-Za-z_]\w*\.)?(?:begin\w*transaction\w*|begin_tx|beginTransaction|begin_txn)\s*\(",
             re.IGNORECASE,
         ),
         "begin helper call",
@@ -502,6 +502,25 @@ def _classify_one(
     kinds = set(se.kinds or [])
     has_mutation_kind = bool(kinds & {"io_write", "mutation"})
     code_text = _mask_strings_and_comments(body_text) if body_text else ""
+    if se.file.endswith((".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")):
+        from roam.analysis.effects import WRITES_DB, classify_symbol_effects
+
+        tx_anchor = re.search(
+            r"\b(?:db|database|conn|connection|session|transaction|tx)\.|\b\w*transaction\w*\s*\(",
+            code_text,
+            re.IGNORECASE,
+        )
+        if not tx_anchor and WRITES_DB not in classify_symbol_effects(body_text, "typescript"):
+            return TxBoundary(
+                symbol=se.symbol,
+                file=se.file,
+                classification="non_transactional",
+                confidence="medium",
+                symbol_id=se.symbol_id,
+                line_start=se.line_start,
+                line_end=se.line_end,
+                issues=["No database-specific evidence; browser/network mutations do not imply a missing transaction"],
+            )
 
     # Fast path: pure or read-only with no body-level transaction markers ⇒
     # non_transactional. Avoids the per-line scan on the (large) majority

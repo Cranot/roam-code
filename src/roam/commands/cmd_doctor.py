@@ -1316,11 +1316,9 @@ def _check_stale_math_signal_column() -> dict:
             "name": "Stale math_signals column",
             "passed": False,
             "detail": (
-                f"ADVISORY: stale math_signals column 'loop_eq_with_dependent_write' - "
-                f"schema v13 added this signal (W36.4 / migration #51) but no row "
-                f"has a non-zero value across {total_rows} rows. This is normal for "
-                f"repos indexed before migration #51 landed. "
-                f"Fix: run `roam index --force` to rebuild signals."
+                f"ADVISORY: no dependent-write loop signals across {total_rows} rows. "
+                f"This may mean no matching loops, or an index created before the signal was added. "
+                f"Run `roam index --force` to refresh; a zero count alone does not prove stale data."
             ),
             "_state": "stale",
             "_row_count": total_rows,

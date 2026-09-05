@@ -133,7 +133,8 @@ Try one:    roam health                        (score this codebase 0-100)
             roam understand                    (briefing)
 Next:       git diff | roam critique           (the killer demo)
 Help:       roam ask "<question>"              roam --help
-Wire MCP:   roam mcp-setup <claude|cursor|codex|gemini|amp>"""
+Wire MCP:   roam mcp-setup <claude-code|cursor|codex-cli|gemini-cli|vscode|windsurf>
+            Preview configuration; add --write to install it."""
 
 
 def _is_inside_git_repo(project_root) -> bool:

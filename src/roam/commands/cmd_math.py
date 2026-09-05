@@ -920,6 +920,9 @@ def math_cmd(
                 patterns = (f.get("evidence") or {}).get("matched_patterns") or []
                 if patterns:
                     click.echo(f"        Matched: {', '.join(str(p) for p in patterns[:4])}")
+                for context_line in (f.get("evidence") or {}).get("context_lines", []):
+                    if context_line.get("is_match"):
+                        click.echo(f"        Source: {context_line.get('text', '')}")
 
             click.echo()
 

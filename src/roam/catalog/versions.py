@@ -37,6 +37,11 @@ DEFAULT_VERSION: str = "1.0.0"
 # Bumping a value below makes the change visible to the manifest writer
 # and any future ``roam doctor`` drift check.
 DETECTOR_VERSION_OVERRIDES: dict[str, str] = {
+    "loop-invariant-call": "2.0.0",
+    "branching-recursion": "1.0.1",
+    "manual-power": "2.0.0",
+    "spread-accumulator": "1.0.1",
+    "serial-await-loop": "2.0.0",
     # nested-lookup tightened in migration 51 (added the
     # loop_eq_with_dependent_write predicate to cut a ~85% FP rate on
     # PHP streaming-CSV / matrix-render code). Pre-W21 indexes built

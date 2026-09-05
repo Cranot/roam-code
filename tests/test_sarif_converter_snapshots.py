@@ -296,7 +296,9 @@ def _snapshot_cases() -> dict[str, tuple[Callable[..., dict], object, dict[str, 
 
 _EXPECTED_SNAPSHOTS: dict[str, tuple[int, str]] = {
     "affected_tests": (3162, "50158399bf22f48c68679658adba8196989d3794fb64c06d49ce374c47cac0d2"),
-    "delete_check": (4068, "7825fe7bf6c8e9c66171758c1eab1929332e01337c7a1798af24afa7aa98797c"),
+    # The incomplete-search REVIEW rule extends the catalogue; existing results
+    # are unchanged (removing that one rule reproduces the prior byte snapshot).
+    "delete_check": (4455, "c32a9d45ade01e75f0e6fda86875d8e3c1c907cd566cf6c0ce3146757298085a"),
     "n1": (4379, "1b32d50cb7fa6c798e76f52982270739abe93ec94ebbf63ed77b7367dcba0a64"),
     "missing_index": (4539, "c40bc94dca0c9fecc3462db5d1b20e87df674a58c54adcdf085e8dc30478fdb3"),
     "orphan_imports": (4643, "d7d030fff59e696a2ee9494a45f48e5d597430a318e31cfd14c92675086da1ea"),

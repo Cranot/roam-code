@@ -149,25 +149,32 @@ _JAVASCRIPT_PATTERNS = _compile(
         (r"ws\.send\s*\(", NETWORK),
         (r"WebSocket\s*\(", NETWORK),
         # Database writes
-        (r"\.save\s*\(", WRITES_DB),
-        (r"\.create\s*\(", WRITES_DB),
+        # Generic lifecycle methods also occur on canvas, sprites and apps.
+        # Require a database receiver for ambiguous methods; retain explicit
+        # MongoDB operations and SQL literals as independent evidence.
+        (
+            r"\b(?:db|database|prisma|sequelize|knex|collection|repository)(?:\.\w+)*\.(?:save|create|destroy|execute|query|run)\s*\(",
+            WRITES_DB,
+        ),
+        (
+            r"\.(?:execute|query|run)\s*\(\s*['\"]\s*(?:INSERT|UPDATE|DELETE|REPLACE|MERGE|DROP|ALTER|TRUNCATE)\b",
+            WRITES_DB,
+        ),
         (r"\.insertOne\s*\(", WRITES_DB),
         (r"\.insertMany\s*\(", WRITES_DB),
         (r"\.updateOne\s*\(", WRITES_DB),
         (r"\.updateMany\s*\(", WRITES_DB),
         (r"\.deleteOne\s*\(", WRITES_DB),
         (r"\.deleteMany\s*\(", WRITES_DB),
-        (r"\.destroy\s*\(", WRITES_DB),
-        (r"\.execute\s*\(", WRITES_DB),
-        (r"\.query\s*\(", WRITES_DB),
-        (r"\.run\s*\(", WRITES_DB),
         # Database reads
-        (r"\.find\s*\(", READS_DB),
+        (
+            r"\b(?:db|database|prisma|sequelize|knex|collection|repository)(?:\.\w+)*\.(?:find|select|where)\s*\(",
+            READS_DB,
+        ),
+        (r"\.(?:execute|query|run)\s*\(\s*['\"]\s*SELECT\b", READS_DB),
         (r"\.findOne\s*\(", READS_DB),
         (r"\.findById\s*\(", READS_DB),
         (r"\.findAll\s*\(", READS_DB),
-        (r"\.select\s*\(", READS_DB),
-        (r"\.where\s*\(", READS_DB),
         # Filesystem
         (r"fs\.\w+\s*\(", FILESYSTEM),
         (r"readFile\w*\s*\(", FILESYSTEM),

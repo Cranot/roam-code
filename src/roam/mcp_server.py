@@ -636,6 +636,35 @@ def _select_instruction_file(precedence: list[str], existing: list[str]) -> str:
 # overrides via ``.update()``; do NOT TypedDict this return without an
 # at-boundary validator. See W933 _resolved_thresholds for the canonical
 # case study.
+def _protocol_compatibility_payload() -> dict:
+    """Disclose installed transport support without claiming future conformance."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        sdk_version = version("mcp")
+    except PackageNotFoundError:
+        return {"available": False, "supported_versions": [], "resolution": "mcp_sdk_not_installed"}
+    try:
+        from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
+        from mcp.types import LATEST_PROTOCOL_VERSION
+    except ImportError:
+        return {
+            "available": True,
+            "sdk_version": sdk_version,
+            "supported_versions": [],
+            "resolution": "protocol_api_unavailable",
+            "partial_success": True,
+        }
+    return {
+        "available": True,
+        "sdk_version": sdk_version,
+        "supported_versions": list(SUPPORTED_PROTOCOL_VERSIONS),
+        "preferred_version": LATEST_PROTOCOL_VERSION,
+        "support_definition": "installed_mcp_sdk_protocol_versions",
+        "stdio_regression_version": "2025-11-25",
+    }
+
+
 def _compat_profile_payload(profile: str, root: str = ".") -> dict:
     """Build MCP client compatibility payload for one profile or all profiles."""
     existing = _detect_instruction_files(root)
@@ -658,6 +687,7 @@ def _compat_profile_payload(profile: str, root: str = ".") -> dict:
         return {
             "server": "roam-code",
             "compat_version": "2026-02-22",
+            "protocol": _protocol_compatibility_payload(),
             "detected_instruction_files": existing,
             "profiles": profiles,
         }
@@ -670,6 +700,7 @@ def _compat_profile_payload(profile: str, root: str = ".") -> dict:
             "compat_version": "2026-02-22",
             "detected_instruction_files": existing,
             "profile": profile,
+            "protocol": _protocol_compatibility_payload(),
         }
     )
     return payload
@@ -14605,12 +14636,15 @@ def roam_simulate_departure(developer: str, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_ai_ratio", description="Estimate AI-generated code percentage from git commit heuristics.")  # W459
+@_tool(
+    name="roam_ai_ratio",
+    description="Inspect AI-associated source/Git patterns as an uncalibrated score, not an authorship estimate.",
+)  # W459
 def roam_ai_ratio(since: int = 90, root: str = ".") -> dict:
-    """Estimate AI-generated code percentage from git commit heuristics.
+    """Inspect an uncalibrated score of AI-associated source/Git patterns.
 
-    WHEN TO USE: Call this to understand how much of the codebase was
-    likely written or co-authored by AI tools. Uses Gini coefficient,
+    WHEN TO USE: Inspect source and commit patterns, not authorship.
+    Uses Gini coefficient,
     burst-addition detection, co-author tags, comment density anomalies,
     and temporal patterns.
 
@@ -14621,8 +14655,10 @@ def roam_ai_ratio(since: int = 90, root: str = ".") -> dict:
     root:
         Working directory (project root).
 
-    Returns: AI ratio (0-1), confidence level, per-signal scores,
-    top AI-likely files, and trend direction.
+    Returns: normalized heuristic score (legacy ``ai_ratio`` key), sample
+    strength (``confidence``), per-signal scores, top pattern-scoring files,
+    and trend direction. Attribution is unsupported; per-file ``probability``
+    is also a legacy score key, not a calibrated authorship probability.
     """
     args = ["ai-ratio", "--since", str(since)]
     return _run_roam(args, root)
@@ -14798,18 +14834,20 @@ def roam_dev_profile(author: str = "", days: int = 90, limit: int = 20, root: st
 
 @_tool(
     name="roam_partition",
-    description="Multi-agent work partitioning: split codebase into independent work zones.",
+    description="Plan conflict-aware work partitions; inspect shared files, dependencies, and merge order before assigning agents.",
 )
 def roam_partition(n_agents: int = 4, output_format: str = "text", root: str = ".") -> dict:
-    """Partition codebase into independent work zones for parallel agents.
+    """Plan conflict-aware work partitions for parallel agents.
 
     WHEN TO USE: when splitting work across multiple AI agents or developers
-    who need to work in parallel without conflicts.
+    who need visibility into shared files and cross-partition dependencies.
+    The manifest does not itself enforce exclusive write access.
 
     Parameters
     ----------
     n_agents:
-        Number of agents/partitions (default 4).
+        Number of agents/partitions (MCP default 4). The CLI without an
+        explicit count instead chooses a natural-cluster count bounded to 2..8.
     output_format:
         Output format: text, json, or claude-teams.
     root:
@@ -15680,7 +15718,8 @@ def roam_history_grep(
         "Audit literal strings across the project and emit a per-string "
         "verdict: SAFE-TO-REMOVE / REVIEW / LOAD-BEARING. Groups every "
         "reference by surface (code, test, docs, config, generated, "
-        "vendored) and annotates reachability for code hits."
+        "vendored) and annotates reachability for code hits. Require "
+        "REVIEW when a failed search leaves reference absence unconfirmed."
     ),
 )
 def roam_refs_text(
@@ -15704,7 +15743,8 @@ def roam_refs_text(
     Verdict ladder:
 
     * ``SAFE-TO-REMOVE`` -- only doc / test / dead-code references.
-    * ``REVIEW`` -- referenced in one or two reachable code symbols.
+    * ``REVIEW`` -- referenced in one or two reachable code symbols, or
+      the reference search is incomplete.
     * ``LOAD-BEARING`` -- referenced in many reachable code symbols, or
       in symbols with non-trivial PageRank.
 
@@ -17132,16 +17172,18 @@ def roam_congestion(
         "symbols whose name matches a common public-API prefix. "
         "Different from ``roam_dead_code`` (all unreferenced symbols) "
         "and ``roam_impact`` (transitive blast radius) -- this is the "
-        "single go/no-go gate."
+        "focused deletion review. Imported files with unresolved symbol use "
+        "require REVIEW; absent indexed references do not prove absence of use."
     ),
 )
 def roam_safe_delete(symbol: str, root: str = ".") -> dict:
-    """Decide whether a symbol can be safely deleted.
+    """Review indexed evidence before deleting a symbol.
 
     WHEN TO USE: agent is about to delete a symbol and wants a single
     verdict + reason before touching the file. Pair with
     ``roam_impact`` for the full blast radius if the verdict is
-    REVIEW / UNSAFE.
+    REVIEW / UNSAFE. Check dynamic/member access and external consumers;
+    the static verdict is not permission to delete without review and tests.
 
     Parameters
     ----------
@@ -17208,9 +17250,9 @@ def roam_safe_zones(symbol: str, depth: int = 5, root: str = ".") -> dict:
         "references to deleted symbols and files. Per-deletion verdict: "
         "SAFE (no surviving references), LIKELY-SAFE (survivors only in "
         "tests / docs / unreachable code), or BREAK-RISK (survivors in "
-        "reachable code). Different from ``roam_critique`` (PR-wide "
+        "reachable code); REVIEW means a check is incomplete. Different from ``roam_critique`` (PR-wide "
         "diff review) -- this targets the deletion surface specifically "
-        "with CI-gate semantics (overall BREAK-RISK trips the gate)."
+        "with CI-gate semantics (BREAK-RISK and incomplete checks trip the gate)."
     ),
 )
 def roam_delete_check(
@@ -17244,8 +17286,8 @@ def roam_delete_check(
         Anchor reachability classification at this entry symbol.
         Empty (default) uses the orphan-set fallback.
     ci:
-        Surface BREAK-RISK as a CI-failing verdict (the underlying CLI
-        exit 5 collapses into the JSON envelope when called via MCP).
+        Report BREAK-RISK or incomplete checks as gate failures. The
+        underlying CLI exits 5; MCP preserves the structured result.
     count:
         Max deletions to report in detail (default 20).
     include_line_deletions:
@@ -17254,8 +17296,9 @@ def roam_delete_check(
     root:
         Repo root (default current directory).
 
-    Returns: ``{summary: {verdict, overall: SAFE|LIKELY-SAFE|BREAK-RISK,
-    break_risk, likely_safe, safe}, deletions: [...]}``.
+    Returns: ``{summary: {verdict, overall: SAFE|LIKELY-SAFE|BREAK-RISK|REVIEW,
+    break_risk, likely_safe, safe}, deletions: [...]}``. Incomplete searches
+    include ``partial_success: true`` and require review before removal.
     """
     args: list[str] = [
         "delete-check",

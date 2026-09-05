@@ -114,7 +114,10 @@ _DECORATOR_PATTERNS = [
 _NAME_PATTERNS = [
     ("Event", re.compile(r"^on_[a-z]|^handle_[a-z]|_handler$|_listener$", re.IGNORECASE)),
     ("Main", re.compile(r"^main$|^__main__$|^cli$|^run$|^app$|^entrypoint$", re.IGNORECASE)),
-    ("Scheduled", re.compile(r"cron|schedule|periodic|tick", re.IGNORECASE)),
+    (
+        "Scheduled",
+        re.compile(r"(?:^|_)(?:cron|schedule|scheduled|periodic|tick)(?:_|$)|^(?:cron|schedule|periodic|tick)[A-Z]"),
+    ),
     ("Message", re.compile(r"consume|subscriber|on_message|process_message", re.IGNORECASE)),
     ("CLI", re.compile(r"^cmd_|_command$|_cmd$", re.IGNORECASE)),
     # HTTP name patterns: only the strong endpoint/controller suffixes.

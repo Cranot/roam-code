@@ -8,6 +8,7 @@ verdict:
   * SAFE          — no surviving reference
   * LIKELY-SAFE   — survivors only in tests / docs
   * BREAK-RISK    — survivors in reachable code
+  * REVIEW        — reference search is incomplete
 
 Exits non-zero when any BREAK-RISK is detected (CI gate behaviour).
 Pairs with the PR Replay narrative — the same audit-grade signal,
@@ -26,6 +27,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.grep_helpers import (
+    SearchEngineError,
     build_interval_index,
     build_orphan_set,
     build_reachable_set,
@@ -290,7 +292,7 @@ def _pre_edit_line_number(
 @click.option("--base-ref", default="main", help="Base branch for --source pr.")
 @click.option("--commit-range", default=None, help="Arbitrary git range, e.g. HEAD~3..HEAD.")
 @click.option("--reachable-from", "reachable_from", default=None, help="Anchor reachability classification at <entry>.")
-@click.option("--ci", is_flag=True, help="Exit 5 on BREAK-RISK so CI fails the job.")
+@click.option("--ci", is_flag=True, help="Exit 5 on BREAK-RISK or incomplete checks so CI fails the job.")
 @click.option("-n", "count", default=20, help="Max deletions to report in detail.")
 @click.option("--include-line-deletions/--symbols-only", default=False, help="Also gate on raw deleted lines (slow).")
 @click.pass_context
@@ -516,7 +518,7 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
             warnings_out.append(f"delete_check_git_grep_failed:{type(exc).__name__}:{exc}")
         else:
             warnings_out.append(f"delete_check_engine_failed:{type(exc).__name__}:{exc}")
-        matches = []
+        matches = exc.matches if isinstance(exc, SearchEngineError) else []
 
     if not matches and engine == "fallback":
         # W607-J: disclose the auto-fan-out fallthrough so the agent can
@@ -634,6 +636,8 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     for t in targets:
         items = per_target.get(t["name"], [])
         verdict, reason = _verdict(items)
+        if warnings_out and verdict != "BREAK-RISK":
+            verdict, reason = _validate_verdict("REVIEW"), "search incomplete; review surviving references"
         if verdict == "BREAK-RISK":
             any_break = True
         # Sort matches so the truncated [:5] view foregrounds the evidence
@@ -641,14 +645,18 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         items_sorted = sorted(items, key=_evidence_rank)
         decorated.append({**t, "verdict": verdict, "reason": reason, "matches": items_sorted})
 
-    # Sort: BREAK-RISK first, then LIKELY-SAFE, then SAFE
-    rank = {"BREAK-RISK": 0, "LIKELY-SAFE": 1, "SAFE": 2}
+    # Put confirmed breakage and incomplete checks before advisory/clean rows.
+    rank = {"BREAK-RISK": 0, "REVIEW": 1, "LIKELY-SAFE": 2, "SAFE": 3}
     decorated.sort(key=lambda d: (rank.get(d["verdict"], 3), d["name"]))
 
     breaks = sum(1 for d in decorated if d["verdict"] == "BREAK-RISK")
     likely = sum(1 for d in decorated if d["verdict"] == "LIKELY-SAFE")
     safe = sum(1 for d in decorated if d["verdict"] == "SAFE")
+    review = sum(1 for d in decorated if d["verdict"] == "REVIEW")
     overall = "BREAK-RISK" if breaks else ("LIKELY-SAFE" if likely else "SAFE")
+    scan_incomplete = bool(warnings_out)
+    if scan_incomplete:
+        overall = "BREAK-RISK" if breaks else "REVIEW"
 
     if sarif_mode:
         # W1192: SARIF projection for CI / GitHub Code Scanning integration.
@@ -684,7 +692,9 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
                 }
             )
         sarif_doc = delete_check_to_sarif({"command": "delete-check", "deletions": deletions_for_sarif})
-        click.echo(write_sarif(with_sarif_disclosures(sarif_doc, warnings_out)))
+        if scan_incomplete:
+            sarif_doc = with_sarif_disclosures(sarif_doc, warnings_out)
+        click.echo(write_sarif(sarif_doc))
         # W1331: the search engine can fail and floor ``matches`` to [];
         # only the JSON envelope said so, so a Code-Scanning gate read an
         # unrun search as a clean one.
@@ -725,7 +735,10 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         # contract (state disclosure) as a separate axis that W607-J
         # does NOT graduate.
         extra: dict = {}
-        if warnings_out:
+        if scan_incomplete:
+            summary["verdict"] = f"Search incomplete: {breaks} break-risk findings, {review} deletions require review"
+            summary["review"] = review
+            summary["scan_incomplete"] = scan_incomplete
             summary["warnings_out"] = list(warnings_out)
             summary["partial_success"] = True
             extra["warnings_out"] = list(warnings_out)
@@ -743,7 +756,12 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     else:
         # W1331: same disclosure for the human-readable branch.
         echo_text_warnings(warnings_out)
-        click.echo(f"VERDICT: {len(decorated)} deletion(s) — {breaks} BREAK-RISK / {likely} LIKELY-SAFE / {safe} SAFE")
+        if scan_incomplete:
+            click.echo(f"VERDICT: Search incomplete: {breaks} break-risk findings, {review} deletions require review")
+        else:
+            click.echo(
+                f"VERDICT: {len(decorated)} deletion(s) — {breaks} BREAK-RISK / {likely} LIKELY-SAFE / {safe} SAFE"
+            )
         click.echo()
         for d in decorated[:count]:
             click.echo(f"  {d['verdict']:11s} {d['kind']:6s} {d['name']}  ({d['reason']})")
@@ -756,7 +774,7 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
         if len(decorated) > count:
             click.echo(f"\n(+{len(decorated) - count} more deletions)")
 
-    if ci and any_break:
+    if ci and (any_break or scan_incomplete):
         raise SystemExit(EXIT_GATE_FAILURE)
 
 

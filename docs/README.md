@@ -11,14 +11,18 @@ the next website deployment; a Git push alone does not publish the site.
 | Need | Maintained source |
 | --- | --- |
 | Install and run the first analysis | [Getting started](../templates/distribution/landing-page/docs/getting-started.html) |
+| Run Roam in Docker | [Containers, mount permissions and release evidence](containers.md) |
 | Find a command or workflow | [User command reference](../templates/distribution/landing-page/docs/command-reference.html), [complete command index](COMMANDS.md) |
 | Connect an MCP client | [MCP usage](../templates/distribution/landing-page/docs/mcp-usage.html), [tool inventory](mcp-tools.md) |
+| Check MCP protocol support | [Protocol compatibility and handshake tests](mcp-protocol-compatibility.md) |
+| Make bounded agent CLI calls | [Agent CLI guide](agent-cli.md) |
 | Understand the index and evidence pipeline | [Architecture](../templates/distribution/landing-page/docs/architecture.html), [agent contract](../templates/distribution/landing-page/docs/agent-contract.html) |
 | Diagnose an installation, index, or lock | [Troubleshooting](../templates/distribution/landing-page/docs/troubleshooting.html) |
 | Maintain this checkout and validate a change | [Repository maintenance](repository-maintenance.md), [contributing](../CONTRIBUTING.md) |
 | Integrate CI and SARIF | [CI integration](ci-integration.md) |
 | Understand data leaving the machine | [Network boundary](network-boundary.md) |
 | Interpret caller counts | [Caller metrics](concepts/caller-metrics.md) |
+| Evaluate findings and avoid overclaiming | [Detector evidence and limitations](concepts/detector-evidence.md) |
 | Reproduce an installation example | [Fresh-install smoke transcript](fresh-install-smoke.md) |
 | Review changes by release | [Changelog](../CHANGELOG.md) |
 

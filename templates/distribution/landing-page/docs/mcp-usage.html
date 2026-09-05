@@ -90,6 +90,11 @@
 
     <section>
       <h2 id="first-run-setup">First-run setup</h2>
+      <p>Client setup and protocol support are different. Run <code>roam mcp --compat-profile all</code>
+        to inspect the installed SDK's supported revisions. The tested stack supports the handshake
+        through <code>2025-11-25</code>; the newer July 2026 lifecycle is not yet a supported integration.
+        See the <a href="https://github.com/Cranot/roam-code/blob/main/docs/mcp-protocol-compatibility.md">protocol compatibility guide</a>.
+        Install dependencies before launching stdio; keep installation output out of the protocol stream.</p>
       <p>
         Install the MCP extra (Python 3.10+ required) and run
         <code>roam init</code> in your project root <strong>before</strong>
@@ -249,8 +254,8 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
           </tr>
           <tr>
             <td><code>roam_orchestrate</code> / <code>roam_partition</code></td>
-            <td>Multi-agent partitioning emits one entry per cluster; thousands of entries on large repos.</td>
-            <td>Bound output with <code>--agents N</code> for orchestrate or partition, or call <code>roam_fleet_plan</code> which emits a compact <code>.roam-fleet.json</code> instead.</td>
+            <td>Partition manifests can contain large symbol/file lists even with a bounded agent count.</td>
+            <td>Set the MCP <code>n_agents</code> parameter explicitly and inspect conflicts. <code>roam_partition</code> defaults to four; the CLI's automatic count is bounded to two through eight. Use response handles for large payloads.</td>
           </tr>
           <tr>
             <td><code>roam_fingerprint</code></td>
@@ -269,6 +274,11 @@ roam_pr_analyze(diff_text="<unified diff>")   # INTENTIONAL / SAFE / REVIEW / BL
           </tr>
         </tbody>
       </table>
+
+      <p>CLI flags and MCP parameters are separate interfaces; check each tool's
+        schema for supported arguments and defaults. Read
+        <a href="/docs/command-reference#evidence-limits">evidence limits</a> for
+        deletion verdicts, test mapping, heuristic scores, and partial analyses.</p>
       <p>
         <code>roam_explore</code> is the recommended browse-style entry
         point because it auto-applies the handle pattern: large

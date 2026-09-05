@@ -3511,6 +3511,11 @@ _DELETE_CHECK_MAX_SECONDARY_LOCS = 10
 
 _DELETE_CHECK_RULES = (
     _ParameterizedRule(
+        "delete-check/review",
+        "Reference search is incomplete — review required before deletion",
+        "error",
+    ),
+    _ParameterizedRule(
         "delete-check/break-risk",
         "Deletion target has surviving reachable code references — deleting it will break the build",
         "error",
@@ -3528,6 +3533,7 @@ _DELETE_CHECK_RULES = (
 )
 
 _DELETE_CHECK_VERDICT_TO_RULE_LEVEL = {
+    "REVIEW": ("delete-check/review", "error"),
     "BREAK-RISK": ("delete-check/break-risk", "error"),
     "LIKELY-SAFE": ("delete-check/likely-safe", "warning"),
     "SAFE": ("delete-check/safe", "note"),
@@ -3570,18 +3576,20 @@ def delete_check_to_sarif(data: dict) -> dict:
     *data* is the JSON envelope built by
     :mod:`roam.commands.cmd_delete_check` — one entry per gated
     deletion under ``deletions[]``, each carrying a closed-enum
-    ``verdict`` (``SAFE`` / ``LIKELY-SAFE`` / ``BREAK-RISK``),
+    ``verdict`` (``SAFE`` / ``LIKELY-SAFE`` / ``BREAK-RISK`` / ``REVIEW``),
     ``kind`` (``symbol`` / ``file`` / ``line``), ``name`` (the deleted
     identifier or path), ``from_file`` + ``from_line`` (the deletion
     site), ``reason`` (human-readable explanation), and a nested
     ``survivors[]`` list of surviving references that prevent the
     deletion from being safe.
 
-    Three rule ids project onto SARIF — one per verdict, each with a
+    Four rule ids project onto SARIF — one per verdict, each with a
     distinct ``defaultLevel`` so a CI gate keyed off SARIF
     ``level: error`` blocks on BREAK-RISK without surfacing the
     advisory bands:
 
+    - ``delete-check/review`` (defaultLevel ``error``): reference search
+      did not complete; absence of surviving references is unconfirmed.
     - ``delete-check/break-risk`` (defaultLevel ``error``): surviving
       reachable code references remain — deleting the target will
       break the build. Mirrors the cmd_delete_check exit-5 gate.

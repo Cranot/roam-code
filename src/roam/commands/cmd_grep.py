@@ -40,6 +40,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.grep_helpers import (
+    SearchEngineError,
     attach_blame,
     attach_heat,
     attach_pagerank,
@@ -322,7 +323,15 @@ def _read_patterns_file(p: Path) -> list[str]:
 @click.option("-F", "--fixed-string", "fixed", is_flag=True, help="Literal mode (no regex).")
 @click.option("-i", "--ignore-case", "case_insensitive", is_flag=True, help="Case-insensitive search.")
 @click.option("-w", "--word", "word_boundary", is_flag=True, help="Match whole words only.")
-@click.option("-n", "count", default=50, help="Max results to show.")
+@click.option(
+    "-n",
+    "--max-results",
+    "count",
+    type=click.IntRange(min=1),
+    default=50,
+    show_default=True,
+    help="Maximum matches to return; also caps groups with --group-by symbol. Use --max-packets for context.",
+)
 @click.option("-s", "--source-only", is_flag=True, help="Exclude docs, configs, and non-source files.")
 @click.option("-t", "--test-only", is_flag=True, help="Only search in test files.")
 @click.option("--exclude", "exclude_patterns", default=None, help="Comma-separated exclusion globs.")
@@ -448,6 +457,9 @@ def grep_cmd(
         """
         try:
             return fn(*args, **kwargs)
+        except SearchEngineError as exc:
+            _w607bv_warnings_out.append(f"grep_{phase}_failed:{type(exc).__name__}:{exc}")
+            return exc.matches
         except Exception as exc:  # noqa: BLE001 -- top-level disclosure
             _w607bv_warnings_out.append(f"grep_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
@@ -852,6 +864,10 @@ def grep_cmd(
     # --- Output ---
     unique_files = len({m["path"] for m in matches})
     verdict = f"{len(matches)} matches in {unique_files} files for {_pat_label(pats)}"
+    if source_only:
+        verdict += "; source files only"
+    if test_only:
+        verdict += "; test files only"
     if reachable_from:
         verdict += f" — reachable from {reachable_from}"
     if unreachable_filter_active:
@@ -860,6 +876,8 @@ def grep_cmd(
         verdict += f"; {len(context_packets)} context packets"
         if omitted_context_packets:
             verdict += f" ({omitted_context_packets} omitted by cap)"
+    if warnings_out or _w607bv_warnings_out:
+        verdict = f"Partial search: {verdict}"
 
     if json_mode:
         # W607-G + W607-BV combined disclosure on the happy match path.
@@ -1159,10 +1177,15 @@ def _pat_label(pats: list[str]) -> str:
 def _emit_empty(json_mode, patterns, budget, engine, filtered=False, *, warnings_out=None):
     label = _pat_label(patterns)
     suffix = " after filters" if filtered else ""
+    verdict = f"no matches for {label}{suffix}"
+    if warnings_out:
+        verdict = f"Search incomplete: {verdict}; absence is unconfirmed"
     if json_mode:
         _summary: dict = {
-            "verdict": f"no matches for {label}{suffix}",
+            "verdict": verdict,
             "total": 0,
+            "shown": 0,
+            "omitted_matches": 0,
             "engine": engine,
         }
         # W607-G: non-empty bucket → summary mirror + partial_success flip
@@ -1187,7 +1210,7 @@ def _emit_empty(json_mode, patterns, budget, engine, filtered=False, *, warnings
         )
     else:
         echo_text_warnings(warnings_out)
-        click.echo(f"VERDICT: no matches for {label}{suffix}")
+        click.echo(f"VERDICT: {verdict}")
         click.echo()
         click.echo(f"No matches for {label}{suffix}.")
 
@@ -1268,8 +1291,15 @@ def _emit_json(
         "verdict": verdict,
         "total": len(matches),
         "shown": len(serialised),
+        "omitted_matches": len(matches) - len(serialised),
         "engine": engine,
     }
+    if groups is not None:
+        _summary.update(
+            total_groups=len(groups),
+            shown_groups=min(count, len(groups)),
+            omitted_groups=max(0, len(groups) - count),
+        )
     if context_packets is not None:
         _summary["context_packets"] = len(context_packets)
         _summary["context_packets_omitted"] = omitted_context_packets
@@ -1408,7 +1438,7 @@ def _packet_state_label(packet: dict) -> str:
 
 
 def _emit_text_grouped(groups, count):
-    click.echo(f"=== {len(groups)} groups ===\n")
+    click.echo(f"=== {len(groups)} groups (showing {min(count, len(groups))}) ===\n")
     shown = 0
     for g in groups:
         if shown >= count:
