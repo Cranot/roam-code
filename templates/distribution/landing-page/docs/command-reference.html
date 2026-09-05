@@ -105,7 +105,7 @@
           <tr><th>Verb</th><th>What it does</th><th>Example</th></tr>
         </thead>
         <tbody>
-          <tr>
+          <tr id="understand">
             <td><code>understand</code></td>
             <td>Landing-pad summary of the codebase: layers, sizes, hotspots, entry points.</td>
             <td><code>roam understand</code></td>
@@ -120,12 +120,12 @@
             <td>Files + line ranges to read before changing a symbol, prioritised by callers and tests.</td>
             <td><code>roam context AuthService</code></td>
           </tr>
-          <tr>
+          <tr id="preflight">
             <td><code>preflight</code></td>
             <td>Blast radius, affected tests, complexity, fitness rules — all in one verdict.</td>
             <td><code>roam preflight AuthService</code></td>
           </tr>
-          <tr>
+          <tr id="critique">
             <td><code>critique</code></td>
             <td>Patch verifier. Pipe a diff in; get clones-not-edited + blast-radius severity. Exits 5 on high-severity findings.</td>
             <td><code>git diff | roam critique</code></td>
