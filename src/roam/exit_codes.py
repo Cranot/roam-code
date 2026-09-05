@@ -5,7 +5,7 @@ Exit code scheme (POSIX + SAST tool conventions):
     0    SUCCESS        -- command completed, no issues found (or info-only output)
     1    GENERAL_ERROR  -- unexpected failure, crash, unhandled exception
     2    USAGE_ERROR    -- invalid arguments, bad flags, unknown command (Click default)
-    3    INDEX_MISSING  -- reserved; see the reachability note below
+    3    INDEX_MISSING  -- automatic indexing was explicitly disabled
     4    INDEX_STALE    -- reserved name; in the field this integer means NEEDS_REVIEW
     5    GATE_FAILURE   -- quality gate check failed (health score below threshold, etc.)
     6    PARTIAL        -- command completed but with warnings/partial results
@@ -15,12 +15,11 @@ REACHABILITY -- what a caller branching on this table will actually receive.
 This section exists because the table above was, for two of its rows, a
 description of an intention rather than of the program.
 
-* 3 (INDEX_MISSING) is returned by NO shipped command. The only helper that
-  raises ``IndexMissingError`` is ``roam.commands.resolve.require_index``,
-  which nothing in ``src/roam`` calls: commands auto-index instead of
-  refusing, so a repo with no ``.roam/index.db`` gets an index, not exit 3.
-  Measured in a fresh repo: ``roam search`` / ``roam health`` / ``roam dead``
-  all exit 0.
+* 3 (INDEX_MISSING) is returned when an analysis command needs a missing or
+  incomplete index and ``ROAM_NO_AUTO_INDEX`` is enabled. The JSON refusal
+  distinguishes ``not_initialized`` from ``incomplete``. Run ``roam index``
+  explicitly to build/recover it. Without the opt-out, commands retain their
+  normal automatic-build behavior; explicit ``roam init`` also still builds.
 
 * 4 (INDEX_STALE) is returned by NO command with that meaning --
   ``IndexStaleError`` is never raised outside tests. The integer 4 IS
@@ -82,7 +81,7 @@ DESCRIPTIONS: dict[int, str] = {
     EXIT_SUCCESS: "success",
     EXIT_ERROR: "unexpected error",
     EXIT_USAGE: "invalid usage (bad arguments or flags)",
-    EXIT_INDEX_MISSING: "index not found -- run `roam init` (reserved; no command returns this)",
+    EXIT_INDEX_MISSING: "index missing or incomplete and automatic indexing disabled -- run `roam index`",
     EXIT_INDEX_STALE: "needs_review -- a guard verdict requires a human; re-running will not change it",
     EXIT_GATE_FAILURE: "quality gate failed",
     EXIT_PARTIAL: "partial results (completed with warnings)",

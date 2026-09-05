@@ -261,6 +261,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
                     json_envelope(
                         "init",
                         persist_response=False,
+                        include_index_metadata=False,
                         summary={
                             "verdict": "Initialization refused: no valid Git repository; no initialized files",
                             "state": "not_initialized",
@@ -324,7 +325,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # since the user just ran exactly that. cmd_init IS the init path; the
     # advisory belongs on commands that consume an index, not the one
     # building it.
-    ensure_index(quiet=json_mode, suppress_cold_start_advisory=True)
+    ensure_index(quiet=json_mode, suppress_cold_start_advisory=True, explicit_build=True)
 
     # 2b. Self-ignore .roam/ so `roam init` does not dirty `git status`
     # (and so `roam health` does not then report that dirt as index

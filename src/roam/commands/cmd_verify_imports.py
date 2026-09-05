@@ -317,9 +317,16 @@ def _iter_pattern_package_files(project_root: str, pattern: str):
     """Yield existing ``package.json`` paths under one workspace glob *pattern*."""
     import glob as _glob
 
-    for hit in sorted(_glob.glob(os.path.join(project_root, pattern))):
+    root = os.path.realpath(project_root)
+    if os.path.isabs(pattern) or ".." in pattern.replace("\\", "/").split("/"):
+        return
+    for hit in sorted(_glob.glob(os.path.join(root, pattern))):
         pkg = os.path.join(hit, "package.json")
-        if os.path.isfile(pkg):
+        try:
+            contained = os.path.commonpath((root, os.path.realpath(pkg))) == root
+        except ValueError:
+            contained = False
+        if contained and os.path.isfile(pkg):
             yield pkg
 
 
@@ -336,6 +343,8 @@ def _workspace_package_files(project_root: str, workspaces) -> list[str]:
     files: list[str] = []
     for pattern in patterns:
         for pkg in _iter_pattern_package_files(project_root, pattern):
+            if pkg in files:
+                continue
             files.append(pkg)
             if len(files) >= _MAX_WORKSPACE_PACKAGE_FILES:
                 return files
@@ -383,7 +392,10 @@ def _read_package_json(path: str, swallow_key: str) -> dict | None:
 
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
-            return _json.load(fh)
+            data = _json.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError("package.json must contain an object")
+        return data
     except (OSError, ValueError) as exc:
         from roam.observability import log_swallowed
 
@@ -395,7 +407,9 @@ def _dep_section_names(data: dict) -> set[str]:
     """Package names across the four dependency sections of a package.json."""
     names: set[str] = set()
     for key in _JS_DEP_SECTIONS:
-        names.update((data.get(key) or {}).keys())
+        section = data.get(key)
+        if isinstance(section, dict):
+            names.update(name for name in section if isinstance(name, str) and name)
     return names
 
 
@@ -406,10 +420,28 @@ def _dependency_packages_from_package_json(package_json: str) -> frozenset[str]:
     return frozenset(_dep_section_names(data)) if data is not None else frozenset()
 
 
+@functools.lru_cache(maxsize=8)
+def _workspace_root_development_packages(project_root: str) -> tuple[frozenset[str], frozenset[str]]:
+    """Return explicitly declared members and shared root development tools.
+
+    Sibling runtime dependencies are not declarations for the importing package.
+    Root tooling is shared only inside a declared workspace, never an unrelated
+    nested package or repository. Cache lifetime is one verification scan.
+    """
+    data = _read_package_json(os.path.join(project_root, "package.json"), "verify_imports.workspace_root")
+    if data is None:
+        return frozenset(), frozenset()
+    members = frozenset(
+        os.path.realpath(path) for path in _workspace_package_files(project_root, data.get("workspaces"))
+    )
+    development = _dep_section_names({"devDependencies": data.get("devDependencies")})
+    return members, frozenset(development)
+
+
 def _nearest_js_dependency_packages(project_root: str, file_path: str) -> frozenset[str]:
-    """Return dependencies from the nearest package.json above *file_path*."""
-    root = os.path.abspath(project_root)
-    directory = os.path.dirname(os.path.abspath(os.path.join(root, file_path)))
+    """Return nearest-package dependencies plus declared workspace root tooling."""
+    root = os.path.realpath(project_root)
+    directory = os.path.dirname(os.path.realpath(os.path.join(root, file_path)))
     try:
         if os.path.commonpath((root, directory)) != root:
             return frozenset()
@@ -419,7 +451,17 @@ def _nearest_js_dependency_packages(project_root: str, file_path: str) -> frozen
     while True:
         package_json = os.path.join(directory, "package.json")
         if os.path.isfile(package_json):
-            return _dependency_packages_from_package_json(package_json)
+            dependencies = _dependency_packages_from_package_json(package_json)
+            if directory != root:
+                ancestor = directory
+                while ancestor != root:
+                    if os.path.lexists(os.path.join(ancestor, ".git")):
+                        return dependencies
+                    ancestor = os.path.dirname(ancestor)
+                members, development = _workspace_root_development_packages(root)
+                if os.path.realpath(package_json) in members:
+                    return dependencies | development
+            return dependencies
         if directory == root:
             return frozenset()
         parent = os.path.dirname(directory)
@@ -1603,6 +1645,11 @@ def verify_imports_for_connection(
     not run. A caller that reports only ``files_checked`` publishes a cap as
     if it were a total and cannot distinguish "clean" from "never looked".
     """
+    # MCP/in-process clients can edit manifests between calls. Cache repeated
+    # per-file reads within this scan, not across independent verification runs.
+    _dependency_packages_from_package_json.cache_clear()
+    _workspace_root_development_packages.cache_clear()
+    _declared_js_dependency_packages.cache_clear()
     # 1. Determine which files to check
     if file_filter:
         # Normalize the filter path

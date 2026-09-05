@@ -151,7 +151,7 @@ def algorithm_detector(
     languages: tuple[str, ...] = (),
     confidence_basis: str = "heuristic",
     query_cost: str = QUERY_COST_LOW,
-    version: str = "1.0.0",
+    version: str | None = None,
 ) -> Callable[[Callable[..., list[dict]]], Callable[..., list[dict]]]:
     """Register an algorithm-catalog detector with metadata.
 
@@ -166,8 +166,8 @@ def algorithm_detector(
         One of ``heuristic``, ``structural``, ``static_analysis``, ``runtime``.
     query_cost : str
         One of ``low``, ``medium``, ``high`` — rough indicator of DB load.
-    version : str
-        Detector version string (bump on behavior changes).
+    version : str | None
+        Explicit detector version, or the canonical task version by default.
     """
     if confidence_basis not in _CONFIDENCE_BASES:
         raise ValueError(f"confidence_basis must be one of {sorted(_CONFIDENCE_BASES)}, got {confidence_basis!r}")
@@ -181,7 +181,7 @@ def algorithm_detector(
             "languages": tuple(languages),
             "confidence_basis": confidence_basis,
             "query_cost": query_cost,
-            "version": version,
+            "version": version if version is not None else _detector_version_for_task(task_id),
             "function": fn,
         }
         return fn
@@ -3398,6 +3398,7 @@ def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
     Each call is O(m) linear scan on the lookup collection, total O(n*m).
     Pre-building a set gives O(1) per lookup, O(n+m) total.
     """
+    legacy_signals = False
     try:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -3410,6 +3411,7 @@ def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
             "AND ms.loop_depth >= 1"
         ).fetchall()
     except sqlite3.Error:
+        legacy_signals = True
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
             "s.line_start, '' as loop_lookup_calls, ms.calls_in_loops, "
@@ -3448,6 +3450,10 @@ def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
             )
             continue
         # Fallback for older indexes: conservative matching only.
+        # An explicit empty modern signal means the AST rejected the candidate;
+        # generic call names must not bring that false positive back.
+        if not legacy_signals:
+            continue
         calls = _iter_loop_calls(r)
         fallback_hits = _call_in(calls, _LOOKUP_CALLS)
         if fallback_hits:
@@ -3700,9 +3706,11 @@ _RE_MAP_FIND = re.compile(
 def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
     """Calls inside loops whose arguments don't reference the loop variable.
 
-    These can be hoisted before the loop to avoid repeated computation.
+    Review callee purity and evaluation order before hoisting these candidates.
     Suppresses common intentional per-iteration calls (logging, metrics, etc.).
     """
+    from roam.index.complexity import _VOLATILE_LOOP_CALLS
+
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
         "s.line_start, s.line_end, ms.loop_invariant_calls "
@@ -3831,7 +3839,6 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
         "cbor",
         "dateutil",
     }
-    _CLOCK_READS = {"time.monotonic", "time.time", "time.perf_counter", "monotonic", "perf_counter"}
 
     results = []
     for r in rows:
@@ -3858,7 +3865,7 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
             if (
                 call_full in _INTENTIONAL_CALLS
                 or call_leaf in _INTENTIONAL_CALLS
-                or call_full in _CLOCK_READS
+                or call_full in _VOLATILE_LOOP_CALLS
                 or call_full in raised_constructors
                 or call_leaf in raised_constructors
             ):
@@ -3881,7 +3888,7 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
                 "loop-invariant-call",
                 "repeated-call",
                 r,
-                f"Loop-invariant call ({', '.join(flagged[:3])}) can be hoisted before loop"
+                f"Potential loop-invariant call ({', '.join(flagged[:3])}); check purity and evaluation order before hoisting"
                 + (f" — heavyweight parse ({', '.join(heavyweight_hits[:2])})" if heavyweight_hits else ""),
                 confidence,
                 matched_patterns=matched_patterns,

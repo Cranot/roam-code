@@ -3,12 +3,12 @@
 # release environment, and stoa's immutable toolchain attestation on one
 # byte-reproducible contract. setuptools 83 retains the PEP 639
 # ``License-Expression`` metadata required since the 12.47 regression.
-requires = ["setuptools==83.0.0", "wheel==0.47.0"]
+requires = ["setuptools==83.0.0", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "14.0.1"
+version = "14.0.2"
 description = "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no source-code egress."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -168,7 +168,7 @@ ci = [
     # is deliberate rather than a floor.
     "pypdf==6.16.1",
     "setuptools==83.0.0",
-    "wheel==0.47.0",
+    "wheel==0.48.0",
 ]
 # Keep the fallback-contract lane intentionally smaller than the dev extra.
 # These exact test-runner versions are already exercised by the full dev lane;

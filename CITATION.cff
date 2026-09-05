@@ -17,7 +17,7 @@ authors:
 repository-code: "https://github.com/Cranot/roam-code"
 url: "https://roam-code.com/"
 license: Apache-2.0
-version: 14.0.1
+version: 14.0.2
 keywords:
   - codebase-intelligence
   - static-analysis

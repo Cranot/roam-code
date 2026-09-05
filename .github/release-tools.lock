@@ -2,10 +2,11 @@
 # Generated with uv for x86_64-manylinux_2_34 from these roots:
 # build, click>=8.0, cyclonedx-bom, networkx>=3.0, pip,
 # pypi-attestations==0.0.29, setuptools==83.0.0, tree-sitter>=0.23,
-# tree-sitter-language-pack==1.13.3, twine, wheel==0.47.0.
+# tree-sitter-language-pack==1.13.3, twine, wheel==0.48.0.
 # Resolution cutoff: 2026-07-17T00:00:00Z, widened per package instead of
 # globally: tree-sitter-language-pack 2026-07-22T00:00:00Z, cryptography and
-# pyopenssl 2026-08-01T20:00:00Z. The base date is a correction, not a move:
+# pyopenssl 2026-08-01T20:00:00Z, wheel 2026-08-12T00:00:00Z.
+# The base date is a correction, not a move:
 # the header previously claimed 2026-07-22, but the body was a 2026-07-17
 # resolution with only tree-sitter-language-pack lifted, so the file never
 # reproduced from its own header.
@@ -17,6 +18,10 @@
 # A single global 2026-08-01 cutoff was rejected: it would also push twine
 # 6.2.0 -> 7.0.0 and sigstore 4.4.0 -> 4.5.0 through the release signer, plus
 # five unrelated bumps, none of them reviewed here.
+# wheel 0.48.0 fixes wheel-convert path traversal (GHSA-vgq5-9859-3mmw).
+# Its per-package cutoff changes no other package in this lock. Our release
+# build does not invoke wheel convert; retaining the fixed build tool avoids
+# leaving the vulnerable utility in the pinned developer/release environment.
 # Regenerate with uv pip compile --generate-hashes --no-header --no-annotate
 # --python-platform x86_64-manylinux_2_34 --python-version 3.12 and the
 # --exclude-newer / --exclude-newer-package dates recorded above.
@@ -952,6 +957,6 @@ urllib3==2.7.0 \
 webcolors==25.10.0 \
     --hash=sha256:032c727334856fc0b968f63daa252a1ac93d33db2f5267756623c210e57a4f1d \
     --hash=sha256:62abae86504f66d0f6364c2a8520de4a0c47b80c03fc3a5f1815fedbef7c19bf
-wheel==0.47.0 \
-    --hash=sha256:212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced \
-    --hash=sha256:cc72bd1009ba0cf63922e28f94d9d83b920aa2bb28f798a31d0691b02fa3c9b3
+wheel==0.48.0 \
+    --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab \
+    --hash=sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322

@@ -155,6 +155,19 @@
           generations itself. Deleting ownership records can allow conflicting
           writers to run against the same index.
         </p>
+        <p>
+          <strong>Choose the store and build policy.</strong>
+          <code>ROAM_DB_DIR</code> or <code>roam config --set-db-dir</code>
+          keeps the database, <code>index.lock</code>, and <code>index.state</code>
+          together in the selected directory. Other configuration and evidence
+          artifacts remain project-local. Stop older indexers before upgrading
+          or changing store locations; do not mix writer versions on one store.
+          Set <code>ROAM_NO_AUTO_INDEX=1</code> to refuse implicit builds with
+          exit <code>3</code>. JSON mode distinguishes a missing index from an
+          incomplete one without opening it. Run <code>roam index</code>
+          explicitly to build or recover it. <code>roam init</code> also builds,
+          and intentionally creates project configuration.
+        </p>
       </div>
     </section>
 

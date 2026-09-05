@@ -344,12 +344,28 @@ def _replacement_call(node, suggested_name: str, source: bytes) -> bytes:
     return call
 
 
+def _walk_nodes_near_row(node, row: int):
+    """Keep preorder while pruning spans outside the matcher's one-row window.
+
+    A descendant cannot start inside the window if its entire parent span is
+    outside it. An explicit stack also avoids Python recursion limits when a
+    valid function is nested deeply in the parsed tree.
+    """
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.start_point[0] > row + 1 or current.end_point[0] < row - 1:
+            continue
+        yield current
+        stack.extend(reversed(current.children))
+
+
 def _matching_function(tree, original, source: bytes):
     original_start = original.start_point[0]
     original_name = original.child_by_field_name("name")
     name_text = _node_text(original_name, source) if original_name is not None else None
     matches = []
-    for node in _walk_nodes(tree.root_node):
+    for node in _walk_nodes_near_row(tree.root_node, original_start):
         if node.type not in _FUNCTION_NODES or abs(node.start_point[0] - original_start) > 1:
             continue
         if name_text:

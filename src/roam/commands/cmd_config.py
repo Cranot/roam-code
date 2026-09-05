@@ -352,7 +352,7 @@ def _emit_exclude_state_text(
 
 
 _KNOWN_CONFIG_KEYS: dict[str, str] = {
-    "db_dir": "Custom location for the SQLite index (network-drive workaround).",
+    "db_dir": "Custom location for the SQLite index and its lock/recovery sidecars (network-drive workaround).",
     "semantic_backend": "Semantic search backend: tfidf | onnx | hybrid | auto.",
     "onnx_model": "Path to ONNX model file for semantic search.",
     "onnx_tokenizer": "Path to tokenizer.json matching the ONNX model.",
@@ -704,7 +704,9 @@ def config(
 
     The setting is saved to ``.roam/config.json`` and takes precedence over
     the default ``.roam/index.db`` location (but the ``ROAM_DB_DIR`` env-var
-    still wins if set).
+    still wins if set). The database, index.lock and index.state share that
+    directory. This redirects index storage, not project configuration,
+    response evidence, agent ledgers or other explicitly requested artifacts.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()
