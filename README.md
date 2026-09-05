@@ -2,7 +2,7 @@
 
 # roam-code
 
-**The local codebase intelligence layer that lets AI coding agents earn the right to change code — with evidence for what was checked.**
+**Understand your codebase. See what a change might affect. Give your coding agent better context.**
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -10,13 +10,11 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-<sub>Credential-free · local analysis with no automatic source-code or telemetry upload · tamper-evident `ChangeEvidence` packets · Apache 2.0 · runs on your machine</sub>
+<sub>Runs on your machine · no account or API key for local analysis · no automatic source-code or telemetry upload · free and open source</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
 <sub>287 commands · 246 MCP tools (17 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
-
-<sub><a href="https://roam-code.com/pricing"><b>Paid layers →</b></a> &nbsp;<b>PR Replay</b> audit $2,500 Team / $6,000 Deep, available now &nbsp;·&nbsp; <b>Roam Review</b> from $99/mo flat — no per-seat pricing &nbsp;·&nbsp; <b>Roam Cloud</b> $19/repo/mo &nbsp;·&nbsp; Review and Cloud are early access. The CLI below is Apache 2.0 and free forever.</sub>
 
 ![roam terminal demo](docs/assets/roam-terminal-demo.gif)
 
@@ -27,7 +25,7 @@
 **Jump to** —
 [Why Roam](#why-roam-is-different) ·
 [Install](#install--first-four-commands) ·
-[The Compiler](#the-compiler--your-agents-first-token-already-knows-the-answer) ·
+[Context for your agent](#context-for-your-agent) ·
 [Core commands](#core-commands) ·
 [MCP server](#mcp-server) ·
 [AI-tool integration](#integration-with-ai-coding-tools) ·
@@ -41,42 +39,60 @@
 
 ## Why Roam is different
 
-[METR](https://metr.org/notes/2026-03-10-many-swe-bench-passing-prs-would-not-be-merged-into-main/) and [FrontierCode](https://cognition.ai/blog/frontier-code) both point at the same gap: passing tests is not the same as mergeable code. Roam is an **agent-first CLI surface** that gives the agent local graph facts before it edits, gates risky changes, and emits scoped evidence after the run. In the agent/review tools surveyed as of 2026-06-12, the differentiator is this combination:
+Roam helps you find your way around a repository before you change it. It builds
+a local map of functions, classes, imports, and the connections between them,
+then uses that map to answer questions like:
 
-- **Credential-free.** No account, no API key, no cloud login. `pip install` and run.
-- **Local analysis with an explicit network boundary.** Source parsing, indexes, findings, and evidence generation stay on the machine; Roam sends no automatic telemetry or update checks. A cold `tree-sitter-language-pack` grammar cache downloads one checksum-verified platform bundle and retains it locally. Additional network-capable commands and flags are opt-in and inventoried in [`docs/network-boundary.md`](docs/network-boundary.md), including their destinations and payload classes.
-- **Tamper-evident `ChangeEvidence` packets.** A Roam-guided change can compile into one portable packet — HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle — answering eight questions: *who acted, what authority existed, what context was read, what changed, what could break, what policy applied, what verified it, who accepted risk*. PR Replay maps those eight questions today: structural change/risk/policy axes are in scope, context and verification are partial, and missing identity/authority/approval evidence is disclosed instead of invented. Cursor logs the run; Roam records and verifies the evidence its producers captured.
-- **MCP runtime security at the wrapper boundary.** Every MCP response is scrubbed for secrets on egress, gated against the active mode (`read_only` / `safe_edit` / `migration` / `autonomous_pr`) with a closed-enum `policy_decision`, and each decision receipt is HMAC-linked into the signed run ledger. Inside-server controls; the gateway layer (Interlock / Lasso / Portkey) composes on top — see [`dev/MCP-SECURITY-POSTURE.md`](dev/MCP-SECURITY-POSTURE.md).
+- Where does this feature start, and which files should I read?
+- Who calls this function? What else could my change affect?
+- Which tests are connected to this code?
+- What did we actually check before calling this change ready?
 
-Underneath sits a SQLite-backed graph of symbols, calls, imports, layers, git history, runtime traces, smells, clones, security flows, and algorithmic patterns across 28 languages — the same local facts queried before, during, and after a change.
+Use it yourself in the terminal, or let your coding agent query it through the
+CLI or MCP (a standard way for assistants to use tools). You do not need to
+learn hundreds of commands: start with the [five below](#core-commands).
 
-**Dependency-aware, not string-based.** Roam knows `Flask` has 47 dependents and 31 affected tests; `grep` knows it appears 847 times. One command replaces 5-10 tool calls, with terminal-friendly UTF-8 output and `--json` / `--sarif` envelopes for agents and CI. See [Performance](#performance) for timings.
+Roam complements your editor, text search, tests, and code review. Its useful
+difference is the connections: a search finds a name; Roam helps you follow
+where that name is defined and used. Those connections come from static
+analysis, so they can be incomplete. A suggested test list is not test coverage,
+and a good health score is not permission to merge.
 
-|  | Without Roam | With Roam |
-|--|-------------|-----------|
-| Tool calls | 8 | **1** |
-| Wall time | ~11s | **<0.5s** |
-| Tokens consumed | ~15,000 | **~3,000** |
+Local analysis needs no account or API key. It does not automatically upload
+your code, index, findings, or telemetry. Installation and the first parser
+download need network access; optional online features have explicit triggers.
+See [what can contact the network](docs/network-boundary.md) before using Roam
+in a restricted environment.
 
-*Illustrative — a typical agent workflow on a 200-file Python project (Flask). Reproducible smoke transcript in [`docs/fresh-install-smoke.md`](docs/fresh-install-smoke.md); OSS benchmark harness in [`benchmarks/oss-eval/`](benchmarks/oss-eval/). Exact numbers vary with repo size, host, agent prompt, and model.*
+For teams that need a review record, Roam can save what changed, which checks
+ran, and why a gate passed or stopped. Signed records can reveal later changes
+to the evidence; they cannot prove that every relevant check was captured.
+Read [what verification evidence does and does not prove](docs/concepts/verification-evidence.md).
 
 ---
 
 ## Install + first four commands
 
-About two minutes from `pip install` to a verdict on whether your next edit is safe.
+Start in a Git repository you want to explore:
 
 ```bash
-pip install "roam-code[mcp]"          # 1. install with MCP server for Claude Code / Cursor / Continue
+pip install "roam-code[mcp]"          # 1. install the CLI and optional agent-tool server
 cd /path/to/your/repo
-roam init                             # 2. index the repo into .roam/index.db (one-time, ~30s on most repos)
-roam health                           # 3. composite 0-100 score: complexity, cycles, dark-matter coupling, dead code
-roam preflight <symbol>               # 4. blast radius + tests + complexity + architecture rules before you edit
+roam init                            # 2. build the local index and project configuration
+roam health                          # 3. see a summary of code structure and findings
+roam preflight <symbol>              # 4. check a function or class before changing it
 ```
 
 Python 3.10+. `pipx install roam-code` and `uv tool install roam-code` work too. Drop `[mcp]` for CLI-only. See [`docs/fresh-install-smoke.md`](docs/fresh-install-smoke.md) for a verbatim transcript of these four commands against a clean venv.
 
-Step 4 is the payoff — `roam preflight` on a hot symbol returns a verdict before you touch it:
+Replace `<symbol>` with a function or class from your project. To find one,
+run `roam search <name>`. The first index takes longer than later refreshes;
+timing depends on repository size and your machine. Use `roam index` instead
+of `init` if you only want the index, without creating project configuration.
+
+Here is a recorded example from Roam's own codebase. `open_db` is used widely,
+so the report calls out the size of the change before you make it. The counts
+below are a snapshot, not live measurements of your checkout:
 
 ```text
 $ roam preflight open_db
@@ -95,7 +111,8 @@ Pre-flight check for `open_db (src/roam/db/connection.py:1076)`:
   Risk driver:  blast radius (17922 symbols in 1732 files, CRITICAL)
 ```
 
-*An agent sees the blast radius before it edits — not after the tests fail.*
+*“Blast radius” means code that could be affected through the indexed connections;
+it does not mean all of those functions will break.*
 
 <details>
 <summary><strong>Alternate install methods + Docker</strong></summary>
@@ -117,20 +134,17 @@ Works on Linux, macOS, and Windows. **Windows:** if `roam` is not found after in
 
 ---
 
-## The Compiler — your agent's first token already knows the answer
+<a id="the-compiler--your-agents-first-token-already-knows-the-answer"></a>
 
-You ask your agent *"who calls `handleSave`?"* and watch it grep, open
-three files, grep again, read a fourth — six turns and $1.30 later you get
-the answer the repo's call graph held all along.
+## Context for your agent
 
-Roam ships a **task compiler** that ends that loop. Before your prompt
-reaches the model, roam recognizes what kind of question it is, runs the
-right code-graph lookups locally (~90 ms, zero model calls), and puts the
-*answers* into the prompt: the caller list with line numbers, the git
-history already filtered, the source around the bug line you cited. The
-agent's first words can be the answer.
+When you ask an agent “who calls `handleSave`?”, it often starts by searching
+and opening files. Roam's **task compiler** can do some of that preparation
+locally and attach relevant context to the prompt: callers with line numbers,
+recent changes, or the source around a reported bug. It makes no model calls
+of its own. Your agent still needs to assess the context and do the work.
 
-For Claude Code it's **one command, zero configuration**:
+For Claude Code, install the hooks once from the project directory:
 
 ```bash
 pip install "roam-code[mcp]"
@@ -144,7 +158,14 @@ fail-open. After an edited turn, the Stop gate is deliberately fail-closed:
 findings, malformed output, an unavailable check, or incomplete evidence must
 be resolved before Claude reports completion. No-edit Q&A turns fast-exit.
 
-**What that buys you, measured head-to-head on Claude** (same prompts, same
+Historical tests found fewer agent turns and lower costs for some tasks, with
+regressions on others. These are dated experiments, not a promise about your
+model or repository. The full results and limitations remain below.
+
+<details>
+<summary><strong>Benchmark results and history (May–July 2026)</strong></summary>
+
+**What was measured head-to-head on Claude** (same prompts, same
 repo, with and without the compiler — June 2026, 41 cells):
 
 | Median per task | vanilla | compiled | delta |
@@ -204,8 +225,8 @@ contains the literal answer — and a further ~33% ship structured facts
 
 **Eval history by version** — losses are published, attacked, then
 re-measured. The ledger is **not** re-run on every release: the newest
-measured kernel is **v13.7 (Jul 11)**, and four kernel releases have shipped
-since without a fresh A/B (13.8.0, 13.9.0, 13.10.0, 14.0.0). Read every row
+measured kernel is **v13.7 (Jul 11)**, and later kernel releases have shipped
+since without a fresh A/B. Read every row
 below as measured-at-the-stated-kernel, not as a current-release claim. The
 table is the summary ledger; raw per-cell data for the historical runs is
 retained privately, not in this repository:
@@ -274,26 +295,23 @@ Private per-task tables and raw cells are retained for audit; the public summary
 </details>
 </details>
 
-Headless for scripts and CI: `roam compile "<task>" --artifact auto`.
+</details>
+
+For scripts and CI: `roam compile "<task>" --artifact auto`.
 
 Prefer a dedicated product CLI? [**compile-code**](https://github.com/Cranot/compile-code)
-wraps this same loop: a compiler for AI coding tasks that pre-resolves repo
-facts before your agent's first token — fewer turns, fewer tokens, same
-answers. It uses roam-code as its kernel (indexer, code graph, classifier,
-verification engine) and installs it as a dependency. Install from the
-repository.
+wraps the same context-and-verification loop and installs roam-code as a
+dependency. See that repository for installation and its supported workflow.
 
-### The verify half of the loop — what runs after every edit
+### Check the work after an edit
 
-The compile half front-loads facts; the verify half reviews what the agent
-just changed. `roam verify --auto` scopes to the touched files, auto-selects
-the checks that make sense for what changed (Python edits unlock the Python
-checks, source edits unlock naming/duplicates), and runs:
+`roam verify --auto` chooses checks for the files that changed. Depending on
+the change, these include:
 
 - **naming** — against the codebase's own per-language convention (sampled
   from production code only: test/vendored/generated files neither vote nor
   get flagged, framework lifecycle names like `setUp` are never touched)
-- **imports** — the hallucination firewall: every import must resolve — to
+- **imports** — check that imports resolve to
   the index, the stdlib, or a declared dependency. A module path that
   resolves to nothing fails as a likely hallucination; near-miss names get
   fuzzy did-you-mean candidates
@@ -317,8 +335,7 @@ scope. The compile hook remains fail-open. The edited-turn Stop gate is quiet
 only on a complete PASS and blocks when verification is unavailable,
 malformed, incomplete, or reports non-advisory findings.
 
-**Scoping and debt control** — the flags that make verify usable on a
-codebase with history:
+To focus on your current change or manage findings already in the project:
 
 ```bash
 roam verify --auto                      # changed files, auto-selected checks
@@ -334,17 +351,16 @@ roam verify --off / --on               # pause / resume the loop repo-wide
 
 | Command | Role in the loop |
 |---|---|
-| `roam verify-imports --path src/roam/cli.py` | The hallucination firewall, standalone — validates every import resolves |
+| `roam verify-imports --path src/roam/cli.py` | Check import resolution in one file |
 | `roam delete-check --ci` | Gates a deletion diff on surviving references (exit 5 on BREAK-RISK or an incomplete check) |
 | `git diff \| roam critique` | Clones-not-edited check + blast radius on the patch (exit 5 on high severity) |
 | `roam verify --report --persist` | Writes findings to the registry so the **compiler** embeds them as `known_findings` in future envelopes — debt gets fixed opportunistically |
 
-**Measured, not asserted.** The detector quality is pinned by three eval
-suites in CI: a planted-issues recall corpus (every category must catch its
-canonical positives), a clean-corpus false-positive lock (dogfooded on this
-repo: the naming rule alone dropped ~2000 FPs when test files stopped
-voting), and an adversarial suppression fuzz suite (suppressions survive
-refactors, never lose entries).
+The test suite includes deliberately broken examples, clean examples that
+should not be flagged, and checks that saved exceptions survive refactoring.
+Those tests help prevent regressions; they do not measure every detector's
+accuracy on unfamiliar repositories. [Detector evidence and limitations](docs/concepts/detector-evidence.md)
+explains where findings still need careful review.
 
 ---
 
@@ -402,13 +418,12 @@ Full release notes in [CHANGELOG.md](CHANGELOG.md).
 
 ## Best for
 
-- **Agent-assisted coding** — structured answers that cut tokens vs raw file exploration
-- **Large codebases (100+ files)** — graph queries beat linear search at scale
-- **Architecture governance** — health scores, CI quality gates, budget enforcement, fitness functions
-- **Safe refactoring** — blast radius, affected tests, pre-change safety checks, graph-level editing
-- **Multi-agent orchestration** — partition codebases for parallel agents with conflict-aware planning
-- **Security analysis** — vulnerability reachability, auth gaps, CVE path tracing, taint analysis
-- **Algorithm optimization** — detect O(n²) loops, N+1 queries, and 32 other anti-patterns with suggested fixes
+- **Getting oriented** — find entry points, important modules, and code worth reading first.
+- **Working with a coding agent** — give it focused context instead of asking it to rediscover everything.
+- **Planning a refactor** — inspect callers, dependencies, and related tests before editing.
+- **Reviewing changes** — collect findings and record which checks actually ran.
+- **Maintaining a growing project** — spot dependency cycles, frequently changed code, and repeated work.
+- **Investigating security or performance concerns** — use findings as leads, then verify them with the right tests and specialist tools.
 
 ### When NOT to use Roam
 
@@ -439,16 +454,16 @@ Roam's surfaces differ in how rigorously they've been validated — know which i
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~282 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **287 commands (280 canonical + 7 aliases) organised into 7 categories** (aliases for muscle memory: `math` → `algo`, `churn` → `weather`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
+**Start with these five commands.** Use `understand`, `context`, `retrieve`, `preflight`, and `critique` for everyday exploration and change review. You can discover the rest as you need them: **287 commands (280 canonical + 7 aliases) organised into 7 categories**. An alias is another name for the same command; you do not need to memorize them. Explore the remaining 282 commands when you need more detail.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
 |------|--------------|
-| `roam understand` | Full codebase briefing: stack, architecture, key abstractions, health, conventions, entry points |
-| `roam context <symbol>` | AI-optimized context: definition + callers + callees + files-to-read with line ranges |
-| `roam retrieve <task>` | Graph-aware context for free-form tasks ("trace login flow", "where is the n+1?") — FTS5 + structural rerank within a token budget |
-| `roam preflight <symbol>` | Pre-change safety gate: blast radius + tests + complexity + coupling + fitness |
-| `roam critique` | Verify a patch against the graph: clones-not-edited + blast radius + intent vs semantic-diff. Pipe `git diff` in; exit 5 on high severity |
+| `roam understand` | Get an overview of the project and where to start reading |
+| `roam context <symbol>` | Read a definition alongside the code that calls it and the code it calls |
+| `roam retrieve "<task>"` | Find useful code for a question such as “trace the login flow” |
+| `roam preflight <symbol>` | See what a change could affect, including connected code and tests |
+| `roam critique` | Review a patch for related code you may have missed; pipe in `git diff`. High-severity findings exit 5 |
 
 <!-- BEGIN auto-count:readme-sarif-surface-mention -->
 The full surface spans **7 categories** — Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, and Refactoring. Run `roam --help` for the 5-verb core, `roam --help-all` for every command name, and `roam surface --json` for the machine-readable inventory. Every command accepts `roam --json <cmd>` for structured output and `roam --sarif <cmd>` for CI integration (SARIF 2.1.0, honoured by 39 commands).
@@ -568,7 +583,10 @@ roam mcp
 
 246 MCP tools span 8 selectable presets (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`); `core` stays narrow to keep the prompt tight. Most tools are read-only index queries; side-effect tools are explicitly annotated. Set `ROAM_MCP_PRESET=full roam mcp` for the complete toolset.
 
-**Cold-start envelope.** Any wrapper that can't complete normally — missing index, stale index, partial failure — returns one canonical structured envelope (`status`, `error_code`, `summary.verdict`, `hint`, `next_command`) instead of hanging or emitting empty output. Agents always get an actionable signal, never a silent failure.
+**When a tool cannot finish.** MCP tools report missing prerequisites and
+incomplete work in a structured response, with a status, explanation, and next
+step. Consumers should check `partial_success` and errors, not just whether
+the tool returned a response.
 
 **MCP runtime security.** Three controls run at the wrapper boundary inside the server, protecting every client even with no gateway present: egress secret-redaction, mode-gated `policy_decision` enforcement (opt-in shadow-mode via `ROAM_MODE_DRY_RUN`), and HMAC-linked decision receipts bound into the signed run ledger. Mixed query/write tools are classified per invocation, so a read-only form stays available while an explicit persist/write flag raises the required mode and receipt effects. Gateway integrators: see [`dev/MCP-SECURITY-POSTURE.md`](dev/MCP-SECURITY-POSTURE.md).
 
@@ -676,7 +694,11 @@ For GitLab / Jenkins / Azure / Bitbucket templates, severity gates, and upload g
 
 ## Roam Guard for PRs
 
-`roam guard-pr` is the one-call CI gate that emits an **Agent Change Proof Bundle v1** + closed-enum verdict (`pass` / `pass_with_warnings` / `needs_review` / `blocked`) for the current PR. Every fact carries evidence — what changed, which checks were required, which ran, why the verdict landed where it did.
+`roam guard-pr` collects the current change's review record in one command:
+what changed, which checks were required, which ran, and why the result is
+`pass`, `pass_with_warnings`, `needs_review`, or `blocked`. The saved JSON
+record is called an **Agent Change Proof Bundle v1**. It records available
+evidence; it does not independently authenticate every supplied claim.
 
 ```bash
 # Local — show the markdown verdict for your current branch's pr-bundle.
@@ -730,7 +752,9 @@ wasn't gating" — `exit_code` is 0 in both cases.
 
 **Output formats:** `text` (default), `markdown` (PR comment / GH Check), `json` (the full AgentChangeProofBundle v1). SARIF is not a `guard-pr` format — emit it from the same bundle with `roam proof-bundle --format sarif`.
 
-**Pluggable rule packs.** The verification contract (what counts as a required check for a given change) lives in YAML, not code. Default pack ships with the binary; override with `roam guard-pr --rules templates/examples/roam-guard-rules.default.yml`:
+**Choose what must be checked.** YAML rules decide which checks a change
+requires. Roam ships a default rule pack; review it for your project's layout
+and risks. Override it with `roam guard-pr --rules templates/examples/roam-guard-rules.default.yml`:
 
 ```yaml
 name: my-repo
@@ -808,7 +832,7 @@ Tier 2 languages (and `.jsonc` / `.mdx`) get basic symbol extraction via a gener
 | Index 200 files | ~3-5s |
 | Index 3,000 files | ~2 min |
 | Incremental (no changes) | <1s |
-| Any query command | <0.5s |
+| Lightweight index queries | Often <0.5s; broader analyses can take much longer |
 
 Every figure includes CLI process startup, which is host- and platform-dependent:
 on a slow Windows host `roam --version` alone can cost ~1.5s, putting a floor
@@ -816,9 +840,8 @@ under every row above. Measure on your own machine before gating on these.
 
 After the first full index, `roam index` reuses unchanged source data (mtime + SHA-256 hash), reprocesses changed files and affected neighbors, and checks Git history even when file contents are unchanged. The OSS benchmark harness in [`benchmarks/oss-eval/`](benchmarks/oss-eval/) tracks 14 repositories (Express, Axios, Vue, Laravel, Svelte, React, Django, cpython, Linux, …); the [committed snapshot](benchmarks/oss-eval/results/latest.md) records which targets completed and which failed or were not present locally.
 
-Compiler A/B results, the per-task gallery, routing stats, and the
-version-keyed eval history live in [The Compiler](#the-compiler--your-agents-first-token-already-knows-the-answer)
-section — one home, no duplicate numbers.
+Historical agent comparisons, per-task results, and their limitations are in
+[Context for your agent](#context-for-your-agent).
 
 ## How It Works
 
@@ -839,9 +862,13 @@ Codebase
 
 Exclude paths with a `.roamignore` file (full gitignore syntax) or `roam config --exclude "*.proto"`. For the graph algorithms (Personalized PageRank for blast radius, Tarjan SCC, Louvain, Fiedler bisection, Mann-Kendall trend detection, …) and the weighted-geometric-mean health score, see the [Architecture guide](https://roam-code.com/docs/architecture).
 
+Text retrieval uses SQLite's FTS5 full-text search, alongside the indexed code
+connections that help rank relevant results.
+
 ## How Roam Compares
 
-roam-code combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), git archaeology, architecture simulation, and multi-agent partitioning in a single local CLI with zero API keys.
+Choose Roam when you want a reusable local map of how a project fits together.
+Use this checklist to see whether it helps with your own code:
 
 | Capability | Roam behavior | How to evaluate it |
 |---|---|---|
@@ -875,7 +902,7 @@ the configured checks match your team's expectations. Save snapshots with
 ## FAQ
 
 **Does Roam send any data externally?**
-Not during ordinary local analysis. Roam does not automatically upload source code, indexes, findings, telemetry, or analytics, and it performs no automatic update check. A cold grammar cache retrieves one checksum-verified parser bundle and retains it locally. Explicit features can contact PyPI, GitHub, user-selected URLs, Roam Cloud, or Sigstore services; [`docs/network-boundary.md`](docs/network-boundary.md) lists every built-in trigger, destination, and payload class. Inspect `roam metrics-push` with `--dry-run` before sending its allow-listed payload.
+Not during ordinary local analysis. Roam does not automatically upload source code, indexes, findings, telemetry, or analytics, and it performs no automatic update check. On first use, `tree-sitter-language-pack` downloads a checksum-verified parser bundle and keeps it in a local cache. Explicit features can contact PyPI, GitHub, user-selected URLs, Roam Cloud, or Sigstore services; [`docs/network-boundary.md`](docs/network-boundary.md) lists every built-in trigger, destination, and payload class. Inspect `roam metrics-push` with `--dry-run` before sending its allow-listed payload.
 
 **Can Roam run in air-gapped environments?**
 Yes, after installation and parser prewarming. Run `roam index --force` once while connected on each target platform; the retained bundle lets later grammar loads complete without network access. Avoid the explicit network triggers in the [network-boundary inventory](docs/network-boundary.md), use fixture/file inputs and offline-key signing, and enforce egress policy around project commands launched by `roam verify` or hooks.

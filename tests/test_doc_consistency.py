@@ -575,9 +575,12 @@ def test_contributing_release_flow_uses_exact_version_and_release_gate():
 # ---------------------------------------------------------------------------
 
 
-def test_readme_headline_uses_codebase_intelligence_phrasing():
-    """README headline must use the current local-codebase-intelligence frame,
-    not the legacy evidence-only or structural-intelligence wording.
+def test_readme_headline_explains_local_codebase_help():
+    """Keep the product's purpose and local operation in the headline.
+
+    Plain-language copy need not repeat the old marketing phrase "local
+    codebase intelligence". Preserve its meaning and the evidence-only
+    regression guards, rather than requiring jargon after a copy rewrite.
 
     The README opens with a centered <div> block, an H1, a tagline, an intro
     paragraph, then the count line. The headline window is the first ~20 lines
@@ -586,14 +589,14 @@ def test_readme_headline_uses_codebase_intelligence_phrasing():
     """
     readme_lines = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     headline_block = "\n".join(readme_lines[:20]).lower()
-    assert "local codebase intelligence" in headline_block, (
-        "README headline must use 'local codebase intelligence' phrasing"
-    )
+    assert "codebase" in headline_block, "README headline must explain what the tool helps readers understand"
+    assert "agent" in headline_block, "README headline must retain coding-agent context"
+    assert "runs on your machine" in headline_block, "README headline must explain local operation"
     assert "structural intelligence" not in headline_block, (
         "Legacy 'structural intelligence' wording detected in README headline"
     )
     assert "evidence engine" not in headline_block, (
-        "Evidence-only headline detected; frame Roam as local codebase intelligence"
+        "Evidence-only headline detected; explain the codebase and coding-agent use"
     )
 
 

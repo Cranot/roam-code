@@ -293,9 +293,11 @@
 
       <h2 id="eight-evidence-questions">The eight evidence questions</h2>
       <p>
-        Roam compiles every AI-assisted change into one
-        <code>ChangeEvidence</code> packet that answers these eight
-        questions. Each question maps to commands the agent already
+        Roam can collect supported command evidence into a
+        <code>ChangeEvidence</code> packet organized around these eight
+        questions. Missing or incomplete evidence remains a gap; a packet
+        does not establish that every AI-assisted change was observed.
+        Each question maps to commands the agent already
         runs as part of the contract above — the packet just makes the
         answers portable for a reviewer.
       </p>
@@ -320,6 +322,16 @@
       </p>
 
       <h2 id="mcp-boundary-security">MCP boundary security</h2>
+      <p>
+        A valid packet, source hash, or signed ledger establishes only its
+        checked contract. It does not independently prove the requested behavior,
+        current-tree test execution, or active enforcement. Proof bundles retain
+        review obligations and verifier results when written and read back;
+        stronger trust still needs an independent consumer with the appropriate
+        authority. Read the
+        <a href="https://github.com/Cranot/roam-code/blob/main/docs/concepts/verification-evidence.md">verification evidence guide</a>
+        for regression controls, serialization checks, and benchmark limits.
+      </p>
       <p>
         Roam owns the <strong>inside-server</strong> half of the agent's
         trust boundary: it runs locally as the same user as the editor,

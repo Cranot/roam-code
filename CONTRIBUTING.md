@@ -135,6 +135,13 @@ On macOS / Linux the equivalent is `.venv/bin/pytest tests/...`.
 
 All tests must pass before submitting a PR.
 
+For a regression, establish a defect-specific failing case before the repair
+and a passing case afterward, retaining a valid-case control. Freeze the test
+between those runs; if it changes, repeat both. Exercise the actual downstream
+reader or CLI, not only a helper's output shape. See
+[verification evidence](docs/concepts/verification-evidence.md) for proof-bundle
+round trips, benchmark denominators, protected outcomes, and claim limits.
+
 ### Dogfood smoke (roam-on-roam)
 
 After a meaningful change, run roam on its own source tree to confirm

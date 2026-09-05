@@ -27,6 +27,7 @@ GUARD_ERROR_CODES: frozenset[str] = frozenset(
         "no_bundle_found",
         "bundle_load_failed",
         "bundle_parse_error",
+        "unmapped_review_status",
         # rule pack loading
         "rule_pack_load_failed",
         "rule_pack_invalid",
@@ -53,6 +54,7 @@ GUARD_ERROR_EXIT_CODES: dict[str, int] = {
     "no_bundle_found": 2,
     "bundle_load_failed": 2,
     "bundle_parse_error": 2,
+    "unmapped_review_status": 2,
     "rule_pack_load_failed": 2,
     "rule_pack_invalid": 2,
     "no_input_files": 2,

@@ -331,19 +331,14 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
         ),
         # Line 325: "the canonical surface is N commands (X canonical + Y aliases) organised into Z categories"
         "readme-canonical-mention": (
-            f"**Lead with the 5 verbs.** The [5 core commands](#core-commands) "
-            f"cover ~80% of agent workflows: `understand`, `context`, "
-            f"`retrieve`, `preflight`, `critique`. The remaining "
-            f"~{c.command_names - 5} commands are detail surface for "
-            f"specialised workflows (taint, fleet, cga, oracle, eval, …) — "
-            f"they're called by agents on demand, not memorised. This is "
-            f"intentional design; under the hood the canonical surface is "
+            f"**Start with these five commands.** Use `understand`, `context`, "
+            f"`retrieve`, `preflight`, and `critique` for everyday exploration "
+            f"and change review. You can discover the rest as you need them: "
             f"**{c.command_names} commands ({c.canonical_commands} canonical "
             f"+ {c.alias_names} aliases) organised into {c.category_count} "
-            f"categories** (aliases for muscle memory: `math` → `algo`, "
-            f"`churn` → `weather`, `digest` / `snapshot` / `trend` → "
-            f"`trends`, `onboard` → `understand`, `refs` → `uses`), but you "
-            f"don't need to know that to start."
+            f"categories**. An alias is another name for the same command; "
+            f"you do not need to memorize them. Explore the remaining "
+            f"{c.command_names - 5} commands when you need more detail."
         ),
         # Line 1023: "Default preset: core (N tools: M core + roam_expand_toolset meta-tool)"
         "readme-default-preset": (

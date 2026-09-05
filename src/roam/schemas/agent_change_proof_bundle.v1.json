@@ -142,6 +142,18 @@
     "scope_findings": { "type": "array" },
     "mcp_tool_findings": { "type": "array" },
     "ledger": { "type": ["object", "null"] },
+    "review_evidence": {
+      "type": ["object", "null"],
+      "description": "Review verifier results used to compute this verdict. Null preserves legacy behavior; an empty object is an explicit review opt-in. These records are not independently authenticated by composition."
+    },
+    "orchestration_contract": {
+      "type": ["object", "null"],
+      "description": "Declared review obligations used to compute this verdict; preserved for subsequent verdict evaluation."
+    },
+    "change_set_unanalyzable": {
+      "type": ["string", "null"],
+      "description": "Reason Git could not completely enumerate the fallback change set, including untracked files. Null means no enumeration failure was recorded, not that declared paths were independently verified."
+    },
     "verdict": {
       "type": "object",
       "required": ["value", "reasons"],

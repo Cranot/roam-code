@@ -76,8 +76,16 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<ul>
+<li><strong>Saved-proof input checks.</strong> <code>roam verdict</code> refuses duplicate JSON keys, non-finite numbers, and malformed evidence fields before they can be mistaken for absent checks or review. UTF-8 files are read consistently across platforms; unreadable input and unknown review statuses return matching structured errors instead of tracebacks or inconsistent error codes. Valid legacy bundles remain supported.</li>
+<li><strong>A clearer introduction.</strong> The README now starts with practical questions, plain-language command descriptions, and explicit limits. Historical benchmark results remain available in an expandable section; generated command counts use the same simpler wording.</li>
+</ul>
 <h3>Fixed</h3>
 <ul>
+<li><strong>Proof-bundle review continuity.</strong> Preserve review obligations and verifier results through composition and JSON serialization, so re-reading a blocked bundle cannot silently drop review failures or coverage warnings. Keep absent and explicitly empty review evidence distinct; this does not authenticate self-reported evidence.</li>
+<li><strong>Complete change-scan disclosure.</strong> Treat failed untracked-file enumeration as an incomplete Git fallback scan, retaining already discovered paths. Read filenames as NUL-delimited UTF-8 records instead of quoted or whitespace-stripped lines.</li>
+<li><strong>Truthful benchmark accounting.</strong> Retain invalid and unreadable saved cells, report observed metric denominators, keep missing measurements unknown, and separate timeout estimates from recorded costs. The live harness rejects unsuccessful result envelopes, preserves assigned/dispatched/reused counts, refuses stale output after failed dispatch, and discloses cell-record persistence failures. Saved artifacts alone do not prove dispatches or verified task success.</li>
+<li><strong>Verification guidance.</strong> Document fixed bad/good regression controls, actual consumer round trips, evidence scope, protected evaluation outcomes, and narrower interpretation of historical prompt-design observations.</li>
 <li><strong>Published installation pins.</strong> Update copied installation instructions and generated CI templates to verified 14.0.2 artifacts, independently pin the dormant Action example to the release commit, and explain how immutable Action defaults and bundled templates retain their original versions.</li>
 <li><strong>Release draft read-back.</strong> After creating one GitHub release draft, retry only its read-only visibility check within a fixed budget. Keep lookup errors, ambiguous drafts, identity mismatches, asset mismatches and signature failures blocking; never create another draft as a retry.</li>
 <li><strong>Private smoke evidence.</strong> Keep the developer command-smoke harness's raw JSONL beside its report under ignored <code>internal/smoke/</code>, matching the documented output location. Preserve older logs rather than overwriting a public-directory copy.</li>

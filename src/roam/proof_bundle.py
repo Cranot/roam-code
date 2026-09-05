@@ -157,12 +157,15 @@ def _git_changed_files_with_provenance(root: Path) -> tuple[list[str], str | Non
     the process had not been able to open. An absent measurement is UNKNOWN,
     never a benign CLEAN.
     """
+    files: list[str] = []
     try:
         # Files modified vs HEAD (staged + unstaged).
         result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--name-only", "-z", "HEAD"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="surrogateescape",
             cwd=str(root),
             timeout=5.0,
         )
@@ -172,25 +175,28 @@ def _git_changed_files_with_provenance(root: Path) -> tuple[list[str], str | Non
                 f"git could not enumerate the change set (`git diff --name-only HEAD` "
                 f"exited {result.returncode}" + (f": {detail[0]}" if detail else "") + ")"
             )
-        files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        # Git's line-delimited output quotes non-ASCII names and cannot
+        # represent embedded newlines. NUL records preserve the actual path,
+        # including meaningful leading/trailing whitespace.
+        files = list(dict.fromkeys(path for path in result.stdout.split("\0") if path))
         # Plus untracked (new) files.
         result2 = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="surrogateescape",
             cwd=str(root),
             timeout=5.0,
         )
-        if result2.returncode == 0:
-            for line in result2.stdout.splitlines():
-                line = line.strip()
-                if line and line not in files:
-                    files.append(line)
+        if result2.returncode != 0:
+            return files, f"git could not enumerate untracked files (`git ls-files` exited {result2.returncode})"
+        files = list(dict.fromkeys([*files, *(path for path in result2.stdout.split("\0") if path)]))
         return files, None
     except subprocess.TimeoutExpired:
-        return [], "git did not answer within 5s while enumerating the change set"
+        return files, "git did not answer within 5s while enumerating the change set"
     except OSError as e:
-        return [], f"git could not be run to enumerate the change set: {e}"
+        return files, f"git could not be run to enumerate the change set: {e}"
 
 
 def _git_changed_files(root: Path) -> list[str]:
@@ -345,7 +351,9 @@ def compose_agent_change_proof_bundle(
     # bundle (put there by the compile envelope) means 1b/4b obligations
     # apply, so missing review evidence blocks rather than passing quietly.
     orchestration_contract = bundle.get("orchestration_contract")
+    orchestration_contract = orchestration_contract if isinstance(orchestration_contract, dict) else None
     review_evidence = bundle.get("review_evidence")
+    review_evidence = review_evidence if isinstance(review_evidence, dict) else None
     verdict = compute_verdict(
         verification_contract=contract,
         executed_checks=executed_checks,
@@ -355,8 +363,8 @@ def compose_agent_change_proof_bundle(
         mcp_tool_findings=mcp_tool_findings,
         risk=risk,
         ledger=ledger,
-        review_evidence=review_evidence if isinstance(review_evidence, dict) else None,
-        orchestration_contract=(orchestration_contract if isinstance(orchestration_contract, dict) else None),
+        review_evidence=review_evidence,
+        orchestration_contract=orchestration_contract,
         change_set_unanalyzable=change_set_unanalyzable,
     )
 
@@ -397,6 +405,11 @@ def compose_agent_change_proof_bundle(
         "scope_findings": scope_findings,
         "mcp_tool_findings": mcp_tool_findings,
         "ledger": ledger,
+        # Persist the exact inputs used above. Otherwise `roam verdict`
+        # reading this artifact silently loses review blockers and warnings.
+        # None (legacy no-review path) must remain distinct from {} (opt-in).
+        "review_evidence": review_evidence,
+        "orchestration_contract": orchestration_contract,
         "verdict": verdict,
     }
 
