@@ -6,27 +6,31 @@ labeled set of (task, expected_files) pairs.
 ## Quick start
 
 ```bash
-# Build a FULL index first -- see the warning below. This is not optional.
-roam init
+# In a separate checkout, reproduce the minimal dependency profile used by CI.
+uv sync --locked --no-default-groups --python 3.11
+
+# Build a FULL index first, preserving other repo-local state.
+uv run --no-sync roam index --force
 
 # Eval the built-in self-test set against the indexed roam-code repo
-roam eval-retrieve --tasks bench/retrieve/roam_self.jsonl
+uv run --no-sync roam eval-retrieve --tasks bench/retrieve/roam_self.jsonl
 
 # Sweep weight vectors (α / β / γ / δ / ε)
-roam eval-retrieve --tasks bench/retrieve/roam_self.jsonl --sweep
+uv run --no-sync roam eval-retrieve --tasks bench/retrieve/roam_self.jsonl --sweep
 
 # Pipe to a CI gate (0.85 is the current pinned floor -- see below)
-roam --json eval-retrieve --tasks ... --min-recall-at-20 0.85
+uv run --no-sync roam --json eval-retrieve --tasks ... --min-recall-at-20 0.85
 ```
 
-> **Warning — benchmark only against a fresh index.** `roam init` on an
-> existing index takes the incremental path, which does not resync the
-> FTS5 table. Measured on this bench with the same binary at the same
-> commit, an incrementally-maintained index scores **0.781** recall@20
-> against **0.914** for a fresh full build — a 13-point silent loss.
-> Rebuilding only the FTS table on the stale index recovers 0.906,
-> which is how the cause was isolated. Full evidence table and the
-> underlying defect are in [SUBMISSION.md](SUBMISSION.md).
+> **Benchmark against a fresh index and a named dependency profile.** A
+> historical 2026-08-06 experiment measured **0.781** recall@20 on an
+> incrementally maintained index versus **0.914** on a full build at the
+> same commit. That experiment is retained in [SUBMISSION.md](SUBMISSION.md),
+> not presented as a new measurement of today's incremental path. Optional
+> NumPy/SciPy dependencies also change ranking: the current minimal and
+> numerical profiles below are different measurements, not interchangeable
+> environments. Use a separate checkout for the minimal-profile sync above;
+> it intentionally excludes development and numerical extras.
 
 ## Task file format
 
@@ -58,23 +62,35 @@ Optional:
 
 ## Current baseline — `roam_self.jsonl` (30 tasks)
 
-Measured **2026-08-06** at commit `0f3d3ac1`, roam-code 13.10.0, against
-a **fresh full `roam init`** (4,944 files / 45,584 symbols / 94,498
-edges), `--rerank fast`, no `[semantic]` extras:
+Measured **2026-09-05** at commit `5c56ff472ebbd3351ce5ae416a6c9caf01d58d74`,
+roam-code 14.0.0, against a **fresh full index** (5,074 files / 47,542
+symbols / 99,217 edges), full Git history, `--rerank fast`, and the locked
+**minimal installation**: no NumPy/SciPy, semantic or learned-ranker extras.
+The Linux/Python 3.11 reproduction agrees with the
+[exact-commit CI measurement](https://github.com/Cranot/roam-code/actions/runs/33934250545).
 
 <!-- canonical-recall:begin -- parsed by check_published_recall.py; keep the format -->
 ```
-recall@5  = 0.642
-recall@10 = 0.772
-recall@20 = 0.914
+recall@5  = 0.706
+recall@10 = 0.783
+recall@20 = 0.856
 ```
 <!-- canonical-recall:end -->
 
 | K  | mean recall | comment |
 |----|-------------|---------|
-|  5 | **0.642** | above the "solvable from retrieve alone" bar |
-| 10 | **0.772** | agents mostly stop double-checking here |
-| 20 | **0.914** | the headline number |
+|  5 | **0.706** | minimal-install profile |
+| 10 | **0.783** | minimal-install profile |
+| 20 | **0.856** | minimal-install profile; always quote K |
+
+An isolated Windows/Python 3.12 installation reproduced the same values on
+the same fresh index. Adding **only NumPy 2.4.4 and SciPy 1.17.1** to that
+environment changed recall@5/@10/@20 to **0.633 / 0.764 / 0.897**. The numerical
+backend uses power-iteration PageRank; the minimal backend uses degree ranking
+with a seed boost. This is a controlled dependency-profile difference, not
+evidence of an overall retrieval improvement or a Windows/Linux discrepancy.
+The CI gate below targets the minimal profile. See [SUBMISSION.md](SUBMISSION.md)
+for both profiles and the retained historical measurements.
 
 Exact command, index provenance, per-signal ablations, and the reasons to
 distrust a stale index are in [SUBMISSION.md](SUBMISSION.md). These
@@ -83,13 +99,14 @@ if you change the retriever and this table is not updated, the build fails.
 
 ### Historical baselines
 
-Kept so the trend is auditable. Neither row has been re-measured; both
-predate the v12.1–v12.3 retrieval work.
+Kept so the history is auditable; these rows were not rerun in September.
+Different dependency profiles and corpora prevent a controlled trend claim.
 
 | when | commit | recall@5 | recall@10 | recall@20 | note |
 |---|---|---|---|---|---|
 | 2026-05-01 | `78de9ee` | 0.286 | 0.358 | 0.503 | 30-task bench, pre-v12.1 retriever |
 | — | — | — | — | 0.433 | prior 10-task bench |
+| 2026-08-06 | `0f3d3ac1` | 0.642 | 0.772 | 0.914 | historical full-index measurement; numerical dependency profile was not recorded |
 
 The 2026-05-01 row sat in this file as "current" until 2026-08-06 while
 the retriever improved underneath it, so this README understated real
@@ -119,16 +136,17 @@ one that quietly regresses, and improvement is in fact how this file
 went stale.
 
 ```bash
-roam --json eval-retrieve --tasks bench/retrieve/roam_self.jsonl > eval.json
-python bench/retrieve/check_published_recall.py --eval-json eval.json
+uv run --no-sync roam --json eval-retrieve --tasks bench/retrieve/roam_self.jsonl > eval.json
+uv run --no-sync python bench/retrieve/check_published_recall.py --eval-json eval.json
 ```
 
-* **Tolerance: ±0.06 absolute**, per K. Chosen from measured variance,
-  not guessed: CI clones at `fetch-depth: 50`, and emptying the
-  `git_cochange` table entirely — a strictly larger perturbation than a
-  shallow clone — moves recall@20 by 0.011. The remaining headroom
-  absorbs platform and tokenizer differences. It is far tighter than the
-  0.133 drift that motivated the gate.
+* **Tolerance: ±0.06 absolute**, per K, unchanged. CI uses **full history**
+  (`fetch-depth: 0`) and the minimal dependency profile. The earlier rationale
+  claiming shallow history was a smaller perturbation than an empty co-change
+  table was disproved by the August 12 experiment recorded in the checker:
+  recall@20 was 0.9139 with full history, 0.8778 with no co-change rows, and
+  0.8500 with a 50-commit clone. Do not spend this tolerance on a different
+  history scope or numerical backend.
 * Wired into `.github/workflows/dogfood.yml`, which already builds a
   fresh index on every push and PR.
 * The previously documented floor, `--min-recall-at-20 0.6`, was loose

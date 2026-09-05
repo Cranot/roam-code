@@ -78,6 +78,7 @@
 <h2>[Unreleased]</h2>
 <h3>Fixed</h3>
 <ul>
+<li><strong>Reproducible retrieval benchmarks.</strong> Refresh the public self-benchmark from a fresh full-history checkout and regenerate its candidate export. Name the minimal CI dependency profile and publish the separate NumPy/SciPy control, which changes ranking on the same index. Retain historical measurements and the existing drift tolerance; do not present cross-profile differences as an overall retrieval improvement.</li>
 <li><strong>Search errors no longer authorize deletion.</strong> Preserve partial matches when ripgrep or git grep fails, disclose missing/timed-out engines, and qualify empty-search verdicts. Reference audits require review after an incomplete search; <code>delete-check --ci</code> refuses consistently in text, JSON and SARIF instead of emitting a clean-looking success.</li>
 <li><strong>Fresh-install MCP and offline container safety.</strong> Bound MCP/FastMCP to the supported major versions and refresh their locked maintenance releases. Build containers from <code>uv.lock</code> and preload/seal production grammars so a non-root, network-isolated first index does not download parsers.</li>
 <li><strong>Container dependency scope.</strong> Move the image to the current stable Debian base, apply available OS updates during builds, and remove bootstrap installers and their build cache from the runtime layer. Document that image-wide OS findings require a separate audit from the Python lock; no vulnerability-free image claim is made.</li>

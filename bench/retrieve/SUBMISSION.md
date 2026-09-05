@@ -8,39 +8,45 @@ treating this as a leaderboard entry — it is not one.
 
 ## Provenance
 
-Every number in this file was produced by one command, at one commit, on
-one index. If you cannot reproduce it, that is a bug — please open an issue.
+The current baseline below has a named commit, index and dependency profile.
+Historical experiments retain their own dates and environments; they were not
+rerun with this baseline. Report a reproduction mismatch with those details.
 
 | field | value |
 |---|---|
-| Commit | `0f3d3ac176b9f258a2238c9a1abf9098136e377a` |
-| Date measured | 2026-08-06 |
-| roam version | 13.10.0 |
-| Index | **fresh full `roam init`** at that commit — 4,944 files, 45,584 symbols, 94,498 edges |
+| Commit | `5c56ff472ebbd3351ce5ae416a6c9caf01d58d74` |
+| Date measured | 2026-09-05 |
+| roam version | 14.0.0 |
+| Index | **fresh full index**, full Git history — 5,074 files, 47,542 symbols, 99,217 edges |
 | Task set | `bench/retrieve/roam_self.jsonl` — 30 tasks |
 | Reranker | `--rerank fast` (the default). No learned ranker. |
-| Semantic | **inert** — `[semantic]` extras not installed, 0/45,584 dense vectors, so ζ=0.2 contributes nothing |
-| Platform | Windows 11, CPython 3.12 |
+| Dependencies | `uv sync --locked --no-default-groups`; no NumPy/SciPy; degree-with-seed-boost ranking fallback |
+| Semantic | **inert** — no semantic/learned extras, 0/47,542 dense vectors, so ζ=0.2 contributes nothing |
+| Platform | Linux, CPython 3.11.15; agrees with GitHub Actions Ubuntu 24.04 / CPython 3.11.16 |
+| Independent reproduction | Windows / CPython 3.12.13, same minimal profile and fresh index: identical aggregate values |
 
 ## Quick reproduce
 
 ```bash
-# 1. Build a FULL index. This step is load-bearing -- see the warning below.
-roam init
+# Use a separate checkout of the measured commit; this selects minimal extras.
+git checkout --detach 5c56ff472ebbd3351ce5ae416a6c9caf01d58d74
+uv sync --locked --no-default-groups --python 3.11
+
+# Build a FULL index, preserving other repo-local state.
+uv run --no-sync roam index --force
 
 # 2. Run the harness.
-roam --json eval-retrieve \
+uv run --no-sync roam --json eval-retrieve \
     --tasks bench/retrieve/roam_self.jsonl \
     --emit-format coderag \
     --emit-out bench/retrieve/roam_self.coderag.jsonl \
     --emit-k 20
 ```
 
-> **Warning — a stale index silently costs ~13 points of recall@20.**
-> `roam init` on an existing index is incremental, and the incremental
-> path does not resync the FTS5 table. Retrieval quality then decays with
-> no error and no warning. Measured on this exact bench, same binary, same
-> commit, same task file — the *only* variable is index build mode:
+> **Historical index experiment — 2026-08-06, commit `0f3d3ac1`.**
+> These retained measurements used the same binary, commit and task file,
+> varying the index build mode. They are not a September re-test of the
+> incremental path:
 >
 > | index state | `symbol_fts` rows | recall@5 | recall@10 | recall@20 |
 > |---|---|---|---|---|
@@ -48,24 +54,49 @@ roam --json eval-retrieve \
 > | incrementally maintained | 44,412 / 45,574 | 0.592 | 0.678 | **0.781** |
 > | same stale index, FTS force-rebuilt and nothing else | 45,574 / 45,574 | 0.636 | 0.778 | **0.906** |
 >
-> Always benchmark against a fresh index. Tracked as a known defect —
-> see [Known defects](#known-defects).
+> Always benchmark against a fresh index. See [Known defects](#known-defects)
+> for the historical finding and its verification scope.
 
 ## Headline numbers
 
 <!-- canonical-recall:begin -- parsed by bench/retrieve/check_published_recall.py; keep the format -->
 ```
-recall@5  = 0.642
-recall@10 = 0.772
-recall@20 = 0.914
+recall@5  = 0.706
+recall@10 = 0.783
+recall@20 = 0.856
 ```
 <!-- canonical-recall:end -->
 
 (30 tasks, full self-bench, default weights, `--rerank fast`, no learned
-ranker, fresh full index at `0f3d3ac1`.)
+ranker, minimal dependencies, fresh full index at `5c56ff47`.)
 
-These are checked in CI on every push and PR — `bench/retrieve/check_published_recall.py`
-re-measures against a fresh index and fails the build if the published
+The [CI run](https://github.com/Cranot/roam-code/actions/runs/33934250545)
+reported the unrounded values 0.7056 / 0.7833 / 0.8556. Its documentation gate
+failed because the previous canonical numbers described a different earlier
+measurement. A separate full-history Linux checkout reproduced all three values.
+The checked-in `roam_self.coderag.jsonl` candidate export was regenerated from
+this minimal-profile checkout at K=20; the recall aggregates come from the
+evaluation envelope, not from treating exported symbol spans as file-level hits.
+
+### Numerical-dependency control
+
+On one fresh Windows index at this same commit, an isolated wheel environment
+was evaluated before and after adding only NumPy 2.4.4 and SciPy 1.17.1:
+
+| profile | recall@5 | recall@10 | recall@20 |
+|---|---|---|---|
+| minimal, no numerical extras | 0.7056 | 0.7833 | 0.8556 |
+| same environment plus NumPy/SciPy | 0.6333 | 0.7639 | 0.8972 |
+
+`roam.graph.pagerank` uses degree-with-seed-boost ranking without these optional
+libraries and power-iteration PageRank with them. The dependency profile changes
+which K performs better; this is not a uniform quality improvement or an OS
+effect. The development environment reproduced the numerical-profile row.
+The canonical CI numbers refer to the minimal profile, not every installation.
+
+Only the canonical minimal-profile values are checked in CI on every push and
+PR — `bench/retrieve/check_published_recall.py` re-measures against a fresh
+index and fails the build if the published
 numbers and the measured numbers drift more than ±0.06 apart, **in either
 direction**. Numbers that quietly improve are as much a docs bug as numbers
 that quietly regress; this file went stale for three minor versions the
@@ -146,9 +177,8 @@ dropping `id`/`score`.
   unweighted across the 30 tasks.
 * Top-K: 20 (the headline recall@K).
 
-Signal ablations on the fresh index, for anyone reasoning about which
-parts of the pipeline carry the result (each row = that table emptied,
-everything else intact):
+**Historical signal ablations, 2026-08-06 at `0f3d3ac1`**, not rerun for the
+current baseline (each row = that table emptied, everything else intact):
 
 | ablation | recall@5 | recall@10 | recall@20 |
 |---|---|---|---|
@@ -159,11 +189,11 @@ everything else intact):
 | `git_cochange` emptied | 0.644 | 0.761 | 0.903 |
 | `symbol_fts` stale | 0.592 | 0.678 | 0.781 |
 
-Lexical FTS is doing nearly all of the work at K=20. The graph and
-co-change signals move recall@10 by ~1 point and recall@20 by ~1 point
-at most. Treat the headline number as a lexical-retrieval result with a
-small structural rerank on top, not as evidence that the graph signals
-are load-bearing for recall.
+Those historical rows showed limited graph/co-change influence in that
+configuration. They do not establish the contribution of each signal in the
+current minimal profile. The September dependency control above independently
+demonstrates that the numerical backend affects ranking on the same index;
+neither experiment is evidence of a universal quality gain.
 
 ## Historical: v12.0 → v12.3 retrieval iteration log
 
@@ -179,8 +209,9 @@ v12.0 baseline reported 0.486 recall@20 on this same bench:
 | 3 | + path-token boost (set-equality) | 0.581 | 0.775 | 0.897 |
 | 4 (v12.3) | + path-token boost (prefix-match) | 0.600 | 0.794 | 0.903 |
 
-The v12.3 line (0.903 recall@20) still holds: the 2026-08-06 re-measurement
-at v13.10 gives 0.914, within noise of it. The v12.0 numbers are
+The 2026-08-06 v13.10 re-measurement gave 0.914 recall@20, close to the
+historical v12.3 value of 0.903; neither establishes the current profile's
+performance. The v12.0 numbers were
 reproducible by reverting commit `47ce02f` and re-running the harness.
 
 ## Cross-repo sanity check
@@ -209,9 +240,9 @@ mode where the gains evaporate on any codebase the maintainer didn't write.
 * **No learned ranker.** This submission uses `--rerank fast` (the
   default). The optional `--rerank learned` (`[learned]` extra,
   LightGBM LambdaMART distillation) is not exercised here.
-* **Recall@20 is not recall@5.** At K=5 the system finds 64% of expected
-  files; the headline 0.914 is a K=20 number and should be quoted with
-  its K.
+* **Recall@20 is not recall@5.** The current minimal profile finds about
+  71% of expected files at K=5 and 86% at K=20. Quote K, date and dependency
+  profile; the numerical profile trades lower K=5 recall for higher K=20 recall.
 * **Some tasks still miss at least one expected file.** Most are missing
   a `commands/cmd_FOO.py` companion whose path token is structurally
   distinct from the engine module's tokens. The fix would be a
@@ -220,7 +251,11 @@ mode where the gains evaporate on any codebase the maintainer didn't write.
 
 ## Known defects
 
-Open at the time of writing, recorded rather than silently carried:
+The following findings were recorded on 2026-08-06. This September baseline
+uses a full index; it does not retest the old incremental-index experiment or
+claim these historical findings are all still live. The Coderag export path was
+invoked again; its stdout preamble remains observable. The BEIR run-name literal
+is still present in the current source.
 
 1. **Incremental indexing does not resync FTS5.** `build_fts_index`
    (`src/roam/search/index_embeddings.py`) syncs by rowid-set difference
