@@ -63,7 +63,7 @@ pipelines:
                 fi
               }
 
-              python -m pip install --quiet "roam-code==14.0.3"
+              python -m pip install --quiet "roam-code==14.0.4"
 
               # Required evidence and gate inputs fail closed.
               roam init
@@ -223,7 +223,7 @@ pipelines:
             - pipcustom
             - roam
           script:
-            - python -m pip install --quiet "roam-code==14.0.3"
+            - python -m pip install --quiet "roam-code==14.0.4"
             - roam init
             - roam --json health > roam-health.json
             - roam health
@@ -236,7 +236,7 @@ pipelines:
             - pipcustom
             - roam
           script:
-            - python -m pip install --quiet "roam-code==14.0.3"
+            - python -m pip install --quiet "roam-code==14.0.4"
             - roam init
             - roam --json health > roam-health.json
             - roam health

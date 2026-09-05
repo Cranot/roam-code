@@ -44,6 +44,11 @@ A separate clean installation of Roam 14.0.3 with the MCP extra was checked
 later that day. It selected the same SDK and FastMCP versions and returned the
 same counts and pagination advisory under the same harness settings.
 
+A fresh Roam 14.0.4 installation was checked after the proof-schema packaging
+correction. With the same SDK, FastMCP, revision, and harness settings, it again
+reported 20 passed, zero failed, zero unverified, 23 not applicable, and the
+same pagination advisory.
+
 The server was launched directly after installation with
 `python -I -m roam mcp --no-auto-index`. Tool-call sampling was restricted to
 the read-only `roam_expand_toolset` call with `preset: core`; this is not an
