@@ -2,7 +2,7 @@
     "@context": "https://w3id.org/codemeta/3.0",
     "@type": "SoftwareSourceCode",
     "name": "roam-code",
-    "version": "14.0.3",
+    "version": "14.0.4",
     "description": "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no source-code egress.",
     "license": "https://spdx.org/licenses/Apache-2.0",
     "codeRepository": "https://github.com/Cranot/roam-code",

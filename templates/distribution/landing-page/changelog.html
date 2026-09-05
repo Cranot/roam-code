@@ -76,7 +76,11 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[14.0.4] — 2026-09-05</h2>
+<h3>Fixed</h3>
 <ul>
+<li><strong>Proof schema in installed packages.</strong> Ship the public AgentChangeProofBundle JSON Schema in both the wheel and source archive. <code>get_v1_schema()</code> could previously work in a source checkout but raise <code>FileNotFoundError</code> after installation. Decode it explicitly as UTF-8 on every platform. Add an installed-wheel resource and loader check, plus a guard for newly added package resources that lack packaging declarations.</li>
+<li><strong>CI template label.</strong> Remove the stale version from the Azure installation step's display label; the actual package installation remains explicitly pinned.</li>
 <li><strong>Published installation instructions.</strong> Point maintained examples, setup templates and the MCP registry package pin to verified 14.0.3 artifacts. Pin the dormant Action example to the verified release commit. The immutable release retains its original defaults; explicitly select the package version when copying a tagged Action example.</li>
 </ul>
 <h2>[14.0.3] — 2026-09-05</h2>

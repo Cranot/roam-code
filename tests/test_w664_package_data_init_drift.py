@@ -50,6 +50,7 @@ except ModuleNotFoundError:  # Python 3.10
         "tomllib not available on Python <3.11 and tomli is not a dev-dep; drift-guard still runs on 3.11/3.12/3.13",
         allow_module_level=True,
     )
+import subprocess
 from pathlib import Path
 
 from tests._helpers.repo_root import repo_root
@@ -65,6 +66,26 @@ def _load_package_data() -> dict[str, list[str]]:
 def _package_dir(root: Path, package_name: str) -> Path:
     """Resolve a dotted package name to its directory under ``src/``."""
     return root / "src" / Path(*package_name.split("."))
+
+
+def test_all_tracked_package_resources_have_package_data_declarations() -> None:
+    """A new data directory must not be invisible to the declaration-only guards."""
+    root = repo_root()
+    declared = {
+        path.resolve()
+        for package_name, patterns in _load_package_data().items()
+        for pattern in patterns
+        for path in _package_dir(root, package_name).glob(pattern)
+        if path.is_file()
+    }
+    tracked = subprocess.check_output(["git", "ls-files", "-z", "--", "src/roam"], cwd=root)
+    resources = [
+        Path(name.decode("utf-8", errors="surrogateescape"))
+        for name in tracked.split(b"\0")
+        if name and not name.endswith((b".py", b".pyi"))
+    ]
+    missing = sorted(path.as_posix() for path in resources if (root / path).resolve() not in declared)
+    assert not missing, f"Tracked runtime resources lack package-data declarations: {missing}"
 
 
 def test_all_package_data_dirs_have_init_py() -> None:

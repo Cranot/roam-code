@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [14.0.4] — 2026-09-05
+
+### Fixed
+
+- **Proof schema in installed packages.** Ship the public AgentChangeProofBundle JSON Schema in both the wheel and source archive. `get_v1_schema()` could previously work in a source checkout but raise `FileNotFoundError` after installation. Decode it explicitly as UTF-8 on every platform. Add an installed-wheel resource and loader check, plus a guard for newly added package resources that lack packaging declarations.
+- **CI template label.** Remove the stale version from the Azure installation step's display label; the actual package installation remains explicitly pinned.
 - **Published installation instructions.** Point maintained examples, setup templates and the MCP registry package pin to verified 14.0.3 artifacts. Pin the dormant Action example to the verified release commit. The immutable release retains its original defaults; explicitly select the package version when copying a tagged Action example.
 
 ## [14.0.3] — 2026-09-05

@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "14.0.3"
+version = "14.0.4"
 description = "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no source-code egress."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -199,6 +199,8 @@ where = ["src"]
 # under a pip install. Resolved via importlib.resources at runtime.
 "roam.templates.audit_report" = ["*.yaml", "*.yml"]
 "roam" = ["mcp-server-card.json"]
+# The public proof-schema loader must work from installed distributions too.
+"roam.schemas" = ["*.json"]
 # Published consumer-contract evidence envelopes (the ecosystem-protocol
 # half of ChangeEvidence). Downstream harnesses load these at runtime via
 # importlib.resources.files("roam.evidence.consumer_fixtures") to self-test

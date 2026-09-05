@@ -56,7 +56,7 @@ _SCHEMA_PATH = Path(__file__).parent / "schemas" / "agent_change_proof_bundle.v1
 
 def get_v1_schema() -> dict[str, Any]:
     """Return the AgentChangeProofBundle v1 JSON Schema as a dict."""
-    return json.loads(_SCHEMA_PATH.read_text())
+    return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 # Top-level required fields per the v1 schema.
