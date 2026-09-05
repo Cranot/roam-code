@@ -23,11 +23,29 @@ def cold_project(tmp_path):
     env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", ROAM_TELEMETRY_LOCAL="0")
     for args in (
         ["init", "--quiet"],
+        # Snapshot all Git files too: prevent the fixture commit's background
+        # maintenance from removing a transient lock during a no-write check.
+        ["config", "maintenance.auto", "false"],
+        ["config", "gc.auto", "0"],
         ["add", "app.py"],
         ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"],
     ):
         subprocess.run(["git", *args], cwd=project, env=env, capture_output=True, check=True)
     return project, env
+
+
+@pytest.mark.parametrize("key,value", [("maintenance.auto", "false"), ("gc.auto", "0")])
+def test_fixture_disables_automatic_git_maintenance(cold_project, key, value):
+    project, env = cold_project
+    result = subprocess.run(
+        ["git", "config", "--local", "--get", key],
+        cwd=project,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == value
 
 
 def _run(cold_project, *args, **overrides):
