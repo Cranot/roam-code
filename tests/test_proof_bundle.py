@@ -288,6 +288,18 @@ def test_v1_schema_file_is_valid_json():
     assert "properties" in schema
 
 
+def test_v1_schema_loader_uses_explicit_utf8(monkeypatch):
+    from roam import proof_bundle
+
+    class Utf8Schema:
+        def read_text(self, *, encoding=None):
+            assert encoding == "utf-8", "Schema decoding must not depend on the platform locale."
+            return '{"title": "Schema \\u03b4"}'
+
+    monkeypatch.setattr(proof_bundle, "_SCHEMA_PATH", Utf8Schema())
+    assert proof_bundle.get_v1_schema() == {"title": "Schema \u03b4"}
+
+
 def test_composer_output_is_schema_valid(tmp_path):
     from roam.proof_bundle import validate_v1
 

@@ -29,6 +29,26 @@ from __future__ import annotations
 from importlib.resources import as_file, files
 
 
+class TestProofSchemaPackageData:
+    """Run these in the isolated installed-wheel CI job, not just an editable checkout."""
+
+    def test_proof_schema_resource_is_shipped(self) -> None:
+        resource = files("roam") / "schemas" / "agent_change_proof_bundle.v1.json"
+        assert resource.is_file(), "The installed package must include the public proof-bundle JSON Schema."
+
+    def test_installed_public_schema_loader_matches_resource(self) -> None:
+        import json
+
+        from roam.proof_bundle import get_v1_schema
+
+        resource = files("roam") / "schemas" / "agent_change_proof_bundle.v1.json"
+        schema = get_v1_schema()
+        assert schema == json.loads(resource.read_text(encoding="utf-8"))
+        assert schema["title"] == "AgentChangeProofBundle"
+        assert schema["properties"]["schema"]["const"] == "agent_change_proof_bundle"
+        assert {"verification_contract", "executed_checks", "missing_checks", "verdict"} <= set(schema["required"])
+
+
 class TestAuditReportPackageDataDriftW570:
     """W570 drift-guard for ``roam.templates.audit_report`` (W554)."""
 
