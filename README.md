@@ -366,6 +366,8 @@ explains where findings still need careful review.
 
 ## What's New
 
+**v14.0.3 (2026-09-05) — clearer guidance and more trustworthy check results.** Saved proof files keep their review results when read back. Malformed evidence and failed collection cannot turn into a passing result. Benchmark reports keep missing measurements unknown and count failed attempts. The README and verification guide now explain how to get useful answers—and where tests and human review still matter. Full notes: [CHANGELOG.md](CHANGELOG.md).
+
 **v14.0.2 (2026-09-05) — controlled cold starts and more precise loop advice.** Keep index control files with a redirected database, opt out of implicit indexing, and receive parseable JSON even on cold starts. Workspace import checks recognize shared development tools without hiding undeclared sibling dependencies. Loop advice accounts for collection mutation, positional lookups, clocks and randomness; complexity-hint matching avoids unrelated AST work. The pinned wheel build tool also receives its path-traversal fix. Full notes: [CHANGELOG.md](CHANGELOG.md).
 
 **v14.0.1 (2026-09-05) — more precise findings and clearer verification.** Browser and TypeScript checks distinguish lifecycle calls from database operations, resolve NodeNext source extensions, and show stronger evidence for algorithm advice. Incomplete searches require review instead of authorizing deletion. MCP compatibility is tested against the supported SDK generation, retrieval benchmarks name their dependency profiles, and release checks enforce their stated worker budget. Official container publication remains on hold pending image-wide security review. Full notes: [CHANGELOG.md](CHANGELOG.md).

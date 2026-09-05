@@ -169,6 +169,16 @@ legacy bundles remain readable, including absent or null optional review
 fields; this compatibility does not authenticate their claims. A parser
 refusal is not a verdict and must not be treated as approval.
 
+The same input checks apply to `roam proof-bundle`, `roam guard-pr`, and the
+composer's consumed evidence fields. `guard-pr` validates the original file
+before auto-collection, rechecks it at collection time, and validates collected
+fields before saving. Invalid input is not rewritten into an apparently valid
+bundle. Failed collection returns `auto_collect_failed` at exit 2, even without
+`--strict`; use `--skip-collect` only when deliberately reviewing saved evidence.
+Expected composition failures, including unknown review statuses in the producer
+commands, return `compose_failed` at exit 5 without emitting or logging a verdict.
+These are input/operation failures, separate from the optional verdict gate.
+
 Use deterministic checks first for removed paths, stale hashes, unsupported
 IDs, and broken links. Then ask whether the cited evidence demonstrates the
 specific claim under the stated source and configuration. Valid but irrelevant

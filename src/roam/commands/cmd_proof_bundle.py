@@ -142,15 +142,16 @@ def proof_bundle(
 
     try:
         bundle_dict = load_pr_bundle(bundle_path)
-    except (ValueError, json.JSONDecodeError) as e:
-        msg = f"Failed to parse pr-bundle at {bundle_path}"
-        fix = f"Inspect / repair the JSON at {bundle_path}."
+    except (OSError, ValueError, RecursionError) as e:
+        code = "bundle_load_failed" if isinstance(e, OSError) else "bundle_parse_error"
+        msg = f"Failed to load pr-bundle at {bundle_path}"
+        fix = f"Check access to {bundle_path} and repair its JSON before retrying."
         if json_mode:
             click.echo(
                 to_json(
                     guard_error_envelope(
                         "proof-bundle",
-                        "bundle_parse_error",
+                        code,
                         msg,
                         fix=fix,
                         context={"bundle_path": str(bundle_path), "exception": str(e)},
@@ -163,12 +164,31 @@ def proof_bundle(
         return
 
     root = find_project_root() or Path.cwd()
-    v1 = compose_agent_change_proof_bundle(
-        bundle_dict,
-        repo_root=Path(root),
-        mode=mode,
-        policy_profile=policy_profile,
-    )
+    try:
+        v1 = compose_agent_change_proof_bundle(
+            bundle_dict,
+            repo_root=Path(root),
+            mode=mode,
+            policy_profile=policy_profile,
+        )
+    except (OSError, ValueError, RecursionError) as e:
+        msg = "Proof composition failed; no verdict was produced."
+        if json_mode:
+            click.echo(
+                to_json(
+                    guard_error_envelope(
+                        "proof-bundle",
+                        "compose_failed",
+                        msg,
+                        fix="Check the bundle evidence and repository access before retrying.",
+                        context={"bundle_path": str(bundle_path), "exception": str(e)},
+                    )
+                )
+            )
+        else:
+            click.echo(f"{msg} {e}", err=True)
+        ctx.exit(5)
+        return
 
     verdict_val = (v1.get("verdict") or {}).get("value", "pass")
     exit_code = verdict_exit_code(verdict_val) if strict else 0

@@ -7,10 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [14.0.3] — 2026-09-05
+
+### Fixed
+
+- **Proof producer boundaries.** Share strict JSON and evidence-shape checks with the saved-file reader. Refuse malformed review inputs before normalization, validate before auto-collection can rewrite the source, and retain rejected bytes. Failed collection or composition returns a structured nonzero error without emitting or logging a verdict, including in reporting-only mode. Explicit `--skip-collect` remains available for reviewing saved evidence.
 - **Saved-proof input checks.** `roam verdict` refuses duplicate JSON keys, non-finite numbers, and malformed evidence fields before they can be mistaken for absent checks or review. UTF-8 files are read consistently across platforms; unreadable input and unknown review statuses return matching structured errors instead of tracebacks or inconsistent error codes. Valid legacy bundles remain supported.
 - **A clearer introduction.** The README now starts with practical questions, plain-language command descriptions, and explicit limits. Historical benchmark results remain available in an expandable section; generated command counts use the same simpler wording.
 
-### Fixed
 - **Proof-bundle review continuity.** Preserve review obligations and verifier results through composition and JSON serialization, so re-reading a blocked bundle cannot silently drop review failures or coverage warnings. Keep absent and explicitly empty review evidence distinct; this does not authenticate self-reported evidence.
 - **Complete change-scan disclosure.** Treat failed untracked-file enumeration as an incomplete Git fallback scan, retaining already discovered paths. Read filenames as NUL-delimited UTF-8 records instead of quoted or whitespace-stripped lines.
 - **Truthful benchmark accounting.** Retain invalid and unreadable saved cells, report observed metric denominators, keep missing measurements unknown, and separate timeout estimates from recorded costs. The live harness rejects unsuccessful result envelopes, preserves assigned/dispatched/reused counts, refuses stale output after failed dispatch, and discloses cell-record persistence failures. Saved artifacts alone do not prove dispatches or verified task success.
@@ -9772,7 +9776,10 @@ isn't an artifact of self-bench.
 - Incremental indexing via mtime + hash change detection
 - Git integration: churn, blame, co-change analysis
 
-[Unreleased]: https://github.com/Cranot/roam-code/compare/v14.0.0...HEAD
+[Unreleased]: https://github.com/Cranot/roam-code/compare/v14.0.3...HEAD
+[14.0.3]: https://github.com/Cranot/roam-code/compare/v14.0.2...v14.0.3
+[14.0.2]: https://github.com/Cranot/roam-code/compare/v14.0.1...v14.0.2
+[14.0.1]: https://github.com/Cranot/roam-code/compare/v14.0.0...v14.0.1
 [14.0.0]: https://github.com/Cranot/roam-code/compare/v13.10.0...v14.0.0
 [13.10.0]: https://github.com/Cranot/roam-code/compare/v13.9.0...v13.10.0
 [13.9.0]: https://github.com/Cranot/roam-code/compare/v13.8.0...v13.9.0
