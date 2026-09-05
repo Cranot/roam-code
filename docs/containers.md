@@ -1,10 +1,17 @@
 # Roam containers
 
-The release workflow publishes the CLI **and MCP dependencies** to
+Official container publication is **on hold** pending image-wide security
+review. No public image is promised by the next package release. Build locally
+using the instructions below; the registry examples describe the intended
+interface after publication is enabled.
+
+The release workflow can publish the CLI **and MCP dependencies** to
 `ghcr.io/cranot/roam-code` after the matching PyPI release and its evidence checks
-pass. The initial supported platform is `linux/amd64`; ARM hosts need emulation
-or a local build. Publication is introduced by the next release; do not assume
-older PyPI versions have matching container tags.
+pass, but only when the repository variable `ROAM_CONTAINER_PUBLISH` is exactly
+`true`. An unset or false value skips container publication without skipping
+package verification. The initial supported platform is `linux/amd64`; ARM
+hosts need emulation or a local build. Do not assume a PyPI version has a
+matching container tag.
 
 ```sh
 docker pull ghcr.io/cranot/roam-code:latest
@@ -75,6 +82,12 @@ byte-identical to a published image. The `.dockerignore` excludes private
 private files out of a build context as well.
 
 ## Release evidence and maintenance
+
+Keep `ROAM_CONTAINER_PUBLISH` unset or `false` while publication is held. Both
+the release caller and the reusable container workflow enforce this opt-in.
+Enable it only after reviewing the complete image scan and accepting the
+remaining exposure. A skipped publication job means **not published**, not a
+successful container release. The hold does not waive any package release gate.
 
 The workflow checks the exact released source commit, builds an amd64 candidate
 with SBOM and provenance attestations, tests indexing/search and MCP dependency

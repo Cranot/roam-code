@@ -71,6 +71,38 @@ def test_release_temp_capacity_scales_with_bounded_worker_budget() -> None:
     assert gate._release_temp_required_bytes(4) == 8 * 1024**3
 
 
+@pytest.mark.parametrize("workers", [1, 4])
+@pytest.mark.parametrize("ci", ["", "true"])
+def test_release_suite_honors_worker_budget_and_group_markers(monkeypatch, capsys, workers, ci):
+    from roam.testing.ci_xdist import xdist_args_to_inject
+
+    gate = _load_gate_module()
+    root = repo_root()
+    monkeypatch.setattr(gate, "repo_root", lambda: root)
+    monkeypatch.setenv("CI", ci)
+    monkeypatch.setenv("ROAM_XDIST_WORKERS", "64")
+    monkeypatch.setattr(gate.shutil, "disk_usage", lambda _path: SimpleNamespace(free=1 << 40))
+    commands = []
+
+    def capture(argv, **kwargs):
+        commands.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(gate.subprocess, "run", capture)
+    assert gate.main(["--release", "--workers", str(workers)]) == 0
+    suites = [argv for argv in commands if "tests/" in argv and "pytest" in argv]
+    assert len(suites) == 1
+    argv = suites[0]
+    assert argv[argv.index("-n") + 1] == str(workers)
+    assert argv[argv.index("--dist") + 1] == "loadgroup"
+    assert argv[argv.index("-m", 3) + 1] == "not slow"
+    assert "-rf" in argv
+    assert xdist_args_to_inject(argv, dict(os.environ), True) == []
+    output = capsys.readouterr().out
+    assert f"{workers} workers, loadgroup" in output
+    assert "serial" not in output.lower()
+
+
 def test_release_temp_capacity_fails_closed_before_expensive_tests(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

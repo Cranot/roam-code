@@ -639,8 +639,9 @@ Full typed surface lives in `src/roam/plugins/registry.py`. Tests live in
 ## Testing
 
 - All tests must pass before committing (run `pytest tests/` to verify)
-- **CI parallelism:** the `roam.testing.ci_xdist` plugin enables auto workers
-  (`-n auto --dist loadgroup`) when `CI` is set. Local runs are sequential unless
+- **CI parallelism:** the `roam.testing.ci_xdist` plugin injects bounded workers
+  (`-n N --dist loadgroup`) when `CI` is set: two by default, overridden by
+  `ROAM_XDIST_WORKERS` (this repository's CI selects four). Local runs are sequential unless
   `-n` is supplied; prefer `-n 4 --dist loadgroup` for bounded local parallelism.
 - Use `-n 0` to run sequentially when debugging
 - Use `-m "not slow"` to skip timing-sensitive performance tests
@@ -740,8 +741,10 @@ bundles):
    start. Full standard: the ops durable-followthrough memo under the
    private planning folder.
 7. The CI matrix runs the suite in parallel via the `roam.testing.ci_xdist`
-   plugin (loaded from pyproject `addopts`; injects `-n auto --dist
-   loadgroup` only when `CI` is set). History: the 3.10 lane outgrew its
+   plugin (loaded from pyproject `addopts`; injects `-n N --dist
+   loadgroup` only when `CI` is set, with the workflow selecting four workers).
+   The local release gate passes explicit `-n`/`--dist` values so its
+   `--workers` budget is independent of the CI environment. History: the 3.10 lane outgrew its
    job timeout three times sequentially (20 → 30 → 45 min). New tests that
    are xdist-unsafe must carry an `xdist_group` marker.
 

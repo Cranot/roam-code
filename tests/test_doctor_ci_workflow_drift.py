@@ -99,6 +99,10 @@ def test_drift_check_detects_modified_workflow(isolated_cwd: Path) -> None:
     assert "first divergence at line" in entry["diff_summary"]
     # LAW 4 anchor — terminal token is concrete ("template").
     assert "drifted from template" in result["detail"]
+    assert "roam ci-setup --platform github` to preview" in result["detail"]
+    assert "preserving" in result["detail"]
+    assert "--write" not in result["detail"]
+    assert "delete" not in result["detail"]
 
 
 def test_drift_check_matches_template_exactly(isolated_cwd: Path) -> None:

@@ -1,8 +1,9 @@
 """Lock the CI auto-parallelism plugin (roam.testing.ci_xdist).
 
-The CI matrix lane runs the suite sequentially from the workflow file; the
-3.10 leg outgrew its job timeout three times (20 -> 30 -> 45 min). The
-``-p``-loaded plugin injects ``-n auto --dist loadgroup`` on CI runners.
+The CI matrix invokes pytest without explicit worker arguments; historically
+the 3.10 leg outgrew its job timeout three times (20 -> 30 -> 45 min). The
+``-p``-loaded plugin injects bounded ``-n N --dist loadgroup`` arguments on CI
+runners (two by default; this repository's workflow selects four).
 These tests pin (a) the full guard matrix of the pure decision function,
 (b) that pyproject actually loads the plugin, and (c) end-to-end worker
 spawn in a subprocess with CI set.

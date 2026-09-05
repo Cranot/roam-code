@@ -350,7 +350,14 @@ refactors, never lose entries).
 
 ## What's New
 
+**v14.0.1 (2026-09-05) — more precise findings and clearer verification.** Browser and TypeScript checks distinguish lifecycle calls from database operations, resolve NodeNext source extensions, and show stronger evidence for algorithm advice. Incomplete searches require review instead of authorizing deletion. MCP compatibility is tested against the supported SDK generation, retrieval benchmarks name their dependency profiles, and release checks enforce their stated worker budget. Official container publication remains on hold pending image-wide security review. Full notes: [CHANGELOG.md](CHANGELOG.md).
+
+<details>
+<summary><strong>Earlier release notes — v13.10</strong></summary>
+
 **v13.10 (2026-07-28) — repeated work becomes measurable procedures, and post-edit verification becomes proof-complete.** Privacy-preserving transcript/shell-template mining can nominate repeated-work interventions without exposing raw prompts or claiming causal savings; `roam savings` promotes only prospectively joined, integrity-checked outcomes. The Claude adapter now binds every edited turn to a strict Verify receipt and blocks unavailable, malformed, incomplete, or failing evidence. Interrupted indexes carry a generation-bound, durably synced lifecycle marker and force a full non-light rebuild before analysis regardless of the direct caller; completion is published only after SQLite checkpoint/fsync, so a crash cannot turn partial graph state into plausible empty answers. Roam owns the canonical hooks end to end—Compile Code no longer rewrites installed source. Full notes: [CHANGELOG.md](CHANGELOG.md).
+
+</details>
 
 <details>
 <summary><strong>Earlier release notes — v13.6 → v13.0</strong></summary>

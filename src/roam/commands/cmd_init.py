@@ -17,7 +17,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import db_exists, find_project_root
+from roam.db.connection import _is_genuine_git_marker, db_exists, find_project_root
 from roam.db.fs_detect import cloud_sync_warning, detect_cloud_sync
 from roam.output.formatter import json_envelope, to_json
 
@@ -138,19 +138,15 @@ Wire MCP:   roam mcp-setup <claude-code|cursor|codex-cli|gemini-cli|vscode|winds
 
 
 def _is_inside_git_repo(project_root) -> bool:
-    """Return True when ``project_root`` (or any ancestor) has a ``.git``.
+    """Validate the Git marker at the resolved bootstrap destination.
 
-    ``find_project_root`` already returns a usable path, but it falls
-    back to ``cwd`` when no .git is present — that's the spawn-in-Downloads
-    failure mode the audit flagged. Refuse to init outside a repo.
+    ``find_project_root`` has already searched ancestors and rejected stray
+    markers. A second, looser ancestor search can accept that rejected marker
+    (or a newly visible repository) and authorize writes at the wrong root.
+    Reuse canonical validation on the actual destination; this also retains
+    support for worktree/submodule pointer files.
     """
-    p = project_root.resolve()
-    while True:
-        if (p / ".git").exists():
-            return True
-        if p.parent == p:
-            return False
-        p = p.parent
+    return _is_genuine_git_marker(project_root.resolve() / ".git")
 
 
 @roam_capability(
@@ -251,14 +247,34 @@ def init(ctx, root, yes, with_ci, since, full_history):
     if not _is_inside_git_repo(project_root):
         from roam.output.errors import structured_usage_error
 
-        raise structured_usage_error(
+        error = structured_usage_error(
             "FILE_NOT_FOUND",
-            "no .git directory found at or above the project root. "
+            "no valid .git marker found at the resolved project root. "
             "`roam init` only runs inside a git repository — `git init` "
             "first if you genuinely want roam to track a non-git tree, or "
             "`cd` into the right project root. "
             "If this looks unexpected, run `roam doctor` to diagnose your install.",
         )
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "init",
+                        persist_response=False,
+                        summary={
+                            "verdict": "Initialization refused: no valid Git repository; no initialized files",
+                            "state": "not_initialized",
+                            "partial_success": True,
+                        },
+                        error_code="FILE_NOT_FOUND",
+                        error=error.message,
+                        created=[],
+                        skipped=[],
+                    )
+                )
+            )
+            ctx.exit(error.exit_code)
+        raise error
 
     created = []
     skipped = []

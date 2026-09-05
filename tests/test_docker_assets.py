@@ -67,3 +67,13 @@ def test_container_publication_is_release_bound_and_tested():
     assert text.index("Require an anonymous pull") < text.index("Promote the verified digest")
     assert '"$latest" == "$TAG"' in text
     assert "Existing image has a different source commit" in text
+
+
+def test_container_publication_requires_explicit_repository_opt_in():
+    gate = "    if: ${{ vars.ROAM_CONTAINER_PUBLISH == 'true' }}"
+    caller = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
+    callee = (ROOT / ".github/workflows/container.yml").read_text(encoding="utf-8")
+    assert gate in caller.split("\n  container:\n", 1)[1]
+    assert gate in callee.split("\n  publish:\n", 1)[1].split("    steps:", 1)[0]
+    # The hold controls container publication only, never package verification.
+    assert "ROAM_CONTAINER_PUBLISH" not in caller.split("\n  container:\n", 1)[0]

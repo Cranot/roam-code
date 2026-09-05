@@ -145,6 +145,38 @@ class TestSafeMkdir:
 
 
 class TestGetDbPath:
+    @pytest.mark.parametrize("source", ["default", "config", "env"])
+    @pytest.mark.parametrize("existing", [False, True])
+    def test_metadata_probe_resolves_without_creating_directories(self, tmp_path, monkeypatch, source, existing):
+        """Read-only probes share writer precedence without mkdir side effects."""
+        from roam.output import formatter
+
+        proj = tmp_path / "project"
+        proj.mkdir()
+        configured = tmp_path / "configured"
+        override = tmp_path / "override"
+        if source != "default":
+            (proj / ".roam").mkdir()
+            (proj / ".roam" / "config.json").write_text(json.dumps({"db_dir": str(configured)}), encoding="utf-8")
+        if source == "env":
+            monkeypatch.setenv("ROAM_DB_DIR", str(override))
+        selected = {"default": proj / ".roam", "config": configured, "env": override}[source]
+        if existing:
+            selected.mkdir(exist_ok=True)
+            (selected / "index.db").write_bytes(b"metadata probe")
+        monkeypatch.chdir(proj)
+
+        def forbidden_mkdir(*args, **kwargs):
+            pytest.fail("A metadata probe attempted to create a directory")
+
+        monkeypatch.setattr(Path, "mkdir", forbidden_mkdir)
+        assert get_db_path(project_root=proj, create=False) == selected / "index.db"
+        age = formatter._index_age_seconds()
+        assert isinstance(age, int) if existing else age is None
+        assert selected.exists() is existing
+        if source == "env":
+            assert not configured.exists()
+
     def test_get_db_path_no_config_falls_back_to_project_default(self, tmp_path, monkeypatch):
         """No ``.roam/config.json`` → db lives under ``<project>/.roam/``."""
         proj = _make_project(tmp_path)

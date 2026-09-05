@@ -83,7 +83,7 @@ sealed class Result {
 // Generic class
 class Container<T>(val content: T) {
     fun get(): T = content
-    fun map<R>(transform: (T) -> R): Container<R> {
+    fun <R> map(transform: (T) -> R): Container<R> {
         return Container(transform(content))
     }
 }

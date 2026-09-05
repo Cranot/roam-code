@@ -223,7 +223,7 @@ def write_project_config(config: dict, project_root: Path | None = None) -> Path
     return config_path
 
 
-def get_db_path(project_root: Path | None = None) -> Path:
+def get_db_path(project_root: Path | None = None, *, create: bool = True) -> Path:
     """Get the path to the index database.
 
     Resolution order (first match wins):
@@ -233,19 +233,24 @@ def get_db_path(project_root: Path | None = None) -> Path:
     2. ``.roam/config.json`` → ``"db_dir"`` key — persistent per-project
        alternative to the env-var (write once with ``roam config``).
     3. Default: ``<project_root>/.roam/index.db``.
+
+    Set ``create=False`` for metadata probes that must not create directories.
+    The default retains the existing directory-creation behavior for writers.
     """
     override = os.environ.get("ROAM_DB_DIR")
     if override:
-        db_dir = _safe_mkdir(override, source="ROAM_DB_DIR env")
+        db_dir = _safe_mkdir(override, source="ROAM_DB_DIR env") if create else Path(override)
         return db_dir / DEFAULT_DB_NAME
     if project_root is None:
         project_root = find_project_root()
     # Check .roam/config.json for a db_dir override
     config = _load_project_config(project_root)
     if config.get("db_dir"):
-        db_dir = _safe_mkdir(config["db_dir"], source=".roam/config.json db_dir")
+        db_dir = _safe_mkdir(config["db_dir"], source=".roam/config.json db_dir") if create else Path(config["db_dir"])
         return db_dir / DEFAULT_DB_NAME
-    db_dir = _safe_mkdir(project_root / DEFAULT_DB_DIR, source="<project default>")
+    db_dir = project_root / DEFAULT_DB_DIR
+    if create:
+        db_dir = _safe_mkdir(db_dir, source="<project default>")
     return db_dir / DEFAULT_DB_NAME
 
 

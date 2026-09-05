@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [14.0.1] — 2026-09-05
+
 ### Fixed
+- **Validate initialization's write destination.** Reject stray or invalid `.git` markers using the same validation as project-root discovery, and require a valid marker at the resolved root before creating configuration or index files. Preserve initialization from nested directories and linked worktrees. JSON refusals include a structured `not_initialized` envelope and a nonzero exit status. Metadata probes no longer create database directories, and refused initialization skips response-sidecar writes even during an agent run.
+- **Preserve customized CI workflows.** Doctor's template-drift advisory now directs users to preview and review differences while retaining local settings. Differences are not proof that a workflow is wrong, and the guidance no longer asks users to delete their live workflow.
+- **Predictable release-test workers.** Apply the requested bounded worker count to the full non-slow suite, preserve grouped-test isolation, and report the actual execution mode instead of calling an environment-dependent run serial. Align the full-suite worker count with the preflight disk-capacity check.
+- **Valid Kotlin parser fixture.** Correct generic method syntax in the shared language fixture and assert both error-free parsing and extraction of the generic method. Retain a malformed-syntax control so parser recovery cannot silently weaken the fixture check.
+- **Independent container publication control.** Require an explicit repository opt-in at both workflow boundaries. Keep official image publication on hold pending image-wide security review without blocking package verification or implying that a skipped container job published an image.
 - **Reproducible retrieval benchmarks.** Refresh the public self-benchmark from a fresh full-history checkout and regenerate its candidate export. Name the minimal CI dependency profile and publish the separate NumPy/SciPy control, which changes ranking on the same index. Retain historical measurements and the existing drift tolerance; do not present cross-profile differences as an overall retrieval improvement.
 - **Search errors no longer authorize deletion.** Preserve partial matches when ripgrep or git grep fails, disclose missing/timed-out engines, and qualify empty-search verdicts. Reference audits require review after an incomplete search; `delete-check --ci` refuses consistently in text, JSON and SARIF instead of emitting a clean-looking success.
 - **Fresh-install MCP and offline container safety.** Bound MCP/FastMCP to the supported major versions and refresh their locked maintenance releases. Build containers from `uv.lock` and preload/seal production grammars so a non-root, network-isolated first index does not download parsers.

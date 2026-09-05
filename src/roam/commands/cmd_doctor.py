@@ -2341,8 +2341,8 @@ def _check_ci_workflow_drift() -> dict:
 
     Compares live ``.github/workflows/*.yml`` files (those that came from
     ``roam ci-setup --write``) against the bundled template under
-    ``src/roam/templates/ci/``. Drift means the template was updated
-    upstream but the user's workflow wasn't refreshed.
+    ``src/roam/templates/ci/``. Differences can reflect template updates or
+    deliberate local customization; this comparison cannot distinguish intent.
 
     States:
       not_applicable — no live workflow exists for any registered template
@@ -2353,9 +2353,9 @@ def _check_ci_workflow_drift() -> dict:
                        absent from the install (advisory pass; doctor's
                        other checks already cover packaging integrity)
 
-    Advisory only — drift is informational, never blocking. Users should
-    refresh the live workflow with ``roam ci-setup --write`` (will warn
-    on file exists) or re-emit after deleting the old file.
+    Advisory only — drift is informational, never blocking. Preview with
+    ``roam ci-setup --platform github`` and review differences while preserving
+    the live workflow's permissions, triggers and custom steps.
     """
     try:
         (
@@ -2420,8 +2420,8 @@ def _check_ci_workflow_drift() -> dict:
             "passed": False,
             "detail": (
                 f"ADVISORY: {len(drifted)} workflows drifted from template ({names}{more}). "
-                "Run `roam ci-setup --platform github --write` (delete the live file first) "
-                "to refresh."
+                "Run `roam ci-setup --platform github` to preview, then review differences "
+                "while preserving the live workflow's custom settings."
             ),
             "_state": "drift",
             "_checked": checked,

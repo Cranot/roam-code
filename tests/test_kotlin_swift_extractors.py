@@ -38,6 +38,24 @@ class TestRegistryRouting:
 
 
 class TestKotlinExtractor:
+    def test_basic_fixture_parses_and_retains_generic_method(self):
+        from tests._helpers.repo_root import repo_root
+
+        path = repo_root() / "tests/fixtures/languages/kotlin/basic.kt"
+        source = path.read_bytes()
+        parser = get_parser(GRAMMAR_ALIASES.get("kotlin", "kotlin"))
+        tree = parser.parse(source)
+        assert not tree.root_node.has_error, str(tree.root_node)
+        symbols = get_extractor("kotlin").extract_symbols(tree, source, "basic.kt")
+        method = _symbol(symbols, "map")
+        assert method["kind"] == "method"
+        assert method["parent_name"] == "Container"
+
+        # The guard must notice the malformed placement this fixture once used.
+        malformed = source.replace(b"fun <R> map(", b"fun map<R>(")
+        assert malformed != source
+        assert parser.parse(malformed).root_node.has_error
+
     def test_kotlin_class_interface_enum_and_object_kinds(self):
         source = "interface Talker { fun speak(): String }\nclass Base\nobject Singleton\nenum class Color { RED }\n"
 
