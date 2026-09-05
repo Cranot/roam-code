@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [14.0.1] — 2026-09-05
 
 ### Fixed
+- **Template-only database endpoints in pre-push checks.** Recognize complete host-and-port substitutions as runtime templates, not embedded credentials. Keep credential-bearing or ambiguous URLs blocked, and continue scanning the rest of the line and every changed commit blob; no fixture-wide exemption is added.
 - **Validate initialization's write destination.** Reject stray or invalid `.git` markers using the same validation as project-root discovery, and require a valid marker at the resolved root before creating configuration or index files. Preserve initialization from nested directories and linked worktrees. JSON refusals include a structured `not_initialized` envelope and a nonzero exit status. Metadata probes no longer create database directories, and refused initialization skips response-sidecar writes even during an agent run.
 - **Preserve customized CI workflows.** Doctor's template-drift advisory now directs users to preview and review differences while retaining local settings. Differences are not proof that a workflow is wrong, and the guidance no longer asks users to delete their live workflow.
 - **Predictable release-test workers.** Apply the requested bounded worker count to the full non-slow suite, preserve grouped-test isolation, and report the actual execution mode instead of calling an environment-dependent run serial. Align the full-suite worker count with the preflight disk-capacity check.

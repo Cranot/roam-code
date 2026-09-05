@@ -1032,6 +1032,49 @@ def test_unresolved_template_placeholder_value_is_not_flagged(wrapped: str) -> N
     assert findings == []
 
 
+@pytest.mark.parametrize("scheme", ["mysql", "postgres", "postgresql", "mongodb", "redis"])
+@pytest.mark.parametrize("endpoint", ["$host:$port", "${host}:${port}", "{host}:{port}", "%(host)s:%(port)s"])
+def test_template_only_database_endpoint_is_not_a_literal_credential(scheme: str, endpoint: str) -> None:
+    findings = secret_scan._scan_text("app.kt", f'val url = "jdbc:{scheme}://{endpoint}"', commit="a" * 40)
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "admin:s3cr3t-value@$host:$port",
+        "$user:s3cr3t-value@$host:$port",
+        "$host:$port?password=s3cr3t-value",
+        "$host:$port#s3cr3t-value",
+        "$host:s3cr3t-value",
+        "$host:$port/s3cr3t-value",
+    ],
+)
+def test_database_template_substring_cannot_hide_literal_credentials(endpoint: str) -> None:
+    findings = secret_scan._scan_text("app.kt", f'val url = "postgresql://{endpoint}"', commit="a" * 40)
+    assert any(f["pattern_name"] == "Database Connection String" for f in findings)
+
+
+def test_database_endpoint_template_cannot_hide_a_second_secret_on_the_line() -> None:
+    token = "ghp_" + "A" * 36
+    findings = secret_scan._scan_text(
+        "app.kt", f'val url = "postgresql://$host:$port"; val key = "{token}"', commit="a" * 40
+    )
+    assert findings
+    assert not any(f["pattern_name"] == "Database Connection String" for f in findings)
+    assert any(f["pattern_name"] == "GitHub Personal Access Token (classic)" for f in findings)
+
+
+def test_template_only_database_endpoint_is_checked_in_changed_commit_blobs(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    source = repo / "app.kt"
+    source.write_text('fun connectionString(): String = "jdbc:postgresql://$host:$port"\n', encoding="utf-8")
+    git_init(repo)
+    source.write_text(source.read_text(encoding="utf-8") + "fun count(): Int = 1\n", encoding="utf-8")
+    git_commit(repo, "add another function")
+    assert secret_scan.scan_commit_range(repo, "HEAD~1..HEAD") == []
+
+
 def test_own_test_corpus_predicate_is_one_file_not_a_directory() -> None:
     """A path allowlist, not a directory rule: only these exact files are
     exempt as the scanner's own fixture corpus, so the exemption cannot
