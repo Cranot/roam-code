@@ -8,21 +8,23 @@ focused on the aggregate run + CI exit code.
 One CLI invocation that runs the full Phase 1+2 flow:
 
   1. Find pr-bundle on current branch (or use --bundle)
-  2. Auto-collect — fold response envelopes from .roam/responses/ into bundle
+  2. Validate input, then collect responses from .roam/responses/ into bundle
   3. Save bundle back to disk
   4. Compose AgentChangeProofBundle v1
   5. Render in requested format (text / markdown / json)
   6. Optionally POST to GitHub Check Run API
   7. Exit per verdict (0 = pass/warnings, 4 = needs_review, 5 = blocked under --strict)
 
-Reporting-only by default, and LOUD about it. Without --strict/--ci the
-process always exits 0 — that is deliberate (the shipped CI templates run a
+Verdicts are reporting-only by default, and LOUD about it. Without --strict/--ci
+a completed verdict exits 0 — that is deliberate (the shipped CI templates run a
 bare `guard-pr --post-check` reporting step under `set -euo pipefail`, and it
 runs precisely when the verdict is blocked). But a suppressed gate is never
 silent: `_emit_gate_suppressed_banner` writes a stderr banner naming the exact
 flag, and the JSON envelope carries `gate_enforced` / `gate_suppressed` /
 `verdict_exit_code` so a machine consumer can see the same thing. Seeing
 `blocked` and getting exit 0 with no signal is the defect this guards.
+Input, collection, and composition failures still exit nonzero: no verdict
+exists to report or suppress when the operation could not complete.
 
 Distinct from `roam guard` (per-symbol pre-edit packet).
 
@@ -32,7 +34,6 @@ demoable Roam Guard CLI sigil.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
@@ -50,7 +51,6 @@ from roam.pr_bundle_primitives import (
     auto_collect,
     discover_active_bundle,
     empty_bundle,
-    load_bundle,
 )
 from roam.pr_bundle_primitives import (
     bundle_path as canonical_bundle_path,
@@ -61,6 +61,7 @@ from roam.proof_bundle import (
     load_pr_bundle,
     render_markdown,
 )
+from roam.proof_input import validate_proof_input
 from roam.verdict import verdict_exit_code
 
 
@@ -100,16 +101,19 @@ def _init_bundle_if_missing(bundle_arg: str | None, intent: str) -> Path | None:
 
 
 def _run_auto_collect_inline(bundle_path: Path, root: Path) -> dict:
-    """Best-effort auto-collect — folds responses into bundle, saves on disk.
+    """Collect responses into a validated bundle and save it on disk.
 
-    Uses the stable pr_bundle_primitives boundary. Failure is non-fatal;
-    we proceed with whatever the bundle has.
+    Uses the stable pr_bundle_primitives boundary. Expected failures return
+    an error marker; the caller refuses composition when collection failed.
     """
-    bundle = load_bundle(bundle_path)
-    if bundle is None:
-        return {"error": "bundle_load_failed"}
+    # Re-check at the point of use if the file changed after the first read.
+    try:
+        bundle = load_pr_bundle(bundle_path)
+    except (OSError, ValueError, RecursionError) as e:
+        return {"error": f"bundle_load_failed: {e}"}
     try:
         totals = auto_collect(bundle, root)
+        validate_proof_input(bundle)
         atomic_write_bundle(bundle_path, bundle)
         return totals
     except (OSError, ValueError, TypeError, KeyError) as e:
@@ -133,8 +137,8 @@ def _run_auto_collect_inline(bundle_path: Path, root: Path) -> dict:
     "--strict",
     is_flag=True,
     default=False,
-    help="Exit non-zero on blocked / needs_review. Without it guard-pr is reporting-only "
-    "and always exits 0 (it says so loudly on stderr when it suppresses a gate).",
+    help="Exit non-zero on blocked / needs_review. Without it completed verdicts are reporting-only "
+    "(with a stderr banner for suppressed gates). Input and operation errors still exit non-zero.",
 )
 @click.option(
     "--format",
@@ -269,21 +273,23 @@ def guard_pr(
     root = Path(find_project_root() or Path.cwd())
 
     collect_summary: dict | None = None
-    # --dry-run implies --skip-collect (don't mutate the bundle on disk).
-    if not skip_collect and not dry_run:
-        collect_summary = _run_auto_collect_inline(bundle_path, root)
-
     try:
+        # Validate the original bytes before auto-collection can rewrite them.
         bundle_dict = load_pr_bundle(bundle_path)
-    except (ValueError, json.JSONDecodeError) as e:
-        msg = f"Failed to parse bundle at {bundle_path}"
-        fix = f"Inspect / repair the JSON at {bundle_path}, or delete it and re-run with --init-if-missing."
+        # --dry-run implies --skip-collect (don't mutate the bundle on disk).
+        if not skip_collect and not dry_run:
+            collect_summary = _run_auto_collect_inline(bundle_path, root)
+            bundle_dict = load_pr_bundle(bundle_path)
+    except (OSError, ValueError, RecursionError) as e:
+        code = "bundle_load_failed" if isinstance(e, OSError) else "bundle_parse_error"
+        msg = f"Failed to load bundle at {bundle_path}"
+        fix = f"Check access to {bundle_path} and repair its JSON before retrying."
         if json_mode:
             click.echo(
                 to_json(
                     guard_error_envelope(
                         "guard-pr",
-                        "bundle_parse_error",
+                        code,
                         msg,
                         fix=fix,
                         context={"bundle_path": str(bundle_path), "exception": str(e)},
@@ -292,6 +298,25 @@ def guard_pr(
             )
         else:
             click.echo(f"{msg}: {e}", err=True)
+        ctx.exit(2)
+        return
+
+    if collect_summary and collect_summary.get("error"):
+        msg = "Evidence collection failed; no verdict was produced."
+        if json_mode:
+            click.echo(
+                to_json(
+                    guard_error_envelope(
+                        "guard-pr",
+                        "auto_collect_failed",
+                        msg,
+                        fix="Repair collection, or use --skip-collect to explicitly review only the saved evidence.",
+                        context={"bundle_path": str(bundle_path), "collection": collect_summary},
+                    )
+                )
+            )
+        else:
+            click.echo(f"{msg} {collect_summary['error']}", err=True)
         ctx.exit(2)
         return
 
@@ -317,13 +342,32 @@ def guard_pr(
         ctx.exit(2)
         return
 
-    v1 = compose_agent_change_proof_bundle(
-        bundle_dict,
-        repo_root=root,
-        mode=mode,
-        policy_profile=policy_profile,
-        rule_pack=active_rules,
-    )
+    try:
+        v1 = compose_agent_change_proof_bundle(
+            bundle_dict,
+            repo_root=root,
+            mode=mode,
+            policy_profile=policy_profile,
+            rule_pack=active_rules,
+        )
+    except (OSError, ValueError, RecursionError) as e:
+        msg = "Proof composition failed; no verdict was produced."
+        if json_mode:
+            click.echo(
+                to_json(
+                    guard_error_envelope(
+                        "guard-pr",
+                        "compose_failed",
+                        msg,
+                        fix="Check the bundle evidence and repository access before retrying.",
+                        context={"bundle_path": str(bundle_path), "exception": str(e)},
+                    )
+                )
+            )
+        else:
+            click.echo(f"{msg} {e}", err=True)
+        ctx.exit(5)
+        return
 
     verdict_value = (v1.get("verdict") or {}).get("value", "pass")
     # The exit code the gate WOULD use, kept separate from the process exit

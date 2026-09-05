@@ -44,6 +44,7 @@ from roam.guard_enums import (
 )
 from roam.guard_rules import RulePack
 from roam.output._severity import severity_rank
+from roam.proof_input import parse_proof_json, validate_proof_input
 from roam.verdict import compute_verdict
 from roam.verification_contract import build_verification_contract
 
@@ -307,6 +308,8 @@ def compose_agent_change_proof_bundle(
       missing_checks, optimizer_findings, scope_findings, mcp_tool_findings,
       ledger, verdict).
     """
+    # Reject malformed evidence before collection or normalization can erase it.
+    validate_proof_input(bundle)
     mode = mode or bundle.get("mode") or "safe_edit"
 
     changed_files = _extract_changed_files(bundle)
@@ -415,12 +418,8 @@ def compose_agent_change_proof_bundle(
 
 
 def load_pr_bundle(path: Path) -> dict[str, Any]:
-    """Load a pr-bundle JSON file (tolerant to None content)."""
-    text = path.read_text()
-    data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError(f"pr-bundle at {path} is not a JSON object")
-    return data
+    """Load an unambiguous UTF-8 proof input before collection or composition."""
+    return parse_proof_json(path.read_text(encoding="utf-8"))
 
 
 # ---- rendering — moved to proof_bundle_render.py (Wave 15) ----
