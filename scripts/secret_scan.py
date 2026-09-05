@@ -274,6 +274,14 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
     r"\{[A-Za-z_][A-Za-z0-9_]*\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}|%\([A-Za-z_][A-Za-z0-9_]*\)s"
 )
 
+# A complete database endpoint made only from runtime host/port variables has
+# no embedded credential. Match the WHOLE value: a template substring must not
+# hide userinfo, a literal password, a query, a fragment, or another secret.
+_DB_ENDPOINT_VARIABLE = r"(?:\$[A-Za-z_][A-Za-z0-9_]*|\$?\{[A-Za-z_][A-Za-z0-9_]*\}|%\([A-Za-z_][A-Za-z0-9_]*\)s)"
+_TEMPLATE_DB_ENDPOINT_RE = re.compile(
+    rf"(?i)(?:mysql|postgres|postgresql|mongodb|redis)://{_DB_ENDPOINT_VARIABLE}:{_DB_ENDPOINT_VARIABLE}"
+)
+
 # Patterns whose regex is keyed on a variable NAME ("secret", "token",
 # "password", ...) followed by "= '<anything 8+ chars>'" -- i.e. patterns
 # that say nothing about the VALUE's shape, unlike e.g. "AWS Access Key"
@@ -291,7 +299,7 @@ _SCREAMING_SNAKE_IDENTIFIER_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 def _is_explicit_placeholder(match: re.Match[str]) -> bool:
     """Recognize whole placeholder values without substring exemptions."""
     raw = _placeholder_candidate(match).strip()
-    if _TEMPLATE_PLACEHOLDER_RE.fullmatch(raw):
+    if _TEMPLATE_PLACEHOLDER_RE.fullmatch(raw) or _TEMPLATE_DB_ENDPOINT_RE.fullmatch(raw):
         return True
     value = raw.strip("<>{}[]()'\"")
     lower = value.lower()
