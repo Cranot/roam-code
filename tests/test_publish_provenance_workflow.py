@@ -60,6 +60,59 @@ def test_release_builds_once_and_has_one_canonical_trigger() -> None:
     assert 'tags:\n      - "v*"' in trigger_block
 
 
+@pytest.mark.parametrize(
+    "scenario,expected_code,expected_calls",
+    [
+        ("immediate", 0, 1),
+        ("delayed", 0, 3),
+        ("absent", 1, 6),
+        ("lookup_error", 7, 1),
+        ("nested_guard_failure", 1, 1),
+        ("unexpected", 1, 1),
+    ],
+)
+def test_created_release_readback_is_bounded_and_fail_closed(scenario, expected_code, expected_calls):
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is unavailable")
+    blocks = [body for _, body in _literal_run_blocks(_text()) if "wait_for_created_release_state()" in body]
+    assert len(blocks) == 1
+    body = blocks[0]
+    function = re.search(r"(?ms)^wait_for_created_release_state\(\) \{.*?^\}", body).group(0)
+    assert "gh release" not in function, "read-back retries must not create or upload releases"
+    create = body.index('gh release create "$TAG"')
+    wait = body.index("wait_for_created_release_state\n", create)
+    assert create < wait < body.index("jq -e --arg tag", wait)
+    stub = f"""
+set -euo pipefail
+scenario={scenario}
+calls=0
+release_status=404
+trap 'printf "CALLS=%s\\n" "$calls"' EXIT
+sleep() {{ :; }}
+fetch_release_state() {{
+  calls=$((calls + 1))
+  case "$scenario" in
+    immediate) release_status=200 ;;
+    delayed) if [[ "$calls" -ge 3 ]]; then release_status=200; fi ;;
+    absent) release_status=404 ;;
+    lookup_error) return 7 ;;
+    nested_guard_failure) false; release_status=200 ;;
+    unexpected) release_status=403 ;;
+  esac
+}}
+"""
+    process = subprocess.run(
+        [bash, "-s"],
+        # Binary stdin preserves LF even when the test host is Windows.
+        input=(stub + function + "\nwait_for_created_release_state\n").encode("utf-8"),
+        capture_output=True,
+        timeout=30,
+    )
+    assert process.returncode == expected_code, process.stderr.decode("utf-8", "replace")
+    assert f"CALLS={expected_calls}\n".encode() in process.stdout
+
+
 def test_partial_pypi_recovery_accepts_only_an_exact_manifest_subset() -> None:
     text = _text()
     recover = _job(text, "recover", "publish")

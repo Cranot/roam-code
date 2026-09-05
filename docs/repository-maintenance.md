@@ -101,6 +101,11 @@ such as a forced rebuild are recorded separately, so running with `--force`
 does not itself imply configuration drift. Differences between successive
 manifests may still reflect real edits or environment changes.
 
+Doctor's index-manifest-history advisory compares successive runs. A `git_head`
+difference can simply record an expected commit advance; inspect the named
+fields and the current freshness checks before treating history drift as an
+indexing failure. Re-indexing solely to erase that comparison is not a repair.
+
 ## Recover from a writer or interrupted index
 
 `ROAM_DB_DIR` and the `db_dir` project setting keep the database and its
@@ -134,6 +139,8 @@ rebuildable database does not make the whole directory disposable.
 | --- | --- |
 | `roam doctor` | Installation, environment, index, and cache checks; advisory-only results exit 0, blocking failures exit 2 |
 | `roam doctor --strict` | The same checks, with advisory failures promoted to exit 2 |
+| `roam db-check --ci` | Index consistency checks; failed checks or high-severity findings exit 5, while medium findings remain review advisories |
+| `roam syntax-check src/roam/db/connection.py` | Tree-sitter syntax checking of the named file; this is not compiler validation or proof of complete symbol extraction |
 | `roam health --explain` | An architectural score and its component contributions; it does not run the test suite |
 | `roam health --gate` | The configured architectural quality gate; a failed gate exits 5 |
 | Relevant pytest suites | Executable behavior covered by those tests |
@@ -155,6 +162,12 @@ the file's stated purpose before regenerating it. Actual repository CI is
 Architectural findings are candidates for investigation. Check the named symbol,
 edge evidence, metric definition, and scope before refactoring. A low score, a
 parser warning, and a failing test describe different conditions.
+
+A zero-symbol-file advisory does not by itself establish a parser failure.
+Package markers, import-only entry points, markup, and styles can legitimately
+contribute no named symbols. Inspect the reported files before classifying the
+index as broken. For syntax checks, pass actual file paths or `--changed`;
+a result with zero checked files establishes no source validation.
 
 ## Documentation checks
 

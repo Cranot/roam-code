@@ -1382,6 +1382,28 @@ jobs:
             esac
           }
 
+          wait_for_created_release_state() {
+            local delay
+            # Creation can precede visibility in the release listing. Retry
+            # read-only absence after ONE create; retain every state/asset gate.
+            for delay in 0 2 5 10 20 30; do
+              [[ "$delay" -eq 0 ]] || sleep "$delay"
+              # Keep this a simple command: testing the function in an OR
+              # list would disable errexit inside its nested JSON guards.
+              fetch_release_state
+              case "$release_status" in
+                200) return 0 ;;
+                404) echo "Created release is not visible yet; retrying its state lookup." ;;
+                *)
+                  echo "::error::Unexpected created-release state: $release_status"
+                  return 1
+                  ;;
+              esac
+            done
+            echo "::error::Created release remained absent after bounded read-back attempts; rerun the failed job after inspecting the draft."
+            return 1
+          }
+
           require_exact_release_assets() {
             jq -r '.assets[].name' "$release_state" | LC_ALL=C sort > /tmp/actual-release-assets
             diff -u /tmp/expected-release-assets /tmp/actual-release-assets
@@ -1459,7 +1481,7 @@ jobs:
           fetch_release_state
           if [[ "$release_status" == 404 ]]; then
             gh release create "$TAG" --repo "$REPO" --verify-tag --draft --title "$TAG" --generate-notes
-            fetch_release_state
+            wait_for_created_release_state
           fi
           jq -e --arg tag "$TAG" '.tag_name == $tag and (.draft | type == "boolean") and (.immutable | type == "boolean")' \
             "$release_state" >/dev/null

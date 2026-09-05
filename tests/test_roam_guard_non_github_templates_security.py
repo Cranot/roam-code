@@ -99,10 +99,10 @@ def test_templates_install_only_exact_roam_release_in_an_isolated_venv() -> None
 
         assert len(install_lines) == 1, path
         assert "--isolated --disable-pip-version-check install" in install_lines[0]
-        assert "--no-input --no-cache-dir --only-binary=:all: 'roam-code==14.0.1'" in shell
-        assert shell.count("roam-code==14.0.1") == 1
+        assert "--no-input --no-cache-dir --only-binary=:all: 'roam-code==14.0.2'" in shell
+        assert shell.count("roam-code==14.0.2") == 1
         assert "pip check" in shell
-        assert "actual == '14.0.1'" in shell
+        assert "actual == '14.0.2'" in shell
         assert "python -I -m venv .roam-guard-venv" in shell
         python_invocations = [line for line in shell.splitlines() if re.search(r"(?:^|/)python\s", line)]
         assert python_invocations

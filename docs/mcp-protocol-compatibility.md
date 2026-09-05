@@ -32,7 +32,7 @@ or every transport. In particular, they do not test SSE/HTTP behavior.
 
 ## Independent published-package check
 
-On 2026-09-05, a clean Linux installation of `roam-code[mcp]==14.0.1`
+On 2026-09-05, a clean Linux installation of `roam-code[mcp]==14.0.2`
 selected MCP SDK 1.29.1 and FastMCP 3.4.7. The independent
 [`@hasmcp/mcp-spec-test`](https://www.npmjs.com/package/@hasmcp/mcp-spec-test)
 0.1.1 harness, run against the advertised 2025-11-25 revision over stdio,

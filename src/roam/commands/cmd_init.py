@@ -82,9 +82,9 @@ jobs:
       # it to the declared version: a ref that is not yet tagged fails this
       # workflow in the USER'S repository with 'Unable to resolve action'.
       # Harden further by resolving the tag to its reviewed 40-character SHA.
-      - uses: Cranot/roam-code@v14.0.1
+      - uses: Cranot/roam-code@v14.0.2
         with:
-          version: "14.0.1"
+          version: "14.0.2"
           commands: "fitness pr-risk"
           python-version: "3.12"
 """
