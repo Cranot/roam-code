@@ -76,6 +76,11 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h3>Fixed</h3>
+<ul>
+<li><strong>Traceable site deployments.</strong> Refuse the production deployment shortcut when Git status fails or the checkout has modified or untracked files. Record the exact clean commit in Pages deployment metadata.</li>
+<li><strong>CI and installation documentation.</strong> Pin the package version independently in copied Action examples, document the public gate states and the Action's narrower automatic SARIF selection, and guard input/output and SARIF lists against drift. Keep the old fresh-install transcript explicitly historical and separate functional smoke evidence from network or security assurance.</li>
+</ul>
 <h2>[14.0.1] — 2026-09-05</h2>
 <h3>Fixed</h3>
 <ul>

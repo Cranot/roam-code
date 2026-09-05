@@ -7,7 +7,7 @@
         {
             "registryType": "pypi",
             "identifier": "roam-code",
-            "version": "14.0.0",
+            "version": "14.0.1",
             "runtimeHint": "python",
             "transport": {
                 "type": "stdio"

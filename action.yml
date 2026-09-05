@@ -8,7 +8,7 @@ inputs:
   version:
     description: 'Exact roam-code version to install; source installs this action checkout; latest requires allow-latest=true'
     required: false
-    default: '14.0.0'
+    default: '14.0.1'
   allow-latest:
     description: 'Explicitly permit the mutable version=latest install path (true/false)'
     required: false
@@ -110,9 +110,9 @@ outputs:
     value: ${{ steps.run-analysis.outputs.affected-count }}
   gate-state:
     description: >-
-      Gate outcome as a three-state word: passed / failed / unevaluated.
-      `gate-passed` is a boolean and cannot distinguish a gate that passed
-      from one whose expressions matched no payload; read this instead.
+      Configured gate outcome: passed / failed / unevaluated. An evaluated
+      failure takes precedence over unchecked expressions. Empty when no
+      gate was requested; an empty output is not a passed check.
     value: ${{ steps.quality-gate.outputs.gate-state }}
 
 runs:
