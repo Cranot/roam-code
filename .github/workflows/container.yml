@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   publish:
+    # Defense in depth: a future caller cannot accidentally lift the hold.
+    if: ${{ vars.ROAM_CONTAINER_PUBLISH == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: pypi

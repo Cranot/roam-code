@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+
 import pytest
 
 from scripts import sync_surface_counts as sync
@@ -244,7 +247,7 @@ class TestInitGuards:
         Pre-fix, running init in ``~/Downloads`` (no .git) would walk
         the filesystem from there, drop ``.roam/`` in the user's home,
         and create a confusing "wrong directory" loop. Post-fix:
-        structured DIRTY_TREE-style refusal.
+        actionable refusal before bootstrap writes.
         """
         non_git = tmp_path / "not_a_repo"
         non_git.mkdir()
@@ -257,3 +260,84 @@ class TestInitGuards:
         out = result.output.lower()
         assert "git" in out
         assert "git init" in out or "outside" in out or ".git" in out
+
+    @pytest.mark.parametrize("json_mode", [False, True])
+    @pytest.mark.parametrize("marker_kind", ["empty_dir", "empty_file", "garbage_file"])
+    @pytest.mark.parametrize("marker_location", ["self", "ancestor"])
+    def test_init_refuses_stray_git_markers_without_writes(
+        self, cli_runner, tmp_path, monkeypatch, marker_location, marker_kind, json_mode
+    ):
+        """A rejected root marker cannot authorize bootstrap writes afterward."""
+        parent = tmp_path / "stray"
+        project = parent / "project"
+        project.mkdir(parents=True)
+        (project / "app.py").write_text("def entry(): return 1\n", encoding="utf-8")
+        marker = (project if marker_location == "self" else parent) / ".git"
+        if marker_kind == "empty_dir":
+            marker.mkdir()
+        else:
+            marker.write_text("" if marker_kind == "empty_file" else "not a Git pointer\n", encoding="utf-8")
+        monkeypatch.chdir(project)
+
+        # An inherited agent run must not turn a refusal into a sidecar write.
+        monkeypatch.setenv("ROAM_RUN_ID", "init-refusal-no-writes")
+
+        result = invoke_cli(cli_runner, ["init"], cwd=project, json_mode=json_mode)
+
+        assert result.exit_code == 2, result.output
+        assert "git" in result.output.lower()
+        if json_mode:
+            data = json.loads(result.stdout)
+            assert_json_envelope(data, "init")
+            assert data["error_code"] == "FILE_NOT_FOUND"
+            assert data["summary"]["state"] == "not_initialized"
+            assert data["summary"]["partial_success"] is True
+            assert data["created"] == []
+        for root in (parent, project):
+            assert not (root / ".roam").exists()
+            assert not (root / ".roamignore").exists()
+            assert not (root / ".github").exists()
+
+    def test_init_refuses_an_unvalidated_child_after_root_resolution(self, cli_runner, tmp_path, monkeypatch):
+        """A newly visible ancestor cannot authorize writes at a stale child root."""
+        from roam.commands import cmd_init
+
+        parent = tmp_path / "repo"
+        project = parent / "child"
+        project.mkdir(parents=True)
+        (project / "app.py").write_text("def entry(): return 1\n", encoding="utf-8")
+        git_init(parent)
+        # Model the result of resolving the child before an ancestor became a
+        # repository. Bootstrap must validate its actual write destination.
+        monkeypatch.setattr(cmd_init, "find_project_root", lambda start: project)
+        monkeypatch.chdir(project)
+
+        result = invoke_cli(cli_runner, ["init"], cwd=project)
+
+        assert result.exit_code != 0, result.output
+        assert not (project / ".roam").exists()
+        assert not (project / ".roamignore").exists()
+
+    @pytest.mark.parametrize("root_kind", ["directory", "worktree"])
+    def test_init_from_nested_directory_uses_validated_root(
+        self, cli_runner, fresh_project, tmp_path, monkeypatch, root_kind
+    ):
+        project = fresh_project
+        if root_kind == "worktree":
+            project = tmp_path / "linked"
+            subprocess.run(
+                ["git", "-C", str(fresh_project), "worktree", "add", "--detach", str(project), "HEAD"],
+                check=True,
+                capture_output=True,
+            )
+            assert (project / ".git").is_file()
+        child = project / "nested"
+        child.mkdir()
+        monkeypatch.chdir(child)
+
+        result = invoke_cli(cli_runner, ["init"], cwd=child, json_mode=True)
+
+        assert result.exit_code == 0, result.output
+        assert_json_envelope(parse_json_output(result, "init"), "init")
+        assert (project / ".roam" / "index.db").exists()
+        assert not (child / ".roam").exists()

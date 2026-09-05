@@ -3,9 +3,10 @@
 
 Runs locally, before ``git push``, the repo-wide structural drift-guards
 that CI runs but contributors routinely skip — the exact class of failure
-that produced this session's ~14 CI fix-forward cascade. Every gate here
-is a pure AST / file / registry scan: NO ``roam`` index build, NO graph
-construction, NO network.
+that produced this session's ~14 CI fix-forward cascade. The FAST tier is
+structural: no full test suite or index build. FULL adds
+documentation checks. RELEASE also runs the non-slow suite and prebuilds a
+missing index; it must not be described as a file-only or fixed-duration check.
 
 Measured push path on a Windows host, 4895 tracked files / 4820 scanned /
 44.5 MB (2026-07-28). The first two run in ``.githooks/pre-push``; the rest
@@ -64,9 +65,9 @@ Usage::
     python scripts/prepush_check.py --full      # FAST + heavy doc-hygiene
     python scripts/prepush_check.py --release --workers 2
 
-Exits non-zero on the first failing gate (after running every gate so the
-summary is complete), printing per-gate timing and a copy-pasteable fix
-command for each failure.
+Exits non-zero if any gate fails, printing per-gate timing and a fix command
+for each failure. Insufficient temporary-disk capacity stops RELEASE before
+expensive checks; otherwise the selected gates run to produce a full summary.
 """
 
 from __future__ import annotations
@@ -630,8 +631,8 @@ def _print_summary(results: list[GateResult], tier: str = "FAST") -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     tier = parser.add_mutually_exclusive_group()
-    tier.add_argument("--fast", action="store_true", help="FAST tier (default): ~43s structural-drift bundle")
-    tier.add_argument("--full", action="store_true", help="FULL tier: FAST + heavy doc-hygiene guards (~70s)")
+    tier.add_argument("--fast", action="store_true", help="FAST tier (default): structural-drift bundle")
+    tier.add_argument("--full", action="store_true", help="FULL tier: FAST + heavy doc-hygiene guards")
     tier.add_argument(
         "--release",
         action="store_true",
@@ -641,7 +642,7 @@ def main(argv: list[str] | None = None) -> int:
             "landing-page linkcheck --strict. Run before ANY push that "
             "precedes a tag. Covers CI's test, lint(ruff) and doc-hygiene "
             "surface; it does NOT run every CI lane (see the RELEASE note "
-            "printed on success). ~15-25 min."
+            "printed on success). Runtime depends on the host, index and suite size."
         ),
     )
     parser.add_argument(
@@ -659,7 +660,7 @@ def main(argv: list[str] | None = None) -> int:
     root = repo_root()
     print(f"[prepush] repo root: {root}")
     print(f"[prepush] tier: {'RELEASE' if release else 'FULL' if full else 'FAST'}")
-    print(f"[prepush] pytest workers: {args.workers} (loadfile distribution)")
+    print(f"[prepush] pytest workers: {args.workers} (structural: loadfile; release suite: loadgroup)")
     print(f"[prepush] native math threads per worker: {_NATIVE_THREADS_PER_WORKER}")
 
     tier_label = "RELEASE" if release else "FULL" if full else "FAST"
@@ -705,12 +706,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         # Mirror CI's index pre-build before fanning out across workers.
         #
-        # CI builds the repo index on one lane (roam-ci.yml "Build the repo index
-        # (dogfood coverage lane)") and then runs pytest SERIALLY. This gate runs
-        # N workers with --dist loadfile and never built the index, so on a cold
-        # checkout the first worker to need it starts a build and every other
-        # worker that touches an index-backed CLI path fails with "The roam index
-        # is currently being built by another process".
+        # CI prebuilds the index before its bounded loadgroup suite. Without
+        # this step, cold-checkout workers race to build the same index and
+        # fail with "The roam index is currently being built by another process".
         #
         # Measured on a cold 12-core box: 224 failures, 147 of them (66%) that
         # single message. On a warm developer machine it is invisible, which is
@@ -727,38 +725,13 @@ def main(argv: list[str] | None = None) -> int:
                 fix_hint="build the index once: python -m roam index",
             )
 
-        # SERIAL, deliberately — this is the tier that decides a release.
-        #
-        # This ran in parallel until 2026-07-27 and the parallelism produced only
-        # costs, never a finding:
-        #   * three consecutive runs died without a terminal result (76%, 91%,
-        #     and one at 74%), one with `[gw1] node down: Not properly
-        #     terminated` -- a crashed worker aborts the whole gate, and in the
-        #     output a crashed worker is indistinguishable from a red suite;
-        #   * each worker builds its own pytest fixture tree, so a killed run
-        #     strands ~4x the temp. Three of them accumulated 2.2 GB and pushed
-        #     the volume from 10 GiB free to 8.0 GiB, making each retry likelier
-        #     to fail than the last;
-        #   * every failure it surfaced that CI did not was xdist isolation, not
-        #     a product defect.
-        #
-        # CI runs this surface serially on a pre-built index (roam-ci.yml:116).
-        # A release gate should verify WHAT CI VERIFIES. Being harsher than the
-        # thing you are gating for buys false alarms, and a gate that cannot
-        # finish is worse than a slower one -- it invites `--no-verify`, which
-        # discards a gate that has caught three real problems in a single day.
-        #
-        # The parallel form remains available for the FAST/FULL drift-guard
-        # bundles above, where the files are pure in-process scans with no
-        # shared fixtures and the distribution is genuinely race-free.
-        # `-rf` so a failure NAMES the failing tests. Without it the gate reports
-        # only "FAIL (6339.6s)" and the operator must re-run a 105-minute suite to
-        # learn which nine of ~19,300 tests broke. A gate that tells you it failed
-        # but not what failed is barely more useful than one that cannot fail --
-        # the same shape as a crashed worker being indistinguishable from a red
-        # suite, which is what made the parallel form untenable above.
+        # Pin the requested worker budget explicitly, with CI's loadgroup
+        # distribution so xdist_group markers remain effective. Omitting -n
+        # made this tier serial locally but environment-dependent under CI,
+        # bypassing both --workers and its temp-capacity calculation.
+        # Keep -rf so a failed run names the tests without an expensive rerun.
         runner._run(
-            "FULL test suite (-m 'not slow', serial — exactly what CI verifies)",
+            f"FULL test suite (-m 'not slow', {args.workers} workers, loadgroup)",
             [
                 sys.executable,
                 "-m",
@@ -767,12 +740,16 @@ def main(argv: list[str] | None = None) -> int:
                 "-q",
                 "-m",
                 "not slow",
+                "-n",
+                str(args.workers),
+                "--dist",
+                "loadgroup",
                 "-p",
                 "no:cacheprovider",
                 "-rf",
             ],
             fix_hint=(
-                "fix the failing tests — CI runs exactly this surface, serially. "
+                "fix the failing tests — CI runs this non-slow test surface. "
                 "The FAILED lines above name them; re-run just those with "
                 "`python -m pytest <nodeid> -q` rather than the whole suite"
             ),

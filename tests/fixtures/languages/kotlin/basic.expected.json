@@ -163,6 +163,12 @@
       "scope": "Container"
     },
     {
+      "name": "map",
+      "kind": "method",
+      "line": 86,
+      "scope": "Container"
+    },
+    {
       "name": "isEmail",
       "kind": "function",
       "line": 92,

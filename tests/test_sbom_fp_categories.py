@@ -27,6 +27,7 @@ from roam.security.sbom_reachability import (
     merge_reachability,
     parse_composer_json,
 )
+from tests.conftest import git_init
 
 # ---------------------------------------------------------------------------
 # Per-category unit tests (pure functions, no DB needed)
@@ -625,9 +626,9 @@ def _make_minimal_sbom_project(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    # Initialise git so find_project_root discovers it.
-    (root / ".git").mkdir(exist_ok=True)
     (root / ".gitignore").write_text("node_modules/\n.roam/\n", encoding="utf-8")
+    # Initialization requires a real repository, not an empty .git marker.
+    git_init(root)
 
 
 def _invoke_sbom_json(root: Path) -> dict:

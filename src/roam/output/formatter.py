@@ -1689,6 +1689,7 @@ def json_envelope(
     budget: int = 0,
     *,
     uncapped: bool = False,
+    persist_response: bool = True,
     **payload,
 ) -> dict:
     """Wrap command output in a self-describing envelope.
@@ -1705,6 +1706,9 @@ def json_envelope(
     :func:`budget_truncate_json` before being returned, intelligently
     trimming list payloads to fit within the token cap while preserving
     summary and envelope metadata.
+
+    Set ``persist_response=False`` for refusals that must not write a response
+    sidecar even when an agent run or proof bundle is active.
 
     Returns a dict with at minimum::
 
@@ -1751,7 +1755,8 @@ def json_envelope(
     # are byte-capped with truncation disclosure inside the stored envelope.
     # Wrapped in try/except inside the helper — must NEVER break envelope
     # generation.
-    _write_response_to_responses_dir(out)
+    if persist_response:
+        _write_response_to_responses_dir(out)
     return _apply_envelope_budget(_project_if_requested(out), budget, uncapped=uncapped)
 
 
@@ -1806,7 +1811,7 @@ def _index_age_seconds() -> int | None:
     try:
         from roam.db.connection import get_db_path
 
-        db_path = get_db_path()
+        db_path = get_db_path(create=False)
         if db_path.exists():
             return int(time.time() - db_path.stat().st_mtime)
     except (OSError, FileNotFoundError):

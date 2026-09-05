@@ -1535,6 +1535,9 @@ jobs:
   container:
     name: Publish the verified container
     needs: [resolve-ref, smoke]
+    # Publication is held until the image-wide security review is accepted.
+    # Missing/false values keep package and website releases independent.
+    if: ${{ vars.ROAM_CONTAINER_PUBLISH == 'true' }}
     permissions:
       contents: read
       packages: write
