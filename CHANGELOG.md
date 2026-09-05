@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Published installation examples.** Update maintained setup instructions, generated CI templates, and the MCP registry package pin to verified 14.0.4 artifacts. Pair the copied Action example with the exact release commit and an explicit package version; keep historical measurements tied to the versions that were actually tested.
+
 ## [14.0.4] — 2026-09-05
 
 ### Fixed

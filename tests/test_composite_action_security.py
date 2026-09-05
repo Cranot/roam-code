@@ -298,8 +298,8 @@ def test_ci_guide_examples_avoid_mutable_dependency_and_runner_defaults() -> Non
 
     assert "runs-on: ubuntu-latest" not in docs
     assert "Cranot/roam-code@main" not in docs
-    assert 'pip install --disable-pip-version-check "roam-code==14.0.3"' in docs
-    assert "Cranot/roam-code@v14.0.3" in docs
+    assert 'pip install --disable-pip-version-check "roam-code==14.0.4"' in docs
+    assert "Cranot/roam-code@v14.0.4" in docs
     assert "replace the tag with its reviewed 40-character SHA" in docs
     for ref in (
         "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
@@ -312,7 +312,7 @@ def test_ci_guide_examples_avoid_mutable_dependency_and_runner_defaults() -> Non
     assert action_refs
     for ref in action_refs:
         if ref.startswith("Cranot/roam-code@"):
-            assert ref == "Cranot/roam-code@v14.0.3"
+            assert ref == "Cranot/roam-code@v14.0.4"
         else:
             assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", ref), ref
 
@@ -323,7 +323,7 @@ def test_github_guard_template_has_closed_verdict_and_required_evidence() -> Non
     steps = payload["jobs"]["roam-guard"]["steps"]
 
     assert payload["jobs"]["roam-guard"]["runs-on"] == "ubuntu-24.04"
-    assert "'roam-code==14.0.3'" in text
+    assert "'roam-code==14.0.4'" in text
     assert "python -I -m venv .roam-guard-venv" in text
     assert 'case "${status}" in' in text
     assert "0|4|5" in text
