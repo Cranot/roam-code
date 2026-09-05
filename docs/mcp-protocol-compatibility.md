@@ -32,13 +32,17 @@ or every transport. In particular, they do not test SSE/HTTP behavior.
 
 ## Independent published-package check
 
-On 2026-09-05, a clean Linux installation of `roam-code[mcp]==14.0.2`
+On 2026-09-05, a clean Linux installation of Roam 14.0.2 with the MCP extra
 selected MCP SDK 1.29.1 and FastMCP 3.4.7. The independent
 [`@hasmcp/mcp-spec-test`](https://www.npmjs.com/package/@hasmcp/mcp-spec-test)
 0.1.1 harness, run against the advertised 2025-11-25 revision over stdio,
 reported 20 passed, zero failed, zero unverified, and 23 not applicable.
 It also reported one advisory: the server answers an unrecognized pagination
 cursor instead of returning the recommended `-32602` error.
+
+A separate clean installation of Roam 14.0.3 with the MCP extra was checked
+later that day. It selected the same SDK and FastMCP versions and returned the
+same counts and pagination advisory under the same harness settings.
 
 The server was launched directly after installation with
 `python -I -m roam mcp --no-auto-index`. Tool-call sampling was restricted to

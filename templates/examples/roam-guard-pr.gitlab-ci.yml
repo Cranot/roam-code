@@ -23,9 +23,9 @@ roam-guard:
       PATH='/usr/local/bin:/usr/bin:/bin'
       export PATH
       .roam-guard-venv/bin/python -I -m pip --isolated --disable-pip-version-check install \
-        --no-input --no-cache-dir --only-binary=:all: 'roam-code==14.0.2'
+        --no-input --no-cache-dir --only-binary=:all: 'roam-code==14.0.3'
       .roam-guard-venv/bin/python -I -m pip check
-      .roam-guard-venv/bin/python -I -c "from importlib.metadata import version; actual = version('roam-code'); print(f'roam-code {actual}'); raise SystemExit(0 if actual == '14.0.2' else 1)"
+      .roam-guard-venv/bin/python -I -c "from importlib.metadata import version; actual = version('roam-code'); print(f'roam-code {actual}'); raise SystemExit(0 if actual == '14.0.3' else 1)"
       git --version
   script:
     - |

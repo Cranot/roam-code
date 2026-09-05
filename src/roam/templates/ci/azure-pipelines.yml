@@ -52,7 +52,7 @@ stages:
               versionSpec: '$(roamPythonVersion)'
             displayName: 'Set up Python $(roamPythonVersion)'
 
-          - script: python -m pip install --quiet "roam-code==14.0.2"
+          - script: python -m pip install --quiet "roam-code==14.0.3"
             displayName: 'Install roam-code 13.10.0'
 
           - script: |

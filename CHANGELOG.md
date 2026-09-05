@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Published installation instructions.** Point maintained examples, setup templates and the MCP registry package pin to verified 14.0.3 artifacts. Pin the dormant Action example to the verified release commit. The immutable release retains its original defaults; explicitly select the package version when copying a tagged Action example.
+
 ## [14.0.3] — 2026-09-05
 
 ### Fixed
