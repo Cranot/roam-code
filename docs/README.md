@@ -19,6 +19,7 @@ the next website deployment; a Git push alone does not publish the site.
 | Understand the index and evidence pipeline | [Architecture](../templates/distribution/landing-page/docs/architecture.html), [agent contract](../templates/distribution/landing-page/docs/agent-contract.html) |
 | Diagnose an installation, index, or lock | [Troubleshooting](../templates/distribution/landing-page/docs/troubleshooting.html) |
 | Maintain this checkout and validate a change | [Repository maintenance](repository-maintenance.md), [contributing](../CONTRIBUTING.md) |
+| Edit and publish the homepage | [Website maintenance](website-maintenance.md) |
 | Integrate CI and SARIF | [CI integration](ci-integration.md) |
 | Understand data leaving the machine | [Network boundary](network-boundary.md) |
 | Interpret caller counts | [Caller metrics](concepts/caller-metrics.md) |

@@ -3,11 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam — Check AI-written changes before they merge</title>
-  <meta name="description" content="Local codebase intelligence for AI coding agents: code-graph facts before edits, structural gates before merge, tamper-evident evidence. Credential-free, no automatic telemetry.">
-
-  <meta property="og:title" content="Roam — Check AI-written changes before they merge">
-  <meta property="og:description" content="Roam gives AI coding agents local code-graph facts before edits, structural gates before merge, and scoped evidence after every run. Maps before agents edit. Gates before they merge. Evidence after every run.">
+  <title>Roam — Find your way around the code</title>
+  <meta name="description" content="Understand an unfamiliar codebase, see what a change might affect, and give your coding agent better context. Free, open-source tools that run on your machine.">
+  <meta property="og:title" content="Roam — Find your way around the code">
+  <meta property="og:description" content="Less hunting through files. More understanding what connects them. Explore your codebase with Roam, a free local tool for you and your coding agent.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/">
   <meta property="og:image" content="https://roam-code.com/og.png">
@@ -15,23 +14,18 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Roam — Local codebase intelligence for AI agents">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Roam — Check AI-written changes before they merge">
-  <meta name="twitter:description" content="Roam gives AI coding agents local code-graph facts before edits, structural gates before merge, and scoped evidence after every run. Maps before agents edit. Gates before they merge. Evidence after every run.">
+  <meta name="twitter:title" content="Roam — Find your way around the code">
+  <meta name="twitter:description" content="Understand your codebase, follow the connections, and give your coding agent a better starting point. Free and open source.">
   <meta name="twitter:image" content="https://roam-code.com/og.png">
-
   <link rel="canonical" href="https://roam-code.com/">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
   <meta name="apple-mobile-web-app-title" content="Roam">
   <link rel="apple-touch-icon" href="/favicon.svg">
   <link rel="manifest" href="/manifest.webmanifest">
-
   <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preconnect" href="//github.com" crossorigin>
-  <link rel="preconnect" href="//pypi.org" crossorigin>
-  <link rel="preload" href="./landing.css" as="style">
-  <link rel="stylesheet" href="./landing.css">
-
+  <link rel="stylesheet" href="/landing.css">
+  <link rel="stylesheet" href="/home.css">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -40,62 +34,45 @@
     "applicationCategory": "DeveloperApplication",
     "applicationSubCategory": "CodeAnalysisApplication",
     "operatingSystem": "Linux, macOS, Windows",
-    "description": "Local codebase intelligence for developers and AI agents. Roam compiles repo graph queries, retrieval, algorithmic risk analysis, change-safety checks, and tamper-evident audit records into machine-readable outputs. Free CLI plus paid PR replay, governance evidence pack, review, and self-hosted tiers.",
+    "description": "Understand a codebase, follow connections between functions and files, and investigate what a change might affect. Free local tools for developers and AI coding agents.",
     "url": "https://roam-code.com/",
     "downloadUrl": "https://pypi.org/project/roam-code/",
     "installUrl": "https://pypi.org/project/roam-code/",
-    "softwareHelp": {"@type": "CreativeWork", "url": "/docs/"},
+    "softwareHelp": {"@type": "CreativeWork", "url": "https://roam-code.com/docs/"},
     "softwareVersion": "14.0.4",
     "softwareRequirements": "Python 3.10+",
-    "fileSize": "~8 MB wheel",
     "image": "https://roam-code.com/og.png",
-    "screenshot": "https://roam-code.com/og.png",
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
     "inLanguage": "en",
-    "offers": [
-      {"@type": "Offer", "name": "Free CLI (Apache 2.0)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "url": "https://roam-code.com/#install"},
-      {"@type": "Offer", "name": "Roam Review — Starter", "price": "99", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "3 repos, 5 active PR authors, 100 reviews/mo"},
-      {"@type": "Offer", "name": "Roam Review — Team", "price": "299", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "20 repos, 30 active PR authors, 900 reviews/mo, current-run Cloud dashboard"},
-      {"@type": "Offer", "name": "Roam Review — Business", "price": "799", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "100 repos, 100 active PR authors, 3,000 reviews/mo, SSO, audit export"},
-      {"@type": "Offer", "name": "Roam Review — Scale", "price": "1499", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "Annual only. 250 active PR authors, 8,000 reviews/mo, SAML/SCIM, priority support"},
-      {"@type": "Offer", "name": "Roam Cloud", "price": "19", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "From $19/repo/mo. Team $99/mo, Growth $299/mo"},
-      {"@type": "Offer", "name": "Roam Self-Hosted", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "url": "https://roam-code.com/pricing", "description": "Private-deployment pilots scoped by SOW; not a packaged GA product."}
-    ],
+    "offers": {"@type": "Offer", "name": "Free CLI and MCP server (Apache 2.0)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "url": "https://roam-code.com/#install"},
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "sameAs": ["https://github.com/Cranot/roam-code", "https://pypi.org/project/roam-code/"],
-    "featureList": "Zero API keys; local source analysis with no automatic repository upload or telemetry; explicit network-boundary inventory; checksum-verified retained parser cache; tamper-evident evidence packets (HMAC-chained run ledger); local code-graph engine; MCP server for coding agents (17 core / 246 full preset tools); 28 languages; clones-not-edited detector; blast-radius analysis; algorithmic-risk detection; refactor simulation; in-toto v1 attestations; SARIF 2.1.0 export"
+    "featureList": "Local codebase exploration; change-impact analysis; context for coding agents; 28 languages; MCP server (17 core / 246 full preset tools); no account or API key for local analysis; no automatic repository upload or telemetry"
   }
   </script>
-
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "FAQPage",
     "mainEntity": [
-      {"@type": "Question", "name": "How is Roam different from CodeRabbit, Greptile, or Qodo?", "acceptedAnswer": {"@type": "Answer", "text": "They review what the code does — semantics. Roam reviews what the code touches — structure: callers, layers, dependency cycles, copy-paste duplicates. Different layer, different findings; most teams keep their reviewer and add Roam alongside it."}},
-      {"@type": "Question", "name": "Will the CLI stay free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Forever. Apache 2.0 — for individuals, teams, and companies of any size. The local engine is the point; we never charge for it."}},
-      {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Ordinary analysis is local with no automatic repository upload. Explicit network features can exchange documented payloads; opt-in MCP model summarization can include source snippets from the selected report. Every trigger and payload class is documented on the security page."}},
-      {"@type": "Question", "name": "Why no analytics or trackers on this site?", "acceptedAnswer": {"@type": "Answer", "text": "Two reasons: every third-party script is attack surface, and we sell to teams that read Privacy policies — zero cookies, zero trackers is a stronger signal than any logo wall."}},
-      {"@type": "Question", "name": "Does Roam fit into my CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. roam --sarif health exports SARIF 2.1.0 (GitHub Code Scanning, GitLab, most CI read it natively); GitHub Actions templates ship with the package; roam critique exits 5 on any high-severity finding so a CI step can gate on it."}},
-      {"@type": "Question", "name": "How long does it take to index a repo?", "acceptedAnswer": {"@type": "Answer", "text": "A 100k-line monorepo indexes in roughly 20–40 seconds on a laptop; incremental rebuilds after a PR's worth of changes are sub-second. Your agents and CI read the same .roam/ artefact."}},
-      {"@type": "Question", "name": "What languages does Roam support?", "acceptedAnswer": {"@type": "Answer", "text": "28, via tree-sitter — Python, JS/TS, Go, Rust, Java, Kotlin, C/C++/C#, PHP, Ruby, Swift, SQL and more, plus framework bridges (Django, Salesforce, REST, protobuf, templates)."}},
-      {"@type": "Question", "name": "What audit-trail evidence does Roam produce?", "acceptedAnswer": {"@type": "Answer", "text": "When the run ledger and proof-bundle flow is enabled, Roam writes tamper-evident logs and verifiable evidence records locally. Useful as SOC 2 / ISO 42001 change-management evidence support; the framework mapping is yours to make, and Roam does not certify compliance."}}
+      {"@type": "Question", "name": "Do I need an AI coding agent to use Roam?", "acceptedAnswer": {"@type": "Answer", "text": "No. Use Roam yourself in the terminal to explore a repository or check a change. Connecting an agent is optional; it gives the agent access to the same local tools."}},
+      {"@type": "Question", "name": "Is Roam free?", "acceptedAnswer": {"@type": "Answer", "text": "The CLI and MCP server are free and open source under Apache 2.0, for individuals and teams. Paid services and planned team products are separate; you do not need them to use the local tools."}},
+      {"@type": "Question", "name": "Does my code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Ordinary analysis is local, with no automatic source-code or telemetry upload. Installation and the first parser download need network access. Optional online features have explicit triggers; opt-in MCP model summarization can include source snippets. Read the network boundary for the full details."}},
+      {"@type": "Question", "name": "What languages and computers does it work with?", "acceptedAnswer": {"@type": "Answer", "text": "Roam runs on Windows, macOS, and Linux with Python 3.10+. It supports 28 languages, including Python, JavaScript, TypeScript, Go, Rust, Java, C#, PHP, and Ruby. The depth of analysis varies by language and framework."}},
+      {"@type": "Question", "name": "How long does the first index take?", "acceptedAnswer": {"@type": "Answer", "text": "It depends on the size of your repository, its history, your machine, and whether parsers are already downloaded. The first index does more work; later refreshes reuse it and process changed files. Run roam index to refresh after changes."}},
+      {"@type": "Question", "name": "Does Roam replace tests or code review?", "acceptedAnswer": {"@type": "Answer", "text": "No. Roam helps you investigate code connections and potential risks. Static analysis can miss connections, a suggested test list is not test coverage, and a health score is not permission to merge. Keep your tests, security checks, and human review."}},
+      {"@type": "Question", "name": "Can our team use it in CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Run Roam checks in your build, review changes, and export findings for code-scanning tools. You can also enable a local run ledger and proof bundles to record which checks ran. Signed records help detect later changes to evidence; they do not prove every relevant check was captured."}}
     ]
   }
   </script>
 </head>
-<body>
-
+<body class="home-page">
   <a class="skip-link" href="#main">Skip to content</a>
-
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="/" class="site-logo" aria-label="Roam — home">
         <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
-          <!-- Code-graph monogram: a central node with two thin edges
-               extending toward the rest of the page. Stroke-only so it
-               picks up currentColor on light + dark surfaces. -->
           <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
           <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
           <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
@@ -104,610 +81,175 @@
         </svg>
         <span>roam<span class="logo-dot">.</span></span>
       </a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="home-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/" aria-current="page">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
-        <li><a href="/compare">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
+      <ul class="nav-links" id="home-navigation">
+        <li><a href="#how-it-works">How it helps</a></li>
         <li><a href="/docs/">Docs</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a class="home-nav-start" href="#install">Get started <span aria-hidden="true">↗</span></a></li>
       </ul>
     </div>
   </nav>
 
   <main id="main">
-
-  <header class="hero">
-    <svg class="hero-graph-mark" viewBox="0 0 120 120" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
-      <!-- Tiny hero corner mark: 4 nodes + 4 edges, stroke-only.
-           Sits at low opacity behind the headline. Sub-perceptible
-           texture, not decoration. -->
-      <line x1="20" y1="30" x2="60" y2="58" stroke-width="0.8"/>
-      <line x1="60" y1="58" x2="100" y2="38" stroke-width="0.8"/>
-      <line x1="60" y1="58" x2="48" y2="100" stroke-width="0.8"/>
-      <line x1="100" y1="38" x2="92" y2="92" stroke-width="0.8"/>
-      <circle cx="20" cy="30" r="4" fill="currentColor" stroke="none"/>
-      <circle cx="60" cy="58" r="5" fill="currentColor" stroke="none"/>
-      <circle cx="100" cy="38" r="3.5" fill="currentColor" stroke="none"/>
-      <circle cx="48" cy="100" r="3" fill="currentColor" stroke="none"/>
-      <circle cx="92" cy="92" r="3.5" fill="currentColor" stroke="none"/>
-    </svg>
-    <div class="hero-inner">
-      <p class="eyebrow">For teams running Cursor, Claude Code, Codex, Gemini in real repos</p>
-      <h1 class="hero-headline">
-        Give AI coding agents<br>
-        <strong>a local map before they edit.</strong>
-      </h1>
-      <p class="hero-thesis">
-        <em>AI agents can write code fast; knowing whether the PR is mergeable is the bottleneck.</em>
-      </p>
-      <p class="hero-subhead">
-        <strong>Passing tests is not enough evidence that an AI-written PR is safe to merge.</strong>
-        Roam gives your agent local code-graph facts before it edits, gates risky
-        diffs before merge, and emits scoped evidence after the run — credential-free,
-        with no automatic repository upload or telemetry and a documented network boundary.
-      </p>
-      <div class="hero-ctas">
-        <a class="btn-primary" href="#install">Install the free CLI</a>
-        <a class="btn-secondary" href="#audit">Replay your last 5 PRs</a>
+    <header class="home-hero home-wrap">
+      <div class="home-intro">
+        <p class="home-eyebrow">For you and your coding agent</p>
+        <h1>Find your way<br>around <em>the code.</em></h1>
+        <p class="home-lede">New repo. Tricky change. One more file to understand.</p>
+        <p class="home-intro-copy">Roam connects the dots between functions, files, and tests, so you can see where to start and what a change might affect.</p>
+        <div class="home-actions">
+          <a class="home-button" href="#install">Try Roam for free <span aria-hidden="true">↗</span></a>
+          <a class="home-text-link" href="#how-it-works">See how it helps <span aria-hidden="true">↓</span></a>
+        </div>
+        <p class="home-small">Open source. Runs on your machine. No account needed.</p>
       </div>
-      <p class="hero-trust-strip">
-        Free CLI · Apache 2.0 · 28 languages · 17 core agent tools · 246 total MCP tools · 500 GitHub stars
-      </p>
-    </div>
-  </header>
+      <figure class="home-map" aria-labelledby="map-title">
+        <div class="home-map-heading"><span class="home-map-dot" aria-hidden="true"></span> A change is rarely just one file.</div>
+        <div class="home-map-body">
+          <p class="home-map-question" id="map-title">“What else uses this function?”</p>
+          <div class="home-map-target"><span>The function you want to change</span><code>calculate_total()</code><small>checkout/pricing.py</small></div>
+          <div class="home-map-connector" aria-hidden="true">↑</div>
+          <p class="home-map-label">Called by</p>
+          <ul class="home-map-callers" aria-label="Example functions that call calculate_total">
+            <li><code>place_order()</code><span>orders.py</span></li>
+            <li><code>preview_order()</code><span>preview.py</span></li>
+            <li><code>apply_discount()</code><span>discounts.py</span></li>
+          </ul>
+          <p class="home-map-takeaway">Now you know where else to look.</p>
+        </div>
+        <div class="home-map-command"><span aria-hidden="true">$</span> <code>roam impact calculate_total</code></div>
+        <figcaption>Illustrative checkout example, not a live report. Roam finds connections in your own repository.</figcaption>
+      </figure>
+    </header>
 
-  <!-- ──────────────────────────────────────────────────────────
-       LEAD BAND — "Roam reads what it touches" (the line that
-       makes the category instantly understandable)
-       ────────────────────────────────────────────────────────── -->
-  <section class="reads-touches" aria-label="The structural-layer claim">
-    <div class="reads-touches-inner">
-      <p class="eyebrow reads-touches-eyebrow">Agentic code intelligence</p>
-      <p class="reads-touches-line">
-        Semantic reviewers read what the code <em>does</em>.
-        <strong>Roam reads what it <em>touches</em>.</strong>
-        Callers, clones, layers, tests, hot paths — the structural
-        layer semantic reviewers can miss.
-      </p>
+    <div class="home-basics">
+      <ul class="home-wrap" aria-label="Roam at a glance">
+        <li>Free CLI + agent tools</li><li>Windows, macOS &amp; Linux</li><li>28 languages</li><li>Apache 2.0</li>
+      </ul>
     </div>
-  </section>
 
-  <!-- ──────────────────────────────────────────────────────────
-       THE COMPILER — prompt-time channel (v13.5, measured)
-       ────────────────────────────────────────────────────────── -->
-  <section class="how-it-works" id="compiler" aria-label="The task compiler">
-    <div class="how-it-works-inner">
-      <p class="eyebrow">The Compiler · before the agent's first token</p>
-      <h2>Your agent's first token already knows the answer</h2>
-      <p>
-        Roam ships a <strong>task compiler</strong>: it classifies your prompt
-        into one of 23 intent procedures (deterministic — zero model calls),
-        pre-executes the matching code-graph probes, and hands your agent the
-        <em>answers</em> before its first model token. Callers, blame history,
-        blast radius, the source around a cited bug line — already in the
-        prompt, in a compact envelope, compiled in ~90&nbsp;ms locally (warm).
-      </p>
-      <pre class="terminal" aria-label="One-command Claude Code setup"><span class="t-prompt">$</span> <span class="t-cmd">pip install "roam-code[mcp]" &amp;&amp; roam init</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam hooks claude --write</span>
-<span class="t-line">Wired roam compile+verify into Claude Code — use `claude` as always.</span></pre>
-      <div class="compare-table-wrap">
-        <table class="compare-table" aria-label="Compiler vs vanilla, measured head-to-head">
-          <thead>
-            <tr><th scope="col">Metric (median/task)</th><th scope="col">vanilla</th><th scope="col">compiled</th><th scope="col">delta</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>Agent turns (nav/comprehension)</td><td>6</td><td>1</td><td><strong>−83%</strong></td></tr>
-            <tr><td>Input tokens</td><td>271K</td><td>53K</td><td><strong>−80%</strong></td></tr>
-            <tr><td>Cost</td><td>$1.30</td><td>$0.48</td><td><strong>−63%</strong></td></tr>
-          </tbody>
-        </table>
+    <section class="home-section home-wrap" id="how-it-works" aria-labelledby="questions-heading">
+      <span id="senses" class="home-anchor" aria-hidden="true"></span>
+      <span id="what-roam-catches" class="home-anchor" aria-hidden="true"></span>
+      <p class="home-eyebrow">Start with a question</p>
+      <div class="home-section-heading">
+        <h2 id="questions-heading">Less hunting.<br>More understanding.</h2>
+        <p>You don’t need to learn a long list of commands. Start with the thing you’re trying to figure out.</p>
       </div>
-      <p>
-        Claude head-to-head vs vanilla, June 2026, 41 cells. Bug-fixing graded
-        by a failing-test-transitions-to-passing oracle: 10/10 in both arms at
-        −13% cost (n=10 — no parity claim). Replayed on 723 real prompts: 57%
-        of envelopes ship pre-executed answers — the agent's first token can
-        be the answer — and a further ~33% ship structured facts.
-        <em>Honest caveats attached: the two cells we once published as losses
-        (trivial prompts, code generation) were attacked in v13.6 and
-        re-measured — now a tie and a −26% win; every number keeps its
-        method and Ns.</em>
-      </p>
-      <p>
-        Prefer a dedicated CLI? The same loop ships as
-        <a href="https://github.com/Cranot/compile-code">compile-code</a>.
-        Its v0.2.0 release is being prepared; use the repository as the
-        authoritative source for current installation and release status.
-      </p>
-    </div>
-  </section>
-
-  <!-- ════ ACT 1 · MAPS — before the agent edits ════ -->
-
-  <section class="how-it-works" id="how-it-works">
-    <div class="how-it-works-inner">
-      <p class="eyebrow">Maps · before the agent edits</p>
-      <h2>How agents use Roam</h2>
-      <p class="lede">
-        Three steps: install once, hand the MCP server to your editor,
-        and your coding agent gains 17 core tools for structured questions
-        about the codebase. The free CLI gives you the same engine to
-        run the same checks from your terminal or CI.
-      </p>
-      <ol class="flow">
-        <li>
-          <span class="flow-num">1</span>
-          <strong>You install Roam locally.</strong>
-          One command. The MCP server starts up alongside your editor or terminal.
-        </li>
-        <li>
-          <span class="flow-num">2</span>
-          <strong>Your AI agent asks structural questions.</strong>
-          <em>What else does this function affect? Where are the tests for this? Is this a clone of another implementation?</em>
-        </li>
-        <li>
-          <span class="flow-num">3</span>
-          <strong>The agent edits with explicit risk facts.</strong>
-          Blast radius, clone siblings, and affected tests are known before the edit instead of rediscovered through grep.
-        </li>
-      </ol>
-
-      <h3 class="how-it-works-sub">The five calls your agent makes most</h3>
-      <div class="verbs-grid">
-        <div class="verb-cell"><code>roam understand</code><span>Map an unfamiliar codebase before editing.</span></div>
-        <div class="verb-cell"><code>roam retrieve</code><span>Pull the exact spans for the task at hand.</span></div>
-        <div class="verb-cell"><code>roam context</code><span>List the files and lines that matter.</span></div>
-        <div class="verb-cell"><code>roam preflight</code><span>Check what a change will break.</span></div>
-        <div class="verb-cell"><code>roam critique</code><span>Review a patch against the graph.</span></div>
-      </div>
-
-      <p class="how-it-works-foot">
-        Works with Claude Code, Cursor, Windsurf, VS Code, Codex, Gemini — and any MCP-aware editor.
-      </p>
-    </div>
-  </section>
-  <section class="whats-in whats-in--wide" id="senses">
-    <div class="whats-in-inner">
-      <h2>The questions agents miss</h2>
-      <p class="lede">
-        Each row is one engineering question AI agents commonly skip
-        because they can't see the answer. The CLI surface is organised
-        around the questions — not around an encyclopaedic command list.
-      </p>
-      <div class="senses-grid">
-        <div class="sense-cell">
-          <strong>Codebase sight</strong>
-          <span class="sense-q">"What does this repo do? What should I read?"</span>
-          <code>roam understand</code> · <code>roam map</code> · <code>roam tour</code> · <code>roam describe</code>
-        </div>
-        <div class="sense-cell">
-          <strong>Context retrieval</strong>
-          <span class="sense-q">"Pull the exact spans I need for this task."</span>
-          <code>roam retrieve</code> · <code>roam context</code> · <code>roam search-semantic</code> · <code>roam agent-context</code>
-        </div>
-        <div class="sense-cell">
-          <strong>Change safety</strong>
-          <span class="sense-q">"What breaks if I edit this? Which tests run?"</span>
-          <code>roam preflight</code> · <code>roam impact</code> · <code>roam affected-tests</code> · <code>roam diff</code>
-        </div>
-        <div class="sense-cell">
-          <strong>PR review</strong>
-          <span class="sense-q">"Did the AI miss a clone, a caller, a test?"</span>
-          <code>roam critique</code> · <code>roam pr-analyze</code> · <code>roam pr-risk</code> · <code>roam clones</code>
-        </div>
-        <div class="sense-cell sense-cell--featured">
-          <strong>Algorithmic judgment</strong>
-          <span class="sense-q">"Is this code <em>correct but slow</em>?"</span>
-          <code>roam math</code> · <code>roam algo</code> · <code>roam n1</code> · <code>roam missing-index</code> · <code>roam hotspots</code>
-          <em class="sense-aside">Catches AI patterns that pass tests but become O(n²): nested-loop lookups, N+1 queries, regex compiled in loops, repeated JSON parsing, branching recursion without memoisation.</em>
-        </div>
-        <div class="sense-cell">
-          <strong>Architecture governance</strong>
-          <span class="sense-q">"Is the architecture drifting?"</span>
-          <code>roam layers</code> · <code>roam architecture-drift</code> · <code>roam health</code> · <code>roam dark-matter</code> · <code>roam fitness</code>
-        </div>
-        <div class="sense-cell">
-          <strong>Refactor safety</strong>
-          <span class="sense-q">"Can I simulate this refactor first?"</span>
-          <code>roam simulate</code> · <code>roam mutate</code> · <code>roam safe-delete</code> · <code>roam plan-refactor</code>
-        </div>
-        <div class="sense-cell">
-          <strong>Multi-agent coordination</strong>
-          <span class="sense-q">"Can multiple agents work on this graph in parallel?"</span>
-          <code>roam fleet</code> · <code>roam partition</code> · <code>roam orchestrate</code> · <code>roam agent-plan</code>
-        </div>
-        <div class="sense-cell">
-          <strong>Evidence + compliance</strong>
-          <span class="sense-q">"Can we prove what was checked, signed, and gated?"</span>
-          <code>roam attest</code> · <code>roam cga</code> · <code>roam audit-trail-export</code> · <code>roam --sarif</code>
-        </div>
-      </div>
-      <p class="how-it-works-foot how-it-works-foot--centered">
-        See it in action: <a href="/docs/demos">eight concrete scenarios where AI ships a plausible patch and Roam catches the problem before merge</a>. Or jump to the <a href="/docs/command-reference">full command reference</a>.
-      </p>
-    </div>
-  </section>
-
-  <!-- ════ ACT 2 · GATES — before it merges ════ -->
-
-  <section class="whats-in" id="what-roam-catches">
-    <div class="whats-in-inner">
-      <p class="eyebrow">Gates · before it merges</p>
-      <h2>What Roam catches</h2>
-      <p class="lede">
-        Across <strong>22,000 developers</strong>, Faros AI's 2026
-        telemetry analysis reported AI-assisted teams saw <strong>more
-        bugs per developer and more than 3x incidents per PR</strong>.
-        The pattern is consistent: agents write plausible code faster
-        than human reviewers can inspect its structural consequences.
-        Roam catches three classes of structural consequence the agent
-        and the reviewer both tend to miss.
-        <span class="lede-source">
-          Source: <a href="https://www.faros.ai/research">Faros AI, <em>The Acceleration Whiplash</em> (2026)</a>
-          — two years of telemetry across 22,000 developers and 4,000+ teams
-          (exact figures: bugs/dev +54%, incidents/PR +242.7%;
-          <a class="archive-link" href="https://adtmag.com/articles/2026/04/22/more-code-more-bugs.aspx" rel="external">independent coverage</a>).
-        </span>
-      </p>
-
-      <div class="scenarios-grid">
-
-        <article class="scenario">
-          <h3>Blast-radius the agent didn't measure</h3>
-          <p class="scenario-cite">Same failure class as the PocketOS incident, April 2026 — production database and three months of backups gone in nine seconds. Not the exact diff; the illustrative output below shows what Roam's blast-radius check would flag on a similar change. <a href="https://www.theregister.com/software/2026/04/27/cursor-opus-agent-snuffs-out-startups-production-database/5224442">Source</a> · <a class="archive-link" href="https://web.archive.org/web/20260507124522/https://www.theregister.com/software/2026/04/27/cursor-opus-agent-snuffs-out-startups-production-database/5224442" rel="external">archive</a>.</p>
-          <p>
-            An AI agent rewrites a <code>cleanup_old_records()</code> job. The diff looks fine. What it actually changed: the <code>WHERE</code> clause now matches every row.
-          </p>
-<pre class="terminal" aria-label="Sample Roam blast-radius output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
-<span class="t-line">VERDICT: BLOCK  (1 high)</span>
-<span class="t-line">  cleanup_old_records  db/maintenance.py:84</span>
-<span class="t-line">  reaches: 3 entry points, 1 destructive op</span>
-<span class="t-line">  runtime: 1,247 calls/day in trace_ingest</span>
-<span class="t-line">  flag: DELETE without LIMIT</span></pre>
-          <p class="tie-back">→ Nine seconds vs three months of backups.</p>
+      <div class="home-question-list">
+        <article class="home-question">
+          <span class="home-number" aria-hidden="true">01</span>
+          <div><h3>“Where do I even start?”</h3><p>Get an overview of an unfamiliar repository: its main parts, how they connect, and useful places to begin reading.</p></div>
+          <a href="/docs/command-reference#understand"><code>roam understand</code><span>Get your bearings <span aria-hidden="true">↗</span></span></a>
         </article>
-
-        <article class="scenario">
-          <h3>The clone the agent forgot to update</h3>
-          <p class="scenario-cite">Same failure class as Amazon's Treadwell 90-day code-controls reset, March 2026 — senior signoff added on agent-generated changes after outages including one linked to an internal AI coding tool. Illustrative Roam output, not the exact diff. <a href="https://www.businessinsider.com/amazon-tightens-code-controls-after-outages-including-one-ai-2026-3">Source</a>.</p>
-          <p>
-            AI agents fix bugs by pattern-matching, then forget the other places the same pattern lives. Diff looks clean. Roam flags the unchanged copies:
-          </p>
-<pre class="terminal" aria-label="Sample Roam clones-not-edited output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
-<span class="t-line">VERDICT: REVIEW  (clones-not-edited)</span>
-<span class="t-line">  order_service.py:142  [edited]</span>
-<span class="t-line">  billing/refunds.py:89  [UNCHANGED]</span>
-<span class="t-line">  admin/bulk_ops.py:201  [UNCHANGED]</span>
-<span class="t-line">  confidence: 0.94 (AST exact + identifier rename)</span></pre>
-          <p class="tie-back">→ Senior signoff plus a structural diff is better than senior signoff alone.</p>
+        <article class="home-question">
+          <span class="home-number" aria-hidden="true">02</span>
+          <div><h3>“What could this change affect?”</h3><p>Follow the callers and related code. Check a function before editing it, and find connected tests worth looking at.</p></div>
+          <a href="/docs/command-reference#preflight"><code>roam preflight &lt;symbol&gt;</code><span>Look before you edit <span aria-hidden="true">↗</span></span></a>
         </article>
-
-        <article class="scenario">
-          <h3>The runtime-hot path the agent treated as cold</h3>
-          <p class="scenario-cite">Shape: the diff-touches-more-than-the-reviewer-thinks pattern Faros's 22,000-developer study quantified above.</p>
-          <p>
-            AI-written code touches more places than the reviewer sees. Roam weights blast-radius by production traffic to surface the hot paths:
-          </p>
-<pre class="terminal" aria-label="Sample Roam runtime-hot output"><span class="t-prompt">$</span> <span class="t-cmd">roam hotspots --runtime</span>
-<span class="t-line">VERDICT: REVIEW  (runtime-hot path)</span>
-<span class="t-line">  serialize_user  api/v2/users.py:34</span>
-<span class="t-line">  trace ingest: 3.2M calls/day (top 0.1%)</span>
-<span class="t-line">  diff: response shape changed</span>
-<span class="t-line">  downstream: 4 mobile clients, 2 webhooks</span></pre>
-          <p class="tie-back">→ The rate isn't fixed by fewer AI commits — it's fixed by reviewing structural impact at machine speed.</p>
+        <article class="home-question">
+          <span class="home-number" aria-hidden="true">03</span>
+          <div><h3>“What did I miss in this patch?”</h3><p>Once you have local changes, review the diff with the surrounding code in view, including related copies that may need the same fix.</p></div>
+          <a href="/docs/command-reference#critique"><code>git diff | roam critique</code><span>Take another look <span aria-hidden="true">↗</span></span></a>
         </article>
-
       </div>
+      <p class="home-section-note">Replace <code>&lt;symbol&gt;</code> with a function or class in your project. <a href="/docs/demos">Explore more examples <span aria-hidden="true">↗</span></a></p>
+    </section>
 
-      <p class="how-it-works-foot how-it-works-foot--centered how-it-works-foot--spaced-top">
-        Want to see what Roam would have caught on <em>your</em> last 5 PRs?
-        <a href="#audit">Replay them locally — no email, no upload &rarr;</a>
-      </p>
-    </div>
-  </section>
-  <section class="compare" id="compare">
-    <div class="compare-inner">
-      <h2>Roam does not replace your reviewer</h2>
-      <p class="lede">
-        Keep CodeRabbit, Greptile, Qodo, SonarQube, or CodeQL. Roam
-        adds the structural layer they don't see: callers, clones,
-        layers, tests, hot paths. Three layers, three jobs, three
-        kinds of finding.
-      </p>
-      <div class="compare-table-wrap">
-        <table class="compare-table compare-table--layered">
-          <caption class="visually-hidden">Three code-review layers compared by what they see.</caption>
-          <thead>
-            <tr>
-              <th scope="col">Layer</th>
-              <th scope="col">What it sees</th>
-              <th scope="col">Examples</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <th scope="row">Semantic reviewers</th>
-              <td>What the diff <em>does</em> — correctness, style, prose-level review</td>
-              <td>CodeRabbit, Greptile, Qodo</td>
-            </tr>
-            <tr>
-              <th scope="row">Static analyzers</th>
-              <td>Known rule and security patterns inside a function</td>
-              <td>SonarQube, Semgrep, CodeQL</td>
-            </tr>
-            <tr>
-              <th scope="row"><strong>Roam</strong></th>
-              <td>What the change <em>touches</em> — callers, clones, layers, tests, hot paths</td>
-              <td><strong>Roam</strong> (local CLI + MCP + CI)</td>
-            </tr>
-          </tbody>
-        </table>
+    <section class="home-agent" id="compiler" aria-labelledby="agent-heading">
+      <span id="fit" class="home-anchor" aria-hidden="true"></span>
+      <div class="home-wrap home-agent-grid">
+        <div>
+          <p class="home-eyebrow">A better starting point for your agent</p>
+          <h2 id="agent-heading">Your agent writes code.<br>Roam helps it get to know yours.</h2>
+          <p>Give your coding agent the same local map you use: relevant files, the functions that call each other, and context around a planned change.</p>
+          <p>Use the CLI directly, or connect through MCP — a standard way for assistants to use tools. Your agent still makes the decisions; Roam gives it more to work with.</p>
+          <a class="home-button home-button-light" href="/setup">Connect your coding agent <span aria-hidden="true">↗</span></a>
+          <p class="home-small">Setup guides for Claude Code, Cursor, Codex, VS Code, and more.</p>
+        </div>
+        <div class="home-agent-note">
+          <p class="home-note-label">A small habit for a new project</p>
+          <h3>Get the context.<br>Then make the change.</h3>
+          <ol>
+            <li><strong>Explore</strong><span>Ask Roam for a repository overview.</span></li>
+            <li><strong>Check</strong><span>Look at the code connected to your change.</span></li>
+            <li><strong>Review</strong><span>Inspect the patch, run tests, and review the findings.</span></li>
+          </ol>
+          <p>Already using Claude Code? Optional <a href="/docs/integration-tutorials">hooks can prepare context before a prompt</a>.</p>
+        </div>
       </div>
-      <p class="compare-foot">
-        Full feature-by-feature breakdown — including local-vs-cloud,
-        MCP exposure, attestations, and pricing — at
-        <a href="/compare"><strong>roam-code.com/compare →</strong></a>
-        Also pairs with Cursor / Claude Code / Codex / Gemini via MCP,
-        and exports SARIF for GitHub / GitLab CI.
-        See something wrong? <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
-      </p>
-    </div>
-  </section>
+    </section>
 
-  <!-- ════ ACT 3 · EVIDENCE — after every run ════ -->
-
-  <section class="audit-upsell" id="audit" aria-labelledby="audit-heading">
-    <div class="audit-upsell-inner">
-      <p class="eyebrow">Evidence · after every run</p>
-      <h2 id="audit-heading">Try it on your last 5 PRs</h2>
-      <p class="lede">
-        Every Roam run leaves a tamper-evident record on your machine — what the
-        change touched, what it could break, what verified it. Point it at your
-        merged PRs and get a structural report, run locally:
-      </p>
-      <p class="install-cmd">
-        <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
-      </p>
-      <p class="replay-fineprint">
-        This local replay sends no email and performs no repository upload.
-        Opt-in network features have separate documented boundaries. Want a full
-        written audit, or these gates running as a CI bot for your team?
-        <a href="/audit">See team options &rarr;</a>
-      </p>
-    </div>
-  </section>
-  <!-- ════ START FREE ════ -->
-
-  <section class="install-band install-band--minor" aria-label="Free vs paid">
-    <div class="install-band-inner" style="text-align:center">
-      <p class="lede">The CLI + MCP server are <strong>free forever</strong> (Apache&nbsp;2.0).
-      For teams that want gates on every PR and a shared audit trail, see
-      <a href="/pricing">pricing&nbsp;&rarr;</a></p>
-    </div>
-  </section>
-  <section class="whats-in" id="what-you-get">
-    <div class="whats-in-inner">
-      <p class="eyebrow">Start free · in 5 minutes</p>
-      <h2>Local code graph in seconds. Free forever.</h2>
-      <p class="lede">
-        Roam indexes a typical 100k-LOC repo in seconds and exposes the
-        result as deterministic local tools your agent can call before,
-        during, and after every change. Your code, your control, your
-        audit trail — evidence stays on your machine and verifies offline.
-      </p>
-      <div class="numbers-grid">
-        <div class="num-cell"><strong>zero</strong><span>API keys required</span></div>
-        <div class="num-cell"><strong>zero</strong><span>automatic telemetry or repository upload</span></div>
-        <div class="num-cell"><strong>tamper-evident</strong><span>HMAC-chained evidence packets</span></div>
-        <div class="num-cell"><strong>28</strong><span>language families</span></div>
-        <div class="num-cell"><strong>500</strong><span>GitHub stars</span></div>
-        <div class="num-cell"><strong>246</strong><span>MCP tools for your agent</span></div>
+    <section class="home-section home-wrap home-local" id="what-you-get" aria-labelledby="local-heading">
+      <div>
+        <p class="home-eyebrow">Your project. Your machine.</p>
+        <h2 id="local-heading">Useful without<br>another account.</h2>
+        <p class="home-lede">Roam builds a local index of your repository. You and your tools can come back to it as the code changes.</p>
       </div>
-      <p class="numbers-date">snapshot as of <time datetime="2026-07-20">2026-07-20</time></p>
+      <div class="home-local-points">
+        <article><h3>Start free, stay in control.</h3><p>The CLI and MCP server are open source under Apache 2.0. Local analysis needs no account or API key.</p></article>
+        <article><h3>Your code isn’t automatically uploaded.</h3><p>There is no automatic repository upload or telemetry. Installation, parser downloads, and optional online features have a <a href="/security#network-boundary">documented network boundary</a>.</p></article>
+        <article id="compare"><h3>Keep the tools you already trust.</h3><p>Roam adds context to your editor, search, tests, and code review. Its map can be incomplete; a useful finding is a starting point for investigation, not a guarantee.</p><a href="/compare">See where Roam fits <span aria-hidden="true">↗</span></a></article>
+      </div>
+    </section>
 
-      <p class="install-cmd" id="install">
-        <code>pip install roam-code &amp;&amp; roam init</code>
-      </p>
-
-      <div class="first-5-min">
-        <h3>Your first 5 minutes</h3>
-        <ol>
-          <li><code>cd</code> into any Git repo</li>
-          <li><code>roam init</code> — build the local graph (a typical 100k-LOC repo finishes in seconds)</li>
-          <li><code>roam understand</code> — guided architectural tour</li>
-          <li><code>git diff | roam critique</code> — structural review of your current changes</li>
-          <li><code>roam mcp</code> — start the MCP server so your agent can call the 17-tool core preset</li>
+    <section class="home-start" id="install" aria-labelledby="install-heading">
+      <div class="home-wrap">
+        <p class="home-eyebrow">Meet your codebase</p>
+        <div class="home-section-heading">
+          <h2 id="install-heading">Try it on a project<br>you’re working on.</h2>
+          <p>You’ll need Python 3.10+ and a Git repository. Open a terminal, then follow these three steps.</p>
+        </div>
+        <ol class="home-install-steps">
+          <li><span class="home-step-label">01 / Install Roam</span><pre><code>pip install roam-code</code></pre><p>Prefer an isolated install? Use <code>pipx install roam-code</code> or <code>uv tool install roam-code</code>.</p></li>
+          <li><span class="home-step-label">02 / Open your repository</span><pre><code>cd path/to/your/repo
+roam init</code></pre><p>Replace the path with your project. This builds the index and creates project configuration.</p></li>
+          <li><span class="home-step-label">03 / Get your bearings</span><pre><code>roam understand</code></pre><p>See the big picture, then follow the parts you want to understand.</p></li>
         </ol>
-        <p class="how-it-works-foot">
-          More detail in the <a href="/docs/getting-started">getting-started guide</a>
-          and the <a href="/docs/mcp-usage">MCP usage guide</a>.
-        </p>
-      </div>
-    </div>
-  </section>
-  <section class="whats-in whats-in--wide" id="fit">
-    <div class="whats-in-inner">
-      <h2>Who Roam is for</h2>
-      <div class="numbers-grid numbers-grid--3">
-        <div class="num-cell">
-          <strong>Use Roam if</strong>
-          <span>AI agents write real PRs in your repo, your codebase has multiple services or modules, or you need review evidence you can hand to an auditor.</span>
+        <div class="home-start-footer">
+          <p>Want only the index, without project configuration? Use <code>roam index</code> instead of <code>roam init</code>.</p>
+          <a class="home-text-link" href="/docs/getting-started">Walk through the getting-started guide <span aria-hidden="true">↗</span></a>
         </div>
-        <div class="num-cell">
-          <strong>Probably skip if</strong>
-          <span>Tiny single-file repo, no AI-generated PRs, and no structural review pain yet. Come back when one of those changes.</span>
-        </div>
-        <div class="num-cell">
-          <strong>Free forever</strong>
-          <span>The engine is Apache 2.0 and free for individuals, teams, and companies of any size. We charge for the team workflow: PR bot, dashboard, self-hosted.</span>
-        </div>
+        <p class="home-agent-install">For agent tools, install <code>pip install "roam-code[mcp]"</code>, then follow the <a href="/setup">editor setup guide</a>. <a href="/docs/mcp-usage">Learn about MCP</a>.</p>
       </div>
+    </section>
 
-      <h3 class="how-it-works-sub" style="margin-top:2.5rem;">Paste this into your agent's system prompt</h3>
-      <pre class="terminal" aria-label="Drop-in instructions for Claude Code, Cursor, Codex, Gemini"><span class="t-line">Before editing this repo, run:</span>
-<span class="t-line">  roam understand     # map the codebase</span>
-<span class="t-line">  roam preflight &lt;sym&gt; # blast radius + tests + fitness</span>
-<span class="t-line"></span>
-<span class="t-line">After editing, run:</span>
-<span class="t-line">  git diff | roam critique</span>
-<span class="t-line"></span>
-<span class="t-line">Do not open a PR until Roam high-severity findings</span>
-<span class="t-line">are fixed or explained.</span></pre>
-      <p class="how-it-works-foot how-it-works-foot--centered">
-        Works in Claude Code, Cursor, Windsurf, Codex, Gemini, and any
-        MCP-aware editor. Full setup guide at <a href="/setup">/setup</a>.
-      </p>
-    </div>
-  </section>
-
-  <!-- ════ Trust ════ -->
-
-  <section class="trust-strip">
-    <div class="trust-strip-inner">
-      <div class="trust-cell">
-        <strong>Apache 2.0</strong>
-        <span>Free forever. <a href="https://github.com/Cranot/roam-code">GitHub</a> · <a href="https://pypi.org/project/roam-code/">PyPI</a></span>
+    <section class="home-section home-wrap home-faq" aria-labelledby="faq-heading">
+      <div><p class="home-eyebrow">A few things worth knowing</p><h2 id="faq-heading">Good questions.</h2><p>Something else on your mind?<br><a href="https://github.com/Cranot/roam-code/discussions">Ask us on GitHub <span aria-hidden="true">↗</span></a></p></div>
+      <div class="home-faq-list">
+        <details><summary>Do I need an AI coding agent to use Roam?</summary><p>No. Use Roam yourself in the terminal to explore a repository or check a change. Connecting an agent is optional; it gives the agent access to the same local tools.</p></details>
+        <details><summary>Is Roam free?</summary><p>The CLI and MCP server are free and open source under Apache 2.0, for individuals and teams. Paid services and planned team products are separate; you do not need them to use the local tools. <a href="/pricing">See team options</a>.</p></details>
+        <details><summary>Does my code leave my machine?</summary><p>Ordinary analysis is local, with no automatic source-code or telemetry upload. Installation and the first parser download need network access. Optional online features have explicit triggers; opt-in MCP model summarization can include source snippets. Read the <a href="/security#network-boundary">network boundary</a> for the full details.</p></details>
+        <details><summary>What languages and computers does it work with?</summary><p>Roam runs on Windows, macOS, and Linux with Python 3.10+. It supports 28 languages, including Python, JavaScript, TypeScript, Go, Rust, Java, C#, PHP, and Ruby. The depth of analysis varies by language and framework. <a href="/docs/">Explore the documentation</a>.</p></details>
+        <details><summary>How long does the first index take?</summary><p>It depends on the size of your repository, its history, your machine, and whether parsers are already downloaded. The first index does more work; later refreshes reuse it and process changed files. Run <code>roam index</code> to refresh after changes.</p></details>
+        <details><summary>Does Roam replace tests or code review?</summary><p>No. Roam helps you investigate code connections and potential risks. Static analysis can miss connections, a suggested test list is not test coverage, and a health score is not permission to merge. Keep your tests, security checks, and human review.</p></details>
+        <details><summary>Can our team use it in CI?</summary><p>Yes. Run Roam checks in your build, review changes, and export findings for code-scanning tools. You can also enable a local run ledger and proof bundles to record which checks ran. Signed records help detect later changes to evidence; they do not prove every relevant check was captured. <a href="/docs/integration-tutorials">See integration guides</a> and <a href="/governance">review records for teams</a>.</p></details>
       </div>
-      <div class="trust-cell">
-        <strong>Evidence you control locally</strong>
-        <span>Local SQLite, no automatic telemetry, and evidence packets that hash-verify offline. Ordinary analysis stays on your machine; a cold parser cache retrieves one checksum-verified platform bundle and retains it for offline reuse. Explicit network features are documented by trigger, destination, and payload on the <a href="/security#network-boundary">security page</a>.</span>
-      </div>
-      <div class="trust-cell">
-        <strong>28 languages, 6 cross-language bridges</strong>
-        <span>Python · TypeScript · PHP · Go · Rust · Java · C# · Kotlin · Scala · SQL · Dart · 17 more. Bridges resolve Salesforce Apex → Aura, REST front-end → back-end routes, Django ORM, .proto stubs, Jinja/Django templates, env var → config.</span>
-      </div>
-      <div class="trust-cell">
-        <strong>Local audit trail</strong>
-        <span>Roam keeps local evidence of what was checked, so teams can show how AI-written code was reviewed. Tamper-evident log file plus signed records (in-toto v1, verifiable with cosign). Full framework-specific detail on the <a href="/security">security page</a> and the <a href="/governance">governance page</a>; trust posture on the <a href="/trust">trust page</a>.</span>
-      </div>
-      <div class="trust-cell">
-        <strong>We never train on your code</strong>
-        <span>Roam Review and Roam Cloud do not use your source, diffs, comments, or metrics to train, fine-tune, or evaluate any machine-learning model — ours, ours-via-third-party, or any third party's. Contractual commitment in the <a href="/security">security policy</a>; details in the <a href="https://github.com/Cranot/roam-code/tree/main/templates/legal">procurement packet</a>.</span>
-      </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- ════ FAQ ════ -->
-
-  <section class="faq">
-    <div class="faq-inner">
-      <h2>Common questions</h2>
-      <details>
-        <summary>How is Roam different from CodeRabbit, Greptile, or Qodo?</summary>
-        <p>
-          They review what the code <em>does</em> — semantics. Roam reviews what
-          the code <em>touches</em> — structure: callers, layers, dependency
-          cycles, copy-paste duplicates. Different layer, different findings; most
-          teams keep their reviewer and add Roam alongside it. See the
-          <a href="/compare">full comparison</a>.
-        </p>
-      </details>
-      <details>
-        <summary>Will the CLI stay free?</summary>
-        <p>
-          Yes. Forever. Apache 2.0 — for individuals, teams, and companies of any
-          size. The local engine is the point; we never charge for it.
-        </p>
-      </details>
-      <details>
-        <summary>Does any of my source code leave my machine?</summary>
-        <p>
-          Ordinary analysis is local with no automatic repository upload. Explicit
-          network features can exchange documented payloads; opt-in MCP model
-          summarization can include source snippets from the selected report. See the
-          <a href="/security#network-boundary">complete trigger and payload inventory</a>.
-        </p>
-      </details>
-      <details>
-        <summary>Why no analytics or trackers on this site?</summary>
-        <p>
-          Two reasons: every third-party script is attack surface, and we sell to
-          teams that read Privacy policies — zero cookies, zero trackers is a
-          stronger signal than any logo wall. See the <a href="/no-cookies">receipt</a>.
-        </p>
-      </details>
-      <details>
-        <summary>Does Roam fit into my CI?</summary>
-        <p>
-          Yes. <code>roam --sarif health</code> exports SARIF 2.1.0 (GitHub Code
-          Scanning, GitLab, most CI read it natively); GitHub Actions templates
-          ship with the package; <code>roam critique</code> exits 5 on any
-          high-severity finding so a CI step can gate on it.
-        </p>
-      </details>
-      <details>
-        <summary>How long does it take to index a repo?</summary>
-        <p>
-          A 100k-line monorepo indexes in roughly 20–40 seconds on a laptop;
-          incremental rebuilds after a PR's worth of changes are sub-second. Your
-          agents and CI read the same <code>.roam/</code> artefact.
-        </p>
-      </details>
-      <details>
-        <summary>What languages does Roam support?</summary>
-        <p>
-          28, via tree-sitter — Python, JS/TS, Go, Rust, Java, Kotlin, C/C++/C#,
-          PHP, Ruby, Swift, SQL and more, plus framework bridges (Django,
-          Salesforce, REST, protobuf, templates). Full list in the
-          <a href="/docs/">docs</a>.
-        </p>
-      </details>
-      <details>
-        <summary>What audit-trail evidence does Roam produce?</summary>
-        <p>
-          When the run ledger and proof-bundle flow is enabled, Roam writes
-          tamper-evident logs and verifiable evidence records locally. Useful
-          as SOC&nbsp;2 / ISO&nbsp;42001 change-management evidence support;
-          the framework mapping is yours to make, and Roam does not certify
-          compliance.
-        </p>
-      </details>
-    </div>
-  </section>
-
+    <section class="home-replay" id="audit" aria-labelledby="audit-heading">
+      <div class="home-wrap home-replay-inner">
+        <div><p class="home-eyebrow">Already have a few changes in mind?</p><h2 id="audit-heading">Take another look at recent work.</h2><p>Run a local sample review of recent merged pull requests. See which structural findings are worth following up.</p></div>
+        <div><pre><code>roam pr-replay --tier sample</code></pre><p class="home-small">Requires Roam and local merge history. This replay sends no email and performs no repository upload.</p><a href="/audit">Explore review and team options <span aria-hidden="true">↗</span></a></div>
+      </div>
+    </section>
   </main>
 
-  <footer>
-    <div class="footer-inner">
-      <div class="footer-col">
-        <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
-        <span class="footer-meta">Built in Athens. Made in the EU.</span>
-      </div>
-      <div class="footer-col">
-        <a href="https://github.com/Cranot/roam-code">GitHub</a>
-        <a href="https://pypi.org/project/roam-code/">PyPI</a>
-        <a href="/docs/">Docs</a>
-      </div>
-      <div class="footer-col">
-        <a href="/setup">Setup</a>
-        <a href="/about">About</a>
-        <a href="/press">Press</a>
-        <a href="/changelog">Changelog</a>
-        <a href="/status">Status</a>
-        <a href="/security">Security</a>
-        <a href="/accessibility">Accessibility</a>
-      </div>
-      <div class="footer-col">
-        <a href="/privacy">Privacy</a>
-        <a href="/terms">Terms</a>
-        <a href="/refund">Refund</a>
-        <a href="/no-cookies">No cookies</a>
-      </div>
-      <div class="footer-col">
-        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
-        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
-        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
-        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+  <footer class="home-footer">
+    <div class="home-wrap">
+      <div class="home-footer-top"><a class="site-logo" href="/" aria-label="Roam — home">roam<span class="logo-dot">.</span></a><p>A little more understanding.<br>A better place to start.</p><a class="home-text-link" href="#install">Try Roam for free <span aria-hidden="true">↗</span></a></div>
+      <div class="home-footer-links">
+        <div><h2>Explore</h2><a href="/docs/">Documentation</a><a href="/setup">Agent setup</a><a href="/compare">Compare</a><a href="/pricing">Pricing</a><a href="https://github.com/Cranot/roam-code">GitHub</a><a href="https://pypi.org/project/roam-code/">PyPI</a></div>
+        <div><h2>About Roam</h2><a href="/about">Our story</a><a href="/changelog">What’s new</a><a href="/status">Status</a><a href="/press">Press</a><a href="mailto:hello@roam-code.com">Say hello</a></div>
+        <div><h2>Trust &amp; care</h2><a href="/security">Security</a><a href="/trust">Trust</a><a href="/accessibility">Accessibility</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/refund">Refunds</a><a href="/no-cookies">No cookies</a><a href="mailto:security@roam-code.com">Report a security issue</a></div>
+        <div class="home-footer-about"><p>Built in Athens. Made in the EU.</p><p>No cookies. No tracking. No analytics.</p><p>287 commands · 246 MCP tools (17 in the default core preset) · 28 languages</p><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source <span aria-hidden="true">↗</span></a></div>
       </div>
     </div>
   </footer>
-
 </body>
 </html>

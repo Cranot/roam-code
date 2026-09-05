@@ -374,10 +374,14 @@ def test_landing_page_drift_guard_actually_catches_drift(tmp_path):
     )
 
 
-def test_homepage_repeated_github_star_claims_are_consistent():
+def test_homepage_does_not_embed_stale_github_star_counts():
+    """The value-led homepage links to GitHub without freezing a popularity count.
+
+    Replaces the old two-identical-counts requirement: consistency did not
+    establish freshness. Keep the registry-derived MCP count guards above.
+    """
     text = (_LANDING_DIR / "index.html").read_text(encoding="utf-8")
     claims = [int(value) for value in re.findall(r"\b(\d{2,6})\s+GitHub stars\b", text)]
     claims.extend(int(value) for value in re.findall(r"<strong>(\d{2,6})</strong><span>GitHub stars</span>", text))
 
-    assert len(claims) >= 2
-    assert len(set(claims)) == 1, f"Contradictory GitHub star claims: {claims}"
+    assert not claims, f"Use the GitHub link, not a hard-coded star snapshot: {claims}"
