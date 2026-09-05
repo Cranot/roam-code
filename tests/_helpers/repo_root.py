@@ -13,11 +13,11 @@ exists check fails, and downstream assertions trip on missing
 content. The two known instances at W572 are
 ``tests/test_auto_count_script.py`` and ``tests/test_compat_sweep.py``.
 
-The fix is to ask git for the canonical toplevel
-(``git rev-parse --show-toplevel``), which returns the same path
-regardless of how deeply the worktree is nested under
-``.claude/worktrees/`` -- nested worktrees still report the *main*
-working tree's path when invoked through their linked ``.git`` file.
+The helper first asks git for the current worktree's toplevel
+(``git rev-parse --show-toplevel``) and accepts it when the project markers
+are present. Linked worktrees report their own root. If that root lacks the
+markers, the fallback walks the containing directories and can find the
+outer checkout when the worktree is physically nested beneath it.
 
 The helper falls back to the historical ``parents[1]`` walk if
 ``git`` is not available (e.g. sdist-style test runs without a
@@ -59,8 +59,8 @@ def _git_toplevel(start: Path) -> Path | None:
 
     Uses ``-C <start>`` so the call works whether the current process
     cwd happens to be inside the repo or not. Stdout is the absolute
-    path to the *main* working tree's root even when invoked from a
-    linked worktree (this is the property W572 relies on). Failures
+    path to the current worktree's root, including a linked worktree.
+    The caller checks project markers before accepting it. Failures
     (git absent, hung, or other OS error) are logged at ``DEBUG`` and
     surfaced as ``None`` so the caller falls back to the marker walk
     -- git is an optional resolution path, never a hard requirement.

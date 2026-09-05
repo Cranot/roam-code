@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Published installation pins.** Update copied installation instructions and generated CI templates to verified 14.0.2 artifacts, independently pin the dormant Action example to the release commit, and explain how immutable Action defaults and bundled templates retain their original versions.
+- **Release draft read-back.** After creating one GitHub release draft, retry only its read-only visibility check within a fixed budget. Keep lookup errors, ambiguous drafts, identity mismatches, asset mismatches and signature failures blocking; never create another draft as a retry.
+- **Private smoke evidence.** Keep the developer command-smoke harness's raw JSONL beside its report under ignored `internal/smoke/`, matching the documented output location. Preserve older logs rather than overwriting a public-directory copy.
+- **Maintenance guidance.** Distinguish index-consistency advisories from failed checks, give syntax checks an explicit file scope, explain legitimate zero-symbol package and markup files, and reference the canonical database schema version.
+
 ## [14.0.2] — 2026-09-05
 
 ### Added

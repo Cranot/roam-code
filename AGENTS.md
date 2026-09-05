@@ -339,7 +339,7 @@ analysis core.
 src/roam/atomic_io.py     - atomic_write_text/bytes/json (os.replace; POSIX+Windows safe)
 src/roam/agents_md/       - AGENTS.md generator (compositional; consumes the rest)
 src/roam/constitution/    - capstone .roam/constitution.yml unifying laws+rules+memory+gates
-src/roam/db/findings.py   - cross-detector finding registry (roam findings list/show/count); USER_VERSION 18 schema
+src/roam/db/findings.py   - cross-detector finding registry (roam findings list/show/count); schema version: db.connection.USER_VERSION
 src/roam/laws/            - invariant mining (roam laws mine/check) - self-installing
 src/roam/leases/          - multi-agent coordination (roam lease claim/release/list)
 src/roam/memory/          - repo-local agent memory (.roam/memory.jsonl)

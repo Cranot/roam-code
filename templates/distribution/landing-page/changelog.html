@@ -76,6 +76,13 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h3>Fixed</h3>
+<ul>
+<li><strong>Published installation pins.</strong> Update copied installation instructions and generated CI templates to verified 14.0.2 artifacts, independently pin the dormant Action example to the release commit, and explain how immutable Action defaults and bundled templates retain their original versions.</li>
+<li><strong>Release draft read-back.</strong> After creating one GitHub release draft, retry only its read-only visibility check within a fixed budget. Keep lookup errors, ambiguous drafts, identity mismatches, asset mismatches and signature failures blocking; never create another draft as a retry.</li>
+<li><strong>Private smoke evidence.</strong> Keep the developer command-smoke harness's raw JSONL beside its report under ignored <code>internal/smoke/</code>, matching the documented output location. Preserve older logs rather than overwriting a public-directory copy.</li>
+<li><strong>Maintenance guidance.</strong> Distinguish index-consistency advisories from failed checks, give syntax checks an explicit file scope, explain legitimate zero-symbol package and markup files, and reference the canonical database schema version.</li>
+</ul>
 <h2>[14.0.2] — 2026-09-05</h2>
 <h3>Added</h3>
 <ul>

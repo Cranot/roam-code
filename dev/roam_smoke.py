@@ -186,7 +186,9 @@ def main() -> int:
     args = ap.parse_args()
 
     root = Path(__file__).resolve().parent.parent
-    jsonl = root / "dev" / "roam_smoke_results.jsonl"
+    smoke_dir = root / "internal" / "smoke"
+    smoke_dir.mkdir(parents=True, exist_ok=True)
+    jsonl = smoke_dir / "roam_smoke_results.jsonl"
     jsonl.write_text("", encoding="utf-8")  # truncate prior run
 
     cmds = _roam_commands()
@@ -220,8 +222,6 @@ def main() -> int:
     }
 
     date = _dt.date.today().isoformat()
-    smoke_dir = root / "internal" / "smoke"
-    smoke_dir.mkdir(parents=True, exist_ok=True)
     md = smoke_dir / f"roam-smoke-{date}.md"
     lines = [f"# roam command smoke - {date}", ""]
     lines.append(f"{len(rows)} commands run argless (`roam --json <cmd>`), {args.timeout}s timeout, stdin=DEVNULL.\n")

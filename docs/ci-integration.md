@@ -2,10 +2,10 @@
 
 Two supported paths:
 
-1. **Plain pip** -- `pip install "roam-code==14.0.1"`, run any commands, upload SARIF
+1. **Plain pip** -- `pip install "roam-code==14.0.2"`, run any commands, upload SARIF
    yourself. Works on every CI platform (GitHub Actions, GitLab CI, Jenkins,
    Azure Pipelines, BitBucket, CircleCI, ...).
-2. **Composite GitHub Action** -- `uses: Cranot/roam-code@v14.0.1`. Adds sticky
+2. **Composite GitHub Action** -- `uses: Cranot/roam-code@v14.0.2`. Adds sticky
    PR comments, guardrail-enforced SARIF upload, and quality gates with one
    block.
 
@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: |
-          python -m pip install --disable-pip-version-check "roam-code==14.0.1"
+          python -m pip install --disable-pip-version-check "roam-code==14.0.2"
           python -m pip check
       - run: roam init
       - run: roam --sarif health > roam-health.sarif
@@ -88,9 +88,9 @@ jobs:
 
       # The readable tag is shown here. For production,
       # replace the tag with its reviewed 40-character SHA (see below).
-      - uses: Cranot/roam-code@v14.0.1
+      - uses: Cranot/roam-code@v14.0.2
         with:
-          version: '14.0.1'
+          version: '14.0.2'
           allow-latest: 'false'
           commands: 'health pr-risk'
           sarif: 'true'
@@ -113,7 +113,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `14.0.1` | Exact roam-code version to install from PyPI. The explicit `source` mode installs from the selected action checkout; `latest` requires `allow-latest: true`. URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
+| `version` | `14.0.2` | Exact roam-code version to install from PyPI. The explicit `source` mode installs from the selected action checkout; `latest` requires `allow-latest: true`. URLs, VCS references, pip options, whitespace, and local-version suffixes are rejected. |
 | `allow-latest` | `false` | Explicit opt-in required when `version: latest` is requested. This keeps the mutable package path visible in review. |
 | `commands` | `health` | Space-separated roam commands to run. Each command produces JSON output that feeds into the PR comment and quality gate. |
 | `changed-only` | `false` | Incremental CI mode. Adapts supported commands to changed files and transitive dependents (when detectable). |
@@ -135,6 +135,9 @@ The default shown here describes `action.yml` on the current main branch.
 An older or immutable Action revision keeps the default committed in that
 revision: selecting an Action tag does not automatically select the same PyPI
 package version. Every copied example therefore sets `with.version` explicitly.
+The templates bundled with an installed CLI are also fixed at that release's
+build time. Review the Action source pin and `with.version` in generated
+workflows when upgrading; a newer CLI does not rewrite an existing workflow.
 The exact package pin selects the first-party roam-code artifact. Its
 transitive dependencies still follow that package version's declared PyPI
 ranges, because a copied downstream action cannot consume this repository's
@@ -241,9 +244,9 @@ the repository, and blocking there would be red on a run where nothing is
 wrong. Set `gate-strict: true` to make an unevaluable gate exit 5 as well:
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.1
+- uses: Cranot/roam-code@v14.0.2
   with:
-    version: '14.0.1'
+    version: '14.0.2'
     gate: 'direction(health_score)!=worsening'
     gate-strict: 'true'
 ```
@@ -382,9 +385,9 @@ Set `changed-only: 'true'` to run incremental PR analysis.
 Example:
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.1
+- uses: Cranot/roam-code@v14.0.2
   with:
-    version: '14.0.1'
+    version: '14.0.2'
     commands: 'verify pr-risk api-changes'
     changed-only: 'true'
     changed-depth: '3'
@@ -428,9 +431,9 @@ can read it instead of copying it.
 ### Multiple commands with strict gate
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.1
+- uses: Cranot/roam-code@v14.0.2
   with:
-    version: '14.0.1'
+    version: '14.0.2'
     commands: 'health complexity dead'
     sarif-commands: 'health complexity dead'
     sarif-category: 'roam-code-pr-${{ github.ref_name }}-${{ matrix.python-version }}'
@@ -441,10 +444,10 @@ can read it instead of copying it.
 ### PR risk only, no comment
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.1
+- uses: Cranot/roam-code@v14.0.2
   id: roam
   with:
-    version: '14.0.1'
+    version: '14.0.2'
     commands: 'pr-risk'
     comment: 'false'
 
@@ -456,9 +459,9 @@ can read it instead of copying it.
 ### Exact release without caching
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.1
+- uses: Cranot/roam-code@v14.0.2
   with:
-    version: '14.0.1'
+    version: '14.0.2'
     cache: 'false'
     commands: 'health'
 ```
@@ -466,10 +469,10 @@ can read it instead of copying it.
 ### Use outputs in subsequent steps
 
 ```yaml
-- uses: Cranot/roam-code@v14.0.1
+- uses: Cranot/roam-code@v14.0.2
   id: analysis
   with:
-    version: '14.0.1'
+    version: '14.0.2'
     commands: 'health'
 
 - name: Report health score
