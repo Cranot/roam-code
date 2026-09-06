@@ -192,7 +192,7 @@ Add the following to your project's `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Cranot/roam-code
-    rev: v13.4            # pin to a release tag
+    rev: v14.0.4          # pin to a release tag
     hooks:
       - id: roam-secrets        # secret scanning -- no index required
       - id: roam-syntax-check   # tree-sitter syntax validation -- no index required
@@ -304,7 +304,7 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
 
 6. Add tests in `tests/`
 
-7. Refresh the command/MCP-tool counts that appear in `README.md`, `CLAUDE.md`,
+7. Refresh the command/MCP-tool counts that appear in `README.md`, `AGENTS.md`,
    `llms-install.md`, and the MCP server cards:
 
    ```bash
@@ -370,8 +370,9 @@ migration. See the `_W210_OMIT_WHEN_DEFAULT_FIELDS` discipline in
 `src/roam/evidence/change_evidence.py`.
 
 **Where to read more:** `dev/MCP-SECURITY-POSTURE.md` (gateway-integrator
-audience), the "MCP runtime security" section of `CLAUDE.md`, the 12 substrate
-packages and 8 evidence questions in `AGENTS.md`, and Discussion
+audience), the "MCP boundary security" section of `AGENTS.md`, the 12 substrate
+packages in `AGENTS.md`, the eight evidence questions in
+`docs/understanding-roam.md`, and Discussion
 [#37 reply](https://github.com/Cranot/roam-code/discussions/37#discussioncomment-16967163).
 
 #### Findings-registry discipline
