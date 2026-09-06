@@ -558,7 +558,60 @@ marks it out of scope; it never invents a value.
 7. What verified it?
 8. Who accepted residual risk?
 
-## 9. Where to go next
+## 9. Potential, and what is still open
+
+A multi-angle pass over the final source and both orientation documents
+(2026-09-06, an independent reviewer model working from the code) settled
+these points. Inferences are marked as such.
+
+- **The graph is a candidate set, not a census.** Method calls reached
+  through a receiver (`law.to_dict()`, `match.to_dict()`) may not resolve to
+  the method's definition; the code says so itself
+  (`src/roam/laws/miner.py:101-104`), and the resolver carries locality and
+  fallback rules (`src/roam/index/relations.py:1234`). Read `uses` and
+  `impact` as "indexed consumers whose completeness varies by construct". The single
+  most useful addition for agents would be a resolution account beside each
+  caller list: exact, import, bridge, or fallback resolution, and nearby
+  unresolved receiver references; `edges.bridge` and `edges.confidence`
+  already carry part of that vocabulary (`src/roam/db/schema.py:45`).
+- **Discovery is an interface property.** With the `core` preset an agent
+  never meets most of the surface; `roam ask` and automatic task compilation
+  are the routes that reach it. More capability sits behind the action space
+  than the action space reveals.
+- **Three futures the code already reaches toward** (inferences from the
+  substrate, not documented commitments): a maintained kernel boundary that
+  is smaller than the CLI boundary, with drivers such as compile-code
+  consuming it; verification obligations emitted as a second compiled output
+  beside context, later discharged by receipts and the verdict engine
+  (`src/roam/plan/compiler.py`, `src/roam/review_receipt.py`,
+  `src/roam/verdict.py`); and repair hypotheses that travel between
+  repositories and earn acceptance locally by replay
+  (`src/roam/knowledge/knowledge_claim.py`, `src/roam/sibling_patch/`).
+- **Three things the code carries that nothing uses**: two law-mining
+  strategies that return empty lists (`src/roam/laws/miner.py:668`, `:684`)
+  and workspace and CI-only command facts that no extractor populates
+  (`src/roam/command_graph.py:176`).
+- **What the trust model forecloses**: an independently trusted control
+  plane on local trust alone (a review receipt binds a declaration to
+  artifact bytes; review occurrence and reviewer identity are declarations,
+  so an agent able to author the receipt can fabricate the review,
+  `src/roam/review_receipt.py:10`); compiler-grade
+  resolution by adding graph algorithms rather than semantic evidence; and
+  "local" as execution containment (repository test commands run with the
+  caller's authority, `src/roam/sibling_patch/replay_gate.py:30`).
+- **The experiment that would settle the biggest open question** is a
+  call-graph precision and bounded-recall study: six untuned repositories
+  across three language families, 600 sampled emitted edges and 600 sampled
+  call sites, two independent labellers, indeterminate kept in the
+  denominator, lexical and compiler baselines, a preregistered promotion
+  line, and a fresh repository set for any re-run after repairs.
+- **Questions these pages still cannot answer**: which reference kinds the
+  graph misses by language and construct; which commands independent users
+  actually repeat; the maintenance cost per subsystem; who besides the
+  owner can qualify and publish a release; and which claimed capability
+  belongs to the published wheel versus the current source.
+
+## 10. Where to go next
 
 - Build rules, anti-patterns, and the add-a-command checklist: `AGENTS.md`.
 - Command reference: `docs/COMMANDS.md`. Agent CLI contract:
