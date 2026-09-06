@@ -10,6 +10,7 @@ the next website deployment; a Git push alone does not publish the site.
 
 | Need | Maintained source |
 | --- | --- |
+| Understand what Roam is, how to speak about it, and how an agent should trust its output | [Understanding roam-code](understanding-roam.md) |
 | Install and run the first analysis | [Getting started](../templates/distribution/landing-page/docs/getting-started.html) |
 | Run Roam in Docker | [Containers, mount permissions and release evidence](containers.md) |
 | Find a command or workflow | [User command reference](../templates/distribution/landing-page/docs/command-reference.html), [complete command index](COMMANDS.md) |

@@ -16,6 +16,7 @@ Authoritative counts (AST-derived, env-independent): `command_count: 287 · cano
 
 ## Documentation Hub
 
+- **Orientation** (read once before anything else): [docs/understanding-roam.md](docs/understanding-roam.md) — what roam is, why it is mechanical and agent-first, what has been measured, how we speak, and how to gate on its output.
 - **Dogfood corpus** (read for quality lessons): `internal/dogfood/` — 212-eval corpus + 6 systemic-pattern synthesis. Single most important reference for understanding what good roam-command behavior looks like. Start with `internal/dogfood/README.md`. (Private — gitignored; not shipped to PyPI/GitHub.)
 - Getting started tutorial: `templates/distribution/landing-page/docs/getting-started.html`
 - Command reference with examples: `templates/distribution/landing-page/docs/command-reference.html`
