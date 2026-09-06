@@ -28,8 +28,10 @@ Each word, defined honestly:
   cell by design (`src/roam/commands/cmd_bench.py:94-101`). `roam ask` is "a deterministic
   intent classifier over a small recipe book" (`src/roam/ask/__init__.py:5`);
   `roam plan` and `roam compile` ship "zero model calls"
-  (`src/roam/plan/__init__.py:5`). The learned reranker in `roam retrieve` is
-  a local gradient-boosted model.
+  (`src/roam/plan/__init__.py:5`). `roam retrieve` has an optional local
+  gradient-boosted reranker; no trained model ships by default, and when
+  the model or LightGBM is absent ranking falls back to the existing blend
+  (`src/roam/retrieve/learned_ranker.py:9`).
 - **Instant.** The word is in the project's first README (commit
   `12befe60`, 2026-02-09): "1 command. Instant. Zero round-trips." Today it
   means one index, then queries against
@@ -54,6 +56,16 @@ mechanical path usually exists and is not obvious *[internal, 2026-08]*. Roam
 is where that rule became code. Structural knowledge that can be checked
 hardens into a detector, and a detector fires or it does not, which makes it
 cheap to run and, by design intent, hard to game.
+
+Mechanical does not mean static-only. Roam can obtain evidence by executing
+a fixed experiment or replaying observed behaviour: `calc-probe` compares
+rounding idioms across installed runtimes and `calc-golden` compares a
+candidate calculation with historical input and output cases
+(`src/roam/commands/cmd_calc_probe.py:1`, `cmd_calc_golden.py:1`). Those
+establish behaviour under the recorded cases and environment, not universal
+correctness. The reusable asset is a question with an explicit observation
+procedure and a stated scope, which is a second foundation beside the graph
+and does not inherit the graph's resolution uncertainty.
 
 ## 2. What it is, in one screen
 
@@ -103,7 +115,11 @@ Default `--json` responses are `roam-envelope-v1` envelopes
 `command`, `version`, `project`, `summary`, an auto-derived `agent_contract`,
 and `_meta`. `--agent` switches on compact output, which drops the identity
 and `_meta` keys and keeps `summary` (`src/roam/cli.py:2044-2052`,
-`formatter.py:1853-1896`). Timestamps and index age live under `_meta` so content keys stay
+`formatter.py:1853-1896`). Compact output returns before the freshness
+stamp (`formatter.py:1736`), so `--agent` and `--compact` remove the
+`_meta` freshness channel; a consumer gating on evidence should keep the
+full JSON envelope and establish source freshness separately. Timestamps and
+index age live under `_meta` so content keys stay
 byte-stable for prompt caching (`formatter.py:1703-1706`), with two known
 exceptions: MCP sampling adds a model-written `briefing` at top level
 (`src/roam/mcp_extras/sampling.py:202-217`), and attestation payloads carry
@@ -153,8 +169,10 @@ Counts in prose drift. The authoritative numbers come from `roam surface
 
 ### What leaves the machine
 
-Nothing by default. The full inventory is `docs/network-boundary.md`; the
-named exceptions (`:15-23`) are: the first parse of a language downloads a
+Roam does not automatically upload repository source, telemetry, or
+analysis results. A missing parser can trigger an automatic grammar
+download, and explicitly selected features have the network paths below;
+the full inventory is `docs/network-boundary.md` (`:15-23`): the first parse of a language downloads a
 checksum-verified grammar bundle; `roam version --check`, `roam metrics-push`,
 and the GitHub check-run poster are explicit online commands; `roam
 bench-compile` launches `claude -p`; `roam pr-analyze
@@ -236,8 +254,12 @@ a downstream consumer *[internal, 2026-08-23]*:
 
 The safe form, in order:
 
-1. Use `--json`, pipe the exact diff after confirming the diff command
-   succeeded, pass `--intent`, and check `summary.review_source`.
+1. Capture the intended diff and require the git command to succeed. If
+   the diff is empty, record that the selected scope contains no diff; do
+   not pipe empty input to `critique`, which would select another change.
+   For a non-empty diff use `--json`, pass `--intent`, and check
+   `summary.review_source`. An explicit `--input` file rejects empty input
+   instead of selecting another change (`cmd_critique.py:929`).
 2. Treat exit 3, 4, 6, any `truncated: true`, `partial_success: true`, a
    present `_meta.index_status`, and any `check_status` entry that is not
    `"ran"` as **UNKNOWN**, never as a pass. Refresh the index yourself rather
@@ -249,6 +271,13 @@ The safe form, in order:
 
 Exit 5 under a gate is a clean mechanical refusal, and it can mean either a
 violation or an incomplete scan; both are non-pass.
+
+Read the command-specific evidence state as well as the common envelope.
+`partial_success: false` is not sufficient on its own to establish a usable
+answer: inspect the oracle value and each command's evidence fields as well.
+Define the answer states your
+consumer accepts, keep unfamiliar states as UNKNOWN, and test the serialized
+producer-to-consumer path with missing, stale, truncated, and valid inputs.
 
 ### Absent state is named, never coerced
 
@@ -306,13 +335,26 @@ private companion; the rules themselves are public.
   grammar languages are skipped (`src/roam/commands/cmd_verify.py:1953-1978`,
   `:2047-2055`, `:2130-2161`). A tree-sitter parse accepts constructs a real
   compiler rejects. Corroborate with the real toolchain.
-- `roam clones --persist` must run before clone-aware checks. `critique` and
-  `oracle is-clone-of` qualify the saved scan: filtered, capped at 2,000
-  functions, incomplete, or stale scans carry `partial_success: true`.
-  The oracle keeps positive saved pairs visible but answers indeterminate on
-  unmatched names until a current completed scan supports a bounded negative.
-  See [detector evidence](concepts/detector-evidence.md#clone-scans-and-patch-review).
-  Retrieval still reads pairs without checking scan metadata.
+- `roam clones --persist` supplies saved clone pairs. `critique` qualifies
+  the saved scan: filtered, capped at 2,000 functions, incomplete, or stale
+  scans carry a qualified check status and `partial_success: true`
+  (`docs/concepts/detector-evidence.md:51-76`). `oracle is-clone-of` also
+  qualifies saved pairs. Its CLI JSON output, CLI JSON batch results, and MCP batch results
+  preserve `check_status`, `clone_scan`, and `partial_success`; both batch
+  producers aggregate partial state in `summary.partial_success`
+  (`src/roam/commands/cmd_oracle.py:750, 775`; `src/roam/mcp_server.py:10156,
+  10174`). An unmatched non-empty name remains indeterminate unless a
+  complete, current scan supports a negative within its recorded detector
+  bounds. Positive saved pairs stay visible when scan evidence is partial;
+  `value: true` alone does not establish a current, complete scan.
+  Retrieval still reads saved pairs without applying scan qualification.
+  Working tree, not yet released (2026-09-06). See
+  [detector evidence](concepts/detector-evidence.md#clone-scans-and-patch-review).
+- `test-impact` reports a failed Git diff as `state: "diff_unavailable"`,
+  `partial_success: true`, and exit 6. Read that state before using the test
+  list: no rows were emitted because the change could not be measured.
+  Even a successful empty selection is not evidence to skip CI; selection
+  depends on indexed symbols, resolution, and the requested hop limit. Working tree, not yet released (2026-09-06).
 - `partition` auto-caps at 8 partitions; `conventions` standalone is noisy on
   large identifier sets; `pr-analyze` reads `--input` and stdin but `critique`
   has the graph-aware checks.
