@@ -567,7 +567,7 @@ these points. Inferences are marked as such.
 - **The graph is a candidate set, not a census.** Method calls reached
   through a receiver (`law.to_dict()`, `match.to_dict()`) may not resolve to
   the method's definition; the code says so itself
-  (`src/roam/laws/miner.py:101-104`), and the resolver carries locality and
+  (`src/roam/laws/miner.py:101-107`), and the resolver carries locality and
   fallback rules (`src/roam/index/relations.py:1234`). Read `uses` and
   `impact` as "indexed consumers whose completeness varies by construct". The single
   most useful addition for agents would be a resolution account beside each
@@ -587,7 +587,7 @@ these points. Inferences are marked as such.
   `src/roam/verdict.py`); and repair hypotheses that travel between
   repositories and earn acceptance locally by replay
   (`src/roam/knowledge/knowledge_claim.py`, `src/roam/sibling_patch/`).
-- **Three things the code carries that nothing uses**: two law-mining
+- **Three things the code carries without productive implementation**: two law-mining
   strategies that return empty lists (`src/roam/laws/miner.py:668`, `:684`)
   and workspace and CI-only command facts that no extractor populates
   (`src/roam/command_graph.py:176`).
