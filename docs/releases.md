@@ -94,10 +94,18 @@ release gate before pushing the version-bump commit:
 set -eu
 release_status="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$release_status"
+git fsck --connectivity-only --no-dangling
 python scripts/prepush_check.py --release
 release_sha="$(git rev-parse HEAD)"
 git push origin main
 ```
+
+Keep long-running qualification clones outside directories subject to automatic
+age-based cleanup. A local clone can retain old modification times on copied
+Git objects; a cleanup service may remove them during the run even when the
+checkout was just created. Verify Git connectivity before and after qualification,
+and keep the source commit and final clean-tree check with the test receipt.
+An interrupted or damaged clone does not qualify a release.
 
 Wait for the commit CI run for `release_sha` to pass. Then prove local `HEAD`
 and `origin/main` still name that exact reviewed commit, derive the version from
