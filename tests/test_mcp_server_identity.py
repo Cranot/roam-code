@@ -25,11 +25,15 @@ def test_initialize_advertises_roam_package_not_framework_version(tmp_path):
             cwd=tmp_path,
             env=env,
         )
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=30)) as session:
-                result = await session.initialize()
-                tools = await session.list_tools()
-                return json.loads(result.model_dump_json()), [tool.name for tool in tools.tools]
+        # An SDK default captured at import time can point to pytest/Click's
+        # in-memory stderr, which has no POSIX subprocess fileno. Keep a real,
+        # task-local descriptor and retain server diagnostics on every platform.
+        with (tmp_path / "mcp-stderr.log").open("w", encoding="utf-8") as errlog:
+            async with stdio_client(params, errlog=errlog) as (read, write):
+                async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=30)) as session:
+                    result = await session.initialize()
+                    tools = await session.list_tools()
+                    return json.loads(result.model_dump_json()), [tool.name for tool in tools.tools]
 
     result, tools = asyncio.run(observe())
     assert result["serverInfo"]["name"] == "roam-code"
