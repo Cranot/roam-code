@@ -55,6 +55,7 @@ def test_stdio_tool_calls_do_not_inherit_the_protocol_input(tmp_path, monkeypatc
     git_init(root)
     output, code = index_in_process(root)
     assert code == 0, output
+    (root / "roam.py").write_text('print(\'{"command":"PROJECT_MODULE_EXECUTED"}\')\n', encoding="utf-8")
 
     async def observe():
         params = StdioServerParameters(
