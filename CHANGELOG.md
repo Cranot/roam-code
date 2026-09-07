@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [14.1.0] — 2026-09-07
+
 ### Fixed
 
 - **Literal agent-hook execution.** Install Claude hooks with an explicit interpreter and argument list so spaces and shell metacharacters in paths stay literal. Migrate exact legacy entries, preserve customized hooks and neighboring commands, and require coordinated consumer readiness checks. Actual dispatch is qualified separately from configuration; a successful agent exit is not a verification receipt.
