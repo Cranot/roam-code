@@ -42,9 +42,11 @@ their interpreter and import root to the running Roam installation. They ignore
 Python import-path environment overrides and remove the analyzed directory from
 module lookup. A project-local `roam.py` must not replace the analysis tool.
 Argument-only and progress-reporting children receive empty stdin; explicit
-patch-review input uses its own pipe. The client's protocol stream is not input
-to those CLI children. Regression controls cover both import-path sources and
-preserve real search results and caller-supplied diff review.
+patch-review input uses its own pipe. These children explicitly use UTF-8 to
+match the parent pipe encoding, including on Windows with a non-UTF-8 locale.
+The client's protocol stream is not input to those CLI children. Regression
+controls cover both import-path sources and preserve real search results and
+caller-supplied diff review for ASCII and non-ASCII source filenames.
 
 This protects those child launch boundaries; it is not an operating-system
 sandbox or a guarantee about every executable a selected command may run.

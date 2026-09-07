@@ -283,12 +283,9 @@ def _git_ls_files(root: Path, skips: dict[str, list[str]] | None = None) -> list
 
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
             cwd=str(root),
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=30,
             env=worktree_git_env(root),
         )
@@ -304,12 +301,15 @@ def _git_ls_files(root: Path, skips: dict[str, list[str]] | None = None) -> list
         # the English warning would bind this to git's locale and fail open
         # under LANG -- an unreadable message must not become an unread
         # directory.
-        if skips is not None and result.stderr.strip():
-            for line in result.stderr.splitlines():
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        if skips is not None and stderr.strip():
+            for line in stderr.splitlines():
                 line = line.strip()
                 if line:
                     skips.setdefault(SKIP_UNENUMERABLE, []).append(_quoted_path(line) or line)
-        paths = [p.strip() for p in result.stdout.splitlines() if p.strip()]
+        # NUL records disable Git's path quoting. Decode bytes explicitly so
+        # text-mode newline normalization cannot alter literal carriage returns.
+        paths = [p for p in result.stdout.decode("utf-8", errors="replace").split("\0") if p]
         return paths
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None

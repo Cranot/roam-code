@@ -57,8 +57,8 @@ _RUN_ROAM_SNIPPET = (
 
 
 def _roam_subprocess_cmd(args: list[str]) -> list[str]:
-    """Build a child Python command that imports this installed/source tree."""
-    return [sys.executable, "-E", "-c", _RUN_ROAM_SNIPPET, "--json", *args]
+    """Import this installed/source tree with the parent's UTF-8 pipe contract."""
+    return [sys.executable, "-E", "-X", "utf8", "-c", _RUN_ROAM_SNIPPET, "--json", *args]
 
 
 def _subprocess_env(env: dict[str, str] | None = None) -> dict[str, str]:

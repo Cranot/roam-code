@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Literal source filenames and UTF-8 review input.** Discover tracked and untracked files using NUL-delimited Git output, preserving non-ASCII names and literal whitespace instead of treating quoted paths as filenames. Run MCP CLI children in explicit UTF-8 mode so supplied diffs match indexed filenames on Windows as well as Linux. Preserve import isolation and unreadable-directory disclosure.
 - **MCP child-process import identity.** Use the server's installed import root for explicit-path analysis and supplied-diff review. A project-local `roam.py` or Python import-path environment setting can no longer replace those CLI children. Reuse the progress runner's import isolation and preserve literal arguments and explicit diff input.
 - **MCP tool calls on explicit repository paths.** Keep the protocol input stream out of argument-only CLI children, preventing tool calls from hanging while the client connection stays open. Apply the same isolation to progress-reporting children; explicit patch-review diffs still use their dedicated input channel. Cover matching searches, empty results and a follow-up request through a real client connection.
 - **MCP server identity.** Advertise Roam's installed package version during the protocol handshake instead of inheriting the framework's version. Exercise initialization and tool discovery through the real stdio transport.
