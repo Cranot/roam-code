@@ -421,8 +421,11 @@ _COMPAT_STRICT: bool = _env_truthy("ROAM_MCP_COMPAT_STRICT", "1")
 # ---------------------------------------------------------------------------
 
 if FastMCP is not None:
+    from roam import __version__ as _roam_package_version
+
     mcp = FastMCP(
         "roam-code",
+        version=_roam_package_version,
         instructions=(
             "Codebase intelligence for AI coding agents. "
             # `roam_expand_toolset` cannot expand anything from inside a

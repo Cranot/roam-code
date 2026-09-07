@@ -746,7 +746,8 @@
         "--high-callers",
         "--input",
         "--intent",
-        "--persist"
+        "--persist",
+        "--working-tree"
       ],
       "function": "critique",
       "module": "roam.commands.cmd_critique"

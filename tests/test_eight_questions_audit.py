@@ -24,10 +24,10 @@ scoring into an executable audit so every wave can:
 2. Verify that a fully-populated packet can earn ``"complete"`` on all
    eight questions (regression guard against the bar moving out of
    reach).
-3. Record the AS-OF-TODAY score on roam-code's own ``pr-replay``
-   output, so any future wave that lowers the bar fails loudly. The
-   threshold is asymmetric (``>=``): coverage going UP is fine and
-   should prompt a deliberate bump of the literal in this file.
+3. Exercise the real ``pr-replay`` producer and serialized evidence with
+   an isolated Git history and declared/missing actor controls. Keep the
+   six-answer threshold when identity is supplied and require an honest
+   Q1 gap when it is absent; no developer config or CI skip supplies proof.
 
 DESIGN NOTE - delegation, not duplication
 -----------------------------------------
@@ -262,7 +262,7 @@ def test_score_values_are_closed_enumeration(
 
 
 # ---------------------------------------------------------------------------
-# Integration: score the current roam-code pr-replay output
+# Integration: score controlled current-producer pr-replay output
 # ---------------------------------------------------------------------------
 #
 # Trajectory: 3 -> 5 -> 6 -> 7 complete answers, lifted across four waves.
@@ -478,105 +478,85 @@ def _packet_from_pr_replay_json(payload: dict) -> ChangeEvidence:
     )
 
 
-def test_current_roam_code_assurance_coverage(tmp_path: Path) -> None:
-    """The executable W186 audit on this repo's own pr-replay output.
+@pytest.mark.parametrize("has_actor", [True, False], ids=["declared-actor", "missing-actor"])
+def test_current_roam_code_assurance_coverage(tmp_path: Path, monkeypatch, has_actor: bool) -> None:
+    """Exercise the serialized producer with explicit, isolated actor inputs.
 
-    Runs ``roam pr-replay --tier sample --evidence <path>`` against the
-    current working tree, scores the packet, and asserts the count of
-    ``"complete"`` answers is ``>= EXPECTED_COMPLETE_COUNT_TODAY``.
-
-    The ``--tier sample`` path is deterministic enough to use as a
-    smoke-target: it always emits a packet with five commits worth of
-    findings and a stable set of W182 refs. We deliberately do NOT
-    assert per-Q values here (those live in the parametrised tests
-    above) — only the aggregate count, because that's what a future
-    wave will move and we want the failure message to point at "the
-    bar moved" not "Q3 changed in a way the test didn't expect".
-
-    Skip behaviour: if ``pr-replay`` exits non-zero (typically because
-    the harness is run in a shallow checkout without ``HEAD~5``), we
-    skip rather than fail — the audit is about coverage of the evidence
-    packet, not about whether the producer ran. The directive's W201
-    pattern is the source for this skip discipline.
-
-    Extended skip (W1285): on GitHub Actions runners we skip too. The CI
-    environment lacks the rich git config + history depth that locally
-    fills Q1 (actor) and Q7 (verification), so the packet completeness
-    score drops from 7/8 to 4/8 — not a regression, just a constrained
-    environment. This test pins LOCAL development coverage; producer
-    gaps on CI are tracked separately on the producer-coverage matrix.
+    A developer's git config, run ledger, attestations and history are not test
+    fixtures. The six-answer control declares its actor; the paired no-identity
+    control must honestly lose Q1 rather than fabricate an actor. Both run in CI
+    and shallow source checkouts because the fixture owns its six commits.
     """
     import os
+    import subprocess
 
     from roam.cli import cli
 
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        pytest.skip(
-            "W1285: GitHub Actions lacks the git config + history depth "
-            "that fills Q1/Q7 — packet coverage on CI is producer-side "
-            "constrained, not a regression. This test pins LOCAL coverage."
+    for key in (
+        "ROAM_AGENT_ID",
+        "ROAM_HUMAN_ACTOR",
+        "ROAM_MCP_CLIENT_ID",
+        "ROAM_CI_RUNNER_ID",
+        "GITHUB_ACTIONS_RUN_ID",
+        "ROAM_RUN_ID",
+        "ROAM_DB_DIR",
+        "ROAM_PROJECT_ROOT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "0")
+    if has_actor:
+        monkeypatch.setenv("ROAM_HUMAN_ACTOR", "fixture@example.invalid")
+
+    repo = tmp_path / "assurance-repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    (repo / ".gitignore").write_text(".roam/\n", encoding="utf-8")
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Assurance fixture",
+        "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+        "GIT_COMMITTER_NAME": "Assurance fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+    }
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", f"core.hooksPath={os.devnull}", *args],
+            cwd=repo,
+            env=git_env,
+            capture_output=True,
+            check=True,
         )
 
+    git("init", "-q")
+    for number in range(6):
+        (repo / "sample.py").write_text(f"def answer():\n    return {number}\n", encoding="utf-8")
+        git("add", ".gitignore", "sample.py")
+        git("commit", "-q", "-m", f"Fixture change {number}")
+
     target = tmp_path / "current-evidence.json"
-    runner = CliRunner()
-    result = runner.invoke(
+    result = CliRunner().invoke(
         cli,
         ["pr-replay", "--tier", "sample", "--evidence", str(target)],
         catch_exceptions=False,
     )
-    if result.exit_code != 0:
-        pytest.skip(
-            f"pr-replay exited {result.exit_code}; likely a shallow checkout. Output head:\n{result.output[:200]}"
-        )
+    assert result.exit_code == 0, result.output
     assert target.exists(), "pr-replay reported success but wrote no file"
-
     payload = json.loads(target.read_text(encoding="utf-8"))
     packet = _packet_from_pr_replay_json(payload)
     full = packet.evidence_completeness()
-    complete_count = full["complete"]
-    partial_count = full["partial"]
-
-    # A local checkout that has run roam carries CGA attestations under
-    # ``.roam/attestations/``; the pr-replay producer folds them into
-    # ``cga_predicate`` verification artifacts, which lifts Q7 from ``partial``
-    # to ``complete``. That legitimately changes the (complete, partial) split
-    # away from the clean-checkout baseline this test pins
-    # (EXPECTED_COMPLETE_COUNT_TODAY=6 / EXPECTED_PARTIAL_COUNT_TODAY=2), so the
-    # lower-bound partial guard below no longer describes this environment.
-    # This is a checkout-state difference (same class as the W1285 CI skip and
-    # the shallow-checkout skip above), NOT a platform difference — a Linux dev
-    # box with attestations would score identically. Skip rather than fail; the
-    # test still runs in full on a clean checkout (Linux CI, fresh clone).
-    if full["Q7"] == "complete":
-        pytest.skip(
-            "local checkout carries CGA attestations (.roam/attestations/) that "
-            "fold into cga_predicate verification artifacts, lifting Q7 to "
-            "'complete' and shifting the complete/partial split off the "
-            "clean-checkout baseline this test pins. Not a regression - the "
-            "same producer-side environment dependency as the W1285 CI skip."
-        )
-
-    assert complete_count >= EXPECTED_COMPLETE_COUNT_TODAY, (
-        "Coverage REGRESSED: expected at least "
-        f"{EXPECTED_COMPLETE_COUNT_TODAY} 'complete' answers, got "
-        f"{complete_count}. Per-Q scores:\n"
-        + "\n".join(f"  Q{i}: {full[f'Q{i}']}" for i in range(1, 9))
-        + "\n\nIf this is a deliberate strip of a Q, update "
-        "EXPECTED_COMPLETE_COUNT_TODAY in tests/test_eight_questions_audit.py. "
-        "If not, find the wave that removed the field and restore it."
-    )
-
-    # W261 — partial-count regression guard. The W261 marker pushes Q8
-    # from ``missing`` to ``partial`` so the banner stays honest about the
-    # producer-side acceptance gap. If a future wave silently strips the
-    # marker, partial drops back to 0 and this assertion catches it.
-    assert partial_count >= EXPECTED_PARTIAL_COUNT_TODAY, (
-        "Partial-coverage REGRESSED: expected at least "
-        f"{EXPECTED_PARTIAL_COUNT_TODAY} 'partial' answers (W261 marks "
-        "Q8 as partial via producer_not_available); got "
-        f"{partial_count}. Per-Q scores:\n"
-        + "\n".join(f"  Q{i}: {full[f'Q{i}']}" for i in range(1, 9))
-        + "\n\nIf a wave lifted Q8 to 'complete' via a real approvals "
-        "harvester, drop EXPECTED_PARTIAL_COUNT_TODAY accordingly AND "
-        "ratchet EXPECTED_COMPLETE_COUNT_TODAY up by the same amount."
-    )
+    assert full["Q1"] == ("complete" if has_actor else "missing"), full
+    if has_actor:
+        assert any(actor.actor_id == "fixture@example.invalid" for actor in packet.actor_refs)
+    else:
+        assert not packet.actor_refs
+    # Keep the original six-answer threshold for a declared actor. The missing
+    # actor control changes only Q1; neither branch supplies verification or
+    # human acceptance that did not occur.
+    expected_complete = EXPECTED_COMPLETE_COUNT_TODAY - int(not has_actor)
+    assert full["complete"] >= expected_complete, full
+    assert full["partial"] >= EXPECTED_PARTIAL_COUNT_TODAY, full
+    assert full["Q7"] == "partial", full
+    assert full["Q8"] == "partial", full
