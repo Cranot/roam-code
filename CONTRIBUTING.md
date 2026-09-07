@@ -105,8 +105,9 @@ uv run --no-sync pytest tests/ -n 0
 ```
 
 Local pytest is sequential unless you pass `-n`. The `roam.testing.ci_xdist`
-plugin enables `-n auto --dist loadgroup` when `CI` is set and no explicit
-worker option is supplied. Use a bounded worker count locally to control memory,
+plugin selects two workers by default when `CI` is set, pytest-xdist is
+available, and no explicit worker/distribution option is supplied. This repo
+sets `ROAM_XDIST_WORKERS` to four in CI. `ROAM_AUTO_XDIST=0` disables injection. Use a bounded worker count locally to control memory,
 native-library threads, and temporary disk usage. Runtime depends on the machine
 and suite; the full non-slow suite can take hours on Windows.
 
@@ -468,73 +469,14 @@ CI lints generated reports AND commit messages / docs for over-claim wording:
 
 ## Version + release cadence
 
-Package identity comes from `pyproject.toml` → `version`. Install instructions
-have a separate authority: the highest published `v*` tag, so documentation
-does not tell users to fetch an unreleased version. The synchronization scripts
-preserve that distinction:
+Use the [release guide](docs/releases.md) for version authority, release cadence,
+generated files, exact-commit CI, tagging, and published-package verification.
+Installation examples follow a published release; package identity follows
+`pyproject.toml`. Historical measurements keep their original version.
 
-| Script                             | Owns                                                                                                                                                              |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/sync_surface_counts.py`   | Release **pins** — `roam-code==X`, `Cranot/roam-code@vX`, `action.yml`'s `version` input default, `server.json` (server + PyPI package pin), `docs/COMMANDS.md`, `docs/ci-integration.md`, the shipped CI templates, `templates/examples/`, landing-page version stamps. Plus all surface counts. |
-| `dev/build_readme_counts.py`       | The `mcp-server-card.json` family (bundled + 3 public mirrors) and the marker-protected count blocks in README / CLAUDE / AGENTS / llms-install.                     |
-
-Both run in dry-run/check mode as CI gates. Identity drift is checked against
-`pyproject.toml`; install-pin drift is checked against the published tag.
-Repair surface pins with
-`scripts/sync_surface_counts.py --write` and generated blocks/cards with
-`dev/build_readme_counts.py --apply`. Regenerate the command index with
-`scripts/build_commands_doc.py` when its registry changes.
-
-Not every version literal is derived, and a find-replace across the repo is
-wrong. Three other classes exist and each is deliberate:
-
-- **Historical** — a record of what was measured or built at a past version:
-  `CHANGELOG.md` and its rendered `changelog.html`, `benchmarks/cross-repo-l1/`,
-  `templates/audit-report/sample-redacted.md`, and the narrative comments in
-  `src/roam/plan/compiler.py`, `src/roam/plan/plan_cache.py`, `src/roam/verdict.py`.
-  Rewriting one falsifies a result. Never sync these.
-- **Deliberately lagging** — `.github/workflows/roam.yml` consumes this repo's
-  *own published* action, so it can only pin a tag/SHA that already exists. It
-  moves in a follow-up commit **after** the release tag is pushed.
-- **Fixture / illustrative** — arbitrary version values in test fixtures and
-  PEP 440 grammar examples. They carry no pin shape and nothing syncs them.
-
-The exemption registry with a reason per entry is
-`scripts/sync_surface_counts.py::_VERSION_PIN_EXEMPT`; the gate and both
-controls are pinned by `tests/test_w1501_release_version_pins.py`.
-
-**Workflow:**
-
-1. Every PR / direct push lands under `[Unreleased]` in `CHANGELOG.md`.
-2. A *release* is a deliberate event:
-   1. bump `pyproject.toml`;
-   2. rename `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`, add a fresh empty
-      `[Unreleased]` block;
-   3. run `python scripts/sync_surface_counts.py --write` and
-      `python dev/build_readme_counts.py --apply`, followed by
-      `python scripts/build_commands_doc.py`; re-running their check modes
-      must then be clean;
-   4. run `python scripts/build_changelog_html.py --write` to re-render
-      `changelog.html` from the new `CHANGELOG.md` section (authoring the
-      section is the one genuinely manual step);
-   5. `uv lock` so `uv.lock`'s own `roam-code` row follows — CI's
-      `uv sync --locked` fails otherwise;
-   6. tag and publish to PyPI.
-3. **After** the tag and package are published, rerun the surface-sync script
-   so install examples follow the newly available release, and check the targets
-   with `python scripts/check_install_targets.py --network`. Update the dormant
-   `.github/workflows/roam.yml` reference to a reviewed release SHA in a follow-up
-   commit when refreshing that example.
-4. Aim for **weekly to bi-weekly** releases. Patches (`X.Y.Z`) for
-   hotfixes only. Don't bump version per commit.
-
-**SemVer interpretation here:**
-
-| Bump        | Meaning                                                |
-| ----------- | ------------------------------------------------------ |
-| Major (`X`) | Breaking change to CLI / MCP API surface               |
-| Minor (`Y`) | New commands, new MCP tools, new languages, schema     |
-| Patch (`Z`) | Bug fixes, doc updates, internal cleanup, CI tweaks    |
+A documentation or website change does not need its own package version bump.
+Record user-visible changes under `[Unreleased]` and follow the guide when a
+package release is deliberately scheduled.
 
 ## Doc-hygiene gates (automatic)
 
@@ -547,7 +489,8 @@ it.
    customer names, etc.).
 2. `scripts/sync_surface_counts.py` — fails if README / llms-install /
    landing pages quote stale command / MCP-tool / language counts, or if any
-   derived **release pin** disagrees with `pyproject.toml` (see above).
+   package identity disagrees with `pyproject.toml` or an installation pin
+   disagrees with the published-tag authority (see the release guide).
 3. `dev/build_readme_counts.py --check` — fails if a marker-protected count
    block or the `mcp-server-card.json` family has drifted.
 4. `scripts/build_changelog_html.py` — fails if the rendered
@@ -557,7 +500,9 @@ it.
 6. `scripts/strip_metadata.py` — fails if a tracked PDF / PNG / SVG carries
    identifying metadata.
 7. `scripts/check_install_targets.py` — verifies that documented installation
-   targets exist. The generated command index is additionally checked by
+   targets resolve in the local tag inventory. Use `--network` to additionally
+   check remote Git tags and PyPI availability; an offline pass is not a
+   published-package check. The generated command index is additionally checked by
    `tests/test_commands_doc_synced.py` in the test suite.
 
 ### Drift-guard discipline
@@ -582,48 +527,17 @@ same commit as the original change, not a follow-up PR:
 
 ## Deploys
 
-Cloudflare Pages goes out by hand (`make site-deploy`; `make site-check`
-compares the live changelog against the declared version and fails on
-drift -- run it after any release cut). The deployment target refuses a dirty
-checkout and records its exact commit. The equivalent direct command is:
+Package publication and website publication are separate operations:
 
-```bash
-set -eu
-site_status="$(git status --porcelain=v1 --untracked-files=all)"
-test -z "$site_status"
-site_sha="$(git rev-parse --verify HEAD)"
-wrangler pages deploy templates/distribution/landing-page \
-  --project-name roam-code --branch main --commit-dirty=false --commit-hash="$site_sha"
-```
+- [Release guide](docs/releases.md#publish-the-verified-package): exact-commit
+  checks, annotated tags, publication, and installed-artifact verification.
+- [Website maintenance](docs/website-maintenance.md#publishing): the clean-source
+  Cloudflare Pages command and live content/header checks.
+- [Containers](docs/containers.md#release-evidence-and-maintenance): the separate
+  opt-in and image-wide review required before container publication.
 
-Use a clean, reviewed revision whose required checks passed. After deployment,
-verify the served changelog/content and security headers, not just HTTP 200.
-The package tag, installed package, and Pages deployment are separate release
-surfaces; record each exact version or source commit.
-
-PyPI publishes from a tag (`.github/workflows/publish.yml`). Run the exact
-release gate before pushing the version-bump commit:
-
-```bash
-python scripts/prepush_check.py --release
-release_sha="$(git rev-parse HEAD)"
-git push origin main
-```
-
-Wait for the commit CI run for `release_sha` to pass. Then prove local `HEAD`
-and `origin/main` still name that exact reviewed commit, derive the version from
-its committed `pyproject.toml`, and attach the annotated tag to the captured SHA:
-
-```bash
-git fetch origin main
-test "$(git rev-parse HEAD)" = "$release_sha"
-test "$(git rev-parse origin/main)" = "$release_sha"
-version="$(python -c 'import sys; toml = __import__("tomllib" if sys.version_info >= (3, 11) else "tomli"); print(toml.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-git tag -a "v${version}" "$release_sha" -m "roam-code ${version}"
-git push origin "v${version}"
-```
-
-Do not create the tag from a dirty tree or before the commit CI run is green.
+A Git push alone does not publish the website. A passed package workflow does
+not establish that an optional container was published.
 
 ## PR Guidelines
 

@@ -38,7 +38,7 @@ _STRICT_DROPS_BASIS = {"heuristic"}
 @roam_capability(
     name="observability-opt",
     category="health",
-    summary="Detect code that leaves systems hard to debug (raw debug prints, ...) and recommend the structured-logging shape",
+    summary="Review raw print candidates and decide whether diagnostics belong in structured logs",
     maturity="beta",
     mcp_expose=True,
     mcp_preset=("core",),
@@ -129,7 +129,7 @@ def observability_opt_cmd(
     limit,
     persist,
 ):
-    """Optimize a repo's diagnosability: find debug prints / weak observability shape."""
+    """Review raw print candidates and their diagnostic context."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
     from roam.observability_opt import (
@@ -244,11 +244,11 @@ def observability_opt_cmd(
 
     # ---- verdict (LAW 6: works standalone) ----
     if total == 0:
-        verdict = f"0 diagnosability improvements found — {n_files} source files scanned"
+        verdict = f"0 diagnosability review candidates — {n_files} source files scanned"
     else:
         plural = "s" if total != 1 else ""
         top_frag = f", top: {top_task}" if top_task else ""
-        verdict = f"{total} diagnosability improvement{plural} found ({high_count} high-confidence{top_frag})"
+        verdict = f"{total} diagnosability review candidate{plural} ({high_count} high-confidence{top_frag})"
     partial = bool(meta.get("partial_success"))
     if partial:
         bits = []
@@ -256,6 +256,10 @@ def observability_opt_cmd(
             bits.append(f"{len(meta['failed_detectors'])} detector(s) failed")
         if not n_files:
             bits.append("no source files harvested")
+        for field, label in (("files_unreadable", "unreadable"), ("files_unparsed", "unparsed")):
+            count = len(meta.get("sources", {}).get(field, []))
+            if count:
+                bits.append(f"{count} {label} source files")
         if persist_error:
             bits.append("persist failed")
         if bits:
@@ -289,6 +293,7 @@ def observability_opt_cmd(
             "failed_detectors": meta.get("failed_detectors", []),
             "source_files_scanned": n_files,
             "files_unreadable": meta.get("sources", {}).get("files_unreadable", []),
+            "files_unparsed": meta.get("sources", {}).get("files_unparsed", []),
             "partial_success": partial,
         }
         if persist:

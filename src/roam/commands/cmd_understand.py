@@ -851,7 +851,9 @@ def understand_cmd(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir)
         def _collect_health():
             from roam.commands.metrics_history import collect_metrics
 
-            return collect_metrics(conn)
+            # Orientation exposes health inputs, not spectral history. Avoid
+            # an unused eigensolver run while retaining the canonical score.
+            return collect_metrics(conn, include_spectral=False)
 
         health = _run_check_bc(
             "collect_metrics",

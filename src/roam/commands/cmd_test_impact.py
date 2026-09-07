@@ -15,16 +15,26 @@ from collections import defaultdict
 import click
 
 from roam.capability import roam_capability
+from roam.commands.changed_files import GIT_ERROR, GIT_NOT_AVAILABLE, GIT_TIMEOUT
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import batched_in, open_db
+from roam.exit_codes import EXIT_PARTIAL
 from roam.index.file_roles import is_test
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
+class _ChangedFilesError(RuntimeError):
+    """The requested changeset could not be measured."""
+
+
 def _changed_files(commit_range: str | None) -> list[str]:
-    args = ["git", "diff", "--name-only"]
+    args = ["git", "diff", "--name-only", "-z"]
     if commit_range:
+        if commit_range.startswith("-"):
+            raise _ChangedFilesError(GIT_ERROR)
         args.append(commit_range)
+    # Disambiguate revisions from paths and preserve Git's literal filenames.
+    args.append("--")
     try:
         proc = subprocess.run(
             args,
@@ -35,11 +45,15 @@ def _changed_files(commit_range: str | None) -> list[str]:
             timeout=10,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
-        return []
+    except FileNotFoundError as exc:
+        raise _ChangedFilesError(GIT_NOT_AVAILABLE) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise _ChangedFilesError(GIT_TIMEOUT) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise _ChangedFilesError(GIT_ERROR) from exc
     if proc.returncode != 0:
-        return []
-    return [ln.strip().replace("\\", "/") for ln in proc.stdout.splitlines() if ln.strip()]
+        raise _ChangedFilesError(GIT_ERROR)
+    return [path.replace("\\", "/") for path in proc.stdout.split("\0") if path]
 
 
 @roam_capability(
@@ -69,7 +83,38 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
-    files = _changed_files(commit_range)
+    try:
+        files = _changed_files(commit_range)
+    except _ChangedFilesError as exc:
+        verdict = f"diff unavailable: {exc}; inspect the Git range before selecting tests"
+        warnings = [f"test_impact_git_diff_failed:{exc}"]
+        if sarif_mode:
+            from roam.output.sarif import test_impact_to_sarif, with_sarif_disclosures, write_sarif
+
+            document = with_sarif_disclosures(test_impact_to_sarif({"tests": []}), warnings)
+            document["runs"][0]["invocations"][0]["executionSuccessful"] = False
+            click.echo(write_sarif(document))
+        elif json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "test-impact",
+                        summary={
+                            "verdict": verdict,
+                            "state": "diff_unavailable",
+                            "git_error": str(exc),
+                            "count": 0,
+                            "count_definition": "emitted_test_rows; unavailable diff does not establish an empty selection",
+                            "partial_success": True,
+                            "warnings_out": warnings,
+                        },
+                        tests=[],
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+        ctx.exit(EXIT_PARTIAL)
     files = [f for f in files if not is_test(f)]
     if not files:
         verdict = f"no non-test source files changed in {commit_range or 'working tree'}"
@@ -112,11 +157,11 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
         return
 
     with open_db(readonly=True) as conn:
-        rows = conn.execute(
-            "SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id "
-            f"WHERE f.path IN ({','.join('?' for _ in files)})",
+        rows = batched_in(
+            conn,
+            "SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id WHERE f.path IN ({ph})",
             files,
-        ).fetchall()
+        )
         seed_ids = [r["id"] for r in rows]
 
         if not seed_ids:

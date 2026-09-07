@@ -34,17 +34,17 @@ Compare with the sibling ``is-test-only`` orphan branch
 (cmd_oracle.py:320-325) which returns ``OracleResult(None, ...)`` and
 emits ``verdict="indeterminate"`` correctly.
 
-The other four oracles are LEGITIMATELY answerable on empty corpus
+Three other oracles are answerable on empty corpus
 (W978 "first hypothesis is often wrong" applied — empty graph really
-does mean "no symbol named foo" / "no clone siblings" / etc.):
+does mean "no symbol named foo" in that index):
 
 - ``symbol-exists`` on missing name: ``value=False`` is correct (no
   such symbol exists, full stop).
 - ``is-test-only`` / ``is-reachable-from-entry`` on missing name:
   ``value=False`` is correct (cannot be test-only / reachable if it
   doesn't exist).
-- ``is-clone-of`` on missing name: ``value=False`` is correct (no
-  persisted clone pairs reference it).
+- ``is-clone-of`` now qualifies absence against saved scan evidence:
+  no completed scan means unknown, not a definitive negative.
 
 The bug is narrowly: the ``route-exists`` "no route-handler symbols
 indexed" branch is the ONE inconsistent shape — reason_class +
@@ -422,19 +422,11 @@ class TestEmptyCorpusLegitimateAnswers:
         assert s["reason_class"] == "definitive_no"
 
     def test_is_clone_of_missing_consistent(self, empty_corpus):
-        """Missing symbol + no clone_pairs rows: verdict=false +
-        reason_class=definitive_no. Either there's no clone table (handled
-        by the OperationalError branch) or no matching qname (handled by
-        the count==0 branch). Both paths are internally consistent."""
+        """No saved scan cannot establish a negative clone answer."""
         result = _invoke_oracle("is-clone-of", "zzNope", json_mode=True)
         envelope = _parse_envelope(result)
         s = envelope["summary"]
-        # On the empty-corpus path, the clone_pairs table either exists
-        # (post-W414b schema) or doesn't (older). Either is fine — we
-        # assert no value/verdict inconsistency.
-        rc = s["reason_class"]
-        verdict = s["verdict"]
-        if rc == "indeterminate_no_data":
-            assert verdict == "indeterminate", f"is-clone-of: rc={rc!r} but verdict={verdict!r}"
-        elif rc == "definitive_no":
-            assert verdict == "false", f"is-clone-of: rc={rc!r} but verdict={verdict!r}"
+        assert s["reason_class"] == "indeterminate_no_data"
+        assert s["verdict"] == "indeterminate"
+        assert s["value"] is None
+        assert s["partial_success"] is True

@@ -22,6 +22,7 @@ place. The TASK catalog IS shared: tasks live in ``catalog/tasks.py`` tagged
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from functools import partial
@@ -55,7 +56,7 @@ __all__ = [
 ]
 
 FAMILY = "observability-opt"
-OBSERVABILITY_OPT_DETECTOR_VERSION = "1.0.0"
+OBSERVABILITY_OPT_DETECTOR_VERSION = "1.1.0"
 
 _VALID_BASES = frozenset({CONFIDENCE_HEURISTIC, CONFIDENCE_STRUCTURAL, CONFIDENCE_STATIC_ANALYSIS, CONFIDENCE_RUNTIME})
 _VALID_COSTS = frozenset({QUERY_COST_LOW, QUERY_COST_MEDIUM, QUERY_COST_HIGH})
@@ -203,8 +204,8 @@ _DEBUG_PRINT_PATTERNS: dict[str, tuple[re.Pattern[str], str]] = {
 
 # Lightweight per-language line-comment markers — skip lines that are wholly a
 # comment so a commented-out ``// console.log(...)`` is not flagged. This is a
-# heuristic (not AST); block comments / string literals are out of scope for
-# the v1 detector and tuned via confidence tier.
+# heuristic for non-Python languages; block comments / string literals there
+# remain out of scope. Python uses AST call nodes instead of text matches.
 _COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
     "python": ("#",),
     "ruby": ("#",),
@@ -234,13 +235,18 @@ def _is_comment_line(stripped: str, language: str) -> bool:
 )
 def detect_print_debug_leftover(
     sources: Iterable[tuple[str, str, str]],
+    *,
+    files_unparsed: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Flag raw debug-print statements left in non-test source.
+    """Flag raw print candidates in non-test source for recovery/output review.
 
     ``sources`` is an iterable of ``(path, language, text)`` — e.g. from
     ``harvest_source_files()``. Caller is responsible for having excluded test
     / docs / generated files. One finding per matching line; confidence tier
-    is per-language (``var_dump`` is high-signal, ``printf`` is low).
+    is per-language. Python requires a bare-name ``print`` call in the AST;
+    comments and literal examples do not count. This does not resolve shadowed
+    builtins or establish that a real call is unintended debugging. Unparseable
+    Python is skipped and collected in ``files_unparsed`` for caller disclosure.
     """
     out: list[dict[str, Any]] = []
     for path, language, text in sources:
@@ -249,11 +255,28 @@ def detect_print_debug_leftover(
         if entry is None or not text:
             continue
         pattern, confidence = entry
-        for lineno, line in enumerate(text.splitlines(), start=1):
+        python_lines = None
+        if lang == "python":
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, ValueError, RecursionError):
+                if files_unparsed is not None:
+                    files_unparsed.append(path)
+                continue
+            python_lines = {
+                node.func.lineno
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print"
+            }
+        # Match Python's physical newline rules: splitlines() also splits
+        # Unicode separators inside literals and form feeds in indentation,
+        # shifting AST coordinates away from the actual call's source text.
+        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if lang == "python" else text.splitlines()
+        for lineno, line in enumerate(lines, start=1):
             stripped = line.strip()
             if not stripped or _is_comment_line(stripped, lang):
                 continue
-            if pattern.search(line):
+            if (lineno in python_lines) if python_lines is not None else pattern.search(line):
                 out.append(
                     _finding(
                         task_id="print-debug-leftover",
@@ -263,10 +286,15 @@ def detect_print_debug_leftover(
                         confidence=confidence,
                         confidence_basis=CONFIDENCE_HEURISTIC,
                         reason=(
-                            f"{path}:{lineno} has a raw debug print "
-                            f"({lang}) — route diagnostics through a structured logger instead"
+                            f"{path}:{lineno} has a raw print candidate ({lang}) — "
+                            "review whether this is intended output or diagnostics for a structured logger"
                         ),
-                        evidence={"language": lang, "line": stripped[:120], "lineno": lineno},
+                        evidence={
+                            "language": lang,
+                            "line": stripped[:120],
+                            "lineno": lineno,
+                            "detection_method": "python_ast_call" if python_lines is not None else "line_pattern",
+                        },
                     )
                 )
     return out
@@ -296,8 +324,8 @@ def run_observability_opt(
 
     Source is harvested once (lazily) and shared across active source-tier
     tasks. ``sources`` may be passed in directly for deterministic tests.
-    ``meta`` carries ``partial_success`` (Pattern 2): True iff a detector raised
-    OR no source could be harvested for an active task.
+    ``meta`` carries ``partial_success`` (Pattern 2) when a detector fails or
+    selected sources are absent, unreadable, or unparseable.
     """
     all_tasks = set(observability_opt_task_ids())
     only_set = {t for t in (only or ()) if t}
@@ -323,15 +351,19 @@ def run_observability_opt(
             harvested, unreadable = sources, []
         sources_meta["source_files_scanned"] = len(harvested)
         sources_meta["files_unreadable"] = unreadable
-        if not harvested:
+        if not harvested or unreadable:
             partial = True  # no signal source -> disclose, don't fake SAFE
 
         if "print-debug-leftover" in active:
+            files_unparsed: list[str] = []
             try:
-                findings.extend(detect_print_debug_leftover(harvested))
+                findings.extend(detect_print_debug_leftover(harvested, files_unparsed=files_unparsed))
                 executed += 1
             except Exception as exc:  # noqa: BLE001 — record + degrade, never silent
                 failed.append({"detector": "detect_print_debug_leftover", "error": f"{type(exc).__name__}: {exc}"})
+                partial = True
+            sources_meta["files_unparsed"] = files_unparsed
+            if files_unparsed:
                 partial = True
 
     if failed:

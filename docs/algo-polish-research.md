@@ -1,14 +1,23 @@
 # Algo Polish Research
 
-Updated: 2026-05-19
+Research snapshot: 2026-05-19. Historical proposals and counts below are retained
+as design context, not the current work queue.
 
-## Current State
+Maintenance review, 2026-09-05: `roam algo --list-tasks` is implemented and the
+command completes; do not schedule it again from this old plan. Run
+`roam algo --list-detectors` for today's installed detector inventory. The
+[detector evidence guide](concepts/detector-evidence.md) now covers supported
+interpretation and known limitations, while [verification evidence](concepts/verification-evidence.md)
+describes paired controls and evaluation discipline. Remaining proposals below
+need fresh implementation and corpus checks before they become planned work.
+
+## Historical implementation snapshot
 
 `roam algo` is the canonical command; `roam math` is the compatibility alias.
 
-What is already built:
+What was recorded as built at that snapshot:
 
-| Surface | Current count | Notes |
+| Surface | Snapshot count | Notes |
 | --- | ---: | --- |
 | Universal catalog tasks | 34 | `src/roam/catalog/tasks.py`; Big-O / rank / language-tip model |
 | Built-in catalog detectors | 34 | Decorated in `src/roam/catalog/detectors.py`; visible through `--list-detectors` |
@@ -42,7 +51,7 @@ Sources checked:
 - CodeQL Python ReDoS: ambiguous repeated subexpressions can drive polynomial or exponential regex matching. https://codeql.github.com/codeql-query-help/python/py-redos/
 - OWASP ReDoS: "evil regex" shapes include repeated groups containing repetition or overlapping alternation. https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
 
-## Priority Queue
+## Historical priority queue
 
 ### P0 - Make The Surface Trustworthy
 

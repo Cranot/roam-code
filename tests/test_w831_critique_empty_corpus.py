@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import textwrap
 
@@ -26,8 +27,8 @@ from roam.output.errors import ALL_CODES, EMPTY_INPUT, parse_code
 
 # Pattern 2 forbidden-fragment blacklist — these are the silent-SAFE
 # defaults that critique MUST NOT emit when the corpus + diff are
-# empty. Substring match is intentional (we want to catch even
-# embedded occurrences in a status line).
+# empty. Match whole terms so envelope metadata such as response_tokens
+# is not mistaken for an OK verdict.
 _FORBIDDEN_FRAGMENTS = ("safe", "no concerns", "ok")
 
 
@@ -82,12 +83,7 @@ def _assert_no_forbidden_fragments(text: str, ctx: str) -> None:
     """
     haystack = text.lower()
     for frag in _FORBIDDEN_FRAGMENTS:
-        # Allow substrings inside structured tokens like "next_command"
-        # that don't carry the silent-SAFE meaning. We require the
-        # fragment to appear as a *word-ish* run, i.e. either at a
-        # boundary or as a standalone token. The conservative test
-        # is: never appear at all in the empty-input message body.
-        assert frag not in haystack, (
+        assert re.search(r"\b" + re.escape(frag) + r"\b", haystack) is None, (
             f"Pattern 2 violation ({ctx}): forbidden fragment {frag!r} found in output\n---\n{text}\n---"
         )
 

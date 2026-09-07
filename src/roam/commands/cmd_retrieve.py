@@ -925,6 +925,10 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
     if candidates:
         verdict = f"{verdict} (confidence {confidence_score:.2f})"
 
+    clone_evidence = result.get("clone_evidence") or {}
+    if clone_evidence.get("partial_success"):
+        verdict += "; clone evidence unqualified (ranking boost omitted)"
+
     if json_mode:
         refinements = (
             _run_check_bi(
@@ -953,6 +957,8 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
             "semantic_coverage_pct": semantic_diag["coverage_pct"],
             "dry_run": dry_run,
         }
+        if clone_evidence.get("partial_success"):
+            summary["partial_success"] = True
         # W607-B + W607-BI combined disclosure: merge BOTH buckets so
         # consumers see every marker (outer-guard ``retrieve_pipeline_*``
         # + per-substrate ``retrieve_<phase>_*``). Empty combined bucket
@@ -973,6 +979,8 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
             "seeds": result["seeds"],
             "candidates": candidates,
         }
+        if clone_evidence:
+            envelope_kwargs["clone_evidence"] = clone_evidence
         if combined:
             # Top-level mirror — required for
             # ``_ALWAYS_PRESERVED_LIST_FIELDS`` survival through
@@ -1023,6 +1031,8 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, repair_intent_path, dry_r
     combined = list(warnings_out) + list(_w607bi_warnings_out)
 
     click.echo(f"VERDICT: {verdict}")
+    if clone_evidence:
+        click.echo(f"CLONE EVIDENCE: {clone_evidence['check_status']}")
     if combined:
         # Pattern-2 disclosure parity with the JSON envelope: a degraded
         # text-mode run must never look identical to a clean one. Before

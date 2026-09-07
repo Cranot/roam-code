@@ -109,7 +109,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_conventions` | Auto-detect codebase naming, file, import, and export conventions with outliers. |
 | `roam_coupling` | Use for: 'what files change together?' / 'find hidden coupling not visible in imports' / 'which sibling file should I also update?'. Pick over reading git log manually — surfaces co-change partners the call graph misses. Use roam_fan for structural connectivity, roam_dark_matter for the latent variant. |
 | `roam_coverage_gaps` | Find unprotected entry points: top-level exported functions / methods that have no call-graph path to a required gate symbol (auth / permission / validation). Supports exact gate names, regex patterns, framework presets (python / javascript / go / java-maven / rust), and a ``.roam-gates.yml`` sidecar config. Different from ``roam_auth_gaps`` (PHP/Laravel source analysis) and ``roam_test_gaps`` (untested symbols in changed files) -- this walks the call graph to verify every entry reaches a required gate. |
-| `roam_critique` | Post-edit patch verifier. Pass `git diff` output as diff_text. Catches clones-not-edited (sibling duplicates the agent missed) and high-blast-radius edits. Grounded in the indexed graph, not heuristics. Triggers: 'review my patch', 'is this PR safe?', after generating any non-trivial diff. |
+| `roam_critique` | Post-edit patch verifier. Pass `git diff` output as diff_text. Catches clones-not-edited (sibling duplicates the agent missed) and high-blast-radius edits. Uses indexed relationships and heuristic checks; incomplete evidence is disclosed. Triggers: 'review my patch', 'is this PR safe?', after generating any non-trivial diff. |
 | `roam_cut` | Find fragile domain boundaries via minimum-cut analysis. Computes the thinnest edge cuts between architectural clusters and the highest-impact 'leak edges' whose removal would best improve domain isolation. Different from ``roam_split`` (decomposes a single file) -- this finds boundaries between clusters. |
 | `roam_cut_analysis` | Minimum cut analysis: fragile domain boundaries, highest-impact leak edges. |
 | `roam_cycles` | Show import/call cycles (Tarjan strongly-connected components) of the symbol graph. Returns per-cycle size, member files/symbols, and an `actionable` flag (spans >=2 distinct non-test files). The focused counterpart to the cycles section of ``roam_health``; sibling of ``roam_clusters`` / ``roam_layers``. |
@@ -157,7 +157,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_for_bug_fix` | Compound: diagnose + affected_tests + diff + context for a symbol you're about to debug. |
 | `roam_for_new_feature` | Compound: understand + search + context + complexity for an area you're about to add code to. |
 | `roam_for_refactor` | Compound: preflight + impact + complexity_report + clones for a symbol you're about to refactor. |
-| `roam_for_security_review` | Compound: taint + vuln + critique + adversarial for a security review pass. |
+| `roam_for_security_review` | Run repository taint and vulnerability inventory checks plus working-change critique and architecture checks. Symbol-scoped review is unsupported and disclosed as incomplete. |
 | `roam_forecast` | Predict when metrics will exceed thresholds (Theil-Sen regression). |
 | `roam_full_coupling` | Composite coupling report for ONE file in a single envelope: top-N temporal coupling pairs touching the file + structural imports/importers + top-N file symbols. Use instead of chaining roam_coupling + roam_deps + roam_file_info. |
 | `roam_generate_plan` | Structured execution plan for code modification: read order, invariants, tests. |
@@ -196,10 +196,10 @@ first-run flow and the canonical agent sequence, and the
 | `roam_mutate` | Agentic editing: move/rename/add-call/extract symbols with auto-import rewrite. |
 | `roam_n1` | Detect N+1 I/O patterns in ORM code (Laravel/Django/Rails/SQLAlchemy/JPA). |
 | `roam_next` | Suggest the next ``roam`` command based on cheap repo-state signals: index presence, staleness, working-tree dirtiness, recent envelope, and recent memory. Emits one imperative recommendation in <200ms. Different from ``roam_brief`` (multi-section session kickoff) and ``roam_workflow`` (curated multi-step recipes) -- this is the single-command router. |
-| `roam_observability_opt` | Detect code that leaves systems hard to debug (raw debug prints, ...) and recommend the structured-logging shape. |
+| `roam_observability_opt` | Review raw print candidates and decide whether diagnostics belong in structured logs. |
 | `roam_onboard` | Generate a new-developer onboarding guide for the codebase. |
 | `roam_oracle_batch` | Run multiple oracle queries in one call. Items: [{name, oracle, max_hops?}, ...] where oracle is one of symbol-exists, route-exists, is-test-only, is-reachable-from-entry, is-clone-of. |
-| `roam_oracle_is_clone_of` | Answer the boolean oracle question: does this symbol have persisted clone siblings in the ``clone_pairs`` table? Returns a yes/no verdict envelope with the matched clone class size. Different from ``roam_clones`` (full clone-pair enumeration) -- this is the cheap boolean lookup for one symbol's clone status. |
+| `roam_oracle_is_clone_of` | Check whether a symbol has saved clone siblings. Return true/false/indeterminate with scan bounds and freshness; incomplete or stale scans cannot establish absence. Use roam_clones for full pair enumeration. |
 | `roam_oracle_is_reachable_from_entry` | Answer the boolean oracle question: is the symbol reachable from any entry point via the call graph (BFS up to ``max_hops`` depth)? Useful for sniffing orphans and production-vs-tooling code. Different from ``roam_dead_code`` (broad dead-symbol detection) and ``roam_entry_points`` (entry-point enumeration) -- this is the cheap boolean lookup for one symbol's reachability. |
 | `roam_oracle_is_test_only` | Answer the boolean oracle question: are ALL callers of this symbol in test files? Useful for sniffing test fixtures and dead-but-test-only helpers. Different from ``roam_dead_code`` (broad dead-symbol detection) -- this is the cheap boolean lookup for one symbol's test-only status. |
 | `roam_oracle_route_exists` | Answer the boolean oracle question: does a route handler match this URL path? Returns a yes/no verdict envelope with the matched handler's file + kind when found. Different from ``roam_endpoints`` (full endpoint enumeration) -- this is the cheap boolean lookup for one route precondition check. |
@@ -235,7 +235,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_repo_map` | Compact project skeleton with key symbols per file, by PageRank. |
 | `roam_report` | Run a compound report preset (built-ins: ``first-contact``, ``security``, ``pre-pr``, ``refactor``, ``guardian``) that orchestrates multiple analysis commands into one rendered report. Different from ``roam_audit`` (single fixed bundle) -- this is the preset-driven multi-command roll-up with optional Markdown output and strict exit-code gating. |
 | `roam_reset` | Delete index DB and rebuild from scratch. Requires force=True. Recovery for corrupted indexes. |
-| `roam_retrieve` | Graph-aware context for free-form tasks: FTS5 + structural rerank (PageRank + clones) + token budget. |
+| `roam_retrieve` | Retrieve code spans for a task with lexical and graph ranking, qualified clone evidence, and a token budget. |
 | `roam_review_change` | Change review bundle: pr-risk + breaking changes + structural diff in one call. |
 | `roam_risk` | Rank symbols by domain-weighted risk: combines static risk (fan-in + fan-out + betweenness) with domain criticality weights so financial / auth / data-integrity symbols rank higher than UI symbols. Different from ``roam_fan`` (raw fan-in/out degree) and ``roam_hotspots`` (runtime hotspot classification) -- this is the semantic-domain-weighted risk heatmap. |
 | `roam_rules_check` | Evaluate custom governance rules from .roam/rules/ YAML files. |
@@ -281,7 +281,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_validate_plan` | Pre-apply validator for a multi-step change plan. Returns blockers, warnings, advice per operation. |
 | `roam_verdict` | Compute a closed-enum verdict (pass / pass_with_warnings / needs_review / blocked) from the active pr-bundle. Pure judgment layer — no rendering, no log, no GH POST. |
 | `roam_verification_contract` | Compute the minimal `{required, skipped}` verification set for the current changed_files × risk × mode × policy. Surfaces what an agent MUST run before its PR can pass. |
-| `roam_verify` | Run the post-edit proof gate over every changed file. |
+| `roam_verify` | Check changed files and disclose applicable inputs, completed checks, and verification gaps. |
 | `roam_verify_imports` | Hallucination firewall: validate import statements resolve to indexed symbols. |
 | `roam_vibe_check` | AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns. |
 | `roam_visualize` | Generate Mermaid/DOT architecture diagram with smart filtering. |

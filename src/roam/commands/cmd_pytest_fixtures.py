@@ -20,11 +20,13 @@ propagation plan + W1224-audit memo.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, find_symbol
-from roam.db.connection import open_db
+from roam.db.connection import batched_in, open_db
 from roam.output.formatter import json_envelope, resolution_disclosure, to_json
 
 
@@ -39,30 +41,31 @@ def _fetch_chain(conn, symbol_id: int, max_depth: int = 6, reverse: bool = False
     depends on this fixture?" — edges where ``target_id == symbol_id``.
 
     Returns a list of ``{depth, id, name, qualified_name, file_path,
-    line_start, scope, autouse}`` dicts in BFS order (root first),
-    capped at ``max_depth``.
+    line_start, scope, autouse}`` dicts in BFS order (root excluded),
+    capped at ``max_depth``. Batch each frontier's adjacency queries while
+    retaining parent discovery order and each parent's name-sorted children.
     """
     from roam.index.pytest_fixtures import _fixture_autouse, _fixture_scope
 
     if reverse:
         sql = """
             SELECT s.id, s.name, s.qualified_name, s.line_start, s.decorators,
-                   f.path AS file_path
+                   f.path AS file_path, e.target_id AS parent_id
             FROM edges e
             JOIN symbols s ON e.source_id = s.id
             JOIN files f ON s.file_id = f.id
-            WHERE e.target_id = ? AND e.kind = 'pytest_fixture_dep'
-            ORDER BY s.name
+            WHERE e.target_id IN ({ph}) AND e.kind = 'pytest_fixture_dep'
+            ORDER BY s.name, e.id
         """
     else:
         sql = """
             SELECT s.id, s.name, s.qualified_name, s.line_start, s.decorators,
-                   f.path AS file_path
+                   f.path AS file_path, e.source_id AS parent_id
             FROM edges e
             JOIN symbols s ON e.target_id = s.id
             JOIN files f ON s.file_id = f.id
-            WHERE e.source_id = ? AND e.kind = 'pytest_fixture_dep'
-            ORDER BY s.name
+            WHERE e.source_id IN ({ph}) AND e.kind = 'pytest_fixture_dep'
+            ORDER BY s.name, e.id
         """
 
     visited = {symbol_id}
@@ -70,11 +73,14 @@ def _fetch_chain(conn, symbol_id: int, max_depth: int = 6, reverse: bool = False
     frontier: list[tuple[int, int]] = [(symbol_id, 0)]
     while frontier:
         next_frontier: list[tuple[int, int]] = []
+        parents = [sid for sid, depth in frontier if depth < max_depth]
+        children: dict[int, list] = defaultdict(list)
+        for row in batched_in(conn, sql, parents, batch_size=400):
+            children[row["parent_id"]].append(row)
         for sid, depth in frontier:
             if depth >= max_depth:
                 continue
-            rows = conn.execute(sql, (sid,)).fetchall()
-            for r in rows:
+            for r in children.get(sid, ()):
                 if r["id"] in visited:
                     continue
                 visited.add(r["id"])

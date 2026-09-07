@@ -302,9 +302,13 @@ def _parameterizable_tokens(node, source: bytes) -> dict[int, tuple[str, str]]:
     return tokens
 
 
+_FunctionNodeCache = dict[str, tuple[object, dict[int, list[tuple[int, object]]]]]
+
+
 def _member_tokens(
     member: dict,
     parse_cache: dict[str, tuple[object | None, bytes | None]] | None = None,
+    node_cache: _FunctionNodeCache | None = None,
 ) -> dict[int, tuple[str, str]] | None:
     from roam.commands.changed_files import parse_source_with_grammar
     from roam.index.parser import detect_language
@@ -330,9 +334,23 @@ def _member_tokens(
         return None
     wanted_start = int(member.get("line_start") or 0)
     wanted_end = int(member.get("line_end") or wanted_start)
+    if node_cache is None:
+        nodes = _find_function_nodes(tree)
+    else:
+        indexed = node_cache.get(path)
+        if indexed is None or indexed[0] is not tree:
+            by_start: dict[int, list[tuple[int, object]]] = defaultdict(list)
+            for order, node in enumerate(_find_function_nodes(tree)):
+                by_start[node.start_point[0] + 1].append((order, node))
+            indexed = (tree, by_start)
+            node_cache[path] = indexed
+        # Keep preorder as the tie-breaker, exactly as the uncached walk does.
+        # Reuse only this parsed tree, never a path's result across commands.
+        nearby = [entry for line in range(wanted_start - 2, wanted_start + 3) for entry in indexed[1].get(line, ())]
+        nodes = [node for _, node in sorted(nearby, key=lambda entry: entry[0])]
     candidates = [
         node
-        for node in _find_function_nodes(tree)
+        for node in nodes
         if abs(node.start_point[0] + 1 - wanted_start) <= 2 and abs(node.end_point[0] + 1 - wanted_end) <= 2
     ]
     if not candidates:
@@ -362,6 +380,7 @@ def build_clone_fix_hint(
     similarity: float,
     *,
     _parse_cache: dict[str, tuple[object | None, bytes | None]] | None = None,
+    _function_cache: _FunctionNodeCache | None = None,
 ) -> dict | None:
     """Build a parameterization hint from aligned raw token positions.
 
@@ -373,7 +392,7 @@ def build_clone_fix_hint(
     """
     if len(members) < 2:
         return None
-    token_maps = [_member_tokens(member, _parse_cache) for member in members]
+    token_maps = [_member_tokens(member, _parse_cache, _function_cache) for member in members]
     if any(tokens is None for tokens in token_maps):
         return None
     concrete_maps = [tokens for tokens in token_maps if tokens is not None]
@@ -533,6 +552,24 @@ def _fetch_candidate_files(conn, scope: str | None):
     ).fetchall()
 
 
+class _ExtractionRecords(list):
+    """Picklable records with an explicit per-file extraction outcome."""
+
+    def __init__(self, *, digest=None, unavailable=False):
+        super().__init__()
+        self.digest = digest
+        self.unavailable = unavailable
+
+
+class _FunctionScan(list):
+    """Keep the list API while carrying extraction coverage to the detector."""
+
+    def __init__(self):
+        super().__init__()
+        self.sources = {}
+        self.unavailable_files = 0
+
+
 def _extract_func_records_pickleable(
     file_path: str,
     language: str | None,
@@ -552,20 +589,20 @@ def _extract_func_records_pickleable(
             path = Path(project_root_str) / file_path
         exists = path.exists()
     except (OSError, TypeError, ValueError):
-        return []
+        return _ExtractionRecords(unavailable=True)
 
     if not exists:
-        return []
+        return _ExtractionRecords(unavailable=True)
 
     try:
         tree, source, _lang = parse_file(path, language)
     except (OSError, LookupError, ValueError):
-        return []
+        return _ExtractionRecords(unavailable=True)
 
     if tree is None or source is None:
-        return []
+        return _ExtractionRecords(unavailable=True)
 
-    out: list[tuple] = []
+    out = _ExtractionRecords(digest=hashlib.sha256(source).hexdigest(), unavailable=tree.root_node.has_error)
     for fn_node in _find_function_nodes(tree):
         line_start = fn_node.start_point[0] + 1
         line_end = fn_node.end_point[0] + 1
@@ -638,13 +675,22 @@ def _parallel_extract_func_infos(
     from roam.db.connection import find_project_root
 
     project_root_str = str(find_project_root())
+    out = _FunctionScan()
+
+    def collect(file_row, records):
+        digest = getattr(records, "digest", None)
+        if digest is not None:
+            out.sources[file_row["path"]] = digest
+        if getattr(records, "unavailable", True):
+            out.unavailable_files += 1
+        return records
 
     if os.environ.get("ROAM_NO_PARALLEL") or len(file_rows) < _PARALLEL_MIN_FILES:
         # Serial path
         all_records: list[tuple] = []
         for fr in file_rows:
             all_records.extend(
-                _extract_func_records_pickleable(fr["path"], fr["language"], project_root_str, min_lines)
+                collect(fr, _extract_func_records_pickleable(fr["path"], fr["language"], project_root_str, min_lines))
             )
     else:
         # Parallel path — ProcessPool because work is CPU-bound (tree-sitter).
@@ -657,18 +703,20 @@ def _parallel_extract_func_infos(
         try:
             with ProcessPoolExecutor(max_workers=workers) as ex:
                 # ex.map returns in submission order, preserving determinism.
-                for recs in ex.map(_extract_func_records_pickleable_starmap, args):
-                    all_records.extend(recs)
+                for fr, recs in zip(file_rows, ex.map(_extract_func_records_pickleable_starmap, args)):
+                    all_records.extend(collect(fr, recs))
         except (BrokenProcessPool, OSError, RuntimeError, pickle.PicklingError, AttributeError, TypeError):
             # If process pool fails (sandbox/pickling), fall back to serial.
             all_records = []
+            out = _FunctionScan()
             for fr in file_rows:
                 all_records.extend(
-                    _extract_func_records_pickleable(fr["path"], fr["language"], project_root_str, min_lines)
+                    collect(
+                        fr, _extract_func_records_pickleable(fr["path"], fr["language"], project_root_str, min_lines)
+                    )
                 )
 
     # Build _FuncInfo with deterministic idx assignment.
-    out: list[_FuncInfo] = []
     for idx, (file_path, name, line_start, line_end, node_count, bag) in enumerate(all_records):
         out.append(
             _FuncInfo(
@@ -790,23 +838,33 @@ def _pair_worker_compare_batch(idx_pairs: list[tuple[int, int]]) -> list[tuple]:
 
 
 def _enumerate_candidate_pairs(funcs: list[_FuncInfo]) -> list[tuple[int, int]]:
-    """Build clone candidates, excluding same-file containment intervals."""
+    """Build candidates in first-seen order without retaining a second pair set.
+
+    The extractor assigns unique indices. Every pair belongs to the first
+    bucket expansion containing both of its size bands; ownership therefore
+    needs only a small band-pair map, not an O(functions squared) seen set.
+    Keep insertion order and even the legacy two-band candidates unchanged.
+    """
     by_bucket = _bucket_funcs_by_size(funcs)
-    seen: set[tuple[int, int]] = set()
+    owners: dict[tuple[int, int], int] = {}
+    for bucket_key in by_bucket:
+        bands = [band for band in (bucket_key, bucket_key - 1, bucket_key + 1) if band in by_bucket]
+        for a_band in bands:
+            for b_band in bands:
+                owners.setdefault((a_band, b_band), bucket_key)
     pairs: list[tuple[int, int]] = []
-    for bucket_key, members in by_bucket.items():
-        candidates = list(members)
-        for delta in (-1, 1):
-            adj = by_bucket.get(bucket_key + delta)
-            if adj:
-                candidates.extend(adj)
-        for i in range(len(candidates)):
+    for bucket_key in by_bucket:
+        bands = [band for band in (bucket_key, bucket_key - 1, bucket_key + 1) if band in by_bucket]
+        candidates = [(function, band) for band in bands for function in by_bucket[band]]
+        owned = {a_band: {b_band for b_band in bands if owners[(a_band, b_band)] == bucket_key} for a_band in bands}
+        for i, (a, a_band) in enumerate(candidates):
+            allowed = owned[a_band]
+            if not allowed:
+                continue
             for j in range(i + 1, len(candidates)):
-                a, b = candidates[i], candidates[j]
-                key = (min(a.idx, b.idx), max(a.idx, b.idx))
-                if key in seen:
+                b, b_band = candidates[j]
+                if b_band not in allowed:
                     continue
-                seen.add(key)
                 # A nested closure's AST is physically contained in its
                 # parent's AST bag, which can yield near-perfect similarity
                 # without any copied implementation. Exclude overlapping
@@ -815,7 +873,7 @@ def _enumerate_candidate_pairs(funcs: list[_FuncInfo]) -> list[tuple[int, int]]:
                 # still eligible.
                 if a.file_path == b.file_path and a.line_start <= b.line_end and b.line_start <= a.line_end:
                     continue
-                pairs.append(key)
+                pairs.append((a.idx, b.idx) if a.idx < b.idx else (b.idx, a.idx))
     return pairs
 
 
@@ -935,6 +993,7 @@ def detect_clones(
     min_lines: int = 5,
     scope: str | None = None,
     max_functions: int = 2000,
+    scan_out: dict | None = None,
 ) -> tuple[list[ClonePair], list[CloneCluster]]:
     """Detect structural code clones across the indexed codebase.
 
@@ -947,6 +1006,29 @@ def detect_clones(
     # files — parallelize via ProcessPool when there's enough work to
     # amortize spinup cost. Falls back to serial under ROAM_NO_PARALLEL.
     funcs: list[_FuncInfo] = _parallel_extract_func_infos(list(files), min_lines)
+    eligible_functions = len(funcs)
+    if scan_out is not None:
+        from datetime import datetime, timezone
+
+        from roam.graph.clone_evidence import index_identity
+
+        unavailable = getattr(funcs, "unavailable_files", len(files))
+        scan_out.update(
+            format_version=1,
+            scanned_at=datetime.now(timezone.utc).isoformat(),
+            detector_version=CLONES_DETECTOR_VERSION,
+            index_identity=index_identity(conn),
+            eligible_files=len(files),
+            unavailable_files=unavailable,
+            eligible_functions=eligible_functions,
+            compared_functions=None,
+            max_functions=max_functions,
+            min_lines=min_lines,
+            min_similarity=min_similarity,
+            scope=scope,
+            sources=getattr(funcs, "sources", {}),
+            complete=False,
+        )
 
     if len(funcs) > max_functions:
         funcs.sort(key=lambda f: -f.node_count)
@@ -963,6 +1045,7 @@ def detect_clones(
     cluster_id = 0
 
     fix_hint_parse_cache: dict[str, tuple[object | None, bytes | None]] = {}
+    fix_hint_function_cache: _FunctionNodeCache = {}
     for root, member_idxs in raw_clusters.items():
         if len(member_idxs) < 2:
             continue
@@ -1001,7 +1084,9 @@ def detect_clones(
         pattern = _infer_clone_pattern([f.name for f in member_funcs])
         suggestion = _suggest_extraction([f.name for f in member_funcs])
         try:
-            fix_hint = build_clone_fix_hint(members, avg_sim, _parse_cache=fix_hint_parse_cache)
+            fix_hint = build_clone_fix_hint(
+                members, avg_sim, _parse_cache=fix_hint_parse_cache, _function_cache=fix_hint_function_cache
+            )
         except Exception as exc:  # noqa: BLE001 — additive enrichment must not break detection
             log.warning("clone fix-hint enrichment failed for cluster %d: %s", cluster_id, exc)
             fix_hint = None
@@ -1028,6 +1113,14 @@ def detect_clones(
         hint_a = hints_by_qname.get(pair.qname_a)
         if hint_a is not None and hint_a is hints_by_qname.get(pair.qname_b):
             pair.fix_hint = hint_a
+    if scan_out is not None:
+        # Extraction alone is not a completed comparison. Publish completion
+        # only after every detection phase finishes; failures retain unknown
+        # compared coverage instead of an optimistic precomputed count.
+        scan_out.update(
+            compared_functions=len(funcs),
+            complete=bool(files) and unavailable == 0 and eligible_functions <= max_functions,
+        )
     return pairs, clusters
 
 
@@ -1094,11 +1187,12 @@ def _clone_pair_finding_id(qname_a: str, qname_b: str) -> str:
     return f"clones:pair:{digest}"
 
 
-def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> None:
+def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster], *, scan: dict | None = None) -> None:
     """Persist detection results to clone_pairs and clone_clusters tables.
 
-    Truncates and replaces — clone results are always a complete snapshot,
-    not incremental. Called from `roam clones --persist` and (eventually)
+    Truncates and replaces; scan metadata qualifies coverage and freshness.
+    A replacement may be scoped or incomplete, never an implicit census.
+    Called from `roam clones --persist` and (eventually)
     the indexer's final stage.
 
     W93 follow-up: every persisted clone pair ALSO emits a row to the
@@ -1108,6 +1202,14 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
     The emit is wrapped in a defensive try/except so pre-W89 DBs (without
     the ``findings`` table) don't crash on this code path.
     """
+    if scan is not None:
+        conn.execute(
+            "INSERT OR REPLACE INTO clone_scan_state (id, metadata_json) VALUES (1, ?)",
+            (json.dumps(scan, sort_keys=True),),
+        )
+    elif conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'clone_scan_state'").fetchone():
+        # Legacy callers may replace rows, but cannot inherit a prior scan's assurance.
+        conn.execute("DELETE FROM clone_scan_state")
     conn.execute("DELETE FROM clone_pairs")
     conn.execute("DELETE FROM clone_clusters")
 
@@ -1138,17 +1240,25 @@ def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> 
             cluster_rows,
         )
 
-    pair_to_cluster: dict[tuple[str, str], int] = {}
-    for c in clusters:
-        qnames = [m.get("qualified_name") for m in c.members]
-        for i in range(len(qnames)):
-            for j in range(i + 1, len(qnames)):
-                key = tuple(sorted((qnames[i], qnames[j])))
-                pair_to_cluster[key] = c.cluster_id
+    # Resolve only actual pairs instead of materializing every combination
+    # of cluster members. Positions preserve last-cluster-wins semantics even
+    # when cluster IDs are not ordered; counts preserve duplicate-name pairs.
+    member_clusters: dict[str, dict[int, int]] = defaultdict(dict)
+    for position, c in enumerate(clusters):
+        for qname, count in Counter(m.get("qualified_name") for m in c.members).items():
+            member_clusters[qname][position] = count
 
     pair_rows = []
     for p in pairs:
-        cluster_id = pair_to_cluster.get(tuple(sorted((p.qname_a, p.qname_b))))
+        left = member_clusters.get(p.qname_a, {})
+        right = member_clusters.get(p.qname_b, {})
+        if p.qname_a == p.qname_b:
+            position = next((pos for pos in reversed(left) if left[pos] > 1), None)
+        else:
+            if len(left) > len(right):
+                left, right = right, left
+            position = next((pos for pos in reversed(left) if pos in right), None)
+        cluster_id = clusters[position].cluster_id if position is not None else None
         pair_rows.append(
             (
                 p.qname_a,

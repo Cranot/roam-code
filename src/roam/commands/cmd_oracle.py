@@ -28,6 +28,7 @@ from __future__ import annotations
 import difflib
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 
 import click
 
@@ -94,6 +95,7 @@ class OracleResult:
     reason: str
     reason_class: str = "definitive_yes"
     confidence: str = "high"
+    evidence: dict | None = None
 
     def __iter__(self):
         # Tuple-unpack as (value, reason) for backwards compatibility.
@@ -457,35 +459,72 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
     )
 
 
-def oracle_is_clone_of(conn: sqlite3.Connection, name: str) -> OracleResult:
+def oracle_is_clone_of(conn: sqlite3.Connection, name: str, *, project_root: Path | None = None) -> OracleResult:
     """Does this symbol participate in a persisted clone cluster?
 
-    Reads ``clone_pairs`` (populated by ``roam clones --persist``). When
-    the table is absent we return ``value=None`` — we genuinely don't
-    know whether clones exist; the user just hasn't computed them.
+    Positive rows remain useful observations even when stale. A negative
+    answer requires a complete, current scan and applies only to its recorded
+    detector bounds. Read pairs and their provenance in one SQLite snapshot.
     """
     if not name:
         return OracleResult(False, "empty query", "definitive_no", "high")
+    owns_snapshot = not conn.in_transaction
+    if owns_snapshot:
+        conn.execute("BEGIN")
     try:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM clone_pairs WHERE qname_a = ? OR qname_b = ?   OR qname_a LIKE ? OR qname_b LIKE ?",
-            (name, name, f"%.{name}", f"%.{name}"),
-        ).fetchone()
+        return _clone_membership_in_snapshot(conn, name, project_root=project_root)
     except sqlite3.OperationalError:
         return OracleResult(
             None,
-            "clone tables not present; run `roam clones --persist` first",
+            "clone evidence unavailable; run `roam clones --persist` first",
             "indeterminate_no_data",
             "indeterminate",
         )
+    finally:
+        if owns_snapshot:
+            conn.rollback()
+
+
+def _clone_membership_in_snapshot(
+    conn: sqlite3.Connection, name: str, *, project_root: Path | None = None
+) -> OracleResult:
+    from roam.graph.clone_evidence import clone_check_status, scan_summary
+
+    # Saved producers use file.py:function; legacy consumers also use dotted
+    # qualified names. Match literal, case-sensitive suffixes, not LIKE globs.
+    suffix_length = len(name) + 1
+    dotted, file_qualified = f".{name}", f":{name}"
+    row = conn.execute(
+        "SELECT COUNT(*) FROM clone_pairs WHERE qname_a = ? OR qname_b = ? "
+        "OR substr(qname_a, -?) IN (?, ?) OR substr(qname_b, -?) IN (?, ?)",
+        (name, name, suffix_length, dotted, file_qualified, suffix_length, dotted, file_qualified),
+    ).fetchone()
     count = int(row[0]) if row else 0
+    status = clone_check_status(conn) if project_root is None else clone_check_status(conn, project_root=project_root)
+    partial = status != "ran"
+    evidence = {"check_status": status, "clone_scan": scan_summary(conn), "partial_success": partial}
     if count == 0:
-        return OracleResult(False, f"no clone siblings for '{name}'", "definitive_no", "high")
+        if partial:
+            return OracleResult(
+                None,
+                f"clone absence unverified for '{name}': {status}; run `roam clones --persist`",
+                "indeterminate_no_data",
+                "indeterminate",
+                evidence,
+            )
+        return OracleResult(
+            False,
+            f"no persisted clone siblings for '{name}' within the completed scan's detector bounds",
+            "definitive_no",
+            "high",
+            evidence,
+        )
     return OracleResult(
         True,
-        f"{count} persisted clone pair(s) for '{name}'",
+        f"{count} persisted clone pair(s) for '{name}'" + (f"; {status}" if partial else ""),
         "definitive_yes",
-        "high",
+        "medium" if partial else "high",
+        evidence,
     )
 
 
@@ -525,6 +564,8 @@ def _emit(
             "reason": result.reason,
             "reason_class": result.reason_class,
             "confidence": result.confidence,
+            "partial_success": result.value is None,
+            **(result.evidence or {}),
         }
         if caller_metric_definition is not None:
             summary["caller_metric_definition"] = caller_metric_definition
@@ -715,6 +756,8 @@ def oracle_batch_cmd(ctx, input_path: str) -> None:
                         "reason": r.reason,
                         "reason_class": r.reason_class,
                         "confidence": r.confidence,
+                        "partial_success": r.value is None,
+                        **(r.evidence or {}),
                     }
                 )
             except KeyError as exc:
@@ -729,6 +772,7 @@ def oracle_batch_cmd(ctx, input_path: str) -> None:
     summary = {
         "verdict": f"{len(results)} oracle queries processed",
         "count": len(results),
+        "partial_success": any(row.get("partial_success") or "error" in row for row in results),
     }
     if json_mode:
         click.echo(to_json(json_envelope("oracle.batch", summary=summary, results=results)))

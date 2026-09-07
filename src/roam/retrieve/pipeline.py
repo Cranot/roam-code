@@ -14,8 +14,8 @@ End-to-end flow:
 5. **Result envelope** — list of candidates with file/line/score/
    justifications + meta (seeds_used, budget, weights).
 
-The pipeline is intentionally pure (no I/O, no Click) so it is easy to
-test and reuse from the MCP tool wrapper.
+The pipeline has no Click dependency. Clone freshness and opt-in repair
+ranking inspect repository files; the supplied repository root scopes them.
 """
 
 from __future__ import annotations
@@ -116,6 +116,25 @@ def run_retrieve(
     harness to rotate vectors deterministically without rewriting
     config files).
     """
+    owns_snapshot = not conn.in_transaction
+    if owns_snapshot:
+        conn.execute("BEGIN")
+    try:
+        return _run_retrieve_in_snapshot(conn, task, seed_files=seed_files, config_root=config_root, options=options)
+    finally:
+        if owns_snapshot:
+            conn.rollback()
+
+
+def _run_retrieve_in_snapshot(
+    conn: sqlite3.Connection,
+    task: str,
+    *,
+    seed_files: list[str] | None,
+    config_root: Path | None,
+    options: RetrieveOptions | None,
+) -> dict:
+    """Keep candidate identities, ranking rows, and scan metadata on one generation."""
     opts = _resolve_options(options)
     weights, tokens_per_line, token_cap = _retrieve_settings(config_root, opts.weights)
 
@@ -136,6 +155,7 @@ def run_retrieve(
     # recall@20 lift over 'fast'. For now only 'fast' triggers structural
     # rerank; 'off' falls back to lexical-only.
     use_personalized = opts.rerank in ("fast", "learned")
+    clone_evidence: dict = {}
     scored = structural_score(
         conn,
         first_stage,
@@ -145,6 +165,7 @@ def run_retrieve(
         config_root=config_root,
         task=task,
         repair_intent=opts.repair_intent,
+        clone_evidence_out=clone_evidence,
     )
 
     if opts.rerank == "learned":
@@ -162,6 +183,7 @@ def run_retrieve(
         "budget_used": budget_used,
         "k": opts.k,
         "weights": weights,
+        "clone_evidence": clone_evidence,
     }
 
 

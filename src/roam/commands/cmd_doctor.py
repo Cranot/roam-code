@@ -491,31 +491,29 @@ def _check_ci_environment_parity() -> dict:
         )
 
     # --- does `roam` on PATH belong to THIS interpreter? ------------------
-    on_path = shutil.which("roam")
-    if on_path:
-        # The console script installed for the running interpreter lives beside
-        # it (venv/bin or venv/Scripts). Anything else is a different install.
-        expected_dir = Path(sys.executable).parent
-        try:
-            same = Path(on_path).parent.resolve() == expected_dir.resolve()
-        except OSError:
-            same = False
-        if not same:
-            findings.append(
-                f"`roam` on PATH is {on_path}, not the one for this interpreter "
-                f"({expected_dir}) — tests that shell out to `roam` will exercise that other install"
-            )
+    from roam.runtime.launcher import inspect_launcher
+
+    launcher = inspect_launcher(shutil.which("roam"), sys.executable)
+    if launcher["state"] == "different_interpreter":
+        findings.append(
+            f"`roam` on PATH is {launcher['path']}, not the one for this interpreter "
+            f"({sys.executable}); its binding names {launcher['interpreter']}"
+        )
+    elif launcher["state"] != "matched":
+        findings.append(f"`roam` launcher is {launcher['state']}: {launcher['evidence']}")
 
     if findings:
         return {
             "name": "CI environment parity",
             "passed": False,
             "detail": "; ".join(findings),
+            "launcher": launcher,
         }
     return {
         "name": "CI environment parity",
         "passed": True,
         "detail": f"Python {running} is in the CI matrix; `roam` resolves to this interpreter",
+        "launcher": launcher,
     }
 
 
@@ -902,21 +900,28 @@ def _check_sqlite(db_path_str: str | None) -> dict:
 
     try:
         import sqlite3
+        from contextlib import closing
 
-        conn = sqlite3.connect(str(db_path), timeout=5)
-        # PRAGMA integrity_check verifies the file is a real, non-corrupted DB
-        rows = conn.execute("PRAGMA integrity_check").fetchall()
-        conn.close()
-        if rows and rows[0][0] == "ok":
+        # URI escaping handles spaces, # and % without interpreting file names
+        # as connection options. Read-only mode also prevents create-on-race.
+        with closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as conn:
+            rows = conn.execute("PRAGMA integrity_check").fetchall()
+        if rows == [("ok",)]:
             return {
                 "name": "SQLite operational",
                 "passed": True,
                 "detail": "SQLite operational",
             }
+        errors = [str(row[0]) for row in rows] or ["integrity_check returned no result"]
+        # Keep actionable evidence bounded; never hide that evidence was cut.
+        bounded = [error[:500] for error in errors[:20]]
+        truncated = len(errors) > 20 or any(len(error) > 500 for error in errors)
         return {
             "name": "SQLite operational",
             "passed": False,
-            "detail": "SQLite integrity check failed",
+            "detail": "SQLite integrity check failed: " + "; ".join(bounded[:3]),
+            "integrity_errors": bounded,
+            "integrity_errors_truncated": truncated,
         }
     except Exception as exc:
         return {

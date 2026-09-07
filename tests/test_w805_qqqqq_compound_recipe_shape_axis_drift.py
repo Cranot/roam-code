@@ -10,6 +10,9 @@ W805-NNNNN surfaced TWO new Pattern-5 bugs in
 ``cmd_for_security_review``'s recipe at ``src/roam/mcp_server.py:6499-6510``
 on the SHAPE axis (NOT the name axis):
 
+Historical reproduction below. Both recipe defects are now repaired; the live
+allowlist is empty and synthetic broken calls retain scanner-sensitivity checks.
+
 1. ``_safe_run([_cr("adversarial"), symbol], root)`` — ``cmd_adversarial``
    has NO ``click.argument`` declaration (0 args, 5 opts). Click rejects
    the ``symbol`` positional with ``USAGE_ERROR: Got unexpected extra
@@ -555,74 +558,27 @@ def _drifts_at(drifts: list[_Drift], cli_name: str) -> list[_Drift]:
     return [d for d in drifts if d.cli_name == cli_name]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-NNNNN: cmd_for_security_review's recipe at "
-        "src/roam/mcp_server.py:6499-6510 passes shape-axis drifts on two "
-        "sections: (1) _safe_run([_cr('adversarial'), symbol], root) — "
-        "cmd_adversarial has 0 click.Argument slots, symbol is silently "
-        "dropped; (2) _safe_run([_cr('vulns'), 'list'], root) — vulns is "
-        "a single click.Command (not a group), 'list' is rejected as an "
-        "unexpected positional. Fix the recipe (e.g. _safe_run([_cr("
-        "'vulns')], root) for vulns, and either drop the symbol from "
-        "adversarial or add a click.argument('symbol', required=False) "
-        "to cmd_adversarial) and this xfail will flip to a pass."
-    ),
-)
 def test_w805_nnnnn_shape_drifts_pinned() -> None:
-    """Pin the two known W805-NNNNN drifts.
-
-    Asserts BOTH:
-    1. ``adversarial`` has a positional drift (recipe passes ``symbol``,
-       target has 0 arg slots).
-    2. ``vulns`` has a positional drift (recipe passes ``"list"``,
-       target has 0 arg slots).
-
-    Each failure independently would still trip the strict-xfail, so
-    a partial fix (closing only one of the two sites) is detected.
-    """
+    """Both repaired security-recipe argument drifts must stay absent."""
     drifts = _scan_drift(_MCP_SERVER)
     adv = _drifts_at(drifts, "adversarial")
     vulns = _drifts_at(drifts, "vulns")
-    assert adv, "Expected an adversarial shape drift but found none"
-    assert vulns, "Expected a vulns shape drift but found none"
-    # Both drifts must be in the for_security_review recipe range
-    # (mcp_server.py:6499-6510 at scan time — allow some slack for
-    # surrounding edits).
-    for d in adv + vulns:
-        assert 6400 <= d.lineno <= 6700, (
-            f"Drift at unexpected lineno {d.lineno} (cli={d.cli_name!r}) — "
-            "the recipe moved or the scanner is mis-attributing the line."
-        )
-    # If we got here, both drifts were detected; xfail-strict flips the
-    # outcome to "expected failure" → test passes. When the recipe is
-    # fixed, drifts go to zero, the asserts above fire, the strict-xfail
-    # catches the unexpected-pass and red-lights CI.
-    raise AssertionError("Pinning W805-NNNNN drift findings via xfail-strict (see reason).")
+    assert not adv, adv
+    assert not vulns, vulns
 
 
 # ---------------------------------------------------------------------------
 # Repo-wide sweep — the shape-axis equivalent of the name-axis lint at
 # tests/test_compound_recipe_registry.py.
 #
-# Today's expected drift count is exactly 2 (the W805-NNNNN finding).
-# When the recipe is fixed, this constant drops to 0 — and any NEW shape
-# drift introduced in a recipe will trip the assert immediately.
+# The two original defects are repaired. Any new positional drift fails.
 # ---------------------------------------------------------------------------
 
 
 # Closed enumeration of known shape drifts as of W805-QQQQQ. Adding to
 # this set means consciously accepting a new drift; the comment must
 # name the wave that authorized it.
-_KNOWN_DRIFTS: frozenset[tuple[str, int]] = frozenset(
-    {
-        # W805-NNNNN: cmd_for_security_review extra positional on adversarial
-        ("adversarial", 1),
-        # W805-NNNNN: cmd_for_security_review treats vulns as a group
-        ("vulns", 1),
-    }
-)
+_KNOWN_DRIFTS: frozenset[tuple[str, int]] = frozenset()
 
 
 def test_repo_wide_shape_axis_sweep() -> None:

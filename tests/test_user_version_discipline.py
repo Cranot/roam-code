@@ -56,8 +56,10 @@ _SCHEMA_PATH = _REPO_ROOT / "src" / "roam" / "db" / "schema.py"
 # ``budget`` / ``health --baseline`` / ``fitness`` / ``alerts`` /
 # ``forecast`` / ``bisect`` refuse to compare a stored snapshot against
 # live metrics computed under a different definition.
-_SNAPSHOT_SCHEMA_HASH = "1c4630a053eee10d"
-_SNAPSHOT_USER_VERSION = 19
+# 2026-09-05 — clone_scan_state + migration #64. Empty scans, partial
+# coverage and source freshness now have a persisted evidence record.
+_SNAPSHOT_SCHEMA_HASH = "067a2839a71f4799"
+_SNAPSHOT_USER_VERSION = 20
 
 
 def _current_schema_hash() -> str:

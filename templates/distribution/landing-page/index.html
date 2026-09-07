@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam — Find your way around the code</title>
-  <meta name="description" content="Understand an unfamiliar codebase, see what a change might affect, and give your coding agent better context. Free, open-source tools that run on your machine.">
-  <meta property="og:title" content="Roam — Find your way around the code">
-  <meta property="og:description" content="Less hunting through files. More understanding what connects them. Explore your codebase with Roam, a free local tool for you and your coding agent.">
+  <title>Roam — Give your coding agent the bigger picture</title>
+  <meta name="description" content="Built for coding agents: a local map of your code, change-impact checks, and structural findings. Free, open-source static analysis. No model calls needed for the checks.">
+  <meta property="og:title" content="Roam — Give your coding agent the bigger picture">
+  <meta property="og:description" content="Agents write more code than we can read. Give yours free, local static analysis to explore the codebase, check changes, and follow the connections.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/">
   <meta property="og:image" content="https://roam-code.com/og.png">
@@ -14,8 +14,8 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Roam — Local codebase intelligence for AI agents">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Roam — Find your way around the code">
-  <meta name="twitter:description" content="Understand your codebase, follow the connections, and give your coding agent a better starting point. Free and open source.">
+  <meta name="twitter:title" content="Roam — Give your coding agent the bigger picture">
+  <meta name="twitter:description" content="Free, local static analysis for coding agents. Give your agent codebase context and change-impact checks, without a model call to run the analysis.">
   <meta name="twitter:image" content="https://roam-code.com/og.png">
   <link rel="canonical" href="https://roam-code.com/">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -34,7 +34,7 @@
     "applicationCategory": "DeveloperApplication",
     "applicationSubCategory": "CodeAnalysisApplication",
     "operatingSystem": "Linux, macOS, Windows",
-    "description": "Understand a codebase, follow connections between functions and files, and investigate what a change might affect. Free local tools for developers and AI coding agents.",
+    "description": "Free, local static analysis built for coding agents. Map code connections, investigate change impact, and find structural problems through the CLI or MCP. The static checks make no model calls.",
     "url": "https://roam-code.com/",
     "downloadUrl": "https://pypi.org/project/roam-code/",
     "installUrl": "https://pypi.org/project/roam-code/",
@@ -48,7 +48,7 @@
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "sameAs": ["https://github.com/Cranot/roam-code", "https://pypi.org/project/roam-code/"],
-    "featureList": "Local codebase exploration; change-impact analysis; context for coding agents; 28 languages; MCP server (17 core / 246 full preset tools); no account or API key for local analysis; no automatic repository upload or telemetry"
+    "featureList": "Agent-first codebase context; free local static analysis with no model calls; change-impact and structural checks; structured results through CLI and MCP; 28 languages; MCP server (17 core / 246 full preset tools); no account or API key for local analysis; no automatic repository upload or telemetry"
   }
   </script>
   <script type="application/ld+json">
@@ -56,12 +56,12 @@
     "@context": "https://schema.org",
     "@type": "FAQPage",
     "mainEntity": [
-      {"@type": "Question", "name": "Do I need an AI coding agent to use Roam?", "acceptedAnswer": {"@type": "Answer", "text": "No. Use Roam yourself in the terminal to explore a repository or check a change. Connecting an agent is optional; it gives the agent access to the same local tools."}},
-      {"@type": "Question", "name": "Is Roam free?", "acceptedAnswer": {"@type": "Answer", "text": "The CLI and MCP server are free and open source under Apache 2.0, for individuals and teams. Paid services and planned team products are separate; you do not need them to use the local tools."}},
-      {"@type": "Question", "name": "Does my code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Ordinary analysis is local, with no automatic source-code or telemetry upload. Installation and the first parser download need network access. Optional online features have explicit triggers; opt-in MCP model summarization can include source snippets. Read the network boundary for the full details."}},
+      {"@type": "Question", "name": "Is Roam for agents or for people?", "acceptedAnswer": {"@type": "Answer", "text": "Roam is built for coding agents to use as they work. Connect it through MCP or let your agent call the CLI, and include Roam checks in its instructions. You can inspect the same results in the terminal, but manually running every check is not the intended workflow. Connecting tools alone does not guarantee your agent will use them."}},
+      {"@type": "Question", "name": "Is Roam free?", "acceptedAnswer": {"@type": "Answer", "text": "The CLI and MCP server are free and open source under Apache 2.0, for individuals and teams. Static checks use local compute, not model calls or a paid Roam API. Your coding agent's own model usage is separate. Paid services and planned team products are separate too; you do not need them to use the local tools."}},
+      {"@type": "Question", "name": "Does my code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Ordinary analysis is local, with no automatic source-code or telemetry upload. A connected coding agent receives tool results and may send them to its model provider under its own settings. Installation and the first parser download need network access. Optional online features have explicit triggers; opt-in MCP model summarization can include source snippets. Read the network boundary for the full details."}},
       {"@type": "Question", "name": "What languages and computers does it work with?", "acceptedAnswer": {"@type": "Answer", "text": "Roam runs on Windows, macOS, and Linux with Python 3.10+. It supports 28 languages, including Python, JavaScript, TypeScript, Go, Rust, Java, C#, PHP, and Ruby. The depth of analysis varies by language and framework."}},
       {"@type": "Question", "name": "How long does the first index take?", "acceptedAnswer": {"@type": "Answer", "text": "It depends on the size of your repository, its history, your machine, and whether parsers are already downloaded. The first index does more work; later refreshes reuse it and process changed files. Run roam index to refresh after changes."}},
-      {"@type": "Question", "name": "Does Roam replace tests or code review?", "acceptedAnswer": {"@type": "Answer", "text": "No. Roam helps you investigate code connections and potential risks. Static analysis can miss connections, a suggested test list is not test coverage, and a health score is not permission to merge. Keep your tests, security checks, and human review."}},
+      {"@type": "Question", "name": "Does Roam replace tests or code review?", "acceptedAnswer": {"@type": "Answer", "text": "No. Roam gives your agent evidence to investigate code connections and potential risks. Static analysis can miss connections, a suggested test list is not test coverage, and a health score is not permission to merge. Use Roam alongside tests, security checks, and human review of the changes that matter. You still set the goals and decide what ships."}},
       {"@type": "Question", "name": "Can our team use it in CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Run Roam checks in your build, review changes, and export findings for code-scanning tools. You can also enable a local run ledger and proof bundles to record which checks ran. Signed records help detect later changes to evidence; they do not prove every relevant check was captured."}}
     ]
   }
@@ -90,7 +90,7 @@
         <li><a href="/docs/">Docs</a></li>
         <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
-        <li><a class="home-nav-start" href="#install">Get started <span aria-hidden="true">↗</span></a></li>
+        <li><a class="home-nav-start" href="#install">Set up your agent <span aria-hidden="true">↗</span></a></li>
       </ul>
     </div>
   </nav>
@@ -98,21 +98,21 @@
   <main id="main">
     <header class="home-hero home-wrap">
       <div class="home-intro">
-        <p class="home-eyebrow">For you and your coding agent</p>
-        <h1>Find your way<br>around <em>the code.</em></h1>
-        <p class="home-lede">New repo. Tricky change. One more file to understand.</p>
-        <p class="home-intro-copy">Roam connects the dots between functions, files, and tests, so you can see where to start and what a change might affect.</p>
+        <p class="home-eyebrow">Built for coding agents</p>
+        <h1>Give your agent<br><em>the bigger picture.</em></h1>
+        <p class="home-lede">Agents can write code faster than we can read it all.</p>
+        <p class="home-intro-copy">Roam gives them a local map of your code and free static checks, so they can find what matters, check a change’s impact, and catch structural problems as they work.</p>
         <div class="home-actions">
-          <a class="home-button" href="#install">Try Roam for free <span aria-hidden="true">↗</span></a>
+          <a class="home-button" href="#install">Equip your agent <span aria-hidden="true">↗</span></a>
           <a class="home-text-link" href="#how-it-works">See how it helps <span aria-hidden="true">↓</span></a>
         </div>
-        <p class="home-small">Open source. Runs on your machine. No account needed.</p>
+        <p class="home-small">Free and open source. Local static analysis. No model calls for the checks.</p>
       </div>
       <figure class="home-map" aria-labelledby="map-title">
-        <div class="home-map-heading"><span class="home-map-dot" aria-hidden="true"></span> A change is rarely just one file.</div>
+        <div class="home-map-heading"><span class="home-map-dot" aria-hidden="true"></span> Before your agent changes a function.</div>
         <div class="home-map-body">
           <p class="home-map-question" id="map-title">“What else uses this function?”</p>
-          <div class="home-map-target"><span>The function you want to change</span><code>calculate_total()</code><small>checkout/pricing.py</small></div>
+          <div class="home-map-target"><span>The function your agent plans to change</span><code>calculate_total()</code><small>checkout/pricing.py</small></div>
           <div class="home-map-connector" aria-hidden="true">↑</div>
           <p class="home-map-label">Called by</p>
           <ul class="home-map-callers" aria-label="Example functions that call calculate_total">
@@ -120,65 +120,65 @@
             <li><code>preview_order()</code><span>preview.py</span></li>
             <li><code>apply_discount()</code><span>discounts.py</span></li>
           </ul>
-          <p class="home-map-takeaway">Now you know where else to look.</p>
+          <p class="home-map-takeaway">Your agent can check the callers, not just the edited file.</p>
         </div>
         <div class="home-map-command"><span aria-hidden="true">$</span> <code>roam impact calculate_total</code></div>
-        <figcaption>Illustrative checkout example, not a live report. Roam finds connections in your own repository.</figcaption>
+        <figcaption>Illustrative checkout example, not a live report. Your agent gets these connections as structured results through the CLI or MCP.</figcaption>
       </figure>
     </header>
 
     <div class="home-basics">
       <ul class="home-wrap" aria-label="Roam at a glance">
-        <li>Free CLI + agent tools</li><li>Windows, macOS &amp; Linux</li><li>28 languages</li><li>Apache 2.0</li>
+        <li>Free CLI + MCP tools</li><li>Windows, macOS &amp; Linux</li><li>28 languages</li><li>Apache 2.0</li>
       </ul>
     </div>
 
     <section class="home-section home-wrap" id="how-it-works" aria-labelledby="questions-heading">
       <span id="senses" class="home-anchor" aria-hidden="true"></span>
       <span id="what-roam-catches" class="home-anchor" aria-hidden="true"></span>
-      <p class="home-eyebrow">Start with a question</p>
+      <p class="home-eyebrow">Useful at every change</p>
       <div class="home-section-heading">
-        <h2 id="questions-heading">Less hunting.<br>More understanding.</h2>
-        <p>You don’t need to learn a long list of commands. Start with the thing you’re trying to figure out.</p>
+        <h2 id="questions-heading">A wider view.<br>A better-informed agent.</h2>
+        <p>You shouldn’t have to chase every generated line. Give your agent tools to explore the codebase, check its changes, and bring back findings worth your attention.</p>
       </div>
       <div class="home-question-list">
         <article class="home-question">
           <span class="home-number" aria-hidden="true">01</span>
-          <div><h3>“Where do I even start?”</h3><p>Get an overview of an unfamiliar repository: its main parts, how they connect, and useful places to begin reading.</p></div>
-          <a href="/docs/command-reference#understand"><code>roam understand</code><span>Get your bearings <span aria-hidden="true">↗</span></span></a>
+          <div><h3>Before it writes</h3><p>Your agent can find the main parts of the repository, follow their connections, and choose relevant files to read.</p></div>
+          <a href="/docs/command-reference#understand"><code>roam understand</code><span>Give it the lay of the land <span aria-hidden="true">↗</span></span></a>
         </article>
         <article class="home-question">
           <span class="home-number" aria-hidden="true">02</span>
-          <div><h3>“What could this change affect?”</h3><p>Follow the callers and related code. Check a function before editing it, and find connected tests worth looking at.</p></div>
-          <a href="/docs/command-reference#preflight"><code>roam preflight &lt;symbol&gt;</code><span>Look before you edit <span aria-hidden="true">↗</span></span></a>
+          <div><h3>Before it changes a function</h3><p>Your agent can check callers, related code, and connected tests, so the plan accounts for more than the file it is editing.</p></div>
+          <a href="/docs/command-reference#preflight"><code>roam preflight &lt;symbol&gt;</code><span>Check the likely impact <span aria-hidden="true">↗</span></span></a>
         </article>
         <article class="home-question">
           <span class="home-number" aria-hidden="true">03</span>
-          <div><h3>“What did I miss in this patch?”</h3><p>Once you have local changes, review the diff with the surrounding code in view, including related copies that may need the same fix.</p></div>
-          <a href="/docs/command-reference#critique"><code>git diff | roam critique</code><span>Take another look <span aria-hidden="true">↗</span></span></a>
+          <div><h3>Before it calls the work ready</h3><p>Your agent can review the patch for structural concerns and, when clone evidence is available, related copies that may need the same fix. It still needs to run tests.</p></div>
+          <a href="/docs/command-reference#critique"><code>git diff | roam critique</code><span>Look beyond the patch <span aria-hidden="true">↗</span></span></a>
         </article>
       </div>
-      <p class="home-section-note">Replace <code>&lt;symbol&gt;</code> with a function or class in your project. <a href="/docs/demos">Explore more examples <span aria-hidden="true">↗</span></a></p>
+      <p class="home-section-note">These are tools for your agent to call, not a checklist you need to run by hand. In CLI examples, replace <code>&lt;symbol&gt;</code> with a function or class in your project. <a href="/docs/demos">Explore more examples <span aria-hidden="true">↗</span></a></p>
     </section>
 
     <section class="home-agent" id="compiler" aria-labelledby="agent-heading">
       <span id="fit" class="home-anchor" aria-hidden="true"></span>
       <div class="home-wrap home-agent-grid">
         <div>
-          <p class="home-eyebrow">A better starting point for your agent</p>
-          <h2 id="agent-heading">Your agent writes code.<br>Roam helps it get to know yours.</h2>
-          <p>Give your coding agent the same local map you use: relevant files, the functions that call each other, and context around a planned change.</p>
-          <p>Use the CLI directly, or connect through MCP — a standard way for assistants to use tools. Your agent still makes the decisions; Roam gives it more to work with.</p>
+          <p class="home-eyebrow">Static analysis does the groundwork</p>
+          <h2 id="agent-heading">Let the model reason.<br>Let Roam do the lookups.</h2>
+          <p>Finding callers, tracing dependencies, spotting duplicate code: much of this is work software can do locally. Roam gives your agent those results without asking another model to work them out.</p>
+          <p>Connect through MCP — a standard way for agents to use tools — or let your agent call the CLI. Results include code locations, findings, and limits it can act on. Add Roam to the agent’s workflow so those checks become routine.</p>
           <a class="home-button home-button-light" href="/setup">Connect your coding agent <span aria-hidden="true">↗</span></a>
           <p class="home-small">Setup guides for Claude Code, Cursor, Codex, VS Code, and more.</p>
         </div>
         <div class="home-agent-note">
-          <p class="home-note-label">A small habit for a new project</p>
-          <h3>Get the context.<br>Then make the change.</h3>
+          <p class="home-note-label">A workflow for your agent</p>
+          <h3>Find the context.<br>Check the work.</h3>
           <ol>
-            <li><strong>Explore</strong><span>Ask Roam for a repository overview.</span></li>
-            <li><strong>Check</strong><span>Look at the code connected to your change.</span></li>
-            <li><strong>Review</strong><span>Inspect the patch, run tests, and review the findings.</span></li>
+            <li><strong>Explore</strong><span>Ask Roam for relevant code and connections.</span></li>
+            <li><strong>Check</strong><span>Inspect likely impact before editing.</span></li>
+            <li><strong>Review</strong><span>Check the patch, run tests, and report findings and gaps.</span></li>
           </ol>
           <p>Already using Claude Code? Optional <a href="/docs/integration-tutorials">hooks can prepare context before a prompt</a>.</p>
         </div>
@@ -187,54 +187,54 @@
 
     <section class="home-section home-wrap home-local" id="what-you-get" aria-labelledby="local-heading">
       <div>
-        <p class="home-eyebrow">Your project. Your machine.</p>
-        <h2 id="local-heading">Useful without<br>another account.</h2>
-        <p class="home-lede">Roam builds a local index of your repository. You and your tools can come back to it as the code changes.</p>
+        <p class="home-eyebrow">Free static power for your agent</p>
+        <h2 id="local-heading">More to check.<br>No model call to run it.</h2>
+        <p class="home-lede">Roam builds a reusable local index. Your agent can query it as it works, instead of asking a model to rediscover the same code connections.</p>
       </div>
       <div class="home-local-points">
-        <article><h3>Start free, stay in control.</h3><p>The CLI and MCP server are open source under Apache 2.0. Local analysis needs no account or API key.</p></article>
-        <article><h3>Your code isn’t automatically uploaded.</h3><p>There is no automatic repository upload or telemetry. Installation, parser downloads, and optional online features have a <a href="/security#network-boundary">documented network boundary</a>.</p></article>
-        <article id="compare"><h3>Keep the tools you already trust.</h3><p>Roam adds context to your editor, search, tests, and code review. Its map can be incomplete; a useful finding is a starting point for investigation, not a guarantee.</p><a href="/compare">See where Roam fits <span aria-hidden="true">↗</span></a></article>
+        <article><h3>Local compute, not another model bill.</h3><p>The CLI and MCP server are free under Apache 2.0. Static checks need no account, API key, or model call. They use your machine’s resources; your agent’s model usage, including reading results, is separate.</p></article>
+        <article><h3>Your code stays under your control.</h3><p>Roam does not automatically upload your repository or telemetry. Connected agents receive tool results under their own provider settings. Installation, parser downloads, and optional online features have a <a href="/security#network-boundary">documented network boundary</a>.</p></article>
+        <article id="compare"><h3>Evidence for the next decision.</h3><p>Static analysis reads code without running your app. Its map can be incomplete; a finding is a lead to investigate, not a guarantee. Keep tests and security checks in the workflow. You decide what ships.</p><a href="/compare">See where Roam fits <span aria-hidden="true">↗</span></a></article>
       </div>
     </section>
 
     <section class="home-start" id="install" aria-labelledby="install-heading">
       <div class="home-wrap">
-        <p class="home-eyebrow">Meet your codebase</p>
+        <p class="home-eyebrow">Set up once. Let your agent use it.</p>
         <div class="home-section-heading">
-          <h2 id="install-heading">Try it on a project<br>you’re working on.</h2>
-          <p>You’ll need Python 3.10+ and a Git repository. Open a terminal, then follow these three steps.</p>
+          <h2 id="install-heading">Give your agent<br>a new set of tools.</h2>
+          <p>You’ll need Python 3.10+ and a Git repository. Install Roam, index the project, then connect your coding agent.</p>
         </div>
         <ol class="home-install-steps">
-          <li><span class="home-step-label">01 / Install Roam</span><pre><code>pip install roam-code</code></pre><p>Prefer an isolated install? Use <code>pipx install roam-code</code> or <code>uv tool install roam-code</code>.</p></li>
+          <li><span class="home-step-label">01 / Install the agent tools</span><pre><code>pip install "roam-code[mcp]"</code></pre><p>Prefer an isolated install? Use <code>pipx install "roam-code[mcp]"</code> or <code>uv tool install "roam-code[mcp]"</code>.</p></li>
           <li><span class="home-step-label">02 / Open your repository</span><pre><code>cd path/to/your/repo
 roam init</code></pre><p>Replace the path with your project. This builds the index and creates project configuration.</p></li>
-          <li><span class="home-step-label">03 / Get your bearings</span><pre><code>roam understand</code></pre><p>See the big picture, then follow the parts you want to understand.</p></li>
+          <li><span class="home-step-label">03 / Connect your agent</span><a class="home-text-link" href="/setup">Choose your agent’s setup guide <span aria-hidden="true">↗</span></a><p>Connect the tools and add the workflow instructions. Ask your agent to use Roam before editing and when checking its work.</p></li>
         </ol>
         <div class="home-start-footer">
           <p>Want only the index, without project configuration? Use <code>roam index</code> instead of <code>roam init</code>.</p>
           <a class="home-text-link" href="/docs/getting-started">Walk through the getting-started guide <span aria-hidden="true">↗</span></a>
         </div>
-        <p class="home-agent-install">For agent tools, install <code>pip install "roam-code[mcp]"</code>, then follow the <a href="/setup">editor setup guide</a>. <a href="/docs/mcp-usage">Learn about MCP</a>.</p>
+        <p class="home-agent-install">If your agent uses shell commands, <code>pip install roam-code</code> is enough for the CLI. You can inspect the same results yourself. <a href="/docs/mcp-usage">Learn about MCP</a>.</p>
       </div>
     </section>
 
     <section class="home-section home-wrap home-faq" aria-labelledby="faq-heading">
       <div><p class="home-eyebrow">A few things worth knowing</p><h2 id="faq-heading">Good questions.</h2><p>Something else on your mind?<br><a href="https://github.com/Cranot/roam-code/discussions">Ask us on GitHub <span aria-hidden="true">↗</span></a></p></div>
       <div class="home-faq-list">
-        <details><summary>Do I need an AI coding agent to use Roam?</summary><p>No. Use Roam yourself in the terminal to explore a repository or check a change. Connecting an agent is optional; it gives the agent access to the same local tools.</p></details>
-        <details><summary>Is Roam free?</summary><p>The CLI and MCP server are free and open source under Apache 2.0, for individuals and teams. Paid services and planned team products are separate; you do not need them to use the local tools. <a href="/pricing">See team options</a>.</p></details>
-        <details><summary>Does my code leave my machine?</summary><p>Ordinary analysis is local, with no automatic source-code or telemetry upload. Installation and the first parser download need network access. Optional online features have explicit triggers; opt-in MCP model summarization can include source snippets. Read the <a href="/security#network-boundary">network boundary</a> for the full details.</p></details>
+        <details><summary>Is Roam for agents or for people?</summary><p>Roam is built for coding agents to use as they work. Connect it through MCP or let your agent call the CLI, and include Roam checks in its instructions. You can inspect the same results in the terminal, but manually running every check is not the intended workflow. Connecting tools alone does not guarantee your agent will use them.</p></details>
+        <details><summary>Is Roam free?</summary><p>The CLI and MCP server are free and open source under Apache 2.0, for individuals and teams. Static checks use local compute, not model calls or a paid Roam API. Your coding agent's own model usage is separate. Paid services and planned team products are separate too; you do not need them to use the local tools. <a href="/pricing">See team options</a>.</p></details>
+        <details><summary>Does my code leave my machine?</summary><p>Ordinary analysis is local, with no automatic source-code or telemetry upload. A connected coding agent receives tool results and may send them to its model provider under its own settings. Installation and the first parser download need network access. Optional online features have explicit triggers; opt-in MCP model summarization can include source snippets. Read the <a href="/security#network-boundary">network boundary</a> for the full details.</p></details>
         <details><summary>What languages and computers does it work with?</summary><p>Roam runs on Windows, macOS, and Linux with Python 3.10+. It supports 28 languages, including Python, JavaScript, TypeScript, Go, Rust, Java, C#, PHP, and Ruby. The depth of analysis varies by language and framework. <a href="/docs/">Explore the documentation</a>.</p></details>
         <details><summary>How long does the first index take?</summary><p>It depends on the size of your repository, its history, your machine, and whether parsers are already downloaded. The first index does more work; later refreshes reuse it and process changed files. Run <code>roam index</code> to refresh after changes.</p></details>
-        <details><summary>Does Roam replace tests or code review?</summary><p>No. Roam helps you investigate code connections and potential risks. Static analysis can miss connections, a suggested test list is not test coverage, and a health score is not permission to merge. Keep your tests, security checks, and human review.</p></details>
+        <details><summary>Does Roam replace tests or code review?</summary><p>No. Roam gives your agent evidence to investigate code connections and potential risks. Static analysis can miss connections, a suggested test list is not test coverage, and a health score is not permission to merge. Use Roam alongside tests, security checks, and human review of the changes that matter. You still set the goals and decide what ships.</p></details>
         <details><summary>Can our team use it in CI?</summary><p>Yes. Run Roam checks in your build, review changes, and export findings for code-scanning tools. You can also enable a local run ledger and proof bundles to record which checks ran. Signed records help detect later changes to evidence; they do not prove every relevant check was captured. <a href="/docs/integration-tutorials">See integration guides</a> and <a href="/governance">review records for teams</a>.</p></details>
       </div>
     </section>
 
     <section class="home-replay" id="audit" aria-labelledby="audit-heading">
       <div class="home-wrap home-replay-inner">
-        <div><p class="home-eyebrow">Already have a few changes in mind?</p><h2 id="audit-heading">Take another look at recent work.</h2><p>Run a local sample review of recent merged pull requests. See which structural findings are worth following up.</p></div>
+        <div><p class="home-eyebrow">Already shipping with agents?</p><h2 id="audit-heading">Give recent work another check.</h2><p>Have your agent run a local sample review of recent merged pull requests, then investigate the structural findings worth following up.</p></div>
         <div><pre><code>roam pr-replay --tier sample</code></pre><p class="home-small">Requires Roam and local merge history. This replay sends no email and performs no repository upload.</p><a href="/audit">Explore review and team options <span aria-hidden="true">↗</span></a></div>
       </div>
     </section>
@@ -242,7 +242,7 @@ roam init</code></pre><p>Replace the path with your project. This builds the ind
 
   <footer class="home-footer">
     <div class="home-wrap">
-      <div class="home-footer-top"><a class="site-logo" href="/" aria-label="Roam — home">roam<span class="logo-dot">.</span></a><p>A little more understanding.<br>A better place to start.</p><a class="home-text-link" href="#install">Try Roam for free <span aria-hidden="true">↗</span></a></div>
+      <div class="home-footer-top"><a class="site-logo" href="/" aria-label="Roam — home">roam<span class="logo-dot">.</span></a><p>Your agent writes the code.<br>Give it the bigger picture.</p><a class="home-text-link" href="#install">Equip your agent for free <span aria-hidden="true">↗</span></a></div>
       <div class="home-footer-links">
         <div><h2>Explore</h2><a href="/docs/">Documentation</a><a href="/setup">Agent setup</a><a href="/compare">Compare</a><a href="/pricing">Pricing</a><a href="https://github.com/Cranot/roam-code">GitHub</a><a href="https://pypi.org/project/roam-code/">PyPI</a></div>
         <div><h2>About Roam</h2><a href="/about">Our story</a><a href="/changelog">What’s new</a><a href="/status">Status</a><a href="/press">Press</a><a href="mailto:hello@roam-code.com">Say hello</a></div>

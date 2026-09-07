@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -268,15 +267,14 @@ class TestIsReachableFromEntry:
 
 
 class TestIsCloneOf:
-    def test_clone_table_absent_returns_false_with_hint(self, indexed_project):
+    def test_clone_scan_absent_returns_unknown_with_hint(self, indexed_project):
         """Without `roam clones --persist`, the clone_pairs table either
-        doesn't exist or is empty — the oracle should return False with
+        doesn't exist or is empty — the oracle should return unknown with
         a helpful hint."""
         with open_db(readonly=True) as conn:
             value, reason = oracle_is_clone_of(conn, "handle_login")
-        assert value is False
-        # Either the hint about persisting, or a "no clone siblings" message.
-        assert "clones --persist" in reason or "no clone" in reason
+        assert value is None
+        assert "clones --persist" in reason
 
     def test_empty_query_returns_false(self, indexed_project):
         with open_db(readonly=True) as conn:
@@ -295,22 +293,22 @@ class TestIsCloneOf:
 
         # Need write access to insert a synthetic row.
         with _open(readonly=False) as conn:
-            try:
-                conn.execute(
-                    "INSERT INTO clone_pairs (qname_a, qname_b, file_a, file_b, jaccard, kind) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (
-                        "auth.handle_login",
-                        "auth.handle_logout",
-                        "auth.py",
-                        "auth.py",
-                        0.95,
-                        "type2",
-                    ),
-                )
-                conn.commit()
-            except sqlite3.DatabaseError:
-                pytest.skip("clone_pairs schema differs in this fixture")
+            conn.execute(
+                "INSERT INTO clone_pairs (qname_a, qname_b, file_a, file_b, func_a, func_b, line_a, line_b, similarity) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "auth.handle_login",
+                    "auth.handle_logout",
+                    "auth.py",
+                    "auth.py",
+                    "handle_login",
+                    "handle_logout",
+                    1,
+                    10,
+                    0.95,
+                ),
+            )
+            conn.commit()
 
         try:
             with open_db(readonly=True) as conn:
@@ -385,7 +383,7 @@ class TestCLI:
         runner = CliRunner()
         result = runner.invoke(cli, ["oracle", "is-clone-of", "handle_login"])
         assert result.exit_code == 0, result.output
-        assert "VERDICT: false" in result.output
+        assert "VERDICT: indeterminate" in result.output
 
     def test_is_reachable_max_hops_flag(self, indexed_project):
         runner = CliRunner()

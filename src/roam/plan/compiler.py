@@ -28,6 +28,7 @@ import subprocess
 import sys
 import threading as _w131_threading  # W131 — pre-import for cross-block use
 import time
+from collections import deque
 from functools import lru_cache as _w144_lru_cache
 
 from roam.observability import log_swallowed
@@ -2559,10 +2560,10 @@ def _write_compile_telemetry_line(path: str, line: str) -> None:
                     )
                     rows = [row for row in rows if str(row.get("ts") or "") >= cutoff]
                     rows = rows[-_COMPILE_TELEMETRY_MAX_RECORDS:]
-                    encoded = [(_fast_json_dumps(row) + "\n").encode("utf-8") for row in rows]
+                    encoded = deque((_fast_json_dumps(row) + "\n").encode("utf-8") for row in rows)
                     total = sum(len(item) for item in encoded)
                     while encoded and total > _COMPILE_TELEMETRY_MAX_BYTES:
-                        total -= len(encoded.pop(0))
+                        total -= len(encoded.popleft())
                     if encoded:
                         _atomic_write_owner_only(path, b"".join(encoded))
     except PermissionError as exc:

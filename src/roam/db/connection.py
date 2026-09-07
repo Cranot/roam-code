@@ -678,6 +678,14 @@ _MIGRATIONS: list[tuple[int, str, "Callable[[sqlite3.Connection], object]"]] = [
     # ``roam budget`` exited 5 on an unchanged tree. Existing rows stay
     # NULL and are read as version 1.
     (63, "snapshots.metrics_version", _alter("snapshots", "metrics_version", "INTEGER")),
+    (
+        64,
+        "clone scan evidence",
+        _exec(
+            "CREATE TABLE IF NOT EXISTS clone_scan_state ("
+            "id INTEGER PRIMARY KEY CHECK (id = 1), metadata_json TEXT NOT NULL)"
+        ),
+    ),
 ]
 
 
@@ -736,7 +744,7 @@ def ensure_schema(conn: sqlite3.Connection, *, warnings_out: WarningsOut = None)
 # The CI check tests/test_user_version_discipline.py enforces this by
 # snapshotting a hash of schema.py; if the hash drifts, the test
 # requires USER_VERSION to drift too (lockstep updates).
-USER_VERSION = 19
+USER_VERSION = 20
 
 # Derived from the ledger so adding/removing a migration auto-updates
 # the count without a manual touch. The pin test in

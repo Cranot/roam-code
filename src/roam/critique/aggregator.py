@@ -36,10 +36,11 @@ def aggregate(
     * ``top_finding`` — the most urgent (or ``None`` when none).
     * ``check_status`` — pass-through of the per-check status dict (when
       provided), so the caller can surface it in JSON envelopes.
-    * ``partial_success`` — True when any check was skipped or errored.
+    * ``partial_success`` — True when any check was skipped, errored or incomplete.
 
     ``check_status``: mapping of ``check_name -> status`` where status is
-    one of ``"ran"`` / ``"skipped:<reason>"`` / ``"errored:<exc>"``. When
+    one of ``"ran"`` / ``"skipped:<reason>"`` / ``"errored:<exc>"`` /
+    ``"partial:<reason>"``. Unknown statuses are incomplete, never clean. When
     omitted, the legacy ``"No concerns"`` verdict is preserved for
     callers that don't yet pass the dict (LAW 11: explicit > inferred).
     """
@@ -69,6 +70,7 @@ def aggregate(
     ran_count = 0
     skipped_count = 0
     errored_count = 0
+    incomplete_count = 0
     if check_status:
         for status in check_status.values():
             if status == "ran":
@@ -77,8 +79,11 @@ def aggregate(
                 skipped_count += 1
             elif status.startswith("errored"):
                 errored_count += 1
-    total_checks = ran_count + skipped_count + errored_count
-    partial = check_status is not None and (skipped_count + errored_count) > 0
+            else:
+                # Partial and unknown statuses can never certify completion.
+                incomplete_count += 1
+    total_checks = ran_count + skipped_count + errored_count + incomplete_count
+    partial = check_status is not None and (skipped_count + errored_count + incomplete_count) > 0
 
     if not sorted_findings:
         if partial:
@@ -88,6 +93,8 @@ def aggregate(
                 parts.append(f"{skipped_count} skipped")
             if errored_count:
                 parts.append(f"{errored_count} errored")
+            if incomplete_count:
+                parts.append(f"{incomplete_count} incomplete")
             verdict = f"0 concerns from {ran_count} of {total_checks} checks ({', '.join(parts)})"
         else:
             verdict = "No concerns from roam critique"
@@ -104,6 +111,8 @@ def aggregate(
                 qual.append(f"{skipped_count} skipped")
             if errored_count:
                 qual.append(f"{errored_count} errored")
+            if incomplete_count:
+                qual.append(f"{incomplete_count} incomplete")
             verdict += f" — {ran_count} of {total_checks} checks ran ({', '.join(qual)})"
 
     result = {

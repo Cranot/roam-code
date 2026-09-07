@@ -39,6 +39,111 @@ an empty or short finding list. For `path-coverage`, depth pruning and shared
 visited-node traversal prevent an exhaustive-path claim even when no test gaps
 are reported. Its test signal is static, not measured runtime coverage.
 
+## Clone scans and patch review
+
+`roam clones --persist` saves the detected pairs and a scan record together.
+An interrupted detector or failed save preserves the previous saved snapshot.
+A successful scan with no pairs is different from never having scanned.
+Scanning reads its file list and index identity from one database snapshot;
+review likewise reads saved metadata and pairs together, even if another
+process refreshes them during the command.
+
+Inspect `summary.scan`: it names the scope, filters, similarity threshold,
+minimum function length, eligible and compared function counts, unavailable
+file count, and completion state. The detector currently compares at most
+2,000 qualifying functions, favoring larger functions when capped. If comparison
+fails before finishing, the compared-function count remains unknown (`null`),
+and the scan is incomplete. This limit is separate from the display limit.
+A cap or unavailable parser/source marks the
+scan incomplete; an empty result then cannot establish absence of clones.
+
+`roam critique` reads this saved evidence, including for batch reviews. Its
+`clone_scan` summary retains the detector's bounds. A filtered, incomplete,
+older-format, changed-detector, or stale scan produces a qualified check status
+and `partial_success: true`. Positive findings remain visible for inspection.
+Old databases migrate without inventing completion records for their existing
+pairs. A completed, current empty scan can count as a check that ran.
+The completion bit alone is insufficient: counts and bounds must agree, and
+the saved source inventory must match the indexed eligible files. Contradictory
+or missing metadata qualifies the review without hiding useful positive findings.
+`NaN` thresholds are rejected before analysis or persistence; JSON callers
+receive a structured usage error with exit code 2. Malformed
+saved numbers cannot leak `NaN` or `Infinity` into the review's JSON summary.
+
+`roam oracle is-clone-of SYMBOL` uses the same saved-scan qualification. With
+no matching pair, missing, capped, filtered, inconsistent, or stale evidence
+produces `value: null`, `verdict: "indeterminate"`, and `partial_success: true`.
+A current completed scan permits a negative answer only within its recorded
+detector bounds, exposed as `summary.clone_scan`; it is not proof that the
+symbol has no semantic duplicates. Existing positive rows remain visible,
+with a qualified reason when their evidence is incomplete or stale.
+`summary.check_status` names that state, and batch queries preserve partial
+rows and mark the batch partial. Names match literally and case-sensitively,
+including the detector's `file.py:function` form and legacy dotted names.
+The MCP single and batch tools preserve the same scan-evidence fields; their
+tool versions are 1.1.0 so clients can refresh older cached descriptions.
+Batch freshness checks use the explicitly requested project root, not the
+server's working directory, and do not auto-index that unrelated directory.
+
+`roam retrieve` qualifies its optional clone-ranking signal with the same
+saved-scan checks. `clone_evidence` carries the status and scan bounds through
+the pipeline, CLI JSON, and MCP. Missing, incomplete, filtered, stale, or invalid
+evidence sets `partial_success: true` in the retrieval summary and qualifies the
+verdict. Other retrieval signals remain useful; partial clone evidence does not
+make their observed results disappear.
+
+Previously observed matches retain `clone_cluster` and `clone_siblings`, plus
+`clone_check_status` and `clone_boost_applied`. Only a complete, current scan may
+boost ranking. A stale observation is a reading lead, not current clone proof;
+absence of a tag is not proof of no duplicates. A completed empty scan remains
+distinct from a missing scan. Candidates and saved evidence share one SQLite
+snapshot, and freshness is checked once per query, not once per candidate.
+Setting the retrieval epsilon weight to zero disables clone inspection and its
+boost; the result records `skipped:disabled` rather than claiming a scan ran.
+
+Freshness compares the indexed file set/generation and the eligible files'
+source hashes. Refresh the index and scan after source changes. This checks
+the indexed corpus under the saved detector settings, not unindexed files,
+all languages, semantic equivalence, or the correctness of a proposed repair.
+Source hashing and launcher metadata are provenance checks, not authentication
+against someone who can rewrite the local evidence store.
+Source hashing streams file contents in fixed-size chunks to bound allocation;
+it does not cache freshness between invocations. Non-regular sources are
+unavailable, including a POSIX file replaced by a FIFO during the type check.
+This is not a bound on network-filesystem latency or an atomic filesystem snapshot.
+
+Clone analysis avoids duplicate candidate bookkeeping and resolves saved cluster
+membership only for pairs that were actually found. Fix-hint lookup reuses
+function locations within the already-parsed tree for that scan; it does not
+cache source freshness across commands. These are implementation optimizations,
+not broader detector coverage: pair ordering, similarity thresholds, scan caps,
+and incomplete-result qualifications remain unchanged. Dense clone output can
+still require quadratic space in the number of participating functions.
+
+## Python reference and test-selection precision
+
+Bare values passed to calls or stored in registries can be genuine callback
+references. They can also be ordinary local data: `project = {}; inspect(project)`
+does not refer to an unrelated function or pytest fixture named `project`.
+The Python extractor guards parameters and ordinary assignment bindings in
+the enclosing function, including annotated, destructured, chained, and
+augmented assignments. It respects `global`/`nonlocal` declarations and treats
+default expressions as part of the enclosing scope. Callback assignments such
+as `alias = callback` retain the reference to the actual callback; subsequent
+uses of the local alias do not invent global-name edges. Function binding
+scans are cached only during that file's extraction.
+
+This is a narrow bare-value reference guard, not complete Python name resolution
+or alias/dataflow analysis. Loop targets, context-manager and exception bindings,
+comprehensions, assignment expressions, imports, and dynamic dispatch have
+additional scope rules outside this guard. Direct-call resolution is unchanged.
+Static impacted-test selection still needs corroboration from real tests.
+Rebuild an existing index with `roam index --force` to refresh previously saved
+reference edges after an extractor change.
+This changes graph-derived metrics even on unchanged source. Snapshot metrics
+definition 3 distinguishes these results from definition 2; baseline consumers
+must report the version mismatch, not interpret it as an improvement or regression.
+
 ## TypeScript and browser projects
 
 Relative runtime imports such as `./worker.js` can name TypeScript source.
@@ -73,6 +178,18 @@ a database transaction is missing.
 
 ## Review an algorithm finding
 
+Broad-exception findings are recovery-review candidates, not proof that an
+error was silently lost. The Python detector checks each handler separately:
+a raise or error record in another handler cannot excuse this one. It recognizes
+direct rethrows and explicit exception-bearing return/results, including in
+methods. A conditional raise, deferred nested function, or logging call alone
+does not establish that every failure path is handled. Review the caller's
+failure contract before narrowing a catch or adding a rethrow; additive
+diagnostics can intentionally recover. Alias/dataflow semantics, tuple exception
+types, and the legacy recovery-name exclusions remain heuristic limitations.
+Detector version 1.1.0 changes which handlers match; changed finding totals are
+not a measured improvement in the target code.
+
 1. Open the exact reported source location and read `reason`,
    `evidence.matched_patterns`, and `evidence.context_lines` when supplied.
 2. Check the assumptions: does the lookup collection vary, is a loop bounded,
@@ -102,6 +219,28 @@ change. Old indexed signals and newly read source can otherwise disagree.
 
 ## Graph scope and work planning
 
+`observability-opt` reports raw-print **review candidates**, not confirmed
+debug leftovers or instructions to replace a CLI's output. Python findings
+require a bare-name `print` call in the parsed syntax tree. Docstrings, string
+examples and comments are excluded; calls inside f-string expressions still
+count. `evidence.detection_method` distinguishes `python_ast_call` from the
+other languages' `line_pattern` heuristic. Neither establishes that the call
+resolves to the builtin or that its output is unwanted. Other languages still
+have string/block-comment limitations.
+
+Unreadable sources and Python syntax the running interpreter cannot parse are
+listed in `files_unreadable` / `files_unparsed`; JSON and MCP mark the result
+partial and the verdict names the gap. Valid files can still contribute useful
+findings. `source_files_scanned` counts harvested files, including unparsed ones,
+not a complete-parse denominator. Profile, language and file limits define the
+selected scope; a strict profile dropping heuristic findings is not a clean bill
+of health. Predicate/persistence version 1.1.0 records this matching change.
+
+The reusable resilience engine likewise marks unreadable selected sources as
+partial while preserving findings from readable files. It is an engine-level
+API; this does not introduce a new resilience CLI command or change its
+text-pattern timeout detector into a parser-based check.
+
 `cycles` uses the symbol import/call graph and labels cross-file actionability.
 `cycle-break` uses the file dependency graph. Its `members` array is a component
 inventory; `cycle_path` is a closed walk whose displayed adjacent edges actually
@@ -121,7 +260,31 @@ For a file-level decomposition, use `roam split path/to/file.ts`.
 CONSTANT_CASE, snake_case, and qualified member identifiers, but it is not a
 general natural-language parser: review the selected recipe and resolved target.
 
+`pytest-fixtures` batches adjacency reads by breadth-first frontier. Its chain
+excludes the root, deduplicates shared dependencies/cycles, and retains minimum
+depth and parent-discovery ordering with name-sorted children. The optimization
+changes database work, not which fixture relationships the index can resolve;
+static fixture reachability remains distinct from running pytest.
+
+## Orientation versus history metrics
+
+`roam understand` uses the shared health calculation but does not compute the
+spectral-history value that its answer never exposes. Health scores and their
+inputs retain the same definitions. Snapshot collection still computes spectral
+history by default; this optimization does not replace a slow or unavailable
+measurement with a made-up value, or change stored history semantics.
+
 ## Practical command checks
+
+`test-impact` distinguishes an unavailable Git changeset from a measured empty
+one. Invalid revisions, missing Git, launch errors, and timeouts return exit 6;
+JSON carries `state: "diff_unavailable"`, `git_error`, and `partial_success: true`.
+SARIF marks the invocation unsuccessful and includes a diagnostic notification.
+MCP preserves the same incomplete state. An emitted `count: 0` on that path
+counts output rows, not proof that no tests are affected. Valid empty ranges
+remain successful; even a populated selection is a bounded static mapping, not
+test execution or complete coverage. Paths are read as NUL-delimited records
+so spaces and non-ASCII names survive Git's output quoting rules.
 
 ```bash
 roam doctor

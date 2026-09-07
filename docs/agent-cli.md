@@ -1,5 +1,23 @@
 # Reliable CLI calls for agents
 
+## Automatic Claude hooks
+
+The working-tree `roam hooks claude --write` installer writes an executable plus
+an argument list, avoiding shell interpretation of Python and hook paths.
+It migrates the exact historical Roam command and keeps other hook entries;
+customized hook bodies still require explicit review. Keep Roam and its
+compile-code consumer in the same Python environment and update both when
+adopting this command format. Exec-form dispatch has been exercised with
+Claude Code 2.1.263; older-client support is not established here.
+This describes the coordinated source change, not a package-release announcement.
+
+A configuration check does not establish successful hook execution. Inspect
+UserPromptSubmit and Stop events and complete verification receipts: the agent
+process can exit successfully even when a hook failed to execute. See
+[verification evidence](concepts/verification-evidence.md) for acceptance limits.
+
+## Choose a command
+
 Start with the question, then narrow the output. Roam's existing CLI and MCP
 interfaces share the same analysis; a second wrapper is not required.
 

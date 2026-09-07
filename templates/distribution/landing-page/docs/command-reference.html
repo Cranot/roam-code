@@ -240,6 +240,15 @@
         <li><code>algo</code> reports candidate patterns. Inspect the exact source,
           loop inputs, receiver identity, and ordering requirements; test and
           measure before applying an optimization.</li>
+        <li><code>observability-opt</code> reports raw-print review candidates,
+          not proven debug leftovers. Python checks actual call syntax and skips
+          docstring/comment examples. Keep intentional CLI output; unreadable or
+          unparseable sources make the result incomplete. Other languages still
+          use text-pattern heuristics.</li>
+        <li><code>doctor</code> checks SQLite integrity independently of index
+          completion or matching search-row counts. Specific failures appear in
+          <code>integrity_errors</code>; a repair does not establish why the
+          corruption happened.</li>
         <li><code>test-map</code>, <code>ai-readiness</code>, and
           <code>path-coverage</code> use static relationships, not runtime coverage.
           Depth-pruned paths and empty input cannot establish a clean result.</li>
@@ -534,7 +543,7 @@
       <tr><td><code>roam ai-readiness</code></td><td>Estimate how effectively AI agents can work on this codeb...</td></tr>
       <tr><td><code>roam check-rules</code></td><td>Run structural governance rules against the indexed codeb...</td></tr>
       <tr><td><code>roam dict-consistency</code></td><td>Audit string-keyed dicts in a Python file for cross-dict ...</td></tr>
-      <tr><td><code>roam ai-ratio</code></td><td>Inspect AI-associated patterns as an uncalibrated score, not an authorship estimate.</td></tr>
+      <tr><td><code>roam ai-ratio</code></td><td>Inspect AI-associated patterns; this is not an authorship...</td></tr>
       <tr><td><code>roam trends</code></td><td>Health trend timeline, anomaly detection, per-metric trac...</td></tr>
       <tr><td><code>roam weather</code></td><td>Rank files by churn x complexity score (highest-leverage ...</td></tr>
       <tr><td><code>roam timeline</code></td><td>Show commits that touched the file owning &lt;symbol&gt;.</td></tr>
@@ -546,7 +555,7 @@
       <tr><td><code>roam test-hermeticity</code></td><td>Scan Python test files for non-hermetic patterns (AI-test...</td></tr>
       <tr><td><code>roam algo</code></td><td>Detect suboptimal algorithms and suggest better approaches.</td></tr>
       <tr><td><code>roam agent-opt</code></td><td>Optimize roam's agent-contract surface: find weak envelop...</td></tr>
-      <tr><td><code>roam observability-opt</code></td><td>Optimize a repo's diagnosability: find debug prints / wea...</td></tr>
+      <tr><td><code>roam observability-opt</code></td><td>Review raw print candidates and their diagnostic context.</td></tr>
       <tr><td><code>roam n1</code></td><td>Detect implicit N+1 I/O patterns in ORM models.</td></tr>
       <tr><td><code>roam over-fetch</code></td><td>Detect models that serialize more fields than necessary i...</td></tr>
       <tr><td><code>roam missing-index</code></td><td>Detect queries that filter or sort on columns without ind...</td></tr>
@@ -606,7 +615,7 @@
       <tr><td><code>roam batch-search</code></td><td>Search up to 10 symbol-name patterns in a single command.</td></tr>
       <tr><td><code>roam complete</code></td><td>Return left-anchored prefix completions for the given par...</td></tr>
       <tr><td><code>roam grep</code></td><td>Context-enriched grep with reachability, clone, and bridg...</td></tr>
-      <tr><td><code>roam refs-text</code></td><td>Audit string references; require REVIEW when the search is incomplete.</td></tr>
+      <tr><td><code>roam refs-text</code></td><td>Audit literal strings across the project: per-surface ref...</td></tr>
       <tr><td><code>roam history-grep</code></td><td>Through-history search using git pickaxe (-S / -G).</td></tr>
       <tr><td><code>roam file</code></td><td>Show file skeleton: all definitions with signatures.</td></tr>
       <tr><td><code>roam symbol</code></td><td>Show definition, callers, and callees for SYMBOL.</td></tr>
@@ -666,16 +675,17 @@
       <tr><td><code>roam flag-dead</code></td><td>Detect potentially stale feature flag code (conditionally...</td></tr>
       <tr><td><code>roam duplicates</code></td><td>Detect semantically duplicate functions via structural si...</td></tr>
       <tr><td><code>roam safe-delete</code></td><td>Check if SYMBOL can be safely deleted.</td></tr>
-      <tr><td><code>roam delete-check</code></td><td>Check surviving references; --ci refuses break risks and incomplete searches.</td></tr>
+      <tr><td><code>roam delete-check</code></td><td>Gate the working diff on surviving references to deleted ...</td></tr>
       <tr><td><code>roam split</code></td><td>Analyze a file's internal structure and suggest how to sp...</td></tr>
       <tr><td><code>roam fn-coupling</code></td><td>Show function-level temporal coupling (hidden dependencies).</td></tr>
+      <tr><td><code>roam doc-drift</code></td><td>Verify concrete prose claims in Markdown docs against rep...</td></tr>
       <tr><td><code>roam doc-staleness</code></td><td>Detect concrete docstring claims that no longer match the...</td></tr>
       <tr><td><code>roam docs-coverage</code></td><td>Analyze exported-symbol doc coverage and stale docs in on...</td></tr>
       <tr><td><code>roam docs-index</code></td><td>Find orphaned planning memos and broken local Markdown li...</td></tr>
       <tr><td><code>roam stale-refs</code></td><td>Find dangling file references — markdown links, HTML href...</td></tr>
       <tr><td><code>roam lsp</code></td><td>Run the roam-stale-refs language server on stdin/stdout (...</td></tr>
       <tr><td><code>roam suggest-refactoring</code></td><td>Rank symbols that are likely to yield high-value refactor...</td></tr>
-      <tr><td><code>roam plan-refactor</code></td><td>Build an ordered refactoring plan with risk, test, and im...</td></tr>
+      <tr><td><code>roam plan-refactor</code></td><td>Build an ordered refactoring plan for a symbol (use split...</td></tr>
       <tr><td><code>roam conventions</code></td><td>Auto-detect codebase naming, file, import, and export con...</td></tr>
       <tr><td><code>roam sketch</code></td><td>Show compact structural skeleton of a directory.</td></tr>
       <tr><td><code>roam test-map</code></td><td>Map a symbol identifier or file path to its test coverage.</td></tr>

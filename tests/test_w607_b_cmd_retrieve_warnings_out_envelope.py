@@ -89,12 +89,13 @@ def retrieve_project(project_factory):
 def test_clean_retrieve_no_warnings(retrieve_project, monkeypatch):
     """Clean retrieve on populated corpus → envelope has no warnings_out.
 
-    Hash-stable: an empty bucket must produce a byte-identical envelope
-    on the success path. ``partial_success`` defaults to False per the
-    W817 always-emit discipline in ``json_envelope``.
+    A complete clone scan qualifies the optional ranking signal. The
+    warnings bucket remains absent and partial_success remains False.
     """
     monkeypatch.chdir(retrieve_project)
     runner = CliRunner()
+    scan = runner.invoke(cli, ["clones", "--persist"], catch_exceptions=False)
+    assert scan.exit_code == 0, scan.output
     result = runner.invoke(
         cli,
         ["--json", "retrieve", "authenticate user session"],

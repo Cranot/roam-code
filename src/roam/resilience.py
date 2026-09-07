@@ -385,7 +385,7 @@ def run_resilience(
     Source is harvested once (lazily) and shared across active source-tier
     tasks. ``sources`` may be passed in directly for deterministic tests.
     ``meta`` carries ``partial_success`` (Pattern 2): True iff a detector
-    raised OR no source could be harvested for an active task.
+    raised OR source files are absent or unreadable for an active task.
     """
     all_tasks = set(resilience_task_ids())
     only_set = {t for t in (only or ()) if t}
@@ -411,7 +411,7 @@ def run_resilience(
             harvested, unreadable = sources, []
         sources_meta["source_files_scanned"] = len(harvested)
         sources_meta["files_unreadable"] = unreadable
-        if not harvested:
+        if not harvested or unreadable:
             partial = True
 
         if "missing-timeout" in active:

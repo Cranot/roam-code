@@ -1,6 +1,8 @@
 version: 2
 updates:
-  - package-ecosystem: "pip"
+  # Keep pyproject.toml and uv.lock together; CI installs with --locked.
+  # https://docs.astral.sh/uv/guides/integration/dependabot/
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"

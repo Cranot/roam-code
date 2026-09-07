@@ -547,17 +547,17 @@ CATALOG: dict[str, dict] = {
         ],
     },
     "broad-except-swallow": {
-        "name": "Broad except clause silently swallows error",
+        "name": "Broad exception recovery needs review",
         "category": "error-handling",
         "kind": "idiom",
         "ways": [
             {
                 "id": "narrow-or-reraise",
-                "name": "Narrow exception type, or log + raise",
+                "name": "Narrow the catch or preserve the failure",
                 "time": "n/a",
                 "space": "n/a",
                 "rank": 1,
-                "tip": "Catch the specific exception you expect (e.g. `OSError`), or log AND re-raise so failures aren't hidden.",
+                "tip": "Review the recovery contract. Narrow the catch, re-raise, or return explicit failure evidence; logging alone does not prove recovery is correct.",
             },
             {
                 "id": "swallow-exception",
@@ -1013,7 +1013,7 @@ CATALOG: dict[str, dict] = {
     # family-local registry. ``time``/``space`` are N/A for a diagnosability
     # task; "weak way" is encoded as the high-rank way.
     "print-debug-leftover": {
-        "name": "Debug print left in source",
+        "name": "Raw print candidate in source",
         "category": "observability",
         "kind": "diagnosability",
         "family": "observability-opt",
@@ -1025,10 +1025,10 @@ CATALOG: dict[str, dict] = {
                 "space": "n/a",
                 "rank": 1,
                 "tip": (
-                    "Route diagnostics through the module logger "
-                    "(logger.debug/info with context fields), not a raw "
-                    "print/console.log/fmt.Println — so output is leveled, "
-                    "filterable, and shipped to your log sink."
+                    "Review the output contract first. Keep intentional CLI output; "
+                    "route diagnostic messages through the module logger "
+                    "(logger.debug/info with context fields) when leveled, "
+                    "filterable logs are appropriate."
                 ),
             },
             {
@@ -1038,9 +1038,9 @@ CATALOG: dict[str, dict] = {
                 "space": "n/a",
                 "rank": 10,
                 "tip": (
-                    "A bare print()/console.log/dbg!/var_dump left in non-test "
-                    "source leaks to stdout, carries no level or context, and is "
-                    "usually a forgotten debug line."
+                    "Inspect bare print()/console.log/dbg!/var_dump calls in non-test "
+                    "source. They may be debug leftovers or intentional user-facing "
+                    "output; the call alone does not establish a defect."
                 ),
             },
         ],

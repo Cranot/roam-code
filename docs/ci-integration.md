@@ -426,6 +426,12 @@ Run `roam --help-all` for all 287 commands.
 `roam exit-codes` prints this same table from the source of truth, so a script
 can read it instead of copying it.
 
+Do not infer complete analysis from exit 0 alone. Commands can return useful
+partial results with `partial_success: true`, truncation, or skipped checks.
+Inspect the JSON summary and per-check state; exit 6 is not a universal signal
+for every incomplete result. A configured but unevaluated Action gate is
+advisory unless `gate-strict` is enabled, as described above.
+
 ## Advanced Examples
 
 ### Multiple commands with strict gate
@@ -501,9 +507,10 @@ permissions:
 
 ### Slow first run
 
-The first run indexes the entire codebase. Subsequent runs with `cache: 'true'`
-will restore the cached index and only re-index changed files. Typical
-improvement: 30-60s down to under 10s.
+The first run builds the index. Subsequent runs can reuse a restored compatible
+index and update changed files; a missing or incompatible cache needs a rebuild.
+Measure the index and analysis steps separately on your repository. A cache hit
+does not establish a fixed runtime or guarantee that a costly analysis is fast.
 
 A completely cold runner may also retrieve one checksum-verified parser bundle.
 `tree-sitter-language-pack` serializes concurrent first use, publishes cache

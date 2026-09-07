@@ -641,8 +641,8 @@ def test_w607_ag_for_refactor_unaffected():
 # ---------------------------------------------------------------------------
 
 
-def test_w805_nnnnn_pins_still_xfail_strict_under_w607_aj():
-    """Orthogonality guard: W805-NNNNN xfail-strict pins survive W607-AJ.
+def test_w805_nnnnn_scanner_sees_broken_arguments_through_w607_aj(tmp_path):
+    """Retain scanner sensitivity on a synthetic broken W607-AJ recipe.
 
     W805-NNNNN pinned 3 latent bugs in for_security_review's recipe:
     (A) cmd_adversarial silent-drop of symbol positional, (B) vulns
@@ -668,11 +668,18 @@ def test_w805_nnnnn_pins_still_xfail_strict_under_w607_aj():
     if sys_path_added not in sys.path:
         sys.path.insert(0, sys_path_added)
     from test_w805_qqqqq_compound_recipe_shape_axis_drift import (  # noqa: E402
-        _MCP_SERVER,
         _scan_drift,
     )
 
-    drifts = _scan_drift(_MCP_SERVER)
+    # Keep scanner sensitivity without requiring production bugs to survive.
+    source = tmp_path / "broken_recipe.py"
+    source.write_text(
+        "def recipe(symbol, root):\n"
+        '    _run_check_aj("vulns", _safe_run, [_cr("vulns"), "list"], root)\n'
+        '    _run_check_aj("adversarial", _safe_run, [_cr("adversarial"), symbol], root)\n',
+        encoding="utf-8",
+    )
+    drifts = _scan_drift(source)
     observed = frozenset((d.cli_name, d.positionals) for d in drifts)
     expected_drift_identities = frozenset(
         {

@@ -49,7 +49,11 @@ from roam.quality.health_score import (
 #   had fused unrelated code into one giant SCC, and breaking it yields many
 #   small genuine cycles with far fewer symbols trapped. A v1->v2 delta is
 #   therefore NOT a regression, and must never be reported as one.
-SNAPSHOT_METRICS_VERSION = 2
+# Version 3: Python bare-value reference resolution now distinguishes assigned
+# locals from global callbacks and records actual callback alias assignments.
+# The graph changes on unchanged source; comparing v2 snapshots to v3 metrics
+# would misreport a definition change as a code-quality improvement/regression.
+SNAPSHOT_METRICS_VERSION = 3
 
 # Rows written before the column existed carry NULL. Every consumer resolves
 # NULL to this value rather than guessing, so "no stamp" is a definite old
@@ -150,12 +154,16 @@ def _count_layer_violations_for_resilient_snapshots(G):
         return 0
 
 
-def collect_metrics(conn):
+def collect_metrics(conn, *, include_spectral: bool = True):
     """Query the DB for all health metrics and compute a health score.
 
     Returns a dict with keys: files, symbols, edges, cycles,
     god_components, bottlenecks, dead_exports, layer_violations,
     health_score (0-100, higher = healthier).
+
+    Snapshot consumers retain the spectral history measurement by default.
+    Orientation-only consumers that do not expose it may set include_spectral
+    to False; spectral_gap is then None, with every other metric unchanged.
     """
     files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
@@ -307,16 +315,17 @@ def collect_metrics(conn):
     # degrade to a 0.0 sentinel inside spectral._compute_algebraic_connectivity.
     # Logic errors (TypeError/AttributeError/...) propagate.
     spectral_gap_val = None
-    from networkx.exception import NetworkXException
+    if include_spectral:
+        from networkx.exception import NetworkXException
 
-    try:
-        from roam.graph.spectral_forecast import compute_current_spectral_gap
+        try:
+            from roam.graph.spectral_forecast import compute_current_spectral_gap
 
-        spectral_gap_val = compute_current_spectral_gap(conn)
-    except (ImportError, sqlite3.Error, NetworkXException) as _exc:
-        from roam.observability import log_swallowed
+            spectral_gap_val = compute_current_spectral_gap(conn)
+        except (ImportError, sqlite3.Error, NetworkXException) as _exc:
+            from roam.observability import log_swallowed
 
-        log_swallowed("metrics_history", _exc)
+            log_swallowed("metrics_history", _exc)
 
     return {
         "files": files,
