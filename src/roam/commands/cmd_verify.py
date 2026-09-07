@@ -3665,7 +3665,7 @@ def _tests_unavailable(reason: str) -> dict:
                 "file": "",
                 "line": None,
                 "message": f"impacted test verification unavailable: {reason}",
-                "fix": "Restore impacted-test discovery, then rerun `roam verify`",
+                "fix": "Restore project test discovery and its environment, then rerun `roam verify`",
                 "hard_block": True,
             }
         ],
@@ -3733,13 +3733,34 @@ def _gather_and_rank_tests(conn, sym_ids, src_paths, changed_paths, root):
 def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
     """Run pytest over the impacted (capped) test files and report failures."""
     import subprocess
-    import sys
+
+    from roam.testing.project_environment import resolve_test_environment
+    from roam.testing.pytest_evidence import run_pytest_with_report
+
+    try:
+        interpreter, working_directory, selection = resolve_test_environment(root, ordered)
+    except (OSError, RuntimeError, ValueError) as exc:
+        result = _tests_unavailable(str(exc))
+        result.update(tests_targeted=0, tests_total_impacted=len(ordered))
+        return result
 
     capped = len(ordered) > _MAX_TEST_FILES
     targets = ordered[:_MAX_TEST_FILES]
-    cmd = [sys.executable, "-B", "-m", "pytest", *targets, "--tb=line", "-q", "-p", "no:cacheprovider"]
+    environment = {
+        "interpreter": interpreter,
+        "working_directory": str(working_directory),
+        "source": selection,
+    }
+    # Absolute paths preserve identity under the selected cwd and prevent a
+    # filename beginning with '-' from being interpreted as a pytest option.
+    test_paths = [str((root / target).absolute()) for target in targets]
+    cmd = [interpreter, "-B", "-m", "pytest", *test_paths, "--tb=line", "-q", "-p", "no:cacheprovider"]
     try:
-        proc = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=timeout)
+        proc, execution = run_pytest_with_report(cmd, working_directory, timeout)
+    except OSError as exc:
+        result = _tests_unavailable(f"project test interpreter could not launch ({type(exc).__name__})")
+        result.update(tests_targeted=len(targets), tests_total_impacted=len(ordered), test_environment=environment)
+        return result
     except subprocess.TimeoutExpired:
         return {
             "score": 0,
@@ -3760,9 +3781,30 @@ def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
                 }
             ],
             "tests_targeted": len(targets),
+            "tests_total_impacted": len(ordered),
+            "test_environment": environment,
         }
+    if execution["state"] == "process_incomplete":
+        process = execution["process"]
+        state = process["state"]
+        result = _tests_unavailable(
+            f"pytest process {state}; process-tree cleanup "
+            + ("verified" if process["tree_terminated"] is True else "unverified")
+        )
+        result.update(
+            execution_state="timed_out" if state == "timeout" else "incomplete",
+            timed_out=state == "timeout",
+            tests_targeted=len(targets),
+            tests_total_impacted=len(ordered),
+            capped=capped,
+            test_environment=environment,
+            test_execution=execution,
+        )
+        return result
     out = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    failed = sorted(set(_PYTEST_FAIL_RE.findall(out)))
+    # Test output may itself contain strings such as "FAILED example". Only
+    # parse diagnostic node IDs after a failed process; the report owns outcomes.
+    failed = sorted(set(_PYTEST_FAIL_RE.findall(out))) if proc.returncode else []
     violations = [
         {
             "category": "tests",
@@ -3798,7 +3840,14 @@ def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
                 "hard_block": True,
             }
         )
-    complete = proc.returncode == 0 and not capped
+    unavailable = proc.returncode not in {0, 1} or execution["state"] != "reported"
+    if proc.returncode == 0 and (
+        execution.get("passed", 0) == 0 or execution.get("failures", 0) or execution.get("errors", 0)
+    ):
+        unavailable = True
+    if unavailable:
+        violations.extend(_tests_unavailable("pytest did not provide consistent executed-test evidence")["violations"])
+    complete = proc.returncode == 0 and not capped and not unavailable and not violations
     score = 100 if complete else 0
     return {
         "score": score,
@@ -3808,7 +3857,15 @@ def _run_impacted_pytest(ordered: list[str], root: Path, timeout: int) -> dict:
         "tests_total_impacted": len(ordered),
         "capped": capped,
         "execution_state": "complete" if complete else "failed",
-        "partial_success": capped,
+        "partial_success": capped or unavailable,
+        "available": not unavailable,
+        "test_environment": environment,
+        "test_execution": execution,
+        **(
+            {"unavailable_reason": "project pytest could not provide consistent executed-test evidence"}
+            if unavailable
+            else {}
+        ),
     }
 
 
@@ -4986,6 +5043,8 @@ def _compute_composite(categories: dict[str, dict], selected: list[str] | tuple[
     for cat_name, weight in _CATEGORY_WEIGHTS.items():
         if cat_name not in sel:
             continue
+        if categories.get(cat_name, {}).get("applicability", {}).get("state") == "not_applicable":
+            continue
         weight_sum += weight
         total += weight * categories.get(cat_name, {}).get("score", 100)
     if weight_sum == 0:
@@ -5579,6 +5638,19 @@ def _verification_gap_violations(
             )
 
     categories = categories or {}
+    if not reasons and selected and all(categories.get(name, {}).get("skipped") for name in selected):
+        reasons.append("no_applicable_checks")
+        violations.append(
+            {
+                "category": "verification",
+                "severity": SEVERITY_FAIL,
+                "file": target_paths[0] if target_paths else "",
+                "line": None,
+                "message": "no selected check has eligible inputs; no verification was performed",
+                "fix": "Select checks applicable to these files, or run the project's own validation commands",
+                "hard_block": True,
+            }
+        )
     for category in selected or []:
         result = categories.get(category) or {}
         incomplete_reasons: list[str] = []
@@ -5664,7 +5736,53 @@ def _maybe_run_verify_check(selected: list[str], name: str, fn):
         return _verify_check_incomplete(name, f"selected check raised: {exc!r}")
 
 
+def _verify_check_input_scopes(conn, file_ids: list[int], target_paths: list[str], root: Path) -> dict[str, list[str]]:
+    """Known input eligibility, not proof of execution or detector completeness.
+
+    Keep unqualified optional detectors out of this map: their invocation is
+    retained and labelled not_assessed, rather than guessed from a file suffix.
+    """
+    rows = _syntax_file_rows(conn, file_ids)
+    code_paths = [row["path"] for row in rows if not _is_non_code_verify_surface(row["path"])]
+    scopes = {name: code_paths for name in ("naming", "imports", "duplicates", "restore_loss", "complexity")}
+    scopes["syntax"] = [row["path"] for row in rows if row["language"] and row["language"] not in _SYNTAX_SKIP_LANGS]
+    scopes["error_handling"] = [row["path"] for row in rows if row["language"] == "python"]
+    scopes["import_side_effects"] = [
+        row["path"] for row in rows if (row["language"] or "").lower() not in _MODULE_INIT_SKIP_LANGS
+    ]
+    scopes["secrets"] = [path for path, _ in _secret_scan_targets(target_paths, root)]
+    scopes["command_examples"] = [
+        path
+        for path in target_paths
+        if _is_command_example_surface(path)
+        and not _is_historical_command_example_surface(path)
+        and not _is_plugin_example_command_surface(path)
+    ]
+    scopes["claims"] = [
+        path for path in target_paths if _is_claim_surface(path) and not _is_historical_command_example_surface(path)
+    ]
+    return scopes
+
+
 def _run_verify_categories(conn, selected: list[str], file_ids: list[int], target_paths: list[str], root: Path) -> dict:
+    scopes = _verify_check_input_scopes(conn, file_ids, target_paths, root)
+    applicable = [name for name in selected if name not in scopes or scopes[name]]
+    categories = _run_applicable_verify_categories(conn, applicable, file_ids, target_paths, root)
+    for name in selected:
+        targets = scopes.get(name)
+        categories[name]["applicability"] = {
+            "state": "not_assessed" if targets is None else "applicable" if targets else "not_applicable",
+            "eligible_file_count": len(targets) if targets is not None else None,
+            "definition": "input-scope eligibility only; not execution coverage or a correctness guarantee",
+        }
+        if targets == []:
+            categories[name]["applicability"]["score_definition"] = "legacy not-run default; excluded from composite"
+    return categories
+
+
+def _run_applicable_verify_categories(
+    conn, selected: list[str], file_ids: list[int], target_paths: list[str], root: Path
+) -> dict:
     return {
         "naming": _maybe_run_verify_check(selected, "naming", lambda: _check_naming(conn, file_ids)),
         "imports": _maybe_run_verify_check(selected, "imports", lambda: _check_imports(conn, file_ids)),
@@ -6249,7 +6367,15 @@ def _category_summary(categories: dict) -> dict:
             entry["available"] = False
             if cat_result.get("unavailable_reason"):
                 entry["unavailable_reason"] = cat_result["unavailable_reason"]
-        for qualifier in ("execution_state", "timed_out", "partial_success", "capped"):
+        for qualifier in (
+            "applicability",
+            "execution_state",
+            "timed_out",
+            "partial_success",
+            "capped",
+            "test_environment",
+            "test_execution",
+        ):
             if qualifier in cat_result:
                 entry[qualifier] = cat_result[qualifier]
         # A check that says WHY its evidence is incomplete must be able to get
@@ -6468,6 +6594,8 @@ def _emit_verify_result(
             ctx.exit(EXIT_GATE_FAILURE)
         return
     if summary_mode:
+        if _has_only_non_code_targets(verify_envelope["summary"]):
+            click.echo(f"VERDICT: {_verify_display_verdict(verify_envelope['summary'])}")
         _emit_verify_summary(all_violations, verify_envelope["summary"]["files_checked"])
         if _verify_gate_failed(verify_envelope["summary"], score, threshold, report):
             ctx.exit(EXIT_GATE_FAILURE)
@@ -6479,10 +6607,10 @@ def _emit_verify_result(
     _emit_verify_text(
         score,
         threshold,
-        summary["verdict"],
+        _verify_display_verdict(summary),
         summary["violation_count"],
         summary["files_checked"],
-        selected,
+        summary["checks_run"],
         categories,
         fix_suggestions,
         root,
@@ -6492,6 +6620,20 @@ def _emit_verify_result(
     )
     if _verify_gate_failed(summary, score, threshold, report):
         ctx.exit(EXIT_GATE_FAILURE)
+
+
+def _has_only_non_code_targets(summary: dict) -> bool:
+    scope = summary.get("scope") or {}
+    return bool(scope) and scope.get("non_code_file_count") == scope.get("target_file_count")
+
+
+def _verify_display_verdict(summary: dict) -> str:
+    verdict = summary["verdict"]
+    if summary.get("state") == "no_applicable_checks":
+        return f"{verdict} -- no applicable checks; nothing verified"
+    if _has_only_non_code_targets(summary) and summary.get("checks_run"):
+        return f"{verdict} -- non-code checks only; source checks not applicable"
+    return verdict
 
 
 def _emit_verify_text(
@@ -6718,13 +6860,14 @@ def _build_verify_run(
             residual_findings = [
                 violation for violation in all_violations if violation.get("finding_scope") == "pre-existing/residual"
             ]
+        checks_run = [name for name in selected if not categories.get(name, {}).get("skipped")]
         verify_summary = _build_verify_summary(
             verdict,
             score,
             threshold,
             files_checked,
             violation_count,
-            selected,
+            checks_run,
             degraded,
             severity,
             len(all_violations),
@@ -6744,6 +6887,8 @@ def _build_verify_run(
             verification_receipt,
         )
         verify_summary["quality_band"] = quality_band
+        if incomplete_reasons == ["no_applicable_checks"]:
+            verify_summary["state"] = "no_applicable_checks"
         verify_summary["targets_checked"] = len(target_paths)
         if scope_summary is not None and unresolved_existing_count:
             scope_summary["unresolved_existing_code_count"] = unresolved_existing_count
@@ -6751,7 +6896,23 @@ def _build_verify_run(
             "summary": verify_summary,
             "categories": _category_summary(categories),
             "violations": all_violations,
+            "check_applicability": {
+                "source_file_count": sum(not _is_non_code_verify_surface(path) for path in target_paths),
+                "checks_not_applicable": [name for name in selected if categories.get(name, {}).get("skipped")],
+                "definition": "input-scope eligibility; inspect category results for execution and remaining gaps",
+            },
         }
+        if _has_only_non_code_targets(verify_summary):
+            envelope_data["agent_contract"] = {
+                "facts": [
+                    ("Only non-code inputs checked" if not verification_gaps else "Incomplete non-code checks")
+                    if checks_run
+                    else "0 applicable checks",
+                    f"{len(checks_run)} invoked checks",
+                    "0 source files checked",
+                ],
+                "risks": ["Use scope and category applicability; a non-code check does not verify source code"],
+            }
         if file_remaining:
             envelope_data["residual_findings"] = residual_findings
         verify_envelope = json_envelope("verify", budget=token_budget, **envelope_data)
@@ -7230,7 +7391,10 @@ def verify(
 def _print_category(label: str, result: dict, fix_suggestions: bool, *, root: Path, verbose: bool):
     """Print a single category's results in text format."""
     if result.get("skipped"):
-        click.echo(f"{label}: skipped (not selected)")
+        reason = (
+            "no eligible inputs" if result.get("applicability", {}).get("state") == "not_applicable" else "not selected"
+        )
+        click.echo(f"{label}: skipped ({reason})")
         click.echo("")
         return
     score = result["score"]

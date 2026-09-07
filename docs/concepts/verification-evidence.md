@@ -29,6 +29,145 @@ checkout; preserve the active worktree and its uncommitted changes. Do not give
 generated probes authority to execute arbitrary commands or modify protected
 tests, admission policy, credentials, or deployment state.
 
+## Bind a review to the intended change
+
+Capture the intended Git diff and check that Git succeeded before reviewing it.
+`roam critique` refuses empty or whitespace-only piped input with exit 2 and an
+`EMPTY_INPUT` JSON envelope; it does not select another change. A non-empty
+`--input` patch is another explicit route. Pass `--intent` when the intended
+change differs from HEAD's subject, and inspect `summary.review_source`.
+
+For an unattended working-tree review, run `roam critique --working-tree`.
+This selects `git diff HEAD`, including staged and unstaged tracked changes.
+A clean tree is empty input, never a request to review the previous commit.
+The flag is mutually exclusive with `--input` and `--batch`. Bare interactive
+use retains the documented working-tree, then last-commit convenience, with
+the selected source printed. The MCP diff tool still requires actual diff text.
+
+## Selected checks, applicable inputs, and completed checks
+
+### Security-review compound scope
+
+The MCP security-review recipe combines different scopes: repository taint
+observations, saved vulnerability inventory, tracked changes against HEAD for
+critique, and working-tree changes for adversarial architecture checks. Its
+`scope` field names each one. The vulnerability step reads `roam vulns`; it does
+not import a fresh external scanner report or establish that the inventory is
+complete.
+
+The legacy `symbol` parameter does not filter these checks. A non-empty request
+retains the broader observations but returns `resolution:
+"unsupported_symbol_scope"`, `partial_success: true`, and a verdict saying that
+symbol scope was not applied. Leave the parameter empty for the supported
+repository/changeset review. Read `summary.check_status` and the child envelopes:
+`completed` means the child returned without an error or declared partial state,
+not proof of complete security coverage. Incomplete children remain visible and
+make the compound partial; operation failures remain in `failed_subcommands`.
+
+### Verify input eligibility
+
+Selecting a check does not establish that it inspected anything. `verify`
+records input eligibility under each selected category's `applicability`:
+`applicable`, `not_applicable`, or `not_assessed`. The assessed set is the default
+checks plus complexity, command examples, and claims. Other optional checks
+retain their invocation and are explicitly not assessed by this input filter.
+Eligibility is not execution coverage or proof of detector correctness.
+
+`summary.checks_run` lists invoked checks, including ones that subsequently
+failed. Read their availability/execution fields and `verification_complete`
+before treating the invocation as a completed check. Known inapplicable checks
+are not invoked or credited in the composite. Their numeric category scores
+retain the legacy not-run default for consumers that require integers; the
+applicability record names that default. It is not measured quality.
+
+If changed files have no applicable selected checks, the gating command exits 5
+with `state: "no_applicable_checks"`, `verification_complete: false`, and
+`partial_success: true`. A clean tree remains the separate `no_changes` case.
+Missing targets, unavailable checks, and incomplete execution keep their own
+failure reasons. Report mode remains non-gating, with the same disclosures.
+
+Docs-only changes can still receive useful checks. The default secret scan can
+read Markdown and YAML; `--checks command_examples` can inspect documentation.
+Such results identify non-code-only scope in text and agent facts. The top-level
+`check_applicability` record gives the source-path denominator and inapplicable
+check names. JSON retains the canonical PASS/WARN/FAIL enum and existing scope
+shape for consumers: read those qualifications rather than inferring source
+verification from PASS or score 100 alone. A syntax-only request over Markdown
+or YAML has no applicable inputs and cannot pass.
+
+A tracked deletion still belongs in the request receipt. If syntax is the only
+selected check and no source remains to parse, a matching receipt does not turn
+that request into completed verification: it returns `no_applicable_checks`.
+
+## Running the right project's tests
+
+Before executing a selected test list, check that the change itself was
+measured. `roam test-impact` returns `diff_unavailable` and exit 6 when its Git
+diff fails, with the reason preserved in JSON/MCP and an unsuccessful SARIF
+invocation. An empty test list in that state must not be used to skip testing.
+Successful selection still establishes only the graph mapping described in
+[detector evidence](detector-evidence.md), not execution.
+
+`roam verify --checks tests` runs the impacted Python test files, not the whole
+test suite. It looks for the nearest `.venv` or `venv` inside the repository,
+starting beside each test file, and runs pytest from that environment's project
+directory. With no project environment, it uses the interpreter running Roam
+and the repository root. It does not install pytest or dependencies for you.
+
+Every impacted file must select the same environment, including files beyond
+the execution cap. A batch spanning different environments stops before any
+tests run; run each project separately. An outside-repository path, nested Git
+repository, broken environment, launch failure, missing pytest, interrupted
+collection, or zero collected tests cannot count as passing verification.
+Timeouts and capped execution remain incomplete. An ordinary assertion failure
+is a failed test run, not a missing environment.
+
+A zero pytest exit code is not enough. Roam requests a fresh temporary JUnit
+report and checks its testcase outcomes against the reported counters.
+Collect-only, setup-only, entirely skipped/expected-failure runs, missing or
+inconsistent reports, and reports over 16 MiB cannot establish passing test
+execution. Successful verification requires at least one reported passing test
+and no failures or errors. A mixed passing/skipped run exposes both counts;
+it does not mean the skipped tests executed. The report is removed afterward.
+Project selection settings remain in effect: these results do not establish
+that every test in each targeted file was selected or that coverage is complete.
+
+Pytest's combined stdout/stderr capture is limited to 8 MiB. Overflow, capture
+failure, timeout, or unverified process cleanup keeps the selected check
+incomplete even if pytest already wrote a passing report. The
+`test_execution.process` receipt records the capture state, output budget,
+timeout, and `tree_terminated` result. Windows uses a job object; Linux uses
+a private subreaper and process-identity handles. Their cleanup includes test
+descendants, including inherited output writers, after root exit or timeout.
+Linux prefers Python's pidfd wrappers and can use the same kernel handle APIs
+through libc when a Python build omits those wrappers. If neither backend is
+available, or the kernel refuses the handle, execution stays fail-closed; this
+does not substitute numeric-PID signalling for an identity-bound handle.
+Cancellation also tears down the owned process boundary. The execution deadline
+has additional bounded cleanup time; it is not a hard wall-clock return promise.
+
+On other POSIX platforms only process-group cleanup is available; an unverified
+descendant tree is reported as incomplete, not silently accepted as a passing
+gate. Linux without the required containment primitives and Windows without a
+usable job boundary refuse test launch. These bounds are lifecycle controls,
+not a sandbox: tests can still write files, access the network, and exercise
+your account's authority while running. Tests that intentionally leave a
+background service need an explicit lifecycle outside this bounded check.
+
+Static discovery may report `no_impacted_tests` when it finds no mapped tests;
+that does not mean a test ran. In proof mode, missing executable evidence is
+an incomplete check.
+
+The test result records `test_environment` (interpreter, working directory, and
+selection source), alongside execution and completeness fields. `test_execution`
+names report availability and, when valid, testcase/pass/failure/error/skip
+counts. Expected failures are included in the JUnit skipped count. These are
+reports from the selected process, not authenticated proof against a test
+plugin or project that deliberately forges its own results. Project tests,
+pytest plugins, and configuration execute with your user account's authority;
+choosing a virtual environment is not sandboxing. Use a trusted checkout and
+retain the project's normal full-suite and CI checks.
+
 ## Proof bundles and verdicts
 
 `roam pr-bundle` records incremental preparation evidence. `roam proof-bundle`

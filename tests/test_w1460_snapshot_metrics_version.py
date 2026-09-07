@@ -51,6 +51,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli
 
@@ -227,10 +229,11 @@ def test_budget_skips_and_exits_zero_on_pre_version_baseline(cli_runner, indexed
     assert "skipped" in result.output.lower()
 
 
-def test_budget_json_discloses_the_version_mismatch(cli_runner, indexed_project):
+@pytest.mark.parametrize("baseline_version", [None, 2])
+def test_budget_json_discloses_the_version_mismatch(cli_runner, indexed_project, baseline_version):
     """Exit 0 alone is not enough — a skipped run must not read as a clean pass."""
     _clear_snapshots(indexed_project)
-    _seed(indexed_project, metrics_version=None, **_REGRESSING_BASELINE)
+    _seed(indexed_project, metrics_version=baseline_version, **_REGRESSING_BASELINE)
 
     result = invoke_cli(cli_runner, ["budget"], cwd=indexed_project, json_mode=True)
     assert result.exit_code == 0
@@ -239,7 +242,7 @@ def test_budget_json_discloses_the_version_mismatch(cli_runner, indexed_project)
 
     assert summary["reason"] == "baseline_metrics_version_mismatch"
     assert summary["partial_success"] is True
-    assert summary["baseline_metrics_version"] == LEGACY_METRICS_VERSION
+    assert summary["baseline_metrics_version"] == (baseline_version or LEGACY_METRICS_VERSION)
     assert summary["metrics_version"] == SNAPSHOT_METRICS_VERSION
     assert summary["failed"] == 0
     assert summary["skipped"] == summary["rules_checked"]
@@ -643,7 +646,7 @@ def test_old_db_at_user_version_18_migrates_to_19_and_rows_read_as_version_1(tmp
     """
     from roam.db.connection import USER_VERSION, ensure_schema
 
-    assert USER_VERSION == 19, "W1460 bumps the schema contract version in lockstep with the column"
+    assert USER_VERSION == 20, "Schema contract includes snapshot metrics and clone scan evidence"
 
     db = tmp_path / "old.db"
     conn = sqlite3.connect(str(db))
@@ -679,7 +682,7 @@ def test_old_db_at_user_version_18_migrates_to_19_and_rows_read_as_version_1(tmp
 
     cols_after = {r[1] for r in conn.execute("PRAGMA table_info(snapshots)")}
     assert "metrics_version" in cols_after, "migration 63 must add the column to an existing table"
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
 
     row = conn.execute("SELECT * FROM snapshots").fetchone()
     assert row["cycles"] == 38, "the pre-existing data point must survive the migration"

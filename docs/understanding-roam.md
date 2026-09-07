@@ -243,23 +243,24 @@ a downstream consumer *[internal, 2026-08-23]*:
 - The default budget truncates. `roam agent-plan` returned `summary.tasks: 3`
   with `emitted_counts.tasks: 1` and `truncated: true`. A caller reading
   `tasks[]` alone would plan one third of the work.
-- Review evidence must be bound to the diff you mean. With empty stdin,
-  `roam critique` silently selects a review target itself: working-tree
-  changes first, then the previous commit (`cmd_critique.py:936-947`,
-  `:240-277`), so a failed upstream `git diff` yields a complete-looking
-  review of a different change. An omitted `--intent` uses HEAD's subject
-  even for a supplied diff (`:1053-1066`). Pipe the diff only after the diff
-  command succeeded, pass the intent, and check `summary.review_source` is
-  `piped_diff` or `input_file` (`:932-944`).
+- Review evidence must be bound to the diff you mean. The local, unreleased
+  repair refuses empty piped input with `EMPTY_INPUT` instead of selecting
+  another change. `roam critique --working-tree` explicitly selects
+  `git diff HEAD` and refuses a clean tree; only bare interactive use retains
+  the working-tree/last-commit convenience (`cmd_critique.py`,
+  `_read_review_input` and `_read_implicit_review_diff`). An omitted `--intent`
+  still uses HEAD's subject even for a supplied diff. Check the diff producer's
+  success, pass the intent, and inspect `summary.review_source`.
 
 The safe form, in order:
 
 1. Capture the intended diff and require the git command to succeed. If
    the diff is empty, record that the selected scope contains no diff; do
-   not pipe empty input to `critique`, which would select another change.
+   not turn that into a review of another change. Older published versions
+   can select another target for an empty pipe; the local repair refuses it.
    For a non-empty diff use `--json`, pass `--intent`, and check
    `summary.review_source`. An explicit `--input` file rejects empty input
-   instead of selecting another change (`cmd_critique.py:929`).
+   instead of selecting another change.
 2. Treat exit 3, 4, 6, any `truncated: true`, `partial_success: true`, a
    present `_meta.index_status`, and any `check_status` entry that is not
    `"ran"` as **UNKNOWN**, never as a pass. Refresh the index yourself rather
@@ -347,8 +348,10 @@ private companion; the rules themselves are public.
   complete, current scan supports a negative within its recorded detector
   bounds. Positive saved pairs stay visible when scan evidence is partial;
   `value: true` alone does not establish a current, complete scan.
-  Retrieval still reads saved pairs without applying scan qualification.
-  Working tree, not yet released (2026-09-06). See
+  Retrieval now qualifies the same saved evidence: unqualified pairs stay
+  visible, but cannot add a ranking boost. Read `clone_evidence` and
+  `summary.partial_success` alongside the candidate list.
+  Working tree, not yet released (2026-09-07). See
   [detector evidence](concepts/detector-evidence.md#clone-scans-and-patch-review).
 - `test-impact` reports a failed Git diff as `state: "diff_unavailable"`,
   `partial_success: true`, and exit 6. Read that state before using the test

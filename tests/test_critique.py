@@ -578,11 +578,12 @@ _DIFF_REFRESH_ONLY = textwrap.dedent(
 )
 
 _PIPED_DIFF_OUTPUT_SNAPSHOT = (
-    "VERDICT: 0 concerns from 2 of 3 checks (1 skipped) (risk_level low)\n"
+    # The fixture completed and persisted an empty scan. Zero pairs now has
+    # evidence of completion, unlike a project that has never scanned.
+    "VERDICT: No concerns from roam critique (risk_level low)\n"
     "\n"
     "  changed files:   1\n"
     "  changed symbols: 2\n"
-    "  clones-not-edited: skipped:no_clone_pairs (run `roam clones --persist`)\n"
     "\n"
     "NEXT STEPS:\n"
     "  1. Run `roam diff` to confirm the structural delta of what you actually changed\n"
@@ -597,7 +598,7 @@ class TestCriticueCLI:
         header = "REVIEWED: piped diff (base: caller-supplied; not computed by roam)\n"
         assert result.output == header + _PIPED_DIFF_OUTPUT_SNAPSHOT
 
-    def test_empty_stdin_dirty_tree_reviews_working_diff(self, critique_project):
+    def test_explicit_working_tree_reviews_working_diff(self, critique_project):
         auth_path = critique_project / "src" / "auth.py"
         auth_path.write_text(auth_path.read_text(encoding="utf-8") + "\n# working-tree edit\n", encoding="utf-8")
         subprocess.run(["git", "add", "src/auth.py"], cwd=critique_project, check=True)
@@ -608,13 +609,16 @@ class TestCriticueCLI:
         )
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["critique"], input="")
+        result = runner.invoke(cli, ["critique", "--working-tree"], input="")
 
         assert result.exit_code in (0, 5), result.output
         assert result.output.startswith("REVIEWED: working tree (base: HEAD)\n")
         assert "changed files:   2" in result.output
 
-    def test_empty_stdin_clean_tree_reviews_last_commit(self, critique_project):
+    def test_interactive_clean_tree_reviews_last_commit(self, critique_project, monkeypatch):
+        from click.testing import _NamedTextIOWrapper
+
+        monkeypatch.setattr(_NamedTextIOWrapper, "isatty", lambda self: True)
         auth_path = critique_project / "src" / "auth.py"
         auth_path.write_text(auth_path.read_text(encoding="utf-8") + "\n# committed edit\n", encoding="utf-8")
         env = {
@@ -643,7 +647,10 @@ class TestCriticueCLI:
         )
         assert "changed files:   1" in result.output
 
-    def test_empty_stdin_clean_tree_without_prior_diff_is_typed_no_input(self, critique_project):
+    def test_interactive_clean_tree_without_prior_diff_is_typed_no_input(self, critique_project, monkeypatch):
+        from click.testing import _NamedTextIOWrapper
+
+        monkeypatch.setattr(_NamedTextIOWrapper, "isatty", lambda self: True)
         runner = CliRunner()
         result = runner.invoke(cli, ["critique"], input="")
 

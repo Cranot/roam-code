@@ -12,6 +12,7 @@ Related commands: ``duplicates`` (metric-based), ``suggest-refactoring``,
 from __future__ import annotations
 
 import json as _json
+import math as _math
 import re as _re
 import sqlite3 as _sqlite3
 from collections import Counter
@@ -296,6 +297,24 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    if not _math.isfinite(threshold):
+        message = "Use a finite --threshold between 0 and 1"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "clones",
+                        summary={"verdict": message, "state": "usage_error", "partial_success": True},
+                        status="usage_error",
+                        isError=True,
+                        error_code="USAGE_ERROR",
+                        error=message,
+                    )
+                )
+            )
+        else:
+            click.echo(f"Error: {message}", err=True)
+        raise SystemExit(2)
     ensure_index()
 
     from roam.graph.clone_detect import detect_clones, store_clones
@@ -426,7 +445,12 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             _w607dc_warnings_out.append(f"clones_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
+    scan: dict = {}
     with open_db(readonly=not persist) as conn:
+        # Candidate files and their generation stamp must describe the same
+        # index, even when a WAL writer refreshes it during source extraction.
+        if not conn.in_transaction:
+            conn.execute("BEGIN")
         # W607-BQ: wrap the AST-subtree-hash detection. Default is an empty
         # ([], []) tuple so the downstream zero-cluster path still emits a
         # well-formed envelope.
@@ -437,9 +461,18 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             min_similarity=threshold,
             min_lines=min_lines,
             scope=scope,
+            scan_out=scan,
             default=([], []),
         )
         pairs, clusters = _detected if _detected is not None else ([], [])
+        detection_failed = bool(_w607bq_warnings_out)
+        scan.update(exclude_tests=exclude_tests, exclude_fixtures=exclude_fixtures)
+        if scan.get("complete") is False and not detection_failed:
+            _w607bq_warnings_out.append(
+                "clones_scan_incomplete: "
+                f"{scan['compared_functions']} of {scan['eligible_functions']} eligible functions compared; "
+                f"{scan['unavailable_files']} files unavailable"
+            )
 
         # W165 — bucket-aware filtering. We compute role buckets BEFORE
         # ``store_clones`` so the persisted clone_pairs / clone_clusters
@@ -490,7 +523,11 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             if _filtered is not None:
                 pairs, clusters = _filtered
 
-        if persist:
+        if (
+            persist
+            and not detection_failed
+            and not any(w.startswith("clones_apply_test_prod_separation_failed:") for w in _w607bq_warnings_out)
+        ):
             # W607-BQ: wrap the registry write path. Default is None --
             # the writes degrade to no-op on a raise while the read-side
             # ``pairs`` / ``clusters`` still surface in the envelope.
@@ -500,13 +537,20 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             # sqlite3.OperationalError surfacing from ``store_clones``
             # (locked DB, full disk, missing column on a stale schema).
             def _emit_findings():
-                store_clones(conn, pairs, clusters)
+                conn.execute("SAVEPOINT clone_scan_write")
                 # W165 — after store_clones writes the findings registry rows
                 # (via ``clone_detect._emit_clone_findings``), enrich each row
                 # with a ``role_bucket`` evidence field so consumers of
                 # ``roam findings list --detector clones`` can post-filter by
                 # production vs test_intentional vs mixed.
-                _enrich_clones_findings_with_role_bucket(conn)
+                try:
+                    store_clones(conn, pairs, clusters, scan=scan)
+                    _enrich_clones_findings_with_role_bucket(conn)
+                    conn.execute("RELEASE clone_scan_write")
+                except Exception:
+                    conn.execute("ROLLBACK TO clone_scan_write")
+                    conn.execute("RELEASE clone_scan_write")
+                    raise
                 conn.commit()
 
             _run_check_bq(
@@ -683,7 +727,16 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                     to_json(
                         json_envelope(
                             "clones",
-                            summary={"verdict": verdict, "file_pairs_total": len(file_pairs)},
+                            summary={
+                                "verdict": f"{verdict} — partial scan" if _w607bq_warnings_out else verdict,
+                                "file_pairs_total": len(file_pairs),
+                                "scan": {k: v for k, v in scan.items() if k != "sources"},
+                                **(
+                                    {"partial_success": True, "warnings_out": list(_w607bq_warnings_out)}
+                                    if _w607bq_warnings_out
+                                    else {}
+                                ),
+                            },
                             file_pairs=file_pairs_top,
                         )
                     )
@@ -868,6 +921,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
 
             summary_payload = {
                 "verdict": verdict_with_conf,
+                "scan": {k: v for k, v in scan.items() if k != "sources"},
                 "clusters": len(clusters),
                 "clone_pairs": total_pairs,
                 "total_functions": total_functions,
@@ -912,6 +966,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
                 "pairs": pair_triples,
             }
             if _combined_warnings:
+                summary_payload["verdict"] += " — partial scan"
                 summary_payload["warnings_out"] = list(_combined_warnings)
                 summary_payload["partial_success"] = True
                 _envelope_kwargs["warnings_out"] = list(_combined_warnings)
@@ -966,6 +1021,8 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
         # nothing, and only the JSON envelope said so.
         echo_text_warnings(list(_w607bq_warnings_out) + list(_w607dc_warnings_out))
         echo_text_empty_corpus(empty_corpus_state(conn) if not clusters else None)
+        if _w607bq_warnings_out or _w607dc_warnings_out:
+            verdict += " — partial scan"
         click.echo(f"VERDICT: {verdict}")
 
         if not clusters:

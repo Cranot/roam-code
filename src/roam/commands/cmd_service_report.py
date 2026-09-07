@@ -54,6 +54,7 @@ disclaimer "does not certify" is the one allowed negation). See
 
 from __future__ import annotations
 
+import functools as _functools
 import json as _json
 import math as _math
 import os as _os
@@ -408,9 +409,63 @@ def _linux_process_stat(pid: int) -> tuple[int, int, str] | None:
         raise RuntimeError("Linux process identity is malformed") from exc
 
 
+@_functools.lru_cache(maxsize=1)
+def _linux_libc_pidfd_api():
+    """Bind libc's pidfd API when a Python build omits its stdlib wrappers.
+
+    No numeric-PID signalling or architecture-specific syscall fallback: an
+    unavailable libc/kernel API still refuses containment. Native wrappers
+    remain preferred by the accessors below.
+    """
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        opener = libc.pidfd_open
+        opener.argtypes = (ctypes.c_int, ctypes.c_uint)
+        opener.restype = ctypes.c_int
+        sender = libc.pidfd_send_signal
+        sender.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint)
+        sender.restype = ctypes.c_int
+    except (ImportError, AttributeError, OSError):
+        return None
+
+    def open_pidfd(pid: int, flags: int = 0) -> int:
+        fd = opener(pid, flags)
+        if fd < 0:
+            code = ctypes.get_errno()
+            raise OSError(code, _os.strerror(code))
+        return fd
+
+    def send_pidfd_signal(pidfd: int, sig: int, siginfo=None, flags: int = 0) -> None:
+        if siginfo is not None:
+            raise TypeError("Roam pidfd signalling requires siginfo=None")
+        if sender(pidfd, sig, None, flags) < 0:
+            code = ctypes.get_errno()
+            raise OSError(code, _os.strerror(code))
+
+    return open_pidfd, send_pidfd_signal
+
+
+def _linux_pidfd_opener():
+    native = getattr(_os, "pidfd_open", None)
+    if callable(native):
+        return native
+    api = _linux_libc_pidfd_api()
+    return api[0] if api is not None else None
+
+
+def _linux_pidfd_sender():
+    native = getattr(_signal, "pidfd_send_signal", None)
+    if callable(native):
+        return native
+    api = _linux_libc_pidfd_api()
+    return api[1] if api is not None else None
+
+
 def _linux_open_pidfd_identity(pid: int) -> tuple[int, int, int] | None:
     """Open an identity-bound pidfd and return ``(pid, start_time, fd)``."""
-    pidfd_open = getattr(_os, "pidfd_open", None)
+    pidfd_open = _linux_pidfd_opener()
     if not callable(pidfd_open):
         raise RuntimeError("Linux pidfd process identity is unavailable")
 
@@ -526,7 +581,7 @@ def _linux_descendant_pidfds(
 
 
 def _linux_pidfd_send_signal(pidfd: int, sig: int) -> None:
-    sender = getattr(_signal, "pidfd_send_signal", None)
+    sender = _linux_pidfd_sender()
     if not callable(sender):
         raise RuntimeError("Linux pidfd signalling is unavailable")
     sender(pidfd, sig, None, 0)
@@ -651,7 +706,7 @@ def _linux_component_supervisor_main(status_fd: int, argv: list[str]) -> int:
     try:
         if not argv:
             return target_returncode
-        if not callable(getattr(_os, "pidfd_open", None)) or not callable(getattr(_signal, "pidfd_send_signal", None)):
+        if not callable(_linux_pidfd_opener()) or not callable(_linux_pidfd_sender()):
             return target_returncode
         expected_parent_pid = _os.getppid()
         if not _linux_enable_component_supervision(expected_parent_pid):
@@ -928,7 +983,7 @@ def _start_component_process(
         process_argv = [_sys.executable, "-c", _WINDOWS_COMPONENT_WRAPPER, *argv]
         child_stdin = _subprocess.PIPE
     elif linux_supervisor:
-        if not callable(getattr(_os, "pidfd_open", None)) or not callable(getattr(_signal, "pidfd_send_signal", None)):
+        if not callable(_linux_pidfd_opener()) or not callable(_linux_pidfd_sender()):
             raise RuntimeError("Linux process-tree identity tracking is unavailable")
         if callable(getattr(_os, "pipe2", None)):
             status_read_fd, status_write_fd = _os.pipe2(getattr(_os, "O_CLOEXEC", 0))
@@ -1149,9 +1204,10 @@ def _capture_component_output(
     proc: _subprocess.Popen,
     *,
     timeout_seconds: float,
+    output_limit: int | None = None,
 ) -> tuple[bytes, bytes, str, bool | None, str | None]:
     """Capture both pipes and return the tri-state containment receipt."""
-    capture = _BoundedComponentCapture(_COMPONENT_MAX_OUTPUT_BYTES)
+    capture = _BoundedComponentCapture(_COMPONENT_MAX_OUTPUT_BYTES if output_limit is None else output_limit)
     streams = (getattr(proc, "stdout", None), getattr(proc, "stderr", None))
     if any(stream is None for stream in streams):
         try:
@@ -1176,7 +1232,7 @@ def _capture_component_output(
         for thread in threads:
             thread.start()
             started_threads.append(thread)
-    except RuntimeError as exc:
+    except BaseException as exc:
         capture.note_error(exc)
         capture.stop_and_discard()
         try:
@@ -1194,8 +1250,31 @@ def _capture_component_output(
         pipes_closed = _close_component_pipes(proc, started)
         if not readers_done or not pipes_closed:
             tree_terminated = False
+        if not isinstance(exc, RuntimeError):
+            raise
         return b"", b"", "capture_error", tree_terminated, type(exc).__name__
 
+    try:
+        return _finish_component_capture(proc, capture, threads, deadline)
+    except BaseException:
+        # Cancellation can interrupt root waiting or EOF draining. The launch
+        # boundary still belongs to this invocation; release it before raising.
+        capture.stop_and_discard()
+        try:
+            _terminate_component_process_tree(proc)
+        finally:
+            _wait_for_component_drainers(
+                threads,
+                capture,
+                _time.perf_counter() + _COMPONENT_CLEANUP_SECONDS,
+                observe_capture_state=False,
+            )
+            _close_component_pipes(proc, threads)
+        raise
+
+
+def _finish_component_capture(proc, capture, threads, deadline):
+    """Finish bounded capture while the caller owns cancellation cleanup."""
     state = _wait_for_component_root(proc, capture, deadline)
     tree_terminated: bool | None = None
     cleanup_attempted = False
@@ -2879,14 +2958,17 @@ def _persist_engagement_record(
                     state=state,
                     directory_fd=directory_fd,
                 )
+                from collections import deque
+
+                rows = deque(rows)
                 rows.append(encoded_record)
                 retention_pruned = prefix_pruned
                 while len(rows) > _ENGAGEMENT_LEDGER_MAX_RECORDS:
-                    del rows[0]
+                    rows.popleft()
                     retention_pruned = True
                 payload_size = sum(len(row) + 1 for row in rows)
                 while rows and payload_size > _ENGAGEMENT_LEDGER_MAX_BYTES:
-                    removed = rows.pop(0)
+                    removed = rows.popleft()
                     payload_size -= len(removed) + 1
                     retention_pruned = True
                 if not rows or rows[-1] != encoded_record:

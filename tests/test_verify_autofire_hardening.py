@@ -125,13 +125,15 @@ def test_json_report_remains_non_gating_even_with_fail_findings(tmp_path):
 
 def test_pytest_protocol_failure_without_node_ids_is_not_pass(monkeypatch, tmp_path):
     from roam.commands import cmd_verify
+    from roam.testing import pytest_evidence
 
     class Result:
         returncode = 4
         stdout = ""
         stderr = "pytest: usage error"
+        roam_process = {"state": "completed", "tree_terminated": True}
 
-    monkeypatch.setattr(cmd_verify.subprocess, "run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr(pytest_evidence, "_run_pytest_process", lambda *args, **kwargs: Result())
     result = cmd_verify._run_impacted_pytest(["tests/test_app.py"], tmp_path, timeout=1)
 
     assert result["score"] == 0
@@ -141,13 +143,15 @@ def test_pytest_protocol_failure_without_node_ids_is_not_pass(monkeypatch, tmp_p
 
 def test_capped_impacted_tests_are_disclosed_as_partial(monkeypatch, tmp_path):
     from roam.commands import cmd_verify
+    from roam.testing import pytest_evidence
 
     class Result:
         returncode = 0
         stdout = "25 passed"
         stderr = ""
+        roam_process = {"state": "completed", "tree_terminated": True}
 
-    monkeypatch.setattr(cmd_verify.subprocess, "run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr(pytest_evidence, "_run_pytest_process", lambda *args, **kwargs: Result())
     impacted = [f"tests/test_{index}.py" for index in range(cmd_verify._MAX_TEST_FILES + 1)]
     result = cmd_verify._run_impacted_pytest(impacted, tmp_path, timeout=1)
 
@@ -285,13 +289,17 @@ def test_deleted_target_receipt_uses_verified_scope_not_index_rows(tmp_path, mon
         json_mode=True,
     )
 
-    assert result.exit_code in {0, 5}, result.output
+    assert result.exit_code == 5, result.output
     envelope = json.loads(result.stdout)
     summary = envelope["summary"]
     receipt = summary["verification_receipt"]
     assert summary["files_checked"] == 0
     assert summary["targets_checked"] == receipt["target_file_count"] == 1
-    assert summary["verification_complete"] is True
+    # A deletion remains in the bound request scope, but syntax has no
+    # surviving source to parse. A matching receipt does not grant a pass.
+    assert summary["verification_complete"] is False
+    assert summary["state"] == "no_applicable_checks"
+    assert summary["checks_run"] == []
     assert receipt["request_match"] is True
 
     body, marker, tail = _CLAUDE_STOP_HOOK_SCRIPT.rpartition("\nmain()\n")
@@ -299,8 +307,7 @@ def test_deleted_target_receipt_uses_verified_scope_not_index_rows(tmp_path, mon
     namespace = {"__name__": "deleted_target_hook_contract", "__file__": str(project / "stop.py")}
     exec(compile(body, "stop.py", "exec"), namespace)
     envelope["_hook_process_returncode"] = result.exit_code
-    expected_state = "passed" if result.exit_code == 0 else "failed"
-    assert namespace["_verify_protocol_state"](envelope, receipt) == expected_state
+    assert namespace["_verify_protocol_state"](envelope, receipt) == "incomplete"
 
 
 def test_verify_scope_binding_mismatch_fails_closed(tmp_path, monkeypatch):

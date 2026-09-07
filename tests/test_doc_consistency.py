@@ -560,8 +560,10 @@ def test_procurement_packet_names_a_real_signing_path():
 
 
 def test_contributing_release_flow_uses_exact_version_and_release_gate():
-    """Release docs must gate first and derive the three-part tag from metadata."""
-    text = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    """Keep the original release invariants at the linked canonical guide."""
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "docs/releases.md#publish-the-verified-package" in contributing
+    text = (ROOT / "docs/releases.md").read_text(encoding="utf-8")
     assert "python scripts/prepush_check.py --release" in text
     assert 'git tag -a "v${version}" "$release_sha"' in text
     assert 'git push origin "v${version}"' in text

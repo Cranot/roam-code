@@ -41,6 +41,8 @@ class PythonExtractor(LanguageExtractor):
 
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
         refs = []
+        # Bindings are file-generation-local; reuse one body walk per scope.
+        self._reference_bindings = {}
         self._walk_refs(tree.root_node, source, file_path, refs, scope_name=None)
         # Add inheritance references collected during symbol extraction
         for info in getattr(self, "_pending_inherits", []):
@@ -544,6 +546,13 @@ class PythonExtractor(LanguageExtractor):
                 #   X: TypeAlias = list[Item]
                 #   type X = list[Item]
                 self._extract_type_alias_refs(child, source, refs, scope_name)
+                if child.type == "assignment":
+                    value = child.child_by_field_name("right")
+                    if value is not None and value.type == "identifier":
+                        # Preserve the actual callback in `alias = callback`;
+                        # later uses of the local alias must not resolve to an
+                        # unrelated global symbol with the alias's name.
+                        self._emit_bare_identifier_ref(value, source, refs, scope_name)
                 self._walk_refs(child, source, file_path, refs, scope_name)
             elif child.type == "type_alias_statement":
                 # PEP 695 type aliases: `type Alias = Expr`
@@ -970,51 +979,83 @@ class PythonExtractor(LanguageExtractor):
             )
         )
 
-    def _is_locally_bound(self, node, source, name: str) -> bool:
-        """True when ``name`` is a parameter of an enclosing function.
+    def _binding_target_names(self, node, source) -> set[str]:
+        """Read binding patterns, excluding attribute/subscript mutation."""
+        if node is None:
+            return set()
+        if node.type == "identifier":
+            return {self.node_text(node, source)}
+        patterns = {
+            "pattern_list",
+            "tuple_pattern",
+            "list_pattern",
+            "tuple",
+            "list",
+            "list_splat_pattern",
+            "dictionary_splat_pattern",
+        }
+        if node.type not in patterns:
+            return set()
+        return set().union(*(self._binding_target_names(child, source) for child in node.named_children))
 
-        WHY THIS GUARD EXISTS. Emitting a reference for every bare identifier in
-        argument position was too broad: in ``def handle_request(name): return
-        create_user(name)`` the argument ``name`` is a LOCAL PARAMETER, but it
-        was emitted as a reference and resolved to an unrelated module-level
-        symbol of the same name. That is a false edge, and false edges are worse
-        here than the missing ones this feature was added to fix -- a spurious
-        edge SHORTENS graph distance, so `roam affected` reported a 2-hop
-        dependent as 1-hop. Caught by
-        test_two_hop_dependent_lands_in_transitive_2plus_not_1.
+    def _function_bindings(self, node, source) -> tuple[set[str], set[str]]:
+        """Cache parameters and assignment bindings for one function body.
 
-        A locally-bound name shadows any module-level symbol, so by Python's own
-        scoping rules it cannot be a reference to one. Walking up the tree keeps
-        this self-contained rather than threading a scope set through every
-        ``_walk_refs`` call site.
-
-        Deliberately conservative: parameters only. Local assignments also shadow,
-        but a name assigned locally AND passed to a dispatcher is a genuine
-        registry idiom (``handler = probe_disk; safe(handler)``), so skipping
-        those would reopen the blind spot this feature closes.
+        Assignments bind throughout a function, including before the statement
+        executes. Nested scopes do not donate their assignments to this scope.
+        This is a narrow bare-value guard, not general alias/dataflow analysis.
         """
+        cache = self._reference_bindings
+        if node.id in cache:
+            return cache[node.id]
+        bound, globals_, nonlocals = set(), set(), set()
+        params = node.child_by_field_name("parameters")
+        for param in params.named_children if params is not None else ():
+            name_node = param.child_by_field_name("name")
+            if name_node is None:
+                name_node = param.named_children[0] if param.type == "typed_parameter" else param
+            bound.update(self._binding_target_names(name_node, source))
+        body = node.child_by_field_name("body")
+        pending = list(body.named_children) if body is not None else []
+        nested_scopes = {
+            "function_definition",
+            "class_definition",
+            "lambda",
+            "decorated_definition",
+            "list_comprehension",
+            "set_comprehension",
+            "dictionary_comprehension",
+            "generator_expression",
+        }
+        while pending:
+            child = pending.pop()
+            if child.type in nested_scopes:
+                continue
+            if child.type in ("assignment", "augmented_assignment"):
+                bound.update(self._binding_target_names(child.child_by_field_name("left"), source))
+            elif child.type == "global_statement":
+                globals_.update(self.node_text(item, source) for item in child.named_children)
+            elif child.type == "nonlocal_statement":
+                nonlocals.update(self.node_text(item, source) for item in child.named_children)
+            pending.extend(child.named_children)
+        result = (bound - globals_ - nonlocals, globals_)
+        cache[node.id] = result
+        return result
+
+    def _is_locally_bound(self, node, source, name: str) -> bool:
+        """Resolve bare-value shadowing without inventing global-name edges."""
         cur = node.parent
         while cur is not None:
             if cur.type in ("function_definition", "lambda"):
-                params = cur.child_by_field_name("parameters")
-                if params is not None:
-                    for p in params.children:
-                        if p.type == "identifier":
-                            if self.node_text(p, source) == name:
-                                return True
-                        elif p.type in (
-                            "default_parameter",
-                            "typed_parameter",
-                            "typed_default_parameter",
-                            "list_splat_pattern",
-                            "dictionary_splat_pattern",
-                        ):
-                            for sub in p.children:
-                                if sub.type == "identifier" and self.node_text(sub, source) == name:
-                                    return True
-                                # typed_parameter nests its name one level deeper
-                                if sub.type == "identifier":
-                                    break
+                body = cur.child_by_field_name("body")
+                # Defaults and annotations evaluate outside the new function's
+                # local scope; the parameter cannot shadow its own default.
+                if body is not None and body.start_byte <= node.start_byte < body.end_byte:
+                    bound, globals_ = self._function_bindings(cur, source)
+                    if name in globals_:
+                        return False
+                    if name in bound:
+                        return True
             cur = cur.parent
         return False
 

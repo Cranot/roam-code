@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Setup — Roam · Install + wire into your AI editor</title>
-  <meta name="description" content="Install roam-code in 30 seconds. Wire it into Claude Code, Cursor, Codex, Gemini, or any MCP-aware editor. Reference docs at roam-code.com/docs.">
+  <title>Setup — Roam · Equip your coding agent</title>
+  <meta name="description" content="Install Roam, index your project, and connect your coding agent. Add free local static checks to its workflow through MCP or the CLI.">
   <link rel="canonical" href="https://roam-code.com/setup">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="Setup — Roam">
-  <meta property="og:description" content="Install in 30 seconds. Wire into Claude Code, Cursor, Codex, and any MCP-aware editor.">
+  <meta property="og:description" content="Install Roam, index your project, and connect your coding agent. Free local static checks through MCP or the CLI.">
   <meta property="og:url" content="https://roam-code.com/setup">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -64,15 +64,16 @@
     <div class="hero-inner">
       <p class="eyebrow">Setup</p>
       <h1 class="hero-headline">
-        <strong>Install once. Wire it into your editor.</strong>
+        <strong>Install Roam. Equip your coding agent.</strong>
       </h1>
       <p class="hero-subhead">
-        30 seconds for the CLI. Another 30 seconds per editor for the MCP integration.
-        The reference docs live separately at
+        Give your agent a local map of the code and static checks it can use
+        before and after edits. Install the tools, index your project, then
+        follow your agent’s connection guide. Full reference docs live at
         <a href="/docs/">roam-code.com/docs</a>.
       </p>
       <div class="hero-ctas">
-        <a class="btn-primary" href="#install-cli">Install the CLI</a>
+        <a class="btn-primary" href="#install-cli">Install the agent tools</a>
         <a class="btn-secondary" href="/docs/">Reference docs</a>
       </div>
     </div>
@@ -80,18 +81,21 @@
 
   <section class="whats-in" id="install-cli">
     <div class="whats-in-inner">
-      <h2>1. Install the CLI</h2>
+      <h2>1. Install the tools and index your project</h2>
       <p class="lede">
-        One command. Works on Linux, macOS, Windows. Apache 2.0.
+        Python 3.10+ and a Git repository. Works on Linux, macOS, and Windows.
+        Free and open source under Apache 2.0.
       </p>
       <p class="install-cmd">
-        <code>pip install roam-code &amp;&amp; roam init</code>
+        <code>pip install "roam-code[mcp]" &amp;&amp; roam init</code>
       </p>
       <p class="install-note">
-        <code>roam init</code> indexes the current Git repo into a SQLite file
-        in <code>.roam/</code>. A typical 100k-LOC repo finishes in seconds.
-        After <code>git pull</code> or major changes, re-run <code>roam index</code>
-        (incremental, near-instant — only changed files re-parse).
+        Run this inside your project. <code>roam init</code> builds the local
+        index in <code>.roam/</code> and creates project configuration. First-run
+        time depends on the repository, its history, and your machine. After
+        changes, refresh with <code>roam index</code>; later runs reuse the index
+        and process changed files. If your agent only uses shell commands,
+        <code>pip install roam-code</code> is enough for the CLI.
       </p>
       <p class="install-note">
         Discover everything: <code>roam --help-all</code> (287 commands
@@ -104,10 +108,11 @@
 
   <section class="how-it-works" id="install-mcp">
     <div class="how-it-works-inner">
-      <h2>2. Wire it into your editor</h2>
+      <h2>2. Connect your agent and add the workflow</h2>
       <p class="lede">
-        Roam is an MCP server. Pick your editor, follow the link to its setup
-        guide on the reference docs.
+        MCP lets coding agents use Roam as a tool. Pick your agent’s guide below,
+        connect the server, and include Roam checks in its project instructions.
+        A connection makes tools available; it does not guarantee the agent uses them.
       </p>
       <div class="setup-editor-grid">
         <a class="verb-cell" href="/docs/integration-tutorials#claude-code">
@@ -136,6 +141,9 @@
         </a>
       </div>
       <p class="how-it-works-foot">
+        Ask your agent to use Roam to find relevant code, check likely impact
+        before editing, and review the patch afterward. It should still run
+        tests and report missing or incomplete checks, not just successful ones.
         Or run <code>roam skill-generate --target claude</code> to emit a SKILL.md
         directly from the live capability registry.
       </p>

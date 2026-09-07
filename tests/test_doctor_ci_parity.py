@@ -14,7 +14,6 @@ exercises different code and reports success.
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -83,7 +82,7 @@ def test_scalar_python_version_is_not_treated_as_a_matrix(tmp_path: Path) -> Non
     assert result.get("_state") == "not_applicable"
 
 
-def test_reports_a_console_script_belonging_to_another_install(tmp_path: Path) -> None:
+def test_reports_a_console_script_belonging_to_another_install(tmp_path: Path, monkeypatch) -> None:
     """`roam` on PATH must belong to the interpreter running the tests.
 
     When it does not, tests that shell out exercise a different build entirely —
@@ -91,17 +90,14 @@ def test_reports_a_console_script_belonging_to_another_install(tmp_path: Path) -
     """
     running = f"{sys.version_info[0]}.{sys.version_info[1]}"
     _write_matrix(tmp_path, [running])  # isolate the entry-point clause
-    result = _run_in(tmp_path)
+    from roam.commands import cmd_doctor
 
-    on_path = shutil.which("roam")
-    if on_path is None:
-        pytest.skip("no `roam` on PATH in this environment")
-    same_dir = Path(on_path).parent.resolve() == Path(sys.executable).parent.resolve()
-    if same_dir:
-        assert "not the one for this interpreter" not in result["detail"]
-    else:
-        assert result["passed"] is False
-        assert "not the one for this interpreter" in result["detail"]
+    launcher = tmp_path / "roam"
+    launcher.write_text(f"#!{tmp_path / 'different/python'}\nfrom roam.cli import cli\n", encoding="utf-8")
+    monkeypatch.setattr(cmd_doctor.shutil, "which", lambda name: str(launcher))
+    result = _run_in(tmp_path)
+    assert result["passed"] is False
+    assert "not the one for this interpreter" in result["detail"]
 
 
 def test_check_is_registered_advisory() -> None:

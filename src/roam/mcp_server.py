@@ -6169,7 +6169,7 @@ def _check_stale_with_cache() -> tuple[bool, str | None]:
     return is_stale, reason
 
 
-def _annotate_stale(result: dict, command: str) -> dict:
+def _annotate_stale(result: dict, command: str, *, root: str = ".") -> dict:
     """If the index is stale and *command* isn't a recovery tool,
     prepend a banner to the verdict and stamp ``_meta.stale_index``.
 
@@ -6180,6 +6180,12 @@ def _annotate_stale(result: dict, command: str) -> dict:
     not just errors.
     """
     _note_partial_success(result)
+    if root != ".":
+        # The subprocess already emits index_status for the requested root.
+        # The cached probe below examines this server's cwd, not that root:
+        # applying it here would mix project evidence and can create .roam
+        # in an unrelated directory. Preserve the scoped producer metadata.
+        return result
     if command in _STALE_BANNER_SKIP:
         return result
     if not isinstance(result, dict):
@@ -6302,7 +6308,7 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
     """
     if root != ".":
         result = _run_roam_subprocess(args, root)
-        return _annotate_stale(result, args[0] if args else "")
+        return _annotate_stale(result, args[0] if args else "", root=root)
 
     # Cache lookup — only for read-only commands.
     if args and args[0] in _CACHEABLE_COMMANDS:
@@ -9501,23 +9507,23 @@ def for_refactor(symbol: str, root: str = ".", ctx: _Context | None = None) -> d
 
 @_tool(
     name="roam_for_security_review",
-    description="Compound: taint + vuln + critique + adversarial for a security review pass.",
-    version="1.0.0",
+    description="Run repository taint and vulnerability inventory checks plus working-change critique and architecture checks. Symbol-scoped review is unsupported and disclosed as incomplete.",
+    version="1.1.0",
 )
 def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None = None) -> dict:
     """Bundle the calls an agent typically makes during a security review.
 
-    WHEN TO USE: When the agent needs to assess attack surface — either
-    for a specific symbol (focused review) or across the whole codebase
-    (broad sweep). Returns taint flows, known vulnerabilities, the
-    critique of any staged diff, and an adversarial scan so the agent
+    WHEN TO USE: When the agent needs repository security observations and
+    a review of tracked working changes. Returns taint flows, known vulnerabilities, the
+    critique of tracked working-tree changes against HEAD, and an adversarial scan so the agent
     can ladder findings into the right layer.
 
     Parameters
     ----------
     symbol:
-        Optional — when provided, scopes the adversarial scan to this
-        symbol. Empty does a broad sweep.
+        Legacy request retained for compatibility. These checks do not
+        implement symbol filtering; a non-empty request marks the result
+        incomplete and explicitly reports that symbol scope was not applied.
 
     Returns: compound envelope with sections {taint, vuln, critique,
     adversarial}.
@@ -9537,13 +9543,11 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
         return _run_substrate("for_security_review", _w607aj_warnings_out, phase, fn, *args, default=default, **kwargs)
 
     # Fix B — go through ``_cr`` so the ``vuln`` typo (CLI key is
-    # ``vulns``) can never come back. ``vulns list`` is the
-    # subcommand-style invocation the CLI expects. ``critique`` reads the
-    # working-tree diff (no-op if nothing's staged); it pairs naturally
+    # ``vulns``) can never come back. ``vulns`` is a command, not a group;
+    # invoke it without a "list" positional. ``critique`` explicitly
+    # reads git diff HEAD (empty input if clean); it pairs naturally
     # here because the agent is often reviewing a PR's worth of changes.
     adv_args = [_cr("adversarial")]
-    if symbol:
-        adv_args.append(symbol)
     sections = _materialize_compound_sections_preserving_recipe_order(
         [
             (
@@ -9565,7 +9569,7 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
                     _run_check_aj(
                         "vulns",
                         _safe_run,
-                        [_cr("vulns"), "list"],
+                        [_cr("vulns")],
                         root,
                         default=_compound_child_default("vulns_w607aj_default"),
                     ),
@@ -9578,7 +9582,7 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
                     _run_check_aj(
                         "critique",
                         _safe_run,
-                        [_cr("critique")],
+                        [_cr("critique"), "--working-tree"],
                         root,
                         default=_compound_child_default("critique_w607aj_default"),
                     ),
@@ -9609,7 +9613,7 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
         target=symbol or "(full repo)",
         default=None,
     )
-    return _finalize_compound_recipe(
+    result = _finalize_compound_recipe(
         envelope,
         "for-security-review",
         sections,
@@ -9617,6 +9621,38 @@ def for_security_review(symbol: str = "", root: str = ".", ctx: _Context | None 
         situation="security_review",
         target=symbol or "(full repo)",
     )
+    # A successful child invocation can still contain incomplete evidence.
+    # Keep that separate from argument/operation failures and requested scope.
+    check_status = {
+        name: "failed"
+        if not data or data.get("isError") is True or "error" in data
+        else "incomplete"
+        if (data.get("summary") or {}).get("partial_success") is True
+        else "completed"
+        for name, data in sections
+    }
+    summary = result["summary"]
+    already_partial = summary.get("partial_success") is True
+    summary["check_status"] = check_status
+    summary["resolution"] = "unsupported_symbol_scope" if symbol else "repository_and_changeset"
+    result["scope"] = {
+        "requested_symbol": symbol or None,
+        "symbol_scope_applied": False,
+        "taint": "repository",
+        "vulns": "saved_inventory",
+        "critique": "tracked_changes_against_HEAD",
+        "adversarial": "working_tree_changes",
+    }
+    incomplete = [name for name, status in check_status.items() if status == "incomplete"]
+    if incomplete:
+        summary["partial_success"] = True
+        summary["verdict"] += f"; incomplete checks: {', '.join(incomplete)}"
+    if symbol:
+        summary["partial_success"] = True
+        summary["verdict"] += "; requested symbol scope was not applied; read per-check scope"
+    if not already_partial:
+        _note_partial_success(result)
+    return result
 
 
 @_tool(
@@ -9781,7 +9817,8 @@ def context(
 
 @_tool(
     name="roam_retrieve",
-    description="Graph-aware context for free-form tasks: FTS5 + structural rerank (PageRank + clones) + token budget.",
+    description="Retrieve code spans for a task with lexical and graph ranking, qualified clone evidence, and a token budget.",
+    version="1.1.0",
     output_schema=_SCHEMA_RETRIEVE,
 )
 def retrieve_context(
@@ -9910,8 +9947,8 @@ def fleet_plan(
     description=(
         "Post-edit patch verifier. Pass `git diff` output as diff_text. "
         "Catches clones-not-edited (sibling duplicates the agent missed) "
-        "and high-blast-radius edits. Grounded in the indexed graph, not "
-        "heuristics. Triggers: 'review my patch', 'is this PR safe?', "
+        "and high-blast-radius edits. Uses indexed relationships and "
+        "heuristic checks; incomplete evidence is disclosed. Triggers: 'review my patch', 'is this PR safe?', "
         "after generating any non-trivial diff."
     ),
     output_schema=_SCHEMA_CRITIQUE,
@@ -10060,6 +10097,7 @@ def oracle_test_only_alias(symbol: str, root: str = ".") -> dict:
 
 @_tool(
     name="roam_oracle_batch",
+    version="1.1.0",
     description=(
         "Run multiple oracle queries in one call. Items: [{name, oracle, "
         "max_hops?}, ...] where oracle is one of symbol-exists, route-exists, "
@@ -10101,7 +10139,6 @@ def oracle_batch(items: list, root: str = ".") -> dict:
     from roam.commands.cmd_oracle import (
         oracle_symbol_exists as _symbol_exists,
     )
-    from roam.commands.resolve import ensure_index
     from roam.db.connection import open_db
 
     if not isinstance(items, list) or not items:
@@ -10116,9 +10153,11 @@ def oracle_batch(items: list, root: str = ".") -> dict:
 
     from pathlib import Path
 
-    ensure_index()
     results: list[dict] = []
-    project_root_path = Path(root) if isinstance(root, str) else Path(".")
+    # The cold-start wrapper checks the requested root. Calling cwd-bound
+    # ensure_index() here could build an unrelated server directory; readonly
+    # open below remains fail-closed for direct/undecorated callers too.
+    project_root_path = (Path(root) if isinstance(root, str) else Path(".")).resolve()
 
     def _error_row(item, message: str) -> dict:
         return {
@@ -10144,7 +10183,7 @@ def oracle_batch(items: list, root: str = ".") -> dict:
                 elif oracle_name == "is-reachable-from-entry":
                     r = _is_reachable(conn, target, max_hops=int(item.get("max_hops", 10)))
                 elif oracle_name == "is-clone-of":
-                    r = _is_clone_of(conn, target)
+                    r = _is_clone_of(conn, target, project_root=project_root_path)
                 else:
                     results.append(_error_row(item, f"unknown oracle '{oracle_name}'"))
                     continue
@@ -10159,12 +10198,18 @@ def oracle_batch(items: list, root: str = ".") -> dict:
                     "reason": r.reason,
                     "reason_class": r.reason_class,
                     "confidence": r.confidence,
+                    "partial_success": r.value is None,
+                    **(r.evidence or {}),
                 }
             )
 
     return {
         "command": "oracle:batch",
-        "summary": {"verdict": f"{len(results)} oracle queries", "count": len(results)},
+        "summary": {
+            "verdict": f"{len(results)} oracle queries",
+            "count": len(results),
+            "partial_success": any(row.get("partial_success") or "error" in row for row in results),
+        },
         "results": results,
     }
 
@@ -10960,8 +11005,8 @@ def mcp_suggest_reviewers(top: int = 3, exclude: str = "", changed: bool = True,
 
 @_tool(
     name="roam_verify",
-    description="Run the post-edit proof gate over every changed file.",
-    version="1.1.0",
+    description="Check changed files and disclose applicable inputs, completed checks, and verification gaps.",
+    version="1.2.0",
     read_only=False,
     destructive=False,
     idempotent=False,
@@ -10970,8 +11015,9 @@ def verify(threshold: int = 70, root: str = ".") -> dict:
     """Check changed files for naming, import, error-handling, and duplicate issues.
 
     WHEN TO USE: Call this before committing to check that changed files
-    follow established codebase conventions. Scores 5 categories (naming,
-    imports, error handling, duplicates, syntax) and returns PASS/WARN/FAIL.
+    follow established codebase conventions. Returns PASS/WARN/FAIL with
+    category applicability and completion state. Non-code inputs can receive
+    secret checks without being described as source-code verification.
 
     Parameters
     ----------
@@ -11309,7 +11355,7 @@ def agent_opt(
 
 @_tool(
     name="roam_observability_opt",
-    description="Detect code that leaves systems hard to debug (raw debug prints, ...) and recommend the structured-logging shape.",
+    description="Review raw print candidates and decide whether diagnostics belong in structured logs.",
 )
 def observability_opt(
     only: str = "",
@@ -11324,8 +11370,10 @@ def observability_opt(
     WHEN TO USE: Call this to find code that leaves a system hard to debug —
     raw debug prints left in non-test source (print / console.log / var_dump /
     dbg!), with string-only logs and traces-without-status to follow. Returns
-    one finding per violation (path:line) with the rank-1 structured-logging
-    shape to adopt.
+    one finding per candidate line (path:line). Review the output contract:
+    intentional CLI output is not a logging defect. Python requires an AST
+    call; other languages retain text-pattern heuristics. Unreadable sources
+    and Python parse failures make the result incomplete.
 
     Parameters
     ----------
@@ -18995,15 +19043,17 @@ def roam_oracle_is_reachable_from_entry(
 # W305: roam_oracle_is_clone_of
 @_tool(
     name="roam_oracle_is_clone_of",
-    description="Answer the boolean oracle question: does this symbol have persisted clone siblings in the ``clone_pairs`` table? Returns a yes/no verdict envelope with the matched clone class size. Different from ``roam_clones`` (full clone-pair enumeration) -- this is the cheap boolean lookup for one symbol's clone status.",
+    description="Check whether a symbol has saved clone siblings. Return true/false/indeterminate with scan bounds and freshness; incomplete or stale scans cannot establish absence. Use roam_clones for full pair enumeration.",
     output_schema=_SCHEMA_ORACLE,
+    version="1.1.0",
 )
 def roam_oracle_is_clone_of(symbol: str, root: str = ".") -> dict:
     """Answer whether a symbol has persisted clone siblings.
 
-    WHEN TO USE: agent is about to edit a symbol and wants a cheap
-    yes/no on whether clone-class siblings exist that should also be
-    updated. Pair with ``roam_clones`` for the full enumeration.
+    WHEN TO USE: agent is about to edit a symbol and wants to check saved
+    siblings that may need the same change. A negative answer also verifies
+    scan freshness; incomplete evidence stays indeterminate. Pair with
+    ``roam_clones`` for the full enumeration.
 
     Parameters
     ----------
@@ -19015,8 +19065,8 @@ def roam_oracle_is_clone_of(symbol: str, root: str = ".") -> dict:
     root:
         Repo root (default current directory).
 
-    Returns: ``{summary: {verdict, has_clones, class_size, ...},
-    siblings: [...]}``.
+    Returns: ``{summary: {verdict, value, reason, check_status, clone_scan,
+    partial_success, ...}}``.
     """
     return _run_roam(["oracle", "is-clone-of", symbol], root)
 

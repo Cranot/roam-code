@@ -786,9 +786,9 @@ def test_w89_substrate_untouched() -> None:
     """
     from roam.db.connection import USER_VERSION
 
-    assert USER_VERSION == 19, (
+    assert USER_VERSION == 20, (
         f"W89 substrate invariant: USER_VERSION must stay at canonical "
-        f"value (19 since the W1460 snapshots.metrics_version migration); got "
+        f"value (20 since clone scan evidence); got "
         f"{USER_VERSION}. W605 must not bump this."
     )
 

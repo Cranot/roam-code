@@ -50,6 +50,7 @@ def structural_score(
     lexical_baseline: float | None = None,
     task: str = "",
     repair_intent: RepairIntent | None = None,
+    clone_evidence_out: dict | None = None,
 ) -> list[dict]:
     """Rerank *candidates* with structural signals.
 
@@ -81,6 +82,8 @@ def structural_score(
         by the JSON envelope).  Sorted descending by ``score``.
     """
     if not candidates:
+        if clone_evidence_out is not None:
+            clone_evidence_out.update(check_status="skipped:no_candidates", partial_success=False)
         return []
 
     candidate_ids = {int(c["symbol_id"]) for c in candidates}
@@ -93,6 +96,8 @@ def structural_score(
         use_personalized=use_personalized,
         repair_intent=repair_intent,
         project_root=config_root or Path.cwd(),
+        clone_evidence_out=clone_evidence_out,
+        clone_enabled=float(weights.get("epsilon", 0.05)) != 0,
     )
     ctx = _build_scoring_context(
         candidates,
@@ -118,6 +123,8 @@ def _gather_signal_maps(
     use_personalized: bool,
     repair_intent: RepairIntent | None,
     project_root: Path,
+    clone_evidence_out: dict | None = None,
+    clone_enabled: bool = True,
 ) -> dict[str, object]:
     """Collect all independently-computed signal maps into one dict.
 
@@ -130,6 +137,13 @@ def _gather_signal_maps(
     if repair_intent is not None and flag_enabled():
         repair_scores = score_retrieval_candidates(candidates, repair_intent, project_root=project_root)
 
+    if clone_enabled:
+        clone_tags = _clone_tags(conn, candidates, project_root=project_root, evidence_out=clone_evidence_out)
+    else:
+        clone_tags = {}
+        if clone_evidence_out is not None:
+            clone_evidence_out.update(check_status="skipped:disabled", partial_success=False)
+
     return {
         "path_token_boost": _path_token_boost(candidates, task),
         "rule_yaml_penalty": _rule_yaml_penalty(candidates, task),
@@ -138,7 +152,7 @@ def _gather_signal_maps(
         "async_query_boost": _async_query_boost(candidates, task, conn=conn),
         "recency_boost": _recency_boost(conn, candidates, task),
         "pr_scores": _pagerank_scores(conn, candidate_ids, seeds, use_personalized=use_personalized),
-        "clone_tags": _clone_tags(conn, candidates),
+        "clone_tags": clone_tags,
         "cochange_scores": _cochange_scores(conn, candidate_ids, seeds),
         "runtime_scores": _runtime_scores(conn, candidate_ids),
         "semantic_scores": _semantic_scores(conn, candidate_ids, task),
@@ -272,7 +286,7 @@ def _normalized_signals(c: dict, ctx: dict[str, object]) -> tuple[dict[str, floa
         "cochange_norm": cochange_scores.get(sid, 0.0) / cochange_max if cochange_max > 0 else 0.0,
         "runtime_norm": runtime_scores.get(sid, 0.0) / runtime_max if runtime_max > 0 else 0.0,
         "semantic_norm": semantic_scores.get(sid, 0.0) / semantic_max if semantic_max > 0 else 0.0,
-        "clone_boost": float(ctx["epsilon"]) if clone_info else 0.0,  # type: ignore[arg-type]
+        "clone_boost": float(ctx["epsilon"]) if clone_info and clone_info.get("boost_eligible") else 0.0,  # type: ignore[arg-type]
         "path_token_boost": ctx["path_token_boost"].get(sid, 0.0),  # type: ignore[union-attr]
         "cmd_companion_boost": ctx["cmd_companion_boost"].get(sid, 0.0),  # type: ignore[union-attr]
         "async_query_boost": ctx["async_query_boost"].get(sid, 0.0),  # type: ignore[union-attr]
@@ -328,6 +342,8 @@ def _justifications_for_signals(
     if clone_info:
         justifications["clone_cluster"] = clone_info["cluster_id"]
         justifications["clone_siblings"] = clone_info["sibling_count"]
+        justifications["clone_check_status"] = clone_info["check_status"]
+        justifications["clone_boost_applied"] = signals["clone_boost"] != 0.0
     if signals["repair_intent"]:
         justifications["repair_intent"] = round(signals["repair_intent"], 4)
     return justifications
@@ -972,12 +988,39 @@ def _pagerank_scores(
     return {int(row[0]): float(row[1]) for row in rows}
 
 
-def _clone_tags(conn: sqlite3.Connection, candidates: list[dict]) -> dict[int, dict]:
-    """Resolve clone membership per candidate.
+def _clone_tags(
+    conn: sqlite3.Connection,
+    candidates: list[dict],
+    *,
+    project_root: Path | None = None,
+    evidence_out: dict | None = None,
+) -> dict[int, dict]:
+    """Read pairs and their qualification in one snapshot, hashing once per query.
 
-    Returns ``{symbol_id: {cluster_id, sibling_count}}`` for every
-    candidate with at least one persisted clone sibling.
+    Stale positive observations remain visible, but only a current, complete
+    scan may contribute a ranking boost. Missing evidence does not mean absence.
     """
+    from roam.graph.clone_evidence import clone_check_status, scan_summary
+
+    owns_snapshot = not conn.in_transaction
+    if owns_snapshot:
+        conn.execute("BEGIN")
+    try:
+        status = clone_check_status(conn, project_root=project_root)
+        tags = _clone_tags_in_snapshot(conn, candidates, status)
+        if evidence_out is not None:
+            evidence_out.update(check_status=status, clone_scan=scan_summary(conn), partial_success=status != "ran")
+        return tags
+    except sqlite3.Error as exc:
+        if evidence_out is not None:
+            evidence_out.update(check_status=f"errored:clone_evidence:{type(exc).__name__}", partial_success=True)
+        return {}
+    finally:
+        if owns_snapshot:
+            conn.rollback()
+
+
+def _clone_tags_in_snapshot(conn: sqlite3.Connection, candidates: list[dict], status: str) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for c in candidates:
         file_path = c.get("file_path")
@@ -996,5 +1039,7 @@ def _clone_tags(conn: sqlite3.Connection, candidates: list[dict]) -> dict[int, d
         out[int(c["symbol_id"])] = {
             "cluster_id": cluster_id,
             "sibling_count": len(siblings),
+            "check_status": status,
+            "boost_eligible": status == "ran",
         }
     return out

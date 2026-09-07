@@ -15,10 +15,19 @@ def _updates_by_ecosystem() -> dict[str, dict]:
     return {row["package-ecosystem"]: row for row in updates}
 
 
-def test_dependabot_covers_pip_with_a_graduated_cooldown() -> None:
+def test_uv_lockfile_uses_the_lock_aware_dependency_ecosystem() -> None:
+    """Manifest-only updates cannot reach tests behind `uv sync --locked`."""
+    assert (ROOT / "uv.lock").is_file()
+    updates = _updates_by_ecosystem()
+    assert "uv" in updates, "Use the uv ecosystem so dependency PRs update uv.lock with pyproject.toml"
+    assert "pip" not in updates, "Avoid duplicate manifest-only Python update jobs"
+    assert updates["uv"]["directory"] == "/"
+
+
+def test_dependabot_covers_uv_with_a_graduated_cooldown() -> None:
     updates = _updates_by_ecosystem()
 
-    assert updates["pip"]["cooldown"] == {
+    assert updates["uv"]["cooldown"] == {
         "default-days": 7,
         "semver-major-days": 30,
         "semver-minor-days": 14,
@@ -47,7 +56,7 @@ def test_github_actions_is_deliberately_absent_with_the_reason_recorded() -> Non
     "parity" edit that silently reintroduces permanently-red PRs.
     """
     updates = _updates_by_ecosystem()
-    assert set(updates) == {"pip"}
+    assert set(updates) == {"uv"}
 
     text = CONFIG.read_text(encoding="utf-8")
     assert "NO github-actions ecosystem here, deliberately" in text
@@ -61,6 +70,11 @@ def test_cooldown_policy_keeps_security_updates_immediate() -> None:
 
     assert "security updates continue immediately" in text
     assert "SECURITY updates are enabled at the" in text
-    assert updates["pip"]["schedule"]["interval"] == "weekly"
-    assert updates["pip"]["commit-message"]["prefix"] == "deps"
-    assert "exclude" not in updates["pip"]["cooldown"]
+    assert updates["uv"]["schedule"] == {"interval": "weekly", "day": "monday"}
+    assert updates["uv"]["commit-message"]["prefix"] == "deps"
+    assert updates["uv"]["open-pull-requests-limit"] == 5
+    assert "exclude" not in updates["uv"]["cooldown"]
+    assert updates["uv"]["ignore"] == [
+        {"dependency-name": name, "update-types": ["version-update:semver-major"]}
+        for name in ("networkx", "leidenalg", "onnxruntime")
+    ]

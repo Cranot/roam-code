@@ -300,5 +300,5 @@ first-impression defects.
 
 ## Cross-references
 
-- README ["Install + first three commands"](../README.md#install--first-three-commands) — the claim this transcript verifies.
-- Landing page ["Install + first three commands"](https://roam-code.com/docs/getting-started) — public-facing version of the same flow.
+- [Current README installation guide](../README.md#install--first-four-commands) — current instructions; this transcript retains its historical fixture and version.
+- [Current getting-started guide](https://roam-code.com/docs/getting-started) — the maintained public walkthrough.

@@ -2,7 +2,7 @@
 
 # roam-code
 
-**Understand your codebase. See what a change might affect. Give your coding agent better context.**
+**Your agent writes the code. Roam gives it the bigger picture.**
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -10,7 +10,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-<sub>Runs on your machine · no account or API key for local analysis · no automatic source-code or telemetry upload · free and open source</sub>
+<sub>Codebase context and static checks for coding agents. Runs on your machine · no account or API key for local analysis · no automatic source-code or telemetry upload · free and open source</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
 <sub>287 commands · 246 MCP tools (17 in the default `core` preset) · 28 languages</sub>
@@ -39,18 +39,25 @@
 
 ## Why Roam is different
 
-Roam helps you find your way around a repository before you change it. It builds
-a local map of functions, classes, imports, and the connections between them,
-then uses that map to answer questions like:
+Coding agents can produce more code than we can keep up with by reading every
+line. Roam is built for those agents: free, local static analysis they can use
+to understand a repository and check their work as they go.
+
+It builds a reusable map of functions, classes, imports, and their connections.
+Your agent can query that map through the CLI or MCP (a standard way for agents
+to use tools) to answer questions like:
 
 - Where does this feature start, and which files should I read?
 - Who calls this function? What else could my change affect?
 - Which tests are connected to this code?
 - What did we actually check before calling this change ready?
 
-Use it yourself in the terminal, or let your coding agent query it through the
-CLI or MCP (a standard way for assistants to use tools). You do not need to
-learn hundreds of commands: start with the [five below](#core-commands).
+The static checks use local compute, not model calls or a paid Roam API. Your
+agent gets structured results with code locations and findings to investigate;
+its own model usage, including reading those results, is separate. You can
+inspect the same results in the terminal, but you do not need to become the
+person manually running every check. [Connect your agent](#mcp-server) and add
+Roam checks to its workflow; a tool connection alone does not guarantee use.
 
 Roam complements your editor, text search, tests, and code review. Its useful
 difference is the connections: a search finds a name; Roam helps you follow
@@ -73,7 +80,10 @@ Read [what verification evidence does and does not prove](docs/concepts/verifica
 
 ## Install + first four commands
 
-Start in a Git repository you want to explore:
+Install Roam in a Git repository your agent works on. The commands below are
+also a quick way to inspect what the agent will get; for ongoing use, follow
+the [agent setup guide](https://roam-code.com/setup) and include checks before
+and after edits in its instructions.
 
 ```bash
 pip install "roam-code[mcp]"          # 1. install the CLI and optional agent-tool server

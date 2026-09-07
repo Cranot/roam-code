@@ -38,6 +38,7 @@ from roam.critique.checks import (
     parse_diff,
 )
 from roam.db.connection import find_project_root, open_db
+from roam.graph.clone_evidence import scan_summary
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -236,8 +237,8 @@ def _git_revision_exists(repo_root: Path, revision: str) -> tuple[bool, str | No
     return result.returncode == 0, None
 
 
-def _read_implicit_review_diff() -> tuple[str, str, str, str]:
-    """Select the working-tree diff, then the last commit, for an empty stdin."""
+def _read_implicit_review_diff(*, working_tree_only: bool = False) -> tuple[str, str, str, str]:
+    """Read HEAD's working diff; only interactive use may select the last commit."""
     from roam.output.errors import EMPTY_INPUT, RUN_FAILED, structured_usage_error
 
     repo_root = find_project_root()
@@ -254,6 +255,9 @@ def _read_implicit_review_diff() -> tuple[str, str, str, str]:
             "HEAD",
             "REVIEWED: working tree (base: HEAD)",
         )
+
+    if working_tree_only:
+        raise structured_usage_error(EMPTY_INPUT, "nothing to review: working tree clean against HEAD")
 
     last_diff, last_error = _run_git_diff(repo_root, "HEAD~1..HEAD")
     if last_error is not None:
@@ -280,6 +284,57 @@ def _read_implicit_review_diff() -> tuple[str, str, str, str]:
         EMPTY_INPUT,
         "nothing to review: working tree clean and no prior commit diff",
     )
+
+
+def _read_review_input(input_path: str | None, working_tree: bool) -> tuple[str, str, str, str]:
+    """Bind the review to explicit input, or the documented interactive default."""
+    from roam.output.errors import EMPTY_INPUT, INVALID_DIFF, structured_usage_error
+
+    if input_path:
+        with open(input_path, encoding="utf-8") as fh:
+            diff_text = fh.read()
+        source = ("input_file", "caller-supplied", "REVIEWED: input file (base: caller-supplied; not computed by roam)")
+    elif working_tree:
+        return _read_implicit_review_diff(working_tree_only=True)
+    elif sys.stdin.isatty():
+        return _read_implicit_review_diff()
+    else:
+        diff_text = sys.stdin.read()
+        source = ("piped_diff", "caller-supplied", "REVIEWED: piped diff (base: caller-supplied; not computed by roam)")
+    if not diff_text.strip():
+        raise structured_usage_error(
+            EMPTY_INPUT,
+            "diff is empty; check the diff producer, pass --input with a non-empty patch, "
+            "or use `roam critique --working-tree` to select git diff HEAD explicitly",
+        )
+    if not looks_like_unified_diff(diff_text):
+        raise structured_usage_error(
+            INVALID_DIFF,
+            "input is not a recognisable unified diff "
+            "(no diff/--- /+++/@@ headers found). Pass `git diff` output verbatim.",
+        )
+    return (diff_text, *source)
+
+
+def _emit_review_input_failure(exc: click.UsageError, json_mode: bool) -> None:
+    """Retain typed input refusals on the serialized CLI boundary too."""
+    from roam.output.errors import parse_code
+
+    if not json_mode:
+        raise exc
+    click.echo(
+        to_json(
+            json_envelope(
+                "critique",
+                summary={"verdict": exc.message, "state": "usage_error", "partial_success": True},
+                status="usage_error",
+                isError=True,
+                error_code=parse_code(exc.message) or "USAGE_ERROR",
+                error=exc.message,
+            )
+        )
+    )
+    raise SystemExit(2)
 
 
 def _diff_sha(
@@ -457,7 +512,7 @@ def _emit_critique_findings(
 _BENCH_RELEVANCE_RULES = [
     (
         ("src/roam/retrieve/", "src/roam/eval/"),
-        "pytest tests/test_retrieve_cross_repo.py + roam eval-retrieve --tasks bench/retrieve/roam_self.jsonl",
+        "roam eval-retrieve --tasks bench/retrieve/roam_self.jsonl",
     ),
     (
         ("src/roam/graph/pagerank.py", "src/roam/graph/clusters.py"),
@@ -594,7 +649,8 @@ def _run_checks_with_status(
 
     W832: Pattern 2 silent-fallback fix. Returns ``(findings,
     check_status)`` where ``check_status`` maps check name → one of
-    ``"ran"`` / ``"skipped:<reason>"`` / ``"errored:<exc_class>:<msg>"``.
+    ``"ran"`` / ``"skipped:<reason>"`` / ``"errored:<exc_class>:<msg>"`` /
+    ``"partial:<reason>"`` (saved clone evidence has limited coverage or freshness).
 
     The clean-path verdict ("No concerns from roam critique") used to
     fire even when 0-of-3 checks had actually run cleanly (e.g. user
@@ -615,12 +671,13 @@ def _run_checks_with_status(
     # clones-not-edited
     if not changed_symbols:
         status["clones-not-edited"] = "skipped:no_changed_symbols"
-    elif not _has_clone_pairs(conn):
-        status["clones-not-edited"] = "skipped:no_clone_pairs (run `roam clones --persist`)"
     else:
         try:
-            findings.extend(check_clones_not_edited(conn, changed_symbols, regions))
-            status["clones-not-edited"] = "ran"
+            from roam.graph.clone_evidence import clone_check_status
+
+            status["clones-not-edited"] = clone_check_status(conn)
+            if not status["clones-not-edited"].startswith("skipped:"):
+                findings.extend(check_clones_not_edited(conn, changed_symbols, regions))
         except Exception as exc:  # noqa: BLE001 — surface error, never crash
             status["clones-not-edited"] = f"errored:{type(exc).__name__}:{exc}"
 
@@ -672,6 +729,8 @@ def _critique_one(diff_text: str, high_callers: int, intent_text: str | None) ->
         except (OSError, subprocess.SubprocessError):
             effective_intent = None
     with open_db(readonly=True) as conn:
+        if not conn.in_transaction:
+            conn.execute("BEGIN")
         changed_symbols = find_changed_symbols(conn, regions)
         findings, check_status = _run_checks_with_status(
             conn,
@@ -680,7 +739,9 @@ def _critique_one(diff_text: str, high_callers: int, intent_text: str | None) ->
             high_callers=high_callers,
             effective_intent=effective_intent,
         )
+        clone_scan = scan_summary(conn)
     result = aggregate(findings, check_status=check_status)
+    result["clone_scan"] = clone_scan
     result["regions"] = regions
     result["changed_symbols"] = changed_symbols
     result["intent"] = effective_intent
@@ -720,6 +781,9 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
             {
                 "file": diff_path.name,
                 "verdict": result["verdict"],
+                "check_status": result.get("check_status", {}),
+                "partial_success": result.get("partial_success", False),
+                "clone_scan": result.get("clone_scan", {}),
                 "changed_files": len(result["regions"]),
                 "changed_symbols": len(result["changed_symbols"]),
                 "findings": len(result["findings"]),
@@ -761,6 +825,10 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
         "risk_level_canonical": batch_risk_level_canonical,
         "risk_rank": batch_risk_rank_int,
     }
+    incomplete = sum(bool(entry.get("partial_success") or entry.get("error")) for entry in per_file)
+    if incomplete:
+        summary.update(partial_success=True, state="partial_critique", incomplete_diffs=incomplete)
+        summary["verdict"] += f" — {incomplete} incomplete diff(s)"
     batch_envelope = json_envelope(
         "critique",
         summary=summary,
@@ -816,6 +884,11 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
 )
 @click.command()
 @click.option(
+    "--working-tree",
+    is_flag=True,
+    help="Review git diff HEAD explicitly. A clean tree is empty input; never select the last commit.",
+)
+@click.option(
     "--input",
     "input_path",
     type=click.Path(exists=True, dir_okay=False),
@@ -867,13 +940,14 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
     ),
 )
 @click.pass_context
-def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
+def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist, working_tree=False):
     """Verify a patch against the indexed graph.
 
     Pipe a unified diff in via stdin (``git diff | roam critique``),
-    pass a file with ``--input``, or invoke it without input to review
-    ``git diff HEAD``. A clean working tree falls back to
-    ``git diff HEAD~1..HEAD``. The output is a ranked list of findings:
+    pass a file with ``--input``, or select ``--working-tree`` to review
+    ``git diff HEAD``. Empty piped input is refused. Interactive use
+    without options selects the working diff, then ``HEAD~1..HEAD`` if
+    clean. The output is a ranked list of findings:
     clone siblings that may need the same change, symbols with high
     blast radius, and intent / dark-matter checks.
 
@@ -891,6 +965,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     \b
     Examples:
       roam critique
+      roam critique --working-tree
       git diff | roam critique
       git diff | roam critique --json
       roam critique --input my.patch
@@ -904,48 +979,29 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
+    if working_tree and (input_path or batch_dir):
+        from roam.output.errors import INVALID_OPTIONS, structured_usage_error
+
+        _emit_review_input_failure(
+            structured_usage_error(INVALID_OPTIONS, "--working-tree, --input and --batch are mutually exclusive"),
+            json_mode,
+        )
+
     if batch_dir:
         if input_path:
             from roam.output.errors import INVALID_OPTIONS, structured_usage_error
 
-            raise structured_usage_error(INVALID_OPTIONS, "--batch and --input are mutually exclusive")
+            _emit_review_input_failure(
+                structured_usage_error(INVALID_OPTIONS, "--batch and --input are mutually exclusive"),
+                json_mode,
+            )
         _run_batch(batch_dir, high_callers, intent_text, json_mode, token_budget)
         return
 
-    if input_path:
-        with open(input_path, encoding="utf-8") as fh:
-            diff_text = fh.read()
-        review_source = "input_file"
-        review_base = "caller-supplied"
-        review_disclosure = "REVIEWED: input file (base: caller-supplied; not computed by roam)"
-    else:
-        diff_text = "" if sys.stdin.isatty() else sys.stdin.read()
-        if diff_text.strip():
-            review_source = "piped_diff"
-            review_base = "caller-supplied"
-            review_disclosure = "REVIEWED: piped diff (base: caller-supplied; not computed by roam)"
-        else:
-            (
-                diff_text,
-                review_source,
-                review_base,
-                review_disclosure,
-            ) = _read_implicit_review_diff()
-
-    from roam.output.errors import EMPTY_INPUT, INVALID_DIFF, structured_usage_error
-
-    if not diff_text.strip():
-        raise structured_usage_error(EMPTY_INPUT, "diff is empty")
-
-    if not looks_like_unified_diff(diff_text):
-        # Earlier silent failures: shell substitutions that lost the diff,
-        # paste-buffer truncation, or wrong-format input. Erroring loudly
-        # here keeps "no concerns" from masking a no-op invocation.
-        raise structured_usage_error(
-            INVALID_DIFF,
-            "input is not a recognisable unified diff "
-            "(no diff/--- /+++/@@ headers found). Pass `git diff` output verbatim.",
-        )
+    try:
+        diff_text, review_source, review_base, review_disclosure = _read_review_input(input_path, working_tree)
+    except click.UsageError as exc:
+        _emit_review_input_failure(exc, json_mode)
 
     ensure_index()
 
@@ -1054,6 +1110,10 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
             effective_intent = None
 
     with open_db(readonly=not persist) as conn:
+        # Bind check status, saved scan metadata and clone rows to one SQLite
+        # snapshot. WAL writers may replace the scan while this review runs.
+        if not conn.in_transaction:
+            conn.execute("BEGIN")
         changed_symbols = _run_check("find_changed_symbols", find_changed_symbols, conn, regions, default=[]) or []
         _checks_result = _run_check(
             "run_checks",
@@ -1066,6 +1126,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
             default=([], {}),
         )
         findings, check_status = _checks_result if _checks_result is not None else ([], {})
+        clone_scan = scan_summary(conn)
 
         result = _run_check(
             "aggregate",
@@ -1266,6 +1327,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist):
         # nothing ran". ``state`` is closed-enum:
         # ``all_checks_ran`` | ``partial_critique``.
         "check_status": result.get("check_status", {}),
+        "clone_scan": clone_scan,
         "partial_success": result.get("partial_success", False),
         "state": ("partial_critique" if result.get("partial_success") else "all_checks_ran"),
     }

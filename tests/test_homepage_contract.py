@@ -166,6 +166,67 @@ def test_homepage_example_and_limits_are_explicit(page):
     assert 'pip install "roam-code[mcp]"' in text
 
 
+def test_homepage_leads_with_agent_workflow_and_setup(page):
+    hero = next(page.root.find("header"))
+    hero_text = normalized(hero.text()).lower()
+    assert "coding agents" in hero_text
+    assert "free static checks" in hero_text
+    assert "agent" in normalized(next(hero.find("h1")).text()).lower()
+    primary_action = next(link for link in hero.find("a") if link.attrs.get("class") == "home-button")
+    assert "agent" in primary_action.text().lower()
+    assert primary_action.attrs["href"] == "#install"
+
+    install = next(node for node in page.elements if node.attrs.get("id") == "install")
+    steps = list(next(install.find("ol")).find("li"))
+    assert len(steps) == 3
+    assert 'pip install "roam-code[mcp]"' in normalized(steps[0].text())
+    assert any(link.attrs.get("href") == "/setup" for link in steps[-1].find("a"))
+    assert "instructions" in steps[-1].text()
+
+
+def test_homepage_metadata_keeps_agent_first_positioning(page):
+    title = normalized(next(page.root.find("title")).text())
+    assert "agent" in title.lower()
+    metadata = {node.attrs.get("name", node.attrs.get("property")): node.attrs for node in page.root.find("meta")}
+    for key in ("og:title", "twitter:title"):
+        assert metadata[key]["content"] == title
+    for key in ("description", "og:description", "twitter:description"):
+        description = metadata[key]["content"].lower()
+        assert all(term in description for term in ("agent", "free", "local", "static"))
+    software = next(
+        json.loads(script.text())
+        for script in page.root.find("script")
+        if json.loads(script.text())["@type"] == "SoftwareApplication"
+    )
+    assert all(term in software["description"].lower() for term in ("agent", "free", "local", "static"))
+    assert software["offers"]["price"] == "0"
+
+
+def test_homepage_qualifies_cost_privacy_and_agent_use(page):
+    answers = {
+        normalized(next(node.find("summary")).text()): normalized(next(node.find("p")).text())
+        for node in page.root.find("details")
+    }
+    assert (
+        "Connecting tools alone does not guarantee your agent will use them"
+        in answers["Is Roam for agents or for people?"]
+    )
+    assert "Static checks use local compute, not model calls" in answers["Is Roam free?"]
+    assert "own model usage is separate" in answers["Is Roam free?"]
+    assert "may send them to its model provider under its own settings" in answers["Does my code leave my machine?"]
+    assert "You still set the goals and decide what ships" in answers["Does Roam replace tests or code review?"]
+
+
+def test_linked_setup_installs_mcp_and_explains_agent_instructions():
+    setup = HomepageParser((SITE / "setup.html").read_text(encoding="utf-8"))
+    text = normalized(next(setup.root.find("main")).text())
+    assert 'pip install "roam-code[mcp]"' in text
+    assert "include Roam checks in its project instructions" in text
+    assert "does not guarantee the agent uses them" in text
+    assert "run tests and report missing or incomplete checks" in text
+    assert any(link.attrs.get("href", "").startswith("/docs/integration-tutorials#") for link in setup.root.find("a"))
+
+
 def test_homepage_walkthrough_and_connection_example_execute(tmp_path):
     """Exercise real indexing and graph commands, not hand-written output fixtures."""
     checkout = tmp_path / "checkout"

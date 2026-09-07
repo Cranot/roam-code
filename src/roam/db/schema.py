@@ -1,5 +1,7 @@
 """SQLite schema for the Roam index."""
 
+from __future__ import annotations
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -364,6 +366,11 @@ CREATE INDEX IF NOT EXISTS idx_taint_findings_sink ON taint_findings(sink_symbol
 -- `roam critique` (clone-not-edited check), and the retrieve reranker
 -- (clone-canonical-boost). Without this, every consumer re-runs detection
 -- (~5s on roam itself per query).
+CREATE TABLE IF NOT EXISTS clone_scan_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    metadata_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS clone_clusters (
     id INTEGER PRIMARY KEY,
     canonical_qname TEXT,

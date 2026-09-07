@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import sqlite3
+import textwrap
 from typing import Any, Callable, Iterable, Mapping
 
 from roam.catalog._shared import is_test_path as _shared_is_test_path
@@ -3008,39 +3009,69 @@ def detect_async_blocking_sleep(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# Python: `except Exception:` / `except BaseException:`
-# without `raise` is the canonical "swallowing bug" pattern. Catches
-# KeyboardInterrupt, MemoryError, SystemExit silently. The fix is to
-# narrow the exception type or always re-raise after logging.
-_RE_BROAD_EXCEPT = re.compile(
-    r"^\s*except\s+(?:Exception|BaseException)\s*(?:as\s+\w+\s*)?:",
-    re.MULTILINE,
-)
-_RE_RERAISE = re.compile(r"^\s*raise(?:\s|$)", re.MULTILINE)
-
-
-def _broad_handler_records_error(snippet: str) -> bool:
-    """Recognise catch blocks that preserve their exception as result data."""
-    try:
-        tree = ast.parse(snippet)
-    except (SyntaxError, ValueError):
-        return False
-    for handler in (node for node in ast.walk(tree) if isinstance(node, ast.ExceptHandler)):
-        exc_name = handler.name
-        if not exc_name or not any(isinstance(node, ast.Name) and node.id == exc_name for node in ast.walk(handler)):
+def _can_skip_handler_tail(statement: ast.AST) -> bool:
+    """Conservatively detect control flow that can bypass a later rethrow."""
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             continue
-        for statement in handler.body:
+        if isinstance(node, (ast.Return, ast.Break, ast.Continue, ast.Yield, ast.YieldFrom)):
+            return True
+        pending.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _broad_handler_records_error(handler: ast.ExceptHandler) -> bool:
+    """Recognise an unconditional rethrow or explicit exception result.
+
+    This is local structural evidence, not a proof of logging, recovery, or
+    downstream error handling. Conditional and deferred paths do not qualify.
+    """
+    for statement in handler.body:
+        if isinstance(
+            statement, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match)
+        ) and _can_skip_handler_tail(statement):
+            # No path-sensitive proof: an earlier branch can exit before a
+            # later raise or result write. Preserve the review candidate.
+            return False
+        if isinstance(statement, ast.Raise):
+            return True
+        if not isinstance(statement, (ast.Return, ast.Assign, ast.Expr)):
+            continue
+        preserves_exception = handler.name and any(
+            isinstance(node, ast.Name) and node.id == handler.name for node in ast.walk(statement)
+        )
+        if isinstance(statement, ast.Return):
+            return bool(preserves_exception)
+        if preserves_exception:
             rendered = ast.unparse(statement).lower()
-            preserves_exception = any(
-                isinstance(node, ast.Name) and node.id == exc_name for node in ast.walk(statement)
-            )
-            if (
-                preserves_exception
-                and re.search(r"\b(?:result|results|errors?|findings|outcome)\b", rendered)
-                and (".append(" in rendered or "[" in rendered and "=" in rendered)
+            if re.search(r"\b(?:result|results|errors?|findings|outcome)\b", rendered) and (
+                ".append(" in rendered or "[" in rendered and "=" in rendered
             ):
                 return True
     return False
+
+
+def _own_broad_handlers(snippet: str) -> list[ast.ExceptHandler]:
+    """Find handlers in this symbol, excluding nested function/class scopes."""
+    try:
+        tree = ast.parse(textwrap.dedent(snippet))
+    except (SyntaxError, ValueError):
+        return []
+    if not tree.body or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return []
+    pending = list(reversed(tree.body[0].body))
+    handlers = []
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(node, ast.ExceptHandler) and isinstance(node.type, ast.Name):
+            if node.type.id in {"Exception", "BaseException"}:
+                handlers.append(node)
+        pending.extend(reversed(list(ast.iter_child_nodes(node))))
+    return handlers
 
 
 @algorithm_detector(
@@ -3050,16 +3081,12 @@ def _broad_handler_records_error(snippet: str) -> bool:
     query_cost=QUERY_COST_MEDIUM,
 )
 def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
-    """Python: `except Exception:` block that silently swallows the error.
+    """Review broad handlers without an unconditional rethrow or error result.
 
-    Fires when the body has NO `raise` statement — meaning the error is
-    caught, possibly logged, and the program continues as if nothing
-    happened. That hides real bugs and masks operational failures.
-
-    Skip cases:
-    - Re-raise present (intentional log-and-rethrow)
-    - Function name suggests it's an error-recovery wrapper
-      (`safe_*`, `_try_*`, `with_default`, `silent_*`).
+    Match each handler independently. An unrelated raise or an error recorded
+    by a sibling handler cannot excuse this handler. Logging can be deliberate;
+    absence of a rethrow does not establish a silently lost exception.
+    Legacy recovery-name exclusions remain heuristic, not safety evidence.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
@@ -3090,35 +3117,25 @@ def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
         snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
         if not snippet:
             continue
-        broad_match = _RE_BROAD_EXCEPT.search(snippet)
-        if not broad_match:
-            continue
-        # If the function body re-raises somewhere AFTER the broad except,
-        # treat it as intentional log-and-rethrow.
-        post = snippet[broad_match.end() :]
-        if _RE_RERAISE.search(post):
-            continue
-        if _broad_handler_records_error(snippet):
-            continue
-        # Find the matched line number for precise location reporting.
-        line_offset = snippet[: broad_match.start()].count("\n")
-        match_line = (r["line_start"] or 1) + line_offset
-        results.append(
-            _finding(
-                "broad-except-swallow",
-                "swallow-exception",
-                r,
-                "`except Exception:` without re-raise — silently swallows bugs",
-                "medium",
-                match_line=match_line,
-                snippet=snippet,
-                matched_patterns=[
-                    "broad except clause",
-                    "no re-raise in body",
-                    "function name not in recovery prefix list",
-                ],
+        for handler in _own_broad_handlers(snippet):
+            if _broad_handler_records_error(handler):
+                continue
+            results.append(
+                _finding(
+                    "broad-except-swallow",
+                    "swallow-exception",
+                    r,
+                    "Broad exception handler without unconditional re-raise or explicit error result; review recovery",
+                    "medium",
+                    match_line=(r["line_start"] or 1) + handler.lineno - 1,
+                    snippet=snippet,
+                    matched_patterns=[
+                        f"broad handler: {handler.type.id}",
+                        "no unconditional re-raise or explicit error result in this handler",
+                        "logging and recovery semantics require review",
+                    ],
+                )
             )
-        )
     return results
 
 

@@ -83,7 +83,7 @@ W97 USER_VERSION SUBSTRATE UNTOUCHED *by W603*:
   schema changes, e.g. B8 ``snapshots.spectral_gap``, are tracked
   separately by ``tests/test_user_version_discipline.py``).
 * ``USER_VERSION`` constant — not moved by W603; the pin below tracks
-  the current canonical contract value (18 since B8).
+  the current canonical contract value (20 since clone scan evidence).
 * The schema-version contract with downstream consumers (manifest
   writer, bundle import, drift detection in ``roam doctor``) is
   unchanged by W603. The W603 plumb only surfaces the READ-side
@@ -657,15 +657,15 @@ def test_w97_user_version_substrate_untouched() -> None:
     modify the constant, the schema, or the migration ordering. This
     test pins both invariants.
     """
-    # (a) USER_VERSION constant at the canonical contract value (19 since
-    # the W1460 snapshots.metrics_version column landed). W603 itself does not
+    # (a) USER_VERSION constant at the canonical contract value (20 since
+    # clone scan evidence landed). W603 itself does not
     # touch this constant — the pin guards against a W603-scope edit
     # silently moving it. Bump in lockstep with a real schema change.
     from roam.db.connection import USER_VERSION
 
-    assert USER_VERSION == 19, (
+    assert USER_VERSION == 20, (
         f"W97 USER_VERSION substrate invariant: USER_VERSION must "
-        f"stay at the canonical contract value (19); got {USER_VERSION}. "
+        f"stay at the canonical contract value (20); got {USER_VERSION}. "
         f"If you bumped USER_VERSION in this wave, audit which schema "
         f"change required it and update tests/test_user_version_discipline.py."
     )

@@ -2928,11 +2928,30 @@ def _assert_claude_settings_unchanged(settings_path: Path, expected_content: byt
         raise _UnsafeClaudePathError(f"Claude settings changed since they were loaded: {settings_path}")
 
 
-def _claude_hook_command(hook_path: Path) -> str:
+def _legacy_claude_hook_command(hook_path: Path) -> str:
     argv = [sys.executable, str(hook_path)]
     if os.name == "nt":
         return subprocess.list2cmdline(argv)
     return " ".join(shlex.quote(part) for part in argv)
+
+
+def _claude_hook_command(hook_path: Path) -> dict:
+    """Use Claude exec-form: neither Windows nor POSIX shell parsing applies."""
+    return {"type": "command", "command": sys.executable, "args": [str(hook_path)]}
+
+
+def _hook_references_filename(entry: dict, filename: str) -> bool:
+    args = entry.get("args")
+    return filename in (entry.get("command") or "") or (
+        isinstance(args, list) and any(isinstance(arg, str) and filename in arg for arg in args)
+    )
+
+
+def _legacy_hook_entry_present(settings: dict, event: str, hook_path: Path) -> bool:
+    expected = {"type": "command", "command": _legacy_claude_hook_command(hook_path)}
+    return any(
+        entry == expected for rule in (settings.get("hooks") or {}).get(event, []) for entry in rule.get("hooks", [])
+    )
 
 
 def _scan_hook_bodies(hook_dir: Path, managed: list) -> dict[str, str]:
@@ -3032,15 +3051,16 @@ def _expected_hook_content(body_states: dict[str, str] | None, filename: str) ->
 def _hook_entry_present(settings: dict, event: str, filename: str) -> bool:
     for rule in (settings.get("hooks") or {}).get(event, []):
         for hk in rule.get("hooks", []):
-            if filename in (hk.get("command") or ""):
+            if _hook_references_filename(hk, filename):
                 return True
     return False
 
 
-def _merge_hook_entry(settings: dict, event: str, hook_cmd: str) -> dict:
+def _merge_hook_entry(settings: dict, event: str, hook_cmd: str | dict) -> dict:
     hooks_block = settings.setdefault("hooks", {})
     rules = hooks_block.setdefault(event, [])
-    rules.append({"hooks": [{"type": "command", "command": hook_cmd}]})
+    entry = hook_cmd if isinstance(hook_cmd, dict) else {"type": "command", "command": hook_cmd}
+    rules.append({"hooks": [entry]})
     return settings
 
 
@@ -3051,9 +3071,12 @@ def _remove_hook_entry(settings: dict, event: str, filename: str) -> bool:
     kept = []
     removed = False
     for rule in rules:
-        cmds = [hk.get("command") or "" for hk in rule.get("hooks", [])]
-        if any(filename in c for c in cmds):
+        entries = rule.get("hooks", [])
+        retained = [hk for hk in entries if not _hook_references_filename(hk, filename)]
+        if len(retained) != len(entries):
             removed = True
+            if retained:
+                kept.append({**rule, "hooks": retained})
             continue
         kept.append(rule)
     if removed:
@@ -3196,7 +3219,15 @@ def _claude_install_hooks(
                 expected_state=state,
                 expected_content=_expected_hook_content(body_states, filename),
             )
-        _merge_hook_entry(settings, event, _claude_hook_command(hook_path))
+        legacy = {"type": "command", "command": _legacy_claude_hook_command(hook_path)}
+        replaced = False
+        for rule in (settings.get("hooks") or {}).get(event, []):
+            for index, entry in enumerate(rule.get("hooks", [])):
+                if entry == legacy:
+                    rule["hooks"][index] = _claude_hook_command(hook_path)
+                    replaced = True
+        if not replaced:
+            _merge_hook_entry(settings, event, _claude_hook_command(hook_path))
     _write_claude_settings(
         settings_path,
         settings,
@@ -3289,7 +3320,11 @@ def claude_setup(ctx, write, user_level, do_uninstall, no_verify, force):
         _emit_hooks_verdict(json_mode, verdict, {"removed": removed_any, "settings_path": str(settings_path)}, {}, [])
         return
 
-    to_install = [(e, f, s) for e, f, s in managed if not _hook_entry_present(settings, e, f)]
+    to_install = [
+        (e, f, s)
+        for e, f, s in managed
+        if not _hook_entry_present(settings, e, f) or _legacy_hook_entry_present(settings, e, hook_dir / f)
+    ]
 
     # C3 heal: a hook whose settings entry is present but whose BODY on disk is a
     # stale roam-written version (frozen at an older install) is invisible to the

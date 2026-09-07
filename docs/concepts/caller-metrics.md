@@ -2,9 +2,10 @@
 
 roam-code exposes several commands that report how many callers a symbol
 has. They do not all compute the same number. A single highly-imported
-symbol such as `useThemeClasses` returns 528 from one command, 269 from
-another, 264 from a third, and 360 from a fourth — and every number is
-correct, because each command answers a subtly different question.
+symbol such as `useThemeClasses` had counts of 528, 269, 264, and 360 in the
+historical example retained below. Those are not live measurements of this
+checkout. Different scopes and counting rules can legitimately produce different
+numbers; a disagreement still deserves inspection rather than automatic acceptance.
 
 This document is the canonical reference. Whenever a roam command emits
 a callers / fan-in / consumers / in-degree count in its JSON envelope it
@@ -22,11 +23,16 @@ commands.
 | `distinct_caller_tuples` | Distinct `(source_symbol, scope)` tuples after filtering test files / dedup by `(qualified_name, path, edge_kind)`. | `SELECT COUNT(DISTINCT (source_id, edge_kind)) FROM edges WHERE target_id = ? AND f.file_role != 'test'` | 264 |
 | `transitive_upstream_bfs` | Multi-hop BFS over `edges.kind IN ('call','reference')` — counts every symbol that can reach the target within N hops. | BFS via `networkx.predecessors()` to a configurable depth (default 2 for `diagnose`). | 360 |
 
-Granularity (finest to coarsest): `raw_edge_rows` > `distinct_caller_tuples` > `direct_in_degree` > `transitive_upstream_bfs`. The first three count direct callers with different dedup strategies; the fourth counts transitive reach so it can exceed the direct counts when the graph fans out.
+There is no universal numeric ordering across these metrics. The first three
+count direct relationships with different filters and deduplication rules; the
+fourth counts transitive reach under its own edge/depth bounds. Compare totals
+only after aligning the subject, index, edge kinds, test/production scope, and
+truncation. In the historical example, the production-filtered tuple count is
+smaller than the unfiltered in-degree.
 
 ## When to use which
 
-* **`raw_edge_rows`** — "How many call sites mention this symbol?" Use when you care about textual / structural occurrences. Always biggest because a function called five times in one file contributes five rows. This is the metric `roam uses` reports (both `summary.total_consumers` and `summary.production_consumers`), and also what `roam context`, `roam deps`, `roam guard`, `roam invariants`, and `roam plan-refactor` expose.
+* **`raw_edge_rows`** — "How many indexed relationship rows mention this symbol?" Rows can preserve call-site multiplicity and different edge kinds, but are not a count of every textual occurrence or runtime invocation. Production filters can reduce the total. This is the metric `roam uses` reports (both `summary.total_consumers` and `summary.production_consumers`), and also what `roam context`, `roam deps`, `roam guard`, `roam invariants`, and `roam plan-refactor` expose.
 * **`direct_in_degree`** — "How many distinct callers does this symbol have?" Use when you want a graph-theoretic in-degree. This is the metric `roam fan`, `roam symbol`, and the `key_abstractions` block in `roam understand` all expose.
 * **`distinct_caller_tuples`** — "How many production-scope callers remain after deduping by file + edge kind?" Use when you are filtering away tests. This is the metric `roam oracle is-test-only` reports, and it is the only command that emits it. It is **not** what `roam uses` reports — `roam uses` filters tests into a separate `production_consumers` field but still counts `raw_edge_rows`, so its production count is per-call-site, not per-caller.
 * **`transitive_upstream_bfs`** — "How much of the call graph depends, transitively, on this symbol?" Use when ranking root-cause suspects (`roam diagnose`) or assessing blast radius beyond direct callers.

@@ -1,13 +1,13 @@
 # Sibling Patch Network v1 (experimental, propose-only, default-OFF)
 
-Productizes the measured **1c cross-org WIN** (mined repair-intent reranking
-beats a stranger's own grep), scoped by the falsifier verdict (`SURVIVES,
-SCOPED` to defect-shaped repairs, judged on nDCG/P@3/hard-neg, not top-10
-recall alone). This file is the design reference; the raw 1c per-cell
-measurement data is retained privately and is not in this repository.
+This experiment ranks places where a proposed repair might also apply, then
+optionally checks a candidate using the consumer's own validation command.
+The original design was motivated by a private cross-project ranking experiment
+(1c, scoped to defect-shaped repairs). Its raw per-cell data is not public here;
+that historical result does not establish useful repairs on a new project.
 
-**Status:** merged to `main` and released in v13.7.0 (2026-07-08); present at
-v14.0.0. Still **experimental and propose-only**, gated behind
+**Status:** originally released in v13.7.0 (2026-07-08). Still
+**experimental and propose-only**, gated behind
 `ROAM_EXPERIMENTAL_REPAIR_SIBLINGS=1` (same flag as `repair-siblings`).
 Default-off remains a true no-op: with the flag unset, `sibling-patch` is
 absent from the CLI command list, help, the shipped command counts, and the
@@ -26,30 +26,34 @@ cross-org lift is still the open question below.
    graph stack**, which transfers poorly cross-org). Deterministic (Rule 10).
    Scoped to defect-shaped intents (deletion/replacement); pure additions are a
    structural no-op.
-3. **(c) replay-gate** (`roam.sibling_patch.replay_gate`): in a **throwaway git
-   worktree**, run *your own* `--validation-command`, assert it **FIRES**
-   pre-patch, apply the candidate patch, assert it **CLEARS** post-patch, and
-   localize. Emits a `fusion_attestation`.
-4. **(d) propose only** — no push, no write, no commit. Trust never travels;
-   the experiment does.
+3. **(c) replay-gate** (`roam.sibling_patch.replay_gate`): run *your own*
+   `--validation-command` before and after the candidate patch, in separate
+   temporary Git clones from the same committed source. The command must fail
+   before and pass after for a green `fusion_attestation`.
+4. **(d) propose only** — Roam does not apply the repair to the active checkout,
+   commit it, or push it. Replay does create temporary files and execute code;
+   propose-only is not a read-only or sandbox guarantee.
 
 ```
 ROAM_EXPERIMENTAL_REPAIR_SIBLINGS=1 roam sibling-patch apply claim.json \
     --validation-command 'pytest -q tests/test_regression.py' --max-replays 3
 ```
 
-Without `--validation-command` it proposes ranked siblings but does not certify
-(replay is skipped — still fully propose-only).
+Without `--validation-command` it proposes ranked siblings with replay skipped.
+A failing/passing command pair alone does not prove the intended defect was
+fixed: inspect the failure, retain valid controls, and use the
+[verification evidence guide](concepts/verification-evidence.md).
 
-## The security model = ONE schema invariant (patch-fusion)
+## Claim validation and trust limits
 
 `roam.knowledge.knowledge_claim` (vendored from `stoa/autopilot/knowledge_claim.py`)
 gains an optional `repair_transfer` payload and a **write-time PATCH-FUSION
 INVARIANT**: a sibling-detector (locator) record is **inadmissible** without its
-replay-validated remedy — a non-empty `candidate_patch` **and** a green
-`fusion_attestation` are jointly required. The locator is inseparable from the
-proven fix, which collapses the reverse-fork-B *n-day exploit map* attack (you
-cannot publish a bare bug-locator). The consumer additionally never executes an
+declared remedy — a non-empty `candidate_patch` **and** a green
+`fusion_attestation` are jointly required. This is structural validation of
+supplied fields, not independent authentication of replay or a proven repair.
+It rejects a locator without those fields; it does not prevent fabricated
+claims or establish the absence of security risk. The consumer never executes an
 attacker-supplied command — the replay command is the consumer's *own*
 `--validation-command`; the claim's `replay_predicate` is a label, never run.
 
@@ -79,10 +83,10 @@ attacker-supplied command — the replay command is the consumer's *own*
 - **BUILD (new):** the `repair_transfer` payload + patch-fusion validator, the
   replay-gate executor, the `sibling-patch` command.
 
-## Mirror this schema change to stoa at deploy time
+## Upstream integration requires separate review
 
 The roam copy is self-contained so `roam sibling-patch` runs without a stoa
-checkout. When the owner chooses to deploy, mirror these **additions** into the
+checkout. The original proposal was to mirror these **additions** into the
 upstream autopilot copy of `knowledge_claim.py` (identity hash and all existing
 behavior are unchanged — `repair_transfer` is payload, deliberately NOT part of
 `stable_claim_id`, so no existing claim is re-keyed):
@@ -95,15 +99,21 @@ behavior are unchanged — `repair_transfer` is payload, deliberately NOT part o
    `create` / `from_dict` / `to_dict`, and the `if self.repair_transfer is not
    None: validate_repair_transfer(...)` hook at the end of `validate()`.
 
+This is an integration checklist, not an instruction to copy changes during a
+Roam release. Recheck the upstream implementation, schema ownership, and explicit
+deployment scope before any cross-repository change.
+
 ## Honest risks / next increment
 
 - **Ranking-lift ≠ landed-fix lift.** The candidate patch may not apply at a
   syntactically-different sibling (`retarget_patch` only rewrites the file path,
   not hunk context); the replay-gate then honestly reports `patch_failed`. Real
   cross-sibling patch synthesis is a NEXT increment.
-- **Dual-use residual.** The validation command executes in the throwaway
-  worktree — propose-only + human-in-the-loop for v1; a diff-safety lens is
-  v1.1.
+- **Host access remains.** Replay uses structured arguments, a restricted
+  inherited environment, separate HOME/TMP directories, and child-process cleanup.
+  It is not a kernel sandbox: repository tests and patched code still run under
+  the caller's OS account and may access host paths or the network. Use external
+  isolation for hostile code; a temporary clone is not that boundary.
 - **THE falsifier for the next increment:** does the lift survive on a **real
   external user's defects** — a stranger runs `sibling-patch apply` against
   their own repo and lands a substantive fix (Rule 9)?
