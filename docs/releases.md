@@ -51,15 +51,18 @@ controls are pinned by `tests/test_w1501_release_version_pins.py`.
    1. bump `pyproject.toml`;
    2. rename `[Unreleased]` → `[X.Y.Z] — YYYY-MM-DD`, add a fresh empty
       `[Unreleased]` block;
-   3. run `python scripts/sync_surface_counts.py --write` and
+   3. run `uv lock` so `uv.lock`'s own `roam-code` row follows, then refresh
+      the locked editable environment with
+      `uv sync --locked --no-default-groups --extra dev --group ci --python 3.12`.
+      This must precede generators that read the live `roam surface` version;
+      otherwise installed metadata can silently restore the previous identity;
+   4. run `python scripts/sync_surface_counts.py --write` and
       `python dev/build_readme_counts.py --apply`, followed by
       `python scripts/build_commands_doc.py`; re-running their check modes
       must then be clean;
-   4. run `python scripts/build_changelog_html.py --write` to re-render
+   5. run `python scripts/build_changelog_html.py --write` to re-render
       `changelog.html` from the new `CHANGELOG.md` section (authoring the
       section is the one genuinely manual step);
-   5. `uv lock` so `uv.lock`'s own `roam-code` row follows — CI's
-      `uv sync --locked` fails otherwise;
    6. follow the exact-commit checks below before tagging and publishing.
 3. **After** the tag and package are published, rerun the surface-sync script
    so install examples follow the newly available release, and check the targets

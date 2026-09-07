@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **MCP server identity.** Advertise Roam's installed package version during the protocol handshake instead of inheriting the framework's version. Exercise initialization and tool discovery through the real stdio transport.
+- **Repeatable release checks.** Exercise replay assurance with explicit actor-present and actor-absent Git fixtures instead of relying on a developer's identity or skipping CI. Keep repaired security recipes covered by real single/ambiguous-corpus controls and genuine child-error cases. Update the compatibility baseline for the new working-tree flag and refresh installed version metadata before generating release docs.
 - **Literal agent-hook execution.** Install Claude hooks with an explicit interpreter and argument list so spaces and shell metacharacters in paths stay literal. Migrate exact legacy entries, preserve customized hooks and neighboring commands, and require coordinated consumer readiness checks. Actual dispatch is qualified separately from configuration; a successful agent exit is not a verification receipt.
 - **Executable security-review recipes.** Invoke the vulnerability inventory and architecture checks with supported arguments. Disclose unsupported symbol filtering and partial child evidence without hiding broader observations. Keep session partial-result accounting in sync.
 - **Runnable retrieval benchmark hint.** Suggest a single `roam eval-retrieve` command instead of joining unrelated commands with a prose plus sign.

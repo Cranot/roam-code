@@ -37,7 +37,9 @@ def test_verify_declares_its_index_refresh_and_ledger_writes() -> None:
     assert meta["read_only"] is False
     assert meta["destructive"] is False
     assert meta["idempotent"] is False
-    assert meta["version"] == "1.1.0"
+    # Applicability/completion evidence changed the result contract in 1.2.0;
+    # index refresh and ledger writes still make this a non-read-only tool.
+    assert meta["version"] == "1.2.0"
 
 
 @pytest.mark.parametrize(
