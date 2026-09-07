@@ -30,6 +30,28 @@ These match the [2025-11-25 lifecycle](https://modelcontextprotocol.io/specifica
 They are targeted regressions, not certification against every MCP requirement
 or every transport. In particular, they do not test SSE/HTTP behavior.
 
+## Tool calls and child-process boundaries
+
+Handshake and tool discovery are not enough to establish that an analysis call
+works. `tests/test_mcp_server_identity.py` also exercises a real client search,
+an empty result and a follow-up request over the same open stdio connection.
+The server advertises the installed Roam version, not the framework version.
+
+CLI children used for explicit repository paths and supplied-diff review bind
+their interpreter and import root to the running Roam installation. They ignore
+Python import-path environment overrides and remove the analyzed directory from
+module lookup. A project-local `roam.py` must not replace the analysis tool.
+Argument-only and progress-reporting children receive empty stdin; explicit
+patch-review input uses its own pipe. The client's protocol stream is not input
+to those CLI children. Regression controls cover both import-path sources and
+preserve real search results and caller-supplied diff review.
+
+This protects those child launch boundaries; it is not an operating-system
+sandbox or a guarantee about every executable a selected command may run.
+The host's interpreter, installed packages and Python startup configuration
+remain trusted. The installed-package checks below retain their original
+version and sampled-tool scope; they do not retroactively qualify these tests.
+
 ## Independent published-package check
 
 On 2026-09-05, a clean Linux installation of Roam 14.0.2 with the MCP extra

@@ -6512,13 +6512,11 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
     EXIT_GATE_FAILURE = _EXIT_GATE_FAILURE
     _success_codes = _SUCCESS_EXIT_CODES
 
-    # Invoke the package through the interpreter that loaded this MCP
-    # server.  A locked/dev environment can import ``roam`` without
-    # installing the console-script shim on PATH; using a bare ``roam``
-    # executable therefore made every non-local-root tool fail in CI and
-    # in embedded MCP hosts. ``python -m roam`` is the same installed
-    # package and remains valid for wheel installs.
-    cmd = [sys.executable, "-m", "roam", "--json"] + args
+    # Bind both interpreter and import root to this server. ``python -m roam``
+    # alone lets a project's roam.py or PYTHONPATH replace the installed CLI.
+    from roam.mcp_extras.progress import _roam_subprocess_cmd, _subprocess_env
+
+    cmd = _roam_subprocess_cmd(args)
     try:
         result = subprocess.run(
             cmd,
@@ -6530,6 +6528,7 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
             encoding="utf-8",
             errors="replace",
             cwd=root,
+            env=_subprocess_env(),
             timeout=60,
         )
         stdout_text = (result.stdout or "").strip()
@@ -9999,7 +9998,8 @@ def critique_patch(
     """
     import json as _json
     import subprocess
-    import sys
+
+    from roam.mcp_extras.progress import _roam_subprocess_cmd, _subprocess_env
 
     if not diff_text or not diff_text.strip():
         return _structured_error(
@@ -10030,7 +10030,7 @@ def critique_patch(
         )
 
     # Use a JSON-mode subprocess so we get the structured envelope.
-    args = [sys.executable, "-m", "roam", "--json", "critique"]
+    args = _roam_subprocess_cmd(["critique"])
     if high_callers != 10:
         args += ["--high-callers", str(high_callers)]
     if intent:
@@ -10038,6 +10038,7 @@ def critique_patch(
     proc = subprocess.run(
         args,
         cwd=root,
+        env=_subprocess_env(),
         input=diff_text,
         capture_output=True,
         text=True,

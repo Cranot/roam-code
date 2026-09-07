@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **MCP child-process import identity.** Use the server's installed import root for explicit-path analysis and supplied-diff review. A project-local `roam.py` or Python import-path environment setting can no longer replace those CLI children. Reuse the progress runner's import isolation and preserve literal arguments and explicit diff input.
 - **MCP tool calls on explicit repository paths.** Keep the protocol input stream out of argument-only CLI children, preventing tool calls from hanging while the client connection stays open. Apply the same isolation to progress-reporting children; explicit patch-review diffs still use their dedicated input channel. Cover matching searches, empty results and a follow-up request through a real client connection.
 - **MCP server identity.** Advertise Roam's installed package version during the protocol handshake instead of inheriting the framework's version. Exercise initialization and tool discovery through the real stdio transport.
 - **Repeatable release checks.** Exercise replay assurance with explicit actor-present and actor-absent Git fixtures instead of relying on a developer's identity or skipping CI. Keep repaired security recipes covered by real single/ambiguous-corpus controls and genuine child-error cases. Update the compatibility baseline for the new working-tree flag and refresh installed version metadata before generating release docs.
