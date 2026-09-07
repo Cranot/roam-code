@@ -79,6 +79,7 @@
 <h2>[14.1.0] — 2026-09-07</h2>
 <h3>Fixed</h3>
 <ul>
+<li><strong>Literal source filenames and UTF-8 review input.</strong> Discover tracked and untracked files using NUL-delimited Git output, preserving non-ASCII names and literal whitespace instead of treating quoted paths as filenames. Run MCP CLI children in explicit UTF-8 mode so supplied diffs match indexed filenames on Windows as well as Linux. Preserve import isolation and unreadable-directory disclosure.</li>
 <li><strong>MCP child-process import identity.</strong> Use the server's installed import root for explicit-path analysis and supplied-diff review. A project-local <code>roam.py</code> or Python import-path environment setting can no longer replace those CLI children. Reuse the progress runner's import isolation and preserve literal arguments and explicit diff input.</li>
 <li><strong>MCP tool calls on explicit repository paths.</strong> Keep the protocol input stream out of argument-only CLI children, preventing tool calls from hanging while the client connection stays open. Apply the same isolation to progress-reporting children; explicit patch-review diffs still use their dedicated input channel. Cover matching searches, empty results and a follow-up request through a real client connection.</li>
 <li><strong>MCP server identity.</strong> Advertise Roam's installed package version during the protocol handshake instead of inheriting the framework's version. Exercise initialization and tool discovery through the real stdio transport.</li>

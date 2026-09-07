@@ -105,6 +105,13 @@ with `error_code: "FILE_NOT_FOUND"`, `summary.state: "not_initialized"`, and an
 empty `created` list. Check the intended checkout before running `git init`;
 an empty `.git` directory does not establish a repository.
 
+Git-backed source discovery uses NUL-delimited filenames. Non-ASCII names,
+spaces and platform-supported control characters remain literal regardless of
+`core.quotePath`; changing global Git quoting settings is not a workaround you
+need to apply. Unreadable-directory warnings still disclose incomplete discovery.
+This qualifies file discovery and indexing, not every command's path rendering
+or Git-history parser.
+
 Normal indexing reuses unchanged source data, reprocesses changed files and
 affected neighbors, and refreshes Git metadata. A commit can change `HEAD`
 without changing any file contents. The full index path still checks Git
