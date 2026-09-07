@@ -131,6 +131,8 @@ async def run_with_phase_progress(
         *full_cmd,
         cwd=cwd,
         env=_subprocess_env(env),
+        # This argument-only child must not inherit the MCP protocol stream.
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -191,6 +193,7 @@ def run_with_phase_progress_sync(
         full_cmd,
         cwd=cwd,
         env=_subprocess_env(env),
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

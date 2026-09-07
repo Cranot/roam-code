@@ -6522,6 +6522,9 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
     try:
         result = subprocess.run(
             cmd,
+            # Arguments carry the tool input. Inheriting the live MCP stdin
+            # can block the child or expose protocol messages to CLI readers.
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",
