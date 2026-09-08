@@ -14,22 +14,24 @@ rerun with this baseline. Report a reproduction mismatch with those details.
 
 | field | value |
 |---|---|
-| Commit | `5c56ff472ebbd3351ce5ae416a6c9caf01d58d74` |
-| Date measured | 2026-09-05 |
-| roam version | 14.0.0 |
-| Index | **fresh full index**, full Git history — 5,074 files, 47,542 symbols, 99,217 edges |
+| Commit | `b3447d3d9d0bdd9e2974b4a7be484fb98842c445` (measured runtime/source, before this documentation update) |
+| Date measured | 2026-09-08, Europe/Athens (2026-09-07 UTC) |
+| roam version | 14.1.0 |
+| Index | **fresh full index**, full Git history — 5,125 files, 48,007 symbols, 82,006 edges; schema 20 |
+| Git scope | Full checkout ancestry: 2,649 commits; index contains 1,986 git-commit rows, not every ancestry commit |
 | Task set | `bench/retrieve/roam_self.jsonl` — 30 tasks |
+| Task SHA-256 | `d3e3d15fe0582913e2d662de0d9e72faf165f912c8135ee09c2d3b1b0321d2c1`; unchanged from September 5 |
 | Reranker | `--rerank fast` (the default). No learned ranker. |
 | Dependencies | `uv sync --locked --no-default-groups`; no NumPy/SciPy; degree-with-seed-boost ranking fallback |
-| Semantic | **inert** — no semantic/learned extras, 0/47,542 dense vectors, so ζ=0.2 contributes nothing |
+| Semantic | **inert** — no semantic/learned extras, 0/48,007 dense vectors, so ζ=0.2 contributes nothing |
 | Platform | Linux, CPython 3.11.15; agrees with GitHub Actions Ubuntu 24.04 / CPython 3.11.16 |
-| Independent reproduction | Windows / CPython 3.12.13, same minimal profile and fresh index: identical aggregate values |
+| Independent reproduction | Windows / CPython 3.12.13, same minimal profile and separate fresh index: identical per-task recalls and aggregate values |
 
 ## Quick reproduce
 
 ```bash
 # Use a separate checkout of the measured commit; this selects minimal extras.
-git checkout --detach 5c56ff472ebbd3351ce5ae416a6c9caf01d58d74
+git checkout --detach b3447d3d9d0bdd9e2974b4a7be484fb98842c445
 uv sync --locked --no-default-groups --python 3.11
 
 # Build a FULL index, preserving other repo-local state.
@@ -61,27 +63,63 @@ uv run --no-sync roam --json eval-retrieve \
 
 <!-- canonical-recall:begin -- parsed by bench/retrieve/check_published_recall.py; keep the format -->
 ```
-recall@5  = 0.706
+recall@5  = 0.644
 recall@10 = 0.783
-recall@20 = 0.856
+recall@20 = 0.872
 ```
 <!-- canonical-recall:end -->
 
 (30 tasks, full self-bench, default weights, `--rerank fast`, no learned
-ranker, minimal dependencies, fresh full index at `5c56ff47`.)
+ranker, minimal dependencies, fresh full index at `b3447d3d`.)
 
-The [CI run](https://github.com/Cranot/roam-code/actions/runs/33934250545)
-reported the unrounded values 0.7056 / 0.7833 / 0.8556. Its documentation gate
-failed because the previous canonical numbers described a different earlier
-measurement. A separate full-history Linux checkout reproduced all three values.
+The [CI run](https://github.com/Cranot/roam-code/actions/runs/34169970244)
+reported the four-decimal values **0.6444 / 0.7833 / 0.8722**. Its documentation
+gate failed because top-5 recall differed from the previous rounded claim of
+0.706 by -0.0616, beyond the unchanged 0.06 tolerance. Two Linux runs reproduce
+identical complete per-task results. An independent Windows full build agrees
+on all per-task recalls; no labels, ranking weights, tolerance or recall floor
+were changed to make the gate pass. Matching recall does not imply identical
+ordering of every lower-ranked file across all environments.
+
 The checked-in `roam_self.coderag.jsonl` candidate export was regenerated from
 this minimal-profile checkout at K=20; the recall aggregates come from the
 evaluation envelope, not from treating exported symbol spans as file-level hits.
 
-### Numerical-dependency control
+### September 8 controlled comparison
 
-On one fresh Windows index at this same commit, an isolated wheel environment
-was evaluated before and after adding only NumPy 2.4.4 and SciPy 1.17.1:
+The September 5 baseline at `5c56ff47` was 0.7056 / 0.7833 / 0.8556, on
+5,074 files / 47,542 symbols / 99,217 edges. Both the source corpus and graph
+definition have changed since then; this is not a fixed-corpus performance
+comparison. To investigate rather than simply replace the published claim,
+two additional controls hold the current corpus and dependency profile fixed:
+
+| Current-corpus configuration | edges | recall@5 | recall@10 | recall@20 |
+|---|---|---|---|---|
+| Current index and runtime | 82,006 | 0.6444 | 0.7833 | 0.8722 |
+| Same current index; only `retrieve.pipeline` and `retrieve.rerank` loaded from `5c56ff47` | 82,006 | 0.6444 | 0.7833 | 0.8722 |
+| Separate full index; only the Python extractor loaded from `5c56ff47`, current ranking | 100,736 | 0.6722 | 0.7833 | 0.8722 |
+
+The old ranking-module control produces identical ordered per-task results.
+The old-extractor control restores 18,730 edges and raises top-5 recall on two
+tasks (`mcp-presets-short-desc` and `anomaly-detection-statistics`). It does not
+restore the whole September 5 score. The remaining cross-snapshot difference
+has not been causally isolated.
+
+The current Python extractor deliberately excludes assigned local values from
+global callback resolution while preserving real callback references. Paired
+controls in `tests/test_python_local_reference_precision.py` cover this
+correctness boundary. Restoring the old extractor also restores that known
+false-reference behavior; a better self-bench score would not justify it.
+The edge-count difference is not a claim that every removed edge was labeled
+and verified, nor is the higher top-20 score evidence of an overall quality gain.
+Keep the precision fix, report the lower top-5 recall, and assess future ranking
+changes on independent tasks before tuning to these 30 labels.
+
+### Historical numerical-dependency control — September 5
+
+At `5c56ff472ebbd3351ce5ae416a6c9caf01d58d74`, one fresh Windows index and
+isolated wheel environment were evaluated before and after adding only NumPy
+2.4.4 and SciPy 1.17.1. These rows were not rerun at `b3447d3d`:
 
 | profile | recall@5 | recall@10 | recall@20 |
 |---|---|---|---|
@@ -222,18 +260,18 @@ Python microservice (auth + payments + notifications, 5 source files +
 2 test files), indexes it via the real `roam init`, and runs 5 generic
 retrieve tasks against it. As of v12.3 (commit 2471521):
 **recall@5 = recall@10 = recall@20 = 1.000**, all 5 tasks. Not
-re-measured at v13.10.
+re-measured for the current baseline.
 
-This is still a synthetic and small repo — formal external validation
-requires CodeRAG-Bench / SWE-bench Pro. But it does rule out the failure
-mode where the gains evaporate on any codebase the maintainer didn't write.
+This small maintainer-authored fixture checks another layout; it does not
+establish gains on independently selected repositories or real agent tasks.
+External validation needs independently sourced tasks, reviewed relevance
+labels, a fixed comparison baseline and an explicit evaluation protocol.
 
 ## Caveats and what to read into these numbers
 
 * **This is a self-bench.** A 30-task suite curated by the maintainer
-  on the maintainer's own codebase will be friendlier than any
-  external eval. Expect lower numbers on CodeRAG-Bench when this is
-  formally run. The point of publishing both the bench and the
+  on the maintainer's own codebase can favor its design and naming conventions.
+  Performance on external tasks is unknown. The point of publishing both the bench and the
   generator is so external reviewers can re-run the same code on
   *their* repo with *their* tasks and see what the system actually
   delivers in the wild.
@@ -241,8 +279,10 @@ mode where the gains evaporate on any codebase the maintainer didn't write.
   default). The optional `--rerank learned` (`[learned]` extra,
   LightGBM LambdaMART distillation) is not exercised here.
 * **Recall@20 is not recall@5.** The current minimal profile finds about
-  71% of expected files at K=5 and 86% at K=20. Quote K, date and dependency
-  profile; the numerical profile trades lower K=5 recall for higher K=20 recall.
+  64% of labeled expected files at K=5 and 87% at K=20, averaged per task.
+  Quote K, date and dependency profile. File recall does not measure agent task
+  success, content sufficiency, or the need for follow-up searches. The historical
+  numerical-profile result is not a current-commit measurement.
 * **Some tasks still miss at least one expected file.** Most are missing
   a `commands/cmd_FOO.py` companion whose path token is structurally
   distinct from the engine module's tokens. The fix would be a
