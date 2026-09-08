@@ -35,7 +35,13 @@ sanitizers, and execution context. An environment value passed as a subprocess
 environment is not by itself proof of shell-command injection. Co-occurrence is
 weaker than computed dataflow, and even a computed path requires security review.
 Inspect rules with zero anchors and budget-truncated results before interpreting
-an empty or short finding list. For `path-coverage`, depth pruning and shared
+an empty or short finding list. The Python text-anchor pass defers argument-flow
+analysis until a same-function source/sink pair can consume it, then reuses that
+file/rule's result for its remaining pairs. Source, sink and sanitizer anchors
+remain available to the separate graph-reach passes. This avoids unused work;
+it does not expand the detector's dataflow or language coverage.
+
+For `path-coverage`, depth pruning and shared
 visited-node traversal prevent an exhaustive-path claim even when no test gaps
 are reported. Its test signal is static, not measured runtime coverage.
 
@@ -266,10 +272,12 @@ depth and parent-discovery ordering with name-sorted children. The optimization
 changes database work, not which fixture relationships the index can resolve;
 static fixture reachability remains distinct from running pytest.
 
-## Orientation versus history metrics
+## Health projections versus history metrics
 
-`roam understand` uses the shared health calculation but does not compute the
-spectral-history value that its answer never exposes. Health scores and their
+`roam understand` and `roam capsule` use the shared health calculation but do
+not compute the spectral-history value that their answers never expose.
+Capsules retain all exported health fields in both file and stdout output,
+including path-redacted exports. Health scores and their
 inputs retain the same definitions. Snapshot collection still computes spectral
 history by default; this optimization does not replace a slow or unavailable
 measurement with a made-up value, or change stored history semantics.

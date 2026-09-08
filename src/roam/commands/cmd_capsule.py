@@ -235,7 +235,9 @@ def _gather_health(conn) -> dict:
     """Collect health metrics via metrics_history.collect_metrics."""
     from roam.commands.metrics_history import collect_metrics
 
-    m = collect_metrics(conn)
+    # Capsules export the health projection below, not spectral history.
+    # Keep the snapshot default intact without running an unused eigensolver.
+    m = collect_metrics(conn, include_spectral=False)
     return {
         "score": m.get("health_score", 0),
         "cycles": m.get("cycles", 0),

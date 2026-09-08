@@ -1512,7 +1512,6 @@ def _text_scan_rule_anchors(
         if loaded is None:
             continue
         source_text, masked, candidates = loaded
-        argument_dataflow_pairs = _python_argument_dataflow_pairs(source_text, rule)
 
         src_hits = _scan_hits(masked, _dotted_names_only(rule.sources))
         sink_hits = _scan_hits(masked, rule.sinks)
@@ -1541,6 +1540,10 @@ def _text_scan_rule_anchors(
 
         seen_pairs: set[tuple[int, int]] = set()
         candidates_by_id = {c["id"]: c for c in candidates}
+        # Argument proofs only classify a same-function text-anchor pair.
+        # Defer the AST pass until such a pair exists; retain one calculation
+        # per file/rule, all anchors, and the separate graph-reach passes.
+        argument_dataflow_pairs: set[tuple[int, int]] | None = None
         for src_anchor in src_anchors:
             eid = src_anchor["_enclosing_id"]
             for sink_anchor in sinks_by_enclosing.get(eid, ()):
@@ -1558,6 +1561,8 @@ def _text_scan_rule_anchors(
                 }
                 source_symbol = _public_text_anchor(src_anchor)
                 sink_symbol = _public_text_anchor(sink_anchor)
+                if argument_dataflow_pairs is None:
+                    argument_dataflow_pairs = _python_argument_dataflow_pairs(source_text, rule)
                 computed_dataflow = pair_key in argument_dataflow_pairs
                 co_findings.append(
                     TaintFinding(

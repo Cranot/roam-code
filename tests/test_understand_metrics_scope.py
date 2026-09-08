@@ -1,4 +1,4 @@
-"""Orientation must not pay for spectral history it does not expose."""
+"""Read-only projections must not pay for spectral history they do not expose."""
 
 from __future__ import annotations
 
@@ -80,4 +80,41 @@ def test_real_understand_skips_unused_spectral_work(project, spectral_calls, jso
         for name in ("cycles", "god_components", "bottlenecks", "dead_exports", "layer_violations"):
             assert payload["health_summary"][name] == expected[name]
     else:
+        assert "VERDICT:" in result.output
+
+
+@pytest.mark.parametrize("redact", [False, True])
+@pytest.mark.parametrize("json_mode,write_file", [(True, False), (True, True), (False, True)])
+def test_real_capsule_skips_unused_spectral_work(project, spectral_calls, tmp_path, redact, json_mode, write_file):
+    with open_db(readonly=True) as conn:
+        expected = collect_metrics(conn)
+    spectral_calls.clear()
+    args = ["capsule"]
+    if redact:
+        args.append("--redact-paths")
+    output = tmp_path / "capsule.json"
+    if write_file:
+        args.extend(["--output", str(output)])
+    result = invoke_cli(CliRunner(), args, cwd=project, json_mode=json_mode)
+    assert result.exit_code == 0, result.output
+    assert spectral_calls == [], "capsule computed spectral history that its export never includes"
+    payload = json.loads(output.read_text(encoding="utf-8") if write_file else result.output)
+    assert payload["health"] == {
+        "score": expected["health_score"],
+        **{
+            name: expected[name]
+            for name in (
+                "cycles",
+                "god_components",
+                "layer_violations",
+                "bottlenecks",
+                "dead_exports",
+                "tangle_ratio",
+                "avg_complexity",
+            )
+        },
+    }
+    assert payload["symbols"] and payload["edges"]
+    assert payload["capsule"]["redacted"] is redact
+    if not json_mode:
         assert "VERDICT:" in result.output
