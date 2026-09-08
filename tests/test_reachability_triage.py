@@ -94,7 +94,12 @@ def test_command_runs_on_roam_code_with_service_report_figures():
     service = _parse_json(service_result)
     command = _parse_json(command_result)
     sections = service["sections"]
-    assert command["metrics"] == triage._compose_metrics(sections)
+    assert command["metrics"] == triage._compose_metrics(sections), {
+        "service_summary": service["summary"],
+        "service_taint_summary": sections.get("taint", {}).get("summary"),
+        "command_summary": command["summary"],
+        "command_failed_primitives": command.get("failed_primitives"),
+    }
     assert command["primitives"] == list(triage.REACHABILITY_TRIAGE_PRIMITIVES)
     assert command["delegated_compose"] == "service-report:reachability-triage"
 
