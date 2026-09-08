@@ -27,7 +27,7 @@ uv run --no-sync roam --json eval-retrieve --tasks ... --min-recall-at-20 0.85
 > incrementally maintained index versus **0.914** on a full build at the
 > same commit. That experiment is retained in [SUBMISSION.md](SUBMISSION.md),
 > not presented as a new measurement of today's incremental path. Optional
-> NumPy/SciPy dependencies also change ranking: the current minimal and
+> NumPy/SciPy dependencies also change ranking: the minimal and historical
 > numerical profiles below are different measurements, not interchangeable
 > environments. Use a separate checkout for the minimal-profile sync above;
 > it intentionally excludes development and numerical extras.
@@ -42,64 +42,76 @@ JSONL — one task per line:
 ```
 
 Required fields:
+
 - `task` — free-form natural-language query, fed to `roam retrieve`.
 - `expected_files` — list of paths that should appear in the top-K
   retrieved candidates. Recall@K = `|expected ∩ retrieved_top_K| / |expected|`.
 
 Optional:
+
 - `task_id` — slug used in summary tables. Auto-generated from the
   task text if absent.
 - `notes` — free-form explanation, surfaced in the per-task report.
 
 ## Recall@K interpretation
 
-* **Recall@5 ≥ 0.5** is the rough bar for "the agent can solve this from
-  the retrieve output alone."
-* **Recall@20 ≥ 0.7** is the bar at which agents stop needing
-  `roam search` follow-ups.
-* **Recall@K = 1.0** when every expected file is in the top K — the
-  ideal.
+Recall@K measures how many labeled expected files appear in the first K
+distinct retrieved files, averaged equally across tasks. **Recall@K = 1.0**
+means every expected file was found within that budget. It does not establish
+that an agent can solve the task, that the retrieved content is sufficient,
+or that no follow-up search is needed. Those outcomes require separate agent
+trials. The labels can also omit useful files; this is a small file-retrieval
+benchmark, not a complete relevance or task-success score.
 
 ## Current baseline — `roam_self.jsonl` (30 tasks)
 
-Measured **2026-09-05** at commit `5c56ff472ebbd3351ce5ae416a6c9caf01d58d74`,
-roam-code 14.0.0, against a **fresh full index** (5,074 files / 47,542
-symbols / 99,217 edges), full Git history, `--rerank fast`, and the locked
+Measured **2026-09-08 (Europe/Athens)** at commit
+`b3447d3d9d0bdd9e2974b4a7be484fb98842c445`, roam-code 14.1.0, against a
+**fresh full index** (5,125 files / 48,007 symbols / 82,006 edges), full Git
+history, `--rerank fast`, and the locked
 **minimal installation**: no NumPy/SciPy, semantic or learned-ranker extras.
-The Linux/Python 3.11 reproduction agrees with the
-[exact-commit CI measurement](https://github.com/Cranot/roam-code/actions/runs/33934250545).
+Independent Linux/Python 3.11 and Windows/Python 3.12 full-index reproductions
+agree on all 30 tasks' recalls with the
+[exact-commit CI measurement](https://github.com/Cranot/roam-code/actions/runs/34169970244).
+That CI run failed the old published-number gate; it is evidence of the
+measurement and discrepancy, not a green release receipt.
 
 <!-- canonical-recall:begin -- parsed by check_published_recall.py; keep the format -->
 ```
-recall@5  = 0.706
+recall@5  = 0.644
 recall@10 = 0.783
-recall@20 = 0.856
+recall@20 = 0.872
 ```
 <!-- canonical-recall:end -->
 
 | K  | mean recall | comment |
 |----|-------------|---------|
-|  5 | **0.706** | minimal-install profile |
+|  5 | **0.644** | minimal-install profile |
 | 10 | **0.783** | minimal-install profile |
-| 20 | **0.856** | minimal-install profile; always quote K |
+| 20 | **0.872** | minimal-install profile; always quote K |
 
-An isolated Windows/Python 3.12 installation reproduced the same values on
-the same fresh index. Adding **only NumPy 2.4.4 and SciPy 1.17.1** to that
-environment changed recall@5/@10/@20 to **0.633 / 0.764 / 0.897**. The numerical
-backend uses power-iteration PageRank; the minimal backend uses degree ranking
-with a seed boost. This is a controlled dependency-profile difference, not
-evidence of an overall retrieval improvement or a Windows/Linux discrepancy.
-The CI gate below targets the minimal profile. See [SUBMISSION.md](SUBMISSION.md)
-for both profiles and the retained historical measurements.
+Compared with the September 5 snapshot, top-5 recall is lower, top-10 is
+unchanged and top-20 is higher. A controlled old-extractor build explains
+part of the top-5 loss: the Python local-reference correction changes the
+graph and candidate ordering. Restoring the old ranking modules alone on the
+current index leaves every task result unchanged. These controls do not
+isolate the remaining corpus/history effects or establish a uniform quality
+gain. See [the controlled comparison](SUBMISSION.md#september-8-controlled-comparison).
+
+The September 5 numerical-dependency control is retained below and in
+[SUBMISSION.md](SUBMISSION.md); it was **not** rerun at the current commit.
+The CI gate targets the minimal profile, not every installation.
 
 Exact command, index provenance, per-signal ablations, and the reasons to
 distrust a stale index are in [SUBMISSION.md](SUBMISSION.md). These
 numbers are enforced in CI by `check_published_recall.py` (see below) —
-if you change the retriever and this table is not updated, the build fails.
+if the measured values drift beyond tolerance, the build fails. Investigate
+the cause before publishing a new baseline; do not tune labels, weights or
+tolerance merely to clear the gate.
 
 ### Historical baselines
 
-Kept so the history is auditable; these rows were not rerun in September.
+Kept so the history is auditable; these rows were not rerun for the September 8 baseline.
 Different dependency profiles and corpora prevent a controlled trend claim.
 
 | when | commit | recall@5 | recall@10 | recall@20 | note |
@@ -107,6 +119,8 @@ Different dependency profiles and corpora prevent a controlled trend claim.
 | 2026-05-01 | `78de9ee` | 0.286 | 0.358 | 0.503 | 30-task bench, pre-v12.1 retriever |
 | — | — | — | — | 0.433 | prior 10-task bench |
 | 2026-08-06 | `0f3d3ac1` | 0.642 | 0.772 | 0.914 | historical full-index measurement; numerical dependency profile was not recorded |
+| 2026-09-05 | `5c56ff47` | 0.706 | 0.783 | 0.856 | fresh full index; minimal profile; Linux and Windows agree |
+| 2026-09-05 | `5c56ff47` | 0.633 | 0.764 | 0.897 | same Windows environment/index plus NumPy 2.4.4 and SciPy 1.17.1 |
 
 The 2026-05-01 row sat in this file as "current" until 2026-08-06 while
 the retriever improved underneath it, so this README understated real
