@@ -22,11 +22,15 @@
   <meta property="og:description" content="Use Roam's run ledger and proof-bundle workflow to record changes and checks for later review. Evidence supports review; it does not certify compliance.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/governance">
-  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta property="og:image:width" content="1731">
+  <meta property="og:image:height" content="909">
+  <meta property="og:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Change records — Roam · Review the work and its checks">
   <meta name="twitter:description" content="Use Roam's run ledger and proof-bundle workflow to record changes and checks for later review. Evidence supports review; it does not certify compliance.">
-  <meta name="twitter:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta name="twitter:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
 
   <script type="application/ld+json">
   {
@@ -161,8 +165,8 @@
         <div class="verb-cell">
           <code>+ Replay narrative</code>
           <span>
-            <code>roam replay &lt;run_id&gt;</code> renders the full
-            transcript as a human-readable narrative — useful when a
+            <code>roam replay &lt;run_id&gt;</code> renders the recorded
+            run events as a human-readable timeline — useful when a
             reviewer or auditor wants the story behind a specific PR
             without reading the raw JSON ledger.
           </span>
@@ -171,7 +175,7 @@
       <p class="how-it-works-foot" style="margin-top: 24px;">
         All five evidence types ship as JSON (machine-readable), Markdown
         (human-readable), and an optional in-toto v1 attestation
-        (cryptographically verifiable offline with cosign).
+        (signing and verification require a separately configured path).
       </p>
     </div>
   </section>
@@ -273,10 +277,11 @@
         <li>
           <span class="flow-num">3</span>
           <strong>Hand to your auditor.</strong>
-          The pack lands as Markdown + PDF + signed JSON. The reviewer
-          can verify the HMAC chain on the ledger and the in-toto v1
-          attestation on each bundle without contacting us. The IP is
-          yours; share it inside the audit scope without restriction.
+          The pack lands as Markdown + PDF + collected JSON. The reviewer
+          can check the ledger's local-key HMAC integrity. Attestations and
+          signatures are optional, separately configured outputs with their
+          own verification requirements. The IP is yours; share it inside
+          the audit scope without restriction.
         </li>
       </ol>
     </div>
@@ -358,7 +363,8 @@
         NIST AI Risk Management Framework 1.0 (Jan 2023); EU Regulation
         2024/1689 (AI Act), Article 12 "Record-keeping". Mapping is for
         evidence support; your conformity assessment is a separate
-        engagement with qualified counsel and auditors.
+        engagement with qualified counsel and auditors. Repository check
+        records are not a substitute for an AI system's operational logs.
       </p>
     </div>
   </section>
@@ -381,13 +387,12 @@
       <div class="trust-cell">
         <strong>Article 12 framing</strong>
         <span>
-          EU AI Act Article 12 (record-keeping) attaches to providers of
-          high-risk AI systems listed in Annex III. Code-generation
-          tooling is not itself in Annex III. If your <em>own product</em>
-          is a high-risk AI system, the pack's tamper-evident ledger is
-          useful evidence for the Article 12 record-keeping expectation
-          and the Article 14 human-oversight expectation. The
-          classification call is for you and your DPO.
+          <a href="https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng">Article 12</a>
+          addresses event logging by high-risk AI systems. Roam supplies
+          development-check records, not the operational logs of a deployed
+          AI system. Those records do not establish that Article 12
+          requirements are met. Consult qualified counsel to assess your
+          system and the wider evidence it needs.
         </span>
       </div>
       <div class="trust-cell">

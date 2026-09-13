@@ -19,9 +19,13 @@
   <meta property="og:title" content="How Roam thinks — Roam Docs">
   <meta property="og:description" content="A decision tree mapping engineering questions to specific Roam commands. Match the question to the command, not the other way around.">
   <meta property="og:url" content="https://roam-code.com/docs/how-roam-thinks">
-  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta property="og:image:width" content="1731">
+  <meta property="og:image:height" content="909">
+  <meta property="og:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta name="twitter:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
 
   <script type="application/ld+json">
   {
@@ -117,6 +121,20 @@
         <a href="/docs/architecture">architecture</a> for the components and
         <a href="/audit">PR Replay</a> for paid interpretation of an agreed scope.
       </p>
+      <nav aria-labelledby="workflow-contents-title">
+        <p id="workflow-contents-title"><strong>Jump to a workflow</strong></p>
+        <ol>
+          <li><a href="#repo-orientation">Understand a new repository</a></li>
+          <li><a href="#task-context">Find code for a task</a></li>
+          <li><a href="#change-impact">Inspect a change's impact</a></li>
+          <li><a href="#patch-review">Review a patch</a></li>
+          <li><a href="#algorithmic-cost">Investigate algorithmic cost</a></li>
+          <li><a href="#architecture-drift">Check architecture drift</a></li>
+          <li><a href="#refactor-planning">Plan a refactor</a></li>
+          <li><a href="#parallel-agents">Coordinate parallel agents</a></li>
+          <li><a href="#evidence-records">Inspect evidence records</a></li>
+        </ol>
+      </nav>
     </div>
   </section>
 
@@ -124,7 +142,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>1. "I'm new to this repo. What does it do?"</h2>
+        <h2 id="repo-orientation">1. "I'm new to this repo. What does it do?"</h2>
         <p>
           You've cloned a codebase you didn't write. Before reading any
           file, get the shape: layers, entry points, hot files, the few
@@ -147,7 +165,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>2. "I have a task. What code should I read first?"</h2>
+        <h2 id="task-context">2. "I have a task. What code should I read first?"</h2>
         <p>
           You have a feature, a bug, or a phrase like "trace login flow"
           or "where is the n+1?" You need ranked, budget-bounded spans —
@@ -169,7 +187,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>3. "I'm about to edit X. What breaks?"</h2>
+        <h2 id="change-impact">3. "I'm about to edit X. What breaks?"</h2>
         <p>
           Before any edit, ask Roam for the blast radius: who calls this
           symbol transitively, which tests may be related, and what fitness
@@ -192,7 +210,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>4. "Did the agent miss something on this PR?"</h2>
+        <h2 id="patch-review">4. "Did the agent miss something on this PR?"</h2>
         <p>
           A patch can change one of several similar implementations or touch
           a function with callers elsewhere. Roam compares the intended patch
@@ -216,7 +234,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>5. "Is the agent's patch correct but slow?"</h2>
+        <h2 id="algorithmic-cost">5. "Is the agent's patch correct but slow?"</h2>
         <p>
           Passing tests need not expose expensive behavior on larger inputs.
           Roam looks for supported patterns such as repeated lookups, database
@@ -239,7 +257,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>6. "Is the architecture drifting?"</h2>
+        <h2 id="architecture-drift">6. "Is the architecture drifting?"</h2>
         <p>
           Layers blur. Cycles appear. Modules creep into each other.
           Roam reports topological layers, strongly-connected components,
@@ -264,7 +282,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>7. "Can I refactor safely?"</h2>
+        <h2 id="refactor-planning">7. "Can I refactor safely?"</h2>
         <p>
           Model a supported move, extraction, or deletion in a copy of the
           graph before editing source. Inspect predicted structural changes
@@ -287,7 +305,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>8. "Multiple agents are working in parallel — can they?"</h2>
+        <h2 id="parallel-agents">8. "Multiple agents are working in parallel — can they?"</h2>
         <p>
           Hand three agents the same repo and they collide on the same
           files. Roam partitions the graph into low-coupling clusters,
@@ -311,7 +329,7 @@
 
     <section class="whats-in">
       <div class="whats-in-inner">
-        <h2>9. "Can we prove what was checked, signed, and gated?"</h2>
+        <h2 id="evidence-records">9. "Can we prove what was checked, signed, and gated?"</h2>
         <p>
           Roam compiles change-time evidence into typed
           <code>ChangeEvidence</code> packets that answer the eight

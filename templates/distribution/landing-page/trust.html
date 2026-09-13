@@ -22,11 +22,15 @@
   <meta property="og:description" content="Honest status on SOC 2 Type II, ISO/IEC 42001, EU AI Act Article 12, and NIST AI RMF — plus the DPA, sub-processor list, security contact, vulnerability disclosure, and data-flow diagram. Evidence support, not certification.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/trust">
-  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta property="og:image:width" content="1731">
+  <meta property="og:image:height" content="909">
+  <meta property="og:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Trust &amp; Compliance Posture — Roam">
   <meta name="twitter:description" content="Honest posture on SOC 2, ISO 42001, EU AI Act, and NIST AI RMF — with the artifacts procurement reviewers want and no current certification claim.">
-  <meta name="twitter:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta name="twitter:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
 
   <script type="application/ld+json">
   {
@@ -133,14 +137,13 @@
           </span>
         </div>
         <div class="verb-cell">
-          <code>EU AI Act Article 12 — evidence layer shipped</code>
+          <code>EU AI Act — record-keeping inputs</code>
           <span>
-            Roam's tamper-evident audit-trail and proof-bundle substrate
-            generates the record-keeping evidence Article 12 requires for
-            high-risk AI systems listed in Annex III. Whether your system
-            falls under Article 12 is your DPO's and counsel's call;
-            Roam supplies the evidence layer to support that
-            determination.
+            Roam can supply records of collected development checks for a
+            broader governance review. Those records are not the operational
+            logs of a deployed AI system and do not establish that Article 12
+            requirements are met. Your counsel and auditors determine
+            applicability and the evidence your system needs.
           </span>
         </div>
         <div class="verb-cell">
@@ -213,7 +216,7 @@
           <strong>Vulnerability disclosure policy.</strong>
           Full coordinated-disclosure policy on the
           <a href="/security">security page</a>: scope, safe-harbor terms,
-          remediation SLAs (high within 30 days, medium within 90, low at
+          remediation targets (high within 30 days, medium within 90, low at
           next scheduled release), and a default 90-day public-disclosure
           window we extend on reporter request. Roam does not run a
           monetary bug-bounty program yet; until a paid program is
@@ -258,54 +261,60 @@
     <div class="whats-in-inner">
       <h2>Roam's evidence layer</h2>
       <p class="lede">
-        While the framework attestations are in flight, the free CLI
-        already ships four evidence substrates auditors and reviewers can
-        consume directly. None of them is a substitute for a SOC 2 or
-        ISO 42001 report; they are the inputs an audit would draw from.
+        The free CLI provides records and checks that reviewers can inspect.
+        They show collected evidence and its gaps, not everything an agent
+        did. They can support a wider review; they do not replace an
+        independent audit or certification.
       </p>
       <div class="verbs-grid verbs-grid--3">
         <div class="verb-cell">
-          <code>Tamper-evident audit trail</code>
+          <code>Collected check results</code>
           <span>
-            CGA-signed event records covering every command an agent or
-            human ran against the local repo. Forwards-compatible with
-            cryptographic signature schemes; today the bundles carry
-            in-toto v1 attestations so reviewers can verify integrity
-            without contacting us (cosign keyless signing of per-run
-            bundles is on the roadmap).
+            After bundle initialization, full JSON results from supported
+            commands can be collected with their source locations and check
+            status. Earlier commands and commands without auto-logging are
+            not a complete record. Keep partial results and missing checks
+            visible, alongside the project's actual test results.
           </span>
         </div>
         <div class="verb-cell">
-          <code>Proof bundles per PR</code>
+          <code>A bundle for the change</code>
           <span>
-            <code>roam pr-bundle init / emit</code> packages the
-            preflight, impact, critique, and test artifacts associated
-            with a single change into one signed bundle. Reviewers see
-            exactly what context the agent consumed before editing.
+            <code>roam pr-bundle init</code> starts collection;
+            <code>roam pr-bundle emit --strict</code> checks the preparation
+            bundle for missing required evidence. It is not automatically
+            signed: CodeGraph attestations and signing are separate,
+            explicitly configured paths. Recorded context is not proof of
+            everything the agent consumed or used in its reasoning.
           </span>
         </div>
         <div class="verb-cell">
           <code>Mode enforcement</code>
           <span>
-            Four cumulative action surfaces — <code>read_only</code>,
+            Four cumulative modes — <code>read_only</code>,
             <code>safe_edit</code>, <code>migration</code>,
-            <code>autonomous_pr</code> — declared per run and enforced
-            by the local control plane. Mode escalations are logged
-            with timestamps and the lease record of the human approver.
+            <code>autonomous_pr</code> — describe permitted operations.
+            The MCP dispatcher applies the configured mode policy at its tool boundary;
+            this does not contain commands run outside Roam. A lease records
+            a coordination claim, not human approval. Keep required approvals
+            in the project's own review process.
           </span>
         </div>
         <div class="verb-cell">
           <code>Run ledger with HMAC chain</code>
           <span>
-            Each <code>roam runs</code> session opens an event ledger
-            with HMAC-chained entries. Tampering with any historical
-            entry breaks the chain; <code>roam runs verify</code> reports
-            the first divergent event so a reviewer can identify any
-            post-hoc edits without trusting our infrastructure.
+            A <code>roam runs</code> session stores HMAC-chained entries.
+            <code>roam runs verify</code> checks their integrity using the
+            local key. Someone with that key can rewrite the chain; it is
+            not independent proof of actor identity, complete collection,
+            or successful work. Preserve the key and records under your
+            project's access controls.
           </span>
         </div>
       </div>
       <p class="how-it-works-foot" style="margin-top: 24px;">
+        <a href="/docs/canonical-demo">Follow the worked change-review example</a>
+        to see collection, missing evidence, and ledger verification in context.
         For the full control-mapping table from these four substrates to
         SOC 2 CC8.1, ISO/IEC 42001 Annex A, NIST AI RMF, and EU AI Act
         Article 12, see the
@@ -388,14 +397,11 @@
       <div class="trust-cell">
         <strong>Article 12 framing</strong>
         <span>
-          EU AI Act Article 12 (record-keeping) attaches to providers of
-          high-risk AI systems listed in Annex III. Code-generation
-          tooling is not itself in Annex III. If your <em>own product</em>
-          is a high-risk AI system, Roam's tamper-evident ledger is
-          useful evidence we collect for the Article 12 record-keeping
-          expectation and the Article 14 human-oversight expectation;
-          whether the obligations apply to your system is a call for
-          your DPO and counsel.
+          <a href="https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng">Article 12</a>
+          addresses event logging by high-risk AI systems. Roam's repository
+          checks are development records, not a substitute for a deployed
+          system's required logs or human-oversight controls. Consult the
+          regulation and qualified counsel to assess your system.
         </span>
       </div>
       <div class="trust-cell">
@@ -435,9 +441,10 @@
           <a href="https://github.com/Cranot/roam-code">GitHub</a> · the
           same package distributed on
           <a href="https://pypi.org/project/roam-code/">PyPI</a>. No
-          proprietary binary in the analysis pipeline; reviewers can
-          rebuild every bundle from source and verify the engine
-          themselves. The
+          proprietary binary in the analysis pipeline. Reviewers can inspect
+          and rebuild the collection and verification software. Reproducing a
+          recorded bundle also requires its retained inputs and records,
+          including the source revision, tool versions, and configuration. The
           <a href="https://github.com/Cranot/roam-code/blob/main/LICENSE">LICENSE</a>
           file in the repo carries the canonical Apache-2.0 text.
         </span>

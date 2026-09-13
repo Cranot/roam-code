@@ -19,9 +19,13 @@
   <meta property="og:title" content="Examples — Roam Docs · Small changes, wider questions">
   <meta property="og:description" content="Explore eight illustrative code changes and the Roam checks that help investigate them, with the limits of static analysis kept visible.">
   <meta property="og:url" content="https://roam-code.com/docs/demos">
-  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta property="og:image:width" content="1731">
+  <meta property="og:image:height" content="909">
+  <meta property="og:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta name="twitter:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
 
   <script type="application/ld+json">
   {
@@ -91,7 +95,21 @@
         results for your project; replace the example symbols and paths.
         Read the scope and limitations before acting.</p>
 
-      <h2>1. The clone the agent didn't notice</h2>
+      <nav aria-labelledby="example-contents-title">
+        <p id="example-contents-title"><strong>Jump to an example</strong></p>
+        <ol>
+          <li><a href="#clone-repair">Repairing similar code</a></li>
+          <li><a href="#hidden-callers">Checking hidden callers</a></li>
+          <li><a href="#repeated-lookups">Investigating repeated lookups</a></li>
+          <li><a href="#database-queries">Checking queries inside loops</a></li>
+          <li><a href="#dependency-boundaries">Checking dependency boundaries</a></li>
+          <li><a href="#test-gaps">Finding test gaps</a></li>
+          <li><a href="#refactor-move">Planning a code move</a></li>
+          <li><a href="#review-evidence">Keeping review evidence</a></li>
+        </ol>
+      </nav>
+
+      <h2 id="clone-repair">1. The clone the agent didn't notice</h2>
       <p><strong>Scenario.</strong> The agent fixes
         <code>UserService.normalize_email()</code>, but similar logic in
         signup and admin code still has the bug.</p>
@@ -104,7 +122,7 @@ roam --json critique --working-tree --intent "Fix email normalization"</code></p
         freshness. Similar code is a lead, not proof that an identical repair
         belongs everywhere. Critique's severity depends on the actual finding.</p>
 
-      <h2>2. The deletion that breaks a hidden caller</h2>
+      <h2 id="hidden-callers">2. The deletion that breaks a hidden caller</h2>
       <p><strong>Scenario.</strong> A function looks unused in source but a
         dispatcher reaches it through a runtime string lookup.</p>
 <pre><code>roam --json impact resolve_legacy_token
@@ -114,7 +132,7 @@ roam --json safe-delete resolve_legacy_token</code></pre>
         Inspect dynamic access, configuration, and external consumers; zero
         indexed callers does not settle those questions.</p>
 
-      <h2>3. The tidy loop that grows expensive</h2>
+      <h2 id="repeated-lookups">3. The tidy loop that grows expensive</h2>
       <p><strong>Scenario.</strong> A deduplication loop checks membership in
         a list on every iteration. It looks simple, but repeated searches can
         become costly as input grows.</p>
@@ -124,7 +142,7 @@ roam --json safe-delete resolve_legacy_token</code></pre>
         membership tasks, but order, equality, and hashability still matter.
         Measure the proposed change with behavior-preserving controls.</p>
 
-      <h2>4. The extra query on every row</h2>
+      <h2 id="database-queries">4. The extra query on every row</h2>
       <p><strong>Scenario.</strong> Rendering each order fetches its customer
         separately. A tiny test fixture hides the query growth.</p>
 <pre><code>roam --json n1</code></pre>
@@ -133,7 +151,7 @@ roam --json safe-delete resolve_legacy_token</code></pre>
         does not prove a database query. Confirm with actual query counts
         before choosing prefetching or batching.</p>
 
-      <h2>5. The import that crosses a boundary</h2>
+      <h2 id="dependency-boundaries">5. The import that crosses a boundary</h2>
       <p><strong>Scenario.</strong> A domain module imports an HTTP retry
         implementation directly, against the project's intended dependency rule.</p>
 <pre><code>roam --json layers
@@ -144,7 +162,7 @@ roam --json check-rules</code></pre>
         impact, and intent check; it does not enforce this policy for you.
         A missing rule is not a passed boundary check.</p>
 
-      <h2>6. The branch no test exercises</h2>
+      <h2 id="test-gaps">6. The branch no test exercises</h2>
       <p><strong>Scenario.</strong> Tests pass through a pricing function,
         but none checks the branch the agent just changed.</p>
 <pre><code>roam --json affected-tests PricingEngine.discount_for_segment
@@ -155,7 +173,7 @@ roam --json test-gaps --changed</code></pre>
         Read the tests, add a regression for the changed behavior, and run
         the project's test and coverage tools.</p>
 
-      <h2>7. The move with references outside the graph</h2>
+      <h2 id="refactor-move">7. The move with references outside the graph</h2>
       <p><strong>Scenario.</strong> The agent moves <code>EmailQueue</code>,
         updates imports, and misses a runtime registry containing its old path.</p>
 <pre><code>roam --json simulate move EmailQueue infrastructure/messaging/email_queue.py
@@ -166,7 +184,7 @@ roam --json plan-refactor EmailQueue --target-file infrastructure/messaging/emai
         Inspect the plan, search configuration and dynamic imports separately,
         then run the real build and tests after the move.</p>
 
-      <h2>8. The PR whose checks were not kept</h2>
+      <h2 id="review-evidence">8. The PR whose checks were not kept</h2>
       <p><strong>Scenario.</strong> A reviewer asks what was checked before a
         merge. Green checkmarks alone do not explain the inputs or missing evidence.</p>
 <pre><code>roam attest --format json --sign --output change-attestation.json</code></pre>

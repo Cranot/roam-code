@@ -1,5 +1,8 @@
 # Cloudflare Pages redirects
 
+# Keep previously shared image links working after replacing the bitmap.
+/og.png                             /og-code-analysis.png     301
+
 # Docs are now hosted on roam-code.com directly. /docs (no slash) -> /docs/.
 /docs                                /docs/                    301
 
