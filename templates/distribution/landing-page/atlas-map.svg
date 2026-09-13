@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" role="img" aria-labelledby="title desc">
+<title id="title">Inside Roam: Python import connections</title>
+<desc id="desc">Source-derived import map grouped by area. Larger circles contain more Python files. Not a runtime call graph.</desc>
+<defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M 32 0 H 0 V 32" fill="none" stroke="#0049b7" stroke-opacity=".035"/></pattern></defs>
+<rect width="960" height="620" fill="#fffefa"/>
+<rect width="960" height="620" fill="url(#grid)"/>
+<path d="M 750 465 L 335 540" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 750 465" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 80 450" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 700 290" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 490 110" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 700 115" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 80 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 270 405" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 890 385" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 870 200" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 105 95" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 250 170 L 335 540" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 460 280 L 250 170" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 460 280 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 460 280 L 80 450" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 460 280 L 80 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 460 280 L 270 405" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 460 280 L 105 95" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 460 280 L 335 540" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 520 440 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 80 450 L 250 170" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 80 450 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 80 450 L 270 405" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 80 450 L 335 540" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 700 290 L 250 170" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 700 290 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 700 290 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 700 290 L 490 110" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 700 290 L 700 115" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 490 110 L 750 465" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 490 110 L 250 170" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 490 110 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 490 110 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 490 110 L 700 290" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 490 110 L 700 115" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 490 110 L 870 200" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 490 110 L 335 540" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 700 115 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 700 115 L 490 110" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 700 115 L 335 540" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 80 280 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 80 280 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 80 280 L 270 405" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 270 405 L 250 170" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 270 405 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 270 405 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 270 405 L 335 540" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 890 385 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 890 385 L 700 290" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 890 385 L 270 405" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 870 200 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 870 200 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 105 95 L 250 170" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 105 95 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 105 95 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 105 95 L 490 110" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 105 95 L 80 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 105 95 L 270 405" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 750 465" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 250 170" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 460 280" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 520 440" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 80 450" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 700 290" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 490 110" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 700 115" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 270 405" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 890 385" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 870 200" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<path d="M 335 540 L 105 95" stroke="#0049b7" stroke-opacity=".2" fill="none"/>
+<circle cx="460" cy="280" r="31.0" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="460" cy="280" r="22.0" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="460" cy="280" r="4" fill="#0049b7"/>
+<text x="460" y="329.0" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Core &amp; interfaces</text>
+<circle cx="250" cy="170" r="46.6" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="250" cy="170" r="37.6" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="250" cy="170" r="4" fill="#0049b7"/>
+<text x="250" y="234.6" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Commands</text>
+<circle cx="490" cy="110" r="28.6" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="490" cy="110" r="19.6" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="490" cy="110" r="4" fill="#0049b7"/>
+<text x="490" y="156.6" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Indexing</text>
+<circle cx="700" cy="115" r="29.7" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="700" cy="115" r="20.7" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="700" cy="115" r="4" fill="#0049b7"/>
+<text x="700" y="162.7" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Languages</text>
+<circle cx="700" cy="290" r="28.4" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="700" cy="290" r="19.4" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="700" cy="290" r="4" fill="#0049b7"/>
+<text x="700" y="336.4" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Graph analysis</text>
+<circle cx="520" cy="440" r="25.7" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="520" cy="440" r="16.7" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="520" cy="440" r="4" fill="#0049b7"/>
+<text x="520" y="483.7" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Local database</text>
+<circle cx="270" cy="405" r="27.6" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="270" cy="405" r="18.6" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="270" cy="405" r="4" fill="#0049b7"/>
+<text x="270" y="450.6" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Output &amp; contracts</text>
+<circle cx="80" cy="280" r="26.2" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="80" cy="280" r="17.2" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="80" cy="280" r="4" fill="#0049b7"/>
+<text x="80" y="324.2" text-anchor="start" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Agent connection</text>
+<circle cx="105" cy="95" r="27.4" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="105" cy="95" r="18.4" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="105" cy="95" r="4" fill="#0049b7"/>
+<text x="105" y="140.4" text-anchor="start" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Security</text>
+<circle cx="750" cy="465" r="26.2" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="750" cy="465" r="17.2" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="750" cy="465" r="4" fill="#0049b7"/>
+<text x="750" y="509.2" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Cross-language bridges</text>
+<circle cx="870" cy="200" r="25.1" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="870" cy="200" r="16.1" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="870" cy="200" r="4" fill="#0049b7"/>
+<text x="870" y="243.1" text-anchor="end" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Search</text>
+<circle cx="890" cy="385" r="26.2" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="890" cy="385" r="17.2" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="890" cy="385" r="4" fill="#0049b7"/>
+<text x="890" y="429.2" text-anchor="end" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Runtime evidence</text>
+<circle cx="80" cy="450" r="29.0" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="80" cy="450" r="20.0" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="80" cy="450" r="4" fill="#0049b7"/>
+<text x="80" y="497.0" text-anchor="start" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Evidence</text>
+<circle cx="335" cy="540" r="37.5" fill="none" stroke="#52616b" stroke-dasharray="2 6" opacity=".4"/>
+<circle cx="335" cy="540" r="28.5" fill="#faf8f2" stroke="#52616b"/>
+<circle cx="335" cy="540" r="4" fill="#0049b7"/>
+<text x="335" y="595.5" text-anchor="middle" fill="#182b3b" stroke="#fffefa" stroke-width="3" paint-order="stroke" stroke-linejoin="round" font-family="sans-serif" font-size="15">Supporting systems</text>
+</svg>

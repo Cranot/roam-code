@@ -17,10 +17,12 @@ the next website deployment; a Git push alone does not publish the site.
 | Connect an MCP client | [MCP usage](../templates/distribution/landing-page/docs/mcp-usage.html), [tool inventory](mcp-tools.md) |
 | Check MCP protocol support | [Protocol compatibility and handshake tests](mcp-protocol-compatibility.md) |
 | Make bounded agent CLI calls | [Agent CLI guide](agent-cli.md) |
+| Check extraction support for a language | [Language support](language-support.md) |
+| Read historical comparisons, losses and timing limits | [Measurement record](measurements.md) |
 | Understand the index and evidence pipeline | [Architecture](../templates/distribution/landing-page/docs/architecture.html), [agent contract](../templates/distribution/landing-page/docs/agent-contract.html) |
 | Diagnose an installation, index, or lock | [Troubleshooting](../templates/distribution/landing-page/docs/troubleshooting.html) |
 | Maintain this checkout and validate a change | [Repository maintenance](repository-maintenance.md), [contributing](../CONTRIBUTING.md) |
-| Edit and publish the homepage | [Website maintenance](website-maintenance.md) |
+| Edit and publish the website; maintain shared typography, navigation, and plain-language copy | [Website maintenance](website-maintenance.md) |
 | Prepare and publish a package release | [Release guide](releases.md) |
 | Integrate CI and SARIF | [CI integration](ci-integration.md) |
 | Understand data leaving the machine | [Network boundary](network-boundary.md) |
@@ -40,10 +42,12 @@ shipped command surface and use `roam <command> --help` for exact flags.
 | Content | Authority | Regenerate |
 | --- | --- | --- |
 | Package version | `pyproject.toml` | Change only for a release, then follow [the release guide](releases.md) |
-| Surface counts and release pins | CLI/MCP registries; package identity from `pyproject.toml`, install pins from the highest published `v*` tag | `uv run --no-sync python scripts/sync_surface_counts.py --write` |
+| Surface counts and release pins | CLI/MCP registries; package identity from `pyproject.toml`; highest `v*` tag with package availability verified separately, as described in [the release guide](releases.md#version-and-release-cadence) | `uv run --no-sync python scripts/sync_surface_counts.py --write` |
 | Count blocks, MCP reference, and server cards | Source tool registrations and docstrings | `uv run --no-sync python dev/build_readme_counts.py --apply` |
 | Complete command index | `roam surface --json` | `uv run --no-sync python scripts/build_commands_doc.py` |
 | Website changelog | `CHANGELOG.md` | `uv run --no-sync python scripts/build_changelog_html.py --write` |
+| Code atlas JSON and static SVG | Literal Python imports under `src/roam`; authored area descriptions and layout in the generator | `uv run --no-sync python scripts/build_atlas_data.py`, then `--check`; see [atlas maintenance](website-maintenance.md#code-atlas-showcase) |
+| Website primary navigation | `scripts/build_site_navigation.py` | Run with `--write` to synchronize all site pages; omit it for a read-only drift check |
 | User guides and troubleshooting | Implemented behavior and executable CLI help | Edit the source guide and verify examples and links |
 
 Keep generated regions generated. Correct a tool's description in its source
@@ -68,6 +72,12 @@ These documents answer different questions from the current user guides:
 ## Keeping the docs useful
 
 Give each procedure one maintained home and link to it from other entry points.
+Keep the project README's first-use route ahead of extended reference and
+measurement history. Its generated count blocks stay owned by the count builder;
+language details live in `language-support.md`, historical measurements in
+`measurements.md`, and detailed agent verification in `agent-cli.md`. Preserve
+legacy README anchors when moving a section, and rebase relative links in moved
+text without rewriting its historical numbers or scope.
 When merging guides, preserve existing links and anchors or leave a short pointer.
 Keep unique evidence in a dated record; mark what supersedes it instead of
 silently rewriting old results. A current handoff should state what is done,

@@ -35,18 +35,36 @@ from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 def _run_subcommand(args: list[str]) -> dict:
     """Invoke a roam subcommand in-process and return its parsed envelope.
 
-    On JSON-parse failure or non-zero exit, returns a sentinel dict carrying
+    Inherit the caller's token budget. On JSON-parse failure or an exit other
+    than 0, 5 or 6, return a dict carrying
     ``_subcommand_failed=True`` so the caller's compositor can detect it
     instead of silently treating an error envelope as a success (Pattern 2 —
     silent fallback). The legacy ``error``/``exit_code``/``raw_output_excerpt``
-    keys are preserved for callers / tests that pin them.
+    keys are preserved for callers / tests that pin them. A valid exit-5
+    gate-negative envelope is retained for the compositor to interpret; exit 6
+    retains observations and explicitly marks partial analysis.
     """
     from roam.cli import cli
 
     runner = CliRunner()
-    result = runner.invoke(cli, args)
+    parent = click.get_current_context(silent=True)
+    budget = parent.obj.get("budget") if parent and isinstance(parent.obj, dict) else None
+    explicit = parent.obj.get("budget_explicit", False) if parent and isinstance(parent.obj, dict) else False
+    budget_args = ["--budget", str(budget)] if budget is not None and (budget != 0 or explicit) else []
+    result = runner.invoke(cli, [*budget_args, *args])
     try:
-        return _json.loads(result.output)
+        payload = _json.loads(result.stdout)
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        if result.exit_code == 6:
+            payload.update(partial_success=True, exit_code=result.exit_code)
+        elif result.exit_code not in (0, 5):
+            payload.update(
+                _subcommand_failed=True,
+                error=f"{' '.join(args[:3])} exited {result.exit_code}",
+                exit_code=result.exit_code,
+            )
+        return payload
     except Exception as exc:  # noqa: BLE001 — defensive
         return {
             "_subcommand_failed": True,
@@ -230,15 +248,38 @@ def dogfood_cmd(
         (e.g. an unexpected envelope shape that broke `.get` chaining)
         becomes a structured marker instead of a Click traceback.
         """
-        audit_summary = (sections.get("audit") or {}).get("summary") or {}
-        pr_summary = (sections.get("pr_analyze") or {}).get("summary") or {}
-        conf_summary = (sections.get("conformance") or {}).get("summary") or {}
+        section_summaries = {
+            name: value["summary"] if isinstance(value, dict) and isinstance(value.get("summary"), dict) else {}
+            for name, value in sections.items()
+        }
+        audit_summary = section_summaries.get("audit", {})
+        pr_summary = section_summaries.get("pr_analyze", {})
+        conf_summary = section_summaries.get("conformance", {})
 
-        health_score = audit_summary.get("health_score") or audit_summary.get("score")
+        health_score = audit_summary.get("health_score")
+        if health_score is None:
+            health_score = audit_summary.get("score")
         pr_verdict = pr_summary.get("verdict")
         conf_score = conf_summary.get("score")
 
-        failed_sections = sorted(k for k, v in sections.items() if isinstance(v, dict) and v.get("_subcommand_failed"))
+        failed_sections = sorted(
+            k for k, v in sections.items() if not isinstance(v, dict) or v.get("_subcommand_failed")
+        )
+        incomplete_sections = sorted(
+            k
+            for k, v in sections.items()
+            if isinstance(v, dict)
+            and (
+                not section_summaries[k]
+                or section_summaries[k].get("partial_success") is not False
+                or v.get("partial_success")
+                or (
+                    section_summaries[k].get("truncated")
+                    and section_summaries[k].get("truncation_reason") != "detail_mode"
+                )
+                or (v.get("truncated") and v.get("truncation_reason") != "detail_mode")
+            )
+        )
 
         parts = []
         if health_score is not None:
@@ -249,11 +290,15 @@ def dogfood_cmd(
             parts.append(f"conformance {conf_score}/100")
         if failed_sections:
             parts.append(f"{len(failed_sections)} section(s) failed: {', '.join(failed_sections)}")
+        if incomplete_sections:
+            parts.append(f"incomplete sections: {', '.join(incomplete_sections)}")
         verdict_text = " · ".join(parts) if parts else "no sections enabled"
 
         summary = {
             "verdict": verdict_text,
             "health_score": health_score,
+            "health_score_scope": audit_summary.get("health_score_scope"),
+            "health_issue_collection_scope": audit_summary.get("health_issue_collection_scope"),
             "pr_verdict": pr_verdict,
             "conformance_score": conf_score,
             "git_sha": git_meta.get("git_sha"),
@@ -263,6 +308,10 @@ def dogfood_cmd(
         if failed_sections:
             summary["partial_success"] = True
             summary["failed_sections"] = failed_sections
+        if incomplete_sections:
+            summary["partial_success"] = True
+            summary["incomplete_sections"] = incomplete_sections
+            summary["child_evidence"] = {name: section_summaries[name] for name in incomplete_sections}
         return summary, verdict_text, pr_summary, conf_summary, health_score, pr_verdict, conf_score
 
     composed = _run_check_av(
@@ -297,6 +346,7 @@ def dogfood_cmd(
             lambda: to_json(
                 json_envelope(
                     "dogfood",
+                    budget=ctx.obj.get("budget", 0) if ctx.obj else 0,
                     summary=summary,
                     sections=sections,
                     **({"warnings_out": list(combined_warnings)} if combined_warnings else {}),
@@ -314,6 +364,7 @@ def dogfood_cmd(
             envelope_text = to_json(
                 json_envelope(
                     "dogfood",
+                    budget=ctx.obj.get("budget", 0) if ctx.obj else 0,
                     summary=summary,
                     sections={},
                     warnings_out=list(combined_warnings),

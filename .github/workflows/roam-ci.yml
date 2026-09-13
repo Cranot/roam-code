@@ -4,6 +4,7 @@
 #   test         — pytest across all supported Python versions (3.10–3.13;
 #                   3.9 dropped 2026-05-16 per pyproject requires-python).
 #   lint         — ruff format/lint check (Python 3.12 only, fast gate)
+#   site-atlas   — dependency-free JavaScript data, interaction and syntax checks
 #   self-analysis — roam analyses its own codebase on PRs using the local
 #                   composite action (uses: ./), posting a sticky comment
 #                   and uploading SARIF to GitHub Code Scanning.
@@ -47,6 +48,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  site-atlas:
+    name: Site atlas contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26.2.0"
+          package-manager-cache: false
+      - name: Check atlas syntax, data and interaction contracts
+        run: |
+          node --check templates/distribution/landing-page/atlas-model.mjs
+          node --check templates/distribution/landing-page/atlas.mjs
+          node --test tests/atlas_model.test.mjs tests/atlas_interaction.test.mjs
+
   # -- Test suite across all supported Python versions -----------------------
   # Ubuntu-only: roam-code is pure Python with no compiled extensions; a
   # single-OS matrix covers correctness without the 3x cost of a full matrix.

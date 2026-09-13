@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **A source-derived code atlas.** Explore Roam's Python module imports on a dedicated page and in the homepage hero. Inspect direct dependencies with named controls, a static fallback, and visible source provenance. The map is a grouped import snapshot, not native command output or a prediction of runtime impact.
+- **Complete issue-list options.** Request full indexed health classification and complete debt output explicitly, while preserving the historical health score and existing compact defaults. Keep collection limits distinct from output-budget limits.
+
+### Fixed
+
+- **Review receipt validation order.** Same-family reviews now validate artifact identity and review outcomes before returning a coverage warning. Stale, rejected, errored or blocking reviews cannot become warning-only acceptance; valid same-family reviews remain usable with their stated limitation.
+- **Public evidence claims.** Correct lease/approval and network boundaries, distinguish the earlier accessibility assessment from the redesigned site, include the first-party atlas in the script inventory, and describe command-reference and atlas diagnostics according to their actual scope.
+- **Explicit completion and portable exports.** Audit and dogfood require a boolean child-completion flag; missing or malformed flags remain incomplete. Atlas generation writes portable LF line endings. Website deployment stages exact committed files with an external digest manifest, and stable asset URLs revalidate cached content.
+- **Website fallback and export checks.** Keep code samples monospace when fonts cannot load, give map-view controls a named group, and preserve visible connection states in forced-colors mode. Export committed site bytes consistently under Windows line-ending settings without changing the user's Git configuration or relaxing byte verification.
+- **A consistent light map.** Match the full code atlas and homepage preview to the site's warm white surfaces, blue accents, and dark text. Keep loading fallbacks in the same palette, area labels readable, and keyboard focus distinct from the selected node.
+- **Clearer agent-first website wording.** Explain code context and change checks in the homepage opening, align setup and atlas copy, and distinguish optional evidence recording, detector leads, and planned hosted products on About and the agent-readable guide.
+- **Document-relative path evidence.** Resolve explicit `./` and `../` claims from the containing Markdown file, including simple labelled links. Keep genuine missing targets visible even when another same-named file exists, while retaining repository-escape and ignored-path disclosures.
+- **Atlas loading and keyboard recovery.** Bound interactive requests, including stalled response bodies, preserve the static fallback, and keep retries usable. Ignore late failed-attempt results and return focus to the area chooser only when the reader is still using the retry control. Exercise loading failures and real interaction handlers in the dependency-free site CI checks.
+- **Audit evidence across delivery boundaries.** Preserve child failures, missing summaries, incomplete metrics, and output-budget disclosure through audit aggregation and MCP delivery. Handle-storage failures remain incomplete evidence instead of successful empty responses. Metrics export refuses incomplete audit input before sending it to a metrics endpoint.
+- **Reference and documentation checks.** Bound source and anchor reads, retain unreadable and out-of-scope targets, and distinguish HTML anchors from missing fragments. Qualify incomplete reference guidance and keep documentation examples separate from measurable current-repository claims.
+- **Explicit stale-reference modes.** `stale-refs --watch` rejects `--gate`, `--attest`, `--baseline-save`, `--github-summary` and `--diff`; `--fix` rejects `--attest`, `--github-summary` and `--sarif`. Generate those artifacts with a separate one-shot scan instead of relying on silently ignored flags.
+- **Atlas input validation and CI.** Reject duplicate connections, unusable coordinates, unsafe or inconsistent counts, and missing labels or metric definitions before drawing the interactive map. Keep valid reciprocal and isolated-area controls, and run the dependency-free JavaScript contracts in CI.
+- **Dogfood evidence gate.** Keep incomplete command evidence visible to the workflow instead of equating a successful process exit with a complete scan.
+- **Metrics export budget recovery.** Forward the caller's explicit global output budget to the internal audit. An omitted budget retains the configured default cap; use `roam --json --budget 0 metrics-push --dry-run` to inspect uncapped evidence without uploading it. Real missing or incomplete source evidence still blocks upload.
+- **Alternate-output contracts.** Include degraded-query warnings in default Health SARIF as well as full classification. In grouped debt output, apply a positive limit per group; grouped text keeps its five-file cap unless the caller requests `--limit 0`. MCP response handles now retain the producer command name. A gated stale-reference fix preview exits unsuccessfully when findings or incomplete evidence remain; previewing a fix is not a clean result.
+
+### Documentation
+
+- **Website browser hardening.** Keep documentation table columns aligned in keyboard-scrollable wrappers; make skip links transfer focus; retain readable atlas labels, native area selection, and clear static fallback states. Let enlarged text reflow in narrow layouts, and identify the manual status page as unmeasured rather than a live green signal.
+- **One website, one reading experience.** Share typography, colors, and generated primary navigation across all site pages, including the atlas. Simplify entry-page wording, label illustrative examples, and keep written confirmation distinct from a page visit. Preserve literal code in generated changelog formatting and escape diff placeholders in the MCP guide.
+- **Agent-first website and clearer offers.** Explain local static analysis, agent setup, and the existing report-request path in plain language. Keep free tooling separate from paid services and planned products, with visible limitations and accessible no-script content.
+- **Verification and maintenance guidance.** Document evidence delivery, complete-versus-capped observations, atlas provenance and maintenance, and separate package/site deployment checks. Refresh the generated MCP reference. Explain why a release tag waiting for publication is not yet a usable installation target; preserve historical measurements and verified installation pins.
+
 ## [14.1.0] — 2026-09-07
 
 ### Fixed

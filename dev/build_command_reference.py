@@ -51,7 +51,9 @@ def _build_appendix() -> str:
         if not rows:
             continue
         lines.append(f"  <h3>{_escape(category)}</h3>")
-        lines.append('  <div class="table-wrap"><table>')
+        lines.append(
+            '  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>'
+        )
         lines.append("    <thead><tr><th>Command</th><th>Description</th></tr></thead>")
         lines.append("    <tbody>")
         for name, help_text in rows:
@@ -62,7 +64,9 @@ def _build_appendix() -> str:
     leftovers = [n for n in sorted(_COMMANDS) if n not in seen]
     if leftovers:
         lines.append("  <h3>Other</h3>")
-        lines.append('  <div class="table-wrap"><table>')
+        lines.append(
+            '  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>'
+        )
         lines.append("    <thead><tr><th>Command</th><th>Description</th></tr></thead>")
         lines.append("    <tbody>")
         for name in leftovers:

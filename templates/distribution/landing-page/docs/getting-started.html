@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Getting Started — Roam Docs · Install, index, query, ship</title>
-  <meta name="description" content="Step-by-step Roam tutorial: install, index your repo, ask the first structural question, run a pre-merge check, plan agent work, sign a Code Graph Attestation.">
+  <title>Get started — Roam Docs · Install and try your first checks</title>
+  <meta name="description" content="Install Roam, build a local map of your project, and try the first checks. Connect your coding agent and keep test and review decisions explicit.">
   <link rel="canonical" href="https://roam-code.com/docs/getting-started">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -16,8 +16,8 @@
   <link rel="dns-prefetch" href="//pypi.org">
   <link rel="stylesheet" href="/landing.css">
   <meta name="robots" content="index,follow">
-  <meta property="og:title" content="Getting Started — Roam Docs">
-  <meta property="og:description" content="Install, index, query, ship — in 10 minutes.">
+  <meta property="og:title" content="Get started — Roam Docs · Install and try your first checks">
+  <meta property="og:description" content="Install Roam, build a local map of your project, and try the first checks. Connect your coding agent and keep test and review decisions explicit.">
   <meta property="og:url" content="https://roam-code.com/docs/getting-started">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -41,57 +41,67 @@
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
+        <li><a href="/docs/" aria-current="true">Docs</a></li>
         <li><a href="/compare">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
-        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
       </ul>
     </div>
   </nav>
 
   <nav class="docs-subnav" aria-label="Documentation sections">
     <div class="docs-subnav-inner">
-      <a href="/docs/getting-started" aria-current="page">Getting Started</a>
+      <a href="/docs/getting-started" aria-current="page">Get started</a>
       <a href="/docs/integration-tutorials">Integrations</a>
-      <a href="/docs/command-reference">Command Reference</a>
+      <a href="/docs/command-reference">Command reference</a>
       <a href="/docs/architecture">Architecture</a>
-      <a href="/docs/agent-contract">Agent Contract</a>
+      <a href="/docs/agent-contract">Agent contract</a>
       <a href="/docs/troubleshooting">Troubleshooting</a>
     </div>
   </nav>
 
-  <main id="main" class="docs-page">
+  <main tabindex="-1" id="main" class="docs-page">
     <p class="eyebrow">Tutorial</p>
-    <h1>Getting Started with Roam</h1>
+    <h1>Get started with Roam</h1>
     <p class="subtitle">
-      Ten minutes from <code>pip install</code> to a verdict on whether your next edit is safe.
+      Install the tools, map your project, and try your first checks.
+      Setup time varies with the project and your machine.
     </p>
     <div class="callout">
-      Roam is the local codebase intelligence layer that lets AI coding agents earn the right to change code — and prove they did. Credential-free, no automatic source-code or telemetry upload, tamper-evident <code>ChangeEvidence</code> packets. A cold parser cache retrieves one checksum-verified grammar bundle and retains it locally; prewarm it before air-gap use. Explicit network features are documented on the <a href="/security#network-boundary">security page</a>. Cursor and Cody log the session; Roam gates the change and emits proof.
+      Roam helps your agent understand connected code and investigate changes.
+      Static findings are leads, not permission to ship; keep tests and review
+      in the workflow. Installation and the first parser download need network
+      access. See the <a href="/security#network-boundary">network boundaries</a>
+      before setting up an offline environment.
     </div>
 
     <section id="why-roam">
       <h2>Why Roam is different</h2>
       <p>
-        IDE-surface tools (Cursor, Cody, Windsurf, Continue) and semantic reviewers
-        (CodeRabbit, Greptile, Qodo, SonarQube) help humans write or review code through
-        hosted accounts and editor surfaces. Roam is the local-CLI surface that gates the
-        change <em>before</em> the diff and emits portable proof <em>after</em>. Three
-        properties no competitor combines today:
+        Roam adds a local map and static checks to the tools your agent
+        already uses. Three useful parts of that workflow:
       </p>
       <ul>
         <li><strong>Credential-free.</strong> No account, no API key, no cloud login. <code>pip install</code> and run.</li>
         <li><strong>Local analysis by default.</strong> Source parsing and analysis stay on the machine with no automatic telemetry or upload. Run <code>roam index --force</code> once while connected to prewarm parser binaries before air-gap use; avoid the explicit network triggers listed on the <a href="/security#network-boundary">security page</a>.</li>
-        <li><strong>Tamper-evident <code>ChangeEvidence</code> packets.</strong> Every AI-assisted change compiles into one portable evidence packet (HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle) that answers <a href="/docs/architecture#eight-evidence-questions">the eight evidence questions</a>.</li>
+        <li><strong>Optional records of checks.</strong> The run ledger and proof-bundle workflow, when configured, can save a portable <code>ChangeEvidence</code> packet. Read <a href="/docs/architecture#eight-evidence-questions">what the record contains</a> and which checks are missing. A signed record does not prove who acted, complete coverage, or permission to ship.</li>
       </ul>
       <p>
         Underneath sits a SQLite-backed graph of symbols, calls, imports, architecture layers,
@@ -101,13 +111,13 @@
     </section>
 
     <section id="install">
-      <h2>Install + first three commands</h2>
+      <h2>Install and try your first checks</h2>
       <div class="step-grid">
 
         <article class="step">
           <h3>Step 1: Install</h3>
 <pre><code>pip install "roam-code[mcp]"</code></pre>
-          <p>Requires Python 3.10+. <code>pipx install roam-code</code> and <code>uv tool install roam-code</code> work too. Drop <code>[mcp]</code> if you only want the CLI.</p>
+          <p>Requires Python 3.10+. <code>pipx install "roam-code[mcp]"</code> and <code>uv tool install "roam-code[mcp]"</code> work too. Drop <code>[mcp]</code> if you only want the CLI.</p>
         </article>
 
         <article class="step">
@@ -126,11 +136,11 @@ roam init</code></pre>
         <article class="step">
           <h3>Step 4: Gate the next change</h3>
 <pre><code>roam preflight &lt;symbol&gt;</code></pre>
-          <p>Blast radius + affected tests + complexity + architecture rules before you edit. The single highest-leverage call agents make before touching code.</p>
+          <p>Inspect callers, related tests, complexity, and architecture findings before editing. Your agent can use the results to plan what else to read and check. Missing connections remain unknown; suggested tests still need to run.</p>
         </article>
 
       </div>
-      <p><strong>Verify it yourself.</strong> <a href="https://github.com/Cranot/roam-code/blob/main/docs/fresh-install-smoke.md">Fresh-install smoke transcript</a> &mdash; a verbatim capture of these four commands run against a clean venv and a three-file synthetic project. Copy-paste reproducible; no synthetic output.</p>
+      <p><strong>Historical example.</strong> The <a href="https://github.com/Cranot/roam-code/blob/main/docs/fresh-install-smoke.md">v13.2 fresh-install smoke transcript, 18 May 2026</a> records commands run in a clean environment against a three-file synthetic project. It is a dated example, not a test of the current package or your installation.</p>
     </section>
 
     <section id="keep-index-current">
@@ -152,12 +162,12 @@ roam health --explain         # inspect architectural score contributions</code>
       <h2>What's next</h2>
       <p>Pick the path that matches your role:</p>
       <ul>
-        <li><strong>See it run end-to-end:</strong> <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; signed <code>ChangeEvidence</code> packet, the moat arc in one sitting.</li>
+        <li><strong>Follow a worked example:</strong> <a href="/docs/canonical-demo">From a first scan to a saved review record</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; a configured <code>ChangeEvidence</code> packet. Setup time varies by project.</li>
         <li><strong>Agent integration:</strong> <code>roam mcp-setup claude-code</code> (or <code>cursor</code>, <code>windsurf</code>, <code>vscode</code>, <code>gemini-cli</code>, <code>codex-cli</code>) — then see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope and canonical agent loop.</li>
         <li><strong>Command workflows:</strong> <a href="/docs/command-reference">Command Reference</a> — examples and command families. Use <code>roam &lt;command&gt; --help</code> for exact flags and <code>roam surface --json</code> for the complete inventory.</li>
         <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> — how the <a href="/docs/architecture#pipeline">index pipeline</a>, <a href="/docs/architecture#findings-registry">findings registry</a>, <a href="/docs/architecture#agent-os-substrate">agent-OS substrate</a>, and <a href="/docs/architecture#evidence-compiler">evidence compiler</a> fit together.</li>
         <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> — context before edit, impact before delete, critique before merge, simulate before refactor, math before optimise.</li>
-        <li><strong>Want a worked example on your own repo?</strong> <a href="/audit">Run a paid PR Replay</a> — we replay your last 5 PRs through Roam, return a signed evidence packet plus a written analyst report, and your spend converts to Review credit if you continue with the hosted product.</li>
+        <li><strong>Try your own repository:</strong> <a href="/audit#sample">Free local sample</a> — <code>roam pr-replay --tier sample</code> checks the <code>HEAD~5..HEAD</code> commit range by default, not five PR identities. It does not rerun tests. For founder review and a walk-through of a larger scope, <a href="/audit">ask about a paid report</a>; scope and terms are agreed before work begins.</li>
       </ul>
     </section>
 
@@ -171,7 +181,7 @@ roam symbol auth_login          # callers + callees for one symbol
 roam file src/auth/service.py   # file skeleton (symbols + line ranges)</code></pre>
 
       <h3>2. Estimate change risk</h3>
-<pre><code>roam impact auth_login          # blast radius: what breaks if this changes
+<pre><code>roam impact auth_login          # indexed callers to investigate before editing
 roam preflight auth_login       # pre-edit gate: blast + tests + complexity + fitness
 roam test-gaps --changed        # tests missing for the current diff</code></pre>
 
@@ -190,9 +200,14 @@ roam rules --rules-dir rules/community
 roam health --gate</code></pre>
 
       <h3 id="mcp-integration">5. Integrate with your agent</h3>
-<pre><code>roam mcp-setup claude-code --write   # writes or safely merges ./.mcp.json
-roam mcp --list-tools           # 246 tools registered; 17 in the default `core` preset
-ROAM_MCP_PRESET=core roam mcp   # start the server (stdio transport)</code></pre>
+<pre><code>roam mcp-setup claude-code          # preview the configuration
+roam mcp-setup claude-code --write  # write or safely merge ./.mcp.json
+roam mcp --list-tools-json          # inspect this local process's inventory</code></pre>
+      <p>Restart the client after changing its configuration or preset, then
+        inspect the connected server's tools in that client. A local inventory
+        does not establish which installation the client launched. See the
+        <a href="/docs/integration-tutorials">client-specific setup steps</a>
+        for executable paths, working directories, and connection checks.</p>
       <p>
         Supported clients: <code>claude-code</code>, <code>cursor</code>, <code>windsurf</code>,
         <code>vscode</code>, <code>gemini-cli</code>, <code>codex-cli</code>. Run
@@ -218,13 +233,13 @@ roam --json test-gaps --changed</code></pre>
       </p>
       <h3>Example: roam + CodeQL co-deploy</h3>
       <p>
-        Run roam alongside GitHub CodeQL and upload both SARIF streams to Code Scanning — coverage is additive, not redundant. See the sample workflow: <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/templates/ci/roam-sarif-with-codeql.yml"><code>src/roam/templates/ci/roam-sarif-with-codeql.yml</code></a>.
+        Run Roam alongside GitHub CodeQL and upload both SARIF streams to Code Scanning. Inspect the findings and their overlap; two reports do not establish complete coverage. See the sample workflow: <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/templates/ci/roam-sarif-with-codeql.yml"><code>src/roam/templates/ci/roam-sarif-with-codeql.yml</code></a>.
       </p>
     </section>
 
     <section id="troubleshooting">
       <h2>Troubleshooting</h2>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead>
           <tr><th>Symptom</th><th>Command</th><th>Expected fix</th></tr>
         </thead>
@@ -242,7 +257,7 @@ roam --json test-gaps --changed</code></pre>
           <tr>
             <td>MCP client cannot see tools</td>
             <td><code>roam mcp --list-tools</code></td>
-            <td>Verifies server + current preset/tool exposure</td>
+            <td>Lists tools for this local process; separately inspect the client's connected server and preset</td>
           </tr>
           <tr>
             <td>Tool hangs from MCP client</td>
@@ -255,7 +270,7 @@ roam --json test-gaps --changed</code></pre>
             <td>Applies tuned thresholds and severities</td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <nav class="docs-footer-nav" aria-label="Pagination">
@@ -274,7 +289,7 @@ roam --json test-gaps --changed</code></pre>
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
+        <span>A local map and free static checks for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

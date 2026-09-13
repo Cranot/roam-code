@@ -3297,12 +3297,14 @@ _HANDLE_GC_MIN_FILES = 50  # only consider GC once dir has > this many entries
 
 
 def _gc_dir_is_usable(handle_dir: Path) -> bool:
-    """Return True iff ``handle_dir`` exists and is a directory. False on
-    missing path, regular-file shadow, or any OSError during the check —
-    silent-skip is the GC contract (never poison an in-flight tool response)."""
+    """Check directory presence; propagate access errors for disclosure.
+
+    A missing path or regular file is not a directory. An access error is
+    unknown, handled by the response boundary rather than a benign False.
+    """
     try:
-        return handle_dir.is_dir()
-    except OSError:
+        return _stat_mod.S_ISDIR(handle_dir.stat().st_mode)
+    except (FileNotFoundError, NotADirectoryError):
         return False
 
 
@@ -3435,8 +3437,8 @@ def _gc_handle_dir(handle_dir: Path) -> None:
         dir — never recurses, never follows symlinks out of scope.
       * Tolerates files vanishing mid-iteration (another process / GC race).
       * If ``handle_dir`` is missing or not a directory, returns silently.
-      * Never raises — GC is opportunistic; the caller has more important
-        work (a tool response is mid-flight).
+      * Access-probe failures propagate to the response boundary, which
+        preserves the handle and discloses unknown maintenance state.
 
     Implementation: split across ``_gc_*`` helpers; this orchestrator
     wires them in eviction-order. Path-confinement is centralised in
@@ -3564,7 +3566,7 @@ def _persist_handle_blob(handle_dir: Path, sha: str, blob: str) -> Path | None:
     handle payloads can include source excerpts, taint findings, and
     PageRank data. Returns the target ``Path`` on success, or ``None``
     on ``OSError`` (read-only filesystem / permission issue — caller
-    should ship the fat envelope rather than fail the call).
+    must disclose unavailable response storage).
 
     Idempotent: identical payloads reuse the same file (content-addressed).
     """
@@ -3597,7 +3599,7 @@ def _persist_handle_blob(handle_dir: Path, sha: str, blob: str) -> Path | None:
     return target
 
 
-def _maybe_run_amortised_gc(handle_dir: Path) -> None:
+def _maybe_run_amortised_gc(handle_dir: Path) -> str | None:
     """Best-effort handle-directory GC, amortised across many calls.
 
     Runs ``_gc_handle_dir`` when EITHER:
@@ -3605,9 +3607,9 @@ def _maybe_run_amortised_gc(handle_dir: Path) -> None:
     * directory has grown past ``_HANDLE_GC_MIN_FILES`` entries, OR
     * we've written ``_HANDLE_GC_RUN_EVERY`` times since the last pass.
 
-    Both gates are wrapped in try/except so a failure here never poisons
-    the response we're about to return; recurring GC breakage surfaces
-    under ``ROAM_VERBOSE`` via ``log_swallowed``.
+    Return a stable disclosure reason on failure without losing the stored
+    response. None means no failure was observed, not proof of an exhaustive
+    cleanup (individual eviction races remain best-effort).
     """
     try:
         _HANDLE_GC_WRITE_COUNTER["n"] += 1
@@ -3615,17 +3617,20 @@ def _maybe_run_amortised_gc(handle_dir: Path) -> None:
         if _HANDLE_GC_WRITE_COUNTER["n"] >= _HANDLE_GC_RUN_EVERY:
             run_gc = True
         else:
-            try:
-                # Cheap len() check on listdir; bounded by directory size.
-                if len(os.listdir(handle_dir)) > _HANDLE_GC_MIN_FILES:
-                    run_gc = True
-            except OSError:
-                run_gc = False
+            # Cheap len() check on listdir; bounded by directory size.
+            if len(os.listdir(handle_dir)) > _HANDLE_GC_MIN_FILES:
+                run_gc = True
         if run_gc:
             _HANDLE_GC_WRITE_COUNTER["n"] = 0
             _gc_handle_dir(handle_dir)
     except Exception as exc:  # noqa: BLE001 — GC must never break the tool response
         log_swallowed("mcp_server:handle_gc", exc)
+        return "handle_gc_unavailable"
+    return None
+
+
+_HANDLE_PREVIEW_MAX_BYTES = 4096
+_HANDLE_PREVIEW_TEXT_CHARS = 512
 
 
 def _build_handle_preview(payload: dict) -> dict:
@@ -3633,7 +3638,7 @@ def _build_handle_preview(payload: dict) -> dict:
 
     Includes (when present):
 
-    * ``summary`` — the full summary dict (already small by contract);
+    * ``summary`` — full when small; bounded orientation when oversized;
     * ``command`` / ``schema`` / ``schema_version`` / ``version`` —
       orientation metadata;
     * ``sections`` — the names of any compound-envelope sections, so
@@ -3653,7 +3658,31 @@ def _build_handle_preview(payload: dict) -> dict:
         sections = payload["summary"].get("sections")
         if isinstance(sections, list):
             preview["sections"] = sections
-    return preview
+    if len(json.dumps(preview, default=str).encode("utf-8")) <= _HANDLE_PREVIEW_MAX_BYTES:
+        return preview
+
+    # Summaries can contain nested compound evidence. A handle must not copy
+    # that unbounded payload back into the response it was meant to shorten.
+    # The content-addressed stored payload remains unchanged and fetchable.
+    summary = payload.get("summary")
+    compact = {"detail_omitted": True, "summary": {}}
+    if isinstance(summary, dict):
+        for key in ("verdict", "state", "truncation_reason"):
+            if isinstance(summary.get(key), str):
+                compact["summary"][key] = summary[key][:_HANDLE_PREVIEW_TEXT_CHARS]
+        for key in ("partial_success", "truncated"):
+            if isinstance(summary.get(key), bool):
+                compact["summary"][key] = summary[key]
+    for key in ("command", "schema", "schema_version", "version"):
+        if isinstance(payload.get(key), str):
+            compact[key] = payload[key][:_HANDLE_PREVIEW_TEXT_CHARS]
+    # Account for JSON escaping, including non-ASCII and control characters.
+    while len(json.dumps(compact).encode("utf-8")) > _HANDLE_PREVIEW_MAX_BYTES:
+        for mapping in (compact, compact["summary"]):
+            for key, value in mapping.items():
+                if isinstance(value, str):
+                    mapping[key] = value[: len(value) // 2]
+    return compact
 
 
 def _build_handle_envelope(*, sha: str, size: int, target: Path, tool_name: str, preview: dict) -> dict:
@@ -3661,10 +3690,11 @@ def _build_handle_envelope(*, sha: str, size: int, target: Path, tool_name: str,
 
     Shape is the public ``roam-code.com/spec/handle/v1`` contract — agents
     branch on ``is_handle`` to decide whether to call ``roam_fetch_handle``.
-    Byte-stable: any change here must update the lock-in tests in
+    Preserve the required shape, delivery limits and round-trip behavior in
     ``tests/test_mcp_handle_off.py`` and ``tests/test_response_volume_handles.py``.
     """
     return {
+        "command": preview.get("command") if isinstance(preview.get("command"), str) else tool_name,
         "schema": "roam-code.com/spec/handle/v1",
         "schema_version": "1.0.0",
         "is_handle": True,
@@ -3675,6 +3705,11 @@ def _build_handle_envelope(*, sha: str, size: int, target: Path, tool_name: str,
         "preview": preview,
         "fetch_with": f"roam_fetch_handle(handle='{sha}')",
         "summary": {
+            **(
+                {"partial_success": preview["summary"]["partial_success"]}
+                if isinstance(preview.get("summary", {}).get("partial_success"), bool)
+                else {}
+            ),
             "verdict": (
                 f"large response ({size:,} bytes) stored as handle {sha}; fetch the full payload via roam_fetch_handle"
             ),
@@ -3682,6 +3717,34 @@ def _build_handle_envelope(*, sha: str, size: int, target: Path, tool_name: str,
             "handle": sha,
         },
     }
+
+
+def _handle_delivery_failure(payload: dict, *, tool_name: str, size: int) -> dict:
+    """Disclose response delivery failure without implying operation rollback."""
+    hint = "Restore response storage and check whether the operation completed before retrying."
+    result = _structured_error(
+        {
+            "command": tool_name,
+            "error_code": "COMMAND_FAILED",
+            "status": "partial_failure",
+            "error": "Large response could not be saved; full evidence is unavailable.",
+            "hint": hint,
+        }
+    )
+    # Preserve delivery semantics even after the generic error-storm compactor.
+    result.update(
+        summary={
+            "verdict": "Response delivery incomplete: storage unavailable; operation may have completed",
+            "state": "response_storage_unavailable",
+            "partial_success": True,
+            "full_output_bytes": size,
+            "detail_available": False,
+        },
+        preview=_build_handle_preview(payload),
+        suggested_action=hint,
+        retryable=False,
+    )
+    return result
 
 
 def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
@@ -3706,15 +3769,23 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
         return payload
     blob, size, sha = serialised
 
-    handle_dir = _handle_storage_dir()
-    target = _persist_handle_blob(handle_dir, sha, blob)
+    try:
+        handle_dir = _handle_storage_dir()
+        target = _persist_handle_blob(handle_dir, sha, blob)
+    except OSError:
+        target = None
     if target is None:
-        return payload
+        return _handle_delivery_failure(payload, tool_name=tool_name, size=size)
 
-    _maybe_run_amortised_gc(handle_dir)
+    gc_warning = _maybe_run_amortised_gc(handle_dir)
 
     preview = _build_handle_preview(payload)
-    return _build_handle_envelope(sha=sha, size=size, target=target, tool_name=tool_name, preview=preview)
+    result = _build_handle_envelope(sha=sha, size=size, target=target, tool_name=tool_name, preview=preview)
+    if gc_warning:
+        result["summary"]["partial_success"] = True
+        result["summary"]["verdict"] += "; handle cleanup status unknown"
+        result["maintenance"] = {"state": "unknown", "reason": gc_warning}
+    return result
 
 
 def _wrap_with_handle_off(name: str, fn):
@@ -7924,7 +7995,7 @@ def ask(
 
 @_tool(
     name="roam_health",
-    description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.",
+    description="Assess codebase health (0-100) with issue breakdown, cycles and bottlenecks. Set all_issues for full classification; the historical score is unchanged.",
     output_schema=_SCHEMA_HEALTH,
     task_mode="required",
 )
@@ -7932,6 +8003,7 @@ async def health(
     root: str = ".",
     summarize: bool | None = None,
     ctx: _Context | None = None,
+    all_issues: bool = False,
 ) -> dict:
     """Codebase health score (0-100) with issue breakdown.
 
@@ -7942,12 +8014,15 @@ async def health(
 
     Parameters
     ----------
+    all_issues:
+        Classify every qualifying indexed candidate while retaining the
+        historical top-candidate score. Default keeps the bounded candidate view.
     summarize:
         If True and the client supports MCP sampling, returns a sampled
         prose summary that highlights the top 3 issues to fix. Falls
         back to the raw envelope when sampling is unavailable.
     """
-    result = _run_roam(["health"], root)
+    result = _run_roam(["health", *(["--all-issues"] if all_issues else [])], root)
     # when the issue count is huge, drop the verbose lists
     # and keep only the score + per-category counts. The full payload is
     # always fetched on disk (cache hit on the next call would still
@@ -7971,8 +8046,10 @@ async def health(
             }
             trimmed = {k: v for k, v in result.items() if k in keep}
             trimmed["truncated"] = True
+            trimmed["truncation_reason"] = "detail_mode"
             trimmed["truncated_hint"] = (
-                "issue list dropped (>= 50 issues). Run `roam health` from CLI for the full list, "
+                "issue list dropped (>= 50 issues). Run `roam --json --budget 0 --detail health --all-issues` "
+                "for all classified candidates, "
                 "or set ROAM_MCP_HEALTH_FULL=1 for the unfiltered MCP envelope."
             )
             result = trimmed
@@ -10503,25 +10580,20 @@ def trace_tool(source: str, symbol: str, root: str = ".") -> dict:
 @_tool(
     name="roam_impact",
     description=(
-        "Blast radius for 'is it safe to change?' — symbols + files affected, in "
-        "5 lines. Compact decision-support output. Round 4 / S: the right "
-        "default tool for safety-checks; preflight is heavier."
+        "Inspect indexed dependents and files a symbol change could affect. "
+        "Use the reported scope, traversal limits and partial-result fields "
+        "to choose follow-up checks; reachability is not proven breakage."
     ),
     output_schema=_SCHEMA_IMPACT,
 )
 def impact(symbol: str, root: str = ".") -> dict:
-    """Show the blast radius of changing a symbol.
+    """Inspect indexed dependents before changing a symbol.
 
-    WHEN TO USE: as the FIRST safety check before touching a symbol.
-    Compact output (typical: 2-5 lines) directly answers "if I change
-    this, what breaks?". Round 4 dogfood promoted this as the default
-    decision-support tool — cleaner than ``roam_diagnose`` for the
-    binary safety question, and lighter than ``roam_prepare_change``.
-
-    Everything that would break if the signature or behavior changed.
-    Affected symbols by hop distance, affected files, severity. Step up
-    to ``roam_preflight`` when you also need test coverage + fitness
-    rule analysis on the same target."""
+    Use hop distances, affected files and importance to choose what to inspect.
+    Read traversal limits and partial-result fields; indexed reachability does
+    not prove breakage or include every possible runtime caller. Use
+    ``roam_prepare_change`` for a broader pre-change analysis, including test
+    suggestions and fitness rules. Suggested tests still need to be run."""
     return _run_roam(["impact", symbol], root)
 
 
@@ -15786,9 +15858,13 @@ def roam_history_grep(
         "Audit literal strings across the project and emit a per-string "
         "verdict: SAFE-TO-REMOVE / REVIEW / LOAD-BEARING. Groups every "
         "reference by surface (code, test, docs, config, generated, "
-        "vendored) and annotates reachability for code hits. Require "
-        "REVIEW when a failed search leaves reference absence unconfirmed."
+        "vendored) and annotates indexed reachability. Inspect partial_success "
+        "and unresolved_code_references; unknown or indexed-unreachable code "
+        "hits require REVIEW. Keep observed LOAD-BEARING evidence even when "
+        "other references are unresolved. SAFE-TO-REMOVE describes scoped "
+        "text absence, not deletion approval."
     ),
+    version="2.0.0",
 )
 def roam_refs_text(
     strings: str = "",
@@ -15810,9 +15886,10 @@ def roam_refs_text(
 
     Verdict ladder:
 
-    * ``SAFE-TO-REMOVE`` -- only doc / test / dead-code references.
-    * ``REVIEW`` -- referenced in one or two reachable code symbols, or
-      the reference search is incomplete.
+    * ``SAFE-TO-REMOVE`` -- no source-code hits in the selected search scope;
+      not permission to delete. Non-code references still need inspection.
+    * ``REVIEW`` -- unknown reachability, indexed-unreachable code hits,
+      an incomplete search, or one or two reachable code symbols.
     * ``LOAD-BEARING`` -- referenced in many reachable code symbols, or
       in symbols with non-trivial PageRank.
 
@@ -15839,7 +15916,9 @@ def roam_refs_text(
         Include every match in JSON output (default: only summary +
         per-surface counts).
 
-    Returns: ``{summary: {verdict, total_targets, ...}, per_string: {...}}``.
+    Returns: ``{summary: {verdict, partial_success, search_scope, ...}, results: [...]}``.
+    Per-string rows preserve resolution and unresolved_code_references. A null
+    reachable value means no enclosing indexed symbol, never proven dead code.
     """
     args: list[str] = ["refs-text"]
     targets = [s.strip() for s in (strings or "").split(",") if s.strip()]
@@ -15850,8 +15929,10 @@ def roam_refs_text(
         g = g.strip()
         if g:
             args.extend(["-g", g])
-    # CLI's --fixed-string defaults to True; only need to skip when
-    # caller wants regex. Same LAW 11 note as roam_history_grep.
+    # The CLI defaults to literal matching. Omitting -F does not opt into
+    # regex; forward the requested mode explicitly rather than change the query.
+    if not fixed:
+        args.append("-E")
     if case_insensitive:
         args.append("-i")
     if not with_clones:

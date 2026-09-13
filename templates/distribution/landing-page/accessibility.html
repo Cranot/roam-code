@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Accessibility — Roam · WCAG 2.2 AA conformance</title>
-  <meta name="description" content="Roam targets WCAG 2.2 Level AA. What is implemented, what we know is incomplete, the testing approach, and how to report accessibility issues to us.">
+  <title>Accessibility — Roam · Approach and known limits</title>
+  <meta name="description" content="Roam targets WCAG 2.2 Level AA. Read about the approach, known gaps, and how to report an issue. This is not an independent accessibility certification.">
   <link rel="canonical" href="https://roam-code.com/accessibility">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -17,8 +17,8 @@
   <link rel="preload" href="./landing.css" as="style">
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
-  <meta property="og:title" content="Accessibility — Roam">
-  <meta property="og:description" content="WCAG 2.2 AA commitment + how to report issues.">
+  <meta property="og:title" content="Accessibility — Roam · Approach and known limits">
+  <meta property="og:description" content="Roam targets WCAG 2.2 Level AA. Read about the approach, known gaps, and how to report an issue. This is not an independent accessibility certification.">
   <meta property="og:url" content="https://roam-code.com/accessibility">
   <meta property="og:image" content="https://roam-code.com/og.png">
 
@@ -29,7 +29,7 @@
     "name": "Accessibility",
     "url": "https://roam-code.com/accessibility",
     "inLanguage": "en",
-    "dateModified": "2026-05-07",
+    "dateModified": "2026-09-13",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -48,27 +48,35 @@
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
-        <li><a href="/compare">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
         <li><a href="/docs/">Docs</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
       </ul>
     </div>
   </nav>
 
-  <main id="main" class="legal-page">
+  <main tabindex="-1" id="main" class="legal-page">
     <header class="legal-header">
       <h1>Accessibility</h1>
-      <p class="legal-meta">Last reviewed: <time datetime="2026-05-07">2026-05-07</time></p>
+      <p class="legal-meta">Statement updated: <time datetime="2026-09-13">2026-09-13</time> — not a new accessibility audit</p>
     </header>
 
     <article>
@@ -78,34 +86,32 @@
         <strong>WCAG 2.2 Level AA</strong> conformance.
       </p>
 
-      <h2>Current conformance</h2>
+      <h2>Approach and verification limits</h2>
       <p>
-        Self-assessed against WCAG 2.2 AA criteria as of the date above.
-        We pass on the audited surface (all 7 marketing pages):
+        Our May 2026 self-assessment covered an earlier seven-page site.
+        It does not establish conformance of the redesigned pages or interactive
+        code atlas. This statement describes our approach; it is not a conformance certification.
       </p>
       <ul>
-        <li><strong>Contrast</strong> — every text/background pair meets or exceeds 4.5:1 (AA), most exceed 7:1 (AAA)</li>
-        <li><strong>Keyboard navigation</strong> — every interactive element is reachable and operable via keyboard; visible focus indicator on every focusable element</li>
+        <li><strong>Contrast and focus</strong> — shared color tokens, visible focus styles and selected source-level contrast checks. These do not measure every rendered combination.</li>
         <li><strong>Skip-to-content link</strong> — present on every page; visible on focus</li>
         <li><strong>Semantic HTML</strong> — <code>&lt;nav&gt;</code>, <code>&lt;main&gt;</code>, <code>&lt;footer&gt;</code> landmarks used correctly; one <code>&lt;h1&gt;</code> per page</li>
         <li><strong>Reduced motion</strong> — <code>@media (prefers-reduced-motion: reduce)</code> disables hover transforms</li>
-        <li><strong>Forms</strong> — none on the marketing site (CTAs are <code>mailto:</code> links). When forms launch with paid services, every input will be labelled and announce errors clearly.</li>
-        <li><strong>Images</strong> — all decorative; no missing alt-text</li>
-        <li><strong>Tables</strong> — comparison/pricing tables use <code>&lt;caption&gt;</code> + <code>scope=&quot;col&quot;/&quot;row&quot;</code>; screen readers announce them correctly</li>
+        <li><strong>Map controls</strong> — the atlas has a labelled area chooser, keyboard handlers and a static fallback. Its informative image has descriptive alternative text; decorative marks are hidden from assistive technology.</li>
+        <li><strong>Tables</strong> — comparison/pricing tables use captions and header scopes, inside named scrollable regions. Actual screen-reader behavior needs separate testing.</li>
       </ul>
 
       <h2>Known gaps</h2>
       <ul>
-        <li>The "Made in the EU" footer line + numeric stats are decorative, not announced separately by screen readers — they integrate into the surrounding text. Acceptable.</li>
-        <li>The terminal-output demo block uses a monospace font for visual fidelity; a screen-reader user gets the literal text content, which may be verbose. Acceptable trade-off.</li>
-        <li>The comparison-table on mobile scrolls horizontally inside a wrapper; screen-reader users get the full table linearly. Acceptable.</li>
+        <li>The visual map is not a complete text description of every connection. The area chooser and adjacent details provide another way to explore it.</li>
+        <li>Long code examples and wide tables can require scrolling. Their usability with enlarged text and assistive technology needs continuing review.</li>
       </ul>
 
-      <h2>Tested with</h2>
+      <h2>What our source checks cover</h2>
       <ul>
-        <li>Programmatic contrast computation (every CSS color pair against its background)</li>
-        <li>Manual keyboard-only navigation</li>
-        <li>HTML semantic landmark presence checks</li>
+        <li>Selected color-pair calculations, shared typography and focus styles</li>
+        <li>Navigation, landmarks, labels and table markup</li>
+        <li>Map loading, retry and keyboard handlers in a controlled DOM test</li>
       </ul>
       <p>
         Not yet tested with: real screen-reader sessions (VoiceOver, NVDA,
@@ -133,7 +139,7 @@
       </p>
 
       <p class="legal-foot">
-        Last verified by self-assessment on the date above.
+        The update date records a wording correction, not a fresh browser or screen-reader assessment.
       </p>
     </article>
 
@@ -148,7 +154,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
+        <span>A local map and free static checks for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

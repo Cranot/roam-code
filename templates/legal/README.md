@@ -1,6 +1,6 @@
 # Legal templates
 
-> **Cluster refreshed 2026-05-18.** This directory holds contract templates
+> **Credit and dispute-link alignment: 2026-09-09; other cluster terms: 2026-05-18.** This directory holds contract templates
 > used for paid roam-code engagements. The four documents below operate as
 > one procurement cluster — sign in the order shown, and apply the
 > order-of-precedence rule (**SOW > DPA > ToS**) per `dpa.md` §1 when terms
@@ -23,8 +23,8 @@ of `[TBD: PROVIDER_VENUE_CITY]`** (mirrors `sow-pr-replay.md`,
 
 | File | Purpose | Last polish |
 |---|---|---|
-| `sow-pr-replay.md` | Current PR Replay Statement of Work template. Copy and customise per engagement. Canonical pricing: **Team $2,500 / Deep $6,000**, with **$1,250 / $3,000** Roam Review credits within 60 days of delivery. | 2026-05-18 |
-| `nda-mutual.md` | One-page mutual NDA. Sign at first call when discussing a real codebase. SOW + DPA supersede confidentiality / personal-data clauses on execution (NDA §10A). | 2026-05-18 |
+| `sow-pr-replay.md` | Current PR Replay Statement of Work template. Copy and customise per engagement. Canonical pricing: **Team $2,500 / Deep $6,000**, with **$1,250 / $3,000** Roam Review credits redeemable within 60 calendar days after Roam Review reaches general availability, not after report delivery. | 2026-09-09 |
+| `nda-mutual.md` | Mutual NDA. Sign at first call when discussing a real codebase. SOW + DPA supersede confidentiality / personal-data clauses on execution (NDA §10A). Closed ODR platform link corrected; other terms unchanged. | 2026-09-09 |
 | `dpa.md` | Data Processing Agreement draft for PR Replay and planned Review processing. Required for EU clients before code access. Carries the canonical **14-day subprocessor notice** (§5) and **vuln SLA 1 business day ack / 2 business days triage** envelope. Still needs attorney review and final hosted-service placeholders before Review launch. | 2026-05-18 |
 | `security-procurement-packet.md` | Pre-fills the questions a typical security or procurement review will ask across all three surfaces: live CLI (local by default, with explicit documented network features), live PR Replay engagements, and the planned Roam Review hosted GitHub App. Covers data flow, GitHub App permissions, sub-processors, retention, no-training statement, incident response, SLA, the local evidence substrate (run ledger, modes, findings registry, `ChangeEvidence`, signed `pr-bundle` + CGA / VSA, OSCAL export, MCP decision receipts), and the maps-to-not-certified compliance stance. Pair with `dpa.md` for binding terms. | 2026-05-18 |
 
@@ -89,5 +89,5 @@ binding):
   wording. The classification call stays with the client and their DPO.
 - Do NOT improvise pricing — match `sow-pr-replay.md` §1 / §7 verbatim
   (Team $2,500 / Deep $6,000, with $1,250 / $3,000 Review credits within 60
-  days of delivery). The customer-journey email cohort enforces the same
+  calendar days after Roam Review reaches general availability). The customer-journey email cohort enforces the same
   numbers; drift in any one place is a drift everywhere.

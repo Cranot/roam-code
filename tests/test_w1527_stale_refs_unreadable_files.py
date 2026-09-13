@@ -63,6 +63,8 @@ _OVERSIZE_BYTES = 1_100_000
 
 
 def _git(cwd, *args):
+    # Intentional integration I/O: Git tracks only the temporary fixture, so
+    # tracked-but-unreadable discovery is exercised without a mocked Git answer.
     subprocess.run(
         ["git", *args],
         cwd=str(cwd),
@@ -70,6 +72,7 @@ def _git(cwd, *args):
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
+        timeout=30,
     )
 
 
@@ -130,6 +133,44 @@ def test_reader_succeeds_normally(tmp_path):
     assert _read_text_with_reason(ok) == ("hello", None)
 
 
+@pytest.mark.parametrize("output", ["json", "text", "sarif"])
+@pytest.mark.parametrize("directory", ["private-docs", "private-docs.bin"])
+def test_unenumerable_directory_is_unknown_not_a_file(cli_runner, refs_project, monkeypatch, output, directory):
+    import roam.commands.cmd_stale_refs as mod
+    from roam.index.discovery import SKIP_UNENUMERABLE
+
+    # Exercise the actual CLI consumer of discovery's documented skip shape.
+    # Injecting this boundary is deterministic across Windows/POSIX/root users;
+    # OS permission fixtures cannot reliably force enumeration failure on all.
+    real_discover = mod.discover_files_with_skips
+
+    def discover_with_unknown_directory(*args, **kwargs):
+        paths, skips = real_discover(*args, **kwargs)
+        skips[SKIP_UNENUMERABLE] = [directory]
+        return paths, skips
+
+    (refs_project / "docs" / "big.md").write_text("No references.\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "discover_files_with_skips", discover_with_unknown_directory)
+    flags = ["--json"] if output == "json" else ["--sarif"] if output == "sarif" else []
+    result = invoke_cli(cli_runner, ["stale-refs", "--gate", *flags], cwd=refs_project)
+    assert result.exit_code == 5, result.output
+    if output == "json":
+        data = json.loads(result.output)
+        assert data["summary"]["partial_success"] is True
+        assert data["summary"]["scan_incomplete"] is True
+        assert data["summary"]["directories_unenumerable"] == 1
+        assert data["summary"]["files_unreadable"] == 0
+        assert data["summary"]["files_scanned"] > 0
+        assert data["unenumerable_directories"] == [directory]
+        assert "all refs resolve" not in data["summary"]["verdict"]
+    elif output == "text":
+        assert "SCAN INCOMPLETE" in result.output
+        assert directory in result.output
+        assert "unknown" in result.output.lower()
+    else:
+        assert "stale_refs_scan_incomplete:1_directories_unenumerable" in result.output
+
+
 # ---------------------------------------------------------------------------
 # MUST FIRE -- a file that was not read is not a file that resolved
 # ---------------------------------------------------------------------------
@@ -157,6 +198,32 @@ def test_oversize_file_does_not_silently_clear_the_gate(cli_runner, refs_project
     assert "all refs resolve" not in summary["verdict"]
     assert [item["file"] for item in data["unreadable_files"]] == ["docs/big.md"]
     assert data["unreadable_files"][0]["reason"] == "oversized"
+
+
+def test_growth_after_discovery_keeps_gate_incomplete(cli_runner, refs_project, monkeypatch):
+    from pathlib import Path
+
+    import roam.commands.cmd_stale_refs as mod
+
+    target = refs_project / "docs" / "big.md"
+    real_open = open
+
+    def grow_then_open(path, *args, **kwargs):
+        # Fixture-local mutation at the actual reader boundary reproduces the
+        # race without threads or timing assumptions. Discovery saw a small file.
+        if Path(path).resolve() == target.resolve():
+            target.write_bytes(b"x" * _OVERSIZE_BYTES)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(mod, "open", grow_then_open, raising=False)
+    result = invoke_cli(cli_runner, ["stale-refs", "--gate", "--json"], cwd=refs_project)
+    assert result.exit_code == 5, result.output
+    data = json.loads(result.output)
+    assert data["summary"]["scan_incomplete"] is True
+    assert data["summary"]["files_unreadable"] == 1
+    assert data["summary"]["partial_success"] is True
+    assert data["unreadable_files"][0]["file"] == "docs/big.md"
+    assert "oversize" in data["unreadable_files"][0]["reason"]
 
 
 def test_unreadable_file_does_not_silently_clear_the_gate(cli_runner, refs_project, monkeypatch):

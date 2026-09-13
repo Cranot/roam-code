@@ -41,35 +41,43 @@
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
+        <li><a href="/docs/" aria-current="true">Docs</a></li>
         <li><a href="/compare">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
-        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
       </ul>
     </div>
   </nav>
 
   <nav class="docs-subnav" aria-label="Documentation sections">
     <div class="docs-subnav-inner">
-      <a href="/docs/getting-started">Getting Started</a>
+      <a href="/docs/getting-started">Get started</a>
       <a href="/docs/integration-tutorials">Integrations</a>
-      <a href="/docs/command-reference">Command Reference</a>
+      <a href="/docs/command-reference">Command reference</a>
       <a href="/docs/architecture">Architecture</a>
-      <a href="/docs/agent-contract">Agent Contract</a>
+      <a href="/docs/agent-contract">Agent contract</a>
       <a href="/docs/troubleshooting">Troubleshooting</a>
     </div>
   </nav>
 
-  <main id="main">
+  <main tabindex="-1" id="main">
 
   <header class="hero">
     <div class="hero-inner">
@@ -100,18 +108,14 @@
         find the command later.
       </p>
       <p>
-        Underneath every command is the same model: parse the repo once,
-        store structural facts in a local SQLite index, and answer
-        questions from that index. The output of each command lands as
-        a JSON envelope; the audit pipeline composes those envelopes
-        into typed <code>ChangeEvidence</code> packets that answer the
-        eight evidence questions &mdash; who acted, what authority they
-        had, what context was read, what changed, what could break,
-        what policy applied, what verified it, and who accepted risk.
-        See <a href="/docs/architecture">architecture</a> for the
-        compiler and <a href="/audit">Roam Audit</a> for the
-        analyst-driven projection of the same packets into a written
-        report.
+        Build a local index, refresh it as code changes, and let the agent
+        reuse its symbols and relationships. Some checks also inspect current
+        source, Git state, or supplied records. Use <code>--json</code> for
+        results an agent acts on, and keep scope, freshness, and incomplete
+        checks visible. Configured evidence workflows can collect supported
+        observations into a <code>ChangeEvidence</code> record. See
+        <a href="/docs/architecture">architecture</a> for the components and
+        <a href="/audit">PR Replay</a> for paid interpretation of an agreed scope.
       </p>
     </div>
   </section>
@@ -147,8 +151,9 @@
         <p>
           You have a feature, a bug, or a phrase like "trace login flow"
           or "where is the n+1?" You need ranked, budget-bounded spans —
-          not a grep wall. Roam returns the spans that matter, ranked by
-          PageRank, clone signal, runtime hotness, and lexical match.
+          not a long list of text matches. Roam ranks candidate spans using
+          lexical and available structural signals. Inspect the selected
+          source and missing signals; ranking does not guarantee complete context.
         </p>
         <p>
           Commands: <code>roam context</code> ·
@@ -167,9 +172,10 @@
         <h2>3. "I'm about to edit X. What breaks?"</h2>
         <p>
           Before any edit, ask Roam for the blast radius: who calls this
-          symbol transitively, which tests cover it, and what fitness
+          symbol transitively, which tests may be related, and what fitness
           rules guard the surrounding architecture. The answer tells you
-          whether the change is local, regional, or cross-cutting.
+          how widely the indexed relationships extend. Suggested tests still
+          need execution; static relationships are not runtime coverage.
         </p>
         <p>
           Commands: <code>roam preflight</code> ·
@@ -188,11 +194,10 @@
       <div class="whats-in-inner">
         <h2>4. "Did the agent miss something on this PR?"</h2>
         <p>
-          The most common AI-PR failure is structural: the agent edited
-          one of three near-identical implementations, or the patch
-          touched a high-PageRank symbol without updating the callers.
-          Roam reads the diff against the graph and surfaces those
-          misses with a verdict line first.
+          A patch can change one of several similar implementations or touch
+          a function with callers elsewhere. Roam compares the intended patch
+          with indexed relationships and saved clone evidence. Findings guide
+          inspection; they are not automatically missed repairs.
         </p>
         <p>
           Commands: <code>roam critique</code> ·
@@ -200,9 +205,12 @@
           <code>roam pr-risk</code> ·
           <code>roam pr-analyze</code>.
         </p>
-<pre class="terminal" aria-label="PR-level structural review"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam pr-risk</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam clones --persist</span></pre>
+<pre class="terminal" aria-label="PR-level structural review"><span class="t-prompt">$</span> <span class="t-cmd">roam index</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam --json clones --persist</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam --json critique --working-tree --intent "Describe the intended change"</span></pre>
+        <p>This selects tracked staged and unstaged changes against HEAD,
+          not untracked files. Inspect the review source and each check's
+          completion, scope, and freshness before relying on its verdict.</p>
       </div>
     </section>
 
@@ -210,16 +218,11 @@
       <div class="whats-in-inner">
         <h2>5. "Is the agent's patch correct but slow?"</h2>
         <p>
-          The differentiator. Tests pass; the patch will fail at scale.
-          Roam detects the algorithmic shape: accidental O(n²) lookups,
-          N+1 queries, regex compiled inside hot loops, repeated JSON
-          parsing, missing indexes on hot tables, branching recursion
-          without memoisation. Cloud semantic reviewers (CodeRabbit,
-          Greptile, Qodo, SonarQube) read the diff for naming and
-          style; IDE surfaces (Cursor, Cody, Windsurf) log the
-          session. Neither runs this algorithmic-shape class of check.
-          Roam does, locally, before merge. See <a href="/compare">/compare</a>
-          for vendor positioning.
+          Passing tests need not expose expensive behavior on larger inputs.
+          Roam looks for supported patterns such as repeated lookups, database
+          work inside loops, and repeated parsing. Inspect the matched source
+          and assumptions, then measure a behavior-preserving alternative.
+          A static finding is not proof of a bottleneck or a speedup.
         </p>
         <p>
           Commands: <code>roam math</code> /
@@ -263,12 +266,11 @@
       <div class="whats-in-inner">
         <h2>7. "Can I refactor safely?"</h2>
         <p>
-          Before any move, rename, extract, or delete: clone the graph,
-          apply the transform in-memory, report what breaks. If the
-          simulation passes, <code>roam mutate</code> applies the
-          transform to source. <code>roam plan-refactor</code> emits a
-          step-by-step plan with caller-update ordering so a junior
-          agent can execute it without breaking the build.
+          Model a supported move, extraction, or deletion in a copy of the
+          graph before editing source. Inspect predicted structural changes
+          and the proposed refactor plan. Simulation does not prove runtime
+          behavior or build success; dynamic references need separate review.
+          <code>roam mutate</code> is a separate source-editing workflow.
         </p>
         <p>
           Commands: <code>roam simulate</code> ·
@@ -277,7 +279,7 @@
           <code>roam closure</code> ·
           <code>roam plan-refactor</code>.
         </p>
-<pre class="terminal" aria-label="Refactor-safety simulation"><span class="t-prompt">$</span> <span class="t-cmd">roam simulate move PaymentService src/billing/</span>
+<pre class="terminal" aria-label="Refactor-safety simulation"><span class="t-prompt">$</span> <span class="t-cmd">roam --json simulate move PaymentService src/billing/payment_service.py</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam safe-delete LegacyAdapter</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam plan-refactor PaymentService</span></pre>
       </div>
@@ -315,11 +317,10 @@
           <code>ChangeEvidence</code> packets that answer the eight
           evidence questions (who acted, what authority, what context,
           what changed, what could break, what policy, what verified it,
-          who accepted risk). For governance work &mdash; SOC 2, ISO
-          42001, AI Governance &mdash; the same packet projects to a
-          Code Graph Attestation (in-toto v1, optionally cosign-signed),
-          a SARIF file for GitHub Code Scanning, and an OSCAL-shaped
-          control mapping. The wording stays disciplined: Roam
+          who accepted risk). Missing inputs remain gaps, and an actor label
+          does not authenticate identity. Separate commands produce CodeGraph
+          statements, command-specific SARIF, and OSCAL control mappings;
+          not every exporter gathers from one shared packet. Roam
           <em>maps to</em> and <em>supports evidence for</em> controls;
           it never <em>certifies</em> or <em>makes compliant</em>. See
           <a href="/docs/agent-contract">/docs/agent-contract</a> for
@@ -334,9 +335,14 @@
           <code>roam audit-trail-verify</code> ·
           <code>--sarif</code>.
         </p>
-<pre class="terminal" aria-label="Audit-grade evidence emission"><span class="t-prompt">$</span> <span class="t-cmd">roam attest --sign</span>
+<pre class="terminal" aria-label="Evidence record commands"><span class="t-prompt">$</span> <span class="t-cmd">roam attest --format json --sign</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam audit-trail-export --since 2026-01-01</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam health --sarif &gt; health.sarif</span></pre>
+        <p><code>attest --sign</code> adds a SHA-256 content hash, not a
+          cosign signature. Use the separate <code>cga</code> signing and
+          verification path when required. <code>audit-trail-verify</code>
+          checks the PR-analysis trail; <code>roam runs verify</code> checks
+          a run ledger. Neither establishes that all required tests ran.</p>
       </div>
     </section>
 
@@ -381,9 +387,9 @@
           </li>
         </ul>
         <p>
-          The framing is complementary, never replacement. Roam plus a
-          linter plus a SAST tool plus an LLM reviewer covers the
-          surface; any one of them alone leaves a gap.
+          These tools answer different questions. Combining them can add
+          useful evidence, but no fixed list establishes complete coverage.
+          Keep the actual scope and remaining risks with the result.
         </p>
       </div>
     </section>
@@ -395,19 +401,18 @@
           <a href="/docs/agent-contract" class="btn-primary">Read the agent contract</a> ·
           <a href="/docs/command-reference">browse the full command reference</a> ·
           <a href="/docs/architecture">read the architecture</a> ·
-          <a href="/docs/getting-started">run the 10-minute tutorial</a>.
+          <a href="/docs/getting-started">follow the setup guide</a>.
         </p>
         <p>
           <strong>See it run:</strong>
-          <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash;
-          install &rarr; health &rarr; preflight &rarr; critique &rarr; signed
-          <code>ChangeEvidence</code> packet, end to end.
+          <a href="/docs/canonical-demo">The worked change-review demo</a> &mdash;
+          local queries, patch review, a saved bundle, and run-ledger verification.
         </p>
         <p>
-          <strong>Want the analyst-driven projection?</strong>
-          <a href="/audit">Roam Audit</a> replays your last five PRs
-          through the same pipeline and returns a signed evidence
-          packet plus a written report.
+          <strong>Want help interpreting your project's history?</strong>
+          <a href="/audit#tiers">Paid PR Replay reports</a> cover an agreed PR
+          scope and founder walk-through. The <a href="/audit#sample">free local
+          sample</a> uses <code>HEAD~5..HEAD</code>, not five identified PRs.
         </p>
       </div>
     </section>
@@ -420,7 +425,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
+        <span>A local map and free static checks for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">
