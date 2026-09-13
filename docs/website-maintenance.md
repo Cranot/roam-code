@@ -387,6 +387,14 @@ paths and Python source bytes. Its `source_hash_definition` names that
 representation: it is portable across Git checkout line endings, not a raw-byte
 checksum of the checkout. Other source-byte changes still change the digest.
 
+The metadata gate preserves the atlas SVG's two reviewed, exact accessibility
+text elements. Other titles/descriptions and authoring metadata remain checked;
+a filename or ARIA attribute does not exempt them. When changing this accessible
+copy, review the replacement and update the exact elements in
+`scripts/strip_metadata.py`, keeping the mixed benign/private metadata controls
+in `tests/test_svg_accessibility_metadata.py`. Do not remove the accessible name
+and description merely to satisfy the metadata gate.
+
 Review the skimmed page as well as its full prose: headings, action labels and
 diagrams can imply a stronger result than the nearby explanation. Trace pictured
 operations to current behavior and label illustrative output. Keep the command

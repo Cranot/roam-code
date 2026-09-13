@@ -120,6 +120,13 @@ def _run_subcommand(args: list[str]) -> dict:
     default=None,
     help="Pass-through to pr-analyze (default: auto-detect .roam/rules.yml).",
 )
+@click.option(
+    "--input",
+    "input_file",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    default=None,
+    help="Read a diff file for pr-analyze instead of uncommitted changes.",
+)
 @click.pass_context
 def dogfood_cmd(
     ctx,
@@ -127,8 +134,9 @@ def dogfood_cmd(
     pr_analyze_on: bool,
     audit_trail_on: bool,
     rules_file: str | None,
+    input_file: str | None = None,
 ) -> None:
-    """Run the v2 stack on the current repo and emit one combined envelope.
+    """Run audit, PR analysis and optional audit-trail checks together.
 
     \b
     Examples:
@@ -136,12 +144,14 @@ def dogfood_cmd(
       roam --json dogfood                # full envelope for tooling
       roam dogfood --no-audit-trail      # skip the audit-trail record
       roam dogfood --rules .roam/rules.yml
+      roam dogfood --input change.diff   # analyze an explicit committed diff
 
-    Designed as the first-touch experience for new users + as a local
-    self-check that surfaces everything Roam can show you in one command.
-    Reuses the same engines that power Roam Cloud Lite + Roam Agent Review.
+    Inspect the combined evidence and any incomplete sections. Supply --input
+    for a clean checkout's committed change; no diff is not a verified patch.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    if input_file and not pr_analyze_on:
+        raise click.UsageError("Use --pr-analyze with --input so the supplied diff is analyzed.")
     ensure_index()
 
     # W607-D: Pattern-2 consumer-layer wiring — thread a ``warnings_out``
@@ -208,9 +218,11 @@ def dogfood_cmd(
                 default={"_subcommand_failed": True, "error": "audit substrate raised"},
             )
 
-        # 2. roam pr-analyze on uncommitted diff (with audit-trail when requested)
+        # 2. PR analysis on explicit or uncommitted diff, with optional trail.
         if pr_analyze_on:
             pr_args = ["--json", "pr-analyze"]
+            if input_file:
+                pr_args.extend(["--input", input_file])
             if rules_file:
                 pr_args.extend(["--rules", rules_file])
             if audit_trail_on:

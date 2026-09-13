@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import time as stdlib_time
+from types import SimpleNamespace
 
 import pytest
 
@@ -78,12 +80,21 @@ def test_modes_preserve_scan_completeness(cli_runner, refs_project, monkeypatch,
         assert recorded["directories_unenumerable"] == int(incomplete)
 
 
-def test_watch_reports_gap_and_recovery_without_findings_change(cli_runner, refs_project, monkeypatch):
+@pytest.mark.parametrize("external_sleep_calls", [0, 3])
+def test_watch_reports_gap_and_recovery_without_findings_change(
+    cli_runner, refs_project, monkeypatch, external_sleep_calls
+):
     (refs_project / "docs/big.md").write_text("No references.\n", encoding="utf-8")
     original = mod.discover_files_with_skips
     scans = []
 
     def discover(*args, **kwargs):
+        # Discovery performs real fixture-local Git subprocesses. Model unrelated
+        # polling deterministically: POSIX subprocess waiting may also use sleep.
+        # These zero-duration calls must never consume the watch clock's ticks.
+        if not scans:
+            for _ in range(external_sleep_calls):
+                stdlib_time.sleep(0)
         paths, skips = original(*args, **kwargs)
         if not scans:
             skips[SKIP_UNENUMERABLE] = ["unseen.bin"]
@@ -102,13 +113,18 @@ def test_watch_reports_gap_and_recovery_without_findings_change(cli_runner, refs
     mtimes = iter([{}, {"changed.md": 1}])
     monkeypatch.setattr(mod, "discover_files_with_skips", discover)
     monkeypatch.setattr(mod, "_collect_mtimes", lambda *a, **k: next(mtimes, {"changed.md": 1}))
-    monkeypatch.setattr(mod.time, "sleep", sleep)
+    # Rebind only the command's clock: patching time.sleep mutates the shared
+    # stdlib module and can interrupt subprocess polling before the first scan.
+    monkeypatch.setattr(
+        mod, "time", SimpleNamespace(sleep=sleep, time=stdlib_time.time, perf_counter=stdlib_time.perf_counter)
+    )
     result = invoke_cli(cli_runner, ["stale-refs", "--watch"], cwd=refs_project, json_mode=False)
     assert result.exit_code == 0, result.output
     assert "initial: clean" not in result.output
     assert "SCAN INCOMPLETE" in result.output
     assert "unseen.bin" in result.output
     assert "SCAN COVERAGE RESTORED" in result.output
+    assert len(scans) == 2
 
 
 def test_watch_rejects_gate_instead_of_ignoring_it(cli_runner, refs_project, monkeypatch):

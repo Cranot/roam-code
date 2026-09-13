@@ -18,8 +18,21 @@ def test_workflow_collects_uncapped_artifact_without_weakening_gate():
         for step in job.get("steps", [])
         if "dogfood execution degraded" in step.get("run", "")
     )
-    assert ".venv/bin/roam --json --budget 0 dogfood > dogfood.json" in script
+    assert '.venv/bin/roam --json --budget 0 dogfood --input "$RUNNER_TEMP/roam-dogfood.diff" > dogfood.json' in script
     assert 's.get("partial_success") is not False' in script
+
+
+def test_workflow_supplies_math_dependencies_finite_scan_budget_and_event_diff():
+    workflow = yaml.safe_load((repo_root() / ".github/workflows/dogfood.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["dogfood"]["steps"]
+    install = next(step["run"] for step in steps if step.get("name") == "Sync the exact runtime graph")
+    assert "uv sync --locked --no-default-groups --extra metrics --python python" in install
+    prepare = next(step for step in steps if step.get("name") == "Prepare immutable dogfood diff")
+    assert "github.event.pull_request.base.sha || github.event.before" in prepare["env"]["EVENT_BASE_SHA"]
+    assert 'git diff --no-ext-diff --no-textconv "$base" "$head" --' in prepare["run"]
+    assert 'test -s "$RUNNER_TEMP/roam-dogfood.diff"' in prepare["run"]
+    run = next(step for step in steps if "dogfood execution degraded" in step.get("run", ""))
+    assert run["env"]["ROAM_STALE_REFS_MAX_BYTES"] == "4000000"
 
 
 @pytest.mark.parametrize(

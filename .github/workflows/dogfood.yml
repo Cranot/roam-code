@@ -88,13 +88,36 @@ jobs:
       - name: Sync the exact runtime graph
         run: |
           python -I -S -B scripts/verify_uv_runtime.py
-          uv sync --locked --no-default-groups --python python
+          uv sync --locked --no-default-groups --extra metrics --python python
           uv pip check --python .venv/bin/python
 
       - name: Index repo
         run: .venv/bin/roam index
 
+      - name: Prepare immutable dogfood diff
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$EVENT_BASE_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            base="$(git rev-parse --verify HEAD^)"
+          fi
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]] || [[ "$base" =~ ^0+$ ]]; then
+            echo "::error::Dogfood needs a nonempty immutable base commit."
+            exit 1
+          fi
+          head="$(git rev-parse --verify HEAD)"
+          git cat-file -e "$base^{commit}"
+          git diff --no-ext-diff --no-textconv "$base" "$head" -- > "$RUNNER_TEMP/roam-dogfood.diff"
+          test -s "$RUNNER_TEMP/roam-dogfood.diff" || { echo "::error::No diff to analyze."; exit 1; }
+          echo "Dogfood diff: $base..$head"
+
       - name: Run dogfood (audit + pr-analyze + audit-trail + conformance)
+        env:
+          # Explicit finite source/anchor budget for this repo's large histories.
+          # Indexing retains its separate default cap; larger files still refuse.
+          ROAM_STALE_REFS_MAX_BYTES: "4000000"
         run: |
           set -euo pipefail
           # --audit-trail is the default (no flag needed) -- a prior
@@ -107,7 +130,7 @@ jobs:
           # reports that trail's real Article 12 conformance score.
           # Collect complete JSON detail into the artifact. The strict gate
           # below still rejects scan failures, unavailable inputs and child caps.
-          .venv/bin/roam --json --budget 0 dogfood > dogfood.json
+          .venv/bin/roam --json --budget 0 dogfood --input "$RUNNER_TEMP/roam-dogfood.diff" > dogfood.json
           .venv/bin/python - <<'PY'
           import json
           import os

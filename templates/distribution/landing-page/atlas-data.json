@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source": "Roam working-tree snapshot · Python sources only",
-  "source_sha256": "4296a662b51d8cdb22894a2f1b57420c36f7ea24367553a70139fd68578cfabf",
+  "source_sha256": "b613547c3a30fcac1e1a3791e25ea032924109a0bd0bdf70f7eddb83db623bde",
   "source_hash_definition": "SHA-256 of sorted relative POSIX paths and Python source bytes with CRLF normalized to LF, NUL-delimited",
   "files_scanned": 640,
   "module_connections": 2699,
