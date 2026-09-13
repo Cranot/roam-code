@@ -991,6 +991,7 @@
       "flags": [
         "--audit",
         "--audit-trail",
+        "--input",
         "--pr-analyze",
         "--rules"
       ],
@@ -4015,6 +4016,7 @@
     "roam_dogfood": [
       "audit",
       "audit_trail_on",
+      "diff_path",
       "input_path",
       "pr_analyze_on",
       "root"

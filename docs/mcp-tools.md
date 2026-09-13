@@ -130,7 +130,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_doc_staleness` | Run a semantic docstring-drift audit: flag documented parameters, returns, or raises that no longer match code. Pass ``include_prose_drift`` to include optional blame-only summary drift. Different from ``roam_docs_coverage`` (missing docs ranked by PageRank) and ``roam_stale_refs`` (dangling doc links) -- this audits concrete claims in existing docs. |
 | `roam_docs_coverage` | Doc coverage + stale-doc drift with PageRank-ranked missing docs. |
 | `roam_doctor` | Setup diagnostics: Python version, tree-sitter, git, index existence, freshness, SQLite. |
-| `roam_dogfood` | One-shot full-stack run: audit + pr-analyze + audit-trail + conformance. |
+| `roam_dogfood` | Run audit, PR analysis and optional audit-trail checks together. |
 | `roam_dogfood_aggregate` | Triage view over the dogfood eval corpus: totals, per-command findings count, by-status / by-severity / by-type breakdowns. Reads ``internal/dogfood/evals/`` (or an override path). Useful for agents auditing roam-code itself; mostly a no-op on consumer repos that have no dogfood corpus. |
 | `roam_drift` | Ownership drift detection: declared CODEOWNERS vs actual time-decayed contributors. |
 | `roam_duplicates` | Detect semantically duplicate functions via structural similarity. |

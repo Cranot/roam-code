@@ -10962,7 +10962,7 @@ def audit_trail_conformance_check(
 
 @_tool(
     name="roam_dogfood",
-    description="One-shot full-stack run: audit + pr-analyze + audit-trail + conformance.",
+    description="Run audit, PR analysis and optional audit-trail checks together.",
     version="1.1.0",
     read_only=False,
     destructive=False,
@@ -10974,20 +10974,21 @@ def dogfood(
     audit_trail_on: bool = True,
     input_path: str = "",
     root: str = ".",
+    diff_path: str = "",
 ) -> dict:
-    """One-shot full-stack run: audit + pr-analyze + audit-trail + conformance.
+    """Run audit, PR analysis and optional audit-trail checks together.
 
     WHEN TO USE: First-touch demo for a new repo, or as a quick local
-    self-check. Bundles the entire hosted-product surface (Cloud metrics,
-    Agent Review verdict, AI-governance audit-trail, conformance score)
-    into one envelope so the agent / user sees everything in one call.
+    self-check. Inspect the combined evidence and any incomplete sections.
+    Supply diff_path when analyzing a clean checkout's committed change;
+    an absent diff does not become evidence of a verified patch.
 
     Parameters
     ----------
     audit:
         Include the audit envelope (health + debt + dead + danger).
     pr_analyze_on:
-        Run pr-analyze on uncommitted diff.
+        Run pr-analyze on diff_path or the uncommitted diff.
     audit_trail_on:
         Append an audit-trail record + run conformance check.
     input_path:
@@ -10995,6 +10996,9 @@ def dogfood(
         ``.roam/rules.yml``). Legacy callers using ``rules_file=`` are
         translated transparently with a deprecation warning under
         ``summary.alias_warnings``.
+    diff_path:
+        Read the PR diff from this file (CLI --input). Keep pr_analyze_on
+        enabled. This is separate from input_path, which remains rules YAML.
 
     Returns: ``{summary: {verdict, health_score, pr_verdict, conformance_score},
     sections: {audit, pr_analyze, conformance}}``.
@@ -11008,6 +11012,8 @@ def dogfood(
         args.append("--no-audit-trail")
     if input_path:
         args.extend(["--rules", input_path])
+    if diff_path:
+        args.extend(["--input", diff_path])
     return _run_roam(args, root)
 
 

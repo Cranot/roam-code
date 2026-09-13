@@ -404,6 +404,7 @@ def _filter_files(
     exclude_patterns: list[str] | None = None,
     include_excluded: bool = False,
     skips: dict[str, list[str]] | None = None,
+    max_file_size: int | None = None,
 ) -> list[str]:
     """Filter out binary, oversized, non-code, and excluded files.
 
@@ -417,6 +418,9 @@ def _filter_files(
             exclusions -- skippable extensions, ignore patterns, generated
             content -- are NOT recorded: those are decisions, not failures.
     """
+    size_limit = MAX_FILE_SIZE if max_file_size is None else max_file_size
+    if type(size_limit) is not int or size_limit <= 0:
+        raise ValueError("max_file_size must be a positive integer")
     kept = []
     for rel_path in paths:
         if _is_skippable(rel_path):
@@ -426,7 +430,7 @@ def _filter_files(
                 continue
         full_path = root / rel_path
         try:
-            if full_path.stat().st_size > MAX_FILE_SIZE:
+            if full_path.stat().st_size > size_limit:
                 if skips is not None:
                     skips.setdefault(SKIP_OVERSIZED, []).append(rel_path)
                 continue
@@ -441,7 +445,9 @@ def _filter_files(
     return kept
 
 
-def discover_files_with_skips(root: Path, include_excluded: bool = False) -> tuple[list[str], dict[str, list[str]]]:
+def discover_files_with_skips(
+    root: Path, include_excluded: bool = False, *, max_file_size: int | None = None
+) -> tuple[list[str], dict[str, list[str]]]:
     """``(discovered, skips)`` -- see W1466 above for why *skips* exists.
 
     *skips* maps a reason (:data:`SKIP_OVERSIZED`, :data:`SKIP_UNSTATABLE`,
@@ -454,6 +460,9 @@ def discover_files_with_skips(root: Path, include_excluded: bool = False) -> tup
     :data:`SKIP_UNENUMERABLE` lists DIRECTORIES that were never opened, behind
     which an unknown number of files sit. Use its presence to withhold a
     completeness claim, never its length as a file count.
+
+    ``max_file_size`` overrides this discovery call's byte cap only. Ordinary
+    indexing retains MAX_FILE_SIZE; consumers must also bound their actual reads.
     """
     root = Path(root).resolve()
     skips: dict[str, list[str]] = {}
@@ -473,6 +482,7 @@ def discover_files_with_skips(root: Path, include_excluded: bool = False) -> tup
         exclude_patterns=exclude_patterns,
         include_excluded=include_excluded,
         skips=skips,
+        max_file_size=max_file_size,
     )
     filtered.sort()
     for paths in skips.values():

@@ -91,6 +91,10 @@
 </ul>
 <h3>Fixed</h3>
 <ul>
+<li><strong>Complete self-audit inputs in CI.</strong> Supply Dogfood with an explicit commit diff through <code>--input</code> (MCP <code>diff_path</code>), install its locked optional metrics dependencies, and use a finite stale-reference source/anchor budget for this repository's larger histories. Empty diffs and incomplete scans still refuse clearance; the existing MCP rules parameter and default indexing limits are unchanged.</li>
+<li><strong>Accessible atlas metadata.</strong> Preserve the map's exact reviewed SVG title and description in the metadata check and cleaner. Additional titles, descriptions and authoring metadata remain checked, including private text following an approved element.</li>
+</ul>
+<ul>
 <li><strong>Review receipt validation order.</strong> Same-family reviews now validate artifact identity and review outcomes before returning a coverage warning. Stale, rejected, errored or blocking reviews cannot become warning-only acceptance; valid same-family reviews remain usable with their stated limitation.</li>
 <li><strong>Public evidence claims.</strong> Correct lease/approval and network boundaries, distinguish the earlier accessibility assessment from the redesigned site, include the first-party atlas in the script inventory, and describe command-reference and atlas diagnostics according to their actual scope.</li>
 <li><strong>Explicit completion and portable exports.</strong> Audit and dogfood require a boolean child-completion flag; missing or malformed flags remain incomplete. Atlas generation writes portable LF line endings. Website deployment stages exact committed files with an external digest manifest, and stable asset URLs revalidate cached content.</li>

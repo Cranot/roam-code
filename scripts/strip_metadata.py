@@ -208,6 +208,16 @@ SVG_LEAK_PATTERNS = [
     re.compile(rb"\s(?:inkscape|sodipodi|adobe):[a-z-]+=\"[^\"]*\""),
 ]
 
+# Reviewed public product copy, not identifying authoring metadata. Match whole
+# elements exactly: an ID, ARIA reference or filename alone is not an exemption.
+# Keep the scan and rewrite paths aligned, including later unapproved elements.
+SVG_REVIEWED_ACCESSIBILITY_ELEMENTS = frozenset(
+    {
+        b'<title id="title">Inside Roam: Python import connections</title>',
+        b'<desc id="desc">Source-derived import map grouped by area. Larger circles contain more Python files. Not a runtime call graph.</desc>',
+    }
+)
+
 
 def _scan_svg(path: Path) -> dict | None:
     try:
@@ -216,9 +226,10 @@ def _scan_svg(path: Path) -> dict | None:
         return None
     leaks = {}
     for i, pat in enumerate(SVG_LEAK_PATTERNS):
-        m = pat.search(data)
-        if m:
-            leaks[f"pattern_{i}"] = m.group(0)[:80].decode("utf-8", errors="replace")
+        for m in pat.finditer(data):
+            if m.group(0) not in SVG_REVIEWED_ACCESSIBILITY_ELEMENTS:
+                leaks[f"pattern_{i}"] = m.group(0)[:80].decode("utf-8", errors="replace")
+                break
     return leaks
 
 
@@ -229,7 +240,9 @@ def _strip_svg(path: Path) -> bool:
         return False
     out = data
     for pat in SVG_LEAK_PATTERNS:
-        out = pat.sub(b"", out)
+        out = pat.sub(
+            lambda match: match.group(0) if match.group(0) in SVG_REVIEWED_ACCESSIBILITY_ELEMENTS else b"", out
+        )
     if out != data:
         try:
             path.write_bytes(out)

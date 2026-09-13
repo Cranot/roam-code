@@ -116,6 +116,31 @@ flag matches another CLI. For evidence limits, see [detector evidence](concepts/
 
 ## Check the work after an edit
 
+### Analyze a committed change in CI
+
+In the unreleased checkout, `roam --json --budget 0 dogfood --input change.diff`
+runs the combined audit with PR analysis of that saved diff. Generate it from
+explicit base and head commits with `git diff --no-ext-diff --no-textconv` and
+check that Git succeeded and the file is nonempty before using it. Without
+`--input`, PR analysis still uses uncommitted changes; a clean checkout is not
+evidence that a committed patch was checked. An empty input remains incomplete.
+
+MCP `roam_dogfood` accepts the diff as `diff_path`. Its existing `input_path`
+still means rules YAML (`--rules`), not a patch. Keep PR analysis enabled when
+supplying a diff. Inspect `summary.partial_success`, failed/incomplete sections
+and the nested scan scope before acting; uncapped output does not repair a
+missing dependency or expand the indexed population.
+
+For repositories with larger documentation files, the unreleased checkout's
+`ROAM_STALE_REFS_MAX_BYTES` environment variable sets a finite per-file budget
+for ordinary stale-reference scans, including source and anchor reads. It
+accepts 1–16,000,000 bytes and defaults to 1,000,000; JSON records
+`summary.max_file_bytes`. This does not change indexing limits. Oversized or
+unreadable observations remain incomplete. Nondefault budgets refuse `--watch`,
+`--check-external` and `--fix`, whose secondary readers retain the default limit.
+
+### Run the selected verification checks
+
 `roam verify --auto` chooses checks for the files that changed. Depending on
 the change, these include:
 

@@ -509,12 +509,29 @@ def _extract_refs(
     return refs
 
 
+_DEFAULT_SOURCE_MAX_BYTES = 1_000_000
+_MAX_SOURCE_MAX_BYTES = 16_000_000
+
+
+def _source_read_limit() -> int:
+    """Resolve a finite, invocation-local opt-in source/anchor byte budget."""
+    raw = os.environ.get("ROAM_STALE_REFS_MAX_BYTES")
+    if raw is None:
+        return _DEFAULT_SOURCE_MAX_BYTES
+    if not re.fullmatch(r"[0-9]{1,8}", raw):
+        raise click.UsageError("ROAM_STALE_REFS_MAX_BYTES must be an integer from 1 through 16000000.")
+    value = int(raw)
+    if not 1 <= value <= _MAX_SOURCE_MAX_BYTES:
+        raise click.UsageError("ROAM_STALE_REFS_MAX_BYTES must be an integer from 1 through 16000000.")
+    return value
+
+
 def _read_text_with_reason(path: Path, max_bytes: int = 1_000_000) -> tuple[str | None, str | None]:
     """Read a file as UTF-8 with replacement, naming WHY it could not be read.
 
     Returns ``(content, None)`` on success and ``(None, reason)`` otherwise.
-    The two failure causes need different remedies -- ``oversize`` is fixed
-    with ``--ignore``, ``unreadable`` by fixing permissions -- so
+    The two failure causes need different remedies -- ``oversize`` needs an
+    explicit adequate read budget, ``unreadable`` may need permissions repaired -- so
     collapsing both into a bare ``None`` left the caller unable to say
     anything useful even if it had wanted to.
     """
@@ -911,6 +928,7 @@ def _scan_project(
     ignore_target: tuple[str, ...] = (),
     check_anchors: bool = True,
     scan_bare_backticks: bool = False,
+    max_file_bytes: int = _DEFAULT_SOURCE_MAX_BYTES,
 ) -> tuple[dict[str, list[dict]], int, int, dict[str, list[str]], AnchorCache, list[dict[str, str]]]:
     """Walk the repo and collect every reference.
 
@@ -936,9 +954,12 @@ def _scan_project(
     # ``_with_skips`` form", and a gate that certifies "all refs resolve" is
     # reporting coverage. W1466 already built the mechanism; stale-refs was
     # not using it.
-    all_files, discovery_skips = discover_files_with_skips(project_root, include_excluded=include_excluded)
+    size_kwargs = {"max_file_size": max_file_bytes} if max_file_bytes != _DEFAULT_SOURCE_MAX_BYTES else {}
+    all_files, discovery_skips = discover_files_with_skips(
+        project_root, include_excluded=include_excluded, **size_kwargs
+    )
     tracked_set, dir_set, basename_idx = _build_lookup_indices(all_files)
-    anchor_cache = AnchorCache(project_root)
+    anchor_cache = AnchorCache(project_root, max_bytes=max_file_bytes)
     target_states: dict[str, bool | None] = {}
     target_errors: dict[str, str] = {}
 
@@ -970,7 +991,7 @@ def _scan_project(
         if _matches_any_glob(rel, ignore_source):
             continue
         full = project_root / rel
-        content, unread_reason = _read_text_with_reason(full)
+        content, unread_reason = _read_text_with_reason(full, max_bytes=max_file_bytes)
         if content is None:
             files_unreadable.append({"file": rel, "reason": unread_reason or "unknown"})
             continue
@@ -3227,6 +3248,8 @@ def stale_refs(
     include_excluded = ctx.obj.get("include_excluded", False) if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
+    max_file_bytes = _source_read_limit()
+
     if root_override:
         # ``--root foo/`` — treat the supplied path as the project
         # root rather than auto-detecting the surrounding git repo.
@@ -3286,6 +3309,14 @@ def stale_refs(
             cfg_limit = repo_config["limit"]
             if 1 <= cfg_limit <= 1000:
                 limit = cfg_limit
+
+    # Secondary readers have separate lifecycle/rewriting contracts. Refuse
+    # an expanded scan scope until those modes can honor the same byte budget.
+    if max_file_bytes != _DEFAULT_SOURCE_MAX_BYTES and (watch or check_external or fix is not None):
+        raise click.UsageError(
+            "ROAM_STALE_REFS_MAX_BYTES overrides support ordinary scans only; "
+            "use the default 1000000-byte limit for --watch, --check-external or --fix."
+        )
 
     # ---- Watch mode short-circuits the regular flow ----------------
     if fix is not None:
@@ -3405,6 +3436,7 @@ def stale_refs(
         ignore_target=tuple(ignore_target),
         check_anchors=not no_anchors,
         scan_bare_backticks=scan_bare_backticks,
+        max_file_bytes=max_file_bytes,
     )
     scan_seconds = round(time.perf_counter() - t_start, 3)
 
@@ -3645,7 +3677,19 @@ def stale_refs(
                 "resolve incomplete evidence before applying fixes."
             )
 
+    if max_file_bytes != _DEFAULT_SOURCE_MAX_BYTES and (target_count or scan_incomplete):
+        # Secondary fix readers retain their default cap. Keep advice executable
+        # within the selected scan scope instead of recommending a refused mode.
+        next_steps = next_steps[:1] if scan_incomplete else []
+        if target_count:
+            next_steps.append("Inspect the reported references manually and correct confirmed path or anchor errors.")
+        next_steps.append(
+            f"Keep the same `ROAM_STALE_REFS_MAX_BYTES={max_file_bytes}` setting and "
+            "rerun `roam stale-refs --gate` after restoring inputs or correcting references."
+        )
+
     coverage_summary = {
+        "max_file_bytes": max_file_bytes,
         "files_scanned": files_scanned,
         "refs_checked": refs_seen,
         "files_unreadable": unreadable_count,
@@ -3983,6 +4027,7 @@ def stale_refs(
             "stale_refs": total_refs,
             "files_scanned": files_scanned,
             "files_unreadable": unreadable_count,
+            "max_file_bytes": max_file_bytes,
             "directories_unenumerable": directory_count,
             "anchor_targets_unreadable": anchor_read_count,
             "targets_unstatable": target_stat_count,

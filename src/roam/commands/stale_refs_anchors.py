@@ -246,8 +246,9 @@ class AnchorCache:
     extraction is cheap and the tradeoff isn't worth the staleness risk.
     """
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, *, max_bytes: int = 1_000_000) -> None:
         self._project_root = project_root
+        self._max_bytes = max_bytes
         self._cache: dict[str, set[str] | None] = {}
 
     def anchors_for(self, rel_path: str) -> set[str] | None:
@@ -261,7 +262,7 @@ class AnchorCache:
         if norm in self._cache:
             return self._cache[norm]
         full = self._project_root / norm
-        anchors = _read_anchors_for(full)
+        anchors = _read_anchors_for(full, max_bytes=self._max_bytes)
         self._cache[norm] = anchors
         return anchors
 
