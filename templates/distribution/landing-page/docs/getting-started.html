@@ -130,7 +130,7 @@ roam init</code></pre>
         <article class="step">
           <h3>Step 3: Check repo health</h3>
 <pre><code>roam health</code></pre>
-          <p>Architectural score with cycle, component, and coupling findings. Run <code>roam health --explain</code> for score contributions and <code>roam doctor</code> for installation and index checks. Add <code>--sarif</code> for GitHub Code Scanning or <code>--gate</code> to enforce configured quality checks. These commands do not run your test suite.</p>
+          <p>Architectural score with cycle, component, and coupling findings. Run <code>roam health --explain</code> for score contributions and <code>roam doctor</code> for installation and index checks. Use <code>roam --sarif health</code> for GitHub Code Scanning or <code>roam health --gate</code> to enforce configured quality checks. These commands do not run your test suite.</p>
         </article>
 
         <article class="step">
@@ -183,11 +183,11 @@ roam file src/auth/service.py   # file skeleton (symbols + line ranges)</code></
       <h3>2. Estimate change risk</h3>
 <pre><code>roam impact auth_login          # indexed callers to investigate before editing
 roam preflight auth_login       # pre-edit gate: blast + tests + complexity + fitness
-roam test-gaps --changed        # tests missing for the current diff</code></pre>
+roam test-gaps --changed        # static test gaps for unstaged changes</code></pre>
 
       <h3>3. Working in tests (pytest projects)</h3>
       <p>
-        pytest fixtures depend on each other through their parameter names. The relationship is invisible to call-graph analysis, so renaming a low-level fixture can break tests several files away with no edge to follow. <code>roam pytest-fixtures</code> materialises the chain.
+        pytest fixtures depend on each other through their parameter names. Indexing records those fixture dependencies, so your agent can trace the tests affected by a fixture change. <code>roam pytest-fixtures</code> shows the chain.
       </p>
 <pre><code>roam pytest-fixtures            # project summary
 roam pytest-fixtures user       # what depends on `user`
@@ -196,8 +196,12 @@ roam impact db                  # blast radius traverses fixture edges</code></p
 
       <h3>4. Enforce quality and governance</h3>
 <pre><code>roam check-rules
-roam rules --rules-dir rules/community
 roam health --gate</code></pre>
+      <p>These use the built-in checks and your configured quality gates.
+        To evaluate custom YAML rules, first place reviewed rules in your
+        project's <code>.roam/rules/</code>, then run <code>roam rules</code>.
+        The <code>rules/community</code> directory belongs to the Roam source
+        checkout; installing the package does not add it to your project.</p>
 
       <h3 id="mcp-integration">5. Integrate with your agent</h3>
 <pre><code>roam mcp-setup claude-code          # preview the configuration
@@ -223,14 +227,20 @@ roam mcp --list-tools-json          # inspect this local process's inventory</co
 
     <section id="ci-example">
       <h2>CI Example (GitHub Actions)</h2>
-      <p>Minimal gate pipeline:</p>
+      <p>Whole-repository checks for an indexed CI checkout:</p>
 <pre><code>roam init
 roam check-rules --severity error
-roam --sarif health --gate
-roam --json test-gaps --changed</code></pre>
+roam --sarif health --gate</code></pre>
       <p>
         Use <code>--sarif</code> output for Code Scanning annotations and <code>--json</code> envelopes for stable machine parsing.
       </p>
+      <p>For test-gap analysis of a committed pull request, establish its exact
+        base and head commits, obtain the changed file paths from that range,
+        and pass those paths to <code>roam --json test-gaps</code>.
+        <code>--changed</code> selects unstaged changes; a clean CI checkout
+        normally has none. Confirm Git succeeded and the selected scope before
+        interpreting an empty report. Static test mappings do not run tests;
+        keep your project's test command in CI.</p>
       <h3>Example: roam + CodeQL co-deploy</h3>
       <p>
         Run Roam alongside GitHub CodeQL and upload both SARIF streams to Code Scanning. Inspect the findings and their overlap; two reports do not establish complete coverage. See the sample workflow: <a href="https://github.com/Cranot/roam-code/blob/main/src/roam/templates/ci/roam-sarif-with-codeql.yml"><code>src/roam/templates/ci/roam-sarif-with-codeql.yml</code></a>.

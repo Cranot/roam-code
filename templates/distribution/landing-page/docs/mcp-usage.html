@@ -316,12 +316,17 @@ roam_prepare_change(symbol="auth_login", root=".")</code></pre>
 
       <h3>Server returns stale data after a <code>git pull</code></h3>
       <p>
-        Run <code>roam index</code> (or set
-        <code>ROAM_MCP_WATCH=1</code> in the server env to enable
-        reactive incremental reindexing on file changes). The watcher
-        emits <code>notifications/resources/updated</code> for subscribing
-        clients. A notification is not proof that your next result covers
-        the intended revision; inspect index freshness after the update.
+        Run <code>roam index</code> and wait for the refresh to finish.
+        For optional reindexing on file changes, install <code>watchdog</code>
+        in the same Python environment as the MCP server; the
+        <code>roam-code[mcp]</code> extra does not include it. Set
+        <code>ROAM_MCP_WATCH=1</code> in the server environment, restart,
+        and confirm <code>file watcher started</code> in its startup log.
+        If it does not start, keep refreshing with <code>roam index</code>.
+        The watcher can emit <code>notifications/resources/updated</code>
+        to supported clients. A notification is not proof that your next
+        result covers the intended revision; inspect index freshness after
+        the update.
       </p>
     </section>
 
