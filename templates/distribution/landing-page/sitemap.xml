@@ -41,14 +41,6 @@
     <priority>0.7</priority>
   </url>
   <url>
-    <!-- Stripe Payment Link confirmation destination. noindex'd via meta
-         robots; included in sitemap only because some auditors check
-         that every linked-from-the-site URL is enumerable. -->
-    <loc>https://roam-code.com/thank-you</loc>
-    <changefreq>yearly</changefreq>
-    <priority>0.1</priority>
-  </url>
-  <url>
     <loc>https://roam-code.com/about</loc>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>

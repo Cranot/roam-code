@@ -150,7 +150,7 @@ def test_mutable_assets_revalidate_without_conflicting_cache_directives():
         assert matches == ["public, max-age=0, must-revalidate"], (path, matches)
     # Pages combines repeated values, so a global policy plus a font override
     # is ambiguous. Leave non-overridden files to the provider's ETag default.
-    for path in ("/fonts/space-grotesk-latin.woff2", "/og.png", "/favicon.svg"):
+    for path in ("/fonts/space-grotesk-latin.woff2", "/og-code-analysis.png", "/favicon.svg"):
         matches = [value for pattern, values in rules if fnmatch.fnmatchcase(path, pattern) for value in values]
         assert len(matches) == 1, (path, matches)
 

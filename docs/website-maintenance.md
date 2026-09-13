@@ -435,6 +435,55 @@ checker covers internal destinations and fragments, not external availability.
 These checks do not certify the rendered layout, keyboard interactions, or
 screen-reader experience.
 
+### Search and sharing surfaces
+
+Review the actual sharing image as well as its HTML metadata. The current
+`data/social-preview.json` records its visible wording, dimensions, and SHA-256.
+The hash binds a visually reviewed bitmap; it is not OCR or an independent
+wording assessment. When the message changes, inspect the replacement at full
+and reduced size, update the record and every OG/Twitter reference, and use the
+image's actual dimensions. A new asset URL avoids keeping superseded text at
+the same sharing URL. Preserve old inbound image links with a redirect and check
+that redirect on Pages; a basic local file server does not emulate it.
+
+Keep the sitemap equal to the intended indexable HTML pages, not every route
+that happens to return 200. The receipt and error pages remain `noindex` and
+outside the sitemap. This source census does not establish what Google has
+crawled or indexed. The strict link checker currently excludes `changelog.html`,
+so its page denominator is not the complete source inventory. Check generated
+changelog metadata separately: omit an optional modification date when no
+maintained source can keep it accurate, rather than assigning a fresh date to
+unchanged content. Do not invent ratings or structured-data eligibility.
+
+The command-reference appendix is owned by `dev/build_command_reference.py`.
+It uses complete first docstring paragraphs and stable `#command-<name>` links,
+including labelled aliases; it is not terminal-width short help. Correct the
+owner and regenerate instead of patching generated rows. Source-derived text
+still needs claim review. Verify native section links on long example pages
+with a keyboard and a narrow viewport, not just an HTML fragment census.
+
+Run the associated regression controls in addition to the website suite:
+
+```sh
+uv run --no-sync pytest tests/test_command_reference_generator.py tests/test_site_seo_contract.py tests/test_site_social_preview.py tests/test_site_public_claim_scope.py tests/test_site_scenario_navigation.py tests/test_site_algorithm_example.py -n 0
+```
+
+These guards pin known failures: missing/truncated descriptions, incorrect
+indexable-page selection, image-reference drift, overstated evidence claims,
+and broken scenario navigation. They do not measure search rankings, conversion,
+detector accuracy, legal compliance, or the quality of every sentence. Trust
+summaries must preserve the underlying contract: collected development checks
+are not lifetime AI-system logs, preparation is separate from signing, a local
+HMAC key does not independently identify a person, and a coordination lease is
+not approval. Keep operational targets distinct from contractual commitments.
+
+The algorithm disclosure in the command reference contains an executable
+synthetic fixture and selected fields from a dated CLI result. Its regression
+runs the published source against the detector and uses Node.js for behavior
+controls, including a counterexample to replacing every `indexOf` with a Set.
+Record a missing Node runtime as a skipped semantic check. Do not present this
+small fixture as a workload benchmark or a detector-accuracy study.
+
 For an accumulated package-release candidate, the structural `--full` gate
 does not replace the full non-slow test suite required by
 `scripts/prepush_check.py --release --workers 2`. Follow the release guide and

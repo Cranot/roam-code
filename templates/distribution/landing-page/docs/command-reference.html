@@ -18,9 +18,13 @@
   <meta property="og:title" content="Command Reference — Roam Docs">
   <meta property="og:description" content="Find a Roam command for your agent's next question: inspect code relationships, investigate algorithm choices, preview an edit, or check a change.">
   <meta property="og:url" content="https://roam-code.com/docs/command-reference">
-  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta property="og:image:width" content="1731">
+  <meta property="og:image:height" content="909">
+  <meta property="og:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta name="twitter:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
 
   <script type="application/ld+json">
   {
@@ -294,6 +298,69 @@ roam --json algo</code></pre>
         performance before adopting a replacement. Refresh the index after code
         changes. An empty or partial scan is not proof that every algorithm is
         appropriate.</p>
+      <details id="algorithm-example">
+        <summary>Run an example: repeated membership checks or needed positions?</summary>
+        <p>With Roam installed, start in an empty folder and save this as
+          <code>lookup.js</code>. The first function repeatedly searches an array;
+          the second builds a membership lookup once. The third needs positions.</p>
+        <pre id="algorithm-example-source"><code>function countAllowed(values, allowed) {
+  let count = 0;
+  for (const value of values) {
+    if (allowed.indexOf(value) !== -1) count++;
+  }
+  return count;
+}
+
+function countAllowedWithSet(values, allowed) {
+  const lookup = new Set(allowed);
+  let count = 0;
+  for (const value of values) {
+    if (lookup.has(value)) count++;
+  }
+  return count;
+}
+
+function findPositions(values, allowed) {
+  const positions = [];
+  for (const value of values) {
+    positions.push(allowed.indexOf(value));
+  }
+  return positions;
+}</code></pre>
+        <p>Index the file and ask for the repeated-lookup candidates:</p>
+        <pre id="algorithm-example-commands"><code>git init --quiet
+git add -- lookup.js
+roam --json index
+roam --json algo --task loop-lookup --path lookup.js</code></pre>
+        <p>This synthetic fixture was run with Roam 14.1.0 on 13 September 2026
+          (UTC). These are selected fields from <code>findings[0]</code>, not
+          the full JSON response:</p>
+        <pre id="algorithm-example-finding"><code>{
+  "location": "lookup.js:1",
+  "symbol_name": "countAllowed",
+  "task_id": "loop-lookup",
+  "suggested_way": "set-prebuilt",
+  "confidence": "medium"
+}</code></pre>
+        <p>The scan reported <code>countAllowed</code>; it did not flag the
+          existing set lookup or the position-returning function for this task.
+          Inspect <code>summary.partial_success</code>, <code>summary.truncated</code>,
+          <code>summary.detectors_failed</code> and <code>summary.scoped_paths</code> in the full
+          response. This example checks one file and one task. If a scan is
+          partial, investigate reported candidates, inspect the failures, and
+          rerun failed checks before drawing conclusions from missing findings.</p>
+        <p>For ordinary, unchanged arrays of strings, the set version preserves
+          the count, including repeated input values. It allocates a separate
+          lookup, so weigh construction cost and memory against the workload.
+          <strong>Keep the position lookup</strong> when callers need offsets:
+          <code>findPositions(["admin", "guest"], ["guest", "admin", "admin"])</code>
+          returns <code>[1, 0]</code>; <code>Set.has</code> cannot supply those
+          first-match positions or the missing-value sentinel <code>-1</code>.</p>
+        <p>Value semantics also matter: with <code>[NaN]</code> as both inputs,
+          <code>countAllowed</code> returns <code>0</code> and the set version
+          returns <code>1</code>. Test the real input contract, mutation and
+          callers before replacing a lookup. <strong>No speedup was measured.</strong></p>
+      </details>
       <p>The CLI command is <code>algo</code>; <code>math</code> remains a legacy
         alias. For MCP, select the <code>review</code> preset and restart the server;
         <code>roam_algo</code> is not in the default <code>core</code> preset.
@@ -355,333 +422,333 @@ roam --json algo</code></pre>
 <!-- BEGIN auto-reference -->
 <section class="section">
   <h2 id="complete-reference">Complete Reference</h2>
-  <p>Auto-generated from the CLI command registry. Every canonical command + alias; inspect the same surface with <code>roam --help-all</code>.</p>
+  <p>Auto-generated from the CLI command registry and complete first docstring paragraphs. Every canonical command + alias has a direct link; inspect the same surface with <code>roam --help-all</code>.</p>
   <h3>Getting Started</h3>
   <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>roam ask</code></td><td>Run the recipe that matches a free-form query.</td></tr>
-      <tr><td><code>roam workflow</code></td><td>Inspect a workflow recipe DAG, review lenses, and next co...</td></tr>
-      <tr><td><code>roam index</code></td><td></td></tr>
-      <tr><td><code>roam index-export</code></td><td>Export the roam index as a portable, integrity-checked ta...</td></tr>
-      <tr><td><code>roam index-import</code></td><td>Import a portable roam index bundle into the current repo.</td></tr>
-      <tr><td><code>roam watch</code></td><td>Watch for file changes and auto-re-index incrementally.</td></tr>
-      <tr><td><code>roam init</code></td><td>Initialize Roam for this project: index + config.</td></tr>
-      <tr><td><code>roam hooks</code></td><td>Manage git hook integration for automatic re-indexing.</td></tr>
-      <tr><td><code>roam reset</code></td><td></td></tr>
-      <tr><td><code>roam clean</code></td><td>Remove orphaned entries from the index (files no longer o...</td></tr>
-      <tr><td><code>roam config</code></td><td>Manage per-project roam configuration (.roam/config.json).</td></tr>
-      <tr><td><code>roam doctor</code></td><td>Diagnose environment setup: Python, dependencies, and ind...</td></tr>
-      <tr><td><code>roam understand</code></td><td>Single-call codebase comprehension — everything in one shot.</td></tr>
-      <tr><td><code>roam dashboard</code></td><td>Unified codebase status: health, hotspots, debt, bus fact...</td></tr>
-      <tr><td><code>roam tour</code></td><td></td></tr>
-      <tr><td><code>roam describe</code></td><td>Auto-generate a project description for AI coding agents.</td></tr>
-      <tr><td><code>roam minimap</code></td><td>Generate a compact codebase minimap for CLAUDE.md injection.</td></tr>
-      <tr><td><code>roam agent-export</code></td><td>Generate an AI agent context file from the roam index.</td></tr>
-      <tr><td><code>roam ws</code></td><td>Manage multi-repo workspaces with cross-repo dependency t...</td></tr>
-      <tr><td><code>roam schema</code></td><td>Show the roam JSON envelope schema and validate output fi...</td></tr>
-      <tr><td><code>roam mcp</code></td><td>Start the roam MCP server.</td></tr>
-      <tr><td><code>roam mcp-setup</code></td><td>Generate MCP server config for AI coding platforms.</td></tr>
-      <tr><td><code>roam mcp-status</code></td><td>Report MCP server status: preset, tools, backpressure, ca...</td></tr>
-      <tr><td><code>roam ci-setup</code></td><td>Generate CI/CD pipeline config for roam-code integration.</td></tr>
-      <tr><td><code>roam adrs</code></td><td>Discover Architecture Decision Records and link them to c...</td></tr>
-      <tr><td><code>roam audit</code></td><td>One-shot codebase architecture audit.</td></tr>
-      <tr><td><code>roam changelog</code></td><td>List commits since the last tag, optionally as a markdown...</td></tr>
-      <tr><td><code>roam exit-codes</code></td><td>List every roam exit code with its meaning.</td></tr>
-      <tr><td><code>roam help-search</code></td><td>Fuzzy search across every command's help text.</td></tr>
-      <tr><td><code>roam plugins</code></td><td>Inspect roam plugins discovered via entry points / ROAM_P...</td></tr>
-      <tr><td><code>roam pre-commit</code></td><td>Install or preview a roam-critique pre-commit git hook.</td></tr>
-      <tr><td><code>roam recipes</code></td><td>List every ``roam ask`` recipe with intent + example quer...</td></tr>
-      <tr><td><code>roam version</code></td><td>Print the installed roam-code version (and check PyPI wit...</td></tr>
-      <tr><td><code>roam index-stats</code></td><td>Report .roam index size, row counts, and fragmentation.</td></tr>
-      <tr><td><code>roam stats</code></td><td>Aggregate metrics: language, role, kind counts + recent a...</td></tr>
-      <tr><td><code>roam telemetry</code></td><td>Show local telemetry: slowest commands + recent runs.</td></tr>
-      <tr><td><code>roam surface</code></td><td>Print the canonical capability surface (commands, aliases...</td></tr>
-      <tr><td><code>roam surface-gaps</code></td><td>Find gaps between CLI registration, MCP exposure, and doc...</td></tr>
-      <tr><td><code>roam commands</code></td><td>List the repo's runnable commands, classified + evidence-...</td></tr>
-      <tr><td><code>roam explain-command</code></td><td>Show what a command does, what it depends on, and how sta...</td></tr>
-      <tr><td><code>roam db-check</code></td><td>Integrity sweep over the local index. Reports orphans, br...</td></tr>
+      <tr id="command-ask"><td><a href="#command-ask"><code>roam ask</code></a></td><td>Run the recipe that matches a free-form query.</td></tr>
+      <tr id="command-workflow"><td><a href="#command-workflow"><code>roam workflow</code></a></td><td>Inspect a workflow recipe DAG, review lenses, and next commands.</td></tr>
+      <tr id="command-index"><td><a href="#command-index"><code>roam index</code></a></td><td>Build or rebuild the codebase index.</td></tr>
+      <tr id="command-index-export"><td><a href="#command-index-export"><code>roam index-export</code></a></td><td>Export the roam index as a portable, integrity-checked tarball.</td></tr>
+      <tr id="command-index-import"><td><a href="#command-index-import"><code>roam index-import</code></a></td><td>Import a portable roam index bundle into the current repo.</td></tr>
+      <tr id="command-watch"><td><a href="#command-watch"><code>roam watch</code></a></td><td>Watch for file changes and auto-re-index incrementally.</td></tr>
+      <tr id="command-init"><td><a href="#command-init"><code>roam init</code></a></td><td>Initialize Roam for this project: index + config.</td></tr>
+      <tr id="command-hooks"><td><a href="#command-hooks"><code>roam hooks</code></a></td><td>Manage git hook integration for automatic re-indexing.</td></tr>
+      <tr id="command-reset"><td><a href="#command-reset"><code>roam reset</code></a></td><td>Delete the index DB and rebuild from scratch.</td></tr>
+      <tr id="command-clean"><td><a href="#command-clean"><code>roam clean</code></a></td><td>Remove orphaned entries from the index (files no longer on disk).</td></tr>
+      <tr id="command-config"><td><a href="#command-config"><code>roam config</code></a></td><td>Manage per-project roam configuration (.roam/config.json).</td></tr>
+      <tr id="command-doctor"><td><a href="#command-doctor"><code>roam doctor</code></a></td><td>Diagnose environment setup: Python, dependencies, and index state.</td></tr>
+      <tr id="command-understand"><td><a href="#command-understand"><code>roam understand</code></a></td><td>Single-call codebase comprehension — everything in one shot.</td></tr>
+      <tr id="command-dashboard"><td><a href="#command-dashboard"><code>roam dashboard</code></a></td><td>Unified codebase status: health, hotspots, debt, bus factor, AI rot.</td></tr>
+      <tr id="command-tour"><td><a href="#command-tour"><code>roam tour</code></a></td><td>Generate a codebase onboarding tour.</td></tr>
+      <tr id="command-describe"><td><a href="#command-describe"><code>roam describe</code></a></td><td>Auto-generate a project description for AI coding agents.</td></tr>
+      <tr id="command-minimap"><td><a href="#command-minimap"><code>roam minimap</code></a></td><td>Generate a compact codebase minimap for CLAUDE.md injection.</td></tr>
+      <tr id="command-agent-export"><td><a href="#command-agent-export"><code>roam agent-export</code></a></td><td>Generate an AI agent context file from the roam index.</td></tr>
+      <tr id="command-ws"><td><a href="#command-ws"><code>roam ws</code></a></td><td>Manage multi-repo workspaces with cross-repo dependency tracking.</td></tr>
+      <tr id="command-schema"><td><a href="#command-schema"><code>roam schema</code></a></td><td>Show the roam JSON envelope schema and validate output files.</td></tr>
+      <tr id="command-mcp"><td><a href="#command-mcp"><code>roam mcp</code></a></td><td>Start the roam MCP server.</td></tr>
+      <tr id="command-mcp-setup"><td><a href="#command-mcp-setup"><code>roam mcp-setup</code></a></td><td>Generate MCP server config for AI coding platforms.</td></tr>
+      <tr id="command-mcp-status"><td><a href="#command-mcp-status"><code>roam mcp-status</code></a></td><td>Report MCP server status: preset, tools, backpressure, cache, watcher.</td></tr>
+      <tr id="command-ci-setup"><td><a href="#command-ci-setup"><code>roam ci-setup</code></a></td><td>Generate CI/CD pipeline config for roam-code integration.</td></tr>
+      <tr id="command-adrs"><td><a href="#command-adrs"><code>roam adrs</code></a></td><td>Discover Architecture Decision Records and link them to code modules.</td></tr>
+      <tr id="command-audit"><td><a href="#command-audit"><code>roam audit</code></a></td><td>One-shot codebase architecture audit.</td></tr>
+      <tr id="command-changelog"><td><a href="#command-changelog"><code>roam changelog</code></a></td><td>List commits since the last tag, optionally as a markdown draft.</td></tr>
+      <tr id="command-exit-codes"><td><a href="#command-exit-codes"><code>roam exit-codes</code></a></td><td>List every roam exit code with its meaning.</td></tr>
+      <tr id="command-help-search"><td><a href="#command-help-search"><code>roam help-search</code></a></td><td>Fuzzy search across every command&#x27;s help text.</td></tr>
+      <tr id="command-plugins"><td><a href="#command-plugins"><code>roam plugins</code></a></td><td>Inspect roam plugins discovered via entry points / ROAM_PLUGIN_MODULES.</td></tr>
+      <tr id="command-pre-commit"><td><a href="#command-pre-commit"><code>roam pre-commit</code></a></td><td>Install or preview a roam-critique pre-commit git hook.</td></tr>
+      <tr id="command-recipes"><td><a href="#command-recipes"><code>roam recipes</code></a></td><td>List every ``roam ask`` recipe with intent + example queries.</td></tr>
+      <tr id="command-version"><td><a href="#command-version"><code>roam version</code></a></td><td>Print the installed roam-code version (and check PyPI with --check).</td></tr>
+      <tr id="command-index-stats"><td><a href="#command-index-stats"><code>roam index-stats</code></a></td><td>Report .roam index size, row counts, and fragmentation.</td></tr>
+      <tr id="command-stats"><td><a href="#command-stats"><code>roam stats</code></a></td><td>Aggregate metrics: language, role, kind counts + recent activity.</td></tr>
+      <tr id="command-telemetry"><td><a href="#command-telemetry"><code>roam telemetry</code></a></td><td>Show local telemetry: slowest commands + recent runs.</td></tr>
+      <tr id="command-surface"><td><a href="#command-surface"><code>roam surface</code></a></td><td>Print the canonical capability surface (commands, aliases, MCP tools, maturity).</td></tr>
+      <tr id="command-surface-gaps"><td><a href="#command-surface-gaps"><code>roam surface-gaps</code></a></td><td>Find gaps between CLI registration, MCP exposure, and documentation.</td></tr>
+      <tr id="command-commands"><td><a href="#command-commands"><code>roam commands</code></a></td><td>List the repo&#x27;s runnable commands, classified + evidence-backed.</td></tr>
+      <tr id="command-explain-command"><td><a href="#command-explain-command"><code>roam explain-command</code></a></td><td>Show what a command does, what it depends on, and how stale-index sensitive it is.</td></tr>
+      <tr id="command-db-check"><td><a href="#command-db-check"><code>roam db-check</code></a></td><td>Integrity sweep over the local index. Reports orphans, broken edges, missing FTS, etc.</td></tr>
     </tbody></table></div>
   <h3>Daily Workflow</h3>
   <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>roam preflight</code></td><td>Run a pre-change safety checklist for a symbol, file, or ...</td></tr>
-      <tr><td><code>roam permit</code></td><td>Structural-permission verdict facade for AI agents + W198...</td></tr>
-      <tr><td><code>roam postmortem</code></td><td>Replay current detectors against past commits.</td></tr>
-      <tr><td><code>roam pr-replay</code></td><td>Generate a PR Replay report.</td></tr>
-      <tr><td><code>roam service-report</code></td><td>Generate a one-command service-engagement report.</td></tr>
-      <tr><td><code>roam reachability-triage</code></td><td>Emit zero-egress vulnerability reachability facts.</td></tr>
-      <tr><td><code>roam guard</code></td><td>Check breaking-change risk for SYMBOL before editing.</td></tr>
-      <tr><td><code>roam guard-pr</code></td><td>Run the full Roam Guard pipeline in one call.</td></tr>
-      <tr><td><code>roam guard-doctor</code></td><td>Preflight + health check before running roam guard-pr.</td></tr>
-      <tr><td><code>roam guard-init</code></td><td>Bootstrap `.roam/` + optional rule-pack stub for Roam Guard.</td></tr>
-      <tr><td><code>roam guard-clean</code></td><td>Prune `.roam/verdict-log.jsonl` to its last N entries.</td></tr>
-      <tr><td><code>roam guard-diff</code></td><td>Show the verdict delta between two bundle snapshots.</td></tr>
-      <tr><td><code>roam guard-history</code></td><td>Show recent pr-bundles + their last-known verdict.</td></tr>
-      <tr><td><code>roam guard-rules</code></td><td>Inspect / validate / test Roam Guard verification rule pa...</td></tr>
-      <tr><td><code>roam proof-bundle</code></td><td>Compose and emit the AgentChangeProofBundle v1 from a pr-...</td></tr>
-      <tr><td><code>roam verdict</code></td><td>Compute the closed-enum verdict for a proof bundle.</td></tr>
-      <tr><td><code>roam verification-contract</code></td><td>Emit the G3 verification contract for changed files + mod...</td></tr>
-      <tr><td><code>roam bench-compile</code></td><td>Run a controlled A/B between vanilla / static / compile p...</td></tr>
-      <tr><td><code>roam agent-plan</code></td><td>Decompose partitions into dependency-ordered multi-agent ...</td></tr>
-      <tr><td><code>roam agent-context</code></td><td>Generate per-worker context: write scope, read-only deps,...</td></tr>
-      <tr><td><code>roam pr-risk</code></td><td>Compute risk score for pending changes.</td></tr>
-      <tr><td><code>roam pr-prep</code></td><td>One-shot pre-PR fitness check: diff + critique + pr-risk.</td></tr>
-      <tr><td><code>roam pr-analyze</code></td><td></td></tr>
-      <tr><td><code>roam pr-bundle</code></td><td>Proof-carrying PR bundle (R26 -- Roam Review MVP differen...</td></tr>
-      <tr><td><code>roam pr-comment-render</code></td><td>Render a markdown PR comment from a pr-analyze envelope.</td></tr>
-      <tr><td><code>roam rules-validate</code></td><td>Lint a `.roam/rules.yml` file before shipping it to your ...</td></tr>
-      <tr><td><code>roam metrics-push</code></td><td>Push metrics-only summary to Roam Cloud Lite.</td></tr>
-      <tr><td><code>roam audit-trail-verify</code></td><td>Verify SHA-256 chain integrity of a roam audit trail.</td></tr>
-      <tr><td><code>roam audit-trail-export</code></td><td>Export the audit trail for procurement / compliance review.</td></tr>
-      <tr><td><code>roam audit-trail-conformance-check</code></td><td>Score the audit trail against an EU AI Act Article 12 che...</td></tr>
-      <tr><td><code>roam article-12-check</code></td><td>EU AI Act Article 12 readiness assessment for the indexed...</td></tr>
-      <tr><td><code>roam capabilities</code></td><td>Emit the capability registry — every command's machine-re...</td></tr>
-      <tr><td><code>roam skill-generate</code></td><td>Generate an agent-runtime skill manifest from the capabil...</td></tr>
-      <tr><td><code>roam compare</code></td><td>Structural diff between two roam indices.</td></tr>
-      <tr><td><code>roam migration-plan</code></td><td>Generate an ordered migration plan with risk + blast-radi...</td></tr>
-      <tr><td><code>roam dogfood</code></td><td>Run audit, PR analysis and optional audit-trail checks to...</td></tr>
-      <tr><td><code>roam dogfood-aggregate</code></td><td>Aggregate the dogfood eval corpus into a backlog/triage v...</td></tr>
-      <tr><td><code>roam suppress</code></td><td>Suppress a math / over-fetch / missing-index / auth-gaps ...</td></tr>
-      <tr><td><code>roam pr-diff</code></td><td>Show structural impact of pending changes.</td></tr>
-      <tr><td><code>roam evidence-diff</code></td><td>Diff two ``ChangeEvidence`` packets.</td></tr>
-      <tr><td><code>roam evidence-doctor</code></td><td>Diagnose a ``ChangeEvidence`` packet's health.</td></tr>
-      <tr><td><code>roam evidence-oscal</code></td><td>Emit an OSCAL v1.2 document (Control Mapping or Assessmen...</td></tr>
-      <tr><td><code>roam api-changes</code></td><td></td></tr>
-      <tr><td><code>roam semantic-diff</code></td><td>Show structural change summary vs a git ref.</td></tr>
-      <tr><td><code>roam test-gaps</code></td><td>Find changed symbols without test-connection or coverage ...</td></tr>
-      <tr><td><code>roam affected</code></td><td>Identify affected files/modules from a git diff via depen...</td></tr>
-      <tr><td><code>roam attest</code></td><td>Generate a proof-carrying PR attestation.</td></tr>
-      <tr><td><code>roam review-request</code></td><td>Emit the brief to hand a different-family reviewer.</td></tr>
-      <tr><td><code>roam review-accept</code></td><td>Record a review outcome as a receipt the verdict gate can...</td></tr>
-      <tr><td><code>roam review-verify</code></td><td>Re-derive the review verdict from the artifact's CURRENT ...</td></tr>
-      <tr><td><code>roam adversarial</code></td><td>Adversarial architecture review -- challenge your changes.</td></tr>
-      <tr><td><code>roam verify</code></td><td>Verify changed files follow codebase conventions.</td></tr>
-      <tr><td><code>roam verify-imports</code></td><td>Validate import/require statements against the indexed sy...</td></tr>
-      <tr><td><code>roam diff</code></td><td>Show blast radius: what code is affected by your changes.</td></tr>
-      <tr><td><code>roam context</code></td><td>Get the minimal context needed to safely modify a symbol.</td></tr>
-      <tr><td><code>roam hover</code></td><td>Show a one-line architectural summary for SYMBOL.</td></tr>
-      <tr><td><code>roam retrieve</code></td><td>Return ranked code spans for a free-form task.</td></tr>
-      <tr><td><code>roam critique</code></td><td>Verify a patch against the indexed graph.</td></tr>
-      <tr><td><code>roam fleet</code></td><td>Graph-aware planner for multi-agent code work.</td></tr>
-      <tr><td><code>roam affected-tests</code></td><td>Trace from a changed symbol or file to test files that ex...</td></tr>
-      <tr><td><code>roam test-impact</code></td><td>List tests transitively reachable from symbols changed in...</td></tr>
-      <tr><td><code>roam diagnose</code></td><td>Root cause analysis for a failing SYMBOL.</td></tr>
-      <tr><td><code>roam why-fail</code></td><td>Find recently-changed symbols transitively reached by a f...</td></tr>
-      <tr><td><code>roam recommend</code></td><td>Recommend related symbols using call-graph, co-change, an...</td></tr>
-      <tr><td><code>roam api</code></td><td>List the public API surface (exported public symbols).</td></tr>
-      <tr><td><code>roam disambiguate</code></td><td>List every symbol matching SYMBOL with disambiguators.</td></tr>
-      <tr><td><code>roam annotate</code></td><td>Annotate a symbol or file with a persistent note.</td></tr>
-      <tr><td><code>roam annotations</code></td><td>List annotations for a symbol, file, or the whole project.</td></tr>
-      <tr><td><code>roam plan</code></td><td>Generate a structured execution plan for modifying code.</td></tr>
-      <tr><td><code>roam compile</code></td><td>Compile TASK (freeform string) into an agent-consumable e...</td></tr>
-      <tr><td><code>roam compile-stats</code></td><td>Show distribution stats over the compile telemetry log.</td></tr>
-      <tr><td><code>roam savings</code></td><td>Materialize the local episode ledger and report admissibl...</td></tr>
-      <tr><td><code>roam savings-backfill</code></td><td>Write a value-redacted historical episode snapshot for re...</td></tr>
-      <tr><td><code>roam compile-cache</code></td><td>Manage the persistent envelope cache.</td></tr>
-      <tr><td><code>roam compile-daemon</code></td><td>S2-lite warm compile server (per-repo, manual lifecycle, ...</td></tr>
-      <tr><td><code>roam envelope-diff</code></td><td>Compare two compile envelopes A and B. Reports probe-fami...</td></tr>
-      <tr><td><code>roam dispatch-trace</code></td><td>Emit the classifier + dispatch decision tree for PROMPT.</td></tr>
-      <tr><td><code>roam syntax-check</code></td><td>Check files for syntax errors using tree-sitter AST parsing.</td></tr>
-      <tr><td><code>roam triage</code></td><td>Manage security finding suppressions.</td></tr>
-      <tr><td><code>roam oracle</code></td><td>Container for the five v12.1 boolean oracles.</td></tr>
-      <tr><td><code>roam memory</code></td><td>Repo-local agent memory.</td></tr>
-      <tr><td><code>roam runs</code></td><td>Per-agent-run event ledger.</td></tr>
-      <tr><td><code>roam laws</code></td><td>Self-installing constitution.</td></tr>
-      <tr><td><code>roam constitution</code></td><td>Repo-local agent constitution -- capstone for agent-OS su...</td></tr>
-      <tr><td><code>roam agents-md</code></td><td>Generate an ``AGENTS.md`` describing this codebase to AI ...</td></tr>
-      <tr><td><code>roam next</code></td><td>Suggest the next roam command based on current repo state.</td></tr>
-      <tr><td><code>roam brief</code></td><td>One-page agent briefing covering mode / next / highlights...</td></tr>
-      <tr><td><code>roam replay</code></td><td>Re-narrate a past run and (optionally) rerun its commands.</td></tr>
-      <tr><td><code>roam agent-score</code></td><td>Aggregate runs and score each agent on a 0..100 composite.</td></tr>
-      <tr><td><code>roam mode</code></td><td>Show, switch, or query the active agent mode.</td></tr>
-      <tr><td><code>roam intent-check</code></td><td>Verify INTENDED_COMMAND would be allowed by the active mode.</td></tr>
-      <tr><td><code>roam lease</code></td><td>Multi-agent lease system.</td></tr>
+      <tr id="command-preflight"><td><a href="#command-preflight"><code>roam preflight</code></a></td><td>Run a pre-change safety checklist for a symbol, file, or staged changes.</td></tr>
+      <tr id="command-permit"><td><a href="#command-permit"><code>roam permit</code></a></td><td>Structural-permission verdict facade for AI agents + W198 issuance.</td></tr>
+      <tr id="command-postmortem"><td><a href="#command-postmortem"><code>roam postmortem</code></a></td><td>Replay current detectors against past commits.</td></tr>
+      <tr id="command-pr-replay"><td><a href="#command-pr-replay"><code>roam pr-replay</code></a></td><td>Generate a PR Replay report.</td></tr>
+      <tr id="command-service-report"><td><a href="#command-service-report"><code>roam service-report</code></a></td><td>Generate a one-command service-engagement report.</td></tr>
+      <tr id="command-reachability-triage"><td><a href="#command-reachability-triage"><code>roam reachability-triage</code></a></td><td>Emit zero-egress vulnerability reachability facts.</td></tr>
+      <tr id="command-guard"><td><a href="#command-guard"><code>roam guard</code></a></td><td>Check breaking-change risk for SYMBOL before editing.</td></tr>
+      <tr id="command-guard-pr"><td><a href="#command-guard-pr"><code>roam guard-pr</code></a></td><td>Run the full Roam Guard pipeline in one call.</td></tr>
+      <tr id="command-guard-doctor"><td><a href="#command-guard-doctor"><code>roam guard-doctor</code></a></td><td>Preflight + health check before running roam guard-pr.</td></tr>
+      <tr id="command-guard-init"><td><a href="#command-guard-init"><code>roam guard-init</code></a></td><td>Bootstrap `.roam/` + optional rule-pack stub for Roam Guard.</td></tr>
+      <tr id="command-guard-clean"><td><a href="#command-guard-clean"><code>roam guard-clean</code></a></td><td>Prune `.roam/verdict-log.jsonl` to its last N entries.</td></tr>
+      <tr id="command-guard-diff"><td><a href="#command-guard-diff"><code>roam guard-diff</code></a></td><td>Show the verdict delta between two bundle snapshots.</td></tr>
+      <tr id="command-guard-history"><td><a href="#command-guard-history"><code>roam guard-history</code></a></td><td>Show recent pr-bundles + their last-known verdict.</td></tr>
+      <tr id="command-guard-rules"><td><a href="#command-guard-rules"><code>roam guard-rules</code></a></td><td>Inspect / validate / test Roam Guard verification rule packs.</td></tr>
+      <tr id="command-proof-bundle"><td><a href="#command-proof-bundle"><code>roam proof-bundle</code></a></td><td>Compose and emit the AgentChangeProofBundle v1 from a pr-bundle.</td></tr>
+      <tr id="command-verdict"><td><a href="#command-verdict"><code>roam verdict</code></a></td><td>Compute the closed-enum verdict for a proof bundle.</td></tr>
+      <tr id="command-verification-contract"><td><a href="#command-verification-contract"><code>roam verification-contract</code></a></td><td>Emit the G3 verification contract for changed files + mode + policy.</td></tr>
+      <tr id="command-bench-compile"><td><a href="#command-bench-compile"><code>roam bench-compile</code></a></td><td>Run a controlled A/B between vanilla / static / compile prompt modes.</td></tr>
+      <tr id="command-agent-plan"><td><a href="#command-agent-plan"><code>roam agent-plan</code></a></td><td>Decompose partitions into dependency-ordered multi-agent tasks.</td></tr>
+      <tr id="command-agent-context"><td><a href="#command-agent-context"><code>roam agent-context</code></a></td><td>Generate per-worker context: write scope, read-only deps, and contracts.</td></tr>
+      <tr id="command-pr-risk"><td><a href="#command-pr-risk"><code>roam pr-risk</code></a></td><td>Compute risk score for pending changes.</td></tr>
+      <tr id="command-pr-prep"><td><a href="#command-pr-prep"><code>roam pr-prep</code></a></td><td>One-shot pre-PR fitness check: diff + critique + pr-risk.</td></tr>
+      <tr id="command-pr-analyze"><td><a href="#command-pr-analyze"><code>roam pr-analyze</code></a></td><td>Analyse a PR diff for structural risk and AI-likelihood.</td></tr>
+      <tr id="command-pr-bundle"><td><a href="#command-pr-bundle"><code>roam pr-bundle</code></a></td><td>Proof-carrying PR bundle (R26 -- Roam Review MVP differentiator).</td></tr>
+      <tr id="command-pr-comment-render"><td><a href="#command-pr-comment-render"><code>roam pr-comment-render</code></a></td><td>Render a markdown PR comment from a pr-analyze envelope.</td></tr>
+      <tr id="command-rules-validate"><td><a href="#command-rules-validate"><code>roam rules-validate</code></a></td><td>Lint a `.roam/rules.yml` file before shipping it to your team.</td></tr>
+      <tr id="command-metrics-push"><td><a href="#command-metrics-push"><code>roam metrics-push</code></a></td><td>Push metrics-only summary to Roam Cloud Lite.</td></tr>
+      <tr id="command-audit-trail-verify"><td><a href="#command-audit-trail-verify"><code>roam audit-trail-verify</code></a></td><td>Verify SHA-256 chain integrity of a roam audit trail.</td></tr>
+      <tr id="command-audit-trail-export"><td><a href="#command-audit-trail-export"><code>roam audit-trail-export</code></a></td><td>Export the audit trail for procurement / compliance review.</td></tr>
+      <tr id="command-audit-trail-conformance-check"><td><a href="#command-audit-trail-conformance-check"><code>roam audit-trail-conformance-check</code></a></td><td>Score the audit trail against an EU AI Act Article 12 checklist.</td></tr>
+      <tr id="command-article-12-check"><td><a href="#command-article-12-check"><code>roam article-12-check</code></a></td><td>EU AI Act Article 12 readiness assessment for the indexed repo.</td></tr>
+      <tr id="command-capabilities"><td><a href="#command-capabilities"><code>roam capabilities</code></a></td><td>Emit the capability registry — every command&#x27;s machine-readable shape.</td></tr>
+      <tr id="command-skill-generate"><td><a href="#command-skill-generate"><code>roam skill-generate</code></a></td><td>Generate an agent-runtime skill manifest from the capability registry.</td></tr>
+      <tr id="command-compare"><td><a href="#command-compare"><code>roam compare</code></a></td><td>Structural diff between two roam indices.</td></tr>
+      <tr id="command-migration-plan"><td><a href="#command-migration-plan"><code>roam migration-plan</code></a></td><td>Generate an ordered migration plan with risk + blast-radius per step.</td></tr>
+      <tr id="command-dogfood"><td><a href="#command-dogfood"><code>roam dogfood</code></a></td><td>Run audit, PR analysis and optional audit-trail checks together.</td></tr>
+      <tr id="command-dogfood-aggregate"><td><a href="#command-dogfood-aggregate"><code>roam dogfood-aggregate</code></a></td><td>Aggregate the dogfood eval corpus into a backlog/triage view.</td></tr>
+      <tr id="command-suppress"><td><a href="#command-suppress"><code>roam suppress</code></a></td><td>Suppress a math / over-fetch / missing-index / auth-gaps finding.</td></tr>
+      <tr id="command-pr-diff"><td><a href="#command-pr-diff"><code>roam pr-diff</code></a></td><td>Show structural impact of pending changes.</td></tr>
+      <tr id="command-evidence-diff"><td><a href="#command-evidence-diff"><code>roam evidence-diff</code></a></td><td>Diff two ``ChangeEvidence`` packets.</td></tr>
+      <tr id="command-evidence-doctor"><td><a href="#command-evidence-doctor"><code>roam evidence-doctor</code></a></td><td>Diagnose a ``ChangeEvidence`` packet&#x27;s health.</td></tr>
+      <tr id="command-evidence-oscal"><td><a href="#command-evidence-oscal"><code>roam evidence-oscal</code></a></td><td>Emit an OSCAL v1.2 document (Control Mapping or Assessment Results).</td></tr>
+      <tr id="command-api-changes"><td><a href="#command-api-changes"><code>roam api-changes</code></a></td><td>Detect breaking and non-breaking API changes vs a git ref.</td></tr>
+      <tr id="command-semantic-diff"><td><a href="#command-semantic-diff"><code>roam semantic-diff</code></a></td><td>Show structural change summary vs a git ref.</td></tr>
+      <tr id="command-test-gaps"><td><a href="#command-test-gaps"><code>roam test-gaps</code></a></td><td>Find changed symbols without test-connection or coverage evidence.</td></tr>
+      <tr id="command-affected"><td><a href="#command-affected"><code>roam affected</code></a></td><td>Identify affected files/modules from a git diff via dependency graph.</td></tr>
+      <tr id="command-attest"><td><a href="#command-attest"><code>roam attest</code></a></td><td>Generate a proof-carrying PR attestation.</td></tr>
+      <tr id="command-review-request"><td><a href="#command-review-request"><code>roam review-request</code></a></td><td>Emit the brief to hand a different-family reviewer.</td></tr>
+      <tr id="command-review-accept"><td><a href="#command-review-accept"><code>roam review-accept</code></a></td><td>Record a review outcome as a receipt the verdict gate can read.</td></tr>
+      <tr id="command-review-verify"><td><a href="#command-review-verify"><code>roam review-verify</code></a></td><td>Re-derive the review verdict from the artifact&#x27;s CURRENT bytes.</td></tr>
+      <tr id="command-adversarial"><td><a href="#command-adversarial"><code>roam adversarial</code></a></td><td>Adversarial architecture review -- challenge your changes.</td></tr>
+      <tr id="command-verify"><td><a href="#command-verify"><code>roam verify</code></a></td><td>Verify changed files follow codebase conventions.</td></tr>
+      <tr id="command-verify-imports"><td><a href="#command-verify-imports"><code>roam verify-imports</code></a></td><td>Validate import/require statements against the indexed symbol table.</td></tr>
+      <tr id="command-diff"><td><a href="#command-diff"><code>roam diff</code></a></td><td>Show blast radius: what code is affected by your changes.</td></tr>
+      <tr id="command-context"><td><a href="#command-context"><code>roam context</code></a></td><td>Get the minimal context needed to safely modify a symbol.</td></tr>
+      <tr id="command-hover"><td><a href="#command-hover"><code>roam hover</code></a></td><td>Show a one-line architectural summary for SYMBOL.</td></tr>
+      <tr id="command-retrieve"><td><a href="#command-retrieve"><code>roam retrieve</code></a></td><td>Return ranked code spans for a free-form task.</td></tr>
+      <tr id="command-critique"><td><a href="#command-critique"><code>roam critique</code></a></td><td>Verify a patch against the indexed graph.</td></tr>
+      <tr id="command-fleet"><td><a href="#command-fleet"><code>roam fleet</code></a></td><td>Graph-aware planner for multi-agent code work.</td></tr>
+      <tr id="command-affected-tests"><td><a href="#command-affected-tests"><code>roam affected-tests</code></a></td><td>Trace from a changed symbol or file to test files that exercise it.</td></tr>
+      <tr id="command-test-impact"><td><a href="#command-test-impact"><code>roam test-impact</code></a></td><td>List tests transitively reachable from symbols changed in &lt;range&gt;.</td></tr>
+      <tr id="command-diagnose"><td><a href="#command-diagnose"><code>roam diagnose</code></a></td><td>Root cause analysis for a failing SYMBOL.</td></tr>
+      <tr id="command-why-fail"><td><a href="#command-why-fail"><code>roam why-fail</code></a></td><td>Find recently-changed symbols transitively reached by a failing test.</td></tr>
+      <tr id="command-recommend"><td><a href="#command-recommend"><code>roam recommend</code></a></td><td>Recommend related symbols using call-graph, co-change, and clone signals.</td></tr>
+      <tr id="command-api"><td><a href="#command-api"><code>roam api</code></a></td><td>List the public API surface (exported public symbols).</td></tr>
+      <tr id="command-disambiguate"><td><a href="#command-disambiguate"><code>roam disambiguate</code></a></td><td>List every symbol matching SYMBOL with disambiguators.</td></tr>
+      <tr id="command-annotate"><td><a href="#command-annotate"><code>roam annotate</code></a></td><td>Annotate a symbol or file with a persistent note.</td></tr>
+      <tr id="command-annotations"><td><a href="#command-annotations"><code>roam annotations</code></a></td><td>List annotations for a symbol, file, or the whole project.</td></tr>
+      <tr id="command-plan"><td><a href="#command-plan"><code>roam plan</code></a></td><td>Generate a structured execution plan for modifying code.</td></tr>
+      <tr id="command-compile"><td><a href="#command-compile"><code>roam compile</code></a></td><td>Compile TASK (freeform string) into an agent-consumable envelope.</td></tr>
+      <tr id="command-compile-stats"><td><a href="#command-compile-stats"><code>roam compile-stats</code></a></td><td>Show distribution stats over the compile telemetry log.</td></tr>
+      <tr id="command-savings"><td><a href="#command-savings"><code>roam savings</code></a></td><td>Materialize the local episode ledger and report admissible savings evidence.</td></tr>
+      <tr id="command-savings-backfill"><td><a href="#command-savings-backfill"><code>roam savings-backfill</code></a></td><td>Write a value-redacted historical episode snapshot for repeated-pattern discovery.</td></tr>
+      <tr id="command-compile-cache"><td><a href="#command-compile-cache"><code>roam compile-cache</code></a></td><td>Manage the persistent envelope cache.</td></tr>
+      <tr id="command-compile-daemon"><td><a href="#command-compile-daemon"><code>roam compile-daemon</code></a></td><td>S2-lite warm compile server (per-repo, manual lifecycle, fail-open).</td></tr>
+      <tr id="command-envelope-diff"><td><a href="#command-envelope-diff"><code>roam envelope-diff</code></a></td><td>Compare two compile envelopes A and B. Reports probe-family and classifier deltas. With --baseline, A is a prompt; the matching baseline replaces B.</td></tr>
+      <tr id="command-dispatch-trace"><td><a href="#command-dispatch-trace"><code>roam dispatch-trace</code></a></td><td>Emit the classifier + dispatch decision tree for PROMPT.</td></tr>
+      <tr id="command-syntax-check"><td><a href="#command-syntax-check"><code>roam syntax-check</code></a></td><td>Check files for syntax errors using tree-sitter AST parsing.</td></tr>
+      <tr id="command-triage"><td><a href="#command-triage"><code>roam triage</code></a></td><td>Manage security finding suppressions.</td></tr>
+      <tr id="command-oracle"><td><a href="#command-oracle"><code>roam oracle</code></a></td><td>Container for the five v12.1 boolean oracles.</td></tr>
+      <tr id="command-memory"><td><a href="#command-memory"><code>roam memory</code></a></td><td>Repo-local agent memory.</td></tr>
+      <tr id="command-runs"><td><a href="#command-runs"><code>roam runs</code></a></td><td>Per-agent-run event ledger.</td></tr>
+      <tr id="command-laws"><td><a href="#command-laws"><code>roam laws</code></a></td><td>Self-installing constitution.</td></tr>
+      <tr id="command-constitution"><td><a href="#command-constitution"><code>roam constitution</code></a></td><td>Repo-local agent constitution -- capstone for agent-OS substrates.</td></tr>
+      <tr id="command-agents-md"><td><a href="#command-agents-md"><code>roam agents-md</code></a></td><td>Generate an ``AGENTS.md`` describing this codebase to AI agents.</td></tr>
+      <tr id="command-next"><td><a href="#command-next"><code>roam next</code></a></td><td>Suggest the next roam command based on current repo state.</td></tr>
+      <tr id="command-brief"><td><a href="#command-brief"><code>roam brief</code></a></td><td>One-page agent briefing covering mode / next / highlights / pr-bundle / runs.</td></tr>
+      <tr id="command-replay"><td><a href="#command-replay"><code>roam replay</code></a></td><td>Re-narrate a past run and (optionally) rerun its commands.</td></tr>
+      <tr id="command-agent-score"><td><a href="#command-agent-score"><code>roam agent-score</code></a></td><td>Aggregate runs and score each agent on a 0..100 composite.</td></tr>
+      <tr id="command-mode"><td><a href="#command-mode"><code>roam mode</code></a></td><td>Show, switch, or query the active agent mode.</td></tr>
+      <tr id="command-intent-check"><td><a href="#command-intent-check"><code>roam intent-check</code></a></td><td>Verify INTENDED_COMMAND would be allowed by the active mode.</td></tr>
+      <tr id="command-lease"><td><a href="#command-lease"><code>roam lease</code></a></td><td>Multi-agent lease system.</td></tr>
     </tbody></table></div>
   <h3>Codebase Health</h3>
   <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>roam health</code></td><td>Show code health: cycles, god components, bottlenecks.</td></tr>
-      <tr><td><code>roam smells</code></td><td>Detect code smells: brain methods, god classes, deep nest...</td></tr>
-      <tr><td><code>roam magic-numbers</code></td><td>Scan source for hardcoded numeric constants that should b...</td></tr>
-      <tr><td><code>roam calc-inventory</code></td><td>Enumerate computed-numeric fields + their formulas from t...</td></tr>
-      <tr><td><code>roam calc-probe</code></td><td>Empirically compare rounding implementations on tie-bound...</td></tr>
-      <tr><td><code>roam calc-golden</code></td><td>Golden-master calculation oracle: extract / audit / check.</td></tr>
-      <tr><td><code>roam compiler-health</code></td><td>One envelope per compiler health snapshot.</td></tr>
-      <tr><td><code>roam compiler-corpus</code></td><td>Compile every prompt in a corpus file and aggregate the p...</td></tr>
-      <tr><td><code>roam vibe-check</code></td><td>Detect AI code anti-patterns and compute AI rot score.</td></tr>
-      <tr><td><code>roam llm-smells</code></td><td>Detect LLM-API integration anti-patterns.</td></tr>
-      <tr><td><code>roam collapse</code></td><td>Detect unavailable sources collapsed into benign defaults.</td></tr>
-      <tr><td><code>roam ai-readiness</code></td><td>Estimate how effectively AI agents can work on this codeb...</td></tr>
-      <tr><td><code>roam check-rules</code></td><td>Run structural governance rules against the indexed codeb...</td></tr>
-      <tr><td><code>roam dict-consistency</code></td><td>Audit string-keyed dicts in a Python file for cross-dict ...</td></tr>
-      <tr><td><code>roam ai-ratio</code></td><td>Inspect AI-associated patterns; this is not an authorship...</td></tr>
-      <tr><td><code>roam trends</code></td><td>Health trend timeline, anomaly detection, per-metric trac...</td></tr>
-      <tr><td><code>roam weather</code></td><td>Rank files by churn x complexity score (highest-leverage ...</td></tr>
-      <tr><td><code>roam timeline</code></td><td>Show commits that touched the file owning &lt;symbol&gt;.</td></tr>
-      <tr><td><code>roam debt</code></td><td>Hotspot-weighted technical debt prioritization.</td></tr>
-      <tr><td><code>roam complexity</code></td><td>Show cognitive complexity metrics for functions and methods.</td></tr>
-      <tr><td><code>roam py-types</code></td><td>Show Python type-annotation health for the indexed project.</td></tr>
-      <tr><td><code>roam py-modern</code></td><td>Modern-Python adoption: walrus, match, PEP 604/585/695, f...</td></tr>
-      <tr><td><code>roam pytest-fixtures</code></td><td>Show the pytest fixture chain for SYMBOL, or a project su...</td></tr>
-      <tr><td><code>roam test-hermeticity</code></td><td>Scan Python test files for non-hermetic patterns (AI-test...</td></tr>
-      <tr><td><code>roam algo</code></td><td>Detect suboptimal algorithms and suggest better approaches.</td></tr>
-      <tr><td><code>roam agent-opt</code></td><td>Optimize roam's agent-contract surface: find weak envelop...</td></tr>
-      <tr><td><code>roam observability-opt</code></td><td>Review raw print candidates and their diagnostic context.</td></tr>
-      <tr><td><code>roam n1</code></td><td>Detect implicit N+1 I/O patterns in ORM models.</td></tr>
-      <tr><td><code>roam over-fetch</code></td><td>Detect models that serialize more fields than necessary i...</td></tr>
-      <tr><td><code>roam missing-index</code></td><td>Detect queries that filter or sort on columns without ind...</td></tr>
-      <tr><td><code>roam alerts</code></td><td>Detect health degradation trends and generate actionable ...</td></tr>
-      <tr><td><code>roam fitness</code></td><td>Run architectural fitness functions from .roam/fitness.yaml.</td></tr>
-      <tr><td><code>roam forecast</code></td><td>Predict when metrics will exceed thresholds using trend a...</td></tr>
-      <tr><td><code>roam bisect</code></td><td>Find which snapshots caused architectural degradation.</td></tr>
-      <tr><td><code>roam ingest-trace</code></td><td>Ingest runtime trace data and match spans to symbols.</td></tr>
-      <tr><td><code>roam profile-import</code></td><td>Rank source spans from a sampled py-spy/speedscope JSON p...</td></tr>
-      <tr><td><code>roam hotspots</code></td><td>Show runtime hotspots comparing static analysis vs runtim...</td></tr>
-      <tr><td><code>roam why-slow</code></td><td>Find runtime hotspots — symbols slow under real productio...</td></tr>
-      <tr><td><code>roam eval-retrieve</code></td><td>Run the retrieval eval harness over a labeled task set.</td></tr>
-      <tr><td><code>roam boundary</code></td><td>Surface public-by-accident exports + changed-range layer ...</td></tr>
-      <tr><td><code>roam vue-emits</code></td><td>Find Vue child emits without matching handlers in resolve...</td></tr>
-      <tr><td><code>roam rules-suggest</code></td><td>Suggest ``.roam/rules.yml`` rules and CI gates from recur...</td></tr>
+      <tr id="command-health"><td><a href="#command-health"><code>roam health</code></a></td><td>Show code health: cycles, god components, bottlenecks.</td></tr>
+      <tr id="command-smells"><td><a href="#command-smells"><code>roam smells</code></a></td><td>Detect code smells: brain methods, god classes, deep nesting, and more.</td></tr>
+      <tr id="command-magic-numbers"><td><a href="#command-magic-numbers"><code>roam magic-numbers</code></a></td><td>Scan source for hardcoded numeric constants that should be named constants. Python via ``ast``; JS/TS/Go/Rust/Java/Ruby/C/C# via tree-sitter (with a regex fallback when the grammar isn&#x27;t available). Defaults to the current directory, including monorepo workspaces; respects discovery exclusions and skips test files.</td></tr>
+      <tr id="command-calc-inventory"><td><a href="#command-calc-inventory"><code>roam calc-inventory</code></a></td><td>Enumerate computed-numeric fields + their formulas from the AST.</td></tr>
+      <tr id="command-calc-probe"><td><a href="#command-calc-probe"><code>roam calc-probe</code></a></td><td>Empirically compare rounding implementations on tie-boundary inputs.</td></tr>
+      <tr id="command-calc-golden"><td><a href="#command-calc-golden"><code>roam calc-golden</code></a></td><td>Golden-master calculation oracle: extract / audit / check.</td></tr>
+      <tr id="command-compiler-health"><td><a href="#command-compiler-health"><code>roam compiler-health</code></a></td><td>One envelope per compiler health snapshot.</td></tr>
+      <tr id="command-compiler-corpus"><td><a href="#command-compiler-corpus"><code>roam compiler-corpus</code></a></td><td>Compile every prompt in a corpus file and aggregate the pipeline metrics.</td></tr>
+      <tr id="command-vibe-check"><td><a href="#command-vibe-check"><code>roam vibe-check</code></a></td><td>Detect AI code anti-patterns and compute AI rot score.</td></tr>
+      <tr id="command-llm-smells"><td><a href="#command-llm-smells"><code>roam llm-smells</code></a></td><td>Detect LLM-API integration anti-patterns.</td></tr>
+      <tr id="command-collapse"><td><a href="#command-collapse"><code>roam collapse</code></a></td><td>Detect unavailable sources collapsed into benign defaults.</td></tr>
+      <tr id="command-ai-readiness"><td><a href="#command-ai-readiness"><code>roam ai-readiness</code></a></td><td>Estimate how effectively AI agents can work on this codebase (0-100).</td></tr>
+      <tr id="command-check-rules"><td><a href="#command-check-rules"><code>roam check-rules</code></a></td><td>Run structural governance rules against the indexed codebase.</td></tr>
+      <tr id="command-dict-consistency"><td><a href="#command-dict-consistency"><code>roam dict-consistency</code></a></td><td>Audit string-keyed dicts in a Python file for cross-dict consistency. Would have caught W181 (refactor_move missing from 4 parallel registries) in one call.</td></tr>
+      <tr id="command-ai-ratio"><td><a href="#command-ai-ratio"><code>roam ai-ratio</code></a></td><td>Inspect AI-associated patterns; this is not an authorship detector.</td></tr>
+      <tr id="command-trends"><td><a href="#command-trends"><code>roam trends</code></a></td><td>Health trend timeline, anomaly detection, per-metric tracking, and CI gates.</td></tr>
+      <tr id="command-weather"><td><a href="#command-weather"><code>roam weather</code></a></td><td>Rank files by churn x complexity score (highest-leverage refactoring targets).</td></tr>
+      <tr id="command-timeline"><td><a href="#command-timeline"><code>roam timeline</code></a></td><td>Show commits that touched the file owning &lt;symbol&gt;.</td></tr>
+      <tr id="command-debt"><td><a href="#command-debt"><code>roam debt</code></a></td><td>Hotspot-weighted technical debt prioritization.</td></tr>
+      <tr id="command-complexity"><td><a href="#command-complexity"><code>roam complexity</code></a></td><td>Show cognitive complexity metrics for functions and methods.</td></tr>
+      <tr id="command-py-types"><td><a href="#command-py-types"><code>roam py-types</code></a></td><td>Show Python type-annotation health for the indexed project.</td></tr>
+      <tr id="command-py-modern"><td><a href="#command-py-modern"><code>roam py-modern</code></a></td><td>Modern-Python adoption: walrus, match, PEP 604/585/695, f-strings.</td></tr>
+      <tr id="command-pytest-fixtures"><td><a href="#command-pytest-fixtures"><code>roam pytest-fixtures</code></a></td><td>Show the pytest fixture chain for SYMBOL, or a project summary.</td></tr>
+      <tr id="command-test-hermeticity"><td><a href="#command-test-hermeticity"><code>roam test-hermeticity</code></a></td><td>Scan Python test files for non-hermetic patterns (AI-test flakiness risk).</td></tr>
+      <tr id="command-algo"><td><a href="#command-algo"><code>roam algo</code></a></td><td>Detect suboptimal algorithms and suggest better approaches.</td></tr>
+      <tr id="command-agent-opt"><td><a href="#command-agent-opt"><code>roam agent-opt</code></a></td><td>Optimize roam&#x27;s agent-contract surface: find weak envelope/description shape.</td></tr>
+      <tr id="command-observability-opt"><td><a href="#command-observability-opt"><code>roam observability-opt</code></a></td><td>Review raw print candidates and their diagnostic context.</td></tr>
+      <tr id="command-n1"><td><a href="#command-n1"><code>roam n1</code></a></td><td>Detect implicit N+1 I/O patterns in ORM models.</td></tr>
+      <tr id="command-over-fetch"><td><a href="#command-over-fetch"><code>roam over-fetch</code></a></td><td>Detect models that serialize more fields than necessary in API responses.</td></tr>
+      <tr id="command-missing-index"><td><a href="#command-missing-index"><code>roam missing-index</code></a></td><td>Detect queries that filter or sort on columns without indexes.</td></tr>
+      <tr id="command-alerts"><td><a href="#command-alerts"><code>roam alerts</code></a></td><td>Detect health degradation trends and generate actionable alerts.</td></tr>
+      <tr id="command-fitness"><td><a href="#command-fitness"><code>roam fitness</code></a></td><td>Run architectural fitness functions from .roam/fitness.yaml.</td></tr>
+      <tr id="command-forecast"><td><a href="#command-forecast"><code>roam forecast</code></a></td><td>Predict when metrics will exceed thresholds using trend analysis.</td></tr>
+      <tr id="command-bisect"><td><a href="#command-bisect"><code>roam bisect</code></a></td><td>Find which snapshots caused architectural degradation.</td></tr>
+      <tr id="command-ingest-trace"><td><a href="#command-ingest-trace"><code>roam ingest-trace</code></a></td><td>Ingest runtime trace data and match spans to symbols.</td></tr>
+      <tr id="command-profile-import"><td><a href="#command-profile-import"><code>roam profile-import</code></a></td><td>Rank source spans from a sampled py-spy/speedscope JSON profile.</td></tr>
+      <tr id="command-hotspots"><td><a href="#command-hotspots"><code>roam hotspots</code></a></td><td>Show runtime hotspots comparing static analysis vs runtime data.</td></tr>
+      <tr id="command-why-slow"><td><a href="#command-why-slow"><code>roam why-slow</code></a></td><td>Find runtime hotspots — symbols slow under real production traffic.</td></tr>
+      <tr id="command-eval-retrieve"><td><a href="#command-eval-retrieve"><code>roam eval-retrieve</code></a></td><td>Run the retrieval eval harness over a labeled task set.</td></tr>
+      <tr id="command-boundary"><td><a href="#command-boundary"><code>roam boundary</code></a></td><td>Surface public-by-accident exports + changed-range layer violations.</td></tr>
+      <tr id="command-vue-emits"><td><a href="#command-vue-emits"><code>roam vue-emits</code></a></td><td>Find Vue child emits without matching handlers in resolved parent usages.</td></tr>
+      <tr id="command-rules-suggest"><td><a href="#command-rules-suggest"><code>roam rules-suggest</code></a></td><td>Suggest ``.roam/rules.yml`` rules and CI gates from recurring findings.</td></tr>
     </tbody></table></div>
   <h3>Architecture</h3>
   <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>roam map</code></td><td>Show project skeleton with entry points and key symbols.</td></tr>
-      <tr><td><code>roam graph-export</code></td><td>Export the indexed graph for external tooling.</td></tr>
-      <tr><td><code>roam graph-stats</code></td><td>Report density, connected components, and degree statistics.</td></tr>
-      <tr><td><code>roam graph-diff</code></td><td>Structural diff between two graph snapshots.</td></tr>
-      <tr><td><code>roam architecture-drift</code></td><td>Architectural-trend report over a sliding window of snaps...</td></tr>
-      <tr><td><code>roam layers</code></td><td>Show dependency layers and violations.</td></tr>
-      <tr><td><code>roam clusters</code></td><td></td></tr>
-      <tr><td><code>roam cycles</code></td><td>List strongly-connected components (import/call cycles) o...</td></tr>
-      <tr><td><code>roam cycle-break</code></td><td>Recommend minimal symbol extractions that break file depe...</td></tr>
-      <tr><td><code>roam spectral</code></td><td>Spectral bisection: Fiedler vector partition tree.</td></tr>
-      <tr><td><code>roam coupling</code></td><td>Show temporal coupling: file pairs that change together.</td></tr>
-      <tr><td><code>roam dark-matter</code></td><td></td></tr>
-      <tr><td><code>roam effects</code></td><td>Show what functions DO — side-effect classification.</td></tr>
-      <tr><td><code>roam side-effects</code></td><td>Classify symbols by their side effects (none / io_read / ...</td></tr>
-      <tr><td><code>roam idempotency</code></td><td>Classify symbols by idempotency (idempotent / non_idempot...</td></tr>
-      <tr><td><code>roam causal-graph</code></td><td>Build per-symbol causal graphs (input → sink data depende...</td></tr>
-      <tr><td><code>roam tx-boundaries</code></td><td>Classify functions by transactional safety.</td></tr>
-      <tr><td><code>roam cut</code></td><td>Minimum cut analysis — find fragile domain boundaries.</td></tr>
-      <tr><td><code>roam simulate</code></td><td></td></tr>
-      <tr><td><code>roam orchestrate</code></td><td></td></tr>
-      <tr><td><code>roam partition</code></td><td>Generate a multi-agent partition manifest with conflict a...</td></tr>
-      <tr><td><code>roam entry-points</code></td><td>Entry point catalog with protocol classification.</td></tr>
-      <tr><td><code>roam patterns</code></td><td>Detect common architectural patterns in the codebase.</td></tr>
-      <tr><td><code>roam safe-zones</code></td><td>Identify safe refactoring boundaries for a symbol or file.</td></tr>
-      <tr><td><code>roam visualize</code></td><td>Generate a Mermaid or DOT architecture diagram.</td></tr>
-      <tr><td><code>roam x-lang</code></td><td>Show cross-language symbol bridges detected in the project.</td></tr>
-      <tr><td><code>roam fingerprint</code></td><td>Topology fingerprint for cross-repo comparison.</td></tr>
-      <tr><td><code>roam clones</code></td><td>Detect near-duplicate code via AST structural hashing.</td></tr>
+      <tr id="command-map"><td><a href="#command-map"><code>roam map</code></a></td><td>Show project skeleton with entry points and key symbols.</td></tr>
+      <tr id="command-graph-export"><td><a href="#command-graph-export"><code>roam graph-export</code></a></td><td>Export the indexed graph for external tooling.</td></tr>
+      <tr id="command-graph-stats"><td><a href="#command-graph-stats"><code>roam graph-stats</code></a></td><td>Report density, connected components, and degree statistics.</td></tr>
+      <tr id="command-graph-diff"><td><a href="#command-graph-diff"><code>roam graph-diff</code></a></td><td>Structural diff between two graph snapshots.</td></tr>
+      <tr id="command-architecture-drift"><td><a href="#command-architecture-drift"><code>roam architecture-drift</code></a></td><td>Architectural-trend report over a sliding window of snapshots.</td></tr>
+      <tr id="command-layers"><td><a href="#command-layers"><code>roam layers</code></a></td><td>Show dependency layers and violations.</td></tr>
+      <tr id="command-clusters"><td><a href="#command-clusters"><code>roam clusters</code></a></td><td>Show code clusters and directory mismatches.</td></tr>
+      <tr id="command-cycles"><td><a href="#command-cycles"><code>roam cycles</code></a></td><td>List strongly-connected components (import/call cycles) of the symbol graph.</td></tr>
+      <tr id="command-cycle-break"><td><a href="#command-cycle-break"><code>roam cycle-break</code></a></td><td>Recommend minimal symbol extractions that break file dependency cycles.</td></tr>
+      <tr id="command-spectral"><td><a href="#command-spectral"><code>roam spectral</code></a></td><td>Spectral bisection: Fiedler vector partition tree.</td></tr>
+      <tr id="command-coupling"><td><a href="#command-coupling"><code>roam coupling</code></a></td><td>Show temporal coupling: file pairs that change together.</td></tr>
+      <tr id="command-dark-matter"><td><a href="#command-dark-matter"><code>roam dark-matter</code></a></td><td>Detect dark matter: file pairs that co-change but have no structural link.</td></tr>
+      <tr id="command-effects"><td><a href="#command-effects"><code>roam effects</code></a></td><td>Show what functions DO — side-effect classification.</td></tr>
+      <tr id="command-side-effects"><td><a href="#command-side-effects"><code>roam side-effects</code></a></td><td>Classify symbols by their side effects (none / io_read / io_write / mutation / process / unknown).</td></tr>
+      <tr id="command-idempotency"><td><a href="#command-idempotency"><code>roam idempotency</code></a></td><td>Classify symbols by idempotency (idempotent / non_idempotent / unknown).</td></tr>
+      <tr id="command-causal-graph"><td><a href="#command-causal-graph"><code>roam causal-graph</code></a></td><td>Build per-symbol causal graphs (input → sink data dependencies).</td></tr>
+      <tr id="command-tx-boundaries"><td><a href="#command-tx-boundaries"><code>roam tx-boundaries</code></a></td><td>Classify functions by transactional safety.</td></tr>
+      <tr id="command-cut"><td><a href="#command-cut"><code>roam cut</code></a></td><td>Minimum cut analysis — find fragile domain boundaries.</td></tr>
+      <tr id="command-simulate"><td><a href="#command-simulate"><code>roam simulate</code></a></td><td>Counterfactual architecture simulator.</td></tr>
+      <tr id="command-orchestrate"><td><a href="#command-orchestrate"><code>roam orchestrate</code></a></td><td>Partition the codebase for parallel multi-agent work.</td></tr>
+      <tr id="command-partition"><td><a href="#command-partition"><code>roam partition</code></a></td><td>Generate a multi-agent partition manifest with conflict analysis.</td></tr>
+      <tr id="command-entry-points"><td><a href="#command-entry-points"><code>roam entry-points</code></a></td><td>Entry point catalog with protocol classification.</td></tr>
+      <tr id="command-patterns"><td><a href="#command-patterns"><code>roam patterns</code></a></td><td>Detect common architectural patterns in the codebase.</td></tr>
+      <tr id="command-safe-zones"><td><a href="#command-safe-zones"><code>roam safe-zones</code></a></td><td>Identify safe refactoring boundaries for a symbol or file.</td></tr>
+      <tr id="command-visualize"><td><a href="#command-visualize"><code>roam visualize</code></a></td><td>Generate a Mermaid or DOT architecture diagram.</td></tr>
+      <tr id="command-x-lang"><td><a href="#command-x-lang"><code>roam x-lang</code></a></td><td>Show cross-language symbol bridges detected in the project.</td></tr>
+      <tr id="command-fingerprint"><td><a href="#command-fingerprint"><code>roam fingerprint</code></a></td><td>Topology fingerprint for cross-repo comparison.</td></tr>
+      <tr id="command-clones"><td><a href="#command-clones"><code>roam clones</code></a></td><td>Detect near-duplicate code via AST structural hashing.</td></tr>
     </tbody></table></div>
   <h3>Exploration</h3>
   <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>roam search</code></td><td></td></tr>
-      <tr><td><code>roam at</code></td><td>Show the code at FILE:LINE plus the enclosing symbol (and...</td></tr>
-      <tr><td><code>roam search-semantic</code></td><td>Find symbols by natural language query (hybrid BM25 + vec...</td></tr>
-      <tr><td><code>roam batch-search</code></td><td>Search up to 10 symbol-name patterns in a single command.</td></tr>
-      <tr><td><code>roam complete</code></td><td>Return left-anchored prefix completions for the given par...</td></tr>
-      <tr><td><code>roam grep</code></td><td>Context-enriched grep with reachability, clone, and bridg...</td></tr>
-      <tr><td><code>roam refs-text</code></td><td>Audit literal strings across the project: per-surface ref...</td></tr>
-      <tr><td><code>roam history-grep</code></td><td>Through-history search using git pickaxe (-S / -G).</td></tr>
-      <tr><td><code>roam file</code></td><td>Show file skeleton: all definitions with signatures.</td></tr>
-      <tr><td><code>roam symbol</code></td><td>Show definition, callers, and callees for SYMBOL.</td></tr>
-      <tr><td><code>roam module</code></td><td>Show directory contents: exports, signatures, deps.</td></tr>
-      <tr><td><code>roam trace</code></td><td>Show shortest path between two symbols.</td></tr>
-      <tr><td><code>roam deps</code></td><td>Show file import/imported-by relationships.</td></tr>
-      <tr><td><code>roam uses</code></td><td>Show all consumers of SYMBOL: callers, importers, inherit...</td></tr>
-      <tr><td><code>roam fan</code></td><td>Show fan-in/fan-out: most connected symbols or files.</td></tr>
-      <tr><td><code>roam impact</code></td><td>Show indexed dependents a change to SYMBOL could affect.</td></tr>
-      <tr><td><code>roam relate</code></td><td>Show how a set of symbols relate to each other.</td></tr>
-      <tr><td><code>roam endpoints</code></td><td>List all detected REST/GraphQL/gRPC endpoints with handlers.</td></tr>
-      <tr><td><code>roam metrics</code></td><td>Show unified metrics for a file or symbol.</td></tr>
-      <tr><td><code>roam findings</code></td><td>Query the central findings registry (cross-detector view).</td></tr>
+      <tr id="command-search"><td><a href="#command-search"><code>roam search</code></a></td><td>Find symbols matching a name substring (case-insensitive).</td></tr>
+      <tr id="command-at"><td><a href="#command-at"><code>roam at</code></a></td><td>Show the code at FILE:LINE plus the enclosing symbol (and callers).</td></tr>
+      <tr id="command-search-semantic"><td><a href="#command-search-semantic"><code>roam search-semantic</code></a></td><td>Find symbols by natural language query (hybrid BM25 + vector + packs).</td></tr>
+      <tr id="command-batch-search"><td><a href="#command-batch-search"><code>roam batch-search</code></a></td><td>Search up to 10 symbol-name patterns in a single command.</td></tr>
+      <tr id="command-complete"><td><a href="#command-complete"><code>roam complete</code></a></td><td>Return left-anchored prefix completions for the given partial.</td></tr>
+      <tr id="command-grep"><td><a href="#command-grep"><code>roam grep</code></a></td><td>Context-enriched grep with reachability, clone, and bridge annotations.</td></tr>
+      <tr id="command-refs-text"><td><a href="#command-refs-text"><code>roam refs-text</code></a></td><td>Audit literal strings across the project: per-surface refs + verdict.</td></tr>
+      <tr id="command-history-grep"><td><a href="#command-history-grep"><code>roam history-grep</code></a></td><td>Through-history search using git pickaxe (-S / -G).</td></tr>
+      <tr id="command-file"><td><a href="#command-file"><code>roam file</code></a></td><td>Show file skeleton: all definitions with signatures.</td></tr>
+      <tr id="command-symbol"><td><a href="#command-symbol"><code>roam symbol</code></a></td><td>Show definition, callers, and callees for SYMBOL.</td></tr>
+      <tr id="command-module"><td><a href="#command-module"><code>roam module</code></a></td><td>Show directory contents: exports, signatures, deps.</td></tr>
+      <tr id="command-trace"><td><a href="#command-trace"><code>roam trace</code></a></td><td>Show shortest path between two symbols.</td></tr>
+      <tr id="command-deps"><td><a href="#command-deps"><code>roam deps</code></a></td><td>Show file import/imported-by relationships.</td></tr>
+      <tr id="command-uses"><td><a href="#command-uses"><code>roam uses</code></a></td><td>Show all consumers of SYMBOL: callers, importers, inheritors.</td></tr>
+      <tr id="command-fan"><td><a href="#command-fan"><code>roam fan</code></a></td><td>Show fan-in/fan-out: most connected symbols or files.</td></tr>
+      <tr id="command-impact"><td><a href="#command-impact"><code>roam impact</code></a></td><td>Show indexed dependents a change to SYMBOL could affect.</td></tr>
+      <tr id="command-relate"><td><a href="#command-relate"><code>roam relate</code></a></td><td>Show how a set of symbols relate to each other.</td></tr>
+      <tr id="command-endpoints"><td><a href="#command-endpoints"><code>roam endpoints</code></a></td><td>List all detected REST/GraphQL/gRPC endpoints with handlers.</td></tr>
+      <tr id="command-metrics"><td><a href="#command-metrics"><code>roam metrics</code></a></td><td>Show unified metrics for a file or symbol.</td></tr>
+      <tr id="command-findings"><td><a href="#command-findings"><code>roam findings</code></a></td><td>Query the central findings registry (cross-detector view).</td></tr>
     </tbody></table></div>
   <h3>Reports &amp; CI</h3>
   <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>roam report</code></td><td>Run a compound report preset — multiple commands in one s...</td></tr>
-      <tr><td><code>roam budget</code></td><td>Check pending changes against architectural budgets.</td></tr>
-      <tr><td><code>roam breaking</code></td><td>Detect potential breaking changes vs a git ref.</td></tr>
-      <tr><td><code>roam coverage-gaps</code></td><td>Find entry points with no path to a required gate symbol.</td></tr>
-      <tr><td><code>roam auth-gaps</code></td><td>Find endpoints missing authentication or authorization ch...</td></tr>
-      <tr><td><code>roam orphan-routes</code></td><td>Find backend API routes that have no frontend consumers (...</td></tr>
-      <tr><td><code>roam bus-factor</code></td><td>Detect knowledge loss risk per module (bus factor analysis).</td></tr>
-      <tr><td><code>roam simulate-departure</code></td><td>Simulate what happens when a developer leaves the team.</td></tr>
-      <tr><td><code>roam suggest-reviewers</code></td><td>Suggest optimal code reviewers for changed files.</td></tr>
-      <tr><td><code>roam blame-reviewers</code></td><td>Suggest reviewers for a diff by git-blame line ownership.</td></tr>
-      <tr><td><code>roam dev-profile</code></td><td>Analyze developer commit patterns and behavioral metrics.</td></tr>
-      <tr><td><code>roam owner</code></td><td>Show code ownership: who owns a file or directory.</td></tr>
-      <tr><td><code>roam codeowners</code></td><td>Analyze CODEOWNERS coverage and ownership distribution.</td></tr>
-      <tr><td><code>roam drift</code></td><td>Detect ownership drift: where declared owners differ from...</td></tr>
-      <tr><td><code>roam secrets</code></td><td>Scan for hardcoded secrets, API keys, tokens, and passwords.</td></tr>
-      <tr><td><code>roam ignore-drift</code></td><td>Report files git tracks despite a `.gitignore` rule that ...</td></tr>
-      <tr><td><code>roam supply-chain</code></td><td>Dependency risk dashboard: pin coverage, risk scoring, su...</td></tr>
-      <tr><td><code>roam risk</code></td><td>Show domain-weighted risk ranking of symbols.</td></tr>
-      <tr><td><code>roam migration-safety</code></td><td>Check migration files for non-idempotent (unsafe if run t...</td></tr>
-      <tr><td><code>roam api-drift</code></td><td>Detect mismatches between backend API responses and front...</td></tr>
-      <tr><td><code>roam path-coverage</code></td><td>Find critical untested paths from entry points to sensiti...</td></tr>
-      <tr><td><code>roam capsule</code></td><td>Export the structural graph as a portable JSON capsule.</td></tr>
-      <tr><td><code>roam rules</code></td><td>Evaluate custom governance rules defined in .roam/rules/.</td></tr>
-      <tr><td><code>roam vuln-map</code></td><td>Ingest vulnerability scanner reports and match to codebas...</td></tr>
-      <tr><td><code>roam vuln-reach</code></td><td>Query reachability of ingested vulnerabilities through th...</td></tr>
-      <tr><td><code>roam vulns</code></td><td>Scan and manage vulnerability inventory.</td></tr>
-      <tr><td><code>roam sbom</code></td><td>Generate a Software Bill of Materials (SBOM) enriched wit...</td></tr>
-      <tr><td><code>roam taint</code></td><td>Reach-analysis from rule sources to sinks over the indexe...</td></tr>
-      <tr><td><code>roam cga</code></td><td>Code Graph Attestation: sign-ready in-toto evidence over ...</td></tr>
-      <tr><td><code>roam congestion</code></td><td>Detect developer congestion: files with too many concurre...</td></tr>
-      <tr><td><code>roam compatibility</code></td><td>Detect outbound surface regressions vs a baseline snapshot.</td></tr>
+      <tr id="command-report"><td><a href="#command-report"><code>roam report</code></a></td><td>Run a compound report preset — multiple commands in one shot.</td></tr>
+      <tr id="command-budget"><td><a href="#command-budget"><code>roam budget</code></a></td><td>Check pending changes against architectural budgets.</td></tr>
+      <tr id="command-breaking"><td><a href="#command-breaking"><code>roam breaking</code></a></td><td>Detect potential breaking changes vs a git ref.</td></tr>
+      <tr id="command-coverage-gaps"><td><a href="#command-coverage-gaps"><code>roam coverage-gaps</code></a></td><td>Find entry points with no path to a required gate symbol.</td></tr>
+      <tr id="command-auth-gaps"><td><a href="#command-auth-gaps"><code>roam auth-gaps</code></a></td><td>Find endpoints missing authentication or authorization checks.</td></tr>
+      <tr id="command-orphan-routes"><td><a href="#command-orphan-routes"><code>roam orphan-routes</code></a></td><td>Find backend API routes that have no frontend consumers (dead endpoints).</td></tr>
+      <tr id="command-bus-factor"><td><a href="#command-bus-factor"><code>roam bus-factor</code></a></td><td>Detect knowledge loss risk per module (bus factor analysis).</td></tr>
+      <tr id="command-simulate-departure"><td><a href="#command-simulate-departure"><code>roam simulate-departure</code></a></td><td>Simulate what happens when a developer leaves the team.</td></tr>
+      <tr id="command-suggest-reviewers"><td><a href="#command-suggest-reviewers"><code>roam suggest-reviewers</code></a></td><td>Suggest optimal code reviewers for changed files.</td></tr>
+      <tr id="command-blame-reviewers"><td><a href="#command-blame-reviewers"><code>roam blame-reviewers</code></a></td><td>Suggest reviewers for a diff by git-blame line ownership.</td></tr>
+      <tr id="command-dev-profile"><td><a href="#command-dev-profile"><code>roam dev-profile</code></a></td><td>Analyze developer commit patterns and behavioral metrics.</td></tr>
+      <tr id="command-owner"><td><a href="#command-owner"><code>roam owner</code></a></td><td>Show code ownership: who owns a file or directory.</td></tr>
+      <tr id="command-codeowners"><td><a href="#command-codeowners"><code>roam codeowners</code></a></td><td>Analyze CODEOWNERS coverage and ownership distribution.</td></tr>
+      <tr id="command-drift"><td><a href="#command-drift"><code>roam drift</code></a></td><td>Detect ownership drift: where declared owners differ from actual contributors.</td></tr>
+      <tr id="command-secrets"><td><a href="#command-secrets"><code>roam secrets</code></a></td><td>Scan for hardcoded secrets, API keys, tokens, and passwords.</td></tr>
+      <tr id="command-ignore-drift"><td><a href="#command-ignore-drift"><code>roam ignore-drift</code></a></td><td>Report files git tracks despite a `.gitignore` rule that claims to exclude them.</td></tr>
+      <tr id="command-supply-chain"><td><a href="#command-supply-chain"><code>roam supply-chain</code></a></td><td>Dependency risk dashboard: pin coverage, risk scoring, supply-chain health.</td></tr>
+      <tr id="command-risk"><td><a href="#command-risk"><code>roam risk</code></a></td><td>Show domain-weighted risk ranking of symbols.</td></tr>
+      <tr id="command-migration-safety"><td><a href="#command-migration-safety"><code>roam migration-safety</code></a></td><td>Check migration files for non-idempotent (unsafe if run twice) operations.</td></tr>
+      <tr id="command-api-drift"><td><a href="#command-api-drift"><code>roam api-drift</code></a></td><td>Detect mismatches between backend API responses and frontend type definitions.</td></tr>
+      <tr id="command-path-coverage"><td><a href="#command-path-coverage"><code>roam path-coverage</code></a></td><td>Find critical untested paths from entry points to sensitive sinks.</td></tr>
+      <tr id="command-capsule"><td><a href="#command-capsule"><code>roam capsule</code></a></td><td>Export the structural graph as a portable JSON capsule.</td></tr>
+      <tr id="command-rules"><td><a href="#command-rules"><code>roam rules</code></a></td><td>Evaluate custom governance rules defined in .roam/rules/.</td></tr>
+      <tr id="command-vuln-map"><td><a href="#command-vuln-map"><code>roam vuln-map</code></a></td><td>Ingest vulnerability scanner reports and match to codebase symbols.</td></tr>
+      <tr id="command-vuln-reach"><td><a href="#command-vuln-reach"><code>roam vuln-reach</code></a></td><td>Query reachability of ingested vulnerabilities through the call graph.</td></tr>
+      <tr id="command-vulns"><td><a href="#command-vulns"><code>roam vulns</code></a></td><td>Scan and manage vulnerability inventory.</td></tr>
+      <tr id="command-sbom"><td><a href="#command-sbom"><code>roam sbom</code></a></td><td>Generate a Software Bill of Materials (SBOM) enriched with call-graph reachability.</td></tr>
+      <tr id="command-taint"><td><a href="#command-taint"><code>roam taint</code></a></td><td>Reach-analysis from rule sources to sinks over the indexed edges.</td></tr>
+      <tr id="command-cga"><td><a href="#command-cga"><code>roam cga</code></a></td><td>Code Graph Attestation: sign-ready in-toto evidence over the index.</td></tr>
+      <tr id="command-congestion"><td><a href="#command-congestion"><code>roam congestion</code></a></td><td>Detect developer congestion: files with too many concurrent authors.</td></tr>
+      <tr id="command-compatibility"><td><a href="#command-compatibility"><code>roam compatibility</code></a></td><td>Detect outbound surface regressions vs a baseline snapshot.</td></tr>
     </tbody></table></div>
   <h3>Refactoring</h3>
   <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>roam dead</code></td><td>Show unreferenced exported symbols (dead code).</td></tr>
-      <tr><td><code>roam orphan-imports</code></td><td>List imports that don't resolve to any indexed module / i...</td></tr>
-      <tr><td><code>roam flag-dead</code></td><td>Detect potentially stale feature flag code (conditionally...</td></tr>
-      <tr><td><code>roam duplicates</code></td><td>Detect semantically duplicate functions via structural si...</td></tr>
-      <tr><td><code>roam safe-delete</code></td><td>Check if SYMBOL can be safely deleted.</td></tr>
-      <tr><td><code>roam delete-check</code></td><td>Gate the working diff on surviving references to deleted ...</td></tr>
-      <tr><td><code>roam split</code></td><td>Analyze a file's internal structure and suggest how to sp...</td></tr>
-      <tr><td><code>roam fn-coupling</code></td><td>Show function-level temporal coupling (hidden dependencies).</td></tr>
-      <tr><td><code>roam doc-drift</code></td><td>Verify concrete prose claims in Markdown docs against rep...</td></tr>
-      <tr><td><code>roam doc-staleness</code></td><td>Detect concrete docstring claims that no longer match the...</td></tr>
-      <tr><td><code>roam docs-coverage</code></td><td>Analyze exported-symbol doc coverage and stale docs in on...</td></tr>
-      <tr><td><code>roam docs-index</code></td><td>Find orphaned planning memos and broken local Markdown li...</td></tr>
-      <tr><td><code>roam stale-refs</code></td><td>Find dangling file references — markdown links, HTML href...</td></tr>
-      <tr><td><code>roam lsp</code></td><td>Run the roam-stale-refs language server on stdin/stdout (...</td></tr>
-      <tr><td><code>roam suggest-refactoring</code></td><td>Rank symbols that are likely to yield high-value refactor...</td></tr>
-      <tr><td><code>roam plan-refactor</code></td><td>Build an ordered refactoring plan for a symbol (use split...</td></tr>
-      <tr><td><code>roam conventions</code></td><td>Auto-detect codebase naming, file, import, and export con...</td></tr>
-      <tr><td><code>roam sketch</code></td><td>Show compact structural skeleton of a directory.</td></tr>
-      <tr><td><code>roam test-map</code></td><td>Map a symbol identifier or file path to its test coverage.</td></tr>
-      <tr><td><code>roam test-pyramid</code></td><td>Count tests by kind (unit/integration/e2e/smoke), flag in...</td></tr>
-      <tr><td><code>roam why</code></td><td>Explain why a symbol matters — role, reach, criticality, ...</td></tr>
-      <tr><td><code>roam invariants</code></td><td>Discover implicit contracts for symbols.</td></tr>
-      <tr><td><code>roam intent</code></td><td>Link documentation to code -- find what docs describe wha...</td></tr>
-      <tr><td><code>roam closure</code></td><td></td></tr>
-      <tr><td><code>roam mutate</code></td><td>Syntax-less agentic editing.</td></tr>
-      <tr><td><code>roam test-scaffold</code></td><td>Generate test file skeletons from indexed symbols.</td></tr>
+      <tr id="command-dead"><td><a href="#command-dead"><code>roam dead</code></a></td><td>Show unreferenced exported symbols (dead code).</td></tr>
+      <tr id="command-orphan-imports"><td><a href="#command-orphan-imports"><code>roam orphan-imports</code></a></td><td>List imports that don&#x27;t resolve to any indexed module / installed package.</td></tr>
+      <tr id="command-flag-dead"><td><a href="#command-flag-dead"><code>roam flag-dead</code></a></td><td>Detect potentially stale feature flag code (conditionally-dead code).</td></tr>
+      <tr id="command-duplicates"><td><a href="#command-duplicates"><code>roam duplicates</code></a></td><td>Detect semantically duplicate functions via structural similarity.</td></tr>
+      <tr id="command-safe-delete"><td><a href="#command-safe-delete"><code>roam safe-delete</code></a></td><td>Check if SYMBOL can be safely deleted.</td></tr>
+      <tr id="command-delete-check"><td><a href="#command-delete-check"><code>roam delete-check</code></a></td><td>Gate the working diff on surviving references to deleted symbols / files.</td></tr>
+      <tr id="command-split"><td><a href="#command-split"><code>roam split</code></a></td><td>Analyze a file&#x27;s internal structure and suggest how to split it.</td></tr>
+      <tr id="command-fn-coupling"><td><a href="#command-fn-coupling"><code>roam fn-coupling</code></a></td><td>Show function-level temporal coupling (hidden dependencies).</td></tr>
+      <tr id="command-doc-drift"><td><a href="#command-doc-drift"><code>roam doc-drift</code></a></td><td>Verify concrete prose claims in Markdown docs against repository state.</td></tr>
+      <tr id="command-doc-staleness"><td><a href="#command-doc-staleness"><code>roam doc-staleness</code></a></td><td>Detect concrete docstring claims that no longer match the code.</td></tr>
+      <tr id="command-docs-coverage"><td><a href="#command-docs-coverage"><code>roam docs-coverage</code></a></td><td>Analyze exported-symbol doc coverage and stale docs in one report.</td></tr>
+      <tr id="command-docs-index"><td><a href="#command-docs-index"><code>roam docs-index</code></a></td><td>Find orphaned planning memos and broken local Markdown links.</td></tr>
+      <tr id="command-stale-refs"><td><a href="#command-stale-refs"><code>roam stale-refs</code></a></td><td>Find dangling file references — markdown links, HTML href/src, backtick paths.</td></tr>
+      <tr id="command-lsp"><td><a href="#command-lsp"><code>roam lsp</code></a></td><td>Run the roam-stale-refs language server on stdin/stdout (LSP).</td></tr>
+      <tr id="command-suggest-refactoring"><td><a href="#command-suggest-refactoring"><code>roam suggest-refactoring</code></a></td><td>Rank symbols that are likely to yield high-value refactoring wins.</td></tr>
+      <tr id="command-plan-refactor"><td><a href="#command-plan-refactor"><code>roam plan-refactor</code></a></td><td>Build an ordered refactoring plan for a symbol (use split for a file).</td></tr>
+      <tr id="command-conventions"><td><a href="#command-conventions"><code>roam conventions</code></a></td><td>Auto-detect codebase naming, file, import, and export conventions.</td></tr>
+      <tr id="command-sketch"><td><a href="#command-sketch"><code>roam sketch</code></a></td><td>Show compact structural skeleton of a directory.</td></tr>
+      <tr id="command-test-map"><td><a href="#command-test-map"><code>roam test-map</code></a></td><td>Map a symbol identifier or file path to its test coverage.</td></tr>
+      <tr id="command-test-pyramid"><td><a href="#command-test-pyramid"><code>roam test-pyramid</code></a></td><td>Count tests by kind (unit/integration/e2e/smoke), flag inverted pyramids.</td></tr>
+      <tr id="command-why"><td><a href="#command-why"><code>roam why</code></a></td><td>Explain why a symbol matters — role, reach, criticality, verdict.</td></tr>
+      <tr id="command-invariants"><td><a href="#command-invariants"><code>roam invariants</code></a></td><td>Discover implicit contracts for symbols.</td></tr>
+      <tr id="command-intent"><td><a href="#command-intent"><code>roam intent</code></a></td><td>Link documentation to code -- find what docs describe what code.</td></tr>
+      <tr id="command-closure"><td><a href="#command-closure"><code>roam closure</code></a></td><td>Compute the minimal set of changes needed when modifying SYMBOL.</td></tr>
+      <tr id="command-mutate"><td><a href="#command-mutate"><code>roam mutate</code></a></td><td>Syntax-less agentic editing.</td></tr>
+      <tr id="command-test-scaffold"><td><a href="#command-test-scaffold"><code>roam test-scaffold</code></a></td><td>Generate test file skeletons from indexed symbols.</td></tr>
     </tbody></table></div>
   <h3>Other</h3>
   <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
-      <tr><td><code>roam churn</code></td><td>Rank files by churn x complexity score (highest-leverage ...</td></tr>
-      <tr><td><code>roam digest</code></td><td>Health trend timeline, anomaly detection, per-metric trac...</td></tr>
-      <tr><td><code>roam math</code></td><td>Detect suboptimal algorithms and suggest better approaches.</td></tr>
-      <tr><td><code>roam onboard</code></td><td>Single-call codebase comprehension — everything in one shot.</td></tr>
-      <tr><td><code>roam refs</code></td><td>Show all consumers of SYMBOL: callers, importers, inherit...</td></tr>
-      <tr><td><code>roam snapshot</code></td><td>Health trend timeline, anomaly detection, per-metric trac...</td></tr>
-      <tr><td><code>roam trend</code></td><td>Health trend timeline, anomaly detection, per-metric trac...</td></tr>
+      <tr id="command-churn"><td><a href="#command-churn"><code>roam churn</code></a></td><td>Rank files by churn x complexity score (highest-leverage refactoring targets). Legacy alias of <a href="#command-weather"><code>roam weather</code></a>.</td></tr>
+      <tr id="command-digest"><td><a href="#command-digest"><code>roam digest</code></a></td><td>Health trend timeline, anomaly detection, per-metric tracking, and CI gates. Legacy alias of <a href="#command-trends"><code>roam trends</code></a>.</td></tr>
+      <tr id="command-math"><td><a href="#command-math"><code>roam math</code></a></td><td>Detect suboptimal algorithms and suggest better approaches. Legacy alias of <a href="#command-algo"><code>roam algo</code></a>.</td></tr>
+      <tr id="command-onboard"><td><a href="#command-onboard"><code>roam onboard</code></a></td><td>Single-call codebase comprehension — everything in one shot. Legacy alias of <a href="#command-understand"><code>roam understand</code></a>.</td></tr>
+      <tr id="command-refs"><td><a href="#command-refs"><code>roam refs</code></a></td><td>Show all consumers of SYMBOL: callers, importers, inheritors. Legacy alias of <a href="#command-uses"><code>roam uses</code></a>.</td></tr>
+      <tr id="command-snapshot"><td><a href="#command-snapshot"><code>roam snapshot</code></a></td><td>Health trend timeline, anomaly detection, per-metric tracking, and CI gates. Legacy alias of <a href="#command-trends"><code>roam trends</code></a>.</td></tr>
+      <tr id="command-trend"><td><a href="#command-trend"><code>roam trend</code></a></td><td>Health trend timeline, anomaly detection, per-metric tracking, and CI gates. Legacy alias of <a href="#command-trends"><code>roam trends</code></a>.</td></tr>
     </tbody></table></div>
 </section>
 <!-- END auto-reference -->
