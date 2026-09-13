@@ -13,6 +13,17 @@ layout. Homepage styles are scoped to `.home-page`; shared navigation, fonts,
 and the other pages still use `landing.css`. Keep homepage-only changes out of
 the shared stylesheet unless the change is deliberately site-wide.
 
+The checkout illustration has an optional native disclosure showing selected
+fields from a real CLI run on a synthetic four-function project. Its full dated
+response is `data/examples/checkout-impact-2026-09-13.json` under the site source.
+`test_homepage_walkthrough_and_connection_example_execute` rebuilds that fixture,
+checks the displayed fields against both the captured response and a new result,
+and exercises the linked explicit-patch review recipe. Keep the capture date,
+synthetic scope, omitted-field label and full-response link visible. The small
+fixture's high relative-risk score is explained, not hidden or represented as
+production evidence. A future capture is a new observation; do not silently
+rewrite the dated one or turn a successful indexed traversal into runtime coverage.
+
 ## Shared typography, navigation, and writing
 
 `landing.css` owns the site's design foundation. All HTML routes load it;

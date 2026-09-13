@@ -55,6 +55,10 @@
 .home-page .home-map-takeaway { margin-top: 1.2rem; font-size: .9375rem; }
 .home-page .home-map-command { background: #f0f3f5; padding: .9rem 1.3rem; border-block: 1px solid var(--home-line); overflow-wrap: anywhere; }
 .home-page .home-map-command > span { margin-right: .7rem; color: var(--home-muted); }
+.home-page .home-output { padding: 1rem 1.3rem; border-bottom: 1px solid var(--home-line); }
+.home-page .home-output summary { cursor: pointer; color: var(--home-blue); font-weight: 600; }
+.home-page .home-output p { font-size: .9375rem; margin-block: 1rem; }
+.home-page .home-output pre { background: #edf3fc; padding: 1rem; border-radius: .4rem; font-size: var(--t-sm); }
 .home-page .home-map figcaption { color: var(--home-muted); font-size:var(--t-sm); padding: .9rem 1.3rem; }
 .home-page .home-basics { border-block: 1px solid var(--home-line); }
 .home-page .home-basics ul { list-style: none; padding-block: 1.3rem; padding-inline: 0; display: flex; justify-content: space-between; gap: 1rem 2rem; flex-wrap: wrap; font-size: .9375rem; color: var(--home-muted); }

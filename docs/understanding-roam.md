@@ -526,11 +526,11 @@ rewritten. In practice:
 
 ### Shape
 
-- Short declaratives, one claim per sentence. The recurring pattern is
-  "X establishes A. It does not establish B." (the evidence-levels table in
-  `docs/concepts/verification-evidence.md:117-125`).
-- Fence scope with "A is not B": "A suggested test list is not test coverage,
-  and a good health score is not permission to merge." (`README.md:65-66`).
+- Use short declaratives with a clear claim. In evidence explanations, name
+  what the observation supports and correct the specific inference at risk:
+  a suggested test list is not executed coverage. The evidence-levels table in
+  `docs/concepts/verification-evidence.md` illustrates this distinction; it is
+  not a sentence formula for every product paragraph.
 - Imperatives to the reader for every action. Tool descriptions are
   imperative ("Run X", not "This command").
 - Command output is plain ASCII: no emoji, no colour, no box drawing
