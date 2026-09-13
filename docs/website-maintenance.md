@@ -127,9 +127,11 @@ technology checks remain separate evidence.
 
 The homepage speaks to people choosing tools for their coding agents. Roam is
 agent-first: agents use its local codebase context and static checks as they
-work, while people set direction and decide what ships. Explain the problem
-plainly: generated code can outpace our ability to read every line. Lead with
-the agent workflow and agent setup, not a manual command checklist with agents
+work, while people set direction and decide what ships. Choose a problem-led
+or offer-led opening according to the reader's question. When discussing code
+volume, explain the premise plainly: generated changes can outpace line-by-line
+attention. An opening can instead lead with the analysis and checks Roam adds.
+Lead with the agent workflow and agent setup, not a manual command checklist with agents
 as an optional extra. Keep the warm, approachable visual style and put the
 command catalog in the documentation.
 
@@ -158,7 +160,9 @@ another explanation of the map. `roam algo` (legacy alias `roam math`) supplies
 candidate alternatives as well as findings; it does not establish that a
 replacement is correct or faster. In the repeated-lookup example, retain the
 checks for value types, collection changes, ordering, duplicates, and returned
-positions, followed by behavior tests and performance measurement. Label the
+positions, followed by behavior tests and performance measurement. Keeping the
+existing code is a valid outcome when an alternative does not preserve required
+behavior or offer a useful gain on the workload. Label the
 example illustrative, not a captured finding. Explain the CLI route and the
 MCP preset requirement rather than implying the default core preset exposes it.
 

@@ -272,7 +272,43 @@ def test_homepage_shows_algorithm_alternatives_beyond_navigation(page):
     assert "restart the server" in normalized(algorithm.text())
     metadata = {node.attrs.get("name", node.attrs.get("property")): node.attrs for node in page.root.find("meta")}
     for key in ("description", "og:description", "twitter:description"):
-        assert "algorithm choices" in metadata[key]["content"]
+        assert all(term in metadata[key]["content"] for term in ("patterns", "alternatives", "catalog"))
+
+
+def test_homepage_algorithm_summary_names_the_source_of_alternatives(page):
+    """Selected meaning boundaries, not a writing-quality score or fixed slogan."""
+    hero = next(page.root.find("header"))
+    lede = next(node for node in hero.find("p") if node.attrs.get("class") == "home-lede")
+    software = next(
+        json.loads(script.text())
+        for script in page.root.find("script")
+        if script.attrs.get("type") == "application/ld+json"
+        and json.loads(script.text())["@type"] == "SoftwareApplication"
+    )
+    for text in (normalized(lede.text()), software["description"]):
+        assert all(term in text for term in ("patterns", "alternatives", "catalog"))
+    algorithm = next(node for node in page.elements if node.attrs.get("id") == "compiler")
+    text = normalized(algorithm.text()).lower()
+    assert "keep the existing code" in text, "Comparing alternatives need not result in a rewrite"
+
+
+def test_homepage_same_page_direction_icons_follow_target_order(page):
+    """Directional decoration must agree with the target, without entering its name."""
+    checked = 0
+    for link in page.root.find("a"):
+        href = link.attrs.get("href", "")
+        if not href.startswith("#"):
+            continue
+        icons = [span for span in link.find("span") if normalized(span.text()) in {"↑", "↓", "↗"}]
+        if not icons:
+            continue
+        target = next(node for node in page.elements if node.attrs.get("id") == href[1:])
+        expected = "↓" if page.elements.index(target) > page.elements.index(link) else "↑"
+        for icon in icons:
+            assert normalized(icon.text()) == expected
+            assert icon.attrs.get("aria-hidden") == "true"
+            checked += 1
+    assert checked >= 3, "No directional same-page controls inspected"
 
 
 def test_homepage_setup_links_to_an_existing_first_result_check(page):
