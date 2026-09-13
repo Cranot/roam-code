@@ -402,6 +402,8 @@ label:focus-within,
    visible burger button. Below the breakpoint, the .nav-links list
    collapses to a slide-down drawer that the label toggles. */
 .nav-toggle-checkbox {
+  /* No invisible keyboard stop while the desktop navigation is expanded. */
+  display: none;
   position: absolute;
   width: 1px;
   height: 1px;
@@ -470,6 +472,7 @@ label:focus-within,
 @media (max-width: 56rem) {
   /* Show the hamburger button, collapse the link list into a drawer. */
   .site-nav { position: relative; }
+  .nav-toggle-checkbox { display: block; }
   .nav-toggle-label { display: flex; }
   .nav-inner {
     flex-wrap: wrap;

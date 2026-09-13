@@ -215,3 +215,108 @@ def test_architecture_overview_does_not_claim_universal_observation():
     assert "every <code>--json</code> error path" not in text
     assert "Every sellable Roam report answers" not in text
     assert "for every ledger and bundle file" not in text
+
+
+def test_getting_started_ci_does_not_use_unstaged_changes_as_pr_scope():
+    page = HomepageParser((SITE / "docs/getting-started.html").read_text(encoding="utf-8"))
+    section = next(node for node in page.elements if node.attrs.get("id") == "ci-example")
+    code = "\n".join(node.text() for node in section.find("pre"))
+    assert "test-gaps --changed" not in code
+    text = normalized(section.text()).lower()
+    assert "whole-repository" in text
+    assert "base" in text and "head" in text and "unstaged" in text
+
+
+def test_first_use_rules_do_not_assume_roams_development_checkout():
+    code = _code_blocks("docs/getting-started.html")
+    assert "roam rules --rules-dir rules/community" not in code
+    assert "roam check-rules" in code
+
+
+def test_watcher_recovery_names_dependency_and_confirms_startup():
+    page = HomepageParser((SITE / "docs/mcp-usage.html").read_text(encoding="utf-8"))
+    text = normalized(next(page.root.find("main")).text())
+    assert "watchdog" in text
+    assert "same Python environment" in text
+    assert "file watcher started" in text
+    assert "roam index" in text
+
+
+def test_test_gaps_changed_excludes_committed_changes_in_clean_ci(tmp_path, monkeypatch):
+    """Exercise the scope behind the rejected example, plus its valid local case."""
+    import json
+    import os
+    import subprocess
+
+    from click.testing import CliRunner
+
+    from roam.cli import cli
+    from roam.commands import cmd_test_gaps
+    from roam.commands.changed_files import get_changed_files
+
+    # Use only fixture-owned configuration. The hostile settings exercise
+    # the overrides without ever discovering or invoking the user's hooks.
+    empty_hooks = tmp_path / "empty-hooks"
+    empty_hooks.mkdir()
+    hostile_hooks = tmp_path / "hostile-hooks"
+    hostile_hooks.mkdir()
+    hostile_hook = hostile_hooks / "pre-commit"
+    hostile_hook.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    hostile_hook.chmod(0o755)
+    fixture_config = tmp_path / "fixture.gitconfig"
+    fixture_config.write_text(
+        "[commit]\n\tgpgsign = true\n"
+        "[gpg]\n\tprogram = deliberately-missing-scope-test-signer\n"
+        f'[core]\n\thooksPath = "{hostile_hooks.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(fixture_config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    # Environment-injected configuration outranks files, and inherited Git
+    # directory/index variables could redirect even a cwd-bound subprocess.
+    for name in list(os.environ):
+        if name in {
+            "GIT_CONFIG",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_COUNT",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_TEMPLATE_DIR",
+        } or name.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+            monkeypatch.delenv(name, raising=False)
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={empty_hooks}", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    assert git("config", "--global", "--get", "commit.gpgsign").stdout.strip() == "true"
+    assert git("config", "--global", "--get", "core.hooksPath").stdout.strip() == hostile_hooks.as_posix()
+    git("init")
+    source = tmp_path / "service.py"
+    source.write_text("def value():\n    return 1\n", encoding="utf-8")
+    git("add", "service.py")
+    git("-c", "user.name=Scope Test", "-c", "user.email=scope@example.invalid", "commit", "-m", "base")
+    source.write_text("def value():\n    return 2\n", encoding="utf-8")
+    git("add", "service.py")
+    git("-c", "user.name=Scope Test", "-c", "user.email=scope@example.invalid", "commit", "-m", "change")
+    assert get_changed_files(tmp_path) == []
+    assert get_changed_files(tmp_path, commit_range="HEAD~1..HEAD") == ["service.py"]
+
+    monkeypatch.chdir(tmp_path)
+    # Scope selection happens before any DB read. Avoid parser acquisition;
+    # this fixture establishes the selection boundary, not detector coverage.
+    monkeypatch.setattr(cmd_test_gaps, "ensure_index", lambda: None)
+    result = CliRunner().invoke(cli, ["--json", "test-gaps", "--changed"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["summary"]["verdict"] == "No changed files to analyze"
+    source.write_text("def value():\n    return 3\n", encoding="utf-8")
+    assert get_changed_files(tmp_path) == ["service.py"]

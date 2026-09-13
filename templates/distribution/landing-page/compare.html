@@ -76,14 +76,16 @@
         <strong>Add code connections and local checks.</strong>
       </h1>
       <p class="hero-subhead">
-        Roam gives coding agents a local map and free static checks to explore
-        code, investigate problems, and review changes. It works alongside your agent, reviewer, and
-        tests; it does not replace them. The vendor tables below are a dated
-        comparison, last checked on <time datetime="2026-06-12">June 12, 2026</time>,
+        Roam gives your agent a local code index and free static checks.
+        It can query callers, investigate algorithm choices, and check a patch's
+        connections without building each analysis from scratch. Refresh the index
+        as code changes. Use the results alongside your reviewer and tests.
+        Vendor tables were last checked <time datetime="2026-06-12">June 12, 2026</time>:
         not a current buying guide. See the <a href="#methodology">sources and limits</a>.
       </p>
       <p class="hero-ctas">
-        <a href="/docs/canonical-demo" class="btn-primary">Follow a worked example</a>
+        <a href="/setup" class="btn-primary">Set up your agent for free</a>
+        <a href="/setup#first-result">Try a known function</a> ·
         <a href="/docs/architecture">Architecture</a> ·
         <a href="/governance">Governance</a> ·
         <a href="/pricing">Pricing</a>
@@ -93,27 +95,25 @@
 
   <section class="whats-in section-intro-tight" id="categories">
     <div class="whats-in-inner whats-in-inner--wide">
-      <h2>Three categories, three different questions</h2>
+      <h2>Different tools, connected jobs</h2>
       <p class="lede">
         Writing code, reviewing a patch, and tracing connections across a
         project are different jobs. A tool may help with more than one.
       </p>
       <div class="verbs-grid verbs-grid--2 review-layers-grid">
         <div class="verb-cell">
-          <code>Cloud-IDE agent</code>
+          <code>Coding agent</code>
           <span><strong>"Help me write code."</strong>
-          Cursor, Sourcegraph Cody Enterprise, Windsurf, Continue, Sweep,
-          Claude Code. Human-first IDE or CLI surface. Usually paired with a
-          vendor account or LLM endpoint; some can be self-hosted or local.
-          Audit logs answer <em>who ran what</em>.</span>
+          Your agent works on the task: reading files, proposing edits, and
+          running tools. Roam supplies analysis it can query during that work.
+          The agent's model, permissions, and workflow remain your choice.</span>
         </div>
         <div class="verb-cell">
-          <code>Cloud semantic reviewer</code>
+          <code>Review tool</code>
           <span><strong>"Does this PR make sense?"</strong>
-          CodeRabbit, Greptile, Qodo, SonarQube Cloud. Reads the diff as
-          text on a vendor server. Catches logic bugs, naming drift,
-          intent mismatches. Source is usually uploaded; private/self-hosted
-          deployment is usually an enterprise conversation.</span>
+          Review a proposed change against its intended behavior and the
+          project's rules. Code connections and static findings can inform
+          that review; they do not establish that the behavior is correct.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
           <code>Local context and checks</code>
@@ -126,9 +126,10 @@
         </div>
       </div>
       <p class="review-layers-foot">
-        Roam composes with the other two categories — keep your IDE agent
-        for code generation, keep your semantic reviewer for intent checks,
-        add Roam underneath for the structural + evidence layer.
+        Your agent can consult Roam throughout a task: use indexed connections
+        to choose files to read, investigate a detected pattern, or check what a
+        patch may affect. These answers remain useful even when no defect is found.
+        Static checks run locally without model calls; your agent's model usage is separate.
         A separate tier of MCP gateways (Lasso, Portkey, Interlock)
         sits <em>between</em> the agent and its tools; Roam emits evidence
         such gateways can consume — they are not direct comparisons.
@@ -144,24 +145,25 @@
 
   <section class="whats-in section-intro-tight" id="three-layers">
     <div class="whats-in-inner whats-in-inner--wide">
-      <h2>Inside review: four sub-layers, Roam covers two</h2>
+      <h2>Four questions to ask about a change</h2>
       <p class="lede">
-        Within the review half of the picture, four sub-layers answer
-        different questions. A healthy setup runs all four; Roam covers
-        the bottom two.
+        These questions overlap, and a tool can help with several of them.
+        Roam's structural and algorithmic analyses are static checks too:
+        they inspect code without running your application. Choose checks
+        that fit the change, then test the behavior that matters.
       </p>
       <div class="verbs-grid verbs-grid--2 review-layers-grid">
         <div class="verb-cell">
           <code>1. Semantic</code>
           <span><strong>Does the code make sense?</strong>
-          CodeRabbit, Greptile, Qodo. Reads the diff as text. Catches
-          logic bugs, missing error paths, intent drift.</span>
+          Check intended behavior, error paths, and assumptions. Use code
+          review and tests; a structural finding alone cannot answer this.</span>
         </div>
         <div class="verb-cell">
-          <code>2. Static</code>
+          <code>2. Rules and security</code>
           <span><strong>Does it violate rules?</strong>
-          SonarQube, Semgrep, ast-grep, ESLint. Insecure patterns, taint
-          violations, banned APIs. Rule-based and language-aware.</span>
+          Apply the project's lint rules and security checks. Inspect what
+          each check covers and investigate its findings.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
           <code>3. Structural</code>
@@ -181,8 +183,8 @@
         </div>
       </div>
       <p class="review-layers-foot">
-        Roam adds structural + algorithmic review without replacing the
-        semantic or static layers. <strong>The local CLI and MCP tools are
+        Use Roam's code connections and algorithmic findings alongside your
+        reviewer, linters, security checks, and tests. <strong>The local CLI and MCP tools are
         free.</strong> Hosted Roam Review is planned, not available to
         subscribe to; its published tiers are proposals, not an active service.
       </p>
@@ -191,12 +193,12 @@
 
   <section class="compare section-intro-tight">
     <div class="compare-inner">
-      <h2 class="compare-h2--tight">Side-by-side 1 of 2: against cloud semantic reviewers</h2>
+      <h2 class="compare-h2--tight">Dated comparison: review tools</h2>
       <p class="lede compare-lede--tight">
-        CodeRabbit, Greptile, Qodo, and SonarQube focus on the cloud semantic
-        reviewer category. Roam complements them with a local structural,
-        algorithmic, and evidence layer. Each cell links to a vendor-page citation
-        below; if we've mischaracterised a capability, email us and we'll update.
+        This table retains the June 12, 2026 review of CodeRabbit, Greptile,
+        Qodo, SonarQube, and Roam. It compares individual capabilities rather
+        than assigning each tool an exclusive job. Vendor sources and shared
+        footnotes appear below; send corrections through the methodology section.
       </p>
       <div class="compare-table-wrap">
         <table class="compare-table">
@@ -295,14 +297,12 @@
 
   <section class="compare section-intro-tight" id="ide-agents">
     <div class="compare-inner">
-      <h2 class="compare-h2--tight">Side-by-side 2 of 2: against cloud-IDE agents</h2>
+      <h2 class="compare-h2--tight">Dated comparison: coding agents</h2>
       <p class="lede compare-lede--tight">
-        Cursor, Cody, Aider, Windsurf, Continue, Sweep, and Claude Code
-        focus on the cloud-IDE-agent category — they write code with the
-        developer. Roam runs underneath as a local assurance layer. Three
-        axes — credentials required, network egress required, and primary
-        audience — differ between Roam and the products in this cohort
-        based on each vendor's public documentation.
+        These are the coding tools included in the June 12, 2026 source review.
+        Their interfaces and deployment options vary. Roam supplies analysis
+        that an agent can call through the CLI or MCP; the rows below retain
+        the dated account, data-path, and capability comparisons.
       </p>
       <div class="compare-table-wrap">
         <table class="compare-table">
@@ -356,7 +356,7 @@
             </tr>
             <tr>
               <th scope="row">Audience</th>
-              <td class="yes">AGENT-first (CLI fallback)</td>
+              <td class="yes">Agent-first through CLI or MCP</td>
               <td class="ltd">HUMAN-first</td>
               <td class="ltd">HUMAN-first</td>
               <td class="ltd">HUMAN-first</td>
@@ -479,11 +479,10 @@
 
       <h3 class="text-center prose-h3-spaced">Why "alongside", not "instead of"</h3>
       <p>
-        Semantic review (CodeRabbit, Greptile, Qodo) reads the diff as text
-        and asks <em>does this make sense semantically?</em>. Structural
-        review (Roam) reads the diff as a graph mutation and asks
-        <em>what else does this touch?</em>. Teams shipping AI-assisted
-        changes often want both signals side by side.
+        Knowing what calls a function helps your agent choose what to inspect.
+        It does not tell you whether the function meets the requirements.
+        Use Roam's connections, findings, and candidate alternatives as inputs
+        to the work, then review and test the proposed changes.
       </p>
       <p>
         You can use Roam's free local tools alongside your existing reviewer.

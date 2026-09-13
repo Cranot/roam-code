@@ -481,6 +481,20 @@ and [header rules](https://developers.cloudflare.com/pages/configuration/headers
 Changing local headers cannot evict a response already cached under an earlier
 policy; record that transition separately when checking a deployment.
 
+Check the custom domain independently of the Pages deployment hostname. A
+Cloudflare zone-level Browser Cache TTL can override a smaller origin value;
+the intended setting is **Respect Existing Headers**. Pages deploy permission
+does not imply zone-settings permission. Record an inaccessible or unchanged
+setting as an open cache-policy issue, without expanding token permissions as
+part of routine publication. Even after a correction, previously cached browser
+responses can survive their old lifetime.
+
+Keep raw response comparisons when Cloudflare transforms HTML, such as email
+address obfuscation. If bytes differ, identify the exact transformation and
+compare the remaining content; do not strip arbitrary markup until hashes match.
+Verify the rendered address and contact link in a browser too. An explained
+transformation is separate from raw-byte identity and from cache-policy success.
+
 `make site-check` compares the served changelog with the declared version; it
 does not verify every page or asset. Record the source commit, deployment ID,
 checked URLs, content/asset comparisons, redirects, and header results separately

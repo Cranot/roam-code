@@ -38,6 +38,21 @@ def test_every_page_has_the_shared_navigation_and_valid_nesting(path):
         assert not re.search(r"font(?:-\w+)?\s*:", node.attrs.get("style", "")), "Type belongs in shared CSS"
 
 
+def test_navigation_toggle_only_receives_focus_when_its_label_is_visible():
+    """Source guard for desktop Tab order; rendered focus needs browser checks."""
+    css = (SITE / "landing.css").read_text(encoding="utf-8")
+    base_toggle = re.search(r"\.nav-toggle-checkbox\s*\{([^}]+)\}", css).group(1)
+    assert re.search(r"display:\s*none\s*;", base_toggle), "Desktop must not expose a clipped Tab stop"
+    mobile = re.search(r"@media\s*\(max-width:\s*56rem\)\s*\{(.*?)\n\}", css, re.S).group(1)
+    mobile_toggle = re.search(r"\.nav-toggle-checkbox\s*\{([^}]+)\}", mobile)
+    assert mobile_toggle and re.search(r"display:\s*block\s*;", mobile_toggle.group(1))
+    # Preserve the native checkbox, visible focus proxy, and no-JS drawer.
+    assert re.search(r"\.nav-toggle-label\s*\{\s*display:\s*flex\s*;", mobile)
+    assert re.search(r"\.nav-toggle-checkbox:checked\s*~\s*\.nav-links\s*\{\s*display:\s*flex\s*;", mobile)
+    focus = re.search(r"\.nav-toggle-checkbox:focus-visible\s*\+\s*\.nav-toggle-label\s*\{([^}]+)\}", css)
+    assert focus and "outline:" in focus.group(1)
+
+
 def test_shared_type_uses_relative_tokens_and_has_no_tiny_navigation():
     css = (SITE / "landing.css").read_text(encoding="utf-8")
     assert "--t-base: 1rem;" in css
