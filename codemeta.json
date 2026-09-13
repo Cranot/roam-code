@@ -3,7 +3,7 @@
     "@type": "SoftwareSourceCode",
     "name": "roam-code",
     "version": "14.1.0",
-    "description": "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no source-code egress.",
+    "description": "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no automatic source-code upload.",
     "license": "https://spdx.org/licenses/Apache-2.0",
     "codeRepository": "https://github.com/Cranot/roam-code",
     "url": "https://roam-code.com/",

@@ -65,6 +65,45 @@ result. `refs-text` requires review after such a failure; `delete-check --ci`
 refuses with exit 5 in text, JSON and SARIF, including when no surviving match
 was confirmed. Fix the reported search error and rerun before approving removal.
 
+### Read `refs-text` as reference evidence, not deletion permission
+
+The working-tree `static_reference_evidence_v2` meaning is recorded in
+`summary.verdict_definition`. This is a source contract, not an announcement
+that an older installed package has been repaired.
+
+- `SAFE-TO-REMOVE` retains its legacy name but means **no source-code matches
+  in the selected text-search scope**, not approval to delete. Inspect any
+  non-code hits and establish the scope needed for your change.
+- `REVIEW` includes source hits with unknown reachability and hits not reached
+  in the indexed graph. No indexed caller is not proof of no runtime caller.
+- `LOAD-BEARING` retains observed indexed reachability/importance even if other
+  references are unresolved. A positive finding is useful without being complete.
+
+Read each result's `resolution`, `unresolved_code_references` and
+`partial_success`, as well as the aggregate `summary.partial_success`.
+With `--per-match-detail`, `reachable: null` means there is no enclosing indexed
+symbol: the file may be omitted, its syntax unsupported, or the hit outside a
+symbol span. It is not `false`. The unresolved count survives compact output
+and budget-shortened detail in the summary. An unrelated unsupported file with
+no matching reference does not invalidate a confirmed positive observation.
+
+`summary.search_scope` records the engine's population and requested globs.
+Git searches tracked nonbinary files; ripgrep uses its searchable-file rules;
+the last-resort scan is limited to indexed files. Its `complete` flag describes
+reported search execution, not whole-repository coverage or a file-count census.
+Search completeness and graph resolution are separate. Match counts are observed
+references, not files scanned. A missing scan population cannot establish broad
+absence. Full JSON keeps the source/index freshness channel; compact output is
+not a substitute for establishing freshness before acting.
+
+An explicitly requested `--reachable-from` entry is resolved even when the text
+search finds no matches. An unresolved entry returns `state: "unresolved_entry"`,
+`partial_success: true` and exit 1; it does not turn into a completed negative.
+With a valid entry, an empty search retains that anchor in its summary.
+MCP `roam_refs_text` uses literal matching by default; `fixed=false` selects
+the CLI's explicit `-E` regex mode. Omitting the CLI's `-F` option is not enough
+to enable regex because literal matching is the default.
+
 ```sh
 roam --json grep "initialize" --glob py --source-only --max-results 5
 roam --json grep "initialize" --group-by symbol --rank-by importance --max-results 3
@@ -74,3 +113,62 @@ The [AXI design principles](https://github.com/kunchenguid/axi) informed these
 improvements to help discovery, bounded output and explicit counts. This is not
 a claim of AXI conformance, a new output format, or a promise that every short
 flag matches another CLI. For evidence limits, see [detector evidence](concepts/detector-evidence.md).
+
+## Check the work after an edit
+
+`roam verify --auto` chooses checks for the files that changed. Depending on
+the change, these include:
+
+- **naming** — against the codebase's own per-language convention (sampled
+  from production code only: test/vendored/generated files neither vote nor
+  get flagged, framework lifecycle names like `setUp` are never touched)
+- **imports** — check that imports resolve to
+  the index, the stdlib, or a declared dependency. A module path that
+  resolves to nothing fails as a likely hallucination; near-miss names get
+  fuzzy did-you-mean candidates
+- **error handling / syntax / complexity / cycles / duplicates** — scoped
+  structural review with honest disclosure when any sub-check could not run
+- **secrets** — a leak gate over every touched file: credential shapes
+  (cloud keys, tokens, PEM blocks) fail the check, and an optional
+  repo-local `.roam-leak-patterns.py` catalogue catches the strings *your*
+  project must never publish
+- **patterns** *(advisory, `--deep`)* — the algorithm/idiom catalog scoped
+  to the diff: N+1 query shapes, loop-invariant calls, string-concat loops,
+  each with a candidate approach and a fix sketch
+
+**The fix loop.** Wired via `roam hooks claude --write`, findings come back
+to the agent as an actionable list — *fix, then re-verify* — and the gate runs
+again on each correction (Claude bounds consecutive continuations). A
+human-reviewed exception can be recorded in `.roam-suppressions.yml`, keyed by
+**symbol** so it survives refactors that shift line numbers; automatic hook
+corrections cannot alter suppressions, policy, baselines, or verification
+scope. The compile hook remains fail-open. The edited-turn Stop gate is quiet
+only on a complete PASS and blocks when verification is unavailable,
+malformed, incomplete, or reports non-advisory findings.
+
+To focus on your current change or manage findings already in the project:
+
+```bash
+roam verify --auto                      # changed files, auto-selected checks
+roam verify --diff-only                 # only lines you changed vs HEAD
+roam verify --changed-lines cli.py:40-90   # exact ranges (agent harnesses)
+roam verify --baseline-write            # snapshot current findings as accepted debt
+roam verify --new-only                  # then: only NEW findings fail
+roam verify --report --severity fail    # whole-repo ranked punch-list (non-gating)
+roam verify --off / --on               # pause / resume the loop repo-wide
+```
+
+**The commands that run beside it** in the same post-edit stance:
+
+| Command | Role in the loop |
+|---|---|
+| `roam verify-imports --path src/roam/cli.py` | Check import resolution in one file |
+| `roam delete-check --ci` | Gates a deletion diff on surviving references (exit 5 on BREAK-RISK or an incomplete check) |
+| `git diff \| roam critique` | Clones-not-edited check + blast radius on the patch (exit 5 on high severity) |
+| `roam verify --report --persist` | Writes findings to the registry so the **compiler** embeds them as `known_findings` in future envelopes — debt gets fixed opportunistically |
+
+The test suite includes deliberately broken examples, clean examples that
+should not be flagged, and checks that saved exceptions survive refactoring.
+Those tests help prevent regressions; they do not measure every detector's
+accuracy on unfamiliar repositories. [Detector evidence and limitations](concepts/detector-evidence.md)
+explains where findings still need careful review.

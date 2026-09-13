@@ -29,6 +29,63 @@ checkout; preserve the active worktree and its uncommitted changes. Do not give
 generated probes authority to execute arbitrary commands or modify protected
 tests, admission policy, credentials, or deployment state.
 
+### Reference evidence before removal
+
+For `refs-text`, test search execution and graph resolution independently.
+Literal hits in an excluded/oversized/unsupported file or outside a symbol span
+must remain observed references with unknown reachability. A graph omission
+cannot improve clearance. Verify this in text, compact and full JSON, then
+across MCP delivery and handle retrieval; a handle preview alone is not the
+full report. Keep a supported positive and a complete, appropriately scoped
+empty-search control so the repair does not simply refuse everything.
+
+The working-tree `static_reference_evidence_v2` contract exposes per-result
+resolution, unresolved-code-reference counts and partial state, retaining the
+aggregate count and qualification in the protected summary. Search failure
+also makes the result partial; unrelated nonmatching unsupported files do not
+erase a confirmed positive. Indexed-unreachable source hits remain `REVIEW`
+without pretending the completed graph observation failed. No verdict from
+this command alone establishes permission to delete. See the
+[agent CLI contract](../agent-cli.md#read-refs-text-as-reference-evidence-not-deletion-permission).
+
+## Match documentation counts to their population
+
+Explicit example qualifiers immediately before or after a count make that
+count unverifiable against current repository totals. Sentence and table-cell
+boundaries keep that scope from suppressing a separate current claim, including
+when the next sentence begins lowercase. Common `e.g.` and `i.e.` abbreviations
+do not themselves end the scope. This is local wording recognition, not a
+document-wide exemption for sample or historical reports.
+
+`roam doc-drift` compares counts only with its available measurement authority.
+For languages, that authority counts distinct language values in the local file
+index, not the languages a product supports. Bare language counts therefore
+remain `unverifiable`; use explicit census wording such as
+`13 indexed languages`, `the index has 13 languages`, or
+`13 languages in the index` when that is the intended population.
+An explicit count that disagrees with the index
+still reports drift. Capability wording needs a separate matching authority;
+the detector does not infer one from the product name or documentation path.
+An unverifiable claim keeps `partial_success: true`, even if `--ci` exits zero
+because no objective drift was found. This is not proof that the claim is true.
+
+### Documentation path context
+
+Explicit `./` and `../` path claims resolve relative to the containing Markdown
+document, including simple inline Markdown link destinations. A link label is
+not a second path claim. A fragment on such a link does not change the file
+existence check; this command does not verify that fragment's anchor. Literal
+link syntax inside inline code is not treated as an active link.
+
+Unqualified prose/code paths retain repository-root precedence and the existing
+document-relative fallback. An explicitly relative missing target stays missing
+even when a different root or sibling file exists. Escapes outside the repository,
+ignored targets and unavailable ignore authorities remain `unverifiable`.
+This is bounded path recognition, not a complete Markdown parser: reference
+links, nested destination syntax, titles and encoded/space-containing paths need
+separate link validation. Neither a verified path nor zero extracted path claims
+establishes complete documentation coverage.
+
 ## Bind a review to the intended change
 
 Capture the intended Git diff and check that Git succeeded before reviewing it.
@@ -63,6 +120,225 @@ repository/changeset review. Read `summary.check_status` and the child envelopes
 `completed` means the child returned without an error or declared partial state,
 not proof of complete security coverage. Incomplete children remain visible and
 make the compound partial; operation failures remain in `failed_subcommands`.
+
+### Audit and Dogfood child evidence
+
+`audit` preserves failed, incomplete, and shortened child results in
+`summary.child_evidence`, including in `--brief` output. A failed or explicitly
+partial child makes the parent partial and names the affected check in its
+verdict. Child summary counts and state remain attached to that check; missing
+tests and an empty corpus are not equivalent to a successful zero-finding scan.
+
+`detail_omitted` means a child declared `truncation_reason: "detail_mode"`
+without declaring partial computation. It does not by itself mark the audit incomplete; inspect
+the retained child summary and follow-up command. A valid gate-negative result
+with exit 5 is not automatically a transport failure.
+
+`dogfood` propagates partial child summaries through `incomplete_sections` and
+`child_evidence`. Its process can still exit successfully while analysis is
+partial: consumers must inspect `summary.partial_success`, as the repository's
+Dogfood workflow does. These disclosures preserve producer limitations, not
+proof of exhaustive analysis or detector accuracy.
+
+The workflow requires `summary.partial_success` to be the JSON boolean `false`.
+Missing, null, or numeric values are UNKNOWN, not completion evidence. A
+root-level partial declaration or named failed/incomplete sections also blocks
+the workflow even when the summary flag says `false`.
+
+The workflow rejects a partial summary even when all subprocesses exited zero;
+its diagnostic names `failed_sections` or `incomplete_sections` when supplied.
+Inspect the child evidence before choosing a remedy. Output caps and files
+skipped by a scanner's size limit are different from subprocess failures, but
+neither becomes complete merely because the aggregate command finished. Keep
+intentional exclusions and the remaining scan denominator visible rather than
+removing the gate to make a run pass.
+
+The stale-reference reader bounds the actual byte read as well as checking the
+file size. A file that grows past the limit between discovery and reading stays
+unreadable/incomplete; a partial prefix is not counted as a fully scanned file.
+Files excluded by discovery's size cap remain outside the observed scan.
+
+For ordinary stale-reference scans, `directories_unenumerable` counts discovery
+failures at directory boundaries. `unenumerable_directories` names those paths.
+Their file population is unknown: they are not added to `files_unreadable` or
+`files_scanned`. Their presence makes the scan incomplete and fails `--gate`,
+including when the readable files contain no stale references. JSON, text and
+SARIF carry this limitation; a directory suffix cannot establish its contents.
+
+Anchor lookup is a separate observation. `anchor_targets_unreadable` and
+`unreadable_anchor_targets` identify failed anchor reads even when source text
+was readable. The anchor reader also bounds the actual byte read; it does not
+extract a supposedly complete anchor set from an oversized prefix.
+
+An explicit `--ignore-target` exclusion is applied before anchor-definition
+reads, including in-page fragments. A whole-target exclusion also skips its
+post-resolution existence probe; a fragment-only exclusion does not waive
+file existence or checks of other fragments. These are scope decisions, not
+successful validations. Target exclusion does not exclude that file as a source:
+if its source text cannot be read, the scan still reports incomplete coverage.
+Incomplete ordinary scans put evidence recovery first in `next_steps`, even
+when findings are present. They may offer fix preview for inspection, but do
+not recommend applying rewrites before the coverage gaps are resolved. This
+guidance is not a change to the explicit ungated-apply command's authority.
+
+Reference-target existence is checked against the filesystem, not inferred from
+the discovery list. A target removed after discovery is missing; an I/O failure
+while inspecting it is unknown. `targets_unstatable` and `unstatable_targets`
+preserve that separate observation in the JSON, fix and attestation paths; SARIF
+also carries the incomplete-state notification. Target observations are cached
+only within one scan, not across scans; this is not an atomic filesystem snapshot.
+
+HTML anchors are parsed as attributes: IDs can belong to any element, including
+`main` and custom elements, while legacy named links require an `a` element.
+Comments, script/style text and fenced Markdown examples do not supply HTML
+anchors. Quoted delimiters, unquoted values and character references are parsed
+without requiring a particular tag layout. This is static extraction, not browser
+execution or a guarantee about dynamically rendered IDs; the existing
+case-normalized matching remains unchanged. Parser refusal is unavailable anchor
+evidence, not an empty anchor set.
+
+Fix preview/apply summaries and stale-reference attestations preserve the scan
+counts and incomplete state. `--fix apply --gate` refuses an incomplete scan
+before rewriting. The gate evaluates the pre-fix findings; successful writes
+do not replace a post-fix scan. Locked files or refused rewrites make apply
+results partial. Without `--gate`, partial fixes can still be reported, but
+they are not a complete verification result.
+
+Watch mode reports scan gaps and later coverage recovery independently of
+finding changes. Recovery means the latest scan reported no unreadable inputs,
+not proof of exhaustive discovery. It is informational: `--watch --gate` is
+rejected; use `--gate` in a separate one-shot scan. Watch rejects `--attest`, `--baseline-save`,
+`--github-summary` and `--diff` rather than silently ignoring them. Fix mode
+similarly rejects `--attest`, `--github-summary` and `--sarif`; generate those
+artifacts with a separate ordinary scan.
+
+MCP handle cleanup is separate from analysis and response storage. If its
+directory probe or cleanup orchestration fails after the response is stored,
+the handle remains available, but the outer summary is partial and
+`maintenance.state` is `unknown` with reason `handle_gc_unavailable`. The preview
+retains the producer's analysis state. Individual eviction races are still
+best-effort; absence of this warning does not certify exhaustive cleanup.
+
+Audit's `debt_total` is an estimate in remediation minutes; `debt_score_total`
+is the separate sum of hotspot-weighted file scores, not time. Their definition
+sidecars name those units. `dead_count` sums the dead-export SAFE, REVIEW and
+INTENTIONAL action buckets; it excludes unused assignments and dataflow findings
+and does not establish that every candidate is safe to delete. A missing bucket
+or absent time estimate remains null rather than a fabricated zero. Valid zeros
+remain zero.
+
+Both aggregators parse child stdout separately from stderr diagnostics. A
+structured result from a process that exits outside 0/5/6 retains its observations
+alongside a failure marker and exit code. Receiving valid JSON does not erase a
+process failure, and a diagnostic on stderr alone does not invalidate valid JSON.
+Exit 6 retains its observations as partial analysis, not a transport failure.
+Missing, empty, or malformed child summaries cannot establish completeness;
+valid sibling sections remain available. Unavailable Audit counts are null,
+including file, symbol, test, API, danger-zone and stale-reference counts.
+Debt's finite `--limit` remains a partial list, even when its aggregate totals
+were computed. Use `roam --json --budget 0 debt --limit 0` to collect every
+computed row; Audit requests this row-unlimited form internally. Grouped JSON
+reports returned and total file counts, and discloses per-directory row caps.
+Grouped text names hidden files. `--limit 0` also includes all requested ROI
+rows; a negative limit is a usage error. Removing the row limit does not remove
+computation failures, unavailable inputs, or the separate JSON token budget.
+
+Health's default SQL caps remain incomplete evidence: they limit which
+candidates are severity-classified, not just which rows are printed. Use
+`roam --json --budget 0 --detail health --all-issues` for all qualifying indexed
+candidates, or `all_issues: true` on `roam_health` over MCP. Audit requests this
+classification scope internally; this does not remove failed queries or unknown
+inputs. Without `--detail`, the formatter can intentionally omit the classified
+lists while retaining their counts.
+
+`summary.issue_collection_scope` distinguishes `top_candidates` from
+`all_qualifying_indexed_symbols`. The 0–100 score retains the historical
+top-candidate calculation, named by `health_score_scope: legacy_top_candidates`;
+full classification is not a new score definition or a score migration.
+Audit/Dogfood propagate the score scope and `health_issue_collection_scope`.
+`--all-issues --baseline` is refused because stored comparisons do not carry
+this full-classification scope. Default baseline behavior is unchanged.
+`--persist --all-issues` intentionally emits the full classified finding set
+to the local findings registry; default `--persist` emits the bounded collection.
+The registry upserts findings and can retain older records; it is not a fresh
+snapshot census. Choose the collection scope before comparing persisted runs.
+
+Health SARIF includes collection and analysis failure notifications in the
+uploaded document as well as stderr. An empty result list accompanied by these
+notifications is incomplete analysis, not proof that no issues exist.
+
+MCP Health's compact presentation names `truncation_reason: detail_mode` and
+provides a complete-classification follow-up command. Stored response handles
+carry the originating command metadata so Health's output validation can accept
+the handle. A valid handle still requires fetching before consuming its analysis.
+
+Both aggregators pass the caller's token budget to their children: `--budget 0`
+removes token-budget truncation at those boundaries, not scan limits or failures.
+An omitted budget remains omitted in child invocations, preserving the configured
+default cap rather than silently turning it into explicit unlimited output.
+The repository Dogfood workflow requests that uncapped artifact explicitly and
+still rejects incomplete analysis. Brief Audit output does not advertise
+available detail merely because a failed child returned transport metadata.
+
+`metrics-push` forwards an explicit global budget to its internal Audit. An
+omitted budget retains the configured default cap, so larger reports may be
+refused even when their source computations completed. Inspect recovery with
+`roam --json --budget 0 metrics-push --dry-run` before deciding to upload: this
+removes delivery caps, not source gaps or failed checks. A positive explicit
+budget is also forwarded. Uncapped collection can use more memory; it is a
+deliberate caller choice, not the default or an automatic retry.
+Keep that same global budget on an approved live push after removing
+`--dry-run`; the dry-run's budget is not saved for the next invocation. Supply
+only an endpoint and credentials you are authorized to use. Budget recovery
+does not establish that a receiving service is available or ready.
+
+`metrics-push` refuses to POST when Audit evidence is partial, truncated or
+missing required metric sections/counters. `--dry-run` remains available to
+inspect the failed audit status and reason; its metrics object is empty rather
+than populated with zero defaults. Actual measured zeros survive metric
+projection. This producer-side refusal does not certify the receiving service.
+
+Payload assembly has its own gate: a failed builder or empty/non-object metrics
+payload is refused before HTTP dispatch, even if Audit completed. The summary's
+`payload_status` distinguishes `ready`, `failed` assembly and `withheld` because
+Audit evidence was incomplete. A successful Audit alone is not permission to
+send a fallback payload. The local readiness check is not receiving-API schema
+certification.
+
+Audit and Dogfood forward an explicit `--budget` to the aggregate formatter.
+When it drops detail, `truncation_reason: "budget"` and `partial_success: true`
+describe the shortened response; child summary evidence remains available.
+Audit's `--brief` instead declares intentional elision with
+`truncation_reason: "detail_mode"` and a `detail_command`. Brief mode preserves
+the computation's existing partial state rather than inventing a failure.
+The formatter protects summary and contract fields: a requested budget is not
+a hard byte ceiling when those protected fields alone exceed it. Do not equate
+short output with complete computation, or preserved summaries with full detail.
+
+For large MCP responses, the handle preview retains a small summary unchanged.
+If the preview exceeds 4 KiB of serialized JSON, it switches to bounded
+orientation fields and declares `preview.detail_omitted: true`. The full stored
+payload is unchanged; use `roam_fetch_handle` to retrieve its evidence. Boolean
+`partial_success` is mirrored into the handle's top-level summary when present,
+so storing an incomplete result does not make it appear complete. This bounds
+the preview, not every field of the enclosing handle or every CLI summary.
+
+If a large MCP result cannot be saved, the response declares `isError: true`,
+`status: "partial_failure"`, and `summary.state:
+"response_storage_unavailable"`. It returns a bounded preview, not an unusable
+handle or the original oversized payload. `detail_available: false` describes
+delivery: the underlying operation may already have completed. Restore storage
+and check the operation's outcome before retrying, particularly for tools with
+side effects. Automatic retry is not recommended. Repeated-error compaction
+retains this recovery guidance and the delivery-failure state.
+
+Audit and Dogfood treat an explicitly budget-truncated child as partial even
+when its own partial flag contradicts that disclosure. Intentional
+`detail_mode` elision alone remains a presentation choice. Missing or unfamiliar
+truncation reasons remain incomplete, including top-level truncation flags;
+an explicit clean flag does not cancel that uncertainty. Audit rejects
+non-object child summaries, including empty arrays, strings, and booleans;
+missing or null summaries retain the existing absent-data behavior.
 
 ### Verify input eligibility
 
@@ -203,6 +479,11 @@ required reviews and review-coverage warnings. This is a transport invariant,
 not a new review policy or a new source of authorization. Stripping fields from
 an unsigned, agent-authored bundle remains outside this guarantee; independent
 CI or another authority must enforce stronger trust requirements.
+
+Same-family review is a coverage qualification, not an exemption from receipt
+validation. Artifact identity, review errors, rejection and blocking findings
+are checked before the `same_family` warning can be returned. A valid accepted
+same-family review retains that warning; stale or rejected evidence still blocks.
 
 When a bundle declares paths, composition uses those paths. It does not prove
 the declaration is exhaustive or bind each test result to the current tree.

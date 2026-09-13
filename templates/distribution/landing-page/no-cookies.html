@@ -29,7 +29,7 @@
     "name": "No Cookies",
     "url": "https://roam-code.com/no-cookies",
     "inLanguage": "en",
-    "dateModified": "2026-05-07",
+    "dateModified": "2026-09-13",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -48,27 +48,35 @@
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
-        <li><a href="/compare">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
         <li><a href="/docs/">Docs</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
       </ul>
     </div>
   </nav>
 
-  <main id="main" class="legal-page">
+  <main tabindex="-1" id="main" class="legal-page">
     <header class="legal-header">
       <h1>No cookies. No tracking. No analytics.</h1>
-      <p class="legal-meta">Last reviewed: <time datetime="2026-05-07">2026-05-07</time></p>
+      <p class="legal-meta">Script inventory updated: <time datetime="2026-09-13">2026-09-13</time></p>
     </header>
 
     <article>
@@ -83,7 +91,7 @@
         <li><strong>No tracking pixels.</strong> No Facebook, Twitter, LinkedIn, or any other tracking pixel.</li>
         <li><strong>No analytics scripts.</strong> No Google Analytics, no Plausible, no Fathom, no PostHog, no Hotjar, no anything.</li>
         <li><strong>No third-party fonts.</strong> Self-hosted Latin-subset Space Grotesk + IBM Plex Mono. No call to fonts.googleapis.com.</li>
-        <li><strong>No third-party scripts.</strong> Inspect <code>view-source:https://roam-code.com/</code> — only inline JSON-LD (data, not code) and Cloudflare's email-obfuscation helper.</li>
+        <li><strong>First-party map scripts, no analytics.</strong> The homepage and atlas load <code>atlas.mjs</code>, which imports <code>atlas-model.mjs</code> and fetches <code>atlas-data.json</code>. These support the map without cookies, browser storage or tracking. Inline JSON-LD is structured data, not executable code. Cloudflare's email helper is separate; inspect the served page for deployment-added scripts.</li>
         <li><strong>No fingerprinting.</strong> No canvas, no WebGL, no audio, no font-list probing.</li>
       </ul>
 
@@ -154,7 +162,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
+        <span>A local map and free static checks for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

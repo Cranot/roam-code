@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>PR Replay audit — Roam · Free 5-PR sample, paid Team and Deep reports</title>
-  <meta name="description" content="Roam runs against your last 5 / 30 / 90 merged PRs and produces a written structural-review report. Free DIY sample · Team $2,500 · Deep $6,000 · 50% credit toward Roam Review.">
+  <title>PR Replay — Roam · Understand recent code changes</title>
+  <meta name="description" content="Review recent code changes with a free local sample or a paid PR Replay report. Team $2,500; Deep $6,000. Clear findings, limits, and a founder walk-through.">
   <link rel="canonical" href="https://roam-code.com/audit">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -19,13 +19,13 @@
   <meta name="robots" content="index,follow">
 
   <meta property="og:title" content="PR Replay audit — Roam">
-  <meta property="og:description" content="Free DIY sample plus paid Team ($2,500) and Deep ($6,000) reports. We replay current detectors against your last 5 / 30 / 90 PRs and ship a written report.">
+  <meta property="og:description" content="Free local sample or paid reports: Team $2,500, Deep $6,000. Understand structural patterns in an agreed change history, with the limits stated.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/audit">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="PR Replay audit — Roam">
-  <meta name="twitter:description" content="Replay current detectors against your last quarter of merged PRs. Free sample, paid Team and Deep reports.">
+  <meta name="twitter:description" content="Review structural patterns in recent changes. Free local sample, paid Team and Deep reports, and a founder walk-through.">
   <meta name="twitter:image" content="https://roam-code.com/og.png">
 
   <script type="application/ld+json">
@@ -37,9 +37,9 @@
     "provider": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "serviceType": "Structural code-review audit",
     "areaServed": "Global (remote-delivered)",
-    "description": "Roam replays the current detector set against a buyer's last 5, 30, or 90 merged PRs and ships a written structural-review report covering findings the detectors would have flagged pre-merge, an aggregated by-detector breakdown, and recommended CI gates.",
+    "description": "Roam runs current structural checks over an agreed change history. The paid service adds a written report, reviewed findings, and a founder walk-through. Historical replay is not proof that an incident would have been prevented; tests are not rerun.",
     "offers": [
-      {"@type": "Offer", "name": "PR Replay — Sample (DIY)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "5-PR self-serve sample, watermarked, no founder review."},
+      {"@type": "Offer", "name": "PR Replay — Sample (DIY)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "Free local sample over HEAD~5..HEAD: a commit range, not necessarily five pull requests. Watermarked; no founder review."},
       {"@type": "Offer", "name": "PR Replay — Team", "price": "2500", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "30-PR report, 30-min founder walk-through. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."},
       {"@type": "Offer", "name": "PR Replay — Deep", "price": "6000", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."}
     ]
@@ -58,149 +58,352 @@
   </script>
 
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "FAQPage",
-    "mainEntity": [
-      {"@type": "Question", "name": "How do I get the report on a private repo without giving you direct access?", "acceptedAnswer": {"@type": "Answer", "text": "We offer two paths: (1) you grant us a read-only deploy key on a temporary clone we delete on completion, or (2) you run roam pr-replay locally and send us the JSON envelope plus the markdown — we add the founder review and ship the polished deliverable. Both paths sign the DPA and a one-page SOW."}},
-      {"@type": "Question", "name": "What if the report is noise, or finds nothing material?", "acceptedAnswer": {"@type": "Answer", "text": "You never pay for noise. On the walk-through, any finding your team calls a false positive is struck and refunded pro-rata. If fewer than half the high/medium findings survive as worth acting on, that is a full refund. A Team engagement that surfaces zero material findings is a 100% refund, not 50%. The guarantee is on the usefulness of the findings, not just their count."}},
-      {"@type": "Question", "name": "Can I share the report with my CTO, board, or auditor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The report is yours. You own the IP and can redistribute internally without restriction. External attribution is appreciated but not required."}},
-      {"@type": "Question", "name": "Why this and not just running roam critique ourselves?", "acceptedAnswer": {"@type": "Answer", "text": "You can. The CLI is Apache 2.0 and free forever. The paid engagement adds: founder review of the patterns that matter for your codebase specifically, a ranked recommendation of which detector classes to wire into CI first, a polished narrative artefact you can hand to leadership or auditors, and a 30 or 90-minute walk-through call."}},
-      {"@type": "Question", "name": "How fast is the turnaround?", "acceptedAnswer": {"@type": "Answer", "text": "Five business days from kickoff for Team, ten business days for Deep. Kickoff happens the day we receive payment confirmation and the agreed-on commit range or repo access. We'll usually move faster on small repos."}},
-      {"@type": "Question", "name": "Do you train ML models on our code?", "acceptedAnswer": {"@type": "Answer", "text": "No. Contractually committed in the DPA. We never use buyer source code, diffs, comments, metrics, or any derived artefact to train, fine-tune, or evaluate any machine-learning model — ours, ours-via-third-party, or any third party's."}}
-    ]
-  }
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How do I get the report on a private repo without giving you direct access?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "We can discuss read-only access or a customer-run replay. If you run it locally, first agree which reports can be shared and whether they contain enough evidence for the work. Reports may contain source snippets and identifiers: review them before sharing. Agree the access, written scope, and data-handling terms before sending private material."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What if the report is noise, or finds nothing material?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "You never pay for noise. On the walk-through, any finding your team calls a false positive is struck and refunded pro-rata. If fewer than half the high/medium findings survive as worth acting on, that's a full refund. And if a Team engagement surfaces zero material findings, that's a 100% refund — not 50%. The guarantee is on the usefulness of the findings, not just their count."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I share the report with my CTO, board, or auditor?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The report is yours. You own the IP and can redistribute internally without restriction. External attribution (e.g., in a public post-mortem) is appreciated but not required."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why this and not just running roam critique ourselves?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "You can run the free tools yourself. The paid engagement adds founder review of the agreed history, prioritised findings to investigate, a written report, and a 30 or 90-minute walk-through. Any proposed CI check still needs validation on your repository before it blocks changes."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How fast is the turnaround?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "5 business days from kickoff for Team, 10 business days for Deep. Kickoff happens the day we receive payment confirmation and the agreed-on commit range or repo access. Smaller repos usually finish faster."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do you train ML models on our code?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Contractually committed in the DPA. We never use buyer source code, diffs, comments, metrics, or any derived artefact to train, fine-tune, or evaluate any machine-learning model — ours, ours-via-third-party, or any third party's."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can multiple people on our team join the walk-through?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The draft scope of work includes up to five attendees. Agree who should join and the meeting time before kickoff; useful participants include the engineering lead and people familiar with the changes being reviewed."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is this a compliance certification?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. PR Replay is a scoped structural assessment, not legal advice or certification. Its records describe the checks performed and their limits. Your legal or assurance team must decide whether those records are useful for its requirements."
+      }
+    }
+  ]
+}
   </script>
 </head>
-<body>
+<body class="selling-page">
 
   <a class="skip-link" href="#main">Skip to content</a>
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
-        <li><a href="/compare">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
         <li><a href="/docs/">Docs</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
       </ul>
     </div>
   </nav>
 
-  <main id="main">
+  <main tabindex="-1" id="main">
 
   <!-- ──────────────────────────────────────────────────────────
        Hero
        ────────────────────────────────────────────────────────── -->
   <header class="hero">
     <div class="hero-inner">
-      <p class="eyebrow">Paid PR Replay audit · Free DIY sample</p>
-      <h1 class="hero-headline">
-        Would Roam have caught<br>
-        <strong>your last incident?</strong>
-      </h1>
+      <p class="eyebrow">PR Replay · Free sample and paid reports</p>
+      <h1 class="hero-headline"><strong>Understand the patterns<br>in recent changes.</strong></h1>
       <p class="hero-subhead">
-        We replay today's structural detectors against your last
-        5 / 30 / 90 merged PRs and ship a written report plus a portable
-        evidence packet — what the detectors would have flagged
-        pre-merge, the patterns worth wiring into CI, and a signed
-        coverage table mapping the eight questions a reviewer needs after
-        an AI-assisted change.
+        Your agents are shipping code. Which structural findings deserve a closer look?
+        Run a free sample, or request a written report on an agreed change history.
+        Paid reports add founder review, practical next steps, and a walk-through
+        with your team.
+      </p>
+      <p class="honest-banner" id="what-this-report-does-not-cover">
+        <strong>What this report does not cover:</strong> semantic correctness,
+        a security audit, performance profiling, or live pre-merge review.
+        It runs current checks against history; it does not rerun your tests or
+        prove that an incident would have been caught or prevented.
+        The replay uses the current index, not a separate reconstruction of the
+        codebase before every historical change.
       </p>
       <div class="hero-ctas">
-        <a class="btn-primary" href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">See a real sample report</a>
-        <a class="btn-secondary" href="#tiers">See the tiers</a>
+        <a class="btn-primary" href="#sample">Try the free local sample</a>
+        <a class="btn-secondary" href="#tiers">Compare the paid reports</a>
       </div>
       <p class="hero-trust-strip">
-        Same engine as the free CLI · Apache 2.0 · Honest evidence coverage table · No code uploaded for the DIY sample · 50% credits toward Roam Review
+        Same free engine · Local DIY sample · Paid interpretation by request · No hosted subscription required
       </p>
+      <p class="selling-example-note"><a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">Read the July 2026 Roam self-audit example</a>.
+        It shows the report format, not a customer result or a current measurement.</p>
     </div>
   </header>
 
-  <!-- ──────────────────────────────────────────────────────────
-       Eight evidence questions — the assurance pitch
-       ────────────────────────────────────────────────────────── -->
-  <section class="whats-in" id="evidence">
-    <div class="whats-in-inner">
-      <h2>Eight questions every PR Replay packet maps</h2>
+  <section class="audit-upsell" id="tiers" aria-labelledby="tiers-heading">
+    <div class="audit-upsell-inner">
+      <h2 id="tiers-heading">Try the sample. Choose the depth of help.</h2>
       <p class="lede">
-        Every paid report includes an evidence-coverage table. PR Replay is
-        a merged-history replay, so it answers structural axes and marks
-        identity, authority, and approval axes out of scope instead of
-        inventing them.
+        The local sample is free. Paid Team and Deep reports add founder time and a
+        defined deliverable. Before kickoff, agree how your repository's commits
+        map to the requested PR window, especially with squash merges or shallow history.
       </p>
-      <div class="verbs-grid verbs-grid--3">
-        <div class="verb-cell">
-          <code>Who acted?</code>
-          <span><strong>Out of scope.</strong> Git authors stay in your git log; replay does not re-derive identity.</span>
-        </div>
-        <div class="verb-cell">
-          <code>What authority existed?</code>
-          <span><strong>Out of scope.</strong> Continuous Review records modes, permits, leases, and policy decisions.</span>
-        </div>
-        <div class="verb-cell">
-          <code>What context was read?</code>
-          <span><strong>Partial.</strong> Commit range, changed files, graph context, and detector set are disclosed.</span>
-        </div>
-        <div class="verb-cell">
-          <code>What changed?</code>
-          <span><strong>In scope.</strong> Per-PR files, changed subjects, and structural findings are reported.</span>
-        </div>
-        <div class="verb-cell">
-          <code>What could break?</code>
-          <span><strong>In scope.</strong> Blast radius, callers, tests, vulnerable paths, and detector hits are replayed.</span>
-        </div>
-        <div class="verb-cell">
-          <code>What policy applied?</code>
-          <span><strong>In scope.</strong> Default detector policy or your provided rule file is named in the report.</span>
-        </div>
-        <div class="verb-cell">
-          <code>What verified it?</code>
-          <span><strong>Partial.</strong> Replay command, detector versions, and report artifacts are captured; tests are not rerun.</span>
-        </div>
-        <div class="verb-cell">
-          <code>Who accepted risk?</code>
-          <span><strong>Out of scope.</strong> Approval remains <code>producer_not_available</code> unless your source system supplies it.</span>
-        </div>
+      <div class="replay-tiers">
+
+        <article class="replay-tier replay-tier--sample" id="sample">
+          <h3>Sample</h3>
+          <p class="replay-price"><strong>Free</strong> · local sample · self-serve</p>
+          <p class="replay-body">
+            A watermarked report from the same free engine, without founder review.
+            The default window is <code>HEAD~5..HEAD</code>: recent commits,
+            not necessarily five pull requests.
+          </p>
+          <pre class="install-cmd replay-cmd"><code>pip install roam-code</code>
+<code>roam pr-replay --tier sample</code></pre>
+          <p class="replay-foot">
+            Run inside a local Git checkout with at least six commits along the
+            current branch's first-parent history, so <code>HEAD~5</code> exists.
+            A shallow clone may need more history. For another window, choose a valid
+            <code>--range</code> after reading <code>roam pr-replay --help</code>.
+            No account, email, or repository upload is needed for this sample.
+          </p>
+        </article>
+
+        <article class="replay-tier replay-tier--team">
+          <h3>Team</h3>
+          <p class="replay-price"><strong>$2,500</strong> · 30 PRs · 30-min walk-through</p>
+          <p class="replay-body">
+            A focused assessment of an agreed 30-PR history window.
+          </p>
+          <ul class="selling-deliverables">
+            <li>Markdown + PDF report with ranked findings and a breakdown by check.</li>
+            <li>Founder review of the important patterns and checks to evaluate in CI.</li>
+            <li>A 30-minute walk-through with your team.</li>
+          </ul>
+          <p class="replay-foot">5 business days from the agreed kickoff.
+            We confirm availability before work starts.</p>
+          <p class="replay-body"><strong>$1,250 banked toward Roam Review</strong>
+            — redeemable within 60 days of its launch, not before.
+            <a href="#credit">Read the future-credit conditions</a>.</p>
+          <!-- STRIPE_TEAM_LINK / PLACEHOLDER_TEAM: when the live Stripe
+               Payment Link URL is ready, replace the primary button's
+               href with the Stripe URL and re-add the "Or email first"
+               mailto as the secondary. The PLACEHOLDER_TEAM marker is
+               the string the PR Replay engagement playbook tells the
+               founder to grep for. -->
+          <a class="btn-primary"
+             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%2C%20I%27m%20interested%20in%20a%20Team%20PR%20Replay%20report.%0A%0AQuestion%20we%20want%20answered%3A%20%0ALanguages%20%2F%20framework%3A%20%0ARepository%20(public%20link%20or%20will%20share%20privately)%3A%20%0AProposed%20change%20window%20or%20commit%20range%20(optional)%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0APlease%20send%20scope%20and%20availability%20before%20we%20arrange%20access%20or%20payment.%0AThis%20first%20email%20includes%20no%20source%20code%20or%20credentials.">
+            Request Team — $2,500 <!-- Evidence: PR Replay Team price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
+          </a>
+          <p class="replay-checkout-note">This opens an email draft, not an order. Payment follows agreed written scope and invoice confirmation.</p>
+        </article>
+
+        <article class="replay-tier replay-tier--deep">
+          <h3>Deep</h3>
+          <p class="replay-price"><strong>$6,000</strong> · 90 PRs · 90-min walk-through</p>
+          <p class="replay-body">
+            A broader assessment of an agreed 90-PR window or specified range.
+          </p>
+          <ul class="selling-deliverables">
+            <li>Everything in Team, with a deeper look at each finding category.</li>
+            <li>A written 90-day remediation plan in the Markdown + PDF report.</li>
+            <li>A 90-minute walk-through with your team.</li>
+          </ul>
+          <p class="replay-foot">10 business days from the agreed kickoff.
+            We confirm availability before work starts.</p>
+          <p class="replay-body"><strong>$3,000 banked toward Roam Review</strong>
+            — redeemable within 60 days of its launch, not before.
+            <a href="#credit">Read the future-credit conditions</a>.</p>
+          <!-- STRIPE_DEEP_LINK / PLACEHOLDER_DEEP: when the live Stripe
+               Payment Link URL is ready, replace the primary button's
+               href with the Stripe URL and re-add the "Or email first"
+               mailto as the secondary. The PLACEHOLDER_DEEP marker is
+               the string the PR Replay engagement playbook tells the
+               founder to grep for. -->
+          <a class="btn-primary"
+             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%2C%20I%27m%20interested%20in%20a%20Deep%20PR%20Replay%20report.%0A%0AQuestion%20we%20want%20answered%3A%20%0ALanguages%20%2F%20framework%3A%20%0ARepository%20(public%20link%20or%20will%20share%20privately)%3A%20%0AProposed%20change%20window%20or%20commit%20range%20(optional)%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0APlease%20send%20scope%20and%20availability%20before%20we%20arrange%20access%20or%20payment.%0AThis%20first%20email%20includes%20no%20source%20code%20or%20credentials.">
+            Request Deep — $6,000 <!-- Evidence: PR Replay Deep price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
+          </a>
+          <p class="replay-checkout-note">This opens an email draft, not an order. Payment follows agreed written scope and invoice confirmation.</p>
+        </article>
+
       </div>
-      <p class="how-it-works-foot" style="margin-top: 24px;">
-        The coverage table is reproducible from the
-        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/">audit-report template</a>.
-        PR Replay does not create live edit-time authority or approval
-        records; continuous Roam Review does. For the framework mapping see
-        <a href="/governance#controls">governance</a>; for current
-        certification posture and target dates see <a href="/trust">trust</a>.
+      <p class="selling-contact-note">
+        Do not email source code, credentials, or private reports. Start with your
+        question, languages, and approximate scope. If the email button does not
+        open an app, write to <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
+        Response time and availability are confirmed by email.
+      </p>
+      <p class="replay-fineprint">
+        Reports ship as Markdown + PDF. Turnaround: 5 business days for
+        Team, 10 business days for Deep, both from kickoff. We never
+        train on or reuse buyer code; the engagement runs against a
+        temporary clone we delete on completion. A separate
+        EU-conformant tax invoice (reverse-charge VAT for EU B2B
+        buyers with a valid VAT-ID) is issued by our accountant within
+        30 days of payment; the Stripe receipt is not the legal invoice
+        in the provider's billing jurisdiction. See the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">SOW</a>,
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>,
+        and <a href="/security">security policy</a> for details. Email
+        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
+        with questions before purchase.
       </p>
     </div>
   </section>
 
-  <!-- ──────────────────────────────────────────────────────────
-       How it works
-       ────────────────────────────────────────────────────────── -->
+  <section class="whats-in" id="deliverable">
+    <div class="whats-in-inner">
+      <h2>What's in the deliverable</h2>
+      <p class="lede">
+        Every paid report has the same skeleton. Section depth scales
+        with tier; Deep adds the per-detector deep-dive.
+      </p>
+      <div class="verbs-grid verbs-grid--3">
+        <div class="verb-cell">
+          <code>Executive summary</code>
+          <span>A short account of the agreed history, the findings that need attention, and the limits of the checks.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Detector breakdown</code>
+          <span>Findings grouped by the check that produced them, so you can see which patterns recur.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Per-PR ranking</code>
+          <span>Changes ranked for investigation, with their date, commit reference, subject, and reported findings.</span>
+        </div>
+        <div class="verb-cell replay-deep-only">
+          <code>Per-detector deep-dive</code>
+          <span><strong>Deep tier only.</strong> A closer look at each finding category, with up to five example PRs per category.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Recommended next steps</code>
+          <span>Prioritised checks to evaluate on your repository, plus CLI examples. Validate findings and false positives before making a check block CI.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Roam Review credit</code>
+          <span>Explicit credit amount and 60-day window — surfaced inside the deliverable, not just the marketing page.</span>
+        </div>
+        <div class="verb-cell">
+          <code>What's NOT covered</code>
+          <span>Semantic correctness, security audit, performance profiling, in-flight PR review — set out explicitly.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Methodology</code>
+          <span>What was measured, what wasn't, and how to reproduce on your own machine.</span>
+        </div>
+      </div>
+      <p class="how-it-works-foot" style="margin-top: 24px;">
+        Markdown + PDF. You can preview the Team-tier shape on
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">GitHub</a>
+        before commissioning.
+      </p>
+    </div>
+  </section>
+
+  <section class="how-it-works" id="who">
+    <div class="how-it-works-inner">
+      <h2>Who PR Replay is for</h2>
+      <p class="lede">
+        A report is useful when it helps answer a specific question about your change history.
+      </p>
+      <ol class="flow">
+        <li>
+          <span class="flow-num">A</span>
+          <strong>Teams adopting AI coding agents.</strong>
+          Agents are producing more changes than you can inspect line by line.
+          You want help choosing which structural findings deserve investigation.
+        </li>
+        <li>
+          <span class="flow-num">B</span>
+          <strong>Post-incident retrospectives.</strong>
+          You want to inspect structural patterns around a known incident and look
+          for related changes. Bring your operational evidence: replay alone does
+          not establish the cause or prove a gate would have prevented it.
+        </li>
+        <li>
+          <span class="flow-num">C</span>
+          <strong>Choosing checks for your existing workflow.</strong>
+          You want to see whether particular findings are useful on your repository
+          before adding checks to your agent instructions or CI. No hosted subscription
+          is required; the report should be useful on its own.
+        </li>
+      </ol>
+    </div>
+  </section>
+
   <section class="how-it-works" id="how">
     <div class="how-it-works-inner">
       <h2>How it works</h2>
       <p class="lede">
-        Three steps from "I'd like a PR Replay" to "here is the report."
-        Synchronous walk-through call closes the engagement.
+        Agree the question and scope, review the findings, then walk through the report together.
       </p>
       <ol class="flow">
         <li>
           <span class="flow-num">1</span>
           <strong>Kickoff (day 1).</strong>
-          You send the repo URL and the time window by email. We countersign a
-          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">one-page SOW</a>
-          and our <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>.
-          You approve the read-only access scope. No code leaves your
-          environment until both are signed.
+          Describe your question and proposed history window. We confirm fit and
+          availability, then agree a
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">written scope of work</a>
+          and <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">data-handling agreement</a>.
+          The linked documents are templates for review, not signed agreements.
+          Agree the access and payment path before work begins.
         </li>
         <li>
           <span class="flow-num">2</span>
@@ -227,193 +430,60 @@
     </div>
   </section>
 
-  <!-- ──────────────────────────────────────────────────────────
-       Tier picker
-       ────────────────────────────────────────────────────────── -->
-  <section class="audit-upsell" id="tiers" aria-labelledby="tiers-heading">
-    <div class="audit-upsell-inner">
-      <h2 id="tiers-heading">Three tiers</h2>
-      <p class="lede">
-        Same engine across all three. The difference is window size,
-        founder hours included, and the depth of the recommended-actions
-        section.
-      </p>
-      <div class="replay-tiers">
-
-        <article class="replay-tier replay-tier--sample">
-          <h3>Sample</h3>
-          <p class="replay-price"><strong>Free</strong> · 5 PRs · self-serve</p>
-          <p class="replay-body">
-            DIY 5-PR sample. Watermarked. No code uploaded — the CLI runs
-            locally by default. Same engine as the paid tiers, just
-            with a smaller window and no founder review.
-          </p>
-          <p class="install-cmd replay-cmd">
-            <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
-          </p>
-          <p class="replay-foot">
-            No email needed. Run it on any repo you have a checkout of.
-          </p>
-        </article>
-
-        <article class="replay-tier replay-tier--team">
-          <h3>Team</h3>
-          <p class="replay-price"><strong>$2,500</strong> · 30 PRs · 30-min walk-through</p>
-          <p class="replay-body">
-            Thirty most-recent merged PRs scored against the current
-            detector set. Aggregated detector-class breakdown, per-PR
-            ranking, recommended CI gates, written narrative, founder
-            walk-through. <strong>$1,250 banked toward Roam Review</strong>
-            — redeemable within 60 days of its launch, not before.
-            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">See sample output</a>.
-          </p>
-          <!-- STRIPE_TEAM_LINK / PLACEHOLDER_TEAM: when the live Stripe
-               Payment Link URL is ready, replace the primary button's
-               href with the Stripe URL and re-add the "Or email first"
-               mailto as the secondary. The PLACEHOLDER_TEAM marker is
-               the string the PR Replay engagement playbook tells the
-               founder to grep for. -->
-          <a class="btn-primary"
-             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Team%20PR%20Replay%20report.%0A%0ARepo%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
-            Request Team — $2,500 <!-- Evidence: PR Replay Team price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
-          </a>
-          <p class="replay-checkout-note">Self-serve checkout launches soon; email requests go through today. Payment follows signed SOW + invoice confirmation.</p>
-        </article>
-
-        <article class="replay-tier replay-tier--deep">
-          <h3>Deep</h3>
-          <p class="replay-price"><strong>$6,000</strong> · 90 PRs · 90-min walk-through</p>
-          <p class="replay-body">
-            Everything in Team plus a per-detector deep-dive section, a
-            written 90-day remediation plan against the highest-impact
-            CI gates, and a 90-minute walk-through call.
-            <strong>$3,000 banked toward Roam Review</strong> — redeemable
-            within 60 days of its launch, not before.
-            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">See sample (Team format; Deep adds the deep-dive section)</a>.
-          </p>
-          <!-- STRIPE_DEEP_LINK / PLACEHOLDER_DEEP: when the live Stripe
-               Payment Link URL is ready, replace the primary button's
-               href with the Stripe URL and re-add the "Or email first"
-               mailto as the secondary. The PLACEHOLDER_DEEP marker is
-               the string the PR Replay engagement playbook tells the
-               founder to grep for. -->
-          <a class="btn-primary"
-             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%20%E2%80%94%20I%27d%20like%20to%20commission%20a%20Deep%20PR%20Replay%20report.%0A%0ARepo%3A%20%0ATime%20window%20%28default%3A%20last%2090%20days%29%3A%20%0AAreas%20to%20emphasise%20%28optional%29%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0A%E2%80%94%20">
-            Request Deep — $6,000 <!-- Evidence: PR Replay Deep price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
-          </a>
-          <p class="replay-checkout-note">Self-serve checkout launches soon; email requests go through today. Payment follows signed SOW + invoice confirmation.</p>
-        </article>
-
-      </div>
-      <p class="replay-fineprint">
-        Reports ship as Markdown + PDF. Turnaround: 5 business days for
-        Team, 10 business days for Deep, both from kickoff. We never
-        train on or reuse buyer code; the engagement runs against a
-        temporary clone we delete on completion. A separate
-        EU-conformant tax invoice (reverse-charge VAT for EU B2B
-        buyers with a valid VAT-ID) is issued by our accountant within
-        30 days of payment; the Stripe receipt is not the legal invoice
-        in the provider's billing jurisdiction. See the
-        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">SOW</a>,
-        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>,
-        and <a href="/security">security policy</a> for details. Email
-        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
-        with questions before purchase.
-      </p>
-    </div>
-  </section>
-
-  <!-- ──────────────────────────────────────────────────────────
-       What you get — deliverable spec
-       ────────────────────────────────────────────────────────── -->
-  <section class="whats-in" id="deliverable">
+  <section class="whats-in" id="evidence">
     <div class="whats-in-inner">
-      <h2>What's in the deliverable</h2>
+      <h2>What the report can—and cannot—tell you</h2>
       <p class="lede">
-        Every paid report has the same skeleton. Section depth scales
-        with tier; Deep adds the per-detector deep-dive.
+        The report names what was checked, what was found, and what remains unknown.
+        These eight questions make the boundaries visible. Reading history does not
+        recreate an agent's actions, permissions, or approval process.
       </p>
       <div class="verbs-grid verbs-grid--3">
         <div class="verb-cell">
-          <code>Executive summary</code>
-          <span>Verdict line, % of PRs that would have been flagged, total high / medium counts.</span>
+          <code>Who acted?</code>
+          <span><strong>Out of scope.</strong> Git authors stay in your git log; replay does not re-derive identity.</span>
         </div>
         <div class="verb-cell">
-          <code>Detector breakdown</code>
-          <span>Aggregated table: detector × total findings × ratio of PRs hit. Highlights the highest-impact class.</span>
+          <code>What authority existed?</code>
+          <span><strong>Out of scope.</strong> A replay cannot reconstruct the permissions in force when a change was made.</span>
         </div>
         <div class="verb-cell">
-          <code>Per-PR ranking</code>
-          <span>Top PRs ranked high → medium → total severity, with date, SHA, subject, top hits.</span>
-        </div>
-        <div class="verb-cell replay-deep-only">
-          <code>Per-detector deep-dive</code>
-          <span><strong>Deep tier only.</strong> One section per detector class with up to 5 example PRs each.</span>
+          <code>What context was read?</code>
+          <span><strong>Partial.</strong> Commit range, changed files, graph context, and detector set are disclosed.</span>
         </div>
         <div class="verb-cell">
-          <code>Recommended next steps</code>
-          <span>Top three detector classes to gate on first, plus concrete CLI commands for CI integration.</span>
+          <code>What changed?</code>
+          <span><strong>In scope.</strong> Per-PR files, changed subjects, and structural findings are reported.</span>
         </div>
         <div class="verb-cell">
-          <code>Roam Review credit</code>
-          <span>Explicit credit amount and 60-day window — surfaced inside the deliverable, not just the marketing page.</span>
+          <code>What could break?</code>
+          <span><strong>Partial.</strong> Indexed connections and detector findings identify leads to inspect, not every runtime effect or vulnerability.</span>
         </div>
         <div class="verb-cell">
-          <code>What's NOT covered</code>
-          <span>Semantic correctness, security audit, performance profiling, in-flight PR review — set out explicitly.</span>
+          <code>What policy applied?</code>
+          <span><strong>In scope.</strong> Default detector policy or your provided rule file is named in the report.</span>
         </div>
         <div class="verb-cell">
-          <code>Methodology</code>
-          <span>What was measured, what wasn't, and how to reproduce on your own machine.</span>
+          <code>What verified it?</code>
+          <span><strong>Partial.</strong> Replay command, detector versions, and report artifacts are captured; tests are not rerun.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Who accepted risk?</code>
+          <span><strong>Out of scope.</strong> Approval remains <code>producer_not_available</code> unless your source system supplies it.</span>
         </div>
       </div>
       <p class="how-it-works-foot" style="margin-top: 24px;">
-        Markdown + PDF. You can preview the Team-tier shape on
-        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-roam-selfaudit.md">GitHub</a>
-        before commissioning.
+        The coverage table is reproducible from the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/">audit-report template</a>.
+        PR Replay does not create live edit-time authority or approval
+        records. Those need evidence captured by the system that performed the work.
+        Hosted Roam Review is not available. For the framework mapping see
+        <a href="/governance#controls">governance</a>; for current
+        certification posture and target dates see <a href="/trust">trust</a>.
       </p>
     </div>
   </section>
 
-  <!-- ──────────────────────────────────────────────────────────
-       Who it's for
-       ────────────────────────────────────────────────────────── -->
-  <section class="how-it-works" id="who">
-    <div class="how-it-works-inner">
-      <h2>Who PR Replay is for</h2>
-      <p class="lede">
-        Three buyer shapes recur across the engagements we'd quote.
-      </p>
-      <ol class="flow">
-        <li>
-          <span class="flow-num">A</span>
-          <strong>Teams adopting AI coding agents.</strong>
-          You've added Cursor, Claude Code, or Codex in the last 6
-          months and the shape of incoming PRs has changed. You want a
-          read on what's slipping through your existing reviewer.
-        </li>
-        <li>
-          <span class="flow-num">B</span>
-          <strong>Post-incident retrospectives.</strong>
-          You shipped something that broke production. You want to know
-          if a structural-review gate would have caught it pre-merge —
-          and what other PRs in the last quarter look like the same shape.
-        </li>
-        <li>
-          <span class="flow-num">C</span>
-          <strong>Pre-purchase signal for Roam Review.</strong>
-          You're considering a Roam Review subscription. PR Replay tells
-          you what the gate would have done on your specific codebase
-          before you commit. The 50% credit makes it close to free if
-          you subscribe.
-        </li>
-      </ol>
-    </div>
-  </section>
-
-  <!-- ──────────────────────────────────────────────────────────
-       Trust + handling
-       ────────────────────────────────────────────────────────── -->
   <section class="trust-strip" id="trust">
     <div class="trust-strip-inner">
       <div class="trust-cell">
@@ -439,25 +509,27 @@
     </div>
   </section>
 
-  <!-- ──────────────────────────────────────────────────────────
-       Apply credit toward Roam Review
-       ────────────────────────────────────────────────────────── -->
   <section class="audit-upsell" id="credit">
     <div class="audit-upsell-inner">
-      <h2>Apply this fee toward Roam Review</h2>
+      <h2>The optional credit toward a future Roam Review subscription</h2>
       <p class="lede">
         Half of the engagement fee is banked toward your first year of Roam
         Review — the 60-day redemption window starts when Roam Review ships
         (it's in development), so the credit can't expire before you can use it.
       </p>
+      <p>Roam Review has no confirmed launch date and is not available to subscribe to.
+        This is a future subscription credit, not cash back. The PR Replay report
+        fee is still payable in full.</p>
+      <div class="compare-table-wrap" tabindex="0" role="region" aria-labelledby="review-credit-caption">
       <table class="compare-table" style="max-width: 760px; margin: 24px auto 0;">
-        <caption class="visually-hidden">Roam Review credit math by PR Replay tier and Roam Review subscription tier.</caption>
+        <caption class="visually-hidden" id="review-credit-caption">Illustrative subscription credit at the proposed Review Team price; report fees are additional.</caption>
         <thead>
           <tr>
             <th scope="col">PR Replay tier</th>
             <th scope="col">Fee</th>
             <th scope="col">Credits toward Review</th>
-            <th scope="col">Net first-year cost on Review Team ($299/mo)</th>
+            <th scope="col">Remaining Review Team subscription cost, excluding the PR Replay fee ($299/mo proposal)</th>
+            <th scope="col">Report fee plus remaining subscription cost</th>
           </tr>
         </thead>
         <tbody>
@@ -466,15 +538,18 @@
             <td>$2,500</td>
             <td>$1,250</td>
             <td>$2,338 (was $3,588)</td>
+            <td>$4,838</td>
           </tr>
           <tr>
             <th scope="row">Deep</th>
             <td>$6,000</td>
             <td>$3,000</td>
             <td>$588 (was $3,588)</td>
+            <td>$6,588</td>
           </tr>
         </tbody>
       </table>
+      </div>
       <p class="compare-foot">
         Mention the report when subscribing and we apply the credit to
         the first invoice. Credit is single-use and expires 60 days
@@ -483,22 +558,18 @@
     </div>
   </section>
 
-  <!-- ──────────────────────────────────────────────────────────
-       FAQ
-       ────────────────────────────────────────────────────────── -->
   <section class="faq" id="faq">
     <div class="faq-inner">
       <h2>Common questions</h2>
       <details>
         <summary>How do I get the report on a private repo without giving you direct access?</summary>
         <p>
-          Two paths: (1) you grant us a read-only deploy key on a
-          temporary clone we delete on completion, or (2) you run
-          <code>roam pr-replay</code> locally and send us the JSON
-          envelope plus the markdown — we add the founder review and
-          ship the polished deliverable. Both paths sign the
-          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>
-          and a one-page SOW.
+          We can discuss read-only access or a customer-run replay. If you
+          run it locally, first agree which reports can be shared and whether they
+          contain enough evidence for the work. Reports may contain source snippets
+          and identifiers: review them before sharing. Agree the access, written scope,
+          and <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">data-handling terms</a>
+          before sending private material.
         </p>
       </details>
       <details>
@@ -523,12 +594,10 @@
       <details>
         <summary>Why this and not just running <code>roam critique</code> ourselves?</summary>
         <p>
-          You can. The CLI is Apache 2.0 and free forever. The paid
-          engagement adds: founder review of the patterns that matter
-          for your codebase specifically, a ranked recommendation of
-          which detector classes to wire into CI first, a polished
-          narrative artefact you can hand to leadership or auditors,
-          and a 30 or 90-minute walk-through call.
+          You can run the free tools yourself. The paid engagement adds founder
+          review of the agreed history, prioritised findings to investigate, a written
+          report, and a 30 or 90-minute walk-through. Any proposed CI check still needs
+          validation on your repository before it blocks changes.
         </p>
       </details>
       <details>
@@ -554,36 +623,28 @@
       <details>
         <summary>Can multiple people on our team join the walk-through?</summary>
         <p>
-          Yes. We default to "everyone you'd want in a code-review
-          retrospective": eng lead, the engineers who shipped the
-          flagged PRs, sometimes the security lead. We send the report
-          a few minutes before the call so people can skim.
+          Yes. The draft scope of work includes up to five attendees. Agree who
+          should join and the meeting time before kickoff; useful participants include
+          the engineering lead and people familiar with the changes being reviewed.
         </p>
       </details>
       <details>
-        <summary>What about the EU AI Act?</summary>
+        <summary>Is this a compliance certification?</summary>
         <p>
-          PR Replay is evidence-generation tooling, not a regulated
-          service. The EU AI Act Article 12 (record-keeping) only
-          attaches to providers of high-risk AI systems listed in
-          Annex III; code-generation tooling is not in Annex III. If
-          your <em>own product</em> is a high-risk AI system, the
-          report's structural-review evidence can support Article 14
-          human-oversight review. The classification call is for you
-          and your DPO.
+          No. PR Replay is a scoped structural assessment, not legal advice or
+          certification. Its records describe the checks performed and their limits.
+          Your legal or assurance team must decide whether those records are useful
+          for its requirements.
         </p>
       </details>
     </div>
   </section>
 
-  <!-- ──────────────────────────────────────────────────────────
-       Final CTA
-       ────────────────────────────────────────────────────────── -->
   <section class="page-cta-strip">
     <div class="page-cta-inner">
       <p>
         Try the free sample first:
-        <a href="#tiers" class="btn-secondary">See the tiers</a>
+        <a href="#sample" class="btn-secondary">Run the local sample</a>
         · or email
         <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
         with questions before purchase.
@@ -604,7 +665,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
+        <span>A local map and free static checks for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

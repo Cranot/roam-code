@@ -23,6 +23,8 @@ from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 
 _INLINE_CODE_RE = re.compile(r"(?<!`)`(?P<value>[^`\n]+)`(?!`)")
+_CODE_SPAN_RE = re.compile(r"(?<!`)(?P<ticks>`+)(?!`)(?P<value>.*?)(?<!`)(?P=ticks)(?!`)")
+_MARKDOWN_DOT_LINK_RE = re.compile(r"\[[^\]\n]*\]\((?P<value>\.{1,2}/[^\s)]+)\)")
 _FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})(?P<tail>.*)$")
 _KNOWN_PREFIX_PATH_RE = re.compile(r"^(?:src|tests|dev|scripts|templates|docs)/[A-Za-z0-9_./-]+$")
 _EXTENSION_PATH_RE = re.compile(r"^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)+\.[A-Za-z0-9]+$")
@@ -178,10 +180,9 @@ def _path_candidate(value: str) -> str | None:
     if "://" in candidate or any(char in candidate for char in "*?<>{}"):
         return None
     candidate = candidate.replace("\\", "/")
-    if candidate.startswith("./"):
-        candidate = candidate[2:]
+    match_candidate = candidate[2:] if candidate.startswith("./") else candidate
     if candidate.startswith("/") or not (
-        _EXTENSION_PATH_RE.fullmatch(candidate) or _KNOWN_PREFIX_PATH_RE.fullmatch(candidate)
+        _EXTENSION_PATH_RE.fullmatch(match_candidate) or _KNOWN_PREFIX_PATH_RE.fullmatch(match_candidate)
     ):
         return None
     if _has_placeholder_segment(candidate):
@@ -192,7 +193,20 @@ def _path_candidate(value: str) -> str | None:
 def _extract_path_claims(line: str, *, doc: str, line_number: int) -> list[dict[str, Any]]:
     claims: list[dict[str, Any]] = []
     occupied: list[tuple[int, int]] = []
-    for match in _INLINE_CODE_RE.finditer(line):
+    code_matches = list(_INLINE_CODE_RE.finditer(line))
+    code_spans = list(_CODE_SPAN_RE.finditer(line))
+    for match in _MARKDOWN_DOT_LINK_RE.finditer(line):
+        if any(code.start() <= match.start() < code.end() for code in code_spans):
+            continue  # Literal Markdown syntax inside code is not a link.
+        candidate = _path_candidate(match.group("value").split("#", 1)[0])
+        if candidate:
+            occupied.append(match.span())
+            claims.append(
+                {"doc": doc, "line": line_number, "kind": "path", "claim_text": candidate, "_path": candidate}
+            )
+    for match in code_matches:
+        if any(start <= match.start() < end for start, end in occupied):
+            continue  # A link label is not a second repository-path claim.
         occupied.append(match.span())
         candidate = _path_candidate(match.group("value"))
         if candidate:
@@ -255,18 +269,47 @@ def _count_metric_key(first: str, second: str | None) -> tuple[str | None, int]:
     return None, 1
 
 
+_COUNT_CONTEXT_BOUNDARY_RE = re.compile(r"(?<!e\.g\.)(?<!i\.e\.)(?<=[.!?;])\s+(?=[A-Za-z])|\|", re.IGNORECASE)
+
+
 def _count_scope_reason(line: str, match: re.Match[str], metric_key: str | None) -> str | None:
     """Disclose explicit example/capability scopes instead of comparing totals."""
     if any(code.start() <= match.start() < code.end() for code in _INLINE_CODE_RE.finditer(line)):
         return "count occurs in an inline code fragment; its population is not established"
     # Keep another sentence or Markdown table cell from changing this claim's
     # scope. Numeric text after an abbreviation such as e.g. stays in context.
-    prefix = re.split(r"(?<=[.!?;])\s+(?=[A-Z])|\|", line[: match.start()])[-1]
+    prefix = _COUNT_CONTEXT_BOUNDARY_RE.split(line[: match.start()])[-1]
     if re.search(r"\b(?:for example\b|e\.g\.|example:|sample output\b|illustrative\b)", prefix, re.IGNORECASE):
         return "illustrative count has no established whole-repository population"
-    suffix = re.split(r"(?<=[.!?;])\s+(?=[A-Z])|\|", line[match.start() :])[0]
+    suffix = _COUNT_CONTEXT_BOUNDARY_RE.split(line[match.start() :])[0]
+    # A population qualifier may follow its count. Inspect only the immediate
+    # tail, not another clause's example wording or a whole document title.
+    _, token_count = _count_metric_key(match.group("first"), match.group("second"))
+    noun_end = match.end("second") if token_count == 2 else match.end("first")
+    tail = _COUNT_CONTEXT_BOUNDARY_RE.split(line[noun_end:])[0]
+    if re.match(
+        r"\s*(?:in\s+(?:(?:this|the|an?)\s+)?(?:example\b|sample\s+output\b)|\(illustrative\))",
+        tail,
+        re.IGNORECASE,
+    ):
+        return "illustrative count has no established whole-repository population"
     if metric_key == "language" and re.search(r"\bsupport(?:s|ed|ing)?\b", prefix + suffix, re.IGNORECASE):
         return "supported languages are a product capability, not languages present in the index"
+    if metric_key == "language":
+        # A bare language count may describe the product's capabilities, not
+        # the languages used to implement it. Require a local census anchor;
+        # another sentence, table cell or earlier count cannot supply one.
+        explicit_index = (
+            match.group("first").lower() == "indexed"
+            or re.search(r"\bindex\s+(?:has|contains|includes|records|reports)\s*$", prefix, re.IGNORECASE)
+            or re.match(
+                r"\s+(?:present\s+)?in\s+(?:the\s+)?index\b",
+                line[match.end("first") :],
+                re.IGNORECASE,
+            )
+        )
+        if not explicit_index:
+            return "language count has no explicit index population; product capability is not an index census"
     return None
 
 
@@ -463,9 +506,11 @@ def _evaluate_count_claim(claim: dict[str, Any], metrics: dict[str, _Metric]) ->
 
 def _evaluate_path_claim(claim: dict[str, Any], root: Path, git_ignore: _GitIgnore) -> dict[str, Any]:
     relative = claim["_path"]
-    target = root / relative
+    document_relative = relative.startswith(("./", "../"))
+    base = (root / claim["doc"]).parent if document_relative else root
+    target = base / relative
     try:
-        target.resolve(strict=False).relative_to(root.resolve())
+        resolved_relative = target.resolve(strict=False).relative_to(root.resolve()).as_posix()
     except (OSError, ValueError):
         return {
             **claim,
@@ -474,7 +519,11 @@ def _evaluate_path_claim(claim: dict[str, Any], root: Path, git_ignore: _GitIgno
             "status": "unverifiable",
             "reason": "path does not resolve inside the project root",
         }
-    if not target.exists():
+    if document_relative:
+        # Explicit dot paths name a location relative to the Markdown document,
+        # even when it is missing. An existing root/sibling must not mask drift.
+        relative = resolved_relative
+    if not document_relative and not target.exists():
         # README files commonly name siblings (for example a rule pack next
         # to that README), while code guides use repository-root paths. Keep
         # root precedence and accept an existing document-relative target.

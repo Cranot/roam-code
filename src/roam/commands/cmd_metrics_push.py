@@ -55,21 +55,67 @@ _git_metadata = git_metadata
 def _capture_audit() -> dict:
     """Invoke ``roam audit`` in-process and return the JSON envelope.
 
-    On failure, returns an envelope shape carrying ``error`` +
-    ``exit_code``. Callers MUST check ``audit_envelope.get("error")``
-    before extracting metrics — otherwise the silent-defaults in
-    :func:`_extract_metrics` (None for scalars, 0 for counters)
-    masquerade as real measurements and get pushed to Cloud Lite.
-    See the "audit_ok" gate in :func:`metrics_push`.
+    On failure, return an envelope carrying ``error`` and ``exit_code``.
+    The caller also validates completion and required source sections through
+    :func:`_audit_evidence_error`: valid JSON alone is not complete evidence.
     """
     from roam.cli import cli
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["--json", "audit"])
+    parent = click.get_current_context(silent=True)
+    budget = parent.obj.get("budget") if parent and isinstance(parent.obj, dict) else None
+    explicit = parent.obj.get("budget_explicit", False) if parent and isinstance(parent.obj, dict) else False
+    budget_args = ["--budget", str(budget)] if budget is not None and (budget != 0 or explicit) else []
+    # Keep the command seed literal so the compound-registry lint can verify it.
+    args = ["--json", "audit"]
+    args[1:1] = budget_args
+    result = runner.invoke(cli, args)
     try:
-        return _json.loads(result.output)
+        payload = _json.loads(result.stdout)
+        if not isinstance(payload, dict):
+            raise ValueError("expected an Audit object")
+        if result.exit_code not in (0, 5):
+            payload.update(error=f"roam audit exited {result.exit_code}", exit_code=result.exit_code)
+        return payload
     except Exception as exc:  # noqa: BLE001 — pr-prep-style defensive
         return {"error": f"roam audit failed: {exc}", "exit_code": result.exit_code}
+
+
+def _audit_evidence_error(envelope: object) -> str | None:
+    """Require completed, available source sections before publishing counters."""
+    if not isinstance(envelope, dict):
+        return "audit returned a non-object"
+    if envelope.get("error") or envelope.get("_error") or envelope.get("partial_success"):
+        return str(envelope.get("error") or envelope.get("_error") or "audit root is incomplete")
+    summary = envelope.get("summary")
+    if not isinstance(summary, dict) or summary.get("partial_success") is not False:
+        return "audit completion is unavailable or partial"
+    if summary.get("truncated") or envelope.get("truncated"):
+        return "audit output is truncated"
+    sections = envelope.get("sections")
+    if not isinstance(sections, dict):
+        return "audit sections are unavailable"
+    for name in ("health", "debt", "dead", "test_pyramid", "hotspots_danger"):
+        section = sections.get(name)
+        child = section.get("summary") if isinstance(section, dict) else None
+        if not isinstance(child, dict) or not child:
+            return f"audit section {name} has no measured summary"
+        if section.get("_error") or section.get("error") or section.get("partial_success"):
+            return f"audit section {name} failed"
+        if child.get("partial_success") is not False:
+            return f"audit section {name} completion is unavailable or partial"
+        required = {
+            "health": ("health_score",),
+            "debt": (),
+            "dead": ("safe", "review", "intentional", "test_only", "total_dead_loc"),
+            "test_pyramid": ("total", "unit", "integration", "e2e", "smoke", "unknown"),
+            "hotspots_danger": ("count",),
+        }[name]
+        if any(child.get(key) is None for key in required):
+            return f"audit section {name} has unavailable counters"
+        if name == "debt" and child.get("total_remediation_minutes") is None and child.get("total_minutes") is None:
+            return "audit section debt has unavailable totals"
+    return None
 
 
 def _infer_repo_id(git_meta: dict, repo_override: str | None) -> str:
@@ -184,25 +230,35 @@ def _extract_metrics(audit_envelope: dict) -> dict:
     danger_summary = (sections.get("hotspots_danger") or {}).get("summary") or {}
 
     return {
-        "health_score": health_summary.get("health_score") or summary.get("health_score"),
-        "debt_total_minutes": debt_summary.get("total_remediation_minutes") or debt_summary.get("total_minutes"),
+        "health_score": (
+            health_summary["health_score"]
+            if health_summary.get("health_score") is not None
+            else summary.get("health_score")
+        ),
+        "debt_total_minutes": (
+            debt_summary["total_remediation_minutes"]
+            if debt_summary.get("total_remediation_minutes") is not None
+            else debt_summary.get("total_minutes")
+        ),
         "debt_total_hours": debt_summary.get("total_remediation_hours"),
-        "dead_safe": dead_summary.get("safe", 0),
-        "dead_review": dead_summary.get("review", 0),
-        "dead_intentional": dead_summary.get("intentional", 0),
-        "dead_test_only": dead_summary.get("test_only", 0),
-        "dead_total_loc": dead_summary.get("total_dead_loc", 0),
-        "danger_zone_count": danger_summary.get("count", 0),
+        "dead_safe": dead_summary.get("safe"),
+        "dead_review": dead_summary.get("review"),
+        "dead_intentional": dead_summary.get("intentional"),
+        "dead_test_only": dead_summary.get("test_only"),
+        "dead_total_loc": dead_summary.get("total_dead_loc"),
+        "danger_zone_count": danger_summary.get("count"),
         "test_pyramid": {
-            "total": pyramid_summary.get("total", 0),
-            "unit": pyramid_summary.get("unit", 0),
-            "integration": pyramid_summary.get("integration", 0),
-            "e2e": pyramid_summary.get("e2e", 0),
-            "smoke": pyramid_summary.get("smoke", 0),
-            "unknown": pyramid_summary.get("unknown", 0),
+            "total": pyramid_summary.get("total"),
+            "unit": pyramid_summary.get("unit"),
+            "integration": pyramid_summary.get("integration"),
+            "e2e": pyramid_summary.get("e2e"),
+            "smoke": pyramid_summary.get("smoke"),
+            "unknown": pyramid_summary.get("unknown"),
         },
         "imported_coverage_pct": health_summary.get("imported_coverage_pct"),
-        "api_surface": summary.get("api_surface") or audit_envelope.get("api_count"),
+        "api_surface": summary["api_surface"]
+        if summary.get("api_surface") is not None
+        else audit_envelope.get("api_count"),
         "file_total": summary.get("file_total"),
         "symbol_total": summary.get("symbol_total"),
         "actionable_cycles": health_summary.get("actionable_cycles"),
@@ -537,7 +593,10 @@ def metrics_push(
     )
     if audit_envelope is None:
         audit_envelope = {"error": "audit capture substrate raised", "exit_code": -1}
-    audit_failed = isinstance(audit_envelope.get("error"), str)
+    audit_error = _audit_evidence_error(audit_envelope)
+    audit_failed = audit_error is not None
+    if not isinstance(audit_envelope, dict):
+        audit_envelope = {"error": audit_error}
 
     # W607-DI: ``git_metadata`` substrate. The helper shells out to ``git``
     # via subprocess; on a non-git checkout it returns ``{}`` (legitimate
@@ -587,7 +646,7 @@ def metrics_push(
             "metrics": {},
         },
     )
-    if payload is None:
+    if not isinstance(payload, dict):
         payload = {
             "schema": "roam-metrics-v1",
             "schema_version": "1.0.0",
@@ -595,21 +654,26 @@ def metrics_push(
             "anonymized": bool(anonymize),
             "metrics": {},
         }
+    payload_failed = not isinstance(payload.get("metrics"), dict) or not payload["metrics"]
+    if payload_failed:
+        _w607di_warnings_out.append("metrics_push_payload_unavailable: empty or invalid metrics object")
 
-    # Pattern 2 + silent-metric-drop fix: when `roam audit` failed (returned an
-    # error envelope), _extract_metrics() silently defaults everything to
-    # None/0. Surface that explicitly on the payload so neither --dry-run
-    # consumers nor the Cloud Lite receiver mistake the defaults for real
-    # measurements. The receiving API can drop the row; the local audit
-    # operator can see WHY it dropped.
+    # Failed, incomplete or missing source evidence is local-only. Dry-run
+    # records the reason; a live request is refused before HTTP dispatch.
     if audit_failed:
+        # Absent counters are not zeros. Keep the failed evidence local and
+        # make dry-run output inspectable without presenting default metrics.
+        payload["metrics"] = {}
+        payload.pop("hotspots", None)
         payload["audit_status"] = "failed"
-        payload["audit_error"] = audit_envelope.get("error")
+        payload["audit_error"] = audit_error
         payload["audit_exit_code"] = audit_envelope.get("exit_code")
 
     if dry_run:
         # W607-DI: ``compose_verdict`` substrate on the dry-run path.
         def _dry_verdict():
+            if payload_failed:
+                return "dry-run — payload unavailable; no metrics would be posted"
             return (
                 "dry-run — audit failed; payload would carry no real metrics"
                 if audit_failed
@@ -645,6 +709,7 @@ def metrics_push(
                 "anonymized": anonymize,
                 "endpoint": endpoint,
                 "audit_status": "failed" if audit_failed else "ok",
+                "payload_status": "withheld" if audit_failed else "failed" if payload_failed else "ready",
                 "partial_success": audit_failed or bool(_w607di_warnings_out),
             }
             envelope_kwargs = dict(summary=dry_summary, payload=payload)
@@ -695,21 +760,27 @@ def metrics_push(
     # command. The W607-DI wrap degrades to the canonical failed-push
     # tuple so the verdict composer still emits a coherent
     # ``push failed (0)`` line.
-    post_result = _run_check_di(
-        "post_metrics",
-        _post_metrics,
-        endpoint,
-        token,
-        payload,
-        timeout=timeout,
-        default=(False, 0, "post_metrics substrate degraded"),
-    )
+    if audit_failed or payload_failed:
+        reason = audit_error if audit_failed else "metrics payload unavailable"
+        post_result = (False, 0, f"Evidence incomplete; no metrics posted: {reason}")
+    else:
+        post_result = _run_check_di(
+            "post_metrics",
+            _post_metrics,
+            endpoint,
+            token,
+            payload,
+            timeout=timeout,
+            default=(False, 0, "post_metrics substrate degraded"),
+        )
     if post_result is None:
         post_result = (False, 0, "post_metrics substrate degraded")
     ok, status, response_text = post_result
 
     # W607-DI: ``compose_verdict`` substrate -- LAW 6 single-line verdict.
     def _push_verdict():
+        if payload_failed:
+            return "metrics not posted: payload unavailable"
         if audit_failed:
             return "metrics pushed (audit failed; payload empty)" if ok else f"push failed ({status})"
         return "metrics pushed" if ok else f"push failed ({status})"
@@ -731,6 +802,7 @@ def metrics_push(
         "git_sha": payload.get("git_sha"),
         "anonymized": anonymize,
         "audit_status": "failed" if audit_failed else "ok",
+        "payload_status": "withheld" if audit_failed else "failed" if payload_failed else "ready",
         "partial_success": audit_failed or not ok or bool(_w607di_warnings_out),
     }
 

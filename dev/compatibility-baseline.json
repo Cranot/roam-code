@@ -1356,6 +1356,7 @@
     },
     "health": {
       "flags": [
+        "--all-issues",
         "--baseline",
         "--explain",
         "--gate",
@@ -4299,6 +4300,7 @@
       "subcommand"
     ],
     "roam_health": [
+      "all_issues",
       "root",
       "summarize"
     ],

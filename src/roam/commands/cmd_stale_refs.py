@@ -50,7 +50,7 @@ from roam.commands.stale_refs_anchors import AnchorCache
 from roam.commands.stale_refs_hints import HintContext, best_hint
 from roam.db.connection import find_project_root
 from roam.exit_codes import gate_should_fail
-from roam.index.discovery import discover_files, discover_files_with_skips
+from roam.index.discovery import SKIP_UNENUMERABLE, discover_files, discover_files_with_skips
 from roam.index.test_conventions import is_test_file
 from roam.output.formatter import json_envelope, to_json
 
@@ -521,8 +521,15 @@ def _read_text_with_reason(path: Path, max_bytes: int = 1_000_000) -> tuple[str 
     try:
         if path.stat().st_size > max_bytes:
             return None, f"oversize (> {max_bytes} bytes)"
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return fh.read(), None
+        # The file can grow after stat(). Bound the actual byte read as well;
+        # the extra byte distinguishes an exact fit from incomplete evidence.
+        with open(path, "rb") as fh:
+            raw = fh.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            return None, f"oversize (> {max_bytes} bytes)"
+        # Match the previous text-mode UTF-8/replacement and universal-newline
+        # behavior so reference line numbers do not change on Windows files.
+        return raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n"), None
     except OSError as exc:
         return None, f"unreadable ({type(exc).__name__})"
 
@@ -641,8 +648,8 @@ def _build_lookup_indices(
     """Build the (tracked_set, dir_set, basename_idx) trio from discovered files.
 
     ``tracked_set`` is the membership set used to check whether a resolved
-    target path is one of the discovered files; ``dir_set`` lets us treat
-    a parent directory as a live target; ``basename_idx`` is the
+    target path is one of the discovered files; ``dir_set`` records its
+    parent directories, not their current existence; ``basename_idx`` is the
     basename → paths map used by the backtick resolver and the caller's
     rename hints.
     """
@@ -673,11 +680,13 @@ def _record_in_page_anchor_stale(
     """Record a stale-anchor finding when the source file's own ``#fragment`` is missing."""
     if not check_anchors or not AnchorCache.is_anchor_validatable(rel):
         return
-    anchors = anchor_cache.anchors_for(rel)
-    if anchors is None or fragment.lower() in anchors:
-        return
+    # An explicit scope exclusion is not a failed observation. Apply it before
+    # reading definitions so excluded targets cannot create coverage gaps.
     synthetic = f"{rel}#{fragment}"
     if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel, ignore_target):
+        return
+    anchors = anchor_cache.anchors_for(rel)
+    if anchors is None or fragment.lower() in anchors:
         return
     stale_by_target[synthetic].append(
         {
@@ -748,14 +757,14 @@ def _record_existing_target_anchor(
     """Record a stale-anchor finding when the target file exists but ``#fragment`` is missing."""
     if not (check_anchors and fragment and AnchorCache.is_anchor_validatable(rel_target)):
         return
+    synthetic = f"{rel_target}#{fragment}"
+    if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel_target, ignore_target):
+        return
     anchors = anchor_cache.anchors_for(rel_target)
     # Case-insensitive lookup — GitHub matches ``#Setup`` against header
     # ``# Setup``. Stored slugs are lowercased; lowercase the URL
     # fragment too.
     if anchors is None or fragment.lower() in anchors:
-        return
-    synthetic = f"{rel_target}#{fragment}"
-    if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel_target, ignore_target):
         return
     stale_by_target[synthetic].append(
         {
@@ -810,6 +819,8 @@ def _process_one_ref(
     check_absolute_routes: bool,
     ignore_target: tuple[str, ...],
     stale_by_target: dict[str, list[dict]],
+    target_states: dict[str, bool | None] | None = None,
+    target_errors: dict[str, str] | None = None,
 ) -> None:
     """Per-ref decision tree: in-page anchor → resolve → exist-check → record."""
     fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
@@ -844,8 +855,27 @@ def _process_one_ref(
     )
     if target is None or rel_target is None:
         return
+    if _matches_any_glob(rel_target, ignore_target):
+        return  # whole-target exclusion also excludes its existence probe
 
-    target_exists = rel_target in tracked_set or rel_target in dir_set or target.exists()
+    # Discovery is a path catalogue, not a current existence observation.
+    # Stat each unique target once per scan; never cache failures as absence.
+    if target_states is None:
+        target_states = {}
+    if rel_target not in target_states:
+        try:
+            target.stat()
+            target_states[rel_target] = True
+        except (FileNotFoundError, NotADirectoryError):
+            target_states[rel_target] = False
+        except OSError as exc:
+            if target_errors is None:
+                raise  # a direct caller without a disclosure channel must fail
+            target_errors[rel_target] = f"{type(exc).__name__}: {exc}"
+            target_states[rel_target] = None
+    target_exists = target_states[rel_target]
+    if target_exists is None:
+        return
     if target_exists:
         _record_existing_target_anchor(
             rel,
@@ -909,6 +939,8 @@ def _scan_project(
     all_files, discovery_skips = discover_files_with_skips(project_root, include_excluded=include_excluded)
     tracked_set, dir_set, basename_idx = _build_lookup_indices(all_files)
     anchor_cache = AnchorCache(project_root)
+    target_states: dict[str, bool | None] = {}
+    target_errors: dict[str, str] = {}
 
     stale_by_target: dict[str, list[dict]] = defaultdict(list)
     files_scanned = 0
@@ -919,6 +951,11 @@ def _scan_project(
     files_unreadable: list[dict[str, str]] = []
     for reason, paths in sorted(discovery_skips.items()):
         for rel in paths:
+            if reason == SKIP_UNENUMERABLE:
+                # This is a directory with an UNKNOWN file population, not a
+                # file whose suffix can establish that it is out of scope.
+                files_unreadable.append({"file": rel, "reason": reason})
+                continue
             ext = os.path.splitext(rel)[1].lower()
             if ext not in _SCANNABLE_EXTS:
                 continue  # never scannable -- a scope decision, not a blind spot
@@ -965,8 +1002,16 @@ def _scan_project(
                 check_absolute_routes=check_absolute_routes,
                 ignore_target=ignore_target,
                 stale_by_target=stale_by_target,
+                target_states=target_states,
+                target_errors=target_errors,
             )
 
+    # Source text and anchor definitions are separate observations. A readable
+    # source does not make a failed anchor lookup complete.
+    for rel in anchor_cache.unreadable_paths:
+        files_unreadable.append({"file": rel, "reason": "anchor_unreadable"})
+    for rel, detail in sorted(target_errors.items()):
+        files_unreadable.append({"file": rel, "reason": "target_unstatable", "detail": detail})
     return stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache, files_unreadable
 
 
@@ -2675,6 +2720,7 @@ def _run_watch_loop(
     on_initial: callable,
     on_delta: callable,
     baseline: set[str] | None = None,
+    on_scan=None,
 ) -> None:
     """Drive the ``--watch`` polling loop until interrupted.
 
@@ -2706,6 +2752,8 @@ def _run_watch_loop(
     stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache, files_unreadable = _scan_project(
         project_root, **scan_kwargs
     )
+    if on_scan is not None:
+        on_scan(files_unreadable)
     if baseline:
         stale_by_target = _filter_against_baseline(stale_by_target, baseline)
     on_initial(stale_by_target, files_scanned, refs_seen)
@@ -2726,6 +2774,8 @@ def _run_watch_loop(
             stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache, files_unreadable = _scan_project(
                 project_root, **scan_kwargs
             )
+            if on_scan is not None:
+                on_scan(files_unreadable)
             if baseline:
                 stale_by_target = _filter_against_baseline(stale_by_target, baseline)
             current_findings = _scan_finding_set(stale_by_target)
@@ -3018,7 +3068,9 @@ def _compact_sources(sources: list[dict]) -> list[dict]:
     default=None,
     help=(
         "Auto-rename HIGH-confidence findings. ``preview`` prints a "
-        "unified diff and exits 0; ``apply`` rewrites files in place via "
+        "unified diff; ``apply`` rewrites files in place via "
+        "atomic writes. With --gate, pre-fix findings or incomplete scans "
+        "exit 5; rescan after applying repairs. Writes use "
         "atomic tempfile + rename (so an interrupted run cannot corrupt "
         "source files). Only edits lines with a single unambiguous "
         "stale reference. Safe with uncommitted changes — substitution "
@@ -3236,7 +3288,25 @@ def stale_refs(
                 limit = cfg_limit
 
     # ---- Watch mode short-circuits the regular flow ----------------
+    if fix is not None:
+        for requested, option in (
+            (sarif_mode, "--sarif"),
+            (attest_path, "--attest"),
+            (github_summary_path, "--github-summary"),
+        ):
+            if requested:
+                raise click.UsageError(f"--fix is not compatible with {option}. Run a separate one-shot scan.")
     if watch:
+        for requested, option in (
+            (attest_path, "--attest"),
+            (baseline_save, "--baseline-save"),
+            (github_summary_path, "--github-summary"),
+            (diff_base is not None, "--diff"),
+        ):
+            if requested:
+                raise click.UsageError(f"--watch is not compatible with {option}. Run a separate one-shot scan.")
+        if gate:
+            raise click.UsageError("--watch is not compatible with --gate. Run a one-shot scan to enforce the gate.")
         if json_mode or sarif_mode:
             # Streaming structured output isn't a sensible mental model
             # for a continuous loop. Fail fast rather than emit
@@ -3274,11 +3344,29 @@ def stale_refs(
             scan_bare_backticks=scan_bare_backticks,
         )
 
+        watch_gaps: tuple[tuple[str, str], ...] = ()
+
+        def _on_scan(gaps):
+            nonlocal watch_gaps
+            current = tuple(sorted((item["file"], item["reason"]) for item in gaps))
+            if current != watch_gaps:
+                if current:
+                    click.echo("SCAN INCOMPLETE: some inputs could not be observed; directory file counts are unknown.")
+                    for path, reason in current[:10]:
+                        click.echo(f"  {path} ({reason})")
+                    if len(current) > 10:
+                        click.echo(f"  (+{len(current) - 10} more)")
+                else:
+                    click.echo("SCAN COVERAGE RESTORED: the latest scan reported no unreadable inputs.")
+            watch_gaps = current
+
         def _on_initial(stale_by_target_, files_scanned_, refs_seen_):
             click.echo(f"WATCH: monitoring {project_root} (interval {watch_interval}s) — Ctrl+C to exit\n")
             count = sum(len(v) for v in stale_by_target_.values())
             tgt_count = len(stale_by_target_)
-            if count == 0:
+            if count == 0 and watch_gaps:
+                click.echo(f"  initial: no stale refs among {refs_seen_} checked; coverage incomplete\n")
+            elif count == 0:
                 click.echo(f"  initial: clean ({refs_seen_} refs across {files_scanned_} files)\n")
             else:
                 click.echo(f"  initial: {count} stale ref(s) across {tgt_count} target(s)\n")
@@ -3304,6 +3392,7 @@ def stale_refs(
             on_initial=_on_initial,
             on_delta=_on_delta,
             baseline=baseline_set,
+            on_scan=_on_scan,
         )
         return
 
@@ -3480,22 +3569,39 @@ def stale_refs(
     # W1527: a file that could not be read contributed no refs to either
     # the numerator or the denominator, so "all refs resolve" would be a
     # claim about references this scan never looked at.
+    unenumerable_directories = [item["file"] for item in files_unreadable if item["reason"] == SKIP_UNENUMERABLE]
+    unreadable_anchor_targets = [item["file"] for item in files_unreadable if item["reason"] == "anchor_unreadable"]
+    unstatable_targets = [item for item in files_unreadable if item["reason"] == "target_unstatable"]
+    files_unreadable = [
+        item
+        for item in files_unreadable
+        if item["reason"] not in {SKIP_UNENUMERABLE, "anchor_unreadable", "target_unstatable"}
+    ]
     unreadable_count = len(files_unreadable)
+    directory_count = len(unenumerable_directories)
+    anchor_read_count = len(unreadable_anchor_targets)
+    target_stat_count = len(unstatable_targets)
     # W1331: ONE SITE DECIDES, and every channel spells it the same way.
     # Named for the canonical disclosure token rather than a local shorthand —
     # the json, text and SARIF branches must all be able to say this scan was
     # partial, and a reader (or the disclosure-symmetry scanner) cannot tell a
     # branch discloses it at all when each branch invents its own spelling.
-    # Identical in value to the `bool(files_unreadable)` guards it replaces:
-    # this is a DISCLOSURE change, not a decision change.
-    scan_incomplete = bool(files_unreadable)
+    scan_incomplete = bool(
+        files_unreadable or unenumerable_directories or unreadable_anchor_targets or unstatable_targets
+    )
     unread_note = f" · {unreadable_count} unreadable" if unreadable_count else ""
+    directory_note = f" · {directory_count} unenumerable directories (file count unknown)" if directory_count else ""
+    if anchor_read_count:
+        directory_note += f" · {anchor_read_count} anchor targets unreadable"
+    if target_stat_count:
+        directory_note += f" · {target_stat_count} target states unavailable"
     if target_count == 0:
-        if unreadable_count:
+        if scan_incomplete:
+            gap_note = f"{unreadable_count} file(s) could not be read" if unreadable_count else "scan incomplete"
             verdict = (
                 f"no stale refs among the {refs_seen} checked, but "
-                f"{unreadable_count} file(s) could not be read · "
-                f"{files_scanned} files · {scan_seconds}s"
+                f"{gap_note} · "
+                f"{files_scanned} files{directory_note} · {scan_seconds}s"
             )
         else:
             verdict = f"all refs resolve · {refs_seen} checked · {files_scanned} files · {scan_seconds}s"
@@ -3505,7 +3611,7 @@ def stale_refs(
         diff_note = f" · diff base {diff_info['base_sha'][:7]}" if diff_info else ""
         verdict = (
             f"{total_refs} stale ref(s) · {target_count} missing target(s){anchor_note}{fix_note}{diff_note} · "
-            f"{refs_seen} refs checked · {files_scanned} files{unread_note} · {scan_seconds}s"
+            f"{refs_seen} refs checked · {files_scanned} files{unread_note}{directory_note} · {scan_seconds}s"
         )
 
     # ---- Baseline write side --------------------------------------
@@ -3529,9 +3635,67 @@ def stale_refs(
             "by_confidence": dict(by_confidence),
         },
     )
+    if scan_incomplete:
+        next_steps = [
+            "Inspect the disclosed scan gaps; restore readable inputs before rerunning `roam stale-refs --gate`."
+        ]
+        if target_count:
+            next_steps.append(
+                "Run `roam stale-refs --fix preview` to inspect candidate rewrites; "
+                "resolve incomplete evidence before applying fixes."
+            )
+
+    coverage_summary = {
+        "files_scanned": files_scanned,
+        "refs_checked": refs_seen,
+        "files_unreadable": unreadable_count,
+        "directories_unenumerable": directory_count,
+        "anchor_targets_unreadable": anchor_read_count,
+        "targets_unstatable": target_stat_count,
+        "scan_incomplete": scan_incomplete,
+        "partial_success": scan_incomplete,
+    }
+    coverage_details = {}
+    if unstatable_targets:
+        coverage_details["unstatable_targets"] = unstatable_targets
+    if files_unreadable:
+        coverage_details["unreadable_files"] = files_unreadable
+    if unenumerable_directories:
+        coverage_details["unenumerable_directories"] = unenumerable_directories
+    if unreadable_anchor_targets:
+        coverage_details["unreadable_anchor_targets"] = unreadable_anchor_targets
+
+    def _fix_gate(*, incomplete=scan_incomplete):
+        # Findings describe the pre-fix scan. A successful write is not a
+        # post-fix verification; callers must rescan before clearing this gate.
+        if gate_should_fail(bool(gate), findings=target_count, scan_incomplete=incomplete):
+            ctx.exit(5)
 
     # ---- --fix mode short-circuits all other output paths
     if fix is not None:
+        if fix == "apply" and gate and scan_incomplete:
+            refusal = "fix refused: scan incomplete; restore readable inputs before applying gated rewrites"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "stale-refs",
+                            summary={
+                                "verdict": refusal,
+                                "fix_mode": fix,
+                                "state": "fix_refused_incomplete_scan",
+                                "files_written": 0,
+                                "edits_applied": 0,
+                                **coverage_summary,
+                            },
+                            budget=token_budget,
+                            **coverage_details,
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {refusal}")
+            ctx.exit(5)
         refused_log: list[str] = []
         edits_by_source = _build_fix_edits(
             full_targets_with_hints,
@@ -3541,17 +3705,17 @@ def stale_refs(
         )
         if fix == "preview":
             diff_text, files_touched, edits_planned = _render_fix_diff(project_root, edits_by_source)
+            preview_verdict = (
+                f"--fix preview: {edits_planned} edit(s) across {files_touched} file(s) "
+                f"({target_count} missing target(s) total)" + (" · scan incomplete" if scan_incomplete else "")
+            )
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "stale-refs",
                             summary={
-                                "verdict": (
-                                    f"--fix preview: {edits_planned} edit(s) "
-                                    f"across {files_touched} file(s) "
-                                    f"({target_count} missing target(s) total)"
-                                ),
+                                "verdict": preview_verdict,
                                 "fix_mode": "preview",
                                 "edits_planned": edits_planned,
                                 "files_touched": files_touched,
@@ -3559,18 +3723,19 @@ def stale_refs(
                                 "stale_refs": total_refs,
                                 "scan_seconds": scan_seconds,
                                 "refused_count": len(refused_log),
+                                **coverage_summary,
                             },
                             budget=token_budget,
                             diff=diff_text,
                             refused=refused_log,
+                            **coverage_details,
                         )
                     )
                 )
             else:
-                click.echo(
-                    f"VERDICT: --fix preview · {edits_planned} edit(s) across "
-                    f"{files_touched} file(s) (HIGH-confidence hints only)\n"
-                )
+                click.echo(f"VERDICT: {preview_verdict}\n")
+                if scan_incomplete:
+                    click.echo("SCAN INCOMPLETE: inspect the unreadable source, directory and anchor inputs.")
                 if refused_log:
                     click.echo(
                         f"Refused {len(refused_log)} unsafe rewrite(s) — these "
@@ -3583,7 +3748,7 @@ def stale_refs(
                         click.echo(f"  (+{len(refused_log) - 10} more)")
                     click.echo()
                 if not edits_planned:
-                    if target_count == 0:
+                    if target_count == 0 and not scan_incomplete:
                         click.echo("No findings to fix — all references resolve.")
                     else:
                         click.echo(
@@ -3595,6 +3760,7 @@ def stale_refs(
                         )
                 else:
                     click.echo(diff_text or "(empty diff)")
+            _fix_gate()
             return
         # fix == "apply"
         files_written, edits_applied, locked_files = _apply_fixes_in_place(project_root, edits_by_source)
@@ -3611,6 +3777,8 @@ def stale_refs(
             lock_note = f" · {len(locked_files)} file(s) skipped due to file locks"
         refuse_note = f" · {len(refused_log)} unsafe rewrite(s) refused" if refused_log else ""
         msg = f"--fix apply · wrote {edits_applied} edit(s) to {files_written} file(s){lock_note}{refuse_note}"
+        if scan_incomplete:
+            msg += " · scan incomplete"
         if json_mode:
             click.echo(
                 to_json(
@@ -3626,10 +3794,13 @@ def stale_refs(
                             "stale_refs": total_refs,
                             "scan_seconds": scan_seconds,
                             "refused_count": len(refused_log),
+                            **coverage_summary,
+                            "partial_success": scan_incomplete or bool(locked_files) or bool(refused_log),
                         },
                         budget=token_budget,
                         locked_files=locked_files,
                         refused=refused_log,
+                        **coverage_details,
                     )
                 )
             )
@@ -3659,12 +3830,13 @@ def stale_refs(
             if files_written:
                 click.echo("Re-run `roam stale-refs` to confirm and address remaining findings.")
             else:
-                if target_count == 0:
+                if target_count == 0 and not scan_incomplete:
                     click.echo("No findings to fix — all references resolve.")
                 else:
                     click.echo(
                         f"0 fixable / {target_count} total finding(s). Run `roam stale-refs --fix preview` to inspect."
                     )
+        _fix_gate(incomplete=scan_incomplete or bool(locked_files) or bool(refused_log))
         return
 
     # ---- --attest writes an in-toto v1 statement before any other output
@@ -3678,6 +3850,8 @@ def stale_refs(
     attest_written: bool = False
     if attest_path:
         attest_summary = {
+            **coverage_summary,
+            **coverage_details,
             "verdict": verdict,
             "missing_targets": target_count,
             "stale_refs": total_refs,
@@ -3774,10 +3948,29 @@ def stale_refs(
             # adapter and marker shape as cmd_supply_chain.py.
             _sarif_doc = with_sarif_disclosures(
                 _sarif_doc,
-                [
-                    f"stale_refs_scan_incomplete:{unreadable_count}_file(s)_could_not_be_read"
-                    "_and_contributed_no_references"
-                ],
+                (
+                    [
+                        f"stale_refs_scan_incomplete:{unreadable_count}_file(s)_could_not_be_read"
+                        "_and_contributed_no_references"
+                    ]
+                    if unreadable_count
+                    else []
+                )
+                + (
+                    [f"stale_refs_scan_incomplete:{directory_count}_directories_unenumerable_file_count_unknown"]
+                    if directory_count
+                    else []
+                )
+                + (
+                    [f"stale_refs_scan_incomplete:{anchor_read_count}_anchor_targets_unreadable"]
+                    if anchor_read_count
+                    else []
+                )
+                + (
+                    [f"stale_refs_scan_incomplete:{target_stat_count}_target_states_unavailable"]
+                    if target_stat_count
+                    else []
+                ),
             )
         click.echo(write_sarif(_sarif_doc))
         _exit_with_policy()
@@ -3790,6 +3983,9 @@ def stale_refs(
             "stale_refs": total_refs,
             "files_scanned": files_scanned,
             "files_unreadable": unreadable_count,
+            "directories_unenumerable": directory_count,
+            "anchor_targets_unreadable": anchor_read_count,
+            "targets_unstatable": target_stat_count,
             "scan_incomplete": scan_incomplete,
             "partial_success": scan_incomplete,
             "refs_checked": refs_seen,
@@ -3833,6 +4029,12 @@ def stale_refs(
             sample = (prose_paths[:300] + other_paths[:200])[:500]
             summary["repo_paths_sample"] = sorted(sample)
         envelope_extra: dict = {}
+        if unstatable_targets:
+            envelope_extra["unstatable_targets"] = unstatable_targets
+        if unreadable_anchor_targets:
+            envelope_extra["unreadable_anchor_targets"] = unreadable_anchor_targets
+        if unenumerable_directories:
+            envelope_extra["unenumerable_directories"] = unenumerable_directories
         if files_unreadable:
             # `unreadable_files` is this repository's existing name for the
             # paths behind a `files_unreadable` count (cmd_calc_inventory,
@@ -3870,6 +4072,24 @@ def stale_refs(
             click.echo(f"  {item['file']}  ({item['reason']})")
         if len(files_unreadable) > 10:
             click.echo(f"  (+{len(files_unreadable) - 10} more)")
+        if unstatable_targets:
+            click.echo(f"  {target_stat_count} target states could not be inspected:")
+            for item in unstatable_targets[:10]:
+                click.echo(f"    {item['file']} ({item['detail']})")
+            if target_stat_count > 10:
+                click.echo(f"    (+{target_stat_count - 10} more)")
+        if unenumerable_directories:
+            click.echo(f"  {directory_count} directories could not be enumerated; file count unknown:")
+            for directory in unenumerable_directories[:10]:
+                click.echo(f"    {directory}")
+            if directory_count > 10:
+                click.echo(f"    (+{directory_count - 10} more)")
+        if unreadable_anchor_targets:
+            click.echo(f"  {anchor_read_count} anchor targets could not be read:")
+            for path in unreadable_anchor_targets[:10]:
+                click.echo(f"    {path}")
+            if anchor_read_count > 10:
+                click.echo(f"    (+{anchor_read_count - 10} more)")
         click.echo()
     if target_count == 0:
         if scan_incomplete:

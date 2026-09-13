@@ -105,7 +105,9 @@ jobs:
           # from a fresh checkout (.roam/ is gitignored, never persisted
           # across runs), so this appends exactly one genesis record and
           # reports that trail's real Article 12 conformance score.
-          .venv/bin/roam --json dogfood > dogfood.json
+          # Collect complete JSON detail into the artifact. The strict gate
+          # below still rejects scan failures, unavailable inputs and child caps.
+          .venv/bin/roam --json --budget 0 dogfood > dogfood.json
           .venv/bin/python - <<'PY'
           import json
           import os
@@ -133,8 +135,15 @@ jobs:
           gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
           if gh_summary:
               pathlib.Path(gh_summary).write_text(summary_md, encoding="utf-8")
-          if s.get("partial_success"):
-              failed = s.get("failed_sections") or s.get("warnings_out") or "undisclosed sections"
+          # An absent or malformed completion flag is UNKNOWN. A false flag
+          # cannot override failed sections or a root-level partial result.
+          if (
+              s.get("partial_success") is not False
+              or env.get("partial_success", False) is not False
+              or s.get("failed_sections")
+              or s.get("incomplete_sections")
+          ):
+              failed = s.get("failed_sections") or s.get("incomplete_sections") or s.get("warnings_out") or "undisclosed sections"
               raise SystemExit(f"dogfood execution degraded: {failed}")
           PY
 

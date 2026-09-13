@@ -193,7 +193,8 @@ def test_audit_clean_envelope_omits_w607dm_markers(cli_runner, audit_project):
 # ---------------------------------------------------------------------------
 
 
-def test_audit_compose_verdict_failure_marker_format(cli_runner, audit_project, monkeypatch):
+@pytest.mark.parametrize("child_failed", [False, True])
+def test_audit_compose_verdict_failure_marker_format(cli_runner, audit_project, monkeypatch, child_failed):
     """Force a compose_verdict raise by poisoning the f-string inputs.
 
     The compose_verdict closure runs ``f"{coverage_pct:.0f}%"`` when
@@ -216,6 +217,14 @@ def test_audit_compose_verdict_failure_marker_format(cli_runner, audit_project, 
         return real_summary_field(payload, *keys, default=default)
 
     monkeypatch.setattr(cmd_audit, "_summary_field", _patched)
+    # Explicitly vary child completion independently of the verdict fault;
+    # the minimal SQLite fixture must not accidentally establish this premise.
+    child = (
+        {"_error": "controlled child failure"}
+        if child_failed
+        else {"summary": {"verdict": "measured", "partial_success": False, "safe": 0, "review": 0, "intentional": 0}}
+    )
+    monkeypatch.setattr(cmd_audit, "_capture", lambda args: child)
 
     result = _invoke_audit(cli_runner, audit_project)
     assert result.exit_code == 0, result.output
@@ -232,7 +241,9 @@ def test_audit_compose_verdict_failure_marker_format(cli_runner, audit_project, 
     # LAW 6 floor: non-empty single-line verdict survives.
     assert isinstance(verdict, str) and verdict
     assert "\n" not in verdict, f"verdict must be single line: {verdict!r}"
-    assert verdict == "AUDIT — verdict unavailable", verdict
+    assert verdict.endswith("AUDIT — verdict unavailable"), verdict
+    # The fallback must coexist with independently disclosed child failures.
+    assert bool(data["summary"].get("child_evidence")) is child_failed, data["summary"]
 
 
 # ---------------------------------------------------------------------------

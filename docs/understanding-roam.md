@@ -10,14 +10,22 @@ records, then reviewed by independent adversarial rounds against the same
 bytes. Public files are cited as `file:line`; line numbers are from the
 working tree on that date and will drift. Statements marked *[internal]* come
 from private records that are not shipped. This page describes the working
-tree; the published package is whatever the newest tag says, and behaviour
-that landed after that tag is not yet in what `pip install` gives you.
+tree. Check installable capabilities against the actual published package
+artifact; a newer Git tag or source change alone does not establish what
+`pip install` gives you.
 
 ## 1. The one card
 
-**Roam is mechanical, instant codebase power, built for coding agents.**
+**Roam equips coding agents with reusable local code analysis and mechanical
+checks.** Agents can investigate repositories, evaluate implementation choices,
+and check changes with those tools. The purpose is wider than understanding
+code, finding defects, or reviewing a patch. The [product model behind the
+words](#the-product-model-behind-the-words) explains how to carry that meaning
+across surfaces without using one mandatory headline.
 
-Each word, defined honestly:
+The earlier design phrase was "mechanical, instant codebase power, built for
+coding agents." Its words describe intent and need the qualifications below;
+in particular, "instant" is not a timing promise for every command.
 
 - **Mechanical.** The static analysis is deterministic. There is no LLM SDK
   imported anywhere under `src/roam`. Two paths reach a model, both opt-in
@@ -69,31 +77,37 @@ and does not inherit the graph's resolution uncertainty.
 
 ## 2. What it is, in one screen
 
-The public identity, verbatim (`pyproject.toml:12`, identical in
-`codemeta.json:6`):
+The package description read on 2026-09-06, verbatim (`pyproject.toml:12`,
+then identical in `codemeta.json:6`):
 
 > Local codebase intelligence for AI coding agents: structural repo map,
 > change-safety gates, MCP security receipts, and tamper-evident
 > ChangeEvidence packets. Local analysis, zero API keys, no source-code egress.
 
+The working-tree description now says "no automatic source-code upload" in
+both metadata files. The older absolute above is a historical quotation, not
+the current data-handling promise: optional features and connected agents have
+the paths described in [the network boundary](network-boundary.md).
+
 The category: **local codebase intelligence and assurance for AI-assisted
-software change**. Roam turns repository structure into **maps, gates, and
-evidence**:
+software change**. The familiar **maps, checks, and evidence** grouping describes
+major parts of the package, not an exhaustive definition. Algorithmic alternatives
+and executable experiments are capabilities too; they are not merely more map
+context. Some checks are advisory, not gates that establish clearance.
 
 | Layer | What it is | Where in the code |
 |---|---|---|
 | Maps | symbols, calls, imports, dependencies, layers, clusters, git history, tests, effects, taint summaries, in 29 SQLite tables | `src/roam/db/schema.py`, `src/roam/index/indexer.py` |
-| Gates | deterministic pre- and post-change checks: blast radius, affected tests, clones, algorithmic risk, architecture drift, rules, conventions | `src/roam/commands/cmd_preflight.py`, `cmd_impact.py`, `cmd_critique.py`, `cmd_verify.py`, `src/roam/rules/` |
+| Checks | pre- and post-change analysis: blast radius, affected tests, clones, algorithmic risk, architecture drift, rules, conventions; gate behavior and limits are command-specific | `src/roam/commands/cmd_preflight.py`, `cmd_impact.py`, `cmd_critique.py`, `cmd_verify.py`, `src/roam/rules/` |
 | Evidence | tamper-evident records of what was checked: proof bundles, run ledger, ChangeEvidence packets, MCP decision receipts | `src/roam/proof_bundle.py`, `src/roam/runs/`, `src/roam/evidence/` |
 
-Review is a workflow. Roam is the local intelligence and assurance layer
-underneath the workflow. It is not code search, not an AI PR reviewer, not
-lint, not SAST, not agent orchestration, and not compliance tooling. Its
-answer to each of those is "local graph + judgment + evidence". The moat is
-not command count; it is the combination of a local deterministic code graph,
-algorithmic and architecture judgment, an agent-facing MCP surface,
-tamper-evident change evidence, and principle lenses grounded in the repo's
-own signals.
+Review is one workflow Roam can support. Its tools also serve investigation and
+implementation choices before there is a patch to review. Code search, static
+checks and coordination helpers exist in the package, but none alone defines
+the product. Roam complements an agent and its other tools through a reusable
+local code model, algorithmic and architecture analysis, an agent-facing tool
+interface, and scoped change evidence. That combination is the product design;
+command count alone does not establish value or a competitive moat.
 
 ### The pipeline
 
@@ -135,7 +149,10 @@ shapes, and only the first implies `partial_success`:
 | `detail_mode` | intentional elision of detail lists; `partial_success` untouched (`formatter.py:2094-2125`) | `--detail` |
 | absent | a command-level display limit such as `roam commands --limit`; `partial_success` stays false (`src/roam/commands/cmd_commands.py:78-117`) | the command's own limit flag |
 
-Treat a missing or unrecognised reason as incomplete.
+Interpret a missing reason through the command's documented display-limit
+contract, if one exists; otherwise keep completion unknown. Intentional detail
+elision can answer a bounded question when all evidence needed for that question
+is present. It does not establish complete delivery of the omitted detail.
 
 Over MCP, two more shapes appear. A large result comes back as a handle
 envelope (`schema: roam-code.com/spec/handle/v1`, `is_handle: true`,
@@ -261,10 +278,16 @@ The safe form, in order:
    For a non-empty diff use `--json`, pass `--intent`, and check
    `summary.review_source`. An explicit `--input` file rejects empty input
    instead of selecting another change.
-2. Treat exit 3, 4, 6, any `truncated: true`, `partial_success: true`, a
-   present `_meta.index_status`, and any `check_status` entry that is not
-   `"ran"` as **UNKNOWN**, never as a pass. Refresh the index yourself rather
-   than trusting the absence of a staleness stamp.
+2. Treat exit 3, 4, 6, missing required checks, and incomplete required evidence
+   as **UNKNOWN**, never as a pass. Inspect `partial_success`, `check_status`,
+   `_meta.index_status`, and `truncation_reason` in the command's contract.
+   Budget truncation or undelivered handle pages cannot clear a question that
+   needs their omitted evidence. Intentional detail elision or a complete
+   requested projection may answer a narrower question without fetching
+   unrelated content; neither establishes whole-report clearance. Preserve
+   concrete findings from completed portions while naming any incomplete scope.
+   Check source/index identity and freshness rather than trusting the absence
+   of a staleness stamp.
 3. Name the checks you expected and reject a result that does not carry them.
 4. Then read the findings, their severity, and the verdict. A check that ran
    is a measurement, not permission: a completed `critique` with medium
@@ -391,18 +414,73 @@ Heuristic-tier detectors carry no precision target and are never CI gates.
 
 ## 4. How we speak
 
-The voice is a product decision, enforced by lint where it can be.
+The voice is a product decision. Wording lints catch selected claim mistakes;
+they do not establish that a reader understands the product. This maintained
+section governs current explanations; earlier source quotations and historical
+measurements in this document keep their original dates and scope.
+
+### The product model behind the words
+
+Roam gives coding agents local tools for investigating code, evaluating
+implementation choices, and checking changes. It makes useful engineering
+questions executable through reusable analysis and mechanical checks. The
+agent uses the returned observations to decide what to read, change, or test;
+people retain direction and acceptance. This is a product model for writers,
+not a mandatory headline or a promise of autonomous improvement.
+
+Keep three kinds of work visible in an explanation of the whole product:
+
+| Work the agent needs to do | What Roam can supply | What the result does not settle |
+|---|---|---|
+| Investigate a repository | Indexed definitions, code relationships, dependencies, architecture and history | Complete runtime behavior or every possible caller |
+| Evaluate an implementation | Pattern findings and candidate algorithmic alternatives; `roam algo` (legacy alias `roam math`) is one example | Whether an alternative fits the program's semantics or is faster on its workload |
+| Check a change | Scoped checks, test-selection guidance, fixed experiments or calculation replays where applicable, and configured evidence records | Unexecuted tests, universal correctness, or permission to ship |
+
+This is a coverage check, not a command taxonomy or a requirement to list every
+capability in every paragraph. Navigation-only, bug-finder-only and
+review-only explanations each mistake a useful part for the whole. A focused
+algorithm page should explain algorithms well; it need not repeat the homepage.
+Even healthy code can benefit from tracing a dependency, comparing approaches,
+or checking that a proposed change preserves behavior. A defect finding is not
+the only useful result.
+
+The adoption reason is the mechanism: agents can call reusable code analysis
+and checks rather than deriving every relationship or writing every check anew.
+The local index serves further questions when refreshed for changed source.
+Static checks use local compute without model calls; consuming their results
+still belongs to the agent's model usage. Mechanical does not mean infallible,
+static-only, instantaneous, or proven cheaper for every workflow. Experiments
+and replays establish observations for their recorded cases and environments.
+
+Keep the actor and strength of claim clear. Roam can detect a pattern, report a
+relationship, suggest an alternative, or execute a supported check. The agent
+assesses applicability and chooses its next action. Some tools can perform
+explicitly requested transformations; do not turn that into an autonomous
+fix-and-ship promise. The public atlas illustrates structure for visitors; it
+is not the interface agents use to obtain these results.
+
+Before accepting an opening, read just the headline and its supporting text:
+what does the reader think Roam is, what would their agent get from it, and why
+add it to an agent they already use? A polished phrase or accurate feature list
+is insufficient if that reason is missing. Check meaning and factual support
+separately. Do not infer complete product understanding from having read this
+document; verify the mechanism behind any new capability claim.
 
 ### Say
 
-- local codebase intelligence · agentic assurance · engineering principles
-  made observable · proof-carrying PRs · local graph + judgment + evidence
-- "maps to", "supports evidence for", "audit-ready record"
-- "deterministic facts, not model guesses"
-- "Semantic reviewers read what the code does. Roam reads what it touches."
-- "Your source never leaves the machine", with the caveat that a connected
-  agent may send tool results to its own provider
-  (`docs/website-maintenance.md:27-29`)
+- Name the work: find relevant code, trace a dependency, inspect an inefficient
+  pattern, compare an approach, or check a change. Explain what result enables
+  the agent's next action.
+- Use "local codebase analysis" or "local codebase intelligence" with a plain
+  explanation. Technical terms such as "agentic assurance" and "proof-carrying
+  PRs" belong where their precise meaning is explained, not as ready-made hooks.
+- Distinguish computed relationships, heuristic findings, proposed alternatives,
+  and executed observations. "Deterministic" describes a method, not certainty
+  that its interpretation is correct; "facts, not guesses" erases that boundary.
+- A record of the configured checks, with what ran and what remains unverified.
+- "Local analysis, no automatic source-code upload", with explicit data paths
+  for connected agents, opt-in summarization, parser downloads and selected
+  online features; use the [network boundary](network-boundary.md).
 
 ### Never say
 
@@ -414,7 +492,9 @@ The voice is a product decision, enforced by lint where it can be.
   out-detect it.
 - "Proof of who did it." Signed records give integrity, not authenticity.
 - "Real taint tracking" or parity with CodeQL, Semgrep, or Snyk.
-- "Roam caught a defect" on a repository it was not tuned for.
+- "Proven accuracy on unfamiliar code" from own-fixture results. A specific
+  defect claim needs matched source and a reproduced failure; it does not
+  establish general detector accuracy on that repository or language.
 - "Safe to ignore" for a non-reachable finding. Non-reachable is not safe.
 - Any absolute security claim ("prevents all secret leaks", "fully sandboxed").
 - "Another AI PR reviewer", generic SAST or SCA positioning, "SOLID score",
@@ -455,9 +535,11 @@ rewritten. In practice:
   imperative ("Run X", not "This command").
 - Command output is plain ASCII: no emoji, no colour, no box drawing
   (`AGENTS.md:489`).
-- Every product spec and paid deliverable opens with what is *not* built or
-  *not* covered, and degrades to "not available" rather than backfilling an
-  illustrative number.
+- Product entry copy opens with a useful reason to adopt the tool. A technical
+  specification or paid deliverable makes scope and exclusions easy to find;
+  that does not require every opening to lead with a disclaimer. Keep a limit
+  beside the claim it qualifies. Missing measurements remain unavailable,
+  never backfilled with an illustrative number.
 - Working memos open with a status banner (research, design, or measurement),
   mark each item SHIPPED, BLOCKED, or TBD, prefix each issue SUSPECTED or
   CONFIRMED, and carry an evidence cell (kind, `file:line`, snippet) per
@@ -469,6 +551,13 @@ rewritten. In practice:
 
 ### Public surfaces and their jobs
 
+Use the product model above across public surfaces, not a shared slogan.
+The homepage and README introduction must make the overall purpose legible;
+inner pages can focus on a single capability or buying question. Keep the
+mechanism and next action concrete. Earlier quoted headlines in this orientation
+remain dated source quotations, not copy to restore. See
+`docs/website-maintenance.md` for site application and consistency checks.
+
 README is the first ten minutes: category, install, three workflows, then
 depth. The homepage is one category, one hook, one install CTA. The docs home
 routes and does not repeat the pitch. Compare is a category comparison, not
@@ -478,8 +567,9 @@ only a vendor table. Pricing says what is available now versus planned.
 
 Most adjacent tools are complements, and we say so:
 
-- Cursor, Windsurf, Claude Code, Codex edit and execute. Roam gates and
-  records.
+- Coding agents plan, edit and execute. Roam supplies callable code analysis,
+  candidate improvements, scoped checks and configured records throughout that
+  work. Gates and records are part of the relationship, not its whole purpose.
 - CodeRabbit, Greptile, Qodo review semantics. Roam reviews structure, blast
   radius, and evidence. Position as the layer beneath review, never as a
   replacement.

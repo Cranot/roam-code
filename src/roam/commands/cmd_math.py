@@ -78,7 +78,7 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     summary="Detect suboptimal algorithms and suggest better approaches",
     maturity="stable",
     mcp_expose=True,
-    mcp_preset=("core",),
+    mcp_preset=("review", "debug", "architecture", "full"),
     side_effect=False,
     task_required=False,
     destructive=False,
@@ -141,7 +141,7 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
         "Layer a framework-specific cache allowlist on top of defaults. "
         "Bundled profiles include django, rails, nestjs, vue3-tanstack, "
         "laravel-multitenant. Unknown names "
-        "are tolerated (defaults still apply). See `roam math --list-frameworks`."
+        "are tolerated (defaults still apply). See `roam algo --list-frameworks`."
     ),
 )
 @click.option(
@@ -172,7 +172,7 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     default=(),
     help=(
         "Restrict the scan to these runtime detector names (repeatable). "
-        "Names match `roam math --list-detectors` output."
+        "Names match `roam algo --list-detectors` output."
     ),
 )
 @click.option(
@@ -189,8 +189,8 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     default=None,
     help=(
         "show only NEW findings vs the JSON envelope at this path. "
-        "Pair with `roam --json math > .roam/math-baseline.json` to take a "
-        "snapshot, then `roam math --since .roam/math-baseline.json` to see "
+        "Pair with `roam --json algo > .roam/math-baseline.json` to take a "
+        "snapshot, then `roam algo --since .roam/math-baseline.json` to see "
         "only what regressed since."
     ),
 )
@@ -477,7 +477,7 @@ def math_cmd(
         if detector_meta.get("framework_unknown"):
             msg = (
                 f"framework '{detector_meta['framework_unknown']}' is not a "
-                "bundled profile. Defaults applied. Run `roam math --list-frameworks` "
+                "bundled profile. Defaults applied. Run `roam algo --list-frameworks` "
                 "to see options."
             )
             if json_mode:
@@ -527,7 +527,7 @@ def math_cmd(
             )
             msg = (
                 f"--only: unknown detector name(s): {', '.join(only_unknown)}. "
-                "Run `roam math --list-detectors` to see registered names." + _only_frag["verdict_suffix"]
+                "Run `roam algo --list-detectors` to see registered names." + _only_frag["verdict_suffix"]
             )
             if not json_mode:
                 click.echo(f"NOTE: {msg}", err=True)
@@ -542,7 +542,7 @@ def math_cmd(
             )
             msg = (
                 f"--exclude: unknown detector name(s): {', '.join(exclude_unknown)}. "
-                "Run `roam math --list-detectors` to see registered names." + _exclude_frag["verdict_suffix"]
+                "Run `roam algo --list-detectors` to see registered names." + _exclude_frag["verdict_suffix"]
             )
             if not json_mode:
                 click.echo(f"NOTE: {msg}", err=True)
@@ -676,7 +676,7 @@ def math_cmd(
             verdict = (
                 f"No algorithmic issues detected{profile_note} — "
                 f"{detector_meta.get('detectors_executed', 0)} detector(s) ran cleanly. "
-                f"Try `roam math --profile aggressive` for more candidates "
+                f"Try `roam algo --profile aggressive` for more candidates "
                 f"or `roam debt --top 10` for refactoring ROI hotspots."
             )
         elif suppressed_count > 0:

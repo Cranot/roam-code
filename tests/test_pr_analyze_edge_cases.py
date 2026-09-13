@@ -308,11 +308,14 @@ def test_payload_handles_completely_empty_envelope():
         anonymize=False,
         include_hotspots=True,
     )
-    # Schema is still pinned; metrics fields default to 0/None.
+    # Preserve the schema, but missing source evidence is unknown, never zero.
     assert payload["schema"] == "roam-metrics-v1"
     m = payload["metrics"]
     assert m["health_score"] is None
-    assert m["dead_safe"] == 0
+    assert m["dead_safe"] is None
+    assert m["dead_review"] is None
+    assert m["dead_intentional"] is None
+    assert all(value is None for value in m["test_pyramid"].values())
     # Anonymized flag respects the input.
     assert payload["anonymized"] is False
 

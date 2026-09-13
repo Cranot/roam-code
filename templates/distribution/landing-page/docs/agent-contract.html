@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>The Agent Contract — Roam Docs · How agents should call Roam</title>
-  <meta name="description" content="Five rules plus the JSON envelope shape for AI coding agents using Roam: read context, check impact, critique diffs, simulate refactors, and parse a canonical envelope.">
+  <meta name="description" content="Choose useful Roam checks before edits, deletions, reviews, refactors, and optimization. Interpret findings, incomplete results, and saved evidence without overstating them.">
   <link rel="canonical" href="https://roam-code.com/docs/agent-contract">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -41,52 +41,59 @@
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
+        <li><a href="/docs/" aria-current="true">Docs</a></li>
         <li><a href="/compare">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
-        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
       </ul>
     </div>
   </nav>
 
   <nav class="docs-subnav" aria-label="Documentation sections">
     <div class="docs-subnav-inner">
-      <a href="/docs/getting-started">Getting Started</a>
+      <a href="/docs/getting-started">Get started</a>
       <a href="/docs/integration-tutorials">Integrations</a>
-      <a href="/docs/command-reference">Command Reference</a>
+      <a href="/docs/command-reference">Command reference</a>
       <a href="/docs/architecture">Architecture</a>
-      <a href="/docs/agent-contract" aria-current="page">Agent Contract</a>
+      <a href="/docs/agent-contract" aria-current="page">Agent contract</a>
       <a href="/docs/troubleshooting">Troubleshooting</a>
     </div>
   </nav>
 
-  <main id="main" class="docs-page">
+  <main tabindex="-1" id="main" class="docs-page">
     <p class="eyebrow">Discipline</p>
     <h1>The Agent Contract</h1>
     <p class="subtitle">Five rules an AI coding agent should follow when Roam is available.</p>
 
     <article>
       <p>
-        When Roam is installed in a repo, agents have a local code graph,
-        a call-graph, dependency edges, runtime hot-paths, git history,
-        and an algorithmic-pattern library — all queryable through
-        deterministic CLI commands or MCP tools. The contract below
-        turns those capabilities into a five-step discipline.
+        After indexing a repo, agents can query local symbols, calls,
+        dependencies, and Git history through the CLI or available MCP tools.
+        Runtime hot-path analysis additionally needs ingested traces. The
+        questions below help choose useful checks for a change.
       </p>
       <p>
-        Each step is one command. Each maps to one engineering question
-        agents commonly miss. Together they prevent the failure modes
-        we see in agent-generated PRs: missed clones, broken tests,
-        accidental O(n²), risky refactors, Codebase Dark Matter.
+        These are investigation routines, not a guarantee against defects.
+        Read the reported source, refresh the index as code changes, and run
+        the project's required tests. Select the checks that answer the
+        current question instead of treating every change as the same task.
       </p>
 
       <h2 id="surface-at-a-glance">Surface at a glance</h2>
@@ -95,34 +102,32 @@
         (v14.1.0). The MCP server exposes a tunable preset surface so the
         agent sees what it needs, not the entire registry.
       </p>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Surface</th><th>Count</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td>CLI commands</td><td>287</td><td>280 canonical + 7 aliases.</td></tr>
           <tr><td>MCP tools registered</td><td>246</td><td>Full registry — pick a subset via preset.</td></tr>
           <tr><td>MCP tools in <code>core</code> preset</td><td>17</td><td>Default for new agent integrations.</td></tr>
           <tr><td>Languages</td><td>28</td><td>Tier-1 extractors plus tree-sitter fallback.</td></tr>
-          <tr><td>Canonical envelope</td><td>1</td><td>One JSON shape across all 246 tools — parse once, branch on <code>status</code>.</td></tr>
+          <tr><td>Result contracts</td><td>Command-specific</td><td>Shared analysis envelope conventions, plus MCP errors, metadata tools, and paginated handles. Inspect the relevant schema.</td></tr>
         </tbody>
-      </table>
+      </table></div>
 
       <h2>1. Before editing — ask for context</h2>
       <pre class="terminal" aria-label="Roam context command"><span class="t-prompt">$</span> <span class="t-cmd">roam context &lt;symbol-or-file&gt;</span></pre>
       <p>
-        Returns the exact files + line ranges to read before changing a
-        symbol, prioritised by callers, callees, and tests. Stops the
-        agent reading the wrong files or skipping the relevant ones.
-        Same data shape as <code>roam preflight</code>, but compact —
-        ideal for prompt-context.
+        Returns ranked source locations and related code to inspect. Use
+        callers, callees, and test candidates to guide reading; the ranking
+        does not guarantee that every relevant file is present. Use full
+        <code>--json</code> output when saving evidence or making a gate decision.
       </p>
 
       <h2>2. Before deleting — ask for impact</h2>
       <pre class="terminal" aria-label="Roam impact command"><span class="t-prompt">$</span> <span class="t-cmd">roam impact &lt;symbol&gt;</span></pre>
       <p>
-        Full blast radius via Personalised PageRank: who calls this
-        symbol, transitively, weighted by churn and runtime hotness.
-        If the answer surfaces a caller the agent didn't know about,
-        the deletion is unsafe. Pair with
+        Inspect callers and transitive relationships visible in the index.
+        A newly discovered caller is a reason to inspect the deletion's effect,
+        not proof that it breaks. Pair with
         <code>roam safe-delete &lt;symbol&gt;</code> for a
         <code>SAFE</code>, <code>REVIEW</code>, or <code>UNSAFE</code> verdict.
         Unresolved use in an imported file requires review; an absent graph edge
@@ -130,14 +135,18 @@
       </p>
 
       <h2>3. Before merging — ask for critique</h2>
-      <pre class="terminal" aria-label="Roam critique command"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique</span></pre>
+      <pre class="terminal" aria-label="Roam critique command"><span class="t-prompt">$</span> <span class="t-cmd">roam --json critique --working-tree --intent "Describe the intended change"</span></pre>
       <p>
         Patch-level structural review. Catches <strong>clones-not-edited</strong>
         (the agent updated one of three near-identical implementations),
         caller-impact spikes, and intent mismatch. Exits 5 when high-severity
         findings are present. Inspect <code>check_status</code> and skipped-check
         reasons: a partial critique is not merge approval. Clone comparison
-        requires persisted clone-pair data.
+        requires a current <code>roam --json clones --persist</code> scan.
+        The working-tree form selects tracked staged and unstaged changes
+        against HEAD, not untracked files. For a different range, capture
+        the intended Git patch successfully and supply it with <code>--input</code>.
+        Inspect <code>summary.review_source</code>.
       </p>
 
       <h2>4. Before refactoring — simulate first</h2>
@@ -181,10 +190,10 @@
 <span class="t-prompt">$</span> <span class="t-cmd">roam safe-delete &lt;target&gt;</span>
 
 <span class="t-prompt">#</span> <span class="t-cmd">Before any merge</span>
-<span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam --json critique --working-tree --intent "Describe the intended change"</span>
 
 <span class="t-prompt">#</span> <span class="t-cmd">Before any refactor</span>
-<span class="t-prompt">$</span> <span class="t-cmd">roam simulate &lt;op&gt; &lt;target&gt;</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam --json simulate move &lt;symbol&gt; &lt;new-file&gt;</span>
 <span class="t-prompt">$</span> <span class="t-cmd">roam plan-refactor &lt;target&gt;</span>
 
 <span class="t-prompt">#</span> <span class="t-cmd">Before any optimisation pass</span>
@@ -193,14 +202,13 @@
 
       <h2 id="canonical-envelope">The canonical JSON envelope</h2>
       <p>
-        Every <code>roam --json &lt;cmd&gt;</code> call and every MCP tool
-        response is shaped by one canonical envelope. Marshal against
-        this shape and the same code handles success, partial success,
-        and the four failure modes Roam treats as first-class signal:
-        missing prerequisite, intermediate-layer signal loss, empty
-        stdout, and degraded resolution.
+        Analysis commands share envelope conventions, but command data,
+        MCP error results, metadata tools, and response handles have different
+        contracts. The following is an illustrative <strong>error-result
+        sketch</strong>, not a universal success schema. Check the installed
+        tool's schema and the actual result state before reading its summary.
       </p>
-<pre class="terminal" aria-label="Canonical roam JSON envelope shape"><span class="t-cmd">{
+<pre class="terminal" aria-label="Illustrative Roam error-result sketch"><span class="t-cmd">{
   "command": "&lt;tool_name&gt;",
   "status": "&lt;index_not_built | advisory_warnings | partial_failure | hard_failure | usage_error | rate_limited | stale_index&gt;",
   "isError": true,
@@ -222,20 +230,24 @@
   "_meta": { "timestamp": "...", "index_age_s": 42 }
 }</span></pre>
       <p>
-        Hard invariants on the shape:
+        Result-reading rules:
       </p>
       <ul>
         <li><code>isError: true</code> sits <em>inside</em> a successful
           JSON-RPC result; it is not a protocol-level error.
           Protocol errors do not reliably reach the LLM context window.</li>
-        <li>Partial results beat total failure. When the underlying
-          check produced any structured signal, the envelope carries it
-          (annotated with <code>partial_success: true</code>) rather
-          than collapsing to a generic <code>COMMAND_FAILED</code>.</li>
+        <li>Preserve useful observations from failed or partial results,
+          but keep missing computation explicit. <code>partial_success: false</code>
+          alone does not establish success; the cold-start error uses that value too.</li>
         <li>The <code>error</code> field carries actionable guidance,
           never a raw exception trace.</li>
-        <li><code>summary.verdict</code> stands alone — an agent that
-          reads only the verdict gets a complete next-action signal.</li>
+        <li>Use <code>summary.verdict</code> for orientation, then inspect
+          error state, required scope, freshness, failed checks, and caps.
+          A completed zero-finding scan is valid within its bounds; an empty
+          list without scan evidence is unknown.</li>
+        <li>Fetch required detail from response handles. Complete delivery
+          does not repair incomplete computation; a complete requested
+          projection need not include unrelated sections.</li>
         <li><code>next_command</code> (when set) is a literal
           copy-paste-executable <code>roam &lt;subcommand&gt;</code>
           string, not a description.</li>
@@ -248,16 +260,16 @@
 
       <h2 id="verdict-vocabulary">Verdict vocabulary — concrete nouns only</h2>
       <p>
-        Verdicts and <code>agent_contract.facts</code> end on a
-        concrete-noun terminal so downstream models stay in
-        analytical mode rather than collapsing to summary mode. A
+        Roam's maintained writing convention anchors
+        <code>agent_contract.facts</code> in concrete objects or measured
+        states. It is not a guarantee about how every model reasons. A
         fact-string is anchored when its terminal token (last word,
         punctuation stripped) is one of the canonical anchors. The
         live set lives in
         <code>src/roam/output/formatter.py</code> and is mirrored by
         the LAW 4 lint at <code>tests/test_law4_lint.py</code>.
       </p>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Family</th><th>Representative anchors</th></tr></thead>
         <tbody>
           <tr>
@@ -281,14 +293,14 @@
             <td><code>days</code>, <code>weeks</code>, <code>months</code>, <code>years</code>, <code>hours</code>, <code>minutes</code>, <code>seconds</code>, <code>milliseconds</code></td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
       <p>
         Wrong: <code>"7 of 10 capabilities are AI-safe"</code> (ends on
         <code>AI-safe</code>, not anchored). Right:
         <code>"7 of 10 AI-safe capabilities"</code> (ends on
         <code>capabilities</code>, anchored). When an agent generates a
-        fact for its own internal reasoning, the same discipline keeps
-        the next step actionable.
+        fact for a consumer, also check that the claim is supported and its
+        next action is usable. A grammatical anchor does not establish either.
       </p>
 
       <h2 id="eight-evidence-questions">The eight evidence questions</h2>
@@ -301,7 +313,7 @@
         runs as part of the contract above — the packet just makes the
         answers portable for a reviewer.
       </p>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Question</th><th>Primitives</th></tr></thead>
         <tbody>
           <tr><td>Who acted?</td><td><code>roam runs</code>, <code>roam replay</code>, MCP receipt</td></tr>
@@ -313,7 +325,7 @@
           <tr><td>What verified it?</td><td><code>roam test-impact</code>, <code>roam critique</code>, <code>roam pr-bundle</code>, <code>roam runs verify</code></td></tr>
           <tr><td>Who accepted risk?</td><td><code>roam permit</code>, <code>roam pr-bundle</code>, audit trail</td></tr>
         </tbody>
-      </table>
+      </table></div>
       <p>
         Roam <em>maps to</em> and <em>supports evidence for</em>
         governance controls; it does not <em>certify</em> or
@@ -355,18 +367,16 @@
         <code>redact_secrets_in_value</code>) before the bytes leave the
         server. Hits replace the secret with a stable placeholder and
         stamp the receipt's <code>redactions</code> field with the
-        closed-enum reason — today the only emitted reason on the MCP
-        path is <code>secret</code>; the canonical vocabulary admits
-        <code>secret</code>, <code>pii</code>,
-        <code>sensitive_content</code>, <code>size_limit</code>,
-        <code>policy</code>, <code>user_opt_in_required</code>,
-        <code>machine_local_path</code>, <code>schema_strict</code>,
-        and <code>producer_not_available</code>. Patterns cover GitHub
+        closed-enum reason <code>secret</code>. Structural injection-marker
+        observations use <code>prompt_injection_marker</code>; they are
+        signals, not secret substitutions. Consult the exported receipt schema
+        for the current vocabulary. Secret patterns cover GitHub
         PAT (classic and fine-grained), OpenAI / Anthropic
         <code>sk-</code> keys, AWS AKIA, Bearer tokens, PEM private-key
         markers, and JWT. Per-pattern hit counts ride in
         <code>extra["redaction_details"]</code> as
-        <code>{pattern_id: hit_count}</code>.
+        <code>{pattern_id: hit_count}</code>. These checks are bounded pattern
+        matching, not a guarantee that every secret or malicious instruction is detected.
       </p>
 
       <h3 id="four-mode-policy">Four-mode policy enforcement</h3>
@@ -384,12 +394,10 @@
         is invocation-sensitive for mixed query/write wrappers: the query
         form remains read-only, while an explicit persist or write control
         raises both <code>required_mode</code> and the receipt's declared
-        effects. Mode-source priority (highest wins): explicit
-        <code>--mode</code> flag,
-        <code>ROAM_AGENT_MODE</code> env var,
-        <code>.roam/active_mode</code> file, default
-        <code>safe_edit</code>. A gateway can map external roles to
-        Roam modes and pass the resolved mode in per call.
+        effects. Configure the server's mode through its supported policy
+        interface and inspect the receipt's resolved mode and decision.
+        A CLI flag is not automatically an MCP argument; do not invent a
+        per-call <code>mode</code> parameter when the tool schema lacks one.
       </p>
       <p>
         A generated <code>.roam/constitution.yml</code> remains fail-safe as
@@ -418,10 +426,11 @@
 
       <h3 id="hmac-linked-receipts">HMAC-linked decision receipts</h3>
       <p>
-        Each receipt's sha256 content hash is linked into the
-        HMAC-chained run ledger at
-        <code>.roam/runs/&lt;run_id&gt;/events.jsonl</code>, so receipt
-        tampering is detectable offline.
+        When an active run is available and linking succeeds, a receipt's
+        sha256 content hash is linked into the HMAC-chained ledger at
+        <code>.roam/runs/&lt;run_id&gt;/events.jsonl</code>. Receipts can also
+        exist without a run link. Inspect the actual linkage and verification
+        result before relying on offline tamper detection.
         <code>verify_chain_with_receipts()</code> in
         <code>src/roam/runs/signing.py</code> extends the standard
         four-state run-verify envelope
@@ -432,16 +441,19 @@
         <code>missing</code> (a ledger event names a receipt file no
         longer on disk), <code>tampered</code> (a receipt file no longer
         hashes to the value the chain anchors), and
-        <code>not_linked</code> (receipts exist on disk that no ledger
-        event anchors). Pre-link chains hash byte-identical to before —
-        no migration is needed.
+        <code>not_linked</code> (no receipt-bearing events were found, or
+        chain tampering prevented receipt inspection). This verifier walks
+        ledger-linked receipts; it does not search for orphan receipt files.
+        Read the chain state as well as receipt integrity. Pre-link chains
+        remain compatible; no migration is needed.
       </p>
 
       <h3 id="receipt-schema-export">Receipt schema export</h3>
       <p>
         The <code>McpDecisionReceipt</code> dataclass exports to a
         Draft 2020-12 JSON Schema via
-        <code>scripts/export_mcp_receipt_schema.py</code>. Gateway and
+        <code>python -m roam.evidence.mcp_receipt_schema</code> in the installed
+        Python environment. Gateway and
         policy-enforcement-point developers can validate emitted
         receipts against the schema before tailing them into SIEM. The
         schema is schema-stable; field additions are additive.
@@ -450,12 +462,15 @@
       <h3 id="receipt-fields">What every <code>McpDecisionReceipt</code> carries</h3>
       <p>
         One JSON file per sensitive tool call, stored at
-        <code>.roam/mcp_receipts/&lt;run_id&gt;/&lt;tool_call&gt;.json</code>.
+        <code>.roam/mcp_receipts/&lt;run_id&gt;/&lt;tool_call&gt;.json</code> when
+        a valid run is selected, or under <code>.roam/mcp_receipts/_no_run/</code>
+        otherwise. Inspect storage and linkage failures in the actual result.
         Frozen dataclass; canonical-JSON serialisation; stable sha256
-        content hash. Raw inputs and outputs are never stored — only
-        their digests.
+        content hash. Input/output hash fields contain digests, not raw
+        payloads. Other local artifacts, including response handles, can
+        contain analysis data. Recorded actor labels are not authenticated identity.
       </p>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Field</th><th>Purpose</th></tr></thead>
         <tbody>
           <tr><td><code>tool_call</code></td><td>Opaque per-invocation id (<code>&lt;tool&gt;_&lt;12-hex&gt;</code>).</td></tr>
@@ -471,7 +486,7 @@
           <tr><td><code>redactions</code></td><td>Closed-enum tuple of redaction reasons; stable across versions.</td></tr>
           <tr><td><code>extra</code></td><td>Free-form structured detail (e.g. <code>redaction_details</code> per-pattern counts).</td></tr>
         </tbody>
-      </table>
+      </table></div>
       <p>
         Reviewers and gateways consume receipts alongside the eight
         evidence questions on
@@ -483,15 +498,16 @@
       <h2>Wire it into your agent</h2>
       <p>
         Roam ships a Model Context Protocol server and an auto-generated
-        Claude Code skill. Setup is one command per editor — see
+        Claude Code skill. Preview the client configuration, connect it,
+        and test the actual tool inventory — see
         <a href="/docs/integration-tutorials">/docs/integration-tutorials</a>
         for Claude Code, Cursor, Codex, Gemini, and Amp.
       </p>
       <p>
         Or run <code>roam skill-generate --target claude</code> to emit a
-        SKILL.md directly from the live capability registry — the agent
-        gets accurate, up-to-date instructions for every command without
-        you hand-writing the prompt.
+        SKILL.md from the capability registry. Review the generated guidance
+        against the installed version, available tools, and your workflow;
+        generation alone does not prove the agent uses it correctly.
       </p>
 
       <h2>The principle behind the contract</h2>
@@ -502,8 +518,8 @@
         The goal isn't fewer commands — it's a clearer mental model.
       </p>
       <p>
-        Five questions × five commands = the discipline. Everything
-        else is specialisation on top.
+        Start with the uncertainty in the change. Choose a useful check,
+        inspect its evidence, and keep the remaining uncertainty visible.
       </p>
 
       <h2>Where to next</h2>
@@ -522,9 +538,8 @@
       </p>
       <p>
         <strong>See it run:</strong>
-        <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash;
-        install &rarr; health &rarr; preflight &rarr; critique &rarr; signed
-        <code>ChangeEvidence</code> packet, end to end.
+        <a href="/docs/canonical-demo">The worked change-review demo</a> &mdash;
+        local queries, patch review, a saved bundle, and run-ledger verification.
       </p>
       <p>
         <strong>Agent onboarding companions:</strong>
@@ -535,7 +550,7 @@
           into your agent's bootstrap prompt to give it the full
           surface in one fetch.</li>
         <li><a href="/docs/getting-started">/docs/getting-started</a> &mdash;
-          the five-minute setup path for the human running the agent.</li>
+          installation and first checks for the person connecting the agent.</li>
         <li><a href="/docs/mcp-usage">/docs/mcp-usage</a> &mdash;
           the MCP-specific call patterns: cold-start envelope, slow-tool
           handle pattern, typical agent flow, parameter aliases.</li>
@@ -551,7 +566,7 @@
           ISO/IEC 42001, NIST AI RMF, and EU AI Act Article 12 control
           mapping.</li>
         <li><a href="/audit#evidence">/audit#evidence</a> &mdash;
-          a worked PR-Replay evidence packet on a real repo.</li>
+          the paid report's evidence questions and stated limits.</li>
         <li><a href="/docs/architecture">/docs/architecture</a> &mdash;
           how the call graph, evidence layer, and detector registry fit
           together. Read once; agents do not need it per call.</li>
@@ -574,7 +589,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
+        <span>A local map and free static checks for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

@@ -1,6 +1,6 @@
 # Statement of Work — Roam PR Replay
 
-> **REVIEW BEFORE USE.** v2 draft, 2026-05-18. Have a qualified
+> **REVIEW BEFORE USE.** v3 draft, 2026-09-09. Have a qualified
 > attorney review before binding execution. Bracketed placeholders
 > `[LIKE_THIS]` are filled in per engagement. If Stripe Payment Links are
 > live, checkout custom fields should map 1:1 to **Section 2 (Scope)**.
@@ -156,13 +156,16 @@ the refund clauses in Section 8 apply.
 Fifty percent (50%) of the engagement fee — **`[CREDIT_AMOUNT]` USD**
 (`$1,250` for Team, `$3,000` for Deep) — credits toward Client's
 first year of a Roam Review subscription if Client subscribes within
-**60 calendar days** of report delivery.
+**60 calendar days after Roam Review reaches general availability**.
+Roam Review is not available to subscribe to today. The redemption window
+starts at general availability, not at report delivery; no launch date is
+promised by this SOW.
 
 Mechanics:
 - Client mentions this SOW (by `[EFFECTIVE_DATE]` and `[CLIENT_LEGAL_NAME]`) when subscribing.
 - Provider applies the credit to Client's first invoice.
 - Credit is single-use, non-transferable, and non-refundable as cash.
-- Credit expires 60 calendar days after report delivery.
+- Credit expires 60 calendar days after Roam Review reaches general availability.
 
 Provider does not guarantee a specific Roam Review pricing tier; the
 credit applies against whichever tier Client selects, capped at the
@@ -306,8 +309,9 @@ This SOW is governed by the laws of **Greece**. Disputes are subject
 to the exclusive jurisdiction of the courts of **Athens, Greece**.
 Each party waives any objection to that venue.
 
-For EU consumer disputes only, the EU Online Dispute Resolution
-platform (`https://ec.europa.eu/consumers/odr`) is also available.
+The EU Online Dispute Resolution platform closed on 20 July 2025.
+The European Commission provides current
+[consumer redress information](https://consumer-redress.ec.europa.eu/site-relocation_en).
 
 ---
 

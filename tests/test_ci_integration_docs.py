@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -69,7 +70,9 @@ def test_documented_cli_sarif_list_matches_the_cli_registry():
     assert commands == list(_SARIF_CONSUMERS)
 
 
-@pytest.mark.parametrize("state", ["clean", "modified", "untracked", "hidden_untracked", "git_failure"])
+@pytest.mark.parametrize(
+    "state", ["clean", "modified", "untracked", "hidden_untracked", "git_failure", "ignored_cache"]
+)
 def test_site_deploy_requires_a_clean_identified_checkout(tmp_path, state):
     """Execute the real recipe with a harmless npx stub; never publish a site."""
     text = (repo_root() / "Makefile").read_text(encoding="utf-8")
@@ -80,9 +83,15 @@ def test_site_deploy_requires_a_clean_identified_checkout(tmp_path, state):
     project = tmp_path / "project"
     project.mkdir()
     (project / "source.txt").write_text("initial\n", encoding="utf-8")
+    site = project / "templates/distribution/landing-page"
+    site.mkdir(parents=True)
+    (site / "index.html").write_text("Public site", encoding="utf-8")
+    (project / ".gitignore").write_text(".roam/\ninternal/\n", encoding="utf-8")
+    (project / "scripts").mkdir()
+    (project / "scripts/stage_site.py").write_bytes((repo_root() / "scripts/stage_site.py").read_bytes())
     for args in (
         ["init", "--quiet"],
-        ["add", "source.txt"],
+        ["add", "source.txt", ".gitignore", "templates", "scripts"],
         ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Fixture"],
     ):
         subprocess.run(["git", *args], cwd=project, check=True, capture_output=True)
@@ -93,8 +102,12 @@ def test_site_deploy_requires_a_clean_identified_checkout(tmp_path, state):
         (project / "new.txt").write_text("new\n", encoding="utf-8")
         if state == "hidden_untracked":
             subprocess.run(["git", "config", "status.showUntrackedFiles", "no"], cwd=project, check=True)
+    elif state == "ignored_cache":
+        (site / ".roam").mkdir()
+        (site / ".roam/private.json").write_text("local analysis only", encoding="utf-8")
     capture = tmp_path / "publish-arguments.txt"
-    stub = 'npx() { printf "%s\\n" "$*" > "$SITE_DEPLOY_CAPTURE"; }\n'
+    stub = 'npx() { printf "%s\\n" "$*" > "$SITE_DEPLOY_CAPTURE"; find "$4" -type f >> "$SITE_DEPLOY_CAPTURE"; }\n'
+    stub += f'python() {{ "{Path(sys.executable).as_posix()}" "$@"; }}\n'
     if state == "git_failure":
         stub += "git() { return 7; }\n"
     process = subprocess.run(
@@ -105,7 +118,7 @@ def test_site_deploy_requires_a_clean_identified_checkout(tmp_path, state):
         text=True,
         timeout=30,
     )
-    if state != "clean":
+    if state not in {"clean", "ignored_cache"}:
         assert process.returncode == (7 if state == "git_failure" else 1), process.stderr
         assert not capture.exists(), "a refused deployment must never call the publisher"
     else:
@@ -113,3 +126,6 @@ def test_site_deploy_requires_a_clean_identified_checkout(tmp_path, state):
         arguments = capture.read_text(encoding="utf-8")
         assert "--commit-dirty=false" in arguments
         assert f"--commit-hash={sha}" in arguments
+        assert "/index.html" in arguments, "the publisher must receive a nonempty public site"
+        assert "/internal/site-deploy/" in arguments, "upload the isolated export, not the working site"
+        assert "private.json" not in arguments, "ignored local analysis must never enter the upload directory"

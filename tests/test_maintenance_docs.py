@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+from functools import lru_cache
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -34,6 +36,24 @@ def _anchors(text):
     return anchors
 
 
+@lru_cache(maxsize=1)
+def _public_candidate_paths():
+    """Inspect real Git eligibility; local ignored outputs must not rescue links.
+
+    Read-only Git is the boundary under test. No network, writes or shared index
+    construction; include non-ignored new files for pre-commit qualification.
+    A committed export still needs the separate release identity checks.
+    """
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        check=True,
+        timeout=10,
+    )
+    return {(ROOT / name).resolve() for name in result.stdout.decode("utf-8").split("\0") if name}
+
+
 @pytest.mark.parametrize("relative", MAINTAINED)
 def test_maintained_relative_links_and_fragments_resolve(relative):
     """Check these handwritten guides, including the preserved contributor anchors.
@@ -49,6 +69,10 @@ def test_maintained_relative_links_and_fragments_resolve(relative):
             continue
         target = (document.parent / unquote(parsed.path)).resolve() if parsed.path else document
         assert target.exists(), f"{relative}: missing {href}"
+        if target.is_file():
+            assert target in _public_candidate_paths(), (
+                f"{relative}: link only exists locally, not in public candidate: {href}"
+            )
         if parsed.fragment and target.is_file():
             assert unquote(parsed.fragment) in _anchors(target.read_text(encoding="utf-8")), (
                 f"{relative}: missing fragment in {href}"

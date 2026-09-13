@@ -86,7 +86,8 @@ site-deploy:
 	site_status=$$(git status --porcelain=v1 --untracked-files=all); \
 	[ -z "$$site_status" ] || { echo "Commit or preserve working changes before deploying the production site."; exit 1; }; \
 	site_sha=$$(git rev-parse --verify HEAD); \
-	npx wrangler pages deploy templates/distribution/landing-page --project-name roam-code --branch main --commit-dirty=false --commit-hash="$$site_sha"
+	site_stage=$$(python scripts/stage_site.py "$$site_sha"); \
+	npx wrangler pages deploy "$$site_stage" --project-name roam-code --branch main --commit-dirty=false --commit-hash="$$site_sha"
 
 clean:
 	rm -rf build/ dist/ *.egg-info src/*.egg-info

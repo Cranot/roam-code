@@ -27,6 +27,7 @@ into prose.
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -48,13 +49,22 @@ _SETEXT_UNDERLINE_RE = re.compile(r"^[ \t]{0,3}(=+|-+)[ \t]*$")
 # header parsing while inside.
 _FENCE_OPEN_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")
 
-# Explicit HTML id / name attribute anchors that markdown libraries
-# preserve verbatim.
-_HTML_ID_RE = re.compile(
-    r"""<\s*(?:h[1-6]|a|div|section|span|p)\b[^>]*?
-        \s(?:id|name)\s*=\s*(?:"(?P<dq>[^"]+)"|'(?P<sq>[^']+)')""",
-    re.IGNORECASE | re.VERBOSE,
-)
+
+class _HTMLAnchorParser(HTMLParser):
+    """Collect global IDs and legacy named links, not markup-looking text."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.anchors: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # The first occurrence of a duplicate attribute wins in HTML. ID is
+        # global; name is an anchor only on <a>, not on e.g. <input> or <div>.
+        for key in ("id", "name") if tag == "a" else ("id",):
+            value = next((value for name, value in attrs if name == key), None)
+            if value:
+                self.anchors.add(value.strip().lower())
+
 
 # Strip-out elements that markdown header text may contain — emphasis
 # markers, code-spans, link wrappers — and collapse to plain text before
@@ -152,6 +162,8 @@ def extract_anchors(content: str) -> set[str]:
     lines = content.splitlines()
     in_fence = False
     fence_marker: str | None = None
+    fence_length = 0
+    html_lines: list[str] = []
 
     def _add_slug(text: str) -> None:
         slug = slugify(text)
@@ -163,22 +175,24 @@ def extract_anchors(content: str) -> set[str]:
         slug_counts[slug] = count + 1
 
     for idx, line in enumerate(lines):
-        # Fence open/close — entry/exit only on lines that start a fence
-        # of length >= the opener's length. We approximate with the
-        # simpler "any fence-shaped line toggles the state" rule, which
-        # is correct for the 99% case of well-formed markdown.
+        # A shorter fence or a same-marker line with trailing info does not
+        # close a code sample. Keep examples out of BOTH anchor channels.
         fence = _FENCE_OPEN_RE.match(line)
         if fence:
             marker = fence.group("fence")[0]  # ` or ~
             if not in_fence:
                 in_fence = True
                 fence_marker = marker
-            elif fence_marker == marker:
+                fence_length = len(fence.group("fence"))
+            elif (
+                fence_marker == marker and len(fence.group("fence")) >= fence_length and not line[fence.end() :].strip()
+            ):
                 in_fence = False
                 fence_marker = None
             continue
         if in_fence:
             continue
+        html_lines.append(line)
 
         # ATX-style: ``# Heading`` … ``###### Heading``
         m = _ATX_HEADER_RE.match(line)
@@ -191,15 +205,13 @@ def extract_anchors(content: str) -> set[str]:
             if prev:
                 _add_slug(prev)
 
-    # Inline HTML ids — scan the whole content (multi-line spans
-    # included), lowercased for case-insensitive lookup symmetry. We do
-    # NOT apply duplicate suffixing here because raw ``id`` attributes
-    # are author-controlled; if two ``id="foo"`` appear in one file
-    # that's the author's bug, not ours to mimic.
-    for m in _HTML_ID_RE.finditer(content):
-        anchor = m.group("dq") or m.group("sq")
-        if anchor:
-            anchors.add(anchor.strip().lower())
+    # Parse attributes rather than regex-shaped tags: preserve quoted '>',
+    # multiline/unquoted values and entities while ignoring comments and
+    # script/style bodies. IDs keep the historical case-normalized contract.
+    parser = _HTMLAnchorParser()
+    parser.feed("\n".join(html_lines))
+    parser.close()
+    anchors.update(parser.anchors)
     return anchors
 
 
@@ -208,9 +220,15 @@ def _read_anchors_for(path: Path, max_bytes: int = 1_000_000) -> set[str] | None
     try:
         if path.stat().st_size > max_bytes:
             return None
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return extract_anchors(fh.read())
-    except OSError:
+        # Bound the actual read too: a file may grow after stat(). Do not
+        # treat a truncated prefix as a complete set of anchor definitions.
+        with open(path, "rb") as fh:
+            raw = fh.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            return None
+        text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        return extract_anchors(text)
+    except (OSError, ValueError, AssertionError):
         return None
 
 
@@ -247,12 +265,17 @@ class AnchorCache:
         self._cache[norm] = anchors
         return anchors
 
+    @property
+    def unreadable_paths(self) -> tuple[str, ...]:
+        """Name attempted anchor reads that returned no measurement."""
+        return tuple(sorted(path for path, anchors in self._cache.items() if anchors is None))
+
     @staticmethod
     def is_anchor_validatable(rel_path: str) -> bool:
         """Only validate anchors for prose-shaped files where slugs apply.
 
         HTML files use raw ``id="..."`` attributes which we already pick
-        up via :data:`_HTML_ID_RE`, so they're validatable too. Source
+        up via :class:`_HTMLAnchorParser`, so they're validatable too. Source
         files (``.py``, ``.ts``) almost never carry meaningful anchor
         targets and parsing them as markdown would surface false
         positives, so they're excluded here.

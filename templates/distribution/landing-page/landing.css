@@ -1,6 +1,6 @@
-/* Roam commercial landing page — minimal, fast (<200KB total).
-   Mirrors docs/site/ visual language but tuned for a buyer surface.
-   Self-hosted fonts (no Google CDN) for GDPR + perf. */
+/* Roam's shared design foundation: paper, blue ink, readable type.
+   Page styles vary the layout, not the navigation or reading conventions.
+   Self-hosted fonts; no third-party font requests. */
 
 @font-face {
   font-family: 'Space Grotesk';
@@ -25,18 +25,19 @@
 }
 
 :root {
+  --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   /* ─── Color tokens ───
-     --ink is the deepest text colour, reserved for headings and the dark
-     wedge background. --text is body copy. --bg is a warm off-white
-     (paper). --bg-deep doubles as the dark-section background and matches
-     --ink so any cross-section element keeps a visual relationship. */
-  --ink: #0a0e16;
+     --ink and --text share the homepage's blue-black ink. --bg is warm
+     paper; --bg-deep is reserved for dark sections. The atlas reuses the
+     light palette, with the same type and navigation system. */
+  --ink: #182b3b;
   --ink-30: rgba(10, 14, 22, 0.30);
   --ink-60: rgba(10, 14, 22, 0.60);
-  --text: #1a1a1a;
-  --muted: #595959;
+  --text: #182b3b;
+  --muted: #52616b;
   --muted-soft: #6b6b6b;
-  --bg: #fafaf6;            /* warm paper */
+  --bg: #faf8f2;            /* warm paper, shared with the homepage */
   --bg-tint: #f3f3ec;       /* a touch deeper than bg, for tinted bands */
   --bg-alt: #f4f4f0;        /* legacy token retained for sub-pages */
   --bg-deep: #0a0e16;       /* the single dark wedge */
@@ -52,32 +53,32 @@
   --footer-text: #fff;
   --footer-meta: #aaa;
 
-  /* ─── Type scale (modular, ratio 1.25) ─── */
-  --t-xs: 12px;
-  --t-sm: 13px;
-  --t-base: 16px;
-  --t-md: 19px;
-  --t-lg: 22px;
-  --t-xl: 28px;
-  --t-2xl: 34px;
+  /* ─── Shared reading and display scale ─── */
+  --t-xs: 0.8125rem;        /* dates and secondary metadata only */
+  --t-sm: 0.875rem;         /* controls, labels and code */
+  --t-base: 1rem;           /* prose, including card descriptions */
+  --t-md: 1.125rem;
+  --t-lg: 1.375rem;
+  --t-xl: 1.75rem;
+  --t-2xl: 2.125rem;
   /* Display ramp — used by hero h1 + section h2 + card h3 + eyebrow. */
-  --t-h1: clamp(34px, 5.2vw, 64px);
-  --t-h2: clamp(26px, 3vw, 40px);
-  --t-h3: 18px;
-  --t-eyebrow: 12px;
-  --t-hero: clamp(34px, 5.2vw, 64px);
-  /* Fluid section-heading scale — floors at 26 px so 320 px phones show a
-     readable section title without breaking onto three lines. */
-  --t-section-h: clamp(26px, 3vw, 40px);
+  --t-h1: clamp(2.75rem, 1.7rem + 3vw, 4.5rem);
+  --t-h2: clamp(2rem, 1.3rem + 2vw, 3.25rem);
+  --t-h3: 1.375rem;
+  --t-eyebrow: 0.875rem;
+  --t-hero: var(--t-h1);
+  --t-doc-title: clamp(2.125rem, 1.5rem + 2vw, 3rem);
+  /* Shared section scale; rem bounds follow the reader's text preference. */
+  --t-section-h: var(--t-h2);
   /* Card h3 ramp (product cards, scenario cards). */
-  --t-card-h: 18px;
+  --t-card-h: 1.375rem;
   /* Big-number ramp (.num-cell strong, .price-amount). */
-  --t-numeric: clamp(22px, 4vw, 26px);
-  --t-price: clamp(26px, 5vw, 32px);
+  --t-numeric: clamp(1.375rem, 4vw, 1.625rem);
+  --t-price: clamp(1.625rem, 5vw, 2rem);
   --lh-tight: 1.06;          /* hero h1 */
-  --lh-h2: 1.15;             /* h2 / h3 */
+  --lh-h2: 1.2;              /* section headings */
   --lh-snug: 1.4;
-  --lh-base: 1.55;
+  --lh-base: 1.65;
   --ls-h1: -0.04em;
   --ls-h2: -0.03em;
   --ls-eyebrow: 0.08em;
@@ -154,9 +155,9 @@ html, body {
   overflow-x: clip;
 }
 body {
-  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  font-size: 16px;
-  line-height: 1.55;
+  font-family: var(--font-sans);
+  font-size: var(--t-base);
+  line-height: var(--lh-base);
   color: var(--text);
   background: var(--bg);
   /* Tabular figures keep counts ("200+", "459", "7,731") aligned vertically
@@ -223,11 +224,12 @@ img, svg, video { max-width: 100%; height: auto; }
 h1, h2, h3, h4 {
   color: var(--ink);
   text-wrap: balance;
+  overflow-wrap: break-word;
   font-feature-settings: "ss01" 1, "tnum" 1;
 }
 h1 {
   font-size: var(--t-h1);
-  font-weight: 600;
+  font-weight: 500;
   line-height: var(--lh-tight);
   letter-spacing: var(--ls-h1);
   margin: 0 0 24px;
@@ -247,13 +249,16 @@ h3 {
   margin: 0 0 8px;
 }
 h4 {
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 600;
   line-height: var(--lh-h2);
   margin: 0 0 8px;
 }
 
-code { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+code, pre, kbd, samp { font-family: var(--font-mono); }
+button, input, select, textarea { font: inherit; }
+p { text-wrap: pretty; }
+.docs-page p a, .legal-page p a, .lede a, .hero-subhead a { text-decoration: underline; }
 
 a {
   color: var(--accent);
@@ -294,11 +299,9 @@ label:focus-within,
   border-radius: var(--radius-sm);
 }
 
-/* Sticky nav is ~58px; on docs pages a second sticky strip (.docs-subnav)
-   stacks on top for ~110px combined. Use the larger value so anchor
-   jumps land below BOTH sticky strips on docs pages — the homepage's
-   single sticky absorbs the extra cushion as breathing room. */
-[id] { scroll-margin-top: 110px; }
+/* The primary nav stays sticky on wide screens. The docs strip flows normally
+   so enlarged text and wrapped links never collide with a fixed offset. */
+[id] { scroll-margin-top: 7rem; }
 
 .skip-link {
   position: absolute;
@@ -328,7 +331,7 @@ label:focus-within,
 .site-nav {
   background: var(--bg);
   border-bottom: 1px solid var(--line-soft);
-  padding: 14px 0;
+  padding: 0;
   position: sticky;
   top: 0;
   z-index: 50;
@@ -339,7 +342,8 @@ label:focus-within,
   background: color-mix(in srgb, var(--bg) 88%, transparent);
 }
 .nav-inner {
-  max-width: var(--max-w);
+  max-width: 90rem;
+  min-height: 5rem;
   margin: 0 auto;
   padding: 0 var(--container-x);
   display: flex;
@@ -349,16 +353,17 @@ label:focus-within,
   gap: var(--s-4);
 }
 .site-logo {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-sans);
   font-weight: 600;
-  font-size: 18px;
-  letter-spacing: -0.01em;
+  font-size: 2rem;
+  letter-spacing: -0.065em;
   color: var(--ink);
   display: inline-flex;
   align-items: center;
   gap: 8px;
   transition: opacity var(--t-fast) var(--easing);
 }
+.site-nav .site-logo { color: var(--ink); }
 .site-logo:hover { opacity: 0.85; text-decoration: none; }
 .site-logo .site-logo-mark {
   display: inline-block;
@@ -371,19 +376,26 @@ label:focus-within,
 .nav-links {
   list-style: none;
   display: flex;
-  gap: 28px;
+  gap: 1.5rem;
+  align-items: center;
   margin: 0;
   padding: 0;
-  font-size: 14px;
+  font-size: 0.9375rem;
   flex-wrap: wrap;
 }
 .nav-links a {
-  color: var(--ink-60);
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  color: var(--muted);
   transition: color var(--t-fast) var(--easing);
   text-underline-offset: 0.18em;
 }
 .nav-links a:hover { color: var(--ink); text-decoration: none; }
-.nav-links a[aria-current="page"] { color: var(--accent); font-weight: 600; }
+.nav-links a[aria-current] { color: var(--accent); font-weight: 600; text-decoration: underline; }
+.nav-links .nav-start { background: var(--accent); color: #fff; padding: .75rem 1.125rem; border-radius: var(--radius-sm); }
+.nav-links .nav-start[aria-current] { color: #fff; text-decoration: underline; }
+.nav-links .nav-start:hover { background: var(--accent-deep); color: #fff; }
 
 /* Hamburger toggle — pure CSS, no JS, plays nicely with strict CSP.
    The hidden checkbox holds open/closed state; the label is the
@@ -404,8 +416,8 @@ label:focus-within,
   display: none;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 2.75rem;
+  height: 2.75rem;
   margin: 0;
   border-radius: 8px;
   cursor: pointer;
@@ -455,11 +467,13 @@ label:focus-within,
   transform: rotate(-45deg);
 }
 
-@media (max-width: 760px) {
+@media (max-width: 56rem) {
   /* Show the hamburger button, collapse the link list into a drawer. */
+  .site-nav { position: relative; }
   .nav-toggle-label { display: flex; }
   .nav-inner {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
+    padding-block: .75rem;
     /* Logo on the left, hamburger on the right. */
   }
   .nav-links {
@@ -477,11 +491,12 @@ label:focus-within,
   .nav-links a {
     display: block;
     padding: 12px 6px;
-    font-size: 16px;
-    line-height: 1;
+    font-size: 1rem;
+    line-height: 1.4;
     border-radius: 6px;
   }
   .nav-links a:hover { background: var(--accent-soft); color: var(--text); }
+  .nav-links .nav-start { margin-top: .5rem; }
 
   .nav-toggle-checkbox:checked ~ .nav-links { display: flex; }
 }
@@ -541,17 +556,17 @@ label:focus-within,
   position: relative;
 }
 .eyebrow {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-sans);
   font-size: var(--t-eyebrow);
   font-weight: 500;
-  text-transform: uppercase;
+  text-transform: none;
   letter-spacing: var(--ls-eyebrow);
   color: var(--ink-60);
   margin: 0 0 18px;
 }
 .hero-headline {
   font-size: var(--t-h1);
-  font-weight: 600;
+  font-weight: 500;
   line-height: var(--lh-tight);
   margin: 0 0 24px;
   letter-spacing: var(--ls-h1);
@@ -560,12 +575,12 @@ label:focus-within,
   margin-left: auto;
   margin-right: auto;
 }
-.hero-headline strong { font-weight: 600; color: var(--ink); }
+.hero-headline strong { font-weight: inherit; color: var(--ink); }
 .hero-subhead {
-  font-size: clamp(16px, 1.5vw, 18px);
-  line-height: 1.55;
-  color: var(--ink-60);
-  max-width: 640px;
+  font-size: var(--t-md);
+  line-height: var(--lh-base);
+  color: var(--muted);
+  max-width: 58ch;
   margin: 0 auto 40px;
   /* Read-flow optimization: text-wrap: pretty drops orphans + balances
      line lengths. Both progressive-enhanced — older browsers ignore. */
@@ -582,7 +597,7 @@ label:focus-within,
   border-radius: 4px;
   font-size: 0.92em;
   font-weight: 500;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .hero-ctas {
   display: flex;
@@ -598,9 +613,10 @@ label:focus-within,
 .btn-primary, .btn-secondary {
   display: inline-block;
   padding: 12px 20px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   font-family: inherit;
-  font-size: 14px;
+  font-size: var(--t-base);
+  min-height: 3rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   text-decoration: none;
@@ -649,7 +665,7 @@ label:focus-within,
 }
 
 .hero-trust-strip {
-  font-size: 13px;
+  font-size: 0.875rem;
   color: var(--ink-60);
   margin: 32px 0 0;
   letter-spacing: -0.005em;
@@ -660,8 +676,8 @@ label:focus-within,
    primary subhead, not a second equally-weighted paragraph. */
 .hero-subhead--tight {
   margin-top: 14px;
-  font-size: 17px;
-  color: var(--ink-80);
+  font-size: 1.0625rem;
+  color: var(--muted);
   line-height: 1.55;
 }
 
@@ -684,7 +700,7 @@ label:focus-within,
 }
 .reads-touches-line {
   margin: 0;
-  font-size: 19px;
+  font-size: 1.1875rem;
   line-height: 1.55;
   color: var(--ink);
   letter-spacing: -0.01em;
@@ -752,16 +768,16 @@ section.whats-in--dark .num-cell:hover {
 }
 section.whats-in--dark .num-cell strong {
   color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: var(--font-sans);
   font-weight: 600;
-  font-size: 16px;
+  font-size: 1rem;
   letter-spacing: -0.01em;
   display: block;
   margin-bottom: 6px;
 }
 section.whats-in--dark .num-cell span {
   color: rgba(245, 245, 240, 0.72);
-  font-size: 13px;
+  font-size: 0.875rem;
   line-height: 1.55;
 }
 section.whats-in--dark .how-it-works-foot {
@@ -773,8 +789,8 @@ section.whats-in--dark .how-it-works-foot code {
   border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 2px 8px;
   border-radius: 4px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
 }
 .whats-in--wide .whats-in-inner { max-width: 980px; }
 .wedge-trylist { text-align: center; margin-top: 32px; }
@@ -785,7 +801,7 @@ section.whats-in--dark .how-it-works-foot code {
 .lede-source {
   display: block;
   margin-top: 12px;
-  font-size: 13px;
+  font-size: 0.875rem;
   color: var(--ink-60);
   font-style: italic;
 }
@@ -809,7 +825,7 @@ section.whats-in--dark .how-it-works-foot code {
   line-height: var(--lh-h2);
 }
 .whats-in .lede {
-  font-size: 17px;
+  font-size: 1.0625rem;
   color: var(--ink-60);
   max-width: 680px;
   margin: 0 auto 40px;
@@ -847,7 +863,7 @@ section.whats-in--dark .how-it-works-foot code {
   font-size: var(--t-numeric);
   font-weight: 700;
   color: var(--accent);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   letter-spacing: -0.5px;
   /* Tabular figures so "1,499" lines up vertically with "299" / "459" /
      "7,731" in the numbers grid — varying digit widths look messy on a
@@ -857,18 +873,21 @@ section.whats-in--dark .how-it-works-foot code {
 }
 .num-cell span {
   display: block;
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--muted);
   margin-top: 4px;
   line-height: 1.3;
 }
+/* Prose URLs and identifiers must still fit when readers enlarge their text.
+   Preformatted commands and native tables retain their own scroll treatment. */
+main { overflow-wrap: anywhere; }
 .install-cmd {
   background: var(--ink);
   color: #fff;
   padding: 18px 22px;
   border-radius: 10px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 14px;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
   display: inline-block;
   margin: 0 auto 16px;
   text-align: left;
@@ -886,7 +905,7 @@ section.whats-in--dark .how-it-works-foot code {
   color: #6a7280;
 }
 .install-note {
-  font-size: 14px;
+  font-size: var(--t-base);
   color: var(--muted);
   max-width: 720px;
   margin: 16px auto 24px;
@@ -895,7 +914,7 @@ section.whats-in--dark .how-it-works-foot code {
   background: var(--bg-alt);
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: 13px;
+  font-size: 0.875rem;
 }
 
 /* ─── Five-verbs grid ─── */
@@ -949,14 +968,14 @@ a.verb-cell:hover {
 a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(--accent) 30%); }
 .verb-cell code {
   display: block;
-  font-size: 13px;
+  font-size: 0.875rem;
   color: var(--accent);
   font-weight: 600;
   margin-bottom: 8px;
 }
 .verb-cell span {
   display: block;
-  font-size: 13px;
+  font-size: var(--t-base);
   color: var(--ink-60);
   line-height: 1.5;
 }
@@ -980,7 +999,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   line-height: var(--lh-h2);
 }
 .how-it-works .lede {
-  font-size: 17px;
+  font-size: 1.0625rem;
   color: var(--ink-60);
   margin: 0 auto 40px;
   max-width: 720px;
@@ -1017,17 +1036,17 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   display: inline-block;
   background: var(--accent);
   color: #fff;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 0.875rem;
   padding: 2px 8px;
   border-radius: 3px;
   margin-bottom: 10px;
 }
-.flow li strong { display: block; font-size: 15px; margin-bottom: 6px; }
-.flow li em { color: var(--muted); font-style: italic; font-size: 14px; line-height: 1.5; }
+.flow li strong { display: block; font-size: 0.9375rem; margin-bottom: 6px; }
+.flow li em { color: var(--muted); font-style: italic; font-size: 0.875rem; line-height: 1.5; }
 .how-it-works-foot {
-  font-size: 13px;
+  font-size: var(--t-base);
   color: var(--muted);
   margin: 0;
 }
@@ -1060,7 +1079,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   margin: 0 0 12px;
 }
 .demo-block .lede {
-  font-size: 16px;
+  font-size: 1rem;
   color: var(--muted);
   max-width: 720px;
   margin: 0 auto var(--s-6);
@@ -1069,13 +1088,13 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background: var(--bg-alt);
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .terminal {
   background: var(--ink);
   color: #e8e8e8;
-  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
   line-height: 1.55;
   padding: 24px 28px;
   border-radius: 10px;
@@ -1111,7 +1130,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   word-break: break-word;
   overflow-x: visible;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: 0.875rem;
   line-height: 1.6;
   padding: 16px 18px;
 }
@@ -1125,14 +1144,14 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .terminal .t-line { color: #d6d6d6; }
 .terminal .t-em { color: #79c0ff; }
 .demo-foot {
-  font-size: 13px;
+  font-size: 0.875rem;
   color: var(--muted);
   margin: 0;
 }
 
 /* ─── Numbers date caption ─── */
 .numbers-date {
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--muted);
   font-style: italic;
   margin: -24px 0 28px;
@@ -1151,7 +1170,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   text-align: left;
 }
 .first-5-min h3 {
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 600;
   margin: 0 0 12px;
   color: var(--accent);
@@ -1159,7 +1178,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .first-5-min ol {
   margin: 0;
   padding-left: 22px;
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.7;
 }
 .first-5-min ol li { margin-bottom: 4px; color: var(--text); }
@@ -1167,13 +1186,13 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background: var(--bg);
   padding: 1px 6px;
   border-radius: 3px;
-  font-size: 13px;
+  font-size: 0.875rem;
   border: 1px solid var(--border);
 }
 
 /* ─── How-it-works subheading ─── */
 .how-it-works-sub {
-  font-size: 17px;
+  font-size: 1.0625rem;
   font-weight: 600;
   margin: 32px 0 14px;
   color: var(--text);
@@ -1188,7 +1207,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .tie-back {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.875rem;
   color: var(--pop);
   font-weight: 500;
   padding-left: 14px;
@@ -1197,7 +1216,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background: rgba(0, 122, 61, 0.08);
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--pop);
 }
 
@@ -1216,8 +1235,8 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   max-width: 100%;
 }
 .demo-label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
   text-transform: uppercase;
   letter-spacing: 1.2px;
   color: var(--muted);
@@ -1256,7 +1275,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border: 1px solid var(--gh-border);
   border-radius: 6px;
   text-align: left;
-  font-size: 13px;
+  font-size: 0.875rem;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
   color: var(--gh-fg-default);
   line-height: 1.5;
@@ -1271,7 +1290,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: 10px 14px;
   border-bottom: 1px solid var(--gh-border);
   background: var(--gh-canvas-subtle);
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .pr-avatar {
   width: 24px; height: 24px;
@@ -1294,7 +1313,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   color: var(--gh-fg-muted);
   border-radius: 3px;
   padding: 0 6px;
-  font-size: 11px;
+  font-size: 0.875rem;
   font-weight: 500;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -1306,7 +1325,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  font-size: 13px;
+  font-size: 0.875rem;
   border-bottom: 1px solid var(--gh-border);
 }
 .pr-checks--block {
@@ -1331,7 +1350,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border-radius: 4px;
   padding: 10px 12px;
   background: var(--gh-canvas);
-  font-size: 13px;
+  font-size: 0.875rem;
 }
 .pr-find-hd {
   display: flex;
@@ -1342,7 +1361,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .pr-sev {
   display: inline-block;
-  font-size: 11px;
+  font-size: 0.875rem;
   font-weight: 600;
   padding: 2px 7px;
   border-radius: 999px;
@@ -1360,13 +1379,13 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border-color: rgba(212, 167, 44, 0.45);
 }
 .pr-find-kind {
-  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--gh-fg-default);
 }
 .pr-find-conf {
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--gh-fg-muted);
   margin-left: auto;
   font-feature-settings: 'tnum';
@@ -1374,8 +1393,8 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 
 .pr-find-loc {
   margin: 0 0 6px 0;
-  font-size: 12px;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.875rem;
+  font-family: var(--font-mono);
   color: var(--gh-fg-muted);
   display: flex;
   flex-wrap: wrap;
@@ -1392,12 +1411,12 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background: var(--gh-canvas-inset);
   border-radius: 3px;
   padding: 0 6px;
-  font-size: 11px;
+  font-size: 0.875rem;
 }
 
 .pr-find-body {
   margin: 0 0 8px 0;
-  font-size: 13px;
+  font-size: 0.875rem;
   color: var(--gh-fg-default);
 }
 .pr-find-body code,
@@ -1405,8 +1424,8 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background: var(--gh-canvas-inset);
   padding: 1px 4px;
   border-radius: 3px;
-  font-size: 12px;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.875rem;
+  font-family: var(--font-mono);
   color: var(--gh-fg-default);
 }
 
@@ -1418,7 +1437,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border: 1px solid var(--gh-border);
   border-radius: 4px;
   overflow: hidden;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 .pr-suggestion-hd {
   display: flex;
@@ -1427,18 +1446,18 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: 6px 10px;
   background: var(--gh-canvas-subtle);
   border-bottom: 1px solid var(--gh-border);
-  font-size: 11px;
+  font-size: 0.875rem;
   color: var(--gh-fg-muted);
 }
 .pr-suggestion-hd svg { color: var(--gh-success-fg); }
 .pr-suggestion-file {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   color: var(--gh-fg-default);
 }
 .pr-diff {
   margin: 0;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: 0.875rem;
   line-height: 1.5;
   background: var(--gh-canvas);
   white-space: pre-wrap;
@@ -1486,12 +1505,12 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: 10px 14px;
   border-top: 1px solid var(--gh-border);
   background: var(--gh-canvas-subtle);
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--gh-fg-muted);
 }
 .pr-cmd {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
   color: var(--gh-accent-fg);
   background: var(--gh-canvas-inset);
   padding: 2px 7px;
@@ -1502,7 +1521,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .pr-cmd-link {
   margin-left: auto;
   color: var(--gh-accent-fg);
-  font-size: 12px;
+  font-size: 0.875rem;
   text-decoration: none;
 }
 .pr-cmd-link:hover { text-decoration: underline; }
@@ -1510,7 +1529,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 @media (max-width: 540px) {
   .pr-find-hd { gap: 6px; }
   .pr-find-conf { margin-left: 0; width: 100%; }
-  .pr-actions { font-size: 11px; }
+  .pr-actions { font-size: 0.875rem; }
   .pr-cmd-link { margin-left: 0; width: 100%; padding-top: 4px; }
 }
 
@@ -1527,7 +1546,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .compare h2 { font-size: var(--t-section-h); margin: 0 0 var(--s-3); }
 .compare .lede {
-  font-size: 16px;
+  font-size: 1rem;
   color: var(--muted);
   max-width: 720px;
   margin: 0 auto var(--s-6);
@@ -1546,7 +1565,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background-attachment: local, local, scroll, scroll;
 }
 @media (max-width: 600px) {
-  .compare-table { font-size: 12px; }
+  .compare-table { font-size: 0.875rem; }
   .compare-table tbody td,
   .compare-table tbody th { padding: 12px 10px; }
   .compare-table tbody th[scope="row"],
@@ -1572,7 +1591,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .compare-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 0.875rem;
   text-align: left;
   background: var(--bg);
   border: 1px solid var(--line-soft);
@@ -1604,7 +1623,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .limits .compare-inner { text-align: left; }
 .limits .compare-inner h2 { text-align: center; }
 .limits .compare-inner > p { max-width: 760px; margin: 0 auto 24px; }
-.limits .compare-inner h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; }
+.limits .compare-inner h3 { font-size: 1.125rem; font-weight: 600; margin: 32px 0 12px; }
 .limits .compare-inner ul { max-width: 820px; margin: 0 auto 24px; padding-left: 26px; }
 .limits .compare-inner ul li { margin-bottom: 8px; line-height: 1.55; }
 
@@ -1619,7 +1638,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 
 /* ─── Numbers-grid label variant (used for "+ CodeRabbit / Greptile / Qodo" stack-fit cells) ─── */
 .numbers-grid--labels { grid-template-columns: repeat(2, 1fr); }
-.numbers-grid--labels .num-cell strong { font-size: var(--t-base); color: var(--accent); font-family: 'Space Grotesk', sans-serif; }
+.numbers-grid--labels .num-cell strong { font-size: var(--t-base); color: var(--accent); font-family: var(--font-sans); }
 @media (max-width: 540px) { .numbers-grid--labels { grid-template-columns: 1fr; } }
 /* When --3 + --labels combine (e.g. on /404), respect the --3 cascade. */
 .numbers-grid--3.numbers-grid--labels { grid-template-columns: repeat(3, 1fr); }
@@ -1641,26 +1660,26 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   text-decoration: none;
 }
 .num-cell--link:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(--accent) 30%); }
-.compare-table .yes { color: var(--pop); font-weight: 600; font-size: 13px; }
-.compare-table .no  { color: var(--muted-soft); font-size: 13px; }
-.compare-table .ltd { color: var(--warn); font-weight: 500; font-size: 13px; }
-.compare-table sup { font-weight: 400; color: var(--muted); margin-left: 2px; font-size: 12px; vertical-align: super; }
+.compare-table .yes { color: var(--pop); font-weight: 600; font-size: 0.875rem; }
+.compare-table .no  { color: var(--muted-soft); font-size: 0.875rem; }
+.compare-table .ltd { color: var(--warn); font-weight: 500; font-size: 0.875rem; }
+.compare-table sup { font-weight: 400; color: var(--muted); margin-left: 2px; font-size: 0.875rem; vertical-align: super; }
 /* sup inside the comparison footnote prose: keep at base body size so
    browser-default `font-size: smaller` doesn't pull it below 12 px on
    already-shrunk parents. */
 .compare-foot sup { font-size: 1em; line-height: 1; }
-.compare-table small { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; font-weight: 400; line-height: 1.4; }
+.compare-table small { display: block; font-size: 0.875rem; color: var(--muted); margin-top: 4px; font-weight: 400; line-height: 1.4; }
 .compare-foot {
   margin: 18px 0 0;
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--muted);
   font-style: italic;
 }
 
 /* ─── Footer meta line ─── */
 .footer-meta {
-  color: #888 !important;
-  font-size: 12px !important;
+  color: var(--footer-meta) !important;
+  font-size: 0.875rem !important;
   font-style: italic;
 }
 
@@ -1669,19 +1688,19 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   max-width: 760px;
   margin: 0 auto;
   padding: var(--section-y) var(--container-x) clamp(56px, 8vw, 80px);
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1.7;
 }
 .legal-header { margin-bottom: 36px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
 .legal-header h1 {
-  font-size: clamp(28px, 5vw, 36px);
+  font-size: var(--t-doc-title);
   line-height: var(--lh-tight);
   margin: 0 0 8px;
   font-weight: 600;
 }
-.legal-meta { font-size: 13px; color: var(--muted); margin: 0; }
+.legal-meta { font-size: 0.875rem; color: var(--muted); margin: 0; }
 .legal-page article h2 {
-  font-size: 20px;
+  font-size: 1.25rem;
   line-height: var(--lh-snug);
   font-weight: 600;
   margin: 32px 0 12px;
@@ -1695,13 +1714,13 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background: var(--bg-alt);
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .legal-foot {
   margin-top: 36px;
   padding-top: 18px;
   border-top: 1px solid var(--border);
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--muted);
 }
 
@@ -1715,14 +1734,14 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .page-cta-inner p {
   margin: 0;
-  font-size: 15px;
+  font-size: 0.9375rem;
   color: var(--text);
 }
 .page-cta-inner .btn-primary {
   display: inline-block;
   margin: 0 6px;
   padding: 8px 18px;
-  font-size: 14px;
+  font-size: 0.875rem;
   vertical-align: middle;
 }
 
@@ -1736,7 +1755,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background: var(--bg-alt);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .status-dot {
   width: 12px;
@@ -1746,7 +1765,8 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .status-up { background: var(--pop); box-shadow: 0 0 0 4px rgba(0, 122, 61, 0.15); }
 .status-pending { background: var(--warn); box-shadow: 0 0 0 4px rgba(194, 84, 0, 0.15); }
-.status-row strong { color: var(--text); flex-shrink: 0; }
+.status-unmeasured { background: var(--muted); }
+.status-row strong { color: var(--text); min-width: 0; max-width: 100%; }
 .status-row .status-text { color: var(--muted); margin-left: auto; text-align: right; }
 @media (max-width: 600px) {
   /* Two-row layout on phones: [dot · name] on the first line, status text
@@ -1779,7 +1799,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   margin: 0 0 12px;
 }
 .products-intro .lede {
-  font-size: 17px;
+  font-size: 1.0625rem;
   color: var(--muted);
   margin: 0;
 }
@@ -1890,29 +1910,29 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   transform: translateY(-1px);
 }
 .sense-cell strong {
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 600;
   color: var(--ink);
   letter-spacing: -0.01em;
 }
 .sense-cell .sense-q {
-  font-size: 13px;
+  font-size: 0.875rem;
   color: var(--ink-60);
   font-style: italic;
   line-height: 1.5;
   min-height: 2.2em;
 }
 .sense-cell code {
-  font-size: 12px;
+  font-size: 0.875rem;
   background: transparent;
   padding: 0;
   color: var(--ink);
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
   line-height: 1.7;
   display: inline;
 }
 .sense-cell .sense-aside {
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--ink-60);
   margin-top: 4px;
   padding-top: 10px;
@@ -1950,7 +1970,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .product-card .tagline {
   margin: 0 0 18px;
-  font-size: 14px;
+  font-size: var(--t-base);
   color: var(--muted);
   line-height: 1.4;
 }
@@ -1962,7 +1982,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
      and <strong> stay legible at 13px. */
   margin: 0 0 18px;
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--t-base);
   line-height: 1.5;
   color: var(--ink-60);
   background: var(--accent-soft);
@@ -1970,13 +1990,13 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border-radius: 4px;
 }
 .honest-banner code {
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .product-card .features {
   list-style: none;
   padding: 0;
   margin: 0 0 24px;
-  font-size: 14px;
+  font-size: var(--t-base);
   flex-grow: 1;
 }
 .product-card .features li {
@@ -2014,7 +2034,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   background: var(--bg-alt);
   padding: 1px 4px;
   border-radius: 3px;
-  font-size: 12px;
+  font-size: 0.875rem;
 }
 .product-card .price {
   margin: 18px 0;
@@ -2105,7 +2125,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   line-height: 1.55;
 }
 .scenario p {
-  font-size: 14px;
+  font-size: var(--t-base);
   margin: 0 0 var(--s-3);
   line-height: 1.55;
 }
@@ -2132,9 +2152,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border-bottom: 1px solid var(--border);
   padding: var(--s-3) 0;
   font-size: var(--t-sm);
-  position: sticky;
-  top: 56px;
-  z-index: 9;
+  position: relative;
 }
 .docs-subnav-inner {
   max-width: var(--max-w);
@@ -2164,15 +2182,15 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: var(--section-y) var(--container-x);
 }
 .docs-page h1 {
-  font-size: var(--t-2xl);
-  font-weight: 700;
+  font-size: var(--t-doc-title);
+  font-weight: 500;
   margin: 0 0 var(--s-3);
   line-height: var(--lh-tight);
 }
 .docs-page > .eyebrow {
   margin: 0 0 var(--s-3);
   font-size: var(--t-sm);
-  text-transform: uppercase;
+  text-transform: none;
   letter-spacing: 0.5px;
   color: var(--muted);
 }
@@ -2220,7 +2238,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border-radius: var(--radius);
   overflow-x: auto;
   margin: var(--s-3) 0 var(--s-4);
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: var(--t-sm);
   line-height: 1.55;
 }
@@ -2235,7 +2253,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: 2px 6px;
   border-radius: var(--radius-sm);
   font-size: 0.92em;
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 .docs-page table {
   width: 100%;
@@ -2259,7 +2277,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: var(--s-3) var(--s-4);
   margin: 0 0 var(--s-4);
   border-radius: 0 var(--radius) var(--radius) 0;
-  font-size: var(--t-sm);
+  font-size: var(--t-base);
   color: var(--text);
 }
 .docs-page .step-grid {
@@ -2280,7 +2298,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   color: var(--accent);
 }
 .docs-page .step p {
-  font-size: var(--t-sm);
+  font-size: var(--t-base);
   color: var(--muted);
   margin-bottom: 0;
 }
@@ -2375,13 +2393,13 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   line-height: var(--lh-tight);
 }
 .price-unit {
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 400;
   color: var(--muted);
 }
 .price-note {
   display: block;
-  font-size: 12px;
+  font-size: 0.875rem;
   color: var(--muted);
   margin: 4px auto 0;
   max-width: 36ch;
@@ -2401,12 +2419,12 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .audit-upsell h2 { font-size: var(--t-section-h); margin: 0 0 var(--s-3); }
 .audit-upsell .lede {
-  font-size: 16px;
+  font-size: 1rem;
   color: var(--muted);
   max-width: 720px;
   margin: 0 auto var(--s-6);
 }
-.audit-upsell p { font-size: 16px; color: var(--text); }
+.audit-upsell p { font-size: 1rem; color: var(--text); }
 
 /* PR Replay tier picker — three side-by-side cards on desktop, stacked
    on phones. Each card has a name, price, body, and CTA. The Sample
@@ -2477,7 +2495,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .replay-tier .replay-cmd {
   margin: 0 0 var(--s-3);
-  font-size: 13px;
+  font-size: 0.875rem;
   display: block;
   text-align: left;
   /* The tier card is intentionally narrow (3 across on desktop) — the
@@ -2553,7 +2571,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   gap: var(--s-5);
 }
 .trust-strip-inner > .trust-cell:nth-child(odd):last-child { grid-column: 1 / -1; }
-@media (max-width: 700px) { .trust-strip-inner { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .trust-strip-inner { grid-template-columns: minmax(0, 1fr); } }
 .trust-cell {
   background: var(--bg);
   border: 1px solid var(--line-soft);
@@ -2568,8 +2586,8 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   border-color: rgba(0, 73, 183, 0.20);
   box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 8px 24px rgba(2, 48, 122, 0.06);
 }
-.trust-cell strong { display: block; font-size: 15px; color: var(--ink); margin-bottom: 8px; letter-spacing: -0.01em; }
-.trust-cell span { font-size: 13px; color: var(--ink-60); line-height: 1.55; }
+.trust-cell strong { display: block; font-size: 0.9375rem; color: var(--ink); margin-bottom: 8px; letter-spacing: -0.01em; }
+.trust-cell span { font-size: var(--t-base); color: var(--ink-60); line-height: 1.55; }
 .trust-cell a { color: var(--accent); }
 
 /* ─── FAQ ─── */
@@ -2599,7 +2617,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 }
 .faq summary {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 0.9375rem;
   color: var(--ink);
   list-style: none;
   cursor: pointer;
@@ -2624,18 +2642,18 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .faq details[open] summary::after { transform: rotate(180deg); }
 .faq details p {
   margin: 12px 0 0;
-  font-size: 15px;
+  font-size: var(--t-base);
   color: var(--text);
   line-height: 1.6;
 }
-.faq code { background: var(--bg-alt); padding: 1px 5px; border-radius: 3px; font-size: 13px; }
+.faq code { background: var(--bg-alt); padding: 1px 5px; border-radius: 3px; font-size: 0.875rem; }
 
 /* ─── Footer ─── */
 footer {
   background: var(--ink);
   color: #ccc;
   padding: var(--section-y-tight) 0;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 footer .footer-col strong { color: #fff; font-weight: 600; letter-spacing: -0.01em; }
 .footer-inner {
@@ -2741,11 +2759,11 @@ footer a { color: #fff; }
 
 /* ─── Archive backup link (Wayback) — small, de-emphasized ─── */
 .archive-link {
-  font-size: 0.78em;
+  font-size: var(--t-sm);
   color: var(--muted);
   text-decoration: none;
   margin-left: 2px;
-  opacity: 0.7;
+  opacity: 1;
 }
 .archive-link:hover {
   opacity: 1;
@@ -2914,17 +2932,17 @@ footer a { color: #fff; }
 .docs-page .step h3 {
   margin-top: 0;
   color: var(--accent);
-  font-size: 15px;
+  font-size: 0.9375rem;
   letter-spacing: -0.01em;
 }
-.docs-page .step p { color: var(--ink-60); font-size: 14px; }
+.docs-page .step p { color: var(--ink-60); font-size: var(--t-base); }
 .docs-page .step pre {
   /* Wrap inside the narrow step card; otherwise long commands force the
      card wider than the viewport on phones. */
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: 0.875rem;
   line-height: 1.55;
   margin-bottom: 12px;
 }
@@ -2953,37 +2971,38 @@ footer a { color: #fff; }
   background: var(--accent-soft);
   border-left: 3px solid var(--accent);
   border-radius: 0 var(--radius) var(--radius) 0;
-  font-size: 14px;
+  font-size: var(--t-base);
   color: var(--text);
   padding: 14px 18px;
   line-height: 1.6;
 }
 
-/* Docs tables — wrap any plain table inside a .docs-page in a horizontal
-   scroller via a flex/grid trick. The table itself gets the new card
-   treatment. We add display:block + overflow-x:auto on the table so
-   long-cell content (Codex CLI command lines) doesn't blow out the
-   viewport on phones. */
-.docs-page table {
-  display: block;
-  width: 100%;
+/* One native table grid keeps headings aligned with their data. Scroll the
+   named, keyboard-focusable wrapper, not independently sized row groups. */
+.docs-page .table-wrap {
   max-width: 100%;
   overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  margin-block: 1.5rem;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
+}
+.docs-page .table-wrap:focus-visible,
+.install-cmd:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.docs-page table {
+  display: table;
+  width: 100%;
+  min-width: 40rem;
+  margin: 0;
   box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset;
-  /* Reset the table-element border-collapse since display:block changes
-     box rendering — re-establish hairline rules between rows via th/td
-     bottom-border below. */
   border-collapse: separate;
   border-spacing: 0;
   background: var(--bg);
 }
-/* Force each row + cell to behave like a normal table inside the block
-   wrapper. */
-.docs-page table thead,
-.docs-page table tbody { display: table; width: 100%; min-width: 100%; }
+.docs-page table code { overflow-wrap: normal; word-break: normal; }
+@media print {
+  .docs-page .table-wrap { overflow:visible; }
+  .docs-page table { min-width:0; }
+}
 .docs-page table th,
 .docs-page table td {
   border-bottom: 1px solid var(--line-soft);
@@ -3029,9 +3048,7 @@ footer a { color: #fff; }
 }
 .docs-footer-nav .label { color: var(--ink-60); }
 
-/* Docs subnav — switch from the older grey track to the same paper +
-   line-soft pair the rest of the page uses. The sticky behaviour stays
-   intact (top: 56px from earlier rule). */
+/* Docs subnav uses the shared paper palette and remains in normal flow. */
 .docs-subnav {
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   border-top: 1px solid var(--line-soft);
@@ -3070,8 +3087,8 @@ footer a { color: #fff; }
 @media (max-width: 540px) { .setup-editor-grid { grid-template-columns: 1fr; } }
 .setup-editor-grid > * { min-width: 0; }
 .setup-editor-grid .verb-cell { padding: 22px 22px; }
-.setup-editor-grid .verb-cell code { font-size: 14px; margin-bottom: 10px; }
-.setup-editor-grid .verb-cell span { font-size: 13px; line-height: 1.55; }
+.setup-editor-grid .verb-cell code { font-size: 0.875rem; margin-bottom: 10px; }
+.setup-editor-grid .verb-cell span { font-size: var(--t-base); line-height: 1.55; }
 
 /* Pricing-page: the "buying path" flow already inherits .flow + .flow-num
    from the homepage. The intro section uses inline padding-top — we add
@@ -3145,15 +3162,15 @@ footer a { color: #fff; }
 .docs-card:hover { text-decoration: none; }
 .docs-card strong {
   display: block;
-  font-size: 17px;
+  font-size: 1.0625rem;
   color: var(--accent);
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: var(--font-sans);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 .docs-card span {
   display: block;
-  font-size: 13px;
+  font-size: var(--t-base);
   color: var(--ink-60);
   line-height: 1.55;
   margin-top: 0;
@@ -3180,7 +3197,7 @@ footer a { color: #fff; }
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: 0.875rem;
   margin: 14px 0 18px;
 }
 
@@ -3272,7 +3289,7 @@ footer a { color: #fff; }
    Subtle colour ramp from soft → bold matching the four price points. */
 .tier-pill {
   display: inline-block;
-  font-size: 11px;
+  font-size: 0.875rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   padding: 2px 9px;
@@ -3315,9 +3332,86 @@ footer a { color: #fff; }
   border-color: #d9cdb3;
 }
 .tier-price {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--ink);
   font-feature-settings: 'tnum';
+}
+
+/* Existing pricing/report pages: keep the shared visual identity and scope
+   readability changes here, away from docs and the homepage. */
+.selling-page .selling-options {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.selling-page .selling-options .replay-tier,
+.selling-page .product-card,
+.selling-page .replay-tier {
+  min-width: 0;
+}
+.selling-page .selling-options .btn-secondary {
+  margin-top: 1rem;
+}
+.selling-page .hero .honest-banner {
+  max-width: 70ch;
+  margin: 1.5rem auto;
+  text-align: left;
+  font-size: var(--t-base);
+  line-height: 1.6;
+}
+.selling-page .selling-contact-note,
+.selling-page .replay-foot,
+.selling-page .replay-checkout-note,
+.selling-page .price-note,
+.selling-page .tier-pill,
+.selling-page .tier-price {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.selling-page .selling-contact-note {
+  max-width: 76ch;
+  margin: 1.5rem auto;
+}
+.selling-page .selling-example-note {
+  max-width: 70ch;
+  margin: 1rem auto;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.selling-page .selling-deliverables {
+  padding-left: 1.25rem;
+  margin-block: 1rem;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+.selling-page .selling-deliverables li + li {
+  margin-top: 0.5rem;
+}
+.selling-page .replay-cmd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.selling-page .selling-plans {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-block: 1.5rem;
+}
+.selling-page .selling-plans > summary {
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  padding-block: 0.5rem;
+}
+.selling-page .selling-plans[open] > summary {
+  margin-bottom: 1rem;
+}
+.selling-page :is(#sample, #credit, #review, #cloud, #self-hosted,
+  #limits-heading, #what-this-report-does-not-cover) {
+  scroll-margin-top: 6rem;
+}
+@media (max-width: 760px) {
+  .selling-page .selling-options {
+    grid-template-columns: 1fr;
+  }
 }

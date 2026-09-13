@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Command Reference - Roam Docs</title>
-  <meta name="description" content="Roam command reference: the 5 core verbs plus the most-used commands grouped by intent — exploration, health, refactoring, security, governance, runtime.">
+  <meta name="description" content="Find a Roam command for your agent's next question: inspect code relationships, investigate algorithm choices, preview an edit, or check a change.">
   <link rel="canonical" href="https://roam-code.com/docs/command-reference">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -16,7 +16,7 @@
   <link rel="stylesheet" href="/landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="Command Reference — Roam Docs">
-  <meta property="og:description" content="The 5 core verbs plus the most-used commands grouped by intent.">
+  <meta property="og:description" content="Find a Roam command for your agent's next question: inspect code relationships, investigate algorithm choices, preview an edit, or check a change.">
   <meta property="og:url" content="https://roam-code.com/docs/command-reference">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -40,79 +40,88 @@
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
+        <li><a href="/docs/" aria-current="true">Docs</a></li>
         <li><a href="/compare">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
-        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
       </ul>
     </div>
   </nav>
 
   <nav class="docs-subnav" aria-label="Documentation sections">
     <div class="docs-subnav-inner">
-      <a href="/docs/getting-started">Getting Started</a>
+      <a href="/docs/getting-started">Get started</a>
       <a href="/docs/integration-tutorials">Integrations</a>
-      <a href="/docs/command-reference" aria-current="page">Command Reference</a>
+      <a href="/docs/command-reference" aria-current="page">Command reference</a>
       <a href="/docs/architecture">Architecture</a>
-      <a href="/docs/agent-contract">Agent Contract</a>
+      <a href="/docs/agent-contract">Agent contract</a>
       <a href="/docs/troubleshooting">Troubleshooting</a>
     </div>
   </nav>
 
-  <main id="main" class="docs-page">
+  <main tabindex="-1" id="main" class="docs-page">
     <p class="eyebrow">Reference</p>
     <h1>Command Reference</h1>
     <p class="subtitle">
-      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Ordinary analysis is local and credential-free; explicitly enabled network features are inventoried on the <a href="/security#network-boundary">security page</a>. Commands emit structured envelopes agents can read. Run <code>roam --help-all</code> for the full surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
+      Pick a command for the question your agent is working on: find relevant code, investigate a pattern, explore an alternative, or check a change. Start with the examples below; the <a href="#complete-reference">complete reference</a> lists the full CLI. Ordinary analysis is local and credential-free; explicitly enabled network features are inventoried on the <a href="/security#network-boundary">security page</a>.
     </p>
     <div class="callout">
-      Every command supports <code>--json</code> for machine output and (where applicable) <code>--sarif</code> for CI Code Scanning. Verdicts use <code>VERDICT:</code> first-line convention.
+      Use <code>roam --json &lt;command&gt;</code> for structured analysis results. Read the verdict together with its scope and any incomplete checks. Run <code>roam &lt;command&gt; --help</code> for the installed version's arguments and options.
     </div>
 
     <section>
       <h2>How to read this reference</h2>
       <p>
-        The command surface is organised around the <strong>nine engineering
-        senses</strong> agents miss (see <a href="/#senses">homepage</a>),
-        plus five tiers of approachability. Most users start with Tier 1.
+        Start with your task, not the size of the command list. The groups below
+        offer entry points for code investigation, implementation choices and
+        change checks. See the <a href="/#senses">homepage examples</a> for the
+        questions behind these tools.
       </p>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Tier</th><th>What it covers</th><th>When to reach for it</th></tr></thead>
         <tbody>
-          <tr><td><strong>Tier 1 — Core workflow</strong></td><td><code>understand</code> · <code>retrieve</code> · <code>context</code> · <code>preflight</code> · <code>critique</code> (plus one-time <code>init</code>)</td><td>First-day, every-day. Five core verbs cover ~80% of agent workflows; <code>init</code> is run once per repo.</td></tr>
-          <tr><td><strong>Tier 2 — High-value practical</strong></td><td><code>impact</code> · <code>affected-tests</code> · <code>test-gaps</code> · <code>safe-delete</code> · <code>clones</code> · <code>pr-risk</code> · <code>verify-imports</code> · <code>math</code> / <code>algo</code></td><td>When you're acting on real changes, not just exploring.</td></tr>
+          <tr><td><strong>Tier 1 — Investigation and change checks</strong></td><td><code>understand</code> · <code>retrieve</code> · <code>context</code> · <code>preflight</code> · <code>critique</code></td><td>Orient in a repository, gather relevant source, and check a proposed change.</td></tr>
+          <tr><td><strong>Tier 2 — Focused analysis</strong></td><td><code>impact</code> · <code>affected-tests</code> · <code>test-gaps</code> · <code>safe-delete</code> · <code>clones</code> · <code>pr-risk</code> · <code>verify-imports</code> · <code>algo</code> (legacy alias: <code>math</code>)</td><td>Investigate a specific relationship, risk or implementation choice.</td></tr>
           <tr><td><strong>Tier 3 — Agent / MCP</strong></td><td><code>mcp</code> · <code>mcp-setup</code> · <code>agent-export</code> · <code>skill-generate</code> · <code>minimap</code> · <code>agent-context</code></td><td>Wiring Roam into Claude Code, Cursor, Codex, your own agent.</td></tr>
           <tr><td><strong>Tier 4 — CI / enterprise</strong></td><td><code>pr-analyze</code> · <code>pr-comment-render</code> · <code>attest</code> · <code>audit-trail-export</code> · <code>audit-trail-verify</code> · <code>--sarif</code></td><td>Production CI gates, audit evidence, signed attestations.</td></tr>
-          <tr><td><strong>Tier 5 — Advanced / experimental</strong></td><td>Specialised commands for specific workflows (catalogued below).</td><td>You know what you're looking for; the surface is exhaustive.</td></tr>
+          <tr><td><strong>Tier 5 — Specialized workflows</strong></td><td>Additional commands in the complete reference below.</td><td>Check the command's help and prerequisites for your particular task.</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section>
-      <h2>Tier 1 — The 5 Core Verbs</h2>
-      <p>These are the <strong>"start here"</strong> commands. Most agents need only these.</p>
-      <table>
+      <h2>Five commands to start with</h2>
+      <p>Useful starting points, not a complete workflow or the MCP <code>core</code> preset. <a href="/setup">Connect Roam and build the index first</a>; refresh it as the code changes.</p>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead>
           <tr><th>Verb</th><th>What it does</th><th>Example</th></tr>
         </thead>
         <tbody>
           <tr id="understand">
             <td><code>understand</code></td>
-            <td>Landing-pad summary of the codebase: layers, sizes, hotspots, entry points.</td>
+            <td>Repository overview: layers, sizes, hotspots and entry points.</td>
             <td><code>roam understand</code></td>
           </tr>
           <tr>
             <td><code>retrieve</code></td>
-            <td>Free-form natural-language task &rarr; budget-bounded ranked spans (graph-aware FTS5 + rerank).</td>
+            <td>Ranked source passages for a task, using text search and indexed code relationships.</td>
             <td><code>roam retrieve "where is auth?"</code></td>
           </tr>
           <tr>
@@ -127,80 +136,80 @@
           </tr>
           <tr id="critique">
             <td><code>critique</code></td>
-            <td>Patch verifier. Pipe a diff in; get clones-not-edited + blast-radius severity. Exits 5 on high-severity findings.</td>
+            <td>Inspect a patch for related code and risks beyond the edited lines. Saved clone evidence must be current and complete for that check to count as complete.</td>
             <td><code>git diff | roam critique</code></td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section>
       <h2>Exploration</h2>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam search &lt;pattern&gt;</code></td><td>Symbol search by name substring; BM25/FTS5 reranking when <code>--explain</code> is set</td></tr>
           <tr><td><code>roam symbol &lt;name&gt;</code></td><td>Show symbol definition, callers, and callees</td></tr>
           <tr><td><code>roam file &lt;path&gt;</code></td><td>Detailed file info: complexity, ownership, recent changes</td></tr>
-          <tr><td><code>roam impact &lt;name&gt;</code></td><td>Caller list — what breaks if you change this symbol</td></tr>
+          <tr><td><code>roam impact &lt;name&gt;</code></td><td>Indexed dependents and files a change could affect, within the reported traversal limits</td></tr>
           <tr><td><code>roam trace &lt;a&gt; &lt;b&gt;</code></td><td>k-shortest paths between two symbols in the call graph</td></tr>
           <tr><td><code>roam tour</code></td><td>Onboarding tour: top symbols, reading order, entry points, language breakdown, stats</td></tr>
           <tr><td><code>roam diagnose &lt;name&gt;</code></td><td>Root-cause ranking for a failing symbol</td></tr>
           <tr><td><code>roam ask "&lt;question&gt;"</code></td><td>Natural-language intent dispatch over the recipe registry</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section>
       <h2>Health &amp; Quality</h2>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam health</code></td><td>Composite health score (0-100) with risk breakdown</td></tr>
           <tr><td><code>roam health --gate</code></td><td>Same, but exits non-zero on threshold breach</td></tr>
-          <tr><td><code>roam complexity</code></td><td>SonarSource-compatible cognitive complexity per symbol</td></tr>
+          <tr id="complexity"><td><code>roam complexity</code></td><td>Rank functions by cognitive complexity to choose code worth investigating. This measures branching and nesting, not runtime speed or correctness.</td></tr>
           <tr><td><code>roam debt</code></td><td>Tech-debt aggregate; <code>--roi</code> ranks refactor candidates</td></tr>
           <tr><td><code>roam check-rules</code></td><td>Run all built-in + community rule packs</td></tr>
-          <tr><td><code>roam test-gaps</code></td><td>Symbols that no test covers; <code>--changed</code> for diff scope</td></tr>
+          <tr><td><code>roam test-gaps --changed</code></td><td>Find changed symbols without indexed test connections or imported coverage evidence. Also accepts explicit file paths; it does not run tests.</td></tr>
           <tr><td><code>roam why-slow</code></td><td>Runtime hotspots from ingested traces</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section>
       <h2>Refactoring</h2>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam suggest-refactoring</code></td><td>Top-N refactor candidates by ROI</td></tr>
-          <tr><td><code>roam plan-refactor &lt;name&gt;</code></td><td>Step-by-step plan to refactor without breaking callers</td></tr>
-          <tr><td><code>roam mutate move &lt;sym&gt; &lt;file&gt;</code></td><td>Apply a structural transform with import rewriting</td></tr>
+          <tr><td><code>roam plan-refactor &lt;name&gt;</code></td><td>Propose refactoring steps using indexed relationships; review and test the resulting changes</td></tr>
+          <tr><td><code>roam mutate move &lt;sym&gt; &lt;file&gt;</code></td><td>Preview a move and supported import updates; <code>--apply</code> writes changes</td></tr>
           <tr><td><code>roam simulate move &lt;sym&gt; &lt;file&gt;</code></td><td>What-if architecture — clone the graph and apply a move</td></tr>
           <tr><td><code>roam clones --persist</code></td><td>Detect AST-level clones; persist to <code>clone_pairs</code> for critique</td></tr>
           <tr><td><code>roam migration-plan</code></td><td>Current architecture &rarr; target architecture roadmap</td></tr>
           <tr><td><code>roam stale-refs [--gate] [--fix preview|apply] [--attest path]</code></td><td>Find dangling file references — markdown links / HTML href-src / backtick paths / anchors whose target is missing. Index-free. Supports SARIF, in-toto attestations, LSP code actions, repo-config (<code>--init</code>), and <code>--root</code> for monorepos.</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section>
       <h2>Security &amp; Governance</h2>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
-          <tr><td><code>roam taint</code></td><td>Graph-reach BFS for vulnerability reachability (OpenVEX-correct)</td></tr>
+          <tr><td><code>roam taint</code></td><td>Inspect source-to-sink findings under the selected rules. Distinguish dataflow evidence from co-occurrence; neither proves exploitability.</td></tr>
           <tr><td><code>roam vuln-reach</code></td><td>Query reachability of ingested vulnerabilities; <code>--cve</code> scopes to one CVE, <code>--from</code> to one entry point</td></tr>
           <tr><td><code>roam adversarial</code></td><td>Adversarial architecture review — challenges your changes by composing diff + cycles + clusters + layers + detectors</td></tr>
           <tr><td><code>roam cga emit</code></td><td>Sign an in-toto v1 Code Graph Attestation</td></tr>
           <tr><td><code>roam cga verify</code></td><td>Verify a CGA attestation (cosign-aware)</td></tr>
           <tr><td><code>roam attest</code></td><td>Proof-carrying PR attestation — bundles diff, risk, breaking changes, and fitness for a commit range</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section>
       <h2>Multi-Agent &amp; MCP</h2>
-      <table>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
@@ -210,13 +219,13 @@
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with conflict-aware partitions</td></tr>
           <tr><td><code>roam skill-generate</code></td><td>Emit a SKILL.md file from the Capability Registry</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section>
       <h2>Output Modes</h2>
-      <p>Every command supports these flags at the top level (before the subcommand):</p>
-      <table>
+      <p>Place global output flags before the command. Format support varies; for example, <code>--sarif</code> applies only to the supported analysis commands below.</p>
+      <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
         <tbody>
           <tr><td><code>--json</code></td><td>Stable JSON envelope with schema versioning. For agent + script consumption.</td></tr>
@@ -225,7 +234,7 @@
           <tr><td><code>--budget &lt;n&gt;</code></td><td>Cap output to N tokens (0 = unlimited).</td></tr>
           <tr><td><code>--select &lt;expr&gt;</code></td><td>Project JSON with <code>.field</code>, <code>[N]</code>, or <code>[START:END]</code>; repeatable and implies JSON.</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section id="evidence-limits">
@@ -272,87 +281,52 @@
         substitution; this is not a complete compiler or bundler resolver.</p>
     </section>
 
-    <section id="mutate">
-      <h2>Mutate &mdash; probabilistic intent, deterministic compiler</h2>
-      <p>
-        <code>roam mutate</code> turns a natural-language refactor request into a deterministic AST transform with a graph-validated diff. The agent emits intent; Roam compiles it to a typed spec, applies it via tree-sitter, then re-resolves the graph and asserts zero dangling references before any disk write.
-      </p>
-<pre><code>            PROBABILISTIC INTENT                       DETERMINISTIC COMPILER
-            (what the agent wants)                     (what roam guarantees)
+    <section id="algorithm-choices">
+      <h2>Investigate algorithm choices</h2>
+      <p><code>roam algo</code> looks for source patterns that may have a better
+        approach and pairs findings with catalogued alternatives. Your agent
+        gets a place to inspect and an option to evaluate, not just a warning
+        that a function is complex.</p>
+      <pre><code>roam index
+roam --json algo</code></pre>
+      <p>For each candidate, inspect the matched source and the stated assumptions.
+        Check inputs, ordering and side effects, then test correctness and measure
+        performance before adopting a replacement. Refresh the index after code
+        changes. An empty or partial scan is not proof that every algorithm is
+        appropriate.</p>
+      <p>The CLI command is <code>algo</code>; <code>math</code> remains a legacy
+        alias. For MCP, select the <code>review</code> preset and restart the server;
+        <code>roam_algo</code> is not in the default <code>core</code> preset.
+        <a href="/docs/mcp-usage#troubleshooting">Check the connected tool list</a>.</p>
+    </section>
 
-            "move handleSave into                      Stage 1 -- Typed transform spec
-             src/forms/save.ts and                     +----------------------------+
-             rewrite its callers"                      | op       : move            |
-                    |                                  | symbol   : handleSave      |
-                    v                                  | dst_file : src/forms/...   |
-            LLM emits a structured                     | dry_run  : true            |
-            transform request                          +----------------------------+
-                    |                                              |
-                    +---------&gt;  validate  --------&gt; reject  -----&gt;+
-                                  fail               (no edit)
-                                    |
-                                    v
-                                Stage 2 -- AST rewriter (tree-sitter)
-                                +------------------------------------+
-                                |  parse src   -&gt;  remove def        |
-                                |  parse dst   -&gt;  insert def        |
-                                |  refs/edges  -&gt;  rewrite imports   |
-                                +------------------------------------+
-                                            |
-                                            v
-                                Stage 3 -- Graph-validated diff
-                                +------------------------------------+
-                                |  re-resolve symbols + edges        |
-                                |  diff against indexed graph        |
-                                |  assert: zero dangling refs        |
-                                +------------------------------------+
-                                            |
-                                            v
-                                  apply patch  |  reject + reason</code></pre>
+    <section id="mutate">
+      <h2>Preview a specific code edit</h2>
+      <p><code>roam mutate</code> supports move, rename, add-call and extract
+        operations. The agent supplies the operation and its arguments. Roam
+        previews the planned edits by default; <code>--apply</code> writes them
+        to source files.</p>
+      <p>Example: preview moving an indexed <code>handle_login</code> function.
+        Replace the name and destination with ones from your repository.</p>
+      <pre><code>roam --json mutate move handle_login src/auth/login.py</code></pre>
+      <p>Inspect the proposed edits and warnings before applying. Move uses
+        indexed references for supported import updates; that is not complete
+        language or dependency resolution. Review the diff, refresh the index
+        and run the project's tests and build after an applied change.</p>
     </section>
 
     <section id="simulate">
-      <h2>Simulate &mdash; gradient descent on an architecture canvas</h2>
-      <p>
-        <code>roam simulate</code> evaluates counterfactual refactors against the indexed graph without writing to disk. For each candidate move / extract / merge / delete, it clones the graph, re-derives the metric vector, and ranks by metric delta &mdash; so the agent picks the structurally best move before any edit lands.
-      </p>
-<pre><code>                    GRADIENT DESCENT ON AN ARCHITECTURE CANVAS
-
-            indexed graph G0  (cycles=12, complexity=84, coupling=0.31)
-                    |
-                    v
-            +-------+---------------------------------------------+
-            |       |       |       |              |              |
-            v       v       v       v              v              v
-        candidate candidate candidate candidate    ...        candidate
-        move      move      extract   merge                   delete
-        A-&gt;m1     B-&gt;m2     C-&gt;m3     D+E                     F
-            |       |       |       |              |              |
-            v       v       v       v              v              v
-        clone     clone     clone     clone        clone        clone
-        graph     graph     graph     graph        graph        graph
-            |       |       |       |              |              |
-            v       v       v       v              v              v
-        re-derive re-derive re-derive re-derive ...    re-derive
-        metrics   metrics   metrics   metrics              metrics
-            |       |       |       |              |              |
-            v       v       v       v              v              v
-        delta:    delta:    delta:    delta:                  delta:
-        -2 cyc    +1 cyc    -4 cyc    -1 cyc                  +3 cyc
-        -8 cmp    -3 cmp    -5 cmp    +2 cmp                  -1 cmp
-        -.04 cpl  +.01 cpl  -.07 cpl  -.02 cpl                +.05 cpl
-
-                                |
-                                v
-                        rank by metric delta
-                                |
-                                v
-                        best move:  extract C -&gt; m3
-                        (-4 cycles, -5 complexity, -0.07 coupling)
-                                |
-                                v
-                        no disk write -- counterfactual only
-                        agent may keep, refine, or discard</code></pre>
+      <h2>Try a change on the graph first</h2>
+      <p><code>roam simulate</code> applies one requested move, extract, merge or
+        delete operation to a copy of the indexed graph and compares structural
+        metrics. It does not edit source files or choose an architecture for you.</p>
+      <p>Example: compare the graph before and after a proposed move. Replace
+        this example symbol and path with your own.</p>
+      <pre><code>roam --json simulate move handle_login src/auth/login.py</code></pre>
+      <p>Use the result to investigate a proposal, not to approve an edit.
+        A move changes file placement in the model while keeping its edges,
+        so topology-based metrics can stay unchanged. These metrics do not
+        establish runtime performance or behavior after an actual refactor.</p>
     </section>
 
     <section>
@@ -364,7 +338,7 @@
         <li><strong>Source</strong>: each command lives in <code>src/roam/commands/cmd_*.py</code>. Apache 2.0.</li>
         <li><strong>Something broken?</strong> See <a href="/docs/troubleshooting">Troubleshooting</a> for index errors, missing flags, MCP setup issues, and rebuild guidance.</li>
       </ul>
-      <p><strong>See it run:</strong> <a href="/docs/canonical-demo">The 5-minute canonical demo</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; signed <code>ChangeEvidence</code> packet, end to end.</p>
+      <p><strong>See a complete workflow:</strong> <a href="/docs/canonical-demo">the worked verification example</a> shows how to bind a run, collect checks, review a change and verify its evidence bundle.</p>
     </section>
 
     <nav class="docs-footer-nav" aria-label="Pagination">
@@ -383,7 +357,7 @@
   <h2 id="complete-reference">Complete Reference</h2>
   <p>Auto-generated from the CLI command registry. Every canonical command + alias; inspect the same surface with <code>roam --help-all</code>.</p>
   <h3>Getting Started</h3>
-  <div class="table-wrap"><table>
+  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>roam ask</code></td><td>Run the recipe that matches a free-form query.</td></tr>
@@ -429,7 +403,7 @@
       <tr><td><code>roam db-check</code></td><td>Integrity sweep over the local index. Reports orphans, br...</td></tr>
     </tbody></table></div>
   <h3>Daily Workflow</h3>
-  <div class="table-wrap"><table>
+  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>roam preflight</code></td><td>Run a pre-change safety checklist for a symbol, file, or ...</td></tr>
@@ -476,7 +450,7 @@
       <tr><td><code>roam evidence-oscal</code></td><td>Emit an OSCAL v1.2 document (Control Mapping or Assessmen...</td></tr>
       <tr><td><code>roam api-changes</code></td><td></td></tr>
       <tr><td><code>roam semantic-diff</code></td><td>Show structural change summary vs a git ref.</td></tr>
-      <tr><td><code>roam test-gaps</code></td><td>Map changed symbols to missing test coverage.</td></tr>
+      <tr><td><code>roam test-gaps</code></td><td>Find changed symbols without test-connection or coverage ...</td></tr>
       <tr><td><code>roam affected</code></td><td>Identify affected files/modules from a git diff via depen...</td></tr>
       <tr><td><code>roam attest</code></td><td>Generate a proof-carrying PR attestation.</td></tr>
       <tr><td><code>roam review-request</code></td><td>Emit the brief to hand a different-family reviewer.</td></tr>
@@ -526,7 +500,7 @@
       <tr><td><code>roam lease</code></td><td>Multi-agent lease system.</td></tr>
     </tbody></table></div>
   <h3>Codebase Health</h3>
-  <div class="table-wrap"><table>
+  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>roam health</code></td><td>Show code health: cycles, god components, bottlenecks.</td></tr>
@@ -573,7 +547,7 @@
       <tr><td><code>roam rules-suggest</code></td><td>Suggest ``.roam/rules.yml`` rules and CI gates from recur...</td></tr>
     </tbody></table></div>
   <h3>Architecture</h3>
-  <div class="table-wrap"><table>
+  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>roam map</code></td><td>Show project skeleton with entry points and key symbols.</td></tr>
@@ -606,7 +580,7 @@
       <tr><td><code>roam clones</code></td><td>Detect near-duplicate code via AST structural hashing.</td></tr>
     </tbody></table></div>
   <h3>Exploration</h3>
-  <div class="table-wrap"><table>
+  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>roam search</code></td><td></td></tr>
@@ -624,14 +598,14 @@
       <tr><td><code>roam deps</code></td><td>Show file import/imported-by relationships.</td></tr>
       <tr><td><code>roam uses</code></td><td>Show all consumers of SYMBOL: callers, importers, inherit...</td></tr>
       <tr><td><code>roam fan</code></td><td>Show fan-in/fan-out: most connected symbols or files.</td></tr>
-      <tr><td><code>roam impact</code></td><td>Show blast radius: what breaks if SYMBOL changes.</td></tr>
+      <tr><td><code>roam impact</code></td><td>Show indexed dependents a change to SYMBOL could affect.</td></tr>
       <tr><td><code>roam relate</code></td><td>Show how a set of symbols relate to each other.</td></tr>
       <tr><td><code>roam endpoints</code></td><td>List all detected REST/GraphQL/gRPC endpoints with handlers.</td></tr>
       <tr><td><code>roam metrics</code></td><td>Show unified metrics for a file or symbol.</td></tr>
       <tr><td><code>roam findings</code></td><td>Query the central findings registry (cross-detector view).</td></tr>
     </tbody></table></div>
   <h3>Reports &amp; CI</h3>
-  <div class="table-wrap"><table>
+  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>roam report</code></td><td>Run a compound report preset — multiple commands in one s...</td></tr>
@@ -667,7 +641,7 @@
       <tr><td><code>roam compatibility</code></td><td>Detect outbound surface regressions vs a baseline snapshot.</td></tr>
     </tbody></table></div>
   <h3>Refactoring</h3>
-  <div class="table-wrap"><table>
+  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>roam dead</code></td><td>Show unreferenced exported symbols (dead code).</td></tr>
@@ -698,7 +672,7 @@
       <tr><td><code>roam test-scaffold</code></td><td>Generate test file skeletons from indexed symbols.</td></tr>
     </tbody></table></div>
   <h3>Other</h3>
-  <div class="table-wrap"><table>
+  <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
     <thead><tr><th>Command</th><th>Description</th></tr></thead>
     <tbody>
       <tr><td><code>roam churn</code></td><td>Rank files by churn x complexity score (highest-leverage ...</td></tr>
@@ -717,7 +691,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
+        <span>A local map and free static checks for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

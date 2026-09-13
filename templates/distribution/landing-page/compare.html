@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam vs AI Coding Tools — Local-CLI Agent Assurance</title>
-  <meta name="description" content="Compare Roam's local-CLI agent assurance with AI IDEs, coding agents, semantic reviewers, and SAST tools.">
+  <title>Compare Roam — Context alongside your coding tools</title>
+  <meta name="description" content="See how Roam's local context and static checks fit alongside coding agents, review tools, and tests. Vendor comparisons are dated June 12, 2026.">
   <link rel="canonical" href="https://roam-code.com/compare">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -17,8 +17,8 @@
   <link rel="preload" href="./landing.css" as="style">
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
-  <meta property="og:title" content="Roam vs AI Coding Tools — Local-CLI Agent Assurance">
-  <meta property="og:description" content="Credential-free local intelligence with no automatic repository upload and a portable tamper-evident ChangeEvidence packet — no direct substitute among the products surveyed as of 2026-06-12.">
+  <meta property="og:title" content="Compare Roam — Context alongside your coding tools">
+  <meta property="og:description" content="See how Roam's local context and static checks fit alongside coding agents, review tools, and tests. Vendor comparisons are dated June 12, 2026.">
   <meta property="og:url" content="https://roam-code.com/compare">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -41,46 +41,49 @@
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
-      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
-      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
       <label for="nav-toggle" class="nav-toggle-label">
-        <span class="nav-burger" aria-hidden="true"></span>
-        <span class="visually-hidden">Menu</span>
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
       </label>
-      <ul class="nav-links">
-        <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
-        <li><a href="/compare" aria-current="page">Compare</a></li>
-        <li><a href="/setup">Setup</a></li>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
         <li><a href="/docs/">Docs</a></li>
+        <li><a href="/compare" aria-current="page">Compare</a></li>
+        <li><a href="/pricing">Pricing</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
       </ul>
     </div>
   </nav>
 
-  <main id="main">
+  <main tabindex="-1" id="main">
 
   <header class="hero">
     <div class="hero-inner">
       <p class="eyebrow">Comparison</p>
       <h1 class="hero-headline">
-        Roam is its own category:<br>
-        <strong>local-CLI agent-assurance.</strong>
+        Keep the tools you like.<br>
+        <strong>Add code connections and local checks.</strong>
       </h1>
       <p class="hero-subhead">
-        Cloud-IDE agents (Cursor, Cody, Windsurf, Continue, Sweep, Claude Code)
-        are human-first surfaces that <em>log a session</em>. Cloud semantic
-        reviewers (CodeRabbit, Greptile, Qodo) read the diff as text on a vendor
-        server. Roam is an agent-first CLI + MCP server that <em>gates the change
-        and emits scoped evidence</em> — credential-free, no automatic repository upload or telemetry, and a
-        portable tamper-evident <code>ChangeEvidence</code> packet (optionally
-        cosign-signed) answering eight evidence questions per AI-assisted change.
-        Among the products surveyed as of <time datetime="2026-06-12">2026-06-12</time>,
-        we did not find a direct substitute for this trio. Vendor pages cited
-        under <a href="#methodology">methodology</a>.
+        Roam gives coding agents a local map and free static checks to explore
+        code, investigate problems, and review changes. It works alongside your agent, reviewer, and
+        tests; it does not replace them. The vendor tables below are a dated
+        comparison, last checked on <time datetime="2026-06-12">June 12, 2026</time>,
+        not a current buying guide. See the <a href="#methodology">sources and limits</a>.
       </p>
       <p class="hero-ctas">
-        <a href="/docs/canonical-demo" class="btn-primary">Try the 5-minute demo</a>
+        <a href="/docs/canonical-demo" class="btn-primary">Follow a worked example</a>
         <a href="/docs/architecture">Architecture</a> ·
         <a href="/governance">Governance</a> ·
         <a href="/pricing">Pricing</a>
@@ -92,9 +95,8 @@
     <div class="whats-in-inner whats-in-inner--wide">
       <h2>Three categories, three different questions</h2>
       <p class="lede">
-        Before comparing vendor tables, name the category. These three
-        product shapes answer different questions for different consumers.
-        Comparing across categories is apples to oranges to evidence packets.
+        Writing code, reviewing a patch, and tracing connections across a
+        project are different jobs. A tool may help with more than one.
       </p>
       <div class="verbs-grid verbs-grid--2 review-layers-grid">
         <div class="verb-cell">
@@ -114,13 +116,13 @@
           deployment is usually an enterprise conversation.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
-          <code>Local-CLI agent-assurance</code>
-          <span><strong>"Was this change structurally understood and recorded?"</strong>
-          <strong>Roam.</strong> Agent-first CLI + MCP server. Local SQLite
-          graph of symbols, callers, layers, runtime hot spots, clones;
-          preflight + blast-radius + critique gates; portable
-          <code>ChangeEvidence</code> packet answering eight evidence
-          questions per change.</span>
+          <code>Local context and checks</code>
+          <span><strong>"Where should my agent look, and what should it check?"</strong>
+          <strong>Roam.</strong> A local index of code connections and free
+          static checks, used by agents through the CLI or MCP. Investigate
+          callers, complexity, duplicate code, and architecture. Runtime
+          traces, if imported, are separate observations. Configured evidence
+          workflows can save a record of checks, including missing evidence.</span>
         </div>
       </div>
       <p class="review-layers-foot">
@@ -130,10 +132,12 @@
         A separate tier of MCP gateways (Lasso, Portkey, Interlock)
         sits <em>between</em> the agent and its tools; Roam emits evidence
         such gateways can consume — they are not direct comparisons.
-        <strong>See the trio end-to-end:</strong>
-        <a href="/docs/canonical-demo">the canonical 5-minute demo</a>
+        <strong>Follow a worked example:</strong>
+        <a href="/docs/canonical-demo">the command-by-command walkthrough</a>
         walks install &rarr; health &rarr; preflight &rarr; critique &rarr;
-        portable <code>ChangeEvidence</code> packet without leaving the laptop.
+        a configured <code>ChangeEvidence</code> packet. Installation and parser
+        downloads need network access; analysis runs locally. See the
+        <a href="/security#network-boundary">data paths for connected agents and optional features</a>.
       </p>
     </div>
   </section>
@@ -163,24 +167,24 @@
           <code>3. Structural</code>
           <span><strong>What else does it touch?</strong>
           <strong>Roam.</strong> Reads the diff as a graph mutation:
-          callers, tests, clones, runtime hot spots, layer violations,
-          blast radius.</span>
+          callers, related tests, similar code, and layer violations.
+          Static connections can be incomplete; suggested tests still need to run.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
           <code>4. Algorithmic</code>
-          <span><strong>Is it correct but slow?</strong>
+          <span><strong>Which patterns deserve a performance check?</strong>
           <strong>Roam.</strong> Deterministic detectors for O(n²)
           nested-loop lookups, N+1 queries, regex compiled in hot loops,
           repeated JSON parses, quadratic string concat, branching
-          recursion without memoisation — patterns AI agents ship that
-          pass tests and fail at scale.</span>
+          recursion without memoisation. These are leads, not proof of slow
+          code or a safe optimization. Inspect the source, test, and measure.</span>
         </div>
       </div>
       <p class="review-layers-foot">
         Roam adds structural + algorithmic review without replacing the
-        semantic or static layers. The flat-tier pricing is intentional:
-        <strong>add two review layers without a per-seat headcount
-        conversation.</strong>
+        semantic or static layers. <strong>The local CLI and MCP tools are
+        free.</strong> Hosted Roam Review is planned, not available to
+        subscribe to; its published tiers are proposals, not an active service.
       </p>
     </div>
   </section>
@@ -225,16 +229,16 @@
               <td class="ltd">Limited</td>
             </tr>
             <tr>
-              <th scope="row">Catches the clone-not-edited bug AI keeps shipping</th>
-              <td class="yes">Yes</td>
+              <th scope="row">Related copies left unchanged by a patch</th>
+              <td class="yes">Flags candidates using persisted duplicate-code results; not proof of a bug</td>
               <td class="no">Not advertised</td>
               <td class="no">Not advertised</td>
               <td class="no">Not advertised</td>
               <td class="no">Not advertised</td>
             </tr>
             <tr>
-              <th scope="row">Runs locally — source never uploaded</th>
-              <td class="yes">Yes</td>
+              <th scope="row">Local analysis option</th>
+              <td class="yes">Yes; no automatic source upload. <a href="/security#network-boundary">Agent providers and selected features have separate data paths.</a></td>
               <td class="no">Cloud<sup>*</sup></td>
               <td class="no">Cloud<sup>*</sup></td>
               <td class="no">Cloud<sup>*</sup></td>
@@ -242,7 +246,7 @@
             </tr>
             <tr>
               <th scope="row">Tamper-evident review attestations (in-toto v1, cosign-verifiable)</th>
-              <td class="yes">Yes</td>
+              <td class="yes">Optional configured workflow; recorded checks may be incomplete</td>
               <td class="no">Not advertised</td>
               <td class="no">Not advertised</td>
               <td class="no">Not advertised</td>
@@ -274,7 +278,7 @@
             </tr>
             <tr>
               <th scope="row">Starting price (team tier)</th>
-              <td>from $99/mo flat <small>(additive to your semantic reviewer)</small></td>
+              <td>Free CLI/MCP. <small>Hosted Review: proposed from $99/mo flat; not available to subscribe to.</small></td>
               <td>$24/dev/mo<sup>**</sup></td>
               <td>$30/seat/mo + usage</td>
               <td>$30/user/mo<sup>**</sup></td>
@@ -330,7 +334,7 @@
             </tr>
             <tr>
               <th scope="row">Credentials required</th>
-              <td class="yes">None</td>
+              <td class="yes">None for local analysis</td>
               <td class="no">Account + LLM tokens</td>
               <td class="no">Enterprise contract<sup>1</sup></td>
               <td class="no">LLM API key (BYOK)</td>
@@ -341,7 +345,7 @@
             </tr>
             <tr>
               <th scope="row">Network egress required</th>
-              <td class="yes">None</td>
+              <td class="yes">Static analysis is local. <a href="/security#network-boundary">Parser downloads and optional online features have separate paths.</a></td>
               <td class="no">Cloud agents</td>
               <td class="no">Cloud or self-host + LLM</td>
               <td class="no">LLM endpoint</td>
@@ -385,7 +389,7 @@
             </tr>
             <tr>
               <th scope="row">Structural depth</th>
-              <td class="yes">Cycles, PageRank, Louvain, spectral, Codebase Dark Matter, world model, N+1, taint — 28 langs</td>
+              <td class="yes">Call graphs and cycles; module groups; files that change together; candidate N+1 patterns; advisory taint leads — 28 languages; depth varies</td>
               <td class="ltd">Embedding search</td>
               <td class="ltd">Precise xref + cross-repo</td>
               <td class="ltd">Tree-sitter repo map</td>
@@ -437,7 +441,8 @@
     <div class="whats-in-inner">
       <h2>Methodology</h2>
       <p class="lede">
-        Every cell in this table is a verifiable claim. Where we say
+        The vendor cells retain the dated source review below, not a fresh
+        measurement of their products. Where we say
         "Limited" or "Not advertised", we mean we could not find the
         capability documented on the vendor's public pages as of the
         verification date below. If you're a vendor and we got something
@@ -481,10 +486,10 @@
         changes often want both signals side by side.
       </p>
       <p>
-        Our pricing assumes you keep your existing reviewer: Roam Review
-        at $99-$1,499/mo flat is additive to $24-30/dev/mo for the
-        semantic reviewer, not a replacement. Flat tiers cap your Roam
-        spend regardless of team size.
+        You can use Roam's free local tools alongside your existing reviewer.
+        Hosted Roam Review is planned, not available to subscribe to. The
+        proposed $99-$1,499/mo flat tiers are a pricing plan, not a current
+        subscription offer. See <a href="/pricing">availability and pricing</a>.
       </p>
     </div>
   </section>
@@ -493,18 +498,21 @@
     <div class="audit-upsell-inner">
       <h2>Try Roam alongside your current reviewer</h2>
       <p>
-        <strong>Start with the canonical 5-minute demo</strong> —
+        <strong>Start with a worked example</strong> —
         <a href="/docs/canonical-demo">install &rarr; health &rarr; preflight
-        &rarr; critique &rarr; portable evidence packet</a>, all locally.
-        Or run the free 5-PR DIY sample on your repo:
-        <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>.
+        &rarr; critique &rarr; a configured evidence packet</a>.
+        Or try the <a href="/audit#sample">free local sample</a> in a checkout
+        with the required history. Its default <code>HEAD~5..HEAD</code> scope
+        is a commit range, not five PR identities. It does not rerun tests.
       </p>
       <p>
         For a written report on your last 30 or 90 PRs scored against the
         current detector set, commission a paid PR Replay engagement —
         <a href="/audit">Team ($2,500) and Deep ($6,000) on /audit</a>.
-        50% of the fee credits toward a Roam Review subscription within
-        60 days.
+        The conditional 50% future credit is usable within 60 days after
+        Roam Review reaches general availability, if it launches. It is not
+        cash or a refund if Review does not launch. Read the full
+        <a href="/audit#credit">credit terms</a> before commissioning a report.
       </p>
     </div>
   </section>
@@ -515,7 +523,7 @@
     <div class="footer-inner">
       <div class="footer-col">
         <strong>Roam</strong>
-        <span>The local codebase intelligence layer for AI agents and the teams that run them.</span>
+        <span>A local map and free static checks for coding agents.</span>
         <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">

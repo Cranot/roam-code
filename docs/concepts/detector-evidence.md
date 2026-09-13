@@ -5,6 +5,15 @@ partial matches and reports engine failures, `refs-text` downgrades unconfirmed
 absence to `REVIEW`, and `delete-check --ci` refuses incomplete searches in every
 output channel. See the [agent CLI guide](../agent-cli.md).
 
+The working-tree `refs-text` contract also separates text evidence from graph
+membership. A source hit without an enclosing indexed symbol has
+`reachable: null`, not `false`, and makes its result partial. Known positives
+remain useful alongside unresolved hits. Even a hit not reached in the indexed
+graph requires review: no indexed caller does not rule out runtime use. The
+legacy `SAFE-TO-REMOVE` label is limited to no source-code hits in the selected
+search scope, not a deletion authorization. These meanings are identified by
+`summary.verdict_definition`; consult that field on the installed version.
+
 Roam is a local static-analysis tool, not a compiler, runtime coverage collector,
 or proof that a change is safe. Start with the verdict, then check the scope,
 resolution, evidence, and incomplete-result fields before acting on a finding.

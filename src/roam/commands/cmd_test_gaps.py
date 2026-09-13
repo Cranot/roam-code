@@ -250,14 +250,16 @@ def _classify_severity(symbol_row, pagerank):
 )
 @click.pass_context
 def test_gaps_cmd(ctx, files, changed, min_severity):
-    """Map changed symbols to missing test coverage.
+    """Find changed symbols without test-connection or coverage evidence.
 
     Unlike ``test-map`` (which shows existing test topology for a symbol),
-    this command finds changed symbols that lack any test coverage.
+    this command highlights changed symbols without indexed test connections
+    or imported coverage evidence.
 
-    Identifies which changed symbols lack test coverage by checking
-    reverse dependency edges to test files.  Use --changed to analyze
-    the current git diff, or pass specific file paths.
+    Checks reverse dependency edges to test files and available imported
+    coverage reports; it does not run tests. Static connections are not runtime
+    coverage. Use --changed to analyze the current git diff, or pass specific
+    file paths.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

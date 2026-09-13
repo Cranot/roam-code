@@ -286,7 +286,7 @@ def test_payload_handles_missing_sections_gracefully():
         include_hotspots=True,
     )
     assert payload["metrics"]["health_score"] == 75
-    assert payload["metrics"]["dead_safe"] == 0  # default fallback
+    assert payload["metrics"]["dead_safe"] is None  # absent evidence is not a measured zero
     assert payload.get("hotspots") == []  # no danger_zone in input
 
 

@@ -1,6 +1,11 @@
 """W805-XXX -- empty-corpus reachability-axis Pattern-1-V-D / Pattern-2 smoke
 on ``roam refs-text``.
 
+Current contract: validate explicit entries before the empty-result return.
+The three expected failures were reproduced and graduated during the DS4
+reference-evidence repair. The audit notes below describe the original defect,
+not instructions to keep it unfixed. Refusals use the established exit 1 path.
+
 Seventy-seventh-in-batch W805 sweep. Reachability-axis sibling of the
 W805-W empty-corpus state-disclosure pin AND mirror of the W805-UUU
 ``cmd_grep`` reachability-axis finding at ``cmd_grep.py:399-401``.
@@ -96,7 +101,6 @@ from conftest import (  # noqa: E402 -- relative-to-tests-dir import after sys.p
     git_init,
     index_in_process,
     invoke_cli,
-    parse_json_output,
 )
 
 
@@ -222,22 +226,8 @@ class TestEmptyCorpusReachabilityBypass:
     an agent can deliberately pass a bogus entry expecting Pattern-1D
     protection and still receive SAFE-TO-REMOVE."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-XXX REAL BUG: src/roam/commands/cmd_refs_text.py:327-329 "
-            "(``_emit_empty`` early-return) fires BEFORE the reachability "
-            "resolver at line 348-389. When the user passes "
-            "``--reachable-from <unresolved_symbol>`` on an empty corpus, "
-            "the Pattern-1D ``state='unresolved_entry'`` / "
-            "``resolution='unresolved'`` disclosure that the clean-corpus "
-            "path emits is silently dropped. Pinned strict so a future "
-            "fix that hoists the resolver above ``_emit_empty`` (or "
-            "threads ``unresolved_entry`` state into the zero-matches "
-            "envelope) graduates this to PASS. Mirror of W805-UUU "
-            "(cmd_grep.py:399-401) on the cmd_refs_text reachability axis."
-        ),
-    )
+    # Graduated after an explicit --runxfail red run: validate the requested
+    # entry before an empty text result can return. No test assertion waived.
     def test_empty_corpus_reachable_from_unresolved_pattern_1d_disclosure(self, cli_runner, empty_corpus, monkeypatch):
         """Empty corpus + bogus --reachable-from MUST disclose Pattern-1D state."""
         monkeypatch.chdir(empty_corpus)
@@ -252,7 +242,8 @@ class TestEmptyCorpusReachabilityBypass:
             cwd=empty_corpus,
             json_mode=True,
         )
-        data = parse_json_output(result, "refs-text")
+        assert result.exit_code == 1, result.output
+        data = _parse_json_any_exit(result)
         summary = data["summary"]
         # Acceptance: either an explicit unresolved-entry state OR a
         # warnings_out marker the agent can switch on. Both indicate the
@@ -274,19 +265,6 @@ class TestEmptyCorpusReachabilityBypass:
             f"verdict={summary.get('verdict')!r}."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-XXX REAL BUG: when --reachable-from is passed but never "
-            "applied (empty-corpus early-return at cmd_refs_text.py:327-329), "
-            "the Pattern-2 contract requires ``partial_success=True`` because "
-            "the requested reachability filter was silently dropped. Today "
-            "the empty-corpus path emits ``partial_success: false`` "
-            "unconditionally. Pinned strict; CRITICAL safety class because "
-            "an agent reading partial_success=false would conclude no "
-            "degradation occurred."
-        ),
-    )
     def test_empty_corpus_reachable_from_partial_success_set(self, cli_runner, empty_corpus, monkeypatch):
         """When --reachable-from is dropped, partial_success must be True."""
         monkeypatch.chdir(empty_corpus)
@@ -301,28 +279,14 @@ class TestEmptyCorpusReachabilityBypass:
             cwd=empty_corpus,
             json_mode=True,
         )
-        data = parse_json_output(result, "refs-text")
+        assert result.exit_code == 1, result.output
+        data = _parse_json_any_exit(result)
         assert data["summary"].get("partial_success") is True, (
             f"W805-XXX Pattern-2: empty-corpus path with --reachable-from "
             f"dropped MUST set partial_success=True; got "
             f"{data['summary'].get('partial_success')!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-XXX REAL BUG -- CRITICAL agent-safety: empty corpus + "
-            "--reachable-from <bogus> emits SAFE-TO-REMOVE with no "
-            "reachability-degrade lineage. An agent passing --reachable-from "
-            "with a typo'd symbol expects Pattern-1D protection (exit 1, "
-            "unresolved-entry state). On empty corpus the protection is "
-            "silently bypassed and the most destructive verdict in roam "
-            "is returned with exit 0. Higher severity than W805-W because "
-            "the agent explicitly opted into a safety check. Pinned strict; "
-            "fix hoists the resolver above ``_emit_empty`` or denies "
-            "SAFE-TO-REMOVE when the filter was dropped."
-        ),
-    )
     def test_empty_corpus_reachable_from_no_silent_safe_to_remove(self, cli_runner, empty_corpus, monkeypatch):
         """CRITICAL: SAFE-TO-REMOVE on dropped-reachability-filter is agent-unsafe."""
         monkeypatch.chdir(empty_corpus)
@@ -337,9 +301,11 @@ class TestEmptyCorpusReachabilityBypass:
             cwd=empty_corpus,
             json_mode=True,
         )
-        data = parse_json_output(result, "refs-text")
-        per_result = data["results"][0]
-        verdict = per_result.get("verdict", "")
+        assert result.exit_code == 1, result.output
+        data = _parse_json_any_exit(result)
+        # A resolution refusal may return no per-string assessment, as on the
+        # existing non-empty unresolved-entry path. Never require an invented row.
+        verdict = ", ".join(row.get("verdict", "") for row in data["results"])
         summary = data["summary"]
         # Fix accepted EITHER as a non-SAFE verdict OR a lineage marker
         # the agent can switch on. Both graduate this xfail to PASS.
@@ -406,7 +372,8 @@ class TestEmptyCorpusReachabilityNoCrash:
             cwd=empty_corpus,
             json_mode=True,
         )
-        data = parse_json_output(result, "refs-text")
+        assert result.exit_code == 1, result.output
+        data = _parse_json_any_exit(result)
         verdict = data.get("summary", {}).get("verdict", "")
         assert isinstance(verdict, str) and verdict.strip(), f"LAW 6: verdict must be non-empty string; got {verdict!r}"
 
@@ -450,7 +417,8 @@ class TestW607ISubprocessAxisOrthogonality:
             cwd=empty_corpus,
             json_mode=True,
         )
-        data = parse_json_output(result, "refs-text")
+        assert result.exit_code == 1, result.output
+        data = _parse_json_any_exit(result)
         warnings_out = data.get("summary", {}).get("warnings_out") or []
         # The W607-I engine-degrade markers MUST NOT appear here:
         # this is a pure reachability-axis bypass, not a subprocess

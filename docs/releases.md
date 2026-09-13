@@ -10,9 +10,12 @@ package release.
 ## Version and release cadence
 
 Package identity comes from `pyproject.toml` → `version`. Install instructions
-have a separate authority: the highest published `v*` tag, so documentation
-does not tell users to fetch an unreleased version. The synchronization scripts
-preserve that distinction:
+have a separate authority: an available release, not merely the version under
+development. The pin generator selects the highest `v*` tag; maintainers must
+also verify that its package has actually been published before adopting those
+pins. A tag can exist while its publication is waiting for approval or has
+failed. The synchronization scripts separate identity from installation pins,
+but the tag lookup alone is not a registry-availability check:
 
 | Script                             | Owns                                                                                                                                                              |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -20,11 +23,18 @@ preserve that distinction:
 | `dev/build_readme_counts.py`       | The `mcp-server-card.json` family (bundled + 3 public mirrors) and the marker-protected count blocks in README / CLAUDE / AGENTS / llms-install.                     |
 
 Both run in dry-run/check mode as CI gates. Identity drift is checked against
-`pyproject.toml`; install-pin drift is checked against the published tag.
+`pyproject.toml`; install-pin drift is checked against the selected tag.
 Repair surface pins with
 `scripts/sync_surface_counts.py --write` and generated blocks/cards with
 `dev/build_readme_counts.py --apply`. Regenerate the command index with
 `scripts/build_commands_doc.py` when its registry changes.
+
+If the highest tag is still awaiting publication, preserve the last verified
+installation pins and report the synchronization gate as blocked. Do not make
+the check green by advertising a package that users cannot install, changing a
+tag, or bypassing a required reviewer. Complete the approved release workflow,
+then synchronize and run `scripts/check_install_targets.py --network` before
+landing the pin update. This is a temporary release hold, not a gate waiver.
 
 Not every version literal is derived, and a find-replace across the repo is
 wrong. Three other classes exist and each is deliberate:

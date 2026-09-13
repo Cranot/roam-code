@@ -1,0 +1,571 @@
+{
+  "schema_version": 1,
+  "source": "Roam working-tree snapshot · Python sources only",
+  "source_sha256": "4296a662b51d8cdb22894a2f1b57420c36f7ea24367553a70139fd68578cfabf",
+  "source_hash_definition": "SHA-256 of sorted relative POSIX paths and Python source bytes with CRLF normalized to LF, NUL-delimited",
+  "files_scanned": 640,
+  "module_connections": 2699,
+  "unresolved_local_imports": 0,
+  "definition": "Unique directed source-module → imported-module pairs from Python AST imports; grouped by directory. Includes conditional and type-checking imports. Not a call graph or runtime trace.",
+  "limitations": "Dynamic imports, non-Python code and symbol-level calls are outside this view. A missing connection is not proof of independence. Supporting systems combines the remaining packages.",
+  "nodes": [
+    {
+      "id": "core",
+      "label": "Core & interfaces",
+      "title": "Bring the tools together",
+      "description": "The entry points and shared modules connect Roam's analysis to its consumers.",
+      "x": 460,
+      "y": 280,
+      "files": 41,
+      "examples": [
+        "src/roam/__init__.py",
+        "src/roam/__main__.py",
+        "src/roam/_glob_match.py"
+      ]
+    },
+    {
+      "id": "commands",
+      "label": "Commands",
+      "title": "Turn a question into a check",
+      "description": "The command modules gather evidence and return results an agent can act on.",
+      "x": 250,
+      "y": 170,
+      "files": 309,
+      "examples": [
+        "src/roam/commands/__init__.py",
+        "src/roam/commands/_command_utils.py",
+        "src/roam/commands/_yaml_loader.py"
+      ]
+    },
+    {
+      "id": "index",
+      "label": "Indexing",
+      "title": "Build the repository picture",
+      "description": "Discover files, extract symbols, and connect references before an agent asks its next question.",
+      "x": 490,
+      "y": 110,
+      "files": 22,
+      "examples": [
+        "src/roam/index/__init__.py",
+        "src/roam/index/_containing_symbol.py",
+        "src/roam/index/calc_extract.py"
+      ]
+    },
+    {
+      "id": "languages",
+      "label": "Languages",
+      "title": "Read the code's structure",
+      "description": "Language extractors translate syntax into symbols and references. Analysis depth varies by language.",
+      "x": 700,
+      "y": 115,
+      "files": 30,
+      "examples": [
+        "src/roam/languages/__init__.py",
+        "src/roam/languages/apex_lang.py",
+        "src/roam/languages/aura_lang.py"
+      ]
+    },
+    {
+      "id": "graph",
+      "label": "Graph analysis",
+      "title": "Follow the connections",
+      "description": "Graph algorithms explore the indexed structure: clusters, layers, cycles, and paths.",
+      "x": 700,
+      "y": 290,
+      "files": 21,
+      "examples": [
+        "src/roam/graph/__init__.py",
+        "src/roam/graph/anomaly.py",
+        "src/roam/graph/builder.py"
+      ]
+    },
+    {
+      "id": "db",
+      "label": "Local database",
+      "title": "Keep the groundwork reusable",
+      "description": "SQLite stores the repository index so later checks can reuse the extracted structure.",
+      "x": 520,
+      "y": 440,
+      "files": 7,
+      "examples": [
+        "src/roam/db/__init__.py",
+        "src/roam/db/connection.py",
+        "src/roam/db/edge_kinds.py"
+      ]
+    },
+    {
+      "id": "output",
+      "label": "Output & contracts",
+      "title": "Make the answer usable",
+      "description": "Formatters and schemas shape results for people and agents, including their limits.",
+      "x": 270,
+      "y": 405,
+      "files": 16,
+      "examples": [
+        "src/roam/output/__init__.py",
+        "src/roam/output/_severity.py",
+        "src/roam/output/confidence.py"
+      ]
+    },
+    {
+      "id": "mcp_extras",
+      "label": "Agent connection",
+      "title": "Meet agents where they work",
+      "description": "MCP helpers support sessions, progress, completions, and other client-facing behavior.",
+      "x": 80,
+      "y": 280,
+      "files": 9,
+      "examples": [
+        "src/roam/mcp_extras/__init__.py",
+        "src/roam/mcp_extras/adversarial_compress.py",
+        "src/roam/mcp_extras/completions.py"
+      ]
+    },
+    {
+      "id": "security",
+      "label": "Security",
+      "title": "Inspect sensitive boundaries",
+      "description": "Security modules support checks and redaction. Static evidence is not a security certification.",
+      "x": 105,
+      "y": 95,
+      "files": 15,
+      "examples": [
+        "src/roam/security/__init__.py",
+        "src/roam/security/aibom_extension.py",
+        "src/roam/security/bounded_json.py"
+      ]
+    },
+    {
+      "id": "bridges",
+      "label": "Cross-language bridges",
+      "title": "Connect across boundaries",
+      "description": "Bridges add known framework and cross-language connections that syntax alone can miss.",
+      "x": 750,
+      "y": 465,
+      "files": 9,
+      "examples": [
+        "src/roam/bridges/__init__.py",
+        "src/roam/bridges/base.py",
+        "src/roam/bridges/bridge_config.py"
+      ]
+    },
+    {
+      "id": "search",
+      "label": "Search",
+      "title": "Find a useful starting point",
+      "description": "Local search helpers find candidate symbols and context for the next investigation.",
+      "x": 870,
+      "y": 200,
+      "files": 5,
+      "examples": [
+        "src/roam/search/__init__.py",
+        "src/roam/search/framework_packs.py",
+        "src/roam/search/index_embeddings.py"
+      ]
+    },
+    {
+      "id": "runtime",
+      "label": "Runtime evidence",
+      "title": "Bring observations into view",
+      "description": "Runtime modules ingest supported traces and help compare observed behavior with static structure.",
+      "x": 890,
+      "y": 385,
+      "files": 9,
+      "examples": [
+        "src/roam/runtime/__init__.py",
+        "src/roam/runtime/daemon.py",
+        "src/roam/runtime/graph_backend.py"
+      ]
+    },
+    {
+      "id": "evidence",
+      "label": "Evidence",
+      "title": "Keep the qualifications attached",
+      "description": "Evidence modules package observations and receipts. Integrity is not proof of completeness or approval.",
+      "x": 80,
+      "y": 450,
+      "files": 25,
+      "examples": [
+        "src/roam/evidence/__init__.py",
+        "src/roam/evidence/_vocabulary.py",
+        "src/roam/evidence/actor_trust.py"
+      ]
+    },
+    {
+      "id": "support",
+      "label": "Supporting systems",
+      "title": "Put the pieces to work",
+      "description": "Other Roam packages support workflows, policies, refactoring, and specialized analysis.",
+      "x": 335,
+      "y": 540,
+      "files": 122,
+      "examples": [
+        "src/roam/agents_md/__init__.py",
+        "src/roam/agents_md/generator.py",
+        "src/roam/analysis/__init__.py"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "bridges",
+      "target": "support",
+      "count": 1
+    },
+    {
+      "source": "commands",
+      "target": "bridges",
+      "count": 1
+    },
+    {
+      "source": "commands",
+      "target": "core",
+      "count": 502
+    },
+    {
+      "source": "commands",
+      "target": "db",
+      "count": 282
+    },
+    {
+      "source": "commands",
+      "target": "evidence",
+      "count": 21
+    },
+    {
+      "source": "commands",
+      "target": "graph",
+      "count": 104
+    },
+    {
+      "source": "commands",
+      "target": "index",
+      "count": 72
+    },
+    {
+      "source": "commands",
+      "target": "languages",
+      "count": 10
+    },
+    {
+      "source": "commands",
+      "target": "mcp_extras",
+      "count": 3
+    },
+    {
+      "source": "commands",
+      "target": "output",
+      "count": 445
+    },
+    {
+      "source": "commands",
+      "target": "runtime",
+      "count": 4
+    },
+    {
+      "source": "commands",
+      "target": "search",
+      "count": 5
+    },
+    {
+      "source": "commands",
+      "target": "security",
+      "count": 20
+    },
+    {
+      "source": "commands",
+      "target": "support",
+      "count": 168
+    },
+    {
+      "source": "core",
+      "target": "commands",
+      "count": 6
+    },
+    {
+      "source": "core",
+      "target": "db",
+      "count": 11
+    },
+    {
+      "source": "core",
+      "target": "evidence",
+      "count": 1
+    },
+    {
+      "source": "core",
+      "target": "mcp_extras",
+      "count": 8
+    },
+    {
+      "source": "core",
+      "target": "output",
+      "count": 5
+    },
+    {
+      "source": "core",
+      "target": "security",
+      "count": 7
+    },
+    {
+      "source": "core",
+      "target": "support",
+      "count": 18
+    },
+    {
+      "source": "db",
+      "target": "core",
+      "count": 1
+    },
+    {
+      "source": "evidence",
+      "target": "commands",
+      "count": 1
+    },
+    {
+      "source": "evidence",
+      "target": "core",
+      "count": 2
+    },
+    {
+      "source": "evidence",
+      "target": "output",
+      "count": 2
+    },
+    {
+      "source": "evidence",
+      "target": "support",
+      "count": 3
+    },
+    {
+      "source": "graph",
+      "target": "commands",
+      "count": 4
+    },
+    {
+      "source": "graph",
+      "target": "core",
+      "count": 3
+    },
+    {
+      "source": "graph",
+      "target": "db",
+      "count": 9
+    },
+    {
+      "source": "graph",
+      "target": "index",
+      "count": 3
+    },
+    {
+      "source": "graph",
+      "target": "languages",
+      "count": 1
+    },
+    {
+      "source": "index",
+      "target": "bridges",
+      "count": 2
+    },
+    {
+      "source": "index",
+      "target": "commands",
+      "count": 1
+    },
+    {
+      "source": "index",
+      "target": "core",
+      "count": 13
+    },
+    {
+      "source": "index",
+      "target": "db",
+      "count": 7
+    },
+    {
+      "source": "index",
+      "target": "graph",
+      "count": 4
+    },
+    {
+      "source": "index",
+      "target": "languages",
+      "count": 7
+    },
+    {
+      "source": "index",
+      "target": "search",
+      "count": 1
+    },
+    {
+      "source": "index",
+      "target": "support",
+      "count": 6
+    },
+    {
+      "source": "languages",
+      "target": "core",
+      "count": 2
+    },
+    {
+      "source": "languages",
+      "target": "index",
+      "count": 1
+    },
+    {
+      "source": "languages",
+      "target": "support",
+      "count": 1
+    },
+    {
+      "source": "mcp_extras",
+      "target": "core",
+      "count": 6
+    },
+    {
+      "source": "mcp_extras",
+      "target": "db",
+      "count": 2
+    },
+    {
+      "source": "mcp_extras",
+      "target": "output",
+      "count": 1
+    },
+    {
+      "source": "output",
+      "target": "commands",
+      "count": 3
+    },
+    {
+      "source": "output",
+      "target": "core",
+      "count": 6
+    },
+    {
+      "source": "output",
+      "target": "db",
+      "count": 1
+    },
+    {
+      "source": "output",
+      "target": "support",
+      "count": 3
+    },
+    {
+      "source": "runtime",
+      "target": "db",
+      "count": 1
+    },
+    {
+      "source": "runtime",
+      "target": "graph",
+      "count": 1
+    },
+    {
+      "source": "runtime",
+      "target": "output",
+      "count": 2
+    },
+    {
+      "source": "search",
+      "target": "core",
+      "count": 1
+    },
+    {
+      "source": "search",
+      "target": "db",
+      "count": 4
+    },
+    {
+      "source": "security",
+      "target": "commands",
+      "count": 1
+    },
+    {
+      "source": "security",
+      "target": "core",
+      "count": 1
+    },
+    {
+      "source": "security",
+      "target": "db",
+      "count": 6
+    },
+    {
+      "source": "security",
+      "target": "index",
+      "count": 2
+    },
+    {
+      "source": "security",
+      "target": "mcp_extras",
+      "count": 1
+    },
+    {
+      "source": "security",
+      "target": "output",
+      "count": 1
+    },
+    {
+      "source": "support",
+      "target": "bridges",
+      "count": 3
+    },
+    {
+      "source": "support",
+      "target": "commands",
+      "count": 17
+    },
+    {
+      "source": "support",
+      "target": "core",
+      "count": 51
+    },
+    {
+      "source": "support",
+      "target": "db",
+      "count": 43
+    },
+    {
+      "source": "support",
+      "target": "evidence",
+      "count": 5
+    },
+    {
+      "source": "support",
+      "target": "graph",
+      "count": 12
+    },
+    {
+      "source": "support",
+      "target": "index",
+      "count": 7
+    },
+    {
+      "source": "support",
+      "target": "languages",
+      "count": 2
+    },
+    {
+      "source": "support",
+      "target": "output",
+      "count": 9
+    },
+    {
+      "source": "support",
+      "target": "runtime",
+      "count": 2
+    },
+    {
+      "source": "support",
+      "target": "search",
+      "count": 1
+    },
+    {
+      "source": "support",
+      "target": "security",
+      "count": 6
+    }
+  ]
+}

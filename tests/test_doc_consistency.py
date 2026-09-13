@@ -348,16 +348,18 @@ class TestVersionConsistency:
         )
 
     def test_canonical_demo_driver_version_matches_pyproject(self):
-        """The SARIF ``driver.version`` baked into the
-        ``docs/canonical-demo.html`` expected-output excerpt must equal
-        pyproject — a stale demo prints a wrong version to every reader."""
+        """Any copied SARIF version must agree; the command-only demo has none."""
         truth = _truth_version()
         actual = _canonical_demo_driver_version()
         if actual is None:
             p = _LANDING_PAGE / "docs" / "canonical-demo.html"
             if not p.exists():
                 pytest.skip("landing-page docs/canonical-demo.html not present (dev-local)")
-            raise AssertionError("canonical-demo.html missing SARIF driver 'version' in the output excerpt")
+            text = p.read_text(encoding="utf-8")
+            assert '"driver"' not in text, "A copied driver must retain its version"
+            assert "roam --json runs verify" in text
+            assert "missing_proofs" in text
+            return
         assert actual == truth, (
             f"canonical-demo.html SARIF driver.version={actual!r} != pyproject {truth!r} — "
             f'bump the SARIF driver "version" in '
@@ -1058,11 +1060,11 @@ def test_release_docs_track_current_mcp_security_and_setup_contracts():
     assert "MCP summarization with <code>ROAM_AI_ENABLED=1</code>" in security
     assert "opt-in MCP model summarization" in privacy
     assert "summarize selected MCP report" in trust
-    assert "Ordinary analysis is\n      local" in integration
+    assert "Ordinary analysis is local" in " ".join(integration.split())
     assert "opt-in MCP model summarization" in procurement
     assert "your code never leaves your machine" not in landing
     assert "active valid run" in install
-    assert "require a server restart" in mcp_usage
+    assert "requires a server restart" in " ".join(mcp_usage.split())
     assert 'roam_expand_toolset(preset="full")</code> exposes all' not in mcp_usage
     assert "Every command is local" not in command_reference
     assert "ROAM_TREE_SITTER_CACHE_DIR" in network_boundary

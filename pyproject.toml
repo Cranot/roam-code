@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roam-code"
 version = "14.1.0"
-description = "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no source-code egress."
+description = "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no automatic source-code upload."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
