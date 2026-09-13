@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 
 import pytest
 from click.testing import CliRunner
@@ -286,14 +287,36 @@ class TestHealthProgressiveDisclosure:
         result = invoke_cli(runner, ["health"], cwd=indexed_project)
         assert "VERDICT:" in result.output
 
-    def test_health_summary_mode_is_shorter_than_detail(self, indexed_project, monkeypatch):
+    @pytest.mark.parametrize("summary_warning", [False, True])
+    def test_health_summary_mode_is_shorter_than_detail(self, indexed_project, monkeypatch, summary_warning):
         monkeypatch.chdir(indexed_project)
         runner = CliRunner()
+        if summary_warning:
+            from roam.commands import cmd_health
+
+            original = cmd_health.algebraic_connectivity
+            calls = []
+
+            def with_warning(*args, **kwargs):
+                # Model a GC-time resource diagnostic in only the first call;
+                # preserve real analysis without leaking an actual connection.
+                if not calls:
+                    warnings.warn("unclosed sqlite.Connection probe " + "x" * 600, ResourceWarning)
+                calls.append(True)
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(cmd_health, "algebraic_connectivity", with_warning)
         result_summary = invoke_cli(runner, ["health"], cwd=indexed_project)
         result_detail = invoke_cli(runner, ["--detail", "health"], cwd=indexed_project)
-        # Detail output should be >= summary output length
-        assert len(result_detail.output) >= len(result_summary.output), (
-            f"detail ({len(result_detail.output)} chars) should be >= summary ({len(result_summary.output)} chars)"
+        assert result_summary.exit_code == result_detail.exit_code == 0
+        if summary_warning:
+            assert len(calls) == 2
+            assert "unclosed sqlite.Connection probe" in result_summary.stderr
+            assert "unclosed sqlite.Connection probe" not in result_summary.stdout
+            assert "unclosed sqlite.Connection probe" not in result_detail.stderr
+        # Compare the disclosed report, not unrelated diagnostics on stderr.
+        assert len(result_detail.stdout) >= len(result_summary.stdout), (
+            f"detail ({len(result_detail.stdout)} chars) should be >= summary ({len(result_summary.stdout)} chars)"
         )
 
     def test_health_json_summary_has_detail_available(self, indexed_project, monkeypatch):
@@ -598,8 +621,8 @@ class TestProgressiveDisclosureConsistency:
         # Summary strips all list fields and detail_available adds ~30 chars to summary.
         # Detail keeps all list fields (even empty ones like "cycles": []).
         # The detail fields stripped in summary should outweigh the metadata added.
-        assert len(result_summary.output) <= len(result_detail.output), (
-            f"{cmd}: summary output ({len(result_summary.output)}) longer than detail ({len(result_detail.output)})"
+        assert len(result_summary.stdout) <= len(result_detail.stdout), (
+            f"{cmd}: summary output ({len(result_summary.stdout)}) longer than detail ({len(result_detail.stdout)})"
         )
 
     @pytest.mark.parametrize("cmd", ["health", "dead", "layers", "clusters"])
@@ -610,8 +633,8 @@ class TestProgressiveDisclosureConsistency:
         result_detail = invoke_cli(runner, ["--detail", cmd], cwd=indexed_project)
         assert result_summary.exit_code == 0, f"{cmd} summary failed: {result_summary.output}"
         assert result_detail.exit_code == 0, f"{cmd} detail failed: {result_detail.output}"
-        assert len(result_summary.output) <= len(result_detail.output), (
-            f"{cmd}: summary text ({len(result_summary.output)}) longer than detail ({len(result_detail.output)})"
+        assert len(result_summary.stdout) <= len(result_detail.stdout), (
+            f"{cmd}: summary text ({len(result_summary.stdout)}) longer than detail ({len(result_detail.stdout)})"
         )
 
     @pytest.mark.parametrize("cmd", ["health", "dead", "layers", "clusters"])
