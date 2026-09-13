@@ -68,7 +68,7 @@ def test_pricing_leads_with_available_free_and_paid_paths():
     assert "not available" in text and "review" in text and "cloud" in text
 
 
-@pytest.mark.parametrize("name", ["pricing.html", "audit.html"])
+@pytest.mark.parametrize("name", ["pricing.html", "audit.html", "compare.html", "governance.html"])
 def test_wide_tables_have_named_keyboard_scroll_regions(name):
     document = page(name)
     wrappers = [node for node in document.elements if "compare-table-wrap" in node.attrs.get("class", "").split()]
