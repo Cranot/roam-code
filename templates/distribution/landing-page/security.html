@@ -172,7 +172,9 @@
         the bundle is retained for offline reuse. Explicit commands and flags
         can contact PyPI, GitHub, user-selected URLs, Roam Cloud, or Sigstore,
         opt-in MCP model summarization can send selected report snippets to the
-        configured model provider, and optional MCP/webhook modes can open a
+        configured model provider. The explicit <code>bench-compile</code> benchmark
+        launches <code>claude -p</code> with task prompts and generated context;
+        optional MCP/webhook modes can open a
         listener. The complete
         trigger, destination, payload, and default inventory is in
         <a href="https://github.com/Cranot/roam-code/blob/main/docs/network-boundary.md"><code>docs/network-boundary.md</code></a>.
@@ -195,6 +197,7 @@
           <tr><td><code>metrics-push</code>, <code>guard-pr --post-check</code></td><td>Send the documented metrics payload or GitHub check-run payload</td><td>Explicit command/flag</td></tr>
           <tr><td>Cosign <code>--keyless</code></td><td>OIDC/Fulcio/Rekor exchange of identity and signing evidence; not source bodies</td><td>Off unless selected</td></tr>
           <tr><td>MCP summarization with <code>ROAM_AI_ENABLED=1</code></td><td>Send up to 60,000 characters of the selected structured report to the client-selected model; fields can include source snippets</td><td>Off unless explicitly enabled; pass <code>summarize=false</code> per call</td></tr>
+          <tr><td><code>roam bench-compile</code></td><td>Launches <code>claude -p</code> with task prompts and, for the compile condition, generated plan/context. Repository access and model-provider usage and charges follow the child agent’s configuration</td><td>Explicit benchmark command, separate from static checks; reused cached cells skip a new call</td></tr>
           <tr><td>HTTP MCP or webhook mode</td><td>Opens an operator-configured listener; loopback by default</td><td>Ordinary CLI analysis opens none</td></tr>
         </tbody>
       </table>

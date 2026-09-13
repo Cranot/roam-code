@@ -136,8 +136,8 @@
           </tr>
           <tr id="critique">
             <td><code>critique</code></td>
-            <td>Inspect a patch for related code and risks beyond the edited lines. Saved clone evidence must be current and complete for that check to count as complete.</td>
-            <td><code>git diff | roam critique</code></td>
+            <td>Inspect a patch for related code and risks beyond the edited lines. Export the intended Git diff to <code>change.patch</code> and check that Git succeeded. Use a non-empty patch and replace the example intent with your change’s purpose. Saved clone evidence must be current and complete for that check to count as complete; read <code>summary.review_source</code> and <code>partial_success</code>.</td>
+            <td><code>roam --json critique --input change.patch --intent "Round checkout totals"</code></td>
           </tr>
         </tbody>
       </table></div>

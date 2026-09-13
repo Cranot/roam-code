@@ -53,7 +53,7 @@ Replace the path with your project. `init` builds the local index and creates
 project configuration; use `roam index` if you want only the index. The first
 run can download a parser and takes longer than a refresh.
 
-Then **[choose your agent's setup guide](https://roam-code.com/setup)**.
+Then **[choose your agent's setup guide](https://roam-code.com/setup#install-mcp)**.
 Connect through MCP (a standard way for agents to use tools), or let your agent
 call the CLI. Add the usage instructions to its project configuration; connecting
 tools alone does not make the agent use them.

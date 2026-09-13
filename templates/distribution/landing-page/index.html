@@ -149,6 +149,24 @@
           <p class="home-map-takeaway">Your agent can check the callers, not just the edited file.</p>
         </div>
         <div class="home-map-command"><span aria-hidden="true">$</span> <code>roam impact calculate_total</code></div>
+        <details class="home-output">
+          <summary>See what the agent receives</summary>
+          <p>Selected fields from <code>roam --json impact calculate_total</code>, run on this four-function example on 13 September 2026:</p>
+          <pre><code>{
+  "symbol": "calculate_total",
+  "direct_dependents": {
+    "call": [
+      {"file": "checkout/discounts.py", "kind": "fn", "name": "apply_discount"},
+      {"file": "checkout/orders.py", "kind": "fn", "name": "place_order"},
+      {"file": "checkout/preview.py", "kind": "fn", "name": "preview_order"}
+    ]
+  },
+  "cap_applied": false,
+  "partial_success": false,
+  "truncated": false
+}</code></pre>
+          <p>The agent can follow these paths to inspect the callers. This run finished its indexed traversal without truncation; that does not establish every runtime connection. The <a href="/data/examples/checkout-impact-2026-09-13.json">full captured JSON</a> includes traversal limits and the relative risk score. In this tiny example, three of four functions are affected, so that score is high—not a production-risk measurement.</p>
+        </details>
         <figcaption>Illustrative checkout example, not a live report. Your agent can request structured results through the CLI or MCP.</figcaption>
       </figure>
     </section>
@@ -179,8 +197,8 @@
         </article>
         <article class="home-question">
           <span class="home-number" aria-hidden="true">04</span>
-          <div><h3>What still needs checking?</h3><p>Your agent can inspect a patch’s connections and look for similar code that may need the same fix. It can also find related tests to run. A suggested test list is a starting point, not evidence that the tests passed.</p></div>
-          <a href="/docs/command-reference#critique"><code>git diff | roam critique</code><span>Look beyond the patch <span aria-hidden="true">↗</span></span></a>
+          <div><h3>What still needs checking?</h3><p>Your agent can inspect a patch’s connections and look for similar code that may need the same fix. Roam reports the findings and any checks it could not complete, so the agent knows what to investigate next.</p></div>
+          <a href="/docs/command-reference#critique"><code>roam critique</code><span>Look beyond the patch <span aria-hidden="true">↗</span></span></a>
         </article>
       </div>
       <p class="home-section-note">Your agent can use the checks that fit the task. Findings are leads; static analysis can miss connections. Refresh the index with <code>roam index</code> after code changes. <a href="/docs/demos">Explore more examples <span aria-hidden="true">↗</span></a></p>
@@ -204,7 +222,7 @@
             <li><strong>Option</strong><span>Roam’s catalog suggests building a set or lookup table once.</span></li>
             <li><strong>Check</strong><span>The agent checks value types, changes to the list, and whether order, duplicates, or the returned position matter. Then it tests behavior and measures performance.</span></li>
           </ol>
-          <p>A candidate to investigate, not an automatic rewrite or a guaranteed speedup. Use <code>roam algo</code> through the CLI. For MCP, select the <code>review</code> preset and restart the server; the default <code>core</code> preset does not include this tool. <a href="/docs/mcp-usage#troubleshooting">Check which tools are connected</a>.</p>
+          <p>A candidate to investigate, not an automatic rewrite or a guaranteed speedup. Available through <code>roam algo</code> in the CLI or the MCP <code>review</code> preset, not default <code>core</code>. <a href="/docs/command-reference#algorithm-choices">Use the algorithm guide</a> for setup and examples.</p>
         </div>
       </div>
     </section>
@@ -233,7 +251,7 @@
           <li><span class="home-step-label">01 / Install the agent tools</span><pre><code>pip install "roam-code[mcp]"</code></pre><p>Prefer an isolated install? Use <code>pipx install "roam-code[mcp]"</code> or <code>uv tool install "roam-code[mcp]"</code>.</p></li>
           <li><span class="home-step-label">02 / Open your repository</span><pre><code>cd path/to/your/repo
 roam init</code></pre><p>Replace the path with your project. This builds the index and creates project configuration.</p></li>
-          <li><span class="home-step-label">03 / Connect and try a task</span><a class="home-text-link" href="/setup">Choose your agent’s setup guide <span aria-hidden="true">↗</span></a><p>Add the workflow instructions, then ask your agent to find a function you know and show its references. <a href="/docs/integration-tutorials#validate-connection">Follow the first-result checklist</a> to check the project, source locations, and any missing results.</p></li>
+          <li><span class="home-step-label">03 / Connect and try a task</span><a class="home-text-link" href="/setup#install-mcp">Choose your agent’s setup guide <span aria-hidden="true">↗</span></a><p>Add the workflow instructions, then ask your agent to find a function you know and show its references. <a href="/docs/integration-tutorials#validate-connection">Follow the first-result checklist</a> to check the project, source locations, and any missing results.</p></li>
         </ol>
         <p class="home-agent-install">Connect through MCP — a standard way for agents to use tools — or let your agent call the CLI. Add Roam to its workflow so it knows when to use those tools and how to handle incomplete results.</p>
         <p class="home-agent-install">Setup guides for Claude Code, Cursor, Codex CLI, Gemini CLI, and Amp.</p>

@@ -149,9 +149,10 @@ def test_faq_structured_data_matches_the_visible_answers(page):
         json.loads(node.text()) for node in page.root.find("script") if node.attrs.get("type") == "application/ld+json"
     ]
     faq = next(schema for schema in schemas if schema["@type"] == "FAQPage")
+    faq_section = next(node for node in page.root.find("section") if node.attrs.get("aria-labelledby") == "faq-heading")
     visible = {
         normalized(next(node.find("summary")).text()): normalized(next(node.find("p")).text())
-        for node in page.root.find("details")
+        for node in faq_section.find("details")
     }
     questions = faq["mainEntity"]
     assert len(questions) == len(visible) == 7
@@ -185,7 +186,7 @@ def test_homepage_leads_with_agent_workflow_and_setup(page):
     steps = list(next(install.find("ol")).find("li"))
     assert len(steps) == 3
     assert 'pip install "roam-code[mcp]"' in normalized(steps[0].text())
-    assert any(link.attrs.get("href") == "/setup" for link in steps[-1].find("a"))
+    assert any(link.attrs.get("href") == "/setup#install-mcp" for link in steps[-1].find("a"))
     assert "instructions" in steps[-1].text()
 
 
@@ -264,8 +265,11 @@ def test_homepage_shows_algorithm_alternatives_beyond_navigation(page):
     assert all(term in text for term in ("value types", "changes to the list", "order", "duplicates", "position"))
     assert "tests behavior and measures performance" in text
     assert "not an automatic rewrite or a guaranteed speedup" in text
-    assert "default core preset does not include this tool" in text
-    assert "restart the server" in text
+    assert "review preset, not default core" in text
+    assert any(link.attrs.get("href") == "/docs/command-reference#algorithm-choices" for link in example.find("a"))
+    guide = HomepageParser((SITE / "docs/command-reference.html").read_text(encoding="utf-8"))
+    algorithm = next(node for node in guide.elements if node.attrs.get("id") == "algorithm-choices")
+    assert "restart the server" in normalized(algorithm.text())
     metadata = {node.attrs.get("name", node.attrs.get("property")): node.attrs for node in page.root.find("meta")}
     for key in ("description", "og:description", "twitter:description"):
         assert "algorithm choices" in metadata[key]["content"]
@@ -279,6 +283,27 @@ def test_homepage_setup_links_to_an_existing_first_result_check(page):
     guide = HomepageParser((SITE / "docs/integration-tutorials.html").read_text(encoding="utf-8"))
     assert any(node.attrs.get("id") == "validate-connection" for node in guide.elements)
     assert "roam_search_symbol" in guide.root.text() and "roam_uses" in guide.root.text()
+
+
+def test_homepage_connect_step_lands_after_installation(page):
+    install = next(node for node in page.elements if node.attrs.get("id") == "install")
+    chooser = next(link for link in install.find("a") if "Choose your agent" in link.text())
+    assert chooser.attrs["href"] == "/setup#install-mcp"
+    setup = HomepageParser((SITE / "setup.html").read_text(encoding="utf-8"))
+    target = next(node for node in setup.elements if node.attrs.get("id") == "install-mcp")
+    assert any(link.attrs.get("href", "").startswith("/docs/integration-tutorials#") for link in target.find("a"))
+
+
+def test_homepage_patch_card_does_not_promise_test_selection_from_critique(page):
+    card = next(
+        node
+        for node in page.root.find("article")
+        if any(link.attrs.get("href") == "/docs/command-reference#critique" for link in node.find("a"))
+    )
+    assert "related tests" not in normalized(card.text()).lower()
+    # Discovery label routes to the scoped recipe; it must not demonstrate an
+    # unstaged-only pipeline as a generic patch, nor inherit HEAD's intent.
+    assert normalized(next(card.find("code")).text()) == "roam critique"
 
 
 def test_about_qualifies_records_and_detector_leads():
@@ -369,7 +394,7 @@ def test_homepage_walkthrough_and_connection_example_execute(tmp_path):
         return result.stdout
 
     source = (SITE / "index.html").read_text(encoding="utf-8")
-    for command in ("roam init", "roam understand", "roam impact calculate_total", "git diff | roam critique"):
+    for command in ("roam init", "roam understand", "roam impact calculate_total", "roam critique"):
         assert command in source
     run("init")
     assert (tmp_path / ".roam").is_dir()
@@ -379,6 +404,27 @@ def test_homepage_walkthrough_and_connection_example_execute(tmp_path):
     assert impact["summary"]["verdict"]
     for caller in callers.values():
         assert caller in json.dumps(impact), f"Missing illustrated caller: {caller}"
+    # The optional homepage disclosure is selected fields, not invented JSON.
+    # Compare both the captured full response and today's real fixture result.
+    snapshot_path = SITE / "data/examples/checkout-impact-2026-09-13.json"
+    captured = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    parsed_page = HomepageParser(source)
+    disclosure = next(node for node in parsed_page.root.find("details") if node.attrs.get("class") == "home-output")
+    excerpt = json.loads(next(disclosure.find("pre")).text())
+    assert set(excerpt) == {"symbol", "direct_dependents", "cap_applied", "partial_success", "truncated"}
+    assert len(excerpt["direct_dependents"]["call"]) == len(callers)
+    disclosure_text = normalized(disclosure.text())
+    assert "Selected fields from roam --json impact calculate_total" in disclosure_text
+    assert "four-function example on 13 September 2026" in disclosure_text
+    assert captured["_meta"]["timestamp"].startswith("2026-09-13T")
+    assert any(
+        link.attrs.get("href") == "/data/examples/checkout-impact-2026-09-13.json" for link in disclosure.find("a")
+    )
+    for key, value in excerpt.items():
+        assert value == captured[key], f"Displayed field differs from captured result: {key}"
+        assert value == impact[key], f"Current fixture result changed: {key}"
+    assert captured["summary"]["risk_level_canonical"] == "high"
+    assert "three of four functions" in normalized(disclosure.text())
     preflight = json.loads(run("--json", "preflight", "calculate_total"))
     assert preflight["summary"]["verdict"]
     (checkout / "pricing.py").write_text(
@@ -386,5 +432,19 @@ def test_homepage_walkthrough_and_connection_example_execute(tmp_path):
     )
     diff = subprocess.run(["git", "diff"], cwd=tmp_path, capture_output=True, text=True, check=True, timeout=30)
     assert diff.stdout, "The review example requires a real change"
-    critique = json.loads(run("--json", "critique", stdin=diff.stdout, expected_codes=(0, 5)))
+    patch = tmp_path / "change.patch"
+    patch.write_text(diff.stdout, encoding="utf-8")
+    reference = (SITE / "docs/command-reference.html").read_text(encoding="utf-8")
+    assert 'roam --json critique --input change.patch --intent "Round checkout totals"' in reference
+    critique = json.loads(
+        run("--json", "critique", "--input", "change.patch", "--intent", "Round checkout totals", expected_codes=(0, 5))
+    )
     assert critique["summary"]["verdict"]
+    assert critique["summary"]["review_source"] == "input_file"
+    assert critique["summary"]["intent"] == "Round checkout totals"
+    assert critique["summary"]["check_status"] == {
+        "clones-not-edited": "skipped:no_clone_pairs (run `roam clones --persist`)",
+        "impact": "ran",
+        "intent": "ran",
+    }
+    assert critique["summary"]["partial_success"] is True
