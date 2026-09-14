@@ -157,7 +157,7 @@ def test_mutable_assets_revalidate_without_conflicting_cache_directives():
 
 def test_skip_link_target_accepts_focus_without_adding_a_tab_stop():
     paths = sorted(SITE.rglob("*.html"))
-    assert len(paths) == 31
+    assert len(paths) == 32
     for path in paths:
         page = HomepageParser(path.read_text(encoding="utf-8"))
         main = next(page.root.find("main"))

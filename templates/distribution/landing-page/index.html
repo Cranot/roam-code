@@ -122,6 +122,10 @@
         </div>
         <p class="home-small">Free and open source. Static checks run locally without model calls. Your agent's model usage is separate.</p>
         <p class="home-intro-copy">Results include source locations, findings, and candidate alternatives for your agent to inspect, test, and build on. Refresh the local index as the code changes.</p>
+        <p class="home-small"><strong>A real answer:</strong> <code>roam impact calculate_total</code>
+          returned <code>place_order</code>, <code>preview_order</code> and
+          <code>apply_discount</code> as direct callers in our four-function fixture.
+          <a href="#home-example-heading">Inspect the captured result and its limits ↓</a></p>
       </div>
       <figure class="atlas-widget home-hero-atlas" data-atlas data-compact aria-labelledby="hero-atlas-title">
         <div class="atlas-widget-title"><strong id="hero-atlas-title">Inside roam-code</strong><span class="home-atlas-badge">SOURCE SNAPSHOT</span></div>
@@ -161,9 +165,9 @@
           <p class="home-map-takeaway">Your agent can check the callers, not just the edited file.</p>
         </div>
         <div class="home-map-command"><span aria-hidden="true">$</span> <code>roam impact calculate_total</code></div>
-        <details class="home-output">
+        <details class="home-output" open>
           <summary>See what the agent receives</summary>
-          <p>Selected fields from <code>roam --json impact calculate_total</code>, run on this four-function example on 13 September 2026:</p>
+          <p>Selected fields from <code>roam --json impact calculate_total</code>, run on this four-function example with Roam 14.1.0 on 13 September 2026:</p>
           <pre><code>{
   "symbol": "calculate_total",
   "direct_dependents": {
@@ -177,7 +181,14 @@
   "partial_success": false,
   "truncated": false
 }</code></pre>
-          <p>The agent can follow these paths to inspect the callers. This run finished its indexed traversal without truncation; that does not establish every runtime connection. The <a href="/data/examples/checkout-impact-2026-09-13.json">full captured JSON</a> includes traversal limits and the relative risk score. In this tiny example, three of four functions are affected, so that score is high—not a production-risk measurement.</p>
+          <p><strong>What it establishes:</strong> these are the callers returned
+            by the indexed traversal in this fixture, without truncation.
+            <strong>What it does not:</strong> every runtime connection or a safe
+            shipping decision. The agent can follow the paths to inspect the callers.
+            The <a href="/data/examples/checkout-impact-2026-09-13.json">full captured JSON</a>
+            includes traversal limits and the relative risk score. In this tiny
+            example, three of four functions are affected, so that score is high—not
+            a production-risk measurement. <a href="/measurements#examples">Run the example checks</a>.</p>
         </details>
         <figcaption>Illustrative checkout example, not a live report. Your agent can request structured results through the CLI or MCP.</figcaption>
       </figure>
@@ -244,6 +255,9 @@
         <p class="home-eyebrow">Free static power for your agent</p>
         <h2 id="local-heading">Static checks.<br>No model calls.</h2>
         <p class="home-lede">Run code analysis on your own machine. Reuse the local index for the next question, and refresh it when the code changes.</p>
+        <p>Let the model reason about the result instead of rebuilding each
+          analysis. That is the mechanism—not a promise of lower token use on
+          every task. <a href="/measurements">See the measurements and their limits</a>.</p>
       </div>
       <div class="home-local-points">
         <article><h3>Free tools. Local compute.</h3><p>The CLI and MCP server are free under Apache 2.0. Static checks need no account, API key, or model call. They use your machine’s resources; your agent’s model usage, including reading results, is separate.</p></article>
@@ -266,6 +280,11 @@ roam init</code></pre><p>Replace the path with your project. This builds the ind
           <li><span class="home-step-label">03 / Connect and try a task</span><a class="home-text-link" href="/setup#install-mcp">Choose your agent’s setup guide <span aria-hidden="true">↗</span></a><p>Add the workflow instructions, then ask your agent to find a function you know and show its references. <a href="/docs/integration-tutorials#validate-connection">Follow the first-result checklist</a> to check the project, source locations, and any missing results.</p></li>
         </ol>
         <p class="home-agent-install">Connect through MCP — a standard way for agents to use tools — or let your agent call the CLI. Add Roam to its workflow so it knows when to use those tools and how to handle incomplete results.</p>
+        <p class="home-agent-install">Start small: <!-- product-fact:defaultMcpToolCount -->17<!-- /product-fact --> tools in
+          the default MCP preset, with broader presets for specific work.
+          Before an edit, investigate the code and run a preflight report.
+          After it, refresh the index, review the intended patch and run the
+          project's tests. <a href="/docs/canonical-demo">Follow the before-and-after example</a>.</p>
         <p class="home-agent-install">Setup guides for Claude Code, Cursor, Codex CLI, Gemini CLI, and Amp.</p>
         <div class="home-start-footer">
           <p>Want only the index, without project configuration? Use <code>roam index</code> instead of <code>roam init</code>.</p>

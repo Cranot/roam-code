@@ -18,7 +18,7 @@ the next website deployment; a Git push alone does not publish the site.
 | Check MCP protocol support | [Protocol compatibility and handshake tests](mcp-protocol-compatibility.md) |
 | Make bounded agent CLI calls | [Agent CLI guide](agent-cli.md) |
 | Check extraction support for a language | [Language support](language-support.md) |
-| Read historical comparisons, losses and timing limits | [Measurement record](measurements.md) |
+| Inspect examples, comparisons, losses and reproduction limits | [Website measurement guide](../templates/distribution/landing-page/measurements.html), [historical record](measurements.md) |
 | Understand the index and evidence pipeline | [Architecture](../templates/distribution/landing-page/docs/architecture.html), [agent contract](../templates/distribution/landing-page/docs/agent-contract.html) |
 | Diagnose an installation, index, or lock | [Troubleshooting](../templates/distribution/landing-page/docs/troubleshooting.html) |
 | Maintain this checkout and validate a change | [Repository maintenance](repository-maintenance.md), [contributing](../CONTRIBUTING.md) |

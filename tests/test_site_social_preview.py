@@ -57,7 +57,7 @@ def test_shared_preview_matches_reviewed_image_and_visible_homepage():
 def test_all_public_pages_use_the_same_current_social_image():
     manifest = json.loads((SITE / "data/social-preview.json").read_text(encoding="utf-8"))
     pages = sorted(SITE.rglob("*.html"))
-    assert len(pages) == 31
+    assert len(pages) == 32
     for path in pages:
         page = HomepageParser(path.read_text(encoding="utf-8"))
         metadata = {}

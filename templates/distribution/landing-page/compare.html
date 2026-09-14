@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Compare Roam — Context alongside your coding tools</title>
-  <meta name="description" content="See how Roam's local context and static checks fit alongside coding agents, review tools, and tests. Vendor comparisons are dated June 12, 2026.">
+  <meta name="description" content="Compare the jobs of coding agents, review tools, local code-graph tools, and Roam. Inspect concrete capabilities, dated vendor sources, and the limits of the evidence.">
   <link rel="canonical" href="https://roam-code.com/compare">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="Compare Roam — Context alongside your coding tools">
-  <meta property="og:description" content="See how Roam's local context and static checks fit alongside coding agents, review tools, and tests. Vendor comparisons are dated June 12, 2026.">
+  <meta property="og:description" content="Compare the jobs of coding agents, review tools, local code-graph tools, and Roam. Inspect concrete capabilities, dated vendor sources, and the limits of the evidence.">
   <meta property="og:url" content="https://roam-code.com/compare">
   <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
   <meta property="og:image:width" content="1731">
@@ -120,13 +120,21 @@
           that review; they do not establish that the behavior is correct.</span>
         </div>
         <div class="verb-cell verb-cell--accent">
-          <code>Local context and checks</code>
+          <code>Roam's local analysis</code>
           <span><strong>"Where should my agent look, and what should it check?"</strong>
           <strong>Roam.</strong> A local index of code connections and free
           static checks, used by agents through the CLI or MCP. Investigate
           callers, complexity, duplicate code, and architecture. Runtime
           traces, if imported, are separate observations. Configured evidence
           workflows can save a record of checks, including missing evidence.</span>
+        </div>
+        <div class="verb-cell">
+          <code>Local code-graph tools</code>
+          <span><strong>"Give my agent the code and its connections."</strong>
+          This is a real overlapping category: tools can expose a repository
+          index, callers, dependencies and change impact through MCP or a CLI.
+          Roam belongs in this comparison too. Check the actual language support,
+          resolution limits and workflow of each tool, not just its category.</span>
         </div>
       </div>
       <p class="review-layers-foot">
@@ -144,6 +152,40 @@
         downloads need network access; analysis runs locally. See the
         <a href="/security#network-boundary">data paths for connected agents and optional features</a>.
       </p>
+    </div>
+  </section>
+
+  <section class="whats-in section-intro-tight" id="local-code-graphs">
+    <div class="whats-in-inner whats-in-inner--prose">
+      <h2>Compare the work each graph tool supports.</h2>
+      <p>Local graph tools also answer useful questions about code. In the
+        documentation checked on <time datetime="2026-09-14">September 14, 2026</time>,
+        <a href="https://github.com/colbymchenry/codegraph/blob/main/site/src/content/docs/reference/mcp-server.md">CodeGraph describes an MCP tool</a>
+        that returns source, call paths and a blast-radius summary.
+        <a href="https://trace-mcp.com/">trace-mcp describes a local graph and agent tools</a>,
+        as well as workflow integration. These are overlapping capabilities,
+        not products we have ruled out or benchmarked against Roam.</p>
+      <p>Roam combines indexed relationships with code-pattern checks,
+        architecture analysis, candidate algorithmic alternatives, patch checks,
+        and optional records of the evidence collected. The distinction is this
+        combination of work you can call on—not a claim that other graph tools
+        only navigate code or cannot grow beyond it.</p>
+      <ul class="prose-list">
+        <li><strong>Before an edit:</strong> query context and callers, inspect
+          likely test candidates, and run <code>preflight</code> to plan the change.</li>
+        <li><strong>When choosing an implementation:</strong> inspect a
+          <a href="/docs/command-reference#algorithm-choices">detected pattern and catalogued alternative</a>;
+          test behavior and measure before calling it an improvement.</li>
+        <li><strong>After an edit:</strong> refresh the index, review the intended
+          diff with <code>critique</code>, and run the project's actual tests.
+          A configured evidence flow records collected checks and missing evidence.</li>
+      </ul>
+      <p>Compare tools on one question in your repository: inspect the returned
+        source locations, missed connections, index refresh cost and the work
+        left for your agent. <a href="/measurements">Our measurement record</a>
+        separates reproducible examples, historical comparisons and unknowns.
+        The descriptions above are vendor documentation, not an installed-product
+        evaluation, accuracy ranking, or exclusive-capability matrix.</p>
     </div>
   </section>
 
@@ -310,7 +352,7 @@
       </p>
       <div class="compare-table-wrap" tabindex="0" role="region" aria-labelledby="coding-agents-caption">
         <table class="compare-table">
-          <caption class="visually-hidden" id="coding-agents-caption">Roam compared with Cursor, Cody, Aider, Windsurf, Continue, Sweep, and Claude Code on eight axes.</caption>
+          <caption class="visually-hidden" id="coding-agents-caption">Dated capability descriptions for Roam, Cursor, Cody, Aider, Windsurf, Continue, Sweep, and Claude Code.</caption>
           <thead>
             <tr>
               <th scope="col"></th>
@@ -359,26 +401,15 @@
               <td class="no">LLM endpoint</td>
             </tr>
             <tr>
-              <th scope="row">Audience</th>
-              <td class="yes">Agent-first through CLI or MCP</td>
-              <td class="ltd">HUMAN-first</td>
-              <td class="ltd">HUMAN-first</td>
-              <td class="ltd">HUMAN-first</td>
-              <td class="ltd">HUMAN-first</td>
-              <td class="ltd">HUMAN-first</td>
-              <td class="ltd">HUMAN-first</td>
-              <td class="yes">AGENT-first</td>
-            </tr>
-            <tr>
               <th scope="row">Compliance certifications<sup>4</sup></th>
-              <td class="yes">Not currently certified; see /trust for posture<sup>3</sup></td>
-              <td class="ltd">SOC 2 (vendor-stated)</td>
-              <td class="ltd">SOC 2 + ISO 27001 (vendor portal)</td>
-              <td class="no">None advertised</td>
-              <td class="ltd">SOC 2 Type II + FedRAMP High + HIPAA (vendor-stated)</td>
-              <td class="no">None advertised</td>
-              <td class="ltd">SOC 2 (vendor-stated)</td>
-              <td class="no">None advertised</td>
+              <td>Not currently certified; see <a href="/trust">trust posture</a><sup>3</sup></td>
+              <td>SOC 2 (vendor-stated)</td>
+              <td>SOC 2 + ISO 27001 (vendor portal)</td>
+              <td>None advertised</td>
+              <td>SOC 2 Type II + FedRAMP High + HIPAA (vendor-stated)</td>
+              <td>None advertised</td>
+              <td>SOC 2 (vendor-stated)</td>
+              <td>None advertised</td>
             </tr>
             <tr>
               <th scope="row">Audit / evidence shape</th>
@@ -446,10 +477,11 @@
       <h2>Methodology</h2>
       <p class="lede">
         The vendor cells retain the dated source review below, not a fresh
-        measurement of their products. Where we say
-        "Limited" or "Not advertised", we mean we could not find the
-        capability documented on the vendor's public pages as of the
-        verification date below. If you're a vendor and we got something
+        measurement of their products. "Limited" means the reviewed sources
+        described partial or restricted availability; "Not advertised" means
+        the capability was not found in those sources. Neither means the
+        capability cannot exist. Literal descriptions in these historical rows
+        are not exhaustive inventories. If you're a vendor and we got something
         wrong, email <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>
         and we'll update.
       </p>
@@ -477,7 +509,7 @@
       <h3 class="text-center prose-h3-spaced">How we mark each cell</h3>
       <ul class="prose-list">
         <li><strong class="yes legend-yes">Yes</strong> — capability documented on the vendor's marketing or docs page</li>
-        <li><strong class="ltd legend-ltd">Limited</strong> — partial capability documented, or the capability appears on enterprise-only or undocumented surfaces</li>
+        <li><strong class="ltd legend-ltd">Limited</strong> — partial capability or restricted availability described in the reviewed sources</li>
         <li><strong class="no legend-no">Not advertised</strong> — we could not find the capability documented; this is verifiable via vendor pages above</li>
       </ul>
 
@@ -509,9 +541,9 @@
         is a commit range, not five PR identities. It does not rerun tests.
       </p>
       <p>
-        For a written report on your last 30 or 90 PRs scored against the
+        For a written report on your last <!-- product-fact:teamReplayPrCount -->30<!-- /product-fact --> or <!-- product-fact:deepReplayPrCount -->90<!-- /product-fact --> PRs scored against the
         current detector set, commission a paid PR Replay engagement —
-        <a href="/audit">Team ($2,500) and Deep ($6,000) on /audit</a>.
+        <a href="/audit">Team (<!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact -->) and Deep (<!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact -->) on /audit</a>.
         The conditional 50% future credit is usable within 60 days after
         Roam Review reaches general availability, if it launches. It is not
         cash or a refund if Review does not launch. Read the full

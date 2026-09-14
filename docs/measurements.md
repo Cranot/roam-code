@@ -15,6 +15,17 @@ citations into older README snapshots remain historical references. The timing
 notes correct one old link to a local result file that was never versioned;
 the recorded numbers are unchanged.
 
+For a current reading guide, see [website measurements](https://roam-code.com/measurements).
+Public artifact pointers checked on 2026-09-14: the repair-sibling record has
+[576 frozen cases](../tests/data/1c_frozen.json),
+[saved four-arm results](../tests/data/1c_fourarm_results.json), and a
+[scorer/saved-metric regression](../tests/test_repair_intent_frozen.py).
+That regression does not recreate candidate collection or the original four-arm
+experiment. The frozen protocol describes reranking the same lexical pool,
+whereas the saved results define treatment over the graph pool. The historical
+win language below does not resolve that discrepancy or establish current
+end-to-end retrieval accuracy. Preserve the original numbers and this boundary.
+
 <a id="context-for-your-agent"></a>
 
 ## Agent workflow comparisons — May–July 2026

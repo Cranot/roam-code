@@ -53,7 +53,10 @@ def test_existing_selling_pages_keep_accessible_static_structure(name):
             assert not target.scheme and not target.netloc
             assert (SITE / target.path.lstrip("/")).is_file()
     for script in document.root.find("script"):
-        assert script.attrs == {"type": "application/ld+json"}
+        assert script.attrs.get("type") == "application/ld+json"
+        assert set(script.attrs) <= {"type", "data-product-offers"}
+        if "data-product-offers" in script.attrs:
+            assert name == "audit.html"
         assert isinstance(json.loads(script.text()), dict)
     assert not list(document.root.find("form")), "No new lead collection or checkout"
 
@@ -184,11 +187,14 @@ def test_existing_offer_prices_and_future_price_visibility_are_preserved():
         ("2500", "USD"),
         ("6000", "USD"),
     ]
-    assert all(offer["availability"].endswith("/PreOrder") for offer in offers[1:])
+    # Commissioned reports require scope confirmation, not a product preorder.
+    assert all("availability" not in offer for offer in offers[1:])
     pricing = page("pricing.html")
     plans = next(node for node in pricing.root.find("details") if node.attrs.get("class") == "selling-plans")
     assert "open" not in plans.attrs, "Keep unavailable products secondary, with native disclosure"
-    text = normalized(plans.text())
+    # The source parser separates data on either side of a generation marker;
+    # browsers concatenate these inline price/month fragments.
+    text = re.sub(r"\s+(?=/mo\b)", "", normalized(plans.text()))
     assert all(amount in text for amount in ("$99/mo", "$299/mo", "$799/mo", "$1,499/mo"))
     assert "proposed" in text.lower()
 

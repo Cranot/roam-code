@@ -9,11 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Inspectable website evidence.** Add a measurements guide with runnable examples, historical baselines and misses, reproduction links, and explicit missing evidence. Put a compact real command result before the homepage map while preserving the headline and design.
+- **Generated product facts.** Build a static product snapshot from source counts, version and adopted offer policy. Bind current site prices, report scopes, availability and derived credit examples; refuse malformed bindings and disagreements with written tier terms in CI.
 - **A source-derived code atlas.** Explore Roam's Python module imports on a dedicated page and in the homepage hero. Inspect direct dependencies with named controls, a static fallback, and visible source provenance. The map is a grouped import snapshot, not native command output or a prediction of runtime impact.
 - **Complete issue-list options.** Request full indexed health classification and complete debt output explicitly, while preserving the historical health score and existing compact defaults. Keep collection limits distinct from output-budget limits.
 
 ### Fixed
 
+- **Comparison and evidence boundaries.** Include local code-graph peers using dated primary sources, without exclusive feature claims. Separate model reasoning from reusable local checks, qualify optional architecture and integrity records, and remove preorder metadata from commissioned report offers.
 - **Website facts and examples.** Detect and repair drift in bold Press CLI, MCP, language, and default-preset counts. Distinguish source inventory from installed releases, remove unsupported statistics from the current fact list, and link the existing captured homepage example directly from the hero and press kit. Match the Status page's report description to the existing scoped offer.
 - **Website reading paths and recovery.** Name the full atlas's direct imports and importers in readable lists, bring connection validation and the agent routine before optional integrations, and distinguish preflight reports from enforced gates. Keep nested missing pages styled, serve the extensionless discovery card as JSON, and describe available tools in the browser manifest.
 - **Complete self-audit inputs in CI.** Supply Dogfood with an explicit commit diff through `--input` (MCP `diff_path`), install its locked optional metrics dependencies, and use a finite stale-reference source/anchor budget for this repository's larger histories. Empty diffs and incomplete scans still refuse clearance; the existing MCP rules parameter and default indexing limits are unchanged.

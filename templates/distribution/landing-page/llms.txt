@@ -64,7 +64,7 @@ products, not available to subscribe to. No launch date is confirmed. Private
 deployment is a separately scoped enquiry, not a packaged hosted-product edition.
 
 - [Free agent tools](https://roam-code.com/setup) — CLI and MCP server, Apache 2.0. Local static checks make no model calls; the connected agent's model usage is separate.
-- [PR Replay](https://roam-code.com/audit) — free local sample; Team report $2,500; Deep report $6,000. Paid reports add founder review and a walk-through. Read the scope and conditional future credit at /audit; an email enquiry is not an order.
+- [PR Replay](https://roam-code.com/audit) — free local sample; Team report <!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact -->; Deep report <!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact -->. Paid reports add founder review and a walk-through. Read the scope and conditional future credit at /audit; an email enquiry is not an order.
 - [Sample prerequisites](https://roam-code.com/audit#sample) — `roam pr-replay --tier sample` defaults to `HEAD~5..HEAD`, a commit range rather than five PR identities. Run inside a checkout with that history. Replay does not rerun tests or establish incident prevention.
 - [Roam Review](https://roam-code.com/pricing#review) — planned hosted pull-request checks; no hosted app or billing yet. Proposed tiers, not purchasable subscriptions, are at /pricing.
 - [Roam Cloud](https://roam-code.com/pricing#cloud) — planned history/dashboard; no hosted ingestion service or team accounts yet.
@@ -80,7 +80,8 @@ deployment is a separately scoped enquiry, not a packaged hosted-product edition
 - Setup (agent integration): https://roam-code.com/setup
 - Pricing: https://roam-code.com/pricing
 - PR Replay (paid audit): https://roam-code.com/audit
-- Compare vs CodeRabbit/Greptile/Qodo: https://roam-code.com/compare
+- Compare coding agents, review tools and local code graphs: https://roam-code.com/compare
+- Measurements and reproduction limits: https://roam-code.com/measurements
 - Status: https://roam-code.com/status
 - MCP server card: https://roam-code.com/.well-known/mcp-server-card.json
 
@@ -99,3 +100,13 @@ as the source changes. Use the findings alongside source inspection, tests,
 linters, security tools, and model reasoning; no one result establishes safety.
 Static checks make no model calls. Connected-agent providers and optional online
 features have separate costs and data paths; see the network boundary above.
+
+## Current product snapshot
+
+<!-- product-block:snapshot -->
+Source version: 14.1.0; 287 CLI commands; 246 MCP tools; 17 default core tools; 28 languages; Apache-2.0.
+Product states: cli: AVAILABLE; mcp: AVAILABLE; prReplay: AVAILABLE; review: PLANNED; cloud: PLANNED.
+Local code analysis and mechanical checks for coding agents.
+Source snapshot, not a fresh installed-package check. Paid reports require agreed written scope.
+Machine-readable facts: https://roam-code.com/data/product-facts.json
+<!-- /product-block -->

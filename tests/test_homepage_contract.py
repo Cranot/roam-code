@@ -213,7 +213,9 @@ def test_homepage_hero_shows_one_real_atlas_with_native_fallback_and_full_page_l
 
 def test_homepage_preserves_the_illustrative_example_below_the_real_atlas(page):
     hero = next(page.root.find("header"))
-    assert "calculate_total" not in hero.text()
+    assert "four-function fixture" in normalized(hero.text())
+    atlas = next(node for node in hero.find("figure") if "home-hero-atlas" in node.attrs.get("class", ""))
+    assert "calculate_total" not in atlas.text(), "Keep the real checkout result distinct from the Roam import map"
     example = next(node for node in page.root.find("figure") if node.attrs.get("class") == "home-map")
     assert page.elements.index(example) > page.elements.index(hero)
     assert "Illustrative checkout example, not a live report." in example.text()
@@ -440,7 +442,7 @@ def test_homepage_walkthrough_and_connection_example_execute(tmp_path):
     assert impact["summary"]["verdict"]
     for caller in callers.values():
         assert caller in json.dumps(impact), f"Missing illustrated caller: {caller}"
-    # The optional homepage disclosure is selected fields, not invented JSON.
+    # The homepage disclosure is selected fields, not invented JSON.
     # Compare both the captured full response and today's real fixture result.
     snapshot_path = SITE / "data/examples/checkout-impact-2026-09-13.json"
     captured = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -451,7 +453,8 @@ def test_homepage_walkthrough_and_connection_example_execute(tmp_path):
     assert len(excerpt["direct_dependents"]["call"]) == len(callers)
     disclosure_text = normalized(disclosure.text())
     assert "Selected fields from roam --json impact calculate_total" in disclosure_text
-    assert "four-function example on 13 September 2026" in disclosure_text
+    assert "four-function example" in disclosure_text and "on 13 September 2026" in disclosure_text
+    assert "Roam 14.1.0" in disclosure_text
     assert captured["_meta"]["timestamp"].startswith("2026-09-13T")
     assert any(
         link.attrs.get("href") == "/data/examples/checkout-impact-2026-09-13.json" for link in disclosure.find("a")

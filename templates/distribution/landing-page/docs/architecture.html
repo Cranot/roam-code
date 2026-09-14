@@ -86,6 +86,12 @@
     <p class="subtitle">
       Roam builds a local code index in SQLite and exposes analysis and checks through CLI and MCP tools. Configured workflows can also record receipts, run events and evidence packets for another tool or reviewer to inspect.
     </p>
+    <p><strong>Available source capabilities.</strong> This page explains the
+      local engine and its explicitly configured evidence workflows. Optional
+      does not mean enabled by default. Hosted Review and Cloud are
+      <strong>planned</strong>, not services provided by these modules; see
+      <a href="/pricing">current product availability</a>. Research directions
+      are separate from this implementation guide.</p>
     <div class="callout">
       <strong>Inside vs gateway.</strong> Roam is the <em>server</em> in the MCP layering: it emits <code>McpDecisionReceipt</code> per sensitive tool call, the HMAC-chained run ledger, and the <code>ChangeEvidence</code> packet. Hosts (Claude Code, Cursor) own per-call approval; gateways own policy + correlation + audit aggregation; Roam ships the structured evidence stream those layers consume. See the <a href="https://github.com/Cranot/roam-code/discussions/37">MCP layering discussion</a> for the full split.
     </div>
@@ -264,9 +270,11 @@
     <section id="agent-os-substrate">
       <h2>Agent OS Substrate</h2>
       <p>
-        On top of the analysis core, Roam ships a 12-package control-plane substrate that
-        lets agents earn the right to change code. Every package is repo-local (under
-        <code>.roam/</code>), zero-network, and additive to the index.
+        On top of the analysis core, Roam provides repo-local modes, coordination
+        and evidence records under <code>.roam/</code>. Configured mode checks
+        apply at Roam's tool boundary; they do not contain arbitrary shell actions
+        or grant permission to ship. Signing, connected agents and selected
+        operations have the <a href="/security#network-boundary">documented network paths</a>.
       </p>
       <div class="table-wrap" tabindex="0" role="group" aria-label="Scrollable reference table"><table>
         <thead>
@@ -296,7 +304,7 @@
 <pre><code>1.  roam runs start             # open run, get ROAM_RUN_ID (HMAC-signed events)
 2.  roam mode safe_edit         # declare action surface
 3.  roam pr-bundle init         # start proof bundle
-4.  roam preflight &lt;sym&gt;        # gate before edit
+4.  roam preflight &lt;sym&gt;        # risk report before edit; not an edit blocker
 5.  roam impact &lt;sym&gt;            # blast radius
 6.  &lt;edit&gt;
 7.  roam --json critique --working-tree   # review
@@ -402,11 +410,12 @@ roam findings count                      # per-detector totals</code></pre>
 
       <h3>Detectors that persist findings</h3>
       <p>
-        30 detectors persist findings to the registry (the registry stores last-run state per
-        detector, so <code>roam findings count</code> returns 0 for detectors that haven't been
-        run on the current corpus; counts are last-run state, not cumulative). Run
+        30 detectors persist findings through configured command paths. This count
+        is checked against command modules containing an emission call; it is not
+        evidence that thirty checks ran. The registry stores last-run state per
+        detector, not a cumulative tally. An absent result does not establish a clean scan. Run
         <code>roam findings count</code> for the live per-detector tally on your workspace.
-        The table below covers the original 16-detector substrate plus <code>boundary</code>
+        The table below gives examples, including <code>boundary</code>
         and <code>test-hermeticity</code>; consumer / aggregator detectors
         (<code>critique</code>, <code>doctor</code>, <code>fan</code>,
         <code>fingerprint</code>, <code>health</code>, <code>llm-smells</code>,
@@ -598,7 +607,7 @@ roam findings count                      # per-detector totals</code></pre>
       <p>
         Want help interpreting results for your repository?
         <a href="/audit#tiers">PR Replay reports</a> add founder interpretation of an
-        agreed 30-PR or 90-PR scope. The <a href="/audit#sample">free local sample</a>
+        agreed <!-- product-fact:teamReplayPrCount -->30<!-- /product-fact -->-PR or <!-- product-fact:deepReplayPrCount -->90<!-- /product-fact -->-PR scope. The <a href="/audit#sample">free local sample</a>
         instead uses <code>HEAD~5..HEAD</code>, not five identified PRs.
         Or jump straight to <a href="/pricing">pricing</a> /
         <a href="/governance">governance</a> / <a href="/trust">trust</a>.
