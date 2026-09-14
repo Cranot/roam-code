@@ -1,7 +1,7 @@
 {
-  "name": "Roam — Local codebase intelligence for AI agents",
+  "name": "Roam Code — Local code analysis for coding agents",
   "short_name": "Roam",
-  "description": "Maps, gates, and evidence in one local CLI. Roam turns your repo into a local code graph for retrieval, algorithmic judgment, change-safety checks, and tamper-evident evidence your team verifies offline. Free CLI; paid PR bot, dashboard, and self-hosted for teams.",
+  "description": "Local code analysis and checks for coding agents. Query code relationships, explore implementation choices, and check changes with free CLI and MCP tools.",
   "start_url": "/",
   "scope": "/",
   "display": "browser",

@@ -25,3 +25,8 @@
   # modules, fonts and snapshots with ETags instead of mixing releases.
   # One rule also avoids Pages merging conflicting Cache-Control values.
   Cache-Control: public, max-age=0, must-revalidate
+
+# The legacy extensionless discovery route contains the same JSON as its
+# .json sibling. Scope its MIME type without changing other asset responses.
+/.well-known/mcp-server-card
+  Content-Type: application/json

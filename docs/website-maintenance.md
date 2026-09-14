@@ -242,6 +242,12 @@ establish successful work, complete coverage, identity, or permission to ship.
 
 MCP setup examples must distinguish a configuration preview, an explicit write,
 an installed process's inventory, and the tools exposed by the connected client.
+Route short setup links to the complete client guide rather than showing a
+preview command as a finished connection. Keep the shared connection check and
+agent routine before optional CI, gateway and audit-export sections, with native
+links from each client section. A preflight report informs the next change; it
+does not block an edit or PR by itself. Preserve that distinction from explicit
+gating options such as `health --gate`.
 Use the actual preset and argument schemas. A retry after a tool failure must
 respect uncertain write outcomes. Result guidance should distinguish incomplete
 delivery from incomplete analysis: a complete requested projection can answer a
@@ -303,6 +309,13 @@ directed module pairs, and groups them by directory. Conditional and typing
 imports count; dynamic imports, other languages, and symbol-level calls do not.
 Keep those limits visible beside the map. Do not relabel incoming imports as
 verified runtime blast radius. Do not infer independence from absent edges.
+
+The full atlas also names direct relationships in visible “Imports from” and
+“Imported by” lists beside the selected area. Drive these from the same validated
+snapshot as the drawn edges; preserve both directions for reciprocal pairs and
+qualify empty lists as empty in this snapshot. Keep the lists outside the concise
+live status region so changing an area does not automatically announce every
+neighbor. The compact homepage preview retains its shorter presentation.
 
 Regenerate before intentionally updating the source snapshot:
 
@@ -499,6 +512,20 @@ This simple server previews the homepage and assets; it does not emulate
 Cloudflare's extensionless routes, redirects, or response headers.
 
 ## Publishing
+
+Check missing routes at more than one URL depth. Pages serves the root error
+document at the requested missing URL, so its shared stylesheet and recovery
+links must remain root-relative. A root-level 404 check cannot catch a broken
+stylesheet under `/docs/missing/page`. Verify the actual 404 status, CSS MIME
+type and rendered recovery links separately.
+
+Treat browser manifests and discovery cards as public copy and delivery
+surfaces. Keep `manifest.webmanifest` focused on available tools, not planned
+paid products. The extensionless MCP discovery card has an exact-path JSON
+Content-Type rule in `_headers`; preserve the inherited security/cache rules
+without duplicating header values or changing unrelated routes. Validate the
+served MIME type and bytes on both hostnames rather than inferring them from
+valid local JSON.
 
 Use the normal Git gates and verify the exact commit's CI before production
 deployment. `uv run --no-sync make site-deploy` supplies the locked interpreter

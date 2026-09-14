@@ -113,3 +113,16 @@ def test_homepage_declares_one_consistent_website_name():
         node.attrs.get("content") for node in head.find("meta") if node.attrs.get("property") == "og:site_name"
     ]
     assert site_names == [website["name"]]
+
+
+def test_browser_manifest_describes_available_agent_tools_not_planned_paid_products():
+    manifest = json.loads((SITE / "manifest.webmanifest").read_text(encoding="utf-8"))
+    description = manifest["description"].lower()
+    # These exact stale offers were published here after pricing had separated
+    # planned services. This bounded guard is not a general copy-quality score.
+    assert "paid pr bot" not in description
+    assert "self-hosted for teams" not in description
+    for supported_term in ("coding agents", "cli", "mcp", "free"):
+        assert supported_term in description
+    assert manifest["start_url"] == manifest["scope"] == "/"
+    assert manifest["display"] == "browser"

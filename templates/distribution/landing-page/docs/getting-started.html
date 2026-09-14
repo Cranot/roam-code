@@ -138,9 +138,10 @@ roam init</code></pre>
         </article>
 
         <article class="step">
-          <h3>Step 4: Gate the next change</h3>
+          <h3>Step 4: Check before the next change</h3>
 <pre><code>roam preflight &lt;symbol&gt;</code></pre>
           <p>Inspect callers, related tests, complexity, and architecture findings before editing. Your agent can use the results to plan what else to read and check. Missing connections remain unknown; suggested tests still need to run.</p>
+          <p>Preflight reports risk; it does not block an edit or pull request by itself.</p>
         </article>
 
       </div>
@@ -167,7 +168,7 @@ roam health --explain         # inspect architectural score contributions</code>
       <p>Pick the path that matches your role:</p>
       <ul>
         <li><strong>Follow a worked example:</strong> <a href="/docs/canonical-demo">From a first scan to a saved review record</a> &mdash; install &rarr; health &rarr; preflight &rarr; critique &rarr; a configured <code>ChangeEvidence</code> packet. Setup time varies by project.</li>
-        <li><strong>Agent integration:</strong> <code>roam mcp-setup claude-code</code> (or <code>cursor</code>, <code>windsurf</code>, <code>vscode</code>, <code>gemini-cli</code>, <code>codex-cli</code>) — then see <a href="/docs/mcp-usage">Using Roam via MCP</a> for the cold-start envelope and canonical agent loop.</li>
+        <li><strong>Agent integration:</strong> <a href="/docs/integration-tutorials#mcp-host-tutorial">Follow your client's setup guide</a> — preview and apply the configuration, restart the connection, then check a result in your project.</li>
         <li><strong>Command workflows:</strong> <a href="/docs/command-reference">Command Reference</a> — examples and command families. Use <code>roam &lt;command&gt; --help</code> for exact flags and <code>roam surface --json</code> for the complete inventory.</li>
         <li><strong>Architecture deep-dive:</strong> <a href="/docs/architecture">Architecture</a> — how the <a href="/docs/architecture#pipeline">index pipeline</a>, <a href="/docs/architecture#findings-registry">findings registry</a>, <a href="/docs/architecture#agent-os-substrate">agent-OS substrate</a>, and <a href="/docs/architecture#evidence-compiler">evidence compiler</a> fit together.</li>
         <li><strong>Agent contract:</strong> <a href="/docs/agent-contract">Agent Contract</a> — context before edit, impact before delete, critique before merge, simulate before refactor, math before optimise.</li>
@@ -186,7 +187,7 @@ roam file src/auth/service.py   # file skeleton (symbols + line ranges)</code></
 
       <h3>2. Estimate change risk</h3>
 <pre><code>roam impact auth_login          # indexed callers to investigate before editing
-roam preflight auth_login       # pre-edit gate: blast + tests + complexity + fitness
+roam preflight auth_login       # pre-edit report: callers, tests, complexity and fitness
 roam test-gaps --changed        # static test gaps for unstaged changes</code></pre>
 
       <h3>3. Working in tests (pytest projects)</h3>

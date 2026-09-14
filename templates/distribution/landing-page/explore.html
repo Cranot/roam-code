@@ -80,6 +80,7 @@
             <p class="atlas-selection-copy" data-selection-copy>The map is a source-derived overview of Roam’s Python imports. The interactive view adds area details and dependency filters.</p>
             <div class="atlas-detail-stats" data-detail-stats></div>
           </div>
+          <div class="atlas-relationships" data-relationships data-controls hidden></div>
           <h4>Inside this area</h4><ul class="atlas-files" data-files><li>Area details are available in the interactive view.</li></ul>
           <p class="atlas-inspector-note">An import shows a structural connection, not every call at runtime. Use it as a starting point for investigation.</p>
           <a class="atlas-inline-link" href="#agent-view">What does the agent get? <span aria-hidden="true">↓</span></a>
@@ -93,8 +94,8 @@
     <section class="atlas-agent-view" id="agent-view" aria-labelledby="agent-view-title">
       <div class="atlas-section-intro"><p class="atlas-kicker">A picture for you. Tools for your agent.</p><h2 id="agent-view-title">Your agent gets answers,<br>not a page to click through.</h2><p>On your project, Roam’s command-line or connected agent tools return code locations, connections, findings, and limits. Your agent can use those results to decide where to look and what to check.</p></div>
       <div class="atlas-stories">
-        <article><span class="atlas-story-number">01 · Find your bearings</span><h3>Find the starting point.</h3><p>Your agent can use an overview of the project's parts and important functions to choose relevant files to read.</p><code>roam map</code><a href="/docs/command-reference#complete-reference">Explore the map command ↗</a></article>
-        <article><span class="atlas-story-number">02 · Follow a connection</span><h3>Look beyond the edit.</h3><p>Ask which indexed callers connect to a function. Investigate what else may need attention before changing it.</p><code>roam impact &lt;symbol&gt;</code><a href="/docs/command-reference#complete-reference">Explore change impact ↗</a></article>
+        <article><span class="atlas-story-number">01 · Find your bearings</span><h3>Find the starting point.</h3><p>Your agent can use an overview of the project's parts and important functions to choose relevant files to read.</p><code>roam map</code><a href="/docs/command-reference#command-map">Explore the map command ↗</a></article>
+        <article><span class="atlas-story-number">02 · Follow a connection</span><h3>Look beyond the edit.</h3><p>Ask which indexed callers connect to a function. Investigate what else may need attention before changing it.</p><code>roam impact &lt;symbol&gt;</code><a href="/docs/command-reference#command-impact">Explore change impact ↗</a></article>
         <article><span class="atlas-story-number">03 · Check the limits</span><h3>Keep the gaps visible.</h3><p>Inspect structural findings alongside the checks that ran, failed, or could not finish. A score is not permission to merge.</p><code>roam audit --json</code><a href="/docs/agent-contract">Read the agent contract ↗</a></article>
       </div>
     </section>

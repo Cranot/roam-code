@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Website reading paths and recovery.** Name the full atlas's direct imports and importers in readable lists, bring connection validation and the agent routine before optional integrations, and distinguish preflight reports from enforced gates. Keep nested missing pages styled, serve the extensionless discovery card as JSON, and describe available tools in the browser manifest.
 - **Complete self-audit inputs in CI.** Supply Dogfood with an explicit commit diff through `--input` (MCP `diff_path`), install its locked optional metrics dependencies, and use a finite stale-reference source/anchor budget for this repository's larger histories. Empty diffs and incomplete scans still refuse clearance; the existing MCP rules parameter and default indexing limits are unchanged.
 - **Accessible atlas metadata.** Preserve the map's exact reviewed SVG title and description in the metadata check and cleaner. Additional titles, descriptions and authoring metadata remain checked, including private text following an approved element.
 

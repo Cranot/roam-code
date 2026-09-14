@@ -122,6 +122,34 @@ async function mount(root, index) {
       }
       const files = root.querySelector('[data-files]');
       if (files) files.replaceChildren(...current.examples.map(path => { const li = document.createElement('li'); li.textContent = path; return li; }));
+      const relationships = !compact && root.querySelector('[data-relationships]');
+      if (relationships) {
+        // The drawn edges are decorative to assistive technology. Keep their
+        // directional names readable outside the concise live announcement.
+        const directions = [['outgoing', 'Imports from'], ['incoming', 'Imported by']];
+        relationships.replaceChildren(...directions.filter(([direction]) => mode === 'all' || mode === direction).map(([direction, title]) => {
+          const outgoing = direction === 'outgoing';
+          const neighbors = active.edges.filter(edge => (outgoing ? edge.source : edge.target) === selected)
+            .map(edge => byId.get(outgoing ? edge.target : edge.source));
+          const group = document.createElement('div'), heading = document.createElement('h4');
+          heading.textContent = title; group.append(heading);
+          if (neighbors.length) {
+            const list = document.createElement('ul');
+            list.className = 'atlas-relationship-list';
+            list.replaceChildren(...neighbors.map(node => {
+              const item = document.createElement('li'); item.textContent = node.label; return item;
+            }));
+            group.append(list);
+          } else {
+            const empty = document.createElement('p');
+            empty.className = 'atlas-relationship-empty';
+            empty.textContent = outgoing ? 'No outgoing connections to other areas in this snapshot.'
+              : 'No incoming connections from other areas in this snapshot.';
+            group.append(empty);
+          }
+          return group;
+        }));
+      }
     }
     root.querySelector('[data-graph]').replaceChildren(graph);
     root.querySelectorAll('[data-controls]').forEach(element => { element.hidden = false; });

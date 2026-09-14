@@ -93,6 +93,10 @@
 .atlas-inspector h4 { font-size:var(--t-sm); font-weight:500; margin:1rem 0 .5rem; }
 .atlas-files { margin:0; padding:0; list-style:none; font-family:var(--font-mono); font-size:var(--t-sm); color:var(--atlas-muted); overflow-wrap:anywhere; }
 .atlas-files li { padding-block:.4rem; border-bottom:1px solid var(--atlas-line); }
+.atlas-relationships { padding-bottom:1rem; border-bottom:1px solid var(--atlas-line); }
+.atlas-relationship-list { margin:0; padding-left:1.2rem; color:var(--atlas-muted); font-size:var(--t-sm); line-height:1.5; overflow-wrap:anywhere; }
+.atlas-relationship-list li { padding-block:.12rem; }
+.atlas-relationship-empty { color:var(--atlas-muted)!important; font-size:var(--t-sm); line-height:1.5; }
 .atlas-inspector-note { color:var(--atlas-muted)!important; font-size:.875rem; margin-top:1.3rem!important; }
 .atlas-inline-link { display:block; margin-top:1.5rem; font-size:.875rem; }
 .atlas-footnote { display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap; padding:1rem 1.5rem; font-size:var(--t-sm); color:var(--atlas-muted); }
