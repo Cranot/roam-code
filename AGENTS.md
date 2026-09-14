@@ -566,9 +566,11 @@ per agent over hoping the timing works out.
      `_BUDGET_EXEMPT` with a one-line rationale instead. The real-gap threshold ratchets DOWN.
 9. **If you added an MCP wrapper, run the count cascade AND check the landing page.** Run
    `python3 dev/build_readme_counts.py --apply` + `python3 scripts/sync_surface_counts.py`
-   (syncs AGENTS.md/README/MCP-cards). The sync script's regexes miss some landing-page spots
-   (newline-split counts, `<strong>`-wrapped numbers, soft-count pages), so
-   `tests/test_w462_landing_page_tool_count_drift.py` may still need a manual 1-number fix.
+   (syncs AGENTS.md/README/MCP-cards). Press bold-number fields and its default-preset
+   count are owned by `sync_surface_counts.py`; test changed source counts with
+   `tests/test_press_count_sync.py`. Other markup and intentionally soft-count pages
+   can still fall outside the sync patterns. Extend the appropriate owner and test
+   a changed count rather than relying on a manual number fix alone.
 10. Add tests
 
 ## Adding a new language (Tier 1)

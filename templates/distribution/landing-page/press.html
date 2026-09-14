@@ -35,7 +35,6 @@
     "name": "Press kit",
     "url": "https://roam-code.com/press",
     "inLanguage": "en",
-    "dateModified": "2026-09-12",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -170,18 +169,22 @@
         <li>Current source license: Apache 2.0</li>
       </ul>
 
-      <h2>Numbers (refresh as you write)</h2>
-      <p>Authoritative counts as of <time datetime="2026-07-22">2026-07-22</time>:</p>
+      <h2>Source counts and their scope</h2>
+      <p>These counts are maintained from Roam's source registries. They describe
+      the code behind this website, not a fresh measurement of the package on
+      your machine. Run <code>roam --json surface</code> to inspect the installed
+      CLI and MCP inventory; check <a href="https://pypi.org/project/roam-code/">PyPI</a>
+      for the published version.</p>
       <ul>
         <li><strong>287</strong> CLI commands</li>
         <li><strong>246</strong> MCP tools (17 in the default core preset)</li>
         <li><strong>28</strong> programming languages</li>
-        <li><strong>2,489</strong> community-contributed rules (under <code>rules/community/</code> in the repo)</li>
-        <li><strong>34</strong> code-quality detectors</li>
-        <li><strong>6</strong> cross-language bridges (Salesforce, REST, Django, .proto, Jinja/Django templates, env-var → config)</li>
-        <li>GitHub stars: <a href="https://github.com/Cranot/roam-code/stargazers">live count</a></li>
-        <li>PyPI installs: <strong>~3,900 / month</strong> (pypistats, 2026-07)</li>
       </ul>
+      <p>The CLI total includes aliases; the default MCP preset is smaller
+      than the full toolset. Analysis depth varies by language and framework.
+      <a href="/docs/command-reference">Browse the command reference</a> or
+      check the <a href="https://github.com/Cranot/roam-code/stargazers">current GitHub star count</a>.
+      Stars are not a count of active users.</p>
 
       <h2>Pricing snapshot</h2>
       <p>The local CLI and MCP tools are free and open source. Paid PR Replay
@@ -207,7 +210,7 @@
 
       <h2>Screenshot ideas (request specific shots from us)</h2>
       <ul>
-        <li>Terminal demo of <code>git diff | roam critique</code> with BLOCK verdict + clones-not-edited finding</li>
+        <li>The <a href="/#home-example-heading">captured impact result</a> from a small checkout example — real CLI output on a synthetic fixture, not a production benchmark</li>
         <li>The <a href="/explore">source-derived code atlas</a>, a snapshot of Roam's Python imports, not a live repository view</li>
         <li>Comparison table at <a href="/compare">/compare</a></li>
         <li>Cookbook recipes at <a href="/docs/">roam-code.com/docs/</a></li>

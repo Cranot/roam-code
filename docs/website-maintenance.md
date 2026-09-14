@@ -24,6 +24,11 @@ fixture's high relative-risk score is explained, not hidden or represented as
 production evidence. A future capture is a new observation; do not silently
 rewrite the dated one or turn a successful indexed traversal into runtime coverage.
 
+The hero's example link leads to that existing section; the map keeps its own
+explore link. Check both routes without JavaScript before adding another demo
+surface. A captured fixture demonstrates a command's output, not agent-workflow
+savings or detector accuracy on unfamiliar repositories.
+
 ## Shared typography, navigation, and writing
 
 `landing.css` owns the site's design foundation. All HTML routes load it;
@@ -447,6 +452,14 @@ legacy anchors, and executable examples in a temporary repository. The link
 checker covers internal destinations and fragments, not external availability.
 These checks do not certify the rendered layout, keyboard interactions, or
 screen-reader experience.
+
+The Press fact list is owned by `scripts/sync_surface_counts.py`, including
+its bold-number HTML and default-preset count. Test a changed count through the
+real check/write path, not just today's agreement between prose and source.
+`tests/test_press_count_sync.py` does this in an isolated copy. Keep historical
+measurements separate from current source counts, with their original evidence
+and scope; do not place unverified download or subsystem estimates under one
+"authoritative" heading. Installed-package identity is a separate observation.
 
 ### Search and sharing surfaces
 
