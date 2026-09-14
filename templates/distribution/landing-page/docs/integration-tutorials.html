@@ -102,6 +102,20 @@
       the project root before connecting. Setup commands below run in a terminal.
     </p>
 
+    <nav aria-labelledby="integration-contents-title">
+      <p id="integration-contents-title"><strong>Jump to your next step</strong></p>
+      <ul>
+        <li><a href="#mcp-host-tutorial">Setup overview</a>:
+          <a href="#claude-code">Claude Code</a> · <a href="#cursor">Cursor</a> ·
+          <a href="#gemini-cli">Gemini CLI</a> · <a href="#codex-cli">Codex CLI</a> ·
+          <a href="#amp">Amp</a> · <a href="#vscode">VS Code</a> · <a href="#windsurf">Windsurf</a></li>
+        <li><a href="#validate-connection">Check the connection and add the routine</a></li>
+        <li>Optional integrations: <a href="#ci-tutorial">CI pipelines</a> ·
+          <a href="#mcp-gateway-tutorial">Tool gateways</a> ·
+          <a href="#oscal-audit-tutorial">Audit exports</a></li>
+      </ul>
+    </nav>
+
     <section>
       <h2 id="mcp-host-tutorial">MCP host integration</h2>
       <p>
@@ -128,13 +142,13 @@
           <tr><th>Platform</th><th>Fast setup command</th><th>Config fallback</th></tr>
         </thead>
         <tbody>
-          <tr><td>Claude Code</td><td><code>roam mcp-setup claude-code --write</code></td><td><code>.mcp.json</code> in project root</td></tr>
-          <tr><td>Cursor</td><td><code>roam mcp-setup cursor --write</code></td><td><code>.cursor/mcp.json</code></td></tr>
-          <tr><td>Gemini CLI</td><td><code>roam mcp-setup gemini-cli --write</code></td><td><code>~/.gemini/settings.json</code></td></tr>
-          <tr><td>Codex CLI</td><td><code>roam mcp-setup codex-cli --write</code></td><td><code>~/.codex/config.toml</code> or <code>codex mcp add</code></td></tr>
-          <tr><td>VS Code</td><td><code>roam mcp-setup vscode --write</code></td><td><code>.vscode/mcp.json</code></td></tr>
-          <tr><td>Windsurf</td><td><code>roam mcp-setup windsurf --write</code></td><td><code>~/.codeium/windsurf/mcp_config.json</code></td></tr>
-          <tr><td>Amp (Sourcegraph)</td><td>Manual stdio entry</td><td>Amp MCP settings with command <code>roam mcp</code></td></tr>
+          <tr><td><a href="#claude-code">Claude Code</a></td><td><code>roam mcp-setup claude-code --write</code></td><td><code>.mcp.json</code> in project root</td></tr>
+          <tr><td><a href="#cursor">Cursor</a></td><td><code>roam mcp-setup cursor --write</code></td><td><code>.cursor/mcp.json</code></td></tr>
+          <tr><td><a href="#gemini-cli">Gemini CLI</a></td><td><code>roam mcp-setup gemini-cli --write</code></td><td><code>~/.gemini/settings.json</code></td></tr>
+          <tr><td><a href="#codex-cli">Codex CLI</a></td><td><code>roam mcp-setup codex-cli --write</code></td><td><code>~/.codex/config.toml</code> or <code>codex mcp add</code></td></tr>
+          <tr><td><a href="#vscode">VS Code</a></td><td><code>roam mcp-setup vscode --write</code></td><td><code>.vscode/mcp.json</code></td></tr>
+          <tr><td><a href="#windsurf">Windsurf</a></td><td><code>roam mcp-setup windsurf --write</code></td><td><code>~/.codeium/windsurf/mcp_config.json</code></td></tr>
+          <tr><td><a href="#amp">Amp (Sourcegraph)</a></td><td>Manual stdio entry</td><td>Amp MCP settings with command <code>roam mcp</code></td></tr>
         </tbody>
       </table></div>
     </section>
@@ -151,7 +165,8 @@
       <h3>3. First end-to-end workflow</h3>
       <p>Ask the agent to find one function in your project and inspect its
         callers. Use the <a href="/docs/mcp-usage#typical-agent-flow">core-preset
-        example</a> for actual MCP call names and arguments.</p>
+        example</a> for actual MCP call names and arguments, then follow the
+        <a href="#validate-connection">connection and routine checklist</a>.</p>
     </section>
 
     <section>
@@ -191,6 +206,7 @@ codex mcp list</code></pre>
         then make a real query. If needed, set the server's <code>cwd</code>
         to the intended project and use an absolute executable path. See
         <a href="https://learn.chatgpt.com/docs/extend/mcp?surface=cli">OpenAI's MCP configuration guide</a>.</p>
+      <p>Finish with the <a href="#validate-connection">connection and routine checklist</a>.</p>
     </section>
 
     <section>
@@ -221,7 +237,8 @@ codex mcp list</code></pre>
 roam mcp-setup vscode --write</code></pre>
       <p>The generator targets the project's <code>.vscode/mcp.json</code>.
         Review the preview first, restart the MCP connection, and check
-        Roam's tools in the agent interface.</p>
+        Roam's tools in the agent interface. Finish with the
+        <a href="#validate-connection">connection and routine checklist</a>.</p>
     </section>
 
     <section>
@@ -230,7 +247,22 @@ roam mcp-setup vscode --write</code></pre>
 roam mcp-setup windsurf --write</code></pre>
       <p>The generator targets the user-level
         <code>~/.codeium/windsurf/mcp_config.json</code>. Confirm the intended
-        project root after restarting the connection.</p>
+        project root after restarting the connection, then follow the
+        <a href="#validate-connection">connection and routine checklist</a>.</p>
+    </section>
+
+    <section>
+      <h2 id="validate-connection">Check the connection, then add the routine</h2>
+      <ul>
+        <li>Confirm the connected client exposes the intended Roam preset and uses the intended project root.</li>
+        <li>Ask the agent to locate a known function using <code>roam_search_symbol</code>, then inspect its references with <code>roam_uses</code>. Check the returned source locations.</li>
+        <li>Inspect result status, scanned scope, freshness, and any partial or failed checks. Follow <a href="/docs/mcp-usage#troubleshooting">result-state guidance</a>; an empty list alone is unknown.</li>
+      </ul>
+      <p>Connection makes tools available; it does not ensure the agent uses
+        them. Add a small instruction to your project's agent guidance:</p>
+<pre><code>Use Roam to find relevant code and inspect indexed callers before a non-trivial edit.
+Read the returned source locations and limitations. After editing, refresh the index
+and run the project's required tests and review checks. Keep missing evidence explicit.</code></pre>
     </section>
 
     <section>
@@ -356,20 +388,6 @@ roam evidence-oscal --kind assessment-results --evidence change-evidence.json --
         <a href="/audit#evidence">PR Replay &mdash; Eight questions every
         packet answers</a>.
       </p>
-    </section>
-
-    <section>
-      <h2 id="validate-connection">Check the connection, then add the routine</h2>
-      <ul>
-        <li>Confirm the connected client exposes the intended Roam preset and uses the intended project root.</li>
-        <li>Ask the agent to locate a known function using <code>roam_search_symbol</code>, then inspect its references with <code>roam_uses</code>. Check the returned source locations.</li>
-        <li>Inspect result status, scanned scope, freshness, and any partial or failed checks. Follow <a href="/docs/mcp-usage#troubleshooting">result-state guidance</a>; an empty list alone is unknown.</li>
-      </ul>
-      <p>Connection makes tools available; it does not ensure the agent uses
-        them. Add a small instruction to your project's agent guidance:</p>
-<pre><code>Use Roam to find relevant code and inspect indexed callers before a non-trivial edit.
-Read the returned source locations and limitations. After editing, refresh the index
-and run the project's required tests and review checks. Keep missing evidence explicit.</code></pre>
     </section>
 
     <section>

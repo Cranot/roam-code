@@ -96,6 +96,35 @@ def test_atlas_ci_runs_data_and_real_module_interaction_contracts():
         assert "hidden" in retry.attrs and "disabled" not in retry.attrs
 
 
+def test_full_atlas_relationship_details_are_outside_the_concise_live_region():
+    """Names stay readable without automatically announcing every neighbor."""
+    page = HomepageParser((SITE / "explore.html").read_text(encoding="utf-8"))
+    inspector = next(page.root.find("aside"))
+    relationships = next(node for node in inspector.find("div") if "data-relationships" in node.attrs)
+    assert relationships in inspector.children
+    assert "data-controls" in relationships.attrs and "hidden" in relationships.attrs
+    assert "aria-live" not in relationships.attrs
+    for live in (node for node in page.elements if "aria-live" in node.attrs):
+        assert relationships not in list(live.find("div"))
+    assert "not every call at runtime" in inspector.text()
+    home = HomepageParser((SITE / "index.html").read_text(encoding="utf-8"))
+    assert not any("data-relationships" in node.attrs for node in home.elements)
+
+
+@pytest.mark.parametrize(
+    ("label", "command"),
+    [("Explore the map command", "map"), ("Explore change impact", "impact")],
+)
+def test_atlas_command_links_reach_the_named_reference_entry(label, command):
+    page = HomepageParser((SITE / "explore.html").read_text(encoding="utf-8"))
+    reference = HomepageParser((SITE / "docs/command-reference.html").read_text(encoding="utf-8"))
+    link = next(node for node in page.root.find("a") if node.text().startswith(label))
+    assert link.attrs["href"] == f"/docs/command-reference#command-{command}"
+    targets = [node for node in reference.elements if node.attrs.get("id") == f"command-{command}"]
+    assert len(targets) == 1
+    assert any(node.text() == f"roam {command}" for node in targets[0].find("code"))
+
+
 def test_public_snapshot_has_observed_denominator_and_no_dangling_areas():
     data = json.loads((SITE / "atlas-data.json").read_text(encoding="utf-8"))
     ids = {node["id"] for node in data["nodes"]}

@@ -26,6 +26,7 @@ class Element {
   }
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   getAttribute(name) { return this.attributes.get(name) ?? null; }
+  set innerHTML(value) { assert.fail('Snapshot labels must be written as text, not HTML'); }
   hasAttribute(name) { return this.attributes.has(name); }
   removeAttribute(name) { this.attributes.delete(name); }
   append(...children) { for (const child of children) { child.parentElement = this; this.children.push(child); } }
@@ -51,7 +52,7 @@ async function fixture(t, fetchImpl, count = 1, compact = false) {
   document.roots = Array.from({ length: count }, () => {
     const root = document.createElement('section');
     if (compact) root.setAttribute('data-compact', '');
-    const names = ['retry', 'node-select', 'graph', 'selection-title', 'selection-copy', 'map-count', 'map-hint', 'detail-stats', 'files', 'load-status'];
+    const names = ['retry', 'node-select', 'graph', 'selection-title', 'selection-copy', 'map-count', 'map-hint', 'detail-stats', 'files', 'load-status', 'relationships'];
     root.parts = Object.fromEntries(names.map(name => [name, document.createElement(name === 'retry' ? 'button' : name === 'node-select' ? 'select' : 'div')]));
     root.parts.retry.hidden = true;
     root.fallback = document.createElement('img'); root.parts.graph.append(root.fallback);
@@ -189,6 +190,104 @@ test('real selection and mode event handlers retain the snapshot relationships',
       assert.equal(root.parts['detail-stats'].children[1].children[0].textContent, neighbors.size);
       assert.equal(button.getAttribute('aria-pressed'), 'true');
     }
+  }
+});
+
+function relationshipGroups(root) {
+  return root.parts.relationships.children.map(group => ({
+    heading: group.children[0].textContent,
+    tag: group.children[1].tagName,
+    labels: group.children[1].children.map(item => item.textContent),
+    empty: group.children[1].textContent,
+  }));
+}
+
+test('every source area and filter has matching readable directional neighbor names', async t => {
+  const state = await fixture(t, async () => response()); const { root } = state;
+  const select = root.parts['node-select'];
+  const labels = new Map(snapshot.nodes.map(node => [node.id, node.label]));
+  for (const node of snapshot.nodes) {
+    select.value = node.id; select.dispatch('change');
+    for (const button of root.modes) {
+      button.focus(); button.dispatch('click');
+      const expected = [['outgoing', 'Imports from'], ['incoming', 'Imported by']]
+        .filter(([direction]) => button.dataset.mode === 'all' || button.dataset.mode === direction)
+        .map(([direction, heading]) => ({
+          heading,
+          labels: snapshot.edges.filter(edge => edge[direction === 'outgoing' ? 'source' : 'target'] === node.id)
+            .map(edge => labels.get(edge[direction === 'outgoing' ? 'target' : 'source'])),
+        }));
+      const groups = relationshipGroups(root);
+      assert.deepEqual(groups.map(({ heading, labels }) => ({ heading, labels })), expected);
+      assert.equal(state.document.activeElement, button, 'updating text must retain control focus');
+    }
+  }
+  assert.equal(state.calls.length, 1, 'relationship lists use the same snapshot');
+});
+
+function directionalSnapshot() {
+  const data = structuredClone(snapshot);
+  data.nodes = ['commands', 'reciprocal', 'dependency', 'consumer', 'isolated'].map((id, index) => ({
+    id, label: id, title: id, description: `${id} description`, files: 1,
+    examples: [`${id}/example.py`], x: 100 + index * 150, y: 300,
+  }));
+  data.edges = [
+    { source: 'commands', target: 'reciprocal', count: 2 },
+    { source: 'reciprocal', target: 'commands', count: 1 },
+    { source: 'commands', target: 'dependency', count: 3 },
+    { source: 'consumer', target: 'commands', count: 1 },
+  ];
+  data.files_scanned = 5; data.module_connections = 7; data.unresolved_local_imports = 0;
+  return data;
+}
+
+test('reciprocal imports remain in both lists while the combined area count stays deduplicated', async t => {
+  const data = directionalSnapshot();
+  const { root } = await fixture(t, async () => ({ ok: true, json: async () => data }));
+  assert.deepEqual(relationshipGroups(root).map(({ heading, labels }) => ({ heading, labels })), [
+    { heading: 'Imports from', labels: ['reciprocal', 'dependency'] },
+    { heading: 'Imported by', labels: ['reciprocal', 'consumer'] },
+  ]);
+  assert.equal(root.parts['detail-stats'].children[1].children[0].textContent, 3);
+  for (const group of root.parts.relationships.children) {
+    assert.equal(group.children[1].tagName, 'ul');
+    assert.ok(group.children[1].children.every(item => item.tagName === 'li' && item.children.length === 0));
+  }
+});
+
+test('isolated area lists disclose snapshot-scoped absence in every filter', async t => {
+  const data = directionalSnapshot();
+  const { root } = await fixture(t, async () => ({ ok: true, json: async () => data }));
+  root.parts['node-select'].value = 'isolated'; root.parts['node-select'].dispatch('change');
+  for (const button of root.modes) {
+    button.dispatch('click');
+    const groups = relationshipGroups(root);
+    assert.equal(groups.length, button.dataset.mode === 'all' ? 2 : 1);
+    for (const group of groups) {
+      assert.equal(group.tag, 'p'); assert.deepEqual(group.labels, []);
+      assert.equal(group.empty, group.heading === 'Imports from'
+        ? 'No outgoing connections to other areas in this snapshot.'
+        : 'No incoming connections from other areas in this snapshot.');
+    }
+    assert.equal(root.parts['detail-stats'].children[1].children[0].textContent, 0);
+  }
+});
+
+test('hostile-looking neighbor labels remain literal text without new elements or controls', async t => {
+  const data = directionalSnapshot();
+  const label = '<img src=x onerror="alert(1)"> & <button>not a button</button>';
+  data.nodes.find(node => node.id === 'reciprocal').label = label;
+  const { root } = await fixture(t, async () => ({ ok: true, json: async () => data }));
+  assert.equal(relationshipGroups(root).filter(group => group.labels.includes(label)).length, 2);
+  const tags = element => [element.tagName, ...element.children.flatMap(tags)];
+  assert.ok(tags(root.parts.relationships).every(tag => ['div', 'h4', 'ul', 'li'].includes(tag)));
+});
+
+test('compact map keeps relationship lists out of the homepage preview', async t => {
+  const { root } = await fixture(t, async () => response(), 1, true);
+  for (const node of snapshot.nodes) {
+    root.parts['node-select'].value = node.id; root.parts['node-select'].dispatch('change');
+    assert.equal(root.parts.relationships.children.length, 0);
   }
 });
 
