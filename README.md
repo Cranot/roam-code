@@ -349,8 +349,9 @@ are separate. You do not need a paid service to use Roam with your agents.
 
 - **PR Replay — paid report by request.** A written assessment of an agreed
   change history, reviewed findings, and a founder walk-through. The existing
-  Team and Deep scopes cover 30 and 90 PRs; agree how commits map to those PRs
-  before kickoff. Try the free local sample with `roam pr-replay --tier sample`.
+  [Team and Deep scopes](https://roam-code.com/audit#tiers) define the PR window;
+  agree how commits map to those PRs before kickoff. Try the free local sample
+  with `roam pr-replay --tier sample`.
   Its default range is `HEAD~5..HEAD`, not necessarily five PRs; your checkout
   needs that history. A replay does not prove that an incident would have been prevented.
 - **Roam Review — planned, not available to subscribe to.** A proposed hosted

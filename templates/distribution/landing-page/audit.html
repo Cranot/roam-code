@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>PR Replay — Roam · Understand recent code changes</title>
-  <meta name="description" content="Review recent code changes with a free local sample or a paid PR Replay report. Team $2,500; Deep $6,000. Clear findings, limits, and a founder walk-through.">
+  <meta name="description" content="Review recent code changes with a free local sample or a paid PR Replay report. Clear findings, limits, and a founder walk-through; scope and terms agreed before work.">
   <link rel="canonical" href="https://roam-code.com/audit">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -19,7 +19,7 @@
   <meta name="robots" content="index,follow">
 
   <meta property="og:title" content="PR Replay audit — Roam">
-  <meta property="og:description" content="Free local sample or paid reports: Team $2,500, Deep $6,000. Understand structural patterns in an agreed change history, with the limits stated.">
+  <meta property="og:description" content="Free local sample or paid Team and Deep reports. Understand structural patterns in an agreed change history, with the limits stated.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/audit">
   <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
@@ -32,22 +32,45 @@
   <meta name="twitter:image" content="https://roam-code.com/og-code-analysis.png">
   <meta name="twitter:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
 
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "Service",
-    "name": "Roam PR Replay",
-    "url": "https://roam-code.com/audit",
-    "provider": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
-    "serviceType": "Structural code-review audit",
-    "areaServed": "Global (remote-delivered)",
-    "description": "Roam runs current structural checks over an agreed change history. The paid service adds a written report, reviewed findings, and a founder walk-through. Historical replay is not proof that an incident would have been prevented; tests are not rerun.",
-    "offers": [
-      {"@type": "Offer", "name": "PR Replay — Sample (DIY)", "price": "0", "priceCurrency": "USD", "availability": "https://schema.org/InStock", "description": "Free local sample over HEAD~5..HEAD: a commit range, not necessarily five pull requests. Watermarked; no founder review."},
-      {"@type": "Offer", "name": "PR Replay — Team", "price": "2500", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "30-PR report, 30-min founder walk-through. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."},
-      {"@type": "Offer", "name": "PR Replay — Deep", "price": "6000", "priceCurrency": "USD", "availability": "https://schema.org/PreOrder", "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."}
-    ]
-  }
+  <script type="application/ld+json" data-product-offers>
+{
+  "@context": "https://schema.org",
+  "@type": "Service",
+  "name": "Roam PR Replay",
+  "url": "https://roam-code.com/audit",
+  "provider": {
+    "@type": "Organization",
+    "name": "Cranot",
+    "url": "https://github.com/Cranot"
+  },
+  "serviceType": "Structural code-review audit",
+  "areaServed": "Global (remote-delivered)",
+  "description": "Roam runs current structural checks over an agreed change history. The paid service adds a written report, reviewed findings, and a founder walk-through. Historical replay is not proof that an incident would have been prevented; tests are not rerun.",
+  "offers": [
+    {
+      "@type": "Offer",
+      "name": "PR Replay — Sample (DIY)",
+      "price": "0",
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock",
+      "description": "Free local sample over HEAD~5..HEAD: a commit range, not necessarily five pull requests. Watermarked; no founder review."
+    },
+    {
+      "@type": "Offer",
+      "name": "PR Replay — Team",
+      "price": "2500",
+      "priceCurrency": "USD",
+      "description": "30-PR report, 30-min founder walk-through. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."
+    },
+    {
+      "@type": "Offer",
+      "name": "PR Replay — Deep",
+      "price": "6000",
+      "priceCurrency": "USD",
+      "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."
+    }
+  ]
+}
   </script>
 
   <script type="application/ld+json">
@@ -231,9 +254,9 @@
 
         <article class="replay-tier replay-tier--team">
           <h3>Team</h3>
-          <p class="replay-price"><strong>$2,500</strong> · 30 PRs · 30-min walk-through</p>
+          <p class="replay-price"><strong><!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact --></strong> · <!-- product-fact:teamReplayPrCount -->30<!-- /product-fact --> PRs · 30-min walk-through</p>
           <p class="replay-body">
-            A focused assessment of an agreed 30-PR history window.
+            A focused assessment of an agreed <!-- product-fact:teamReplayPrCount -->30<!-- /product-fact -->-PR history window.
           </p>
           <ul class="selling-deliverables">
             <li>Markdown + PDF report with ranked findings and a breakdown by check.</li>
@@ -242,7 +265,7 @@
           </ul>
           <p class="replay-foot">5 business days from the agreed kickoff.
             We confirm availability before work starts.</p>
-          <p class="replay-body"><strong>$1,250 banked toward Roam Review</strong>
+          <p class="replay-body"><strong><!-- product-fact:teamCreditPrice -->$1,250<!-- /product-fact --> banked toward Roam Review</strong>
             — redeemable within 60 days of its launch, not before.
             <a href="#credit">Read the future-credit conditions</a>.</p>
           <!-- STRIPE_TEAM_LINK / PLACEHOLDER_TEAM: when the live Stripe
@@ -253,16 +276,16 @@
                founder to grep for. -->
           <a class="btn-primary"
              href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%2C%20I%27m%20interested%20in%20a%20Team%20PR%20Replay%20report.%0A%0AQuestion%20we%20want%20answered%3A%20%0ALanguages%20%2F%20framework%3A%20%0ARepository%20(public%20link%20or%20will%20share%20privately)%3A%20%0AProposed%20change%20window%20or%20commit%20range%20(optional)%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0APlease%20send%20scope%20and%20availability%20before%20we%20arrange%20access%20or%20payment.%0AThis%20first%20email%20includes%20no%20source%20code%20or%20credentials.">
-            Request Team — $2,500 <!-- Evidence: PR Replay Team price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
+            Request Team — <!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact --> <!-- Evidence: PR Replay Team price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
           </a>
           <p class="replay-checkout-note">This opens an email draft, not an order. Payment follows agreed written scope and invoice confirmation.</p>
         </article>
 
         <article class="replay-tier replay-tier--deep">
           <h3>Deep</h3>
-          <p class="replay-price"><strong>$6,000</strong> · 90 PRs · 90-min walk-through</p>
+          <p class="replay-price"><strong><!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact --></strong> · <!-- product-fact:deepReplayPrCount -->90<!-- /product-fact --> PRs · 90-min walk-through</p>
           <p class="replay-body">
-            A broader assessment of an agreed 90-PR window or specified range.
+            A broader assessment of an agreed <!-- product-fact:deepReplayPrCount -->90<!-- /product-fact -->-PR window or specified range.
           </p>
           <ul class="selling-deliverables">
             <li>Everything in Team, with a deeper look at each finding category.</li>
@@ -271,7 +294,7 @@
           </ul>
           <p class="replay-foot">10 business days from the agreed kickoff.
             We confirm availability before work starts.</p>
-          <p class="replay-body"><strong>$3,000 banked toward Roam Review</strong>
+          <p class="replay-body"><strong><!-- product-fact:deepCreditPrice -->$3,000<!-- /product-fact --> banked toward Roam Review</strong>
             — redeemable within 60 days of its launch, not before.
             <a href="#credit">Read the future-credit conditions</a>.</p>
           <!-- STRIPE_DEEP_LINK / PLACEHOLDER_DEEP: when the live Stripe
@@ -282,7 +305,7 @@
                founder to grep for. -->
           <a class="btn-primary"
              href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%2C%20I%27m%20interested%20in%20a%20Deep%20PR%20Replay%20report.%0A%0AQuestion%20we%20want%20answered%3A%20%0ALanguages%20%2F%20framework%3A%20%0ARepository%20(public%20link%20or%20will%20share%20privately)%3A%20%0AProposed%20change%20window%20or%20commit%20range%20(optional)%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0APlease%20send%20scope%20and%20availability%20before%20we%20arrange%20access%20or%20payment.%0AThis%20first%20email%20includes%20no%20source%20code%20or%20credentials.">
-            Request Deep — $6,000 <!-- Evidence: PR Replay Deep price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
+            Request Deep — <!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact --> <!-- Evidence: PR Replay Deep price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
           </a>
           <p class="replay-checkout-note">This opens an email draft, not an order. Payment follows agreed written scope and invoice confirmation.</p>
         </article>
@@ -532,24 +555,24 @@
             <th scope="col">PR Replay tier</th>
             <th scope="col">Fee</th>
             <th scope="col">Credits toward Review</th>
-            <th scope="col">Remaining Review Team subscription cost, excluding the PR Replay fee ($299/mo proposal)</th>
+            <th scope="col">Remaining Review Team subscription cost, excluding the PR Replay fee (<!-- product-fact:reviewTeamProposedMonthlyPrice -->$299<!-- /product-fact -->/mo proposal)</th>
             <th scope="col">Report fee plus remaining subscription cost</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <th scope="row">Team</th>
-            <td>$2,500</td>
-            <td>$1,250</td>
-            <td>$2,338 (was $3,588)</td>
-            <td>$4,838</td>
+            <td><!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact --></td>
+            <td><!-- product-fact:teamCreditPrice -->$1,250<!-- /product-fact --></td>
+            <td><!-- product-fact:teamRemainingPrice -->$2,338<!-- /product-fact --> (was <!-- product-fact:reviewAnnualPrice -->$3,588<!-- /product-fact -->)</td>
+            <td><!-- product-fact:teamCombinedPrice -->$4,838<!-- /product-fact --></td>
           </tr>
           <tr>
             <th scope="row">Deep</th>
-            <td>$6,000</td>
-            <td>$3,000</td>
-            <td>$588 (was $3,588)</td>
-            <td>$6,588</td>
+            <td><!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact --></td>
+            <td><!-- product-fact:deepCreditPrice -->$3,000<!-- /product-fact --></td>
+            <td><!-- product-fact:deepRemainingPrice -->$588<!-- /product-fact --> (was <!-- product-fact:reviewAnnualPrice -->$3,588<!-- /product-fact -->)</td>
+            <td><!-- product-fact:deepCombinedPrice -->$6,588<!-- /product-fact --></td>
           </tr>
         </tbody>
       </table>
