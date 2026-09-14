@@ -122,6 +122,21 @@ def test_customer_email_credit_reminders_wait_for_review_launch():
     assert not re.search(r"(?<!not )\b60 (?:calendar )?days (?:after|of) (?:report )?delivery", compact, re.IGNORECASE)
 
 
+def test_status_routes_to_scoped_reports_without_implying_payment_or_live_monitoring():
+    page = HomepageParser((SITE / "status.html").read_text(encoding="utf-8"))
+    main = next(page.root.find("main"))
+    text = normalized(main.text())
+    assert "paid reports over an agreed PR scope" in text
+    assert "runs against a single PR" not in text
+    assert "ask about a paid report" in text
+    assert "This is not a live status feed" in text
+    assert "does not run uptime checks" in text
+    assert any(
+        link.attrs.get("href") == "/setup" and "Set up your agent for free" in normalized(link.text())
+        for link in main.find("a")
+    )
+
+
 def _reference():
     return HomepageParser((SITE / "docs/command-reference.html").read_text(encoding="utf-8"))
 
