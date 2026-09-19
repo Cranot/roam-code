@@ -638,9 +638,42 @@ compare the remaining content; do not strip arbitrary markup until hashes match.
 Verify the rendered address and contact link in a browser too. An explained
 transformation is separate from raw-byte identity and from cache-policy success.
 
-`make site-check` compares the served changelog with the declared version; it
-does not verify every page or asset. Record the source commit, deployment ID,
-checked URLs, content/asset comparisons, redirects, and header results separately
-from browser/device/accessibility testing. Keep the prior verified deployment
+`uv run --no-sync make site-check` now runs the maintained production acceptance
+check against the clean current commit, not just the first changelog version.
+It retains raw responses and a JSON receipt in a fresh ignored
+`internal/site-acceptance/` directory. The deploy recipe runs the same custom-domain
+check after uploading. A failed post-deploy check does not undo an upload or
+authorize automatic rollback: inspect its receipt and the prior verified export.
+
+Qualify both hostnames explicitly after publication (replace both placeholders):
+
+```bash
+uv run --no-sync python scripts/verify_site_deployment.py \
+  --commit FULL_REVIEWED_COMMIT_ID \
+  --base-url https://roam-code.com \
+  --base-url https://DEPLOYMENT_ID.roam-code.pages.dev \
+  --output-dir internal/site-acceptance/NEW_RECEIPT_DIRECTORY
+```
+
+The check binds its inventory to regular committed Git blobs, refuses a dirty or
+changed HEAD, checks canonical source facts, and requests every served file.
+It verifies HTTP status, MIME type, ten configured security/cache headers and
+content identity. Known Cloudflare email obfuscation is accepted only if reversing
+those exact shapes restores the committed HTML byte for byte; other differences
+fail. Historical changelog bytes remain historical, not rewritten to current
+counts. Transport failure is UNKNOWN; an empty or incomplete inventory cannot pass.
+
+Run `scripts/verify_site_deployment.py --source-only` in CI before deployment;
+it makes no HTTP requests and does not pretend an unpublished commit is live.
+Its additional current-fact scan is a bounded phrase check, not a semantic proof:
+source version is not a fresh package-registry observation, and human review must
+still distinguish dated measurements, current claims and offer qualifications.
+The synthetic Team report at `/examples/team-replay-report.md` demonstrates the
+deliverable format, not a performed customer audit. Its current offer bindings
+are generated; fictional scenarios and the separately dated real fixture stay distinct.
+
+Record redirects, missing-page behavior, indexing policy, browser/device checks,
+copy interactions and accessibility separately; file acceptance does not exercise
+those behaviors or certify the site's claims. Keep the prior verified deployment
 available for recovery. For a package release, use the separate
 [release guide](releases.md).

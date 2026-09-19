@@ -30,3 +30,8 @@
 # .json sibling. Scope its MIME type without changing other asset responses.
 /.well-known/mcp-server-card
   Content-Type: application/json
+
+# Keep the inspectable Markdown report readable in a browser rather than
+# relying on a provider's default file-type mapping.
+/examples/team-replay-report.md
+  Content-Type: text/plain; charset=utf-8

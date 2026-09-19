@@ -150,3 +150,19 @@ def test_stale_credit_in_written_terms_refuses_generation(product_site):
     terms.write_text(terms.read_text(encoding="utf-8").replace("$1,250 credits", "$1,000 credits"), encoding="utf-8")
     with pytest.raises(ValueError, match="scope/price/credit"):
         builder.run(product_site, write=True)
+
+
+def test_current_report_terms_and_status_are_required_bindings(product_site):
+    facts = builder.product_facts(product_site)
+    for name in ("examples/team-replay-report.md", "status.html"):
+        path = product_site / builder.SITE / name
+        text = path.read_text(encoding="utf-8")
+        for key in builder.REQUIRED[name]:
+            assert builder.fact_value(facts, key) in text
+    report = product_site / builder.SITE / "examples/team-replay-report.md"
+    original = report.read_text(encoding="utf-8")
+    assert "Synthetic engagement" in original and "**0**" in original
+    report.write_text(original.replace("$2,500", "$2,400"), encoding="utf-8")
+    assert builder.run(product_site) == 1
+    assert builder.run(product_site, write=True) == 0
+    assert report.read_text(encoding="utf-8") == original

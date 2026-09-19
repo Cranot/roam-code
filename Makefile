@@ -72,14 +72,13 @@ publish: quality-strict verify-build
 
 # roam-code.com goes out by hand on purpose (see CONTRIBUTING.md "Deploys"):
 # a human says when the site ships. These targets keep the step from being
-# lost: site-check names the drift the moment the live site falls behind the
-# declared version (measured 2026-08: a release sat undeployed for a month
-# because the command lived only in a doc), site-deploy is the one command.
+# lost: site-check compares every served file with the clean current commit.
+# Publication still requires review and the exact commit's CI acceptance.
 site-check:
-	@declared=$$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"); \
-	live=$$(curl -sL https://roam-code.com/changelog | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1); \
-	echo "declared=$$declared live=$$live"; \
-	[ "$$declared" = "$$live" ] || { echo "DRIFT: live roam-code.com is behind -- run 'make site-deploy'"; exit 1; }
+	@set -eu; \
+	site_sha=$$(git rev-parse --verify HEAD); \
+	site_receipt=$$(python -c "import uuid; print('internal/site-acceptance/' + uuid.uuid4().hex)"); \
+	python scripts/verify_site_deployment.py --commit "$$site_sha" --base-url https://roam-code.com --output-dir "$$site_receipt"
 
 site-deploy:
 	@set -eu; \
@@ -87,7 +86,8 @@ site-deploy:
 	[ -z "$$site_status" ] || { echo "Commit or preserve working changes before deploying the production site."; exit 1; }; \
 	site_sha=$$(git rev-parse --verify HEAD); \
 	site_stage=$$(python scripts/stage_site.py "$$site_sha"); \
-	npx wrangler pages deploy "$$site_stage" --project-name roam-code --branch main --commit-dirty=false --commit-hash="$$site_sha"
+	npx wrangler pages deploy "$$site_stage" --project-name roam-code --branch main --commit-dirty=false --commit-hash="$$site_sha"; \
+	python scripts/verify_site_deployment.py --commit "$$site_sha" --base-url https://roam-code.com --output-dir "$$site_stage/../acceptance"
 
 clean:
 	rm -rf build/ dist/ *.egg-info src/*.egg-info

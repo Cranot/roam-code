@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Maintained website acceptance.** Compare all deployed public files with a clean commit, canonical facts and configured security/cache headers. Retain raw responses and refuse empty, partial or stale evidence. Include a clearly synthetic full Team report-format example without inventing customer results.
 - **Inspectable website evidence.** Add a measurements guide with runnable examples, historical baselines and misses, reproduction links, and explicit missing evidence. Put a compact real command result before the homepage map while preserving the headline and design.
 - **Generated product facts.** Build a static product snapshot from source counts, version and adopted offer policy. Bind current site prices, report scopes, availability and derived credit examples; refuse malformed bindings and disagreements with written tier terms in CI.
 - **A source-derived code atlas.** Explore Roam's Python module imports on a dedicated page and in the homepage hero. Inspect direct dependencies with named controls, a static fallback, and visible source provenance. The map is a grouped import snapshot, not native command output or a prediction of runtime impact.
