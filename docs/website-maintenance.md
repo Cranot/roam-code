@@ -70,6 +70,35 @@ not detector accuracy, human comprehension, agent outcomes or savings.
 
 ## Shared typography, navigation, and writing
 
+### Downloadable identity and report preview
+
+The Press page previews the existing logo in color, ink and white, plus the node
+mark. Files in `brand/` include outlined SVGs and transparent PNGs; they are not a
+new identity. The navigation and `landing.css` remain the mark and palette owners.
+`scripts/build_brand_assets.py --write` derives mark geometry, colors, font weight
+and tracking from the current site, outlining the bundled Space Grotesk typeface.
+Its optional authoring dependency is `fonttools[woff]`; it is not needed to serve
+the site or run the ordinary test suite. Without `--write`, it checks SVG drift.
+After regeneration, run `node scripts/render_brand_assets.cjs` with the optional
+`sharp` authoring package available. This rasterizes those exact SVGs, not a
+separate drawing. No new browser/runtime dependency is introduced.
+
+Check all four variants on suitable light/dark backgrounds. SVGs must contain no
+font fetches, scripts or external assets; PNGs retain transparency. Keep the
+Press image dimensions aligned with their SVG viewBoxes. Preserve the existing
+favicon and social image unless a separate review justifies changing them.
+`tests/test_site_brand_assets.py` checks geometry, source font identity, download
+targets, dimensions, PNG alpha-channel format and report-excerpt provenance.
+These source checks do not replace inspection of the rendered assets.
+
+The Audit deliverable section uses real HTML for its synthetic report preview,
+so its text wraps and remains selectable. The quotation comes from the linked
+Team example, not a real engagement. Keep the synthetic label, unperformed
+repository review, unrun tests and fictional findings visible alongside it.
+Do not replace these with success badges or imply that the preview is a PDF.
+
+### Shared foundation
+
 `landing.css` owns the site's design foundation. All HTML routes load it;
 `home.css` and `atlas.css` provide scoped layouts, not separate color themes.
 Every page, including the full atlas and homepage map, shares the warm paper
