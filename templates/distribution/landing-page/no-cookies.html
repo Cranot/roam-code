@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>No cookies, no tracking, no analytics — the receipt — Roam</title>
-  <meta name="description" content="Roam doesn't set cookies, track visitors, or run analytics on the marketing site or in the CLI. This page documents exactly what we do and don't collect.">
+  <title>No cookies, no analytics scripts, no ad tracking — Roam</title>
+  <meta name="description" content="Roam's website uses no cookies, analytics scripts or ad tracking. Read about first-party scripts and the standard request logs processed by Cloudflare.">
   <link rel="canonical" href="https://roam-code.com/no-cookies">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="No Cookies — Roam">
-  <meta property="og:description" content="We don't set cookies. We don't track. Here's the receipt.">
+  <meta property="og:description" content="No cookies, analytics scripts or ad tracking. First-party scripts and standard request logs explained.">
   <meta property="og:url" content="https://roam-code.com/no-cookies">
   <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
   <meta name="twitter:image" content="https://roam-code.com/og-code-analysis.png">
@@ -34,7 +34,7 @@
     "name": "No Cookies",
     "url": "https://roam-code.com/no-cookies",
     "inLanguage": "en",
-    "dateModified": "2026-09-13",
+    "dateModified": "2026-09-19",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -80,8 +80,9 @@
 
   <main tabindex="-1" id="main" class="legal-page">
     <header class="legal-header">
-      <h1>No cookies. No tracking. No analytics.</h1>
+      <h1>No cookies. No analytics scripts. No ad tracking.</h1>
       <p class="legal-meta">Script inventory updated: <time datetime="2026-09-13">2026-09-13</time></p>
+      <p class="legal-meta">Privacy wording clarified: <time datetime="2026-09-19">2026-09-19</time></p>
     </header>
 
     <article>
@@ -104,7 +105,7 @@
       <ul>
         <li>HTTP request logs via Cloudflare: IP address, User-Agent, requested path, response code, timestamp</li>
         <li>Retained 30 days for security / abuse prevention (legal basis: legitimate interest, GDPR Art. 6(1)(f))</li>
-        <li>Not joined to any other dataset; not sold; not shared</li>
+        <li>Not sold, not used for behavioural advertising, and not intentionally combined with other Roam datasets; processed by Cloudflare for hosting and security</li>
       </ul>
       <p>See the full <a href="/privacy">Privacy Policy</a> for the details.</p>
 
@@ -137,10 +138,12 @@
       <h2>What changes when paid services launch?</h2>
       <p>
         <strong>Roam Cloud</strong> and <strong>Roam Review</strong> are
-        authenticated apps — they will set a session cookie for sign-in.
+        planned authenticated apps, not available today. Their proposed
+        sign-in flow uses a session cookie.
         That's a strictly-necessary cookie and exempt from cookie consent
-        under the <a href="https://eur-lex.europa.eu/eli/dir/2002/58/oj">EU ePrivacy Directive Art. 5(3)</a>. They still won't run
-        analytics or tracking scripts.
+        under the <a href="https://eur-lex.europa.eu/eli/dir/2002/58/oj">EU ePrivacy Directive Art. 5(3)</a> when used solely for the requested sign-in service.
+        The current design excludes analytics and advertising trackers.
+        We will update the privacy policy with the actual data flows before launch.
       </p>
       <p>
         Ordinary CLI analysis does not upload source code from your machine;
@@ -193,7 +196,7 @@
       <div class="footer-col">
         <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
         <a href="mailto:security@roam-code.com">security@roam-code.com</a>
-        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta">No cookies. No analytics scripts. No ad tracking.</span>
         <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
       </div>
     </div>

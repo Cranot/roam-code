@@ -7,6 +7,12 @@ Cloudflare Pages project. A Git push alone does not publish it.
 
 ## Homepage
 
+The homepage is frozen for routine marketing additions. Correct demonstrated
+errors, but do not add another slogan, feature section, animation or synthetic
+proof example merely to accommodate a new capability. Prefer an existing
+section's link when it serves the reader. The next evidence investment is
+reproducible third-party repository work, with misses and limits retained.
+
 Edit [`index.html`](../templates/distribution/landing-page/index.html) for the
 story and [`home.css`](../templates/distribution/landing-page/home.css) for its
 layout. Homepage styles are scoped to `.home-page`; shared navigation, fonts,
@@ -59,6 +65,17 @@ are not silently rewritten by a marketing generator. Historical sample reports
 retain the windows and prices of their recorded or illustrative engagements.
 The binding check catches known shapes, not every possible contradiction in
 natural language; review the whole diff and search current offer wording too.
+
+Keep offer and policy ownership explicit: `dev/site-product-policy.json` owns
+adopted availability and bound offer facts; the signed SOW/order form governs
+engagement terms; Terms and Refund explain those terms; Privacy owns processing
+disclosures. Governance may describe a by-request evidence review, not invent a
+parallel priced product or promise a future checkout. Planned subscription
+mechanics must remain conditional wherever repeated. Update visible revision
+dates and structured metadata when clarifying policy pages, retaining the
+original effective date separately. Changes to customer rights need an explicit
+commercial decision and legal review, not an automatic copy cleanup. Existing
+signed terms are not rewritten by updating a page or generator.
 
 `/measurements` is the public reading guide to runnable examples and historical
 records. Preserve engine/date/source identity, denominator, baseline, misses,
