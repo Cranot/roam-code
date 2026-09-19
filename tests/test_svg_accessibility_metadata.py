@@ -5,11 +5,33 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
+
 from scripts.strip_metadata import _scan_svg, _strip_svg
 from tests._helpers.repo_root import repo_root
 
 TITLE = b'<title id="title">Inside Roam: Python import connections</title>'
 DESC = b'<desc id="desc">Source-derived import map grouped by area. Larger circles contain more Python files. Not a runtime call graph.</desc>'
+
+
+@pytest.mark.parametrize("title", [b'<title id="title">Roam</title>', b'<title id="title">Roam mark</title>'])
+def test_brand_accessibility_titles_preserved_without_hiding_private_metadata(tmp_path, title):
+    path = svg(tmp_path, title)
+    assert _scan_svg(path) == {}
+    assert _strip_svg(path) is False
+    path.write_bytes(path.read_bytes().replace(b"</svg>", b"<title>Private author</title></svg>"))
+    assert set(_scan_svg(path)) == {"pattern_1"}
+    assert _strip_svg(path) is True
+    assert title in path.read_bytes()
+    assert b"Private author" not in path.read_bytes()
+    assert _scan_svg(path) == {}
+
+
+@pytest.mark.parametrize("name", ["roam-logo", "roam-logo-mono", "roam-logo-white", "roam-mark"])
+def test_downloadable_brand_svg_passes_metadata_scan(name):
+    path = repo_root() / "templates/distribution/landing-page/brand" / f"{name}.svg"
+    assert path.is_file()
+    assert _scan_svg(path) == {}
 
 
 def svg(tmp_path, content):

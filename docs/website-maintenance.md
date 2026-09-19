@@ -489,7 +489,8 @@ representation: it is portable across Git checkout line endings, not a raw-byte
 checksum of the checkout. Other source-byte changes still change the digest.
 
 The metadata gate preserves the atlas SVG's two reviewed, exact accessibility
-text elements. Other titles/descriptions and authoring metadata remain checked;
+text elements and the downloadable logos' exact "Roam" and "Roam mark" titles.
+Other titles/descriptions and authoring metadata remain checked;
 a filename or ARIA attribute does not exempt them. When changing this accessible
 copy, review the replacement and update the exact elements in
 `scripts/strip_metadata.py`, keeping the mixed benign/private metadata controls
