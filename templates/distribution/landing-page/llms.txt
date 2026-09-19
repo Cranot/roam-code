@@ -11,9 +11,12 @@ tools (17 in the default `core` preset) across 28 languages. AI agents
 (Claude Code, Cursor, Codex, Aider, your own) can call it before, during, and
 after a change when their workflow is configured to do so.
 
-Configured evidence workflows can emit a portable `ChangeEvidence` packet
-(HMAC-chained run ledger + signed Code Graph Attestation + signed PR bundle)
-that records available evidence for review. Read which checks ran and which
+Configured evidence workflows can collect portable change evidence for review.
+Ordinary records, an HMAC-chained run ledger, preparation bundles and optional
+attestations are distinct components; every packet does not contain all of them.
+Cosign signatures require a separately configured signing path, and keyless
+signing contacts external services. HMAC integrity uses a local key, not an
+independent identity authority. Read which checks ran and which
 were missing, and distinguish supplied decisions from observed execution.
 The packet does not authenticate who acted or by itself prove semantic
 correctness or merge approval.
@@ -88,7 +91,7 @@ deployment is a separately scoped enquiry, not a packaged hosted-product edition
 ## Compliance
 
 - Configured evidence workflows can emit in-toto v1 attestations and a SHA-256-chained audit-trail JSONL file. These are supporting records for change-management and AI-governance review, not automatic coverage of every analysis or a compliance certificate.
-- `roam article-12-check` is a scoping/readiness assessment for buyers who actually fall under EU AI Act Article 12 (Annex III high-risk AI providers). Code-generation tooling itself is not Annex III — Article 12 applies to Roam's outputs only when the buyer's product is in scope.
+- `roam article-12-check` is a scoped readiness aid, not a legal classification or compliance determination. High-risk classification is not limited to Annex III; Article 6(1) also addresses qualifying Annex I product-related systems. Applicability depends on the system, role, exceptions and applicable dates. Roam development records are not Article 12 system logs. See https://roam-code.com/security and qualified counsel.
 - License: Apache-2.0
 
 ## Differentiation

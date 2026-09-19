@@ -1,7 +1,8 @@
 # Statement of Work — Roam PR Replay
 
-> **REVIEW BEFORE USE.** v3 draft, 2026-09-09. Have a qualified
-> attorney review before binding execution. Bracketed placeholders
+> **REVIEW BEFORE USE.** v4 draft, 2026-09-19. Have a qualified
+> attorney review before binding execution and an accountant validate the
+> invoice wording and applicable tax treatment. Bracketed placeholders
 > `[LIKE_THIS]` are filled in per engagement. If Stripe Payment Links are
 > live, checkout custom fields should map 1:1 to **Section 2 (Scope)**.
 > If payment is handled by manual invoice, collect the same fields before
@@ -130,13 +131,12 @@ to the engagement scope above.
 
 A separate Greek-myDATA-compliant invoice for tax purposes will be
 issued by Provider's accountant within 30 days of payment receipt;
-the Stripe receipt does not substitute for the Greek invoice. Where
-Client is an EU B2B buyer with a valid VAT-ID, the invoice applies
-reverse-charge VAT (no VAT charged by Provider; Client self-accounts).
-Where Client is a non-EU buyer, no Greek VAT applies. Where Client is a
-Greek-established buyer, Greek VAT applies at the standard rate. The
-applicable treatment is determined at invoice time from the VAT-ID and
-address Client supplies at checkout or intake.
+the Stripe receipt does not substitute for the Greek invoice. The invoice
+follows the applicable VAT treatment. EU B2B reverse charge is applied
+where applicable, not solely because a VAT-ID is supplied. Provider's
+accountant confirms the treatment from the service, the parties' business
+status and establishments, and applicable rules. Confirm the billing
+details and any applicable VAT in writing before payment.
 
 ---
 

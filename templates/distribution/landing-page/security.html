@@ -35,7 +35,7 @@
     "name": "Security",
     "url": "https://roam-code.com/security",
     "inLanguage": "en",
-    "dateModified": "2026-06-12",
+    "dateModified": "2026-09-19",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -82,7 +82,7 @@
   <main tabindex="-1" id="main" class="legal-page">
     <header class="legal-header">
       <h1>Security &amp; AI-Governance Audit Trail</h1>
-      <p class="legal-meta">Last updated: <time datetime="2026-06-12">2026-06-12</time></p>
+      <p class="legal-meta">Last updated: <time datetime="2026-09-19">2026-09-19</time></p>
     </header>
 
     <article>
@@ -215,36 +215,33 @@
       <h3 id="supply-chain">Supply-chain integrity</h3>
       <ul>
         <li>PyPI releases use OIDC <strong>Trusted Publishing</strong> (no long-lived API tokens) — see <a href="https://github.com/Cranot/roam-code/blob/main/.github/workflows/publish.yml"><code>.github/workflows/publish.yml</code></a></li>
-        <li>Each release is built reproducibly from a tagged commit</li>
-        <li>Sigstore attestations are produced by the publish workflow (verifiable provenance)</li>
-        <li>CycloneDX SBOM emitted on every release as a separate artifact (audit-grade dependency manifest)</li>
+        <li>Releases are built by the published workflow from tagged source</li>
+        <li>The publish workflow produces Sigstore-backed PyPI attestations linking artifact digests to the publishing identity</li>
+        <li>The workflow emits a CycloneDX SBOM describing dependencies in its release inspection environment</li>
         <li>The repo enables Dependabot security updates + secret scanning + push-protection</li>
       </ul>
       <p class="note">
-        For context on why this matters: in August 2025 a hosted code-review
-        vendor was compromised through a CI/CD path —
-        <a href="https://kudelskisecurity.com/research/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories">researchers
-        achieved RCE plus write access to roughly one million repositories</a>
-        (<a class="archive-link" href="https://web.archive.org/web/20260507124707/https://kudelskisecurity.com/research/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories" rel="external" aria-label="Wayback Machine archive">archive</a>).
-        Roam's CLI is open source and runs locally by default — that
-        GitHub-App token-leak class does not apply to the local CLI. The Sigstore + SBOM chain
-        above lets you verify the wheel you install matches the tagged
-        commit you can read.
+        Local analysis does not require granting a hosted review service access
+        to your repository. It still depends on the package, its dependencies,
+        the build and publishing chain, and your machine. Attestations establish
+        provenance within that trust model; an SBOM inventories dependencies.
+        Neither establishes that the code is safe or that an independent rebuild
+        is bit-for-bit identical. We do not claim independently verified
+        reproducible builds. Inspect the workflow and tagged source when
+        evaluating a release.
       </p>
 
       <h4>Verify a release yourself</h4>
       <p>
-        After installing from PyPI, you can confirm provenance with the
-        Sigstore client. The wheel and its attestation are both fetched
-        from the publish workflow's GitHub OIDC chain — no per-release
-        keys to manage.
+        Select the exact distribution file you intend to install, then follow
+        <a href="https://docs.pypi.org/attestations/consuming-attestations/">PyPI's
+        attestation verification instructions</a> with the expected repository
+        <code>https://github.com/Cranot/roam-code</code>. The documented
+        <code>pypi-attestations</code> verifier fetches the file and its provenance
+        separately and checks the publishing identity and artifact digest.
+        A normal <code>pip download</code> does not supply an attestation sidecar.
+        Missing or failed verification is not a successful provenance check.
       </p>
-      <pre class="terminal" aria-label="Sigstore verification commands"><span class="t-prompt">$</span> <span class="t-cmd">pip install sigstore</span>
-<span class="t-prompt">$</span> <span class="t-cmd">pip download roam-code --no-deps -d /tmp/roam</span>
-<span class="t-prompt">$</span> <span class="t-cmd">sigstore verify github \
-    --cert-identity-regexp 'https://github.com/Cranot/roam-code/.github/workflows/publish.yml@.*' \
-    --bundle /tmp/roam/roam_code-*.whl.publish.attestation \
-    /tmp/roam/roam_code-*.whl</span></pre>
       <p>
         SBOM (CycloneDX) and the workflow's GitHub Attestations view are
         linked from each <a href="https://github.com/Cranot/roam-code/releases">GitHub release</a>.
@@ -317,8 +314,8 @@
       <ul>
         <li><strong>SOC 2 CC8.1 (change management)</strong> — Roam's tamper-evident audit-trail and proof bundles map to the change-management control; they supply evidence inputs an auditor would draw from, not the attestation itself.</li>
         <li><strong>ISO/IEC 42001 (AI management system)</strong> — the AI management system standard published April 2024. Roam's structural-review records and in-toto attestations support clauses on documentation, monitoring, and operational controls for AI-generated artefacts.</li>
-        <li><strong>Internal AI-governance policies</strong> — most Series B-C companies are now writing internal policies covering AI-assisted code; Roam supplies the per-PR evidence those policies need to be auditable.</li>
-        <li><strong>EU AI Act</strong> — Article 12 (record-keeping) attaches only to providers of high-risk AI systems listed in Annex III. Code-generation tooling is not in Annex III, so most teams using Cursor/Claude Code/Codex have no direct Article 12 obligation. If your <em>own product</em> is a high-risk AI system (HR-tech, edtech, fintech credit-scoring, healthtech), Roam's review attestations are circumstantial evidence for the human-oversight obligation in Article 14 — not Article 12 logs themselves. Talk to your DPO or counsel.</li>
+        <li><strong>Internal AI-governance policies</strong> — configured Roam workflows can supply development-check records for a team's review process. Whether those records meet a policy's needs depends on the required checks and the evidence actually collected.</li>
+        <li><strong>EU AI Act</strong> — Article 12 addresses record-keeping for high-risk AI systems within the Regulation's applicable regime. High-risk classification is not limited to Annex III: Article 6(1) also covers qualifying product-related systems under Annex I. Applicability depends on the system, role, classification, scope exceptions and applicable dates. Roam's development records are not themselves Article 12 system logs and do not establish compliance. Consult your DPO or counsel and the <a href="https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng">Regulation, including Articles 2, 6, 12 and 113</a>.</li>
         <li><strong>GDPR</strong> — see <a href="/privacy">Privacy Policy</a> for data-processing details + sub-processors, and <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">templates/legal/dpa.md</a> for the Article 28 processor agreement.</li>
         <li><strong>SOC 2 / ISO/IEC 42001 / ISO 27001</strong> — control mappings exist as evidence-support templates; standalone certification and packaged Self-Hosted controls are roadmapped, with no current independent attestation. See <a href="/trust#today">trust page framework status</a> for current roadmap candor.</li>
       </ul>
@@ -376,7 +373,7 @@
       <div class="footer-col">
         <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
         <a href="mailto:security@roam-code.com">security@roam-code.com</a>
-        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta">No cookies. No analytics scripts. No ad tracking.</span>
         <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
       </div>
     </div>
