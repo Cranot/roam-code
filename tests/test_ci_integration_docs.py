@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -71,10 +72,20 @@ def test_documented_cli_sarif_list_matches_the_cli_registry():
 
 
 @pytest.mark.parametrize(
-    "state", ["clean", "modified", "untracked", "hidden_untracked", "git_failure", "ignored_cache"]
+    "state",
+    [
+        "clean",
+        "modified",
+        "untracked",
+        "hidden_untracked",
+        "git_failure",
+        "ignored_cache",
+        "publish_failure",
+        "acceptance_failure",
+    ],
 )
 def test_site_deploy_requires_a_clean_identified_checkout(tmp_path, state):
-    """Execute the real recipe with a harmless npx stub; never publish a site."""
+    """Exercise real Git/staging with publisher and HTTP-check stubs; no network."""
     text = (repo_root() / "Makefile").read_text(encoding="utf-8")
     block = text.split("site-deploy:\n", 1)[1].split("\n\n", 1)[0]
     recipe = "\n".join(line.removeprefix("\t").removeprefix("@") for line in block.splitlines())
@@ -89,6 +100,14 @@ def test_site_deploy_requires_a_clean_identified_checkout(tmp_path, state):
     (project / ".gitignore").write_text(".roam/\ninternal/\n", encoding="utf-8")
     (project / "scripts").mkdir()
     (project / "scripts/stage_site.py").write_bytes((repo_root() / "scripts/stage_site.py").read_bytes())
+    # HTTP behavior has its own positive/negative controls. Here test the real
+    # recipe's argument wiring, ordering and propagation, without public requests.
+    (project / "scripts/verify_site_deployment.py").write_text(
+        "import json, os, sys\nfrom pathlib import Path\n"
+        "Path(os.environ['SITE_ACCEPTANCE_CAPTURE']).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n"
+        "sys.exit(int(os.environ['SITE_ACCEPTANCE_EXIT']))\n",
+        encoding="utf-8",
+    )
     for args in (
         ["init", "--quiet"],
         ["add", "source.txt", ".gitignore", "templates", "scripts"],
@@ -106,26 +125,48 @@ def test_site_deploy_requires_a_clean_identified_checkout(tmp_path, state):
         (site / ".roam").mkdir()
         (site / ".roam/private.json").write_text("local analysis only", encoding="utf-8")
     capture = tmp_path / "publish-arguments.txt"
-    stub = 'npx() { printf "%s\\n" "$*" > "$SITE_DEPLOY_CAPTURE"; find "$4" -type f >> "$SITE_DEPLOY_CAPTURE"; }\n'
+    acceptance = tmp_path / "acceptance-arguments.json"
+    stub = (
+        'npx() { printf "%s\\n" "$*" > "$SITE_DEPLOY_CAPTURE"; '
+        'find "$4" -type f >> "$SITE_DEPLOY_CAPTURE"; return "$SITE_PUBLISH_EXIT"; }\n'
+    )
     stub += f'python() {{ "{Path(sys.executable).as_posix()}" "$@"; }}\n'
     if state == "git_failure":
         stub += "git() { return 7; }\n"
     process = subprocess.run(
         [_bash_executable(), "-c", stub + recipe],
         cwd=project,
-        env={**os.environ, "SITE_DEPLOY_CAPTURE": Path(capture).as_posix()},
+        env={
+            **os.environ,
+            "SITE_DEPLOY_CAPTURE": capture.as_posix(),
+            "SITE_ACCEPTANCE_CAPTURE": acceptance.as_posix(),
+            "SITE_ACCEPTANCE_EXIT": "2" if state == "acceptance_failure" else "0",
+            "SITE_PUBLISH_EXIT": "7" if state == "publish_failure" else "0",
+        },
         capture_output=True,
         text=True,
         timeout=30,
     )
-    if state not in {"clean", "ignored_cache"}:
+    if state not in {"clean", "ignored_cache", "publish_failure", "acceptance_failure"}:
         assert process.returncode == (7 if state == "git_failure" else 1), process.stderr
         assert not capture.exists(), "a refused deployment must never call the publisher"
+        assert not acceptance.exists(), "a refused deployment must not claim post-deploy verification"
     else:
-        assert process.returncode == 0, process.stderr
+        expected_exit = 7 if state == "publish_failure" else 2 if state == "acceptance_failure" else 0
+        assert process.returncode == expected_exit, process.stderr
         arguments = capture.read_text(encoding="utf-8")
         assert "--commit-dirty=false" in arguments
         assert f"--commit-hash={sha}" in arguments
         assert "/index.html" in arguments, "the publisher must receive a nonempty public site"
         assert "/internal/site-deploy/" in arguments, "upload the isolated export, not the working site"
         assert "private.json" not in arguments, "ignored local analysis must never enter the upload directory"
+        if state == "publish_failure":
+            assert not acceptance.exists(), "failed publication must stop before acceptance"
+        else:
+            checked = json.loads(acceptance.read_text(encoding="utf-8"))
+            assert checked[:4] == ["--commit", sha, "--base-url", "https://roam-code.com"]
+            assert checked[4] == "--output-dir" and len(checked) == 6
+            receipt = Path(checked[5]).resolve()
+            assert receipt.name == "acceptance"
+            assert receipt.parent.parent == project / "internal/site-deploy"
+            assert receipt.parent.name.startswith(sha[:12] + "-")

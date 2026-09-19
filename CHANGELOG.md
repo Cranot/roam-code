@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Locked dependency security and website release controls.** Update AnyIO to 4.14.2 for CVE-2026-63374 and CVE-2026-64847. Exercise post-deploy acceptance failure propagation in the deployment recipe, and check the generated Status source-version binding without calling it an installed release.
 - **Comparison and evidence boundaries.** Include local code-graph peers using dated primary sources, without exclusive feature claims. Separate model reasoning from reusable local checks, qualify optional architecture and integrity records, and remove preorder metadata from commissioned report offers.
 - **Website facts and examples.** Detect and repair drift in bold Press CLI, MCP, language, and default-preset counts. Distinguish source inventory from installed releases, remove unsupported statistics from the current fact list, and link the existing captured homepage example directly from the hero and press kit. Match the Status page's report description to the existing scoped offer.
 - **Website reading paths and recovery.** Name the full atlas's direct imports and importers in readable lists, bring connection validation and the agent routine before optional integrations, and distinguish preflight reports from enforced gates. Keep nested missing pages styled, serve the extensionless discovery card as JSON, and describe available tools in the browser manifest.

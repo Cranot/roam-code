@@ -149,12 +149,32 @@ def _index_html_jsonld_version() -> str | None:
 
 
 def _status_html_current_version() -> str | None:
-    """``status.html`` ``(current: vN.N)`` Changelog pointer."""
+    """Generated source-version binding, not a claim about installed releases."""
     p = _LANDING_PAGE / "status.html"
     if not p.exists():
         return None
-    m = re.search(r"current:\s*v(\d+\.\d+(?:\.\d+)?)", p.read_text(encoding="utf-8"))
-    return m.group(1) if m else None
+    matches = re.findall(
+        r"<!-- product-fact:sourceVersion -->\s*(\d+\.\d+\.\d+)\s*<!-- /product-fact -->",
+        p.read_text(encoding="utf-8"),
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+@pytest.mark.parametrize("damage", ["stale", "missing", "duplicate", "valid"])
+def test_status_version_guard_requires_one_current_generated_binding(tmp_path, monkeypatch, damage):
+    monkeypatch.setitem(globals(), "_LANDING_PAGE", tmp_path)
+    version = "0.0.0" if damage == "stale" else _truth_version()
+    binding = f"<!-- product-fact:sourceVersion -->{version}<!-- /product-fact -->"
+    if damage == "missing":
+        binding = f"current: v{version}"
+    elif damage == "duplicate":
+        binding *= 2
+    (tmp_path / "status.html").write_text(binding, encoding="utf-8")
+    if damage == "valid":
+        TestVersionConsistency().test_status_html_current_version_matches_pyproject()
+    else:
+        with pytest.raises(AssertionError):
+            TestVersionConsistency().test_status_html_current_version_matches_pyproject()
 
 
 def _changelog_html_latest_release_version() -> str | None:
@@ -311,19 +331,17 @@ class TestVersionConsistency:
         )
 
     def test_status_html_current_version_matches_pyproject(self):
-        """``status.html`` Changelog pointer ``(current: vN.N)`` must equal
-        pyproject — it said ``v13.2`` after the v13.3/v13.4 releases."""
+        """The generated Status source snapshot must match pyproject."""
         truth = _truth_version()
         actual = _status_html_current_version()
         if actual is None:
             p = _LANDING_PAGE / "status.html"
             if not p.exists():
                 pytest.skip("landing-page status.html not present (dev-local)")
-            raise AssertionError("status.html missing '(current: vN.N)' Changelog pointer")
+            raise AssertionError("status.html needs exactly one valid product-fact:sourceVersion binding")
         assert actual == truth, (
-            f"status.html says 'current: v{actual}' but pyproject is {truth!r} — "
-            f"update the '(current: v...)' pointer in "
-            f"templates/distribution/landing-page/status.html to v{truth}"
+            f"status.html source snapshot {actual!r} differs from pyproject {truth!r}; "
+            "regenerate with scripts/build_site_product_facts.py --write"
         )
 
     def test_changelog_html_latest_release_matches_pyproject(self):
