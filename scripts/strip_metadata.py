@@ -213,6 +213,8 @@ SVG_LEAK_PATTERNS = [
 # Keep the scan and rewrite paths aligned, including later unapproved elements.
 SVG_REVIEWED_ACCESSIBILITY_ELEMENTS = frozenset(
     {
+        b'<title id="title">Roam</title>',
+        b'<title id="title">Roam mark</title>',
         b'<title id="title">Inside Roam: Python import connections</title>',
         b'<desc id="desc">Source-derived import map grouped by area. Larger circles contain more Python files. Not a runtime call graph.</desc>',
     }
