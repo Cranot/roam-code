@@ -239,6 +239,8 @@
 
   <section class="compare section-intro-tight">
     <div class="compare-inner">
+      <details class="historical-comparison">
+      <summary>Historical vendor comparison: review tools — reviewed June 12, 2026</summary>
       <h2 class="compare-h2--tight">Dated comparison: review tools</h2>
       <p class="lede compare-lede--tight">
         This table retains the June 12, 2026 review of CodeRabbit, Greptile,
@@ -338,11 +340,14 @@
       <p class="compare-foot">
         <sup>*</sup>self-host or private deployment is vendor-specific and generally enterprise-scoped; <sup>**</sup>annual billing where listed (Qodo lists $38 monthly / $30 annual); <sup>***</sup>Roam exposes the code graph as an MCP server (agents call roam tools directly); CodeRabbit lists MCP connections, Greptile lists external-app connections, Qodo lists Enterprise MCP tools, and SonarQube ships an MCP server plus Cloud-native MCP.
       </p>
+      </details>
     </div>
   </section>
 
   <section class="compare section-intro-tight" id="ide-agents">
     <div class="compare-inner">
+      <details class="historical-comparison">
+      <summary>Historical vendor comparison: coding agents — reviewed June 12, 2026</summary>
       <h2 class="compare-h2--tight">Dated comparison: coding agents</h2>
       <p class="lede compare-lede--tight">
         These are the coding tools included in the June 12, 2026 source review.
@@ -469,6 +474,7 @@
         — see <a href="#methodology">methodology</a> below for full
         citations.
       </p>
+      </details>
     </div>
   </section>
 
@@ -490,7 +496,9 @@
 
   <section class="whats-in whats-in--flush-top">
     <div class="whats-in-inner whats-in-inner--prose">
-      <h3 class="text-center">Sources verified <time datetime="2026-06-12">2026-06-12</time></h3>
+      <details class="historical-comparison">
+      <summary>Historical source notes — reviewed June 12, 2026</summary>
+      <h3 class="text-center">Sources reviewed <time datetime="2026-06-12">2026-06-12</time></h3>
       <ul class="prose-list">
         <li><strong>CodeRabbit:</strong> pricing — <a href="https://www.coderabbit.ai/pricing">coderabbit.ai/pricing</a>; product capabilities — <a href="https://www.coderabbit.ai/">coderabbit.ai</a>. Pro tier: $24/user/mo annual; Free tier includes PR summarization and IDE/CLI reviews; Enterprise lists self-hosting, RBAC, SSO, and audit logging.</li>
         <li><strong>Greptile:</strong> pricing — <a href="https://www.greptile.com/pricing">greptile.com/pricing</a>; product — <a href="https://www.greptile.com/">greptile.com</a>. Pro tier: $30/seat/mo with 50 reviews included per seat and $1 additional reviews; Enterprise lists self-hosting.</li>
@@ -498,7 +506,7 @@
         <li><strong>SonarQube:</strong> pricing — <a href="https://www.sonarsource.com/plans-and-pricing/">sonarsource.com/plans-and-pricing</a>; MCP announcements — <a href="https://www.sonarsource.com/blog/announcing-sonarqube-mcp-server">standalone MCP server</a> and <a href="https://www.sonarsource.com/blog/announcing-native-mcp-server-in-sonarqube-cloud/">native Cloud MCP</a>. Cloud Team starts at $32/mo for private projects up to 100k LOC.</li>
         <li><strong>Cursor:</strong> pricing and enterprise feature list — <a href="https://cursor.com/en-US/pricing">cursor.com/pricing</a>. Teams lists shared team context, SSO, privacy mode, analytics, and centralized billing; Enterprise lists SCIM, AI code tracking API, audit logs, granular admin controls, and pooled usage.</li>
         <li><strong>Sourcegraph Cody / Amp:</strong> plan deprecation — <a href="https://sourcegraph.com/blog/changes-to-cody-free-pro-and-enterprise-starter-plans">sourcegraph.com/blog/changes-to-cody-free-pro-and-enterprise-starter-plans</a>; enterprise pricing — <a href="https://sourcegraph.com/pricing">sourcegraph.com/pricing</a>; security portal — <a href="https://security.sourcegraph.com/">security.sourcegraph.com</a>. Cody Free + Pro ended on 2025-07-23; Sourcegraph pricing now lists an Enterprise platform starting at $16K.</li>
-        <li><strong>Aider:</strong> homepage — <a href="https://aider.chat/">aider.chat</a>. v3.0 ships internal debugger + NL query interpretation; no native MCP, no governance surface; BYOK LLM.</li>
+        <li><strong>Aider:</strong> homepage — <a href="https://aider.chat/">aider.chat</a>. Consult its current documentation; this historical table does not establish the absence of a capability.</li>
         <li><strong>Windsurf:</strong> security — <a href="https://windsurf.com/security">windsurf.com/security</a>. SOC 2 Type II certification, FedRAMP High accreditation, HIPAA posture, Cloud / Hybrid / Self-hosted tiers, and detailed data-flow notes are documented there.</li>
         <li><strong>Continue.dev:</strong> MCP transports — <a href="https://docs.continue.dev/customize/deep-dives/mcp">docs.continue.dev/customize/deep-dives/mcp</a>; changelog — <a href="https://changelog.continue.dev/">changelog.continue.dev</a>. Stdio + SSE + streamable-http with OAuth on MCP servers.</li>
         <li><strong>Sweep AI:</strong> product + pricing — <a href="https://sweep.dev/">sweep.dev</a>, <a href="https://docs.sweep.dev/pricing">docs.sweep.dev/pricing</a>. Current public surface is a JetBrains coding assistant with proprietary LLMs, zero third-party retention claims, MCP changelog entries, and SOC 2 compliance language.</li>
@@ -506,11 +514,12 @@
         <li><strong>Roam:</strong> pricing — <a href="/pricing">/pricing</a>; product — <a href="/">homepage</a>; source — <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a>.</li>
       </ul>
 
+      </details>
       <h3 class="text-center prose-h3-spaced">How we mark each cell</h3>
       <ul class="prose-list">
         <li><strong class="yes legend-yes">Yes</strong> — capability documented on the vendor's marketing or docs page</li>
         <li><strong class="ltd legend-ltd">Limited</strong> — partial capability or restricted availability described in the reviewed sources</li>
-        <li><strong class="no legend-no">Not advertised</strong> — we could not find the capability documented; this is verifiable via vendor pages above</li>
+        <li><strong class="no legend-no">Not advertised</strong> — we did not find the capability in the sources reviewed on the stated date; current documentation may differ</li>
       </ul>
 
       <h3 class="text-center prose-h3-spaced">Why "alongside", not "instead of"</h3>

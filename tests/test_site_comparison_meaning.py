@@ -55,3 +55,14 @@ def test_dated_comparison_and_existing_terms_remain_explicit():
     assert "proposed $99-$1,499/mo" in html
     assert "within 60 days" in html
     assert "not available to subscribe to" in html
+
+
+def test_historical_matrices_are_native_closed_disclosures_with_sources():
+    html = _page("compare.html")
+    disclosures = re.findall(r'<details class="historical-comparison">(.*?)</details>', html, re.S)
+    assert len(disclosures) == 3
+    for block in disclosures:
+        assert re.search(r"<summary>Historical.*June 12, 2026</summary>", block)
+    assert sum("<table" in block for block in disclosures) == 2
+    assert "https://aider.chat/" in disclosures[-1]
+    assert "v3.0 ships internal debugger" not in html

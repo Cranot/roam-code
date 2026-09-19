@@ -715,6 +715,16 @@ label:focus-within,
    centre all body cells; the layered version reads as prose (left-align
    the "what it sees" column for readability). */
 .compare-table--layered tbody td { text-align: left; }
+.historical-comparison > summary {
+  cursor: pointer;
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-alt);
+  font-size: var(--t-base);
+  line-height: var(--lh-snug);
+}
+.historical-comparison[open] > summary { margin-bottom: var(--s-5); }
 .compare-table--layered tbody th[scope="row"] { width: 180px; min-width: 160px; }
 
 /* ─── What's in the free CLI ─── */

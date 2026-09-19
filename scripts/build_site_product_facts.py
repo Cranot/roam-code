@@ -50,6 +50,8 @@ REQUIRED = {
     "docs/architecture.html": {"teamReplayPrCount", "deepReplayPrCount"},
     "docs/mcp-usage.html": {"teamReplayPrCount", "deepReplayPrCount"},
     "index.html": {"defaultMcpToolCount"},
+    "status.html": {"sourceVersion", "productAvailability.review", "productAvailability.cloud"},
+    "examples/team-replay-report.md": {"teamReplayPrice", "teamReplayPrCount", "teamCreditPrice"},
 }
 
 
@@ -215,7 +217,7 @@ def run(root: Path = ROOT, *, write: bool = False) -> int:
     pending = {root / SNAPSHOT: json.dumps(facts, ensure_ascii=False, indent=2) + "\n"}
     scanned = 0
     for path in sorted((root / SITE).rglob("*")):
-        if path.suffix not in {".html", ".txt"}:
+        if path.suffix not in {".html", ".txt", ".md"}:
             continue
         scanned += 1
         text = path.read_text(encoding="utf-8")

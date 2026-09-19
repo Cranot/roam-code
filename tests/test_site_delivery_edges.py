@@ -15,6 +15,7 @@ import pytest
 from tests.test_homepage_contract import SITE, HomepageParser
 
 CARD_PATH = "/.well-known/mcp-server-card"
+REPORT_PATH = "/examples/team-replay-report.md"
 CONTROL_PATHS = [
     "/",
     "/docs/",
@@ -86,8 +87,9 @@ def _header_rules(source):
 def _assert_scoped_card_type(source):
     rules = _header_rules(source)
     owners = [(path, value) for path, headers in rules for name, value in headers if name == "content-type"]
-    assert owners == [(CARD_PATH, "application/json")], "Use one exact-path JSON MIME owner, not a broad override"
-    for path in [CARD_PATH, *CONTROL_PATHS]:
+    expected_types = {CARD_PATH: "application/json", REPORT_PATH: "text/plain; charset=utf-8"}
+    assert owners == list(expected_types.items()), "Use exact-path MIME owners, not broad overrides"
+    for path in [CARD_PATH, REPORT_PATH, "/examples/other.md", *CONTROL_PATHS]:
         # Only this file's plain paths and '*' splat are modeled. Provider
         # default headers and actual response behavior need live verification.
         headers = [
@@ -100,7 +102,7 @@ def _assert_scoped_card_type(source):
         assert SECURITY_HEADERS <= values.keys()
         assert values["x-content-type-options"] == "nosniff"
         assert values["cache-control"] == "public, max-age=0, must-revalidate"
-        assert values.get("content-type") == ("application/json" if path == CARD_PATH else None)
+        assert values.get("content-type") == expected_types.get(path)
 
 
 def test_extensionless_card_has_one_exact_json_mime_rule_without_changing_other_routes():
@@ -116,6 +118,7 @@ def test_mime_guard_rejects_broad_wrong_or_duplicate_custom_headers(mutation):
     )
     source += "  X-Content-Type-Options: nosniff\n  Cache-Control: public, max-age=0, must-revalidate\n"
     source += CARD_PATH + "\n  Content-Type: application/json\n"
+    source += REPORT_PATH + "\n  Content-Type: text/plain; charset=utf-8\n"
     _assert_scoped_card_type(source)
     if mutation == "broad-type":
         source = source.replace(CARD_PATH + "\n", "/.well-known/*\n")
