@@ -152,6 +152,15 @@ def test_stale_credit_in_written_terms_refuses_generation(product_site):
         builder.run(product_site, write=True)
 
 
+def test_mcp_tutorial_is_required_without_commercial_bindings(product_site):
+    assert builder.REQUIRED["docs/mcp-usage.html"] == set()
+    assert builder.run(product_site) == 0
+    tutorial = product_site / builder.SITE / "docs/mcp-usage.html"
+    tutorial.unlink()
+    with pytest.raises(ValueError, match="missing or empty required site scope"):
+        builder.run(product_site)
+
+
 def test_current_report_terms_and_status_are_required_bindings(product_site):
     facts = builder.product_facts(product_site)
     for name in ("examples/team-replay-report.md", "status.html"):

@@ -488,6 +488,18 @@ record the conflict privately and resolve it with the owner before publication;
 do not silently change commercial terms. Legal templates with placeholders are
 templates, not executed agreements or evidence of business readiness.
 
+The September 20, 2026 PR Replay finding-review revision is prospective:
+new engagements must expressly adopt it, and already-agreed rights remain
+unchanged. Keep Audit FAQ + JSON-LD, Refund, and SOW sections 6/8 aligned on
+the evidence test, original finding denominator, 5-business-day objection
+window, 10-business-day response, and 30-calendar-day unresolved fallback.
+Information requests cannot reset that deadline. Preserve both full-refund
+thresholds and the attorney-review gate before binding execution. The regression
+checks in `tests/test_site_finding_review_terms.py` pin these boundaries; they
+are not legal review. Credit amounts and launch-based conditions remain in
+SOW section 7; avoid hypothetical future subscription-bill arithmetic in Audit.
+The MCP tutorial links to the offer without duplicating its commercial scope.
+
 Styles for the existing pricing/report pages are scoped to `.selling-page` in
 `landing.css`. Preserve the homepage's own styling and existing route/fragment
 links. FAQ structured data must match every visible answer. Keep unavailable

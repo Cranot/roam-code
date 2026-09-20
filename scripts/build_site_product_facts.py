@@ -48,7 +48,9 @@ REQUIRED = {
     "compare.html": {"teamReplayPrice", "teamReplayPrCount", "deepReplayPrice", "deepReplayPrCount"},
     "llms.txt": {"teamReplayPrice", "deepReplayPrice"},
     "docs/architecture.html": {"teamReplayPrCount", "deepReplayPrCount"},
-    "docs/mcp-usage.html": {"teamReplayPrCount", "deepReplayPrCount"},
+    # Technical reference links to the offer rather than repeating paid scope.
+    # Keep the page mandatory and scan copied claims without requiring a pitch.
+    "docs/mcp-usage.html": set(),
     "index.html": {"defaultMcpToolCount"},
     "status.html": {"sourceVersion", "productAvailability.review", "productAvailability.cloud"},
     "examples/team-replay-report.md": {"teamReplayPrice", "teamReplayPrCount", "teamCreditPrice"},
