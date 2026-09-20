@@ -1,4 +1,7 @@
-"""W805-MMM: Empty-corpus Pattern-2 + Pattern-1-V-D smoke test on ``cmd_pr_replay``.
+"""Regression status (2026-09-20): no-scan guards now resolve the four
+expected failures below. Historical investigation follows.
+
+W805-MMM: Empty-corpus Pattern-2 + Pattern-1-V-D smoke test on ``cmd_pr_replay``.
 
 Sixty-fifth-in-batch W805 sweep. End-to-end ChangeEvidence compiler
 empty-PR analog peer of W805-FFF (cmd_cga -- in-toto predicate
@@ -218,16 +221,6 @@ def test_empty_pr_envelope_has_verdict(cli_runner, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-MMM Pattern-2 bug: cmd_pr_replay emits no `state` field when the "
-        "commit range resolves to ZERO commits. Verdict reads 'no commits matched' "
-        "(JSON) / 'Clean window' (Markdown) without a state disclosure. Fix: "
-        "cmd_pr_replay.py:3700-3729 must set summary.state='empty_corpus' (or "
-        "'no_commits_in_range') when summary.commits_scanned == 0."
-    ),
-)
 def test_empty_pr_state_explicit(cli_runner, tmp_path, monkeypatch):
     """Empty corpus -> ``summary.state`` MUST be explicitly set (e.g.
     ``"empty_corpus"`` / ``"no_commits_in_range"``), NOT a silent green
@@ -253,14 +246,6 @@ def test_empty_pr_state_explicit(cli_runner, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-MMM Pattern-2 bug: cmd_pr_replay emits partial_success=false on a "
-        "zero-commit range. No real replay happened -- the engine was trivially "
-        "'clean'. Fix: set partial_success=True whenever commits_scanned == 0."
-    ),
-)
 def test_empty_pr_partial_success_set(cli_runner, tmp_path, monkeypatch):
     """Pattern-2: degenerate input flips ``partial_success``."""
     proj = tmp_path / "partial"
@@ -327,17 +312,6 @@ def test_law6_verdict_standalone(cli_runner, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-MMM Pattern-1-V-D bug: cmd_pr_replay emits no `resolution` field "
-        "(closed enum: pr_range / empty_range / unindexed / ...). The replay over "
-        "an empty range produces a verdict indistinguishable from a populated "
-        "range with zero findings -- both read 'Clean window' in Markdown. Fix: "
-        "stamp resolution='empty_range' (or similar) on summary when "
-        "commits_scanned == 0."
-    ),
-)
 def test_missing_bundle_resolution_disclosed(cli_runner, tmp_path, monkeypatch):
     """Pattern-1-V-D: the resolution state of the PR-range query MUST
     be disclosed via a ``resolution`` field on the summary. Without it,
@@ -372,19 +346,6 @@ def test_missing_bundle_resolution_disclosed(cli_runner, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-MMM Pattern-2 bug (W805-FFF empty-hash family analog at the end-to-"
-        "end compiler tier): empty-corpus Markdown report emits 'Verdict: Clean "
-        "window. None of the 0 PRs replayed would have been flagged...' exactly "
-        "like a real 5-PR window with zero detector hits. An agent OR a buyer "
-        "reading the Markdown cannot tell which one ran. Fix: cmd_pr_replay.py:"
-        "2913-2917 must branch on commits_scanned == 0 -> 'EMPTY CORPUS:' / "
-        "'no PRs in window' (Markdown) AND summary.verdict starts with "
-        "'empty corpus' / 'no PRs matched' (JSON)."
-    ),
-)
 def test_no_silent_replay_complete_on_empty(cli_runner, tmp_path, monkeypatch):
     """The JSON verdict + the Markdown report MUST NOT collapse to the
     'Clean window' string used for real-PR-with-no-findings scans.
