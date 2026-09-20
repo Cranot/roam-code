@@ -212,6 +212,21 @@
 <span class="t-prompt">#</span> <span class="t-cmd">MCP reactive watcher (optional watchdog dependency)</span>
 <span class="t-prompt">$</span> <span class="t-cmd">pip install watchdog</span>
 <span class="t-prompt">$</span> <span class="t-cmd">ROAM_MCP_WATCH=1 roam mcp</span></pre>
+        <p>
+          <strong>Missing numeric metrics?</strong> Algebraic connectivity
+          needs the optional NumPy and SciPy dependencies. For a pip-managed
+          installation, install the metrics extra in the same Python environment
+          as Roam, then rerun the check. If you installed with pipx or uv tool,
+          add the extra through that tool's environment instead.
+        </p>
+<pre class="terminal" aria-label="Enable optional metrics and recheck health"><span class="t-prompt">$</span> <span class="t-cmd">python -m pip install "roam-code[metrics]"</span>
+<span class="t-prompt">$</span> <span class="t-cmd">roam --json health --explain</span></pre>
+        <p>
+          Read the warnings and <code>partial_success</code> field again after
+          installation: other checks may still be incomplete. A health score
+          describes static analysis; it is not a test-suite result or proof
+          that the code works.
+        </p>
       </div>
     </section>
 

@@ -80,6 +80,8 @@ def _invoke_pr_replay(runner: CliRunner, cwd, *extra, json_mode: bool = True):
     if json_mode:
         args.append("--json")
     args.append("pr-replay")
+    # Exercise aggregation with actual fixture history, not an invalid default.
+    args.extend(["--range", "HEAD"])
     args.extend(extra)
 
     old_cwd = os.getcwd()

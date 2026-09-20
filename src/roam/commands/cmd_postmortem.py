@@ -70,9 +70,9 @@ def _git_log_in_range(commit_range: str, *, limit: int = 100) -> list[dict]:
             errors="replace",
         )
         if result.returncode != 0:
-            return []
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
+            raise RuntimeError(f"Git could not enumerate the requested range (exit {result.returncode})")
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Git range enumeration unavailable: {type(exc).__name__}") from exc
     out: list[dict] = []
     for line in result.stdout.splitlines():
         parts = line.split("\t")
@@ -382,9 +382,19 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
         or []
     )
     if not commits:
+        range_unavailable = bool(_w607an_warnings_out)
+        no_scan_state = "range_unavailable" if range_unavailable else "no_commits_in_range"
+        no_scan_verdict = (
+            "Replay unavailable: Git commit range could not be enumerated"
+            if range_unavailable
+            else "No replay performed: requested range contains no commits"
+        )
         if json_mode:
             no_commits_summary = {
-                "verdict": "no commits matched",
+                "verdict": no_scan_verdict,
+                "state": no_scan_state,
+                "resolution": "unresolved" if range_unavailable else "empty_range",
+                "partial_success": True,
                 "commit_range": commit_range,
                 "commits_scanned": 0,
                 "commits_with_findings": 0,
@@ -410,7 +420,7 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
                 )
             )
         else:
-            click.echo(f"VERDICT: no commits matched {commit_range}", err=True)
+            click.echo(f"VERDICT: {no_scan_verdict}: {commit_range}", err=True)
         # Use return — ctx.exit() can swallow output when invoked via CliRunner.
         _ = EXIT_SUCCESS  # exit code surfaces via Click's normal return path
         return

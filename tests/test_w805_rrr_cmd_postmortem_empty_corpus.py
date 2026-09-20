@@ -254,23 +254,6 @@ def test_clean_corpus_emits_real_postmortem():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-RRR BUG #1 (Pattern-1-V-D + Pattern-2 silent-SAFE): the "
-        "empty-range path at cmd_postmortem.py:197-217 emits "
-        "partial_success: False with verdict 'no commits matched' and "
-        "NO state field disclosing WHICH empty-path was hit. A "
-        "user-intent --limit 0, a typo-range, and a real empty repo "
-        "all produce byte-identical envelopes. Per Pattern-1-V-D, the "
-        "envelope MUST surface a 'state' (closed enum) naming the "
-        "cause AND set partial_success: True for the "
-        "degraded-resolution case. Fix template: add summary['state'] "
-        "= 'no_commits_matched' (or 'invalid_range' when git returned "
-        "non-zero) and set partial_success: True so consumers can "
-        "branch on real-empty vs degraded-input."
-    ),
-)
 def test_empty_corpus_state_explicit():
     """Empty-range envelope SHOULD name the empty-cause explicitly.
 
@@ -287,21 +270,6 @@ def test_empty_corpus_state_explicit():
     assert isinstance(state, str) and state, f"empty-range path did not surface explicit state field: {summary!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-RRR BUG #1 follow-on (Pattern-2 silent-SAFE on empty "
-        "range): the envelope sets partial_success: False on an "
-        "empty-range / typo-range / --limit 0 input. Per the "
-        "Pattern-2 rule ('never emit verdict: SAFE / completed when "
-        "the underlying check failed or didn't run'), a degraded "
-        "input must surface partial_success: True. Today the inner "
-        "_git_log_in_range catches git's non-zero exit and returns "
-        "[] -- a silent fallback (CP45/CP46) that loses the "
-        "distinction between 'walked zero commits' and 'git rejected "
-        "the range'."
-    ),
-)
 def test_empty_corpus_partial_success_set():
     """Empty-range envelope SHOULD set partial_success: True.
 
@@ -314,35 +282,6 @@ def test_empty_corpus_partial_success_set():
     assert env["summary"]["partial_success"] is True
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-RRR BUG #2 (Pattern-2 silent-SAFE on zero-findings "
-        "retroactive replay): at cmd_postmortem.py:250-272, when "
-        "commits_with_findings == 0, the verdict reads "
-        "'0 of N commits would have surfaced findings (0 high, 0 "
-        "medium total)' with partial_success: False -- a "
-        "'successful' retroactive replay that produced no signal. "
-        "There is no way for a consumer to distinguish 'all commits "
-        "cleanly passed' from 'the critique detector silently "
-        "swallowed errors on every commit'. The inner "
-        "_critique_diff catches JSONDecodeError and returns a "
-        "_parse_error sentinel that is NEVER propagated upward -- a "
-        "CP45/CP46 lineage violation. Fix template: count "
-        "critique-errors during the walk and surface "
-        "summary['detector_errors'] + set partial_success: True when "
-        "detector_errors > 0 OR when commits_with_findings == 0 AND "
-        "commits_scanned > 0 (the latter is the canonical "
-        "'no signal' ambiguous case). NOTE: This pin uses a synthetic "
-        "range that doesn't resolve, falling through the empty-range "
-        "path; it exercises the SAME 'silent SAFE on no signal' "
-        "Pattern-2 family as the zero-findings branch (line 274-277). "
-        "The disclosure-shape invariant is identical: when "
-        "commits_with_findings == 0 AND the underlying state could "
-        "be either real-empty or silently-swallowed, partial_success "
-        "MUST be True."
-    ),
-)
 def test_no_silent_no_incidents_on_empty():
     """Zero-incidents replay SHOULD NOT emit a clean SAFE envelope.
 

@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Optional-metrics recovery.** Explain how to install numeric metrics in the Roam environment and recheck incomplete health evidence without treating a score as a test result.
+- **No-scan replay disclosure.** Distinguish unavailable Git history from a valid empty commit range. Withhold report and evidence writes when no commits were replayed, preserve existing destination files, and leave risk unclassified instead of emitting a clean or low-risk report.
+
 - **Report-page clarity and mobile credit table.** Match temporary-clone wording to the existing seven-calendar-day retention window, remove an unsupported delivery-speed prediction and undefined compliance labels, and keep future-credit promotion out of the integration tutorial. Let the short fee/credit table fit narrow screens without shrinking its text or changing wider comparison tables. Existing commercial amounts and refund terms are unchanged.
 - **Prospective PR Replay finding review.** Define the evidence test, response deadline and customer-protective refund treatment for unresolved findings in newly adopted terms, preserving full-refund thresholds and already-agreed rights. Simplify the optional Review-credit table without changing amounts or launch-based conditions; keep commercial terms out of the MCP tutorial and clarify website request-metadata processing. The SOW remains a draft requiring attorney review before binding execution.
 - **Website claim boundaries.** Qualify EU AI Act applicability, release provenance, optional signing, Cloudflare request processing and invoice treatment. Align privacy footers, remove unsupported Press promises, and point Status and report readers to maintained service terms. Clarify planned subscriptions and by-request governance reviews without changing the PR Replay refund guarantee. Preserve the homepage story and explicitly dated evidence.

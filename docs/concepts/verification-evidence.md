@@ -103,6 +103,23 @@ the selected source printed. The MCP diff tool still requires actual diff text.
 
 ## Selected checks, applicable inputs, and completed checks
 
+### Historical replay with no scanned commits
+
+`postmortem` distinguishes a Git enumeration failure (`range_unavailable`)
+from a valid empty selection (`no_commits_in_range`). Both have zero scanned
+commits and `partial_success: true`: neither supports a no-findings conclusion.
+For example, the sample's default `HEAD~5..HEAD` cannot resolve in a repository
+with insufficient history. Inspect the actual range; do not substitute a
+different range without recording that scope change.
+
+When its child supplies no scanned commits, `pr-replay` emits an unavailable
+report response, leaves risk and rank null, and withholds requested report,
+PDF, engagement and evidence writes. Existing destination files are preserved,
+not refreshed; their presence is not evidence of this invocation's completion.
+This non-gating path can still exit zero. Consumers must inspect the state and
+scan count, not only process success. A populated replay retains its separate
+detector and evidence limitations; this guard does not establish their completeness.
+
 ### Security-review compound scope
 
 The MCP security-review recipe combines different scopes: repository taint
