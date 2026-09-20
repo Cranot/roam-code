@@ -24,7 +24,7 @@
     "name": "Refund Policy",
     "url": "https://roam-code.com/refund",
     "inLanguage": "en",
-    "dateModified": "2026-09-19",
+    "dateModified": "2026-09-20",
     "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "breadcrumb": {
@@ -82,7 +82,7 @@
   <main tabindex="-1" id="main" class="legal-page">
     <header class="legal-header">
       <h1>Refund Policy</h1>
-      <p class="legal-meta">Last updated: <time datetime="2026-09-19">2026-09-19</time> · Original effective date: <time datetime="2026-05-18">2026-05-18</time></p>
+      <p class="legal-meta">Last updated: <time datetime="2026-09-20">2026-09-20</time> · Original effective date: <time datetime="2026-05-18">2026-05-18</time></p>
     </header>
 
     <article>
@@ -102,9 +102,10 @@
       <p>
         Roam Review and Roam Cloud are not available to subscribe to today.
         Their subscription and cancellation provisions below describe planned
-        services, not an active checkout or account dashboard. This update
-        clarifies availability; it does not change the PR Replay refund
-        guarantee or existing signed engagement terms.
+        services, not an active checkout or account dashboard. The revised
+        PR Replay finding-review process below applies only to new engagements
+        expressly adopting the September 20, 2026 terms. Already-agreed customer
+        rights, including earlier refund guarantees, remain unchanged.
       </p>
 
       <h2>Roam Cloud (when available) — 30-day first-charge refund</h2>
@@ -148,7 +149,7 @@
         written into the order form before work starts.
       </p>
 
-      <h2>PR Replay — refund before kickoff</h2>
+      <h2 id="pr-replay">PR Replay — refunds and finding review</h2>
       <p>
         <a href="/audit">PR Replay</a> terms are governed by the signed
         Statement of Work (SOW) Section 8, which takes precedence over
@@ -166,26 +167,59 @@
           may withdraw within 14 calendar days of payment per Directive
           2011/83/EU. Where the buyer is a business (B2B), the right of
           withdrawal does not strictly apply but we honour it in practice.</li>
-        <li><strong>False-positive and material-findings clause
-          (SOW Section 8):</strong> on the walk-through, we review each
-          high- and medium-severity finding with your team. Any finding
-          your team calls a false positive is struck from the report and
-          its pro-rata share of the fee refunded. If fewer than half the
-          high/medium findings survive that review, you receive a full
-          refund. If the report surfaces zero material findings, the
-          refund is 100% of the fee (not 50%). You keep the delivered
-          report and evidence packet in all cases. This clause applies
-          to Team and Deep engagements alike.</li>
+        <li><strong>Finding-review guarantee (SOW Section 8):</strong>
+          an unsupported finding is one whose material claim is not supported
+          by the evidence against the agreed repository snapshot, scope and
+          methodology. A later code change does not by itself disprove a finding
+          about the agreed snapshot. We remove unsupported findings from the
+          report and refund their pro-rata share of the fee. Findings still
+          disputed at the deadline below receive the same refund treatment,
+          without requiring agreement that they are technically false.</li>
+        <li><strong>Full-refund thresholds:</strong> if fewer than half the
+          original high/medium findings survive review, you receive a full refund.
+          If the report surfaces zero material findings, the refund is 100% of
+          the fee (not 50%). We use the original delivered report's finding IDs
+          and severity levels; adding, splitting or reclassifying findings during
+          review cannot reduce your refund. You keep the delivered report and
+          evidence packet in all cases. This applies to Team and Deep engagements alike.</li>
         <li><strong>Post-kickoff cancellation (buyer request):</strong>
           non-refundable, but we will deliver the work-in-progress at
           the time of cancellation if you request it.</li>
         <li><strong>Acceptance window:</strong> deliverables are deemed
           accepted 5 business days after the walk-through call unless
-          you raise specific written objections in writing within that
-          window (SOW Section 6). If objections are raised and not
-          resolved within 30 calendar days, SOW Section 8 refund
-          clauses apply.</li>
+          you raise specific written objections within that window (SOW Section 6).
+          A timely objection keeps the disputed findings open for the review below;
+          it does not reduce your statutory or already-agreed contractual rights.</li>
       </ul>
+      <h3>How finding disputes are resolved</h3>
+      <ol>
+        <li><strong>Raise the issue:</strong> email
+          <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20finding%20review">hello@roam-code.com</a>
+          within 5 business days after the walk-through. Identify the finding
+          and explain the disputed claim; include any relevant evidence you have.
+          You do not need to commission an independent expert.</li>
+        <li><strong>Our evidence response:</strong> within 10 business days of
+          receiving your objection, we supply the matched source locations,
+          recorded check results and reasoning supporting the finding, or remove
+          it as unsupported. We assess the agreed snapshot, scope and methodology,
+          not a new standard introduced after delivery.</li>
+        <li><strong>A fixed end to review:</strong> if a finding remains disputed
+          30 calendar days after we receive your objection, it is excluded from
+          the surviving findings for refund purposes. Requests for more information
+          do not restart this deadline. We mark it as unresolved in the report;
+          our disagreement cannot postpone its refund treatment.</li>
+      </ol>
+      <p>
+        For a partial refund, each excluded finding receives an equal share of
+        the engagement fee: fee paid multiplied by excluded findings divided by
+        all findings in the original delivered report. An excluded finding is
+        either unsupported or unresolved at the deadline. Count each finding once.
+        The full-refund thresholds above take precedence; total refunds are capped
+        at the fee paid. We initiate the refund within 5 business days after the
+        review closes or the 30-calendar-day deadline, whichever comes first.
+        Payment-provider processing time is additional. There is no review fee.
+        This process does not restrict statutory remedies or already-agreed rights.
+      </p>
       <p>
         Data-handling for PR Replay engagements is governed by the
         <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">Data Processing Agreement (DPA)</a>,
@@ -225,7 +259,8 @@
         <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20refund%20or%20dispute">hello@roam-code.com</a>
         before initiating a credit-card chargeback. We aim to acknowledge
         refund or dispute requests within <strong>2 business days</strong>
-        and to resolve them within <strong>5 business days</strong>.
+        and to resolve them within <strong>5 business days</strong>. These are
+        service targets; PR Replay finding disputes have the fixed deadlines above.
         Most disputes are resolved by clarifying scope against the signed
         SOW; please reference your SOW effective date and tier in the
         first email so we can match the engagement record quickly.

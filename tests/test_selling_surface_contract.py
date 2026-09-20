@@ -149,21 +149,22 @@ def test_audit_requests_are_drafts_and_do_not_require_private_code_in_email():
     assert "Response time and availability are confirmed by email" in text
 
 
-def test_audit_sample_link_and_total_cost_labels_are_not_misleading():
+def test_audit_credit_preserves_amounts_without_hypothetical_subscription_costs():
     document = page("audit.html")
     closing = next(node for node in document.elements if node.attrs.get("class") == "page-cta-strip")
     assert any(node.attrs.get("href") == "#sample" for node in closing.find("a"))
     credit = next(node for node in document.elements if node.attrs.get("id") == "credit")
-    assert "excluding the PR Replay fee" in normalized(credit.text())
+    assert "fee is still payable in full" in normalized(credit.text())
+    assert "$299" not in normalized(credit.text())
+    assert "remaining subscription cost" not in normalized(credit.text())
+    assert len(list(next(credit.find("thead")).find("th"))) == 3
     assert "launch date" in normalized(credit.text())
     rows = list(credit.find("tr"))[1:]
     assert len(rows) == 2
     for row in rows:
         amounts = [int(re.search(r"\$([\d,]+)", cell.text())[1].replace(",", "")) for cell in row.find("td")]
-        fee, discount, remaining, total = amounts
+        fee, discount = amounts
         assert discount == fee // 2
-        assert remaining == 299 * 12 - discount
-        assert total == fee + remaining
 
 
 def test_audit_faq_json_matches_all_visible_answers():

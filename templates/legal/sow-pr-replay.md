@@ -1,6 +1,6 @@
 # Statement of Work — Roam PR Replay
 
-> **REVIEW BEFORE USE.** v4 draft, 2026-09-19. Have a qualified
+> **REVIEW BEFORE USE.** v5 draft, 2026-09-20. Have a qualified
 > attorney review before binding execution and an accountant validate the
 > invoice wording and applicable tax treatment. Bracketed placeholders
 > `[LIKE_THIS]` are filled in per engagement. If Stripe Payment Links are
@@ -144,10 +144,12 @@ details and any applicable VAT in writing before payment.
 
 The deliverables are deemed accepted **5 business days after the
 walk-through call** unless Client emails `hello@roam-code.com` with
-specific written objections within that window. If Client raises
-objections, Provider will work in good faith to resolve them; if
-objections are reasonable and not resolved within 30 calendar days,
-the refund clauses in Section 8 apply.
+specific written objections within that window. A timely objection keeps
+the disputed findings open. Provider supplies its evidence response within
+10 business days of receiving the objection. Findings still disputed
+30 calendar days after receipt receive the refund treatment in Section 8;
+requests for more information do not restart this deadline. Statutory and
+already-agreed contractual rights are not reduced by this acceptance window.
 
 ---
 
@@ -175,8 +177,12 @@ credit amount.
 
 ## 8. Refunds and cancellation
 
-The full Provider Refund Policy at `https://roam-code.com/refund`
-governs. The clauses most material to PR Replay engagements:
+The Provider Refund Policy at `https://roam-code.com/refund` supplements
+this SOW; this SOW takes precedence where they diverge. This revised
+finding-review process applies only to new engagements expressly adopting
+the September 20, 2026 terms. Already-agreed customer rights, including
+earlier refund guarantees, remain unchanged. The clauses most material
+to PR Replay engagements:
 
 - **Pre-kickoff (Day 1 only)**: Full refund, no questions asked, on
   Client written request to `hello@roam-code.com`.
@@ -184,15 +190,37 @@ governs. The clauses most material to PR Replay engagements:
   14 calendar days of payment per Directive 2011/83/EU. Where Client
   is a business buyer (B2B), the right of withdrawal does not strictly
   apply but Provider honours it in practice.
-- **False-positive and material-findings clause**: On the walk-through,
-  Provider and Client review each high- and medium-severity finding.
-  Any finding Client's team calls a false positive is struck from the
-  report and its pro-rata share of the fee refunded. If fewer than half
-  of the high- and medium-severity findings survive that review, Client
-  receives a full refund. If the report surfaces zero material findings,
-  the refund is 100% of the fee (not 50%). Client keeps the delivered
-  report and evidence packet in all cases. This clause applies to Team
-  and Deep engagements alike.
+- **Finding-review guarantee**: An unsupported finding is one whose
+  material claim is not supported by the evidence against the agreed
+  repository snapshot, scope and methodology. A later code change does
+  not by itself disprove a finding about the agreed snapshot. Client
+  identifies the finding and disputed claim by email within 5 business
+  days after the walk-through, including any relevant evidence Client has.
+  No independent expert is required. Within 10 business days of receipt,
+  Provider supplies matched source locations, recorded check results and
+  reasoning, or removes the finding as unsupported. Provider may not
+  introduce a new assessment standard after delivery. If still disputed
+  30 calendar days after receipt, the finding is marked unresolved and
+  excluded from surviving findings for refund purposes, without requiring
+  agreement that it is technically false. Requests for more information
+  do not restart the deadline; Provider's disagreement cannot postpone
+  refund treatment. Unsupported findings are removed from the report.
+- **Refund calculation**: Each unsupported or deadline-unresolved finding
+  receives an equal share of the fee: fee paid multiplied by excluded
+  findings divided by all findings in the original delivered report.
+  Count each finding once. If fewer than half the original high/medium
+  findings survive review, Client receives a full refund. If the report
+  surfaces zero material findings, the refund is 100% of the fee (not 50%).
+  These full-refund thresholds take precedence over the pro-rata calculation.
+  Original finding IDs and severity levels are fixed for this calculation;
+  adding, splitting or reclassifying findings during review cannot reduce
+  the refund. Total refunds are capped at the fee paid. Provider initiates
+  the refund within 5 business days after review closes or the
+  30-calendar-day deadline, whichever comes first; payment-provider
+  processing time is additional. There is no review fee. Client keeps
+  the delivered report and evidence packet. This applies to Team and Deep
+  engagements alike and does not restrict statutory remedies or
+  already-agreed rights.
 - **Post-kickoff cancellation (Client request)**: Non-refundable, but
   Provider will deliver the work-in-progress at the time of cancellation
   if Client requests it.

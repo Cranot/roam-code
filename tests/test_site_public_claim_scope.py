@@ -154,14 +154,15 @@ def test_refund_planned_program_preserves_current_report_guarantee():
     assert "free for open-source projects forever" not in text
     assert "planned to be free for qualifying open-source projects" in text
     assert "not available to subscribe to today" in text
-    assert "your team calls a false positive" in text
+    assert "Already-agreed customer rights" in text
+    assert "earlier refund guarantees, remain unchanged" in text
     assert "Team and Deep engagements alike" in text
 
 
-@pytest.mark.parametrize("name", ["terms.html", "refund.html"])
-def test_policy_clarification_date_is_separate_from_original_effective_date(name):
+@pytest.mark.parametrize("name,date", [("terms.html", "2026-09-19"), ("refund.html", "2026-09-20")])
+def test_policy_clarification_date_is_separate_from_original_effective_date(name, date):
     source = (SITE / name).read_text(encoding="utf-8")
-    assert '"dateModified": "2026-09-19"' in source
+    assert f'"dateModified": "{date}"' in source
     text = normalized(_page(name).root.text())
-    assert "Last updated: 2026-09-19" in text
+    assert f"Last updated: {date}" in text
     assert "Original effective date: 2026-05-18" in text
