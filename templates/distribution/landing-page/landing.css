@@ -1664,6 +1664,12 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .compare-table tbody th[scope="row"],
 .compare-table tbody td:first-child { text-align: left; padding-left: 18px; color: var(--text); font-weight: 500; }
 
+/* Short fee/credit tables can fit a phone without shrinking their text.
+   Keep the wrapper's keyboard scrolling as a fallback for enlarged text. */
+.compare-table--compact { min-width: 0; }
+.compare-table--compact thead th:first-child { min-width: 0; }
+.compare-table--compact tbody td { white-space: nowrap; }
+
 .limits .compare-inner { text-align: left; }
 .limits .compare-inner h2 { text-align: center; }
 .limits .compare-inner > p { max-width: 760px; margin: 0 auto 24px; }
