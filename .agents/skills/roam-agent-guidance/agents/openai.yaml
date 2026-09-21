@@ -1,0 +1,3 @@
+interface:
+  display_name: "Roam Agent Guidance"
+  short_description: "Keep agent instructions accurate and usable"
