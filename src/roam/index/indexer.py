@@ -2344,7 +2344,7 @@ class Indexer:
                 "roam.index.registry_dispatch",
                 "resolve_registry_dispatch",
                 (),
-                {},
+                {"root": self.root},
                 "registry_dispatch_resolver",
                 "registry-dispatch resolver",
                 _make_edge_count_formatter("registry dispatch", "edge(s)"),

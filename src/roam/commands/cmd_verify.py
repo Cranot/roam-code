@@ -3690,7 +3690,7 @@ def _rank_affected_test_entries(entries) -> list[tuple[int, int, str]]:
         path = entry.get("file")
         if not (path and path.endswith(".py")):
             continue
-        priority = {"DIRECT": 1, "COLOCATED": 2}.get(entry.get("kind"), 3)
+        priority = {"DIRECT": 1, "CLI_INVOKE": 1, "COLOCATED": 2}.get(entry.get("kind"), 3)
         ranked.append((priority, int(entry.get("hops") or 9), path.replace("\\", "/")))
     return ranked
 
