@@ -586,7 +586,8 @@ _SHELLPATH_BIN = "str(Path.cwd() / 'bin') + os.pathsep + os.environ['PATH']"
 _SHELLPATH_PROCESSES = {
     # Four launches that reach alpha; bin/cat, as bin/echo, runs alpha (echo is a shell builtin).
     "shell_path": "    out = subprocess.run('PATH=bin cat', shell=True, " + _GITPY_RUN,
-    "shell_substitution": "    out = subprocess.run('echo \"$(python3 wrapper.py)\"', shell=True, " + _GITPY_RUN,
+    "shell_substitution": f"    out = subprocess.run('echo \"$({sys.executable} wrapper.py)\"', shell=True, "
+    + _GITPY_RUN,
     "alias_os": f"    operating.environ['PATH'] = {_SHELLPATH_BIN}\n    out = subprocess.run(['echo'], " + _GITPY_RUN,
     "alias_environ": f"    environment['PATH'] = {_SHELLPATH_BIN}\n    out = subprocess.run(['echo'], " + _GITPY_RUN,
     # Every other launch through a shell, and every other spelling of a PATH change.
@@ -744,7 +745,7 @@ _ENVWRITE_PATHS = {
 }
 _ENVWRITE_PRELOAD = (
     "#include <stdlib.h>\n#include <unistd.h>\n__attribute__((constructor)) static void run(void) "
-    f'{{ unsetenv("LD_PRELOAD"); execl("{sys.executable}", "python3", "bin/echo", (char *)0); }}\n'
+    f'{{ unsetenv("LD_PRELOAD"); execl("{sys.executable}", "{sys.executable}", "bin/echo", (char *)0); }}\n'
 )
 
 
