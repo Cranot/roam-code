@@ -1,15 +1,21 @@
 """W1160: SARIF projection for ``roam affected-tests`` output.
 
 The killer signal for affected-tests is *which tests cover the changed
-symbol/file* and *how directly* they cover it. Three kinds project onto
-three closed-enum SARIF rule ids, each with a distinct severity so a CI
+symbol/file* and *how directly* they cover it. Six kinds project onto
+six closed-enum SARIF rule ids, each with a severity so a CI
 consumer (GitHub Code Scanning, code-scanning APIs) can triage by
 distance from the change:
 
 - ``affected-tests/direct`` (defaultLevel ``error``): test calls the
   changed symbol with no indirection.
+- ``affected-tests/cli-invoke`` (defaultLevel ``error``): test invokes
+  the changed command by its registered name.
 - ``affected-tests/transitive`` (defaultLevel ``warning``): test reaches
   the changed symbol through intermediate callers.
+- ``affected-tests/module-import`` (defaultLevel ``note``): test imports
+  the changed symbol's module.
+- ``affected-tests/cli-possible`` (defaultLevel ``note``): the analysis
+  cannot rule out that the test runs the changed command.
 - ``affected-tests/colocated`` (defaultLevel ``note``): test file shares
   a directory with a changed source file (filename convention only).
 
@@ -43,12 +49,15 @@ def test_empty_tests_produces_valid_sarif_with_zero_results() -> None:
     assert "runs" in doc and len(doc["runs"]) == 1
     run = doc["runs"][0]
     assert run["results"] == []
-    # The rule catalogue is always present (closed enum of 3 rules).
+    # The rule catalogue is always present (closed enum of 6 rules).
     rules = run["tool"]["driver"]["rules"]
     rule_ids = {r["id"] for r in rules}
     assert rule_ids == {
         "affected-tests/direct",
+        "affected-tests/cli-invoke",
         "affected-tests/transitive",
+        "affected-tests/module-import",
+        "affected-tests/cli-possible",
         "affected-tests/colocated",
     }
 
@@ -140,3 +149,32 @@ def test_colocated_test_finding_has_note_severity_and_no_symbol_in_message() -> 
     # No "None" should leak into the message body when symbol is absent
     # (an early bug in the projection would interpolate the literal).
     assert "None" not in text
+
+
+def test_file_level_relation_kinds_keep_their_rule_and_via() -> None:
+    """CLI_INVOKE, MODULE_IMPORT and CLI_POSSIBLE entries are not dropped by the projection."""
+    envelope = {
+        "command": "affected-tests",
+        "summary": {"target": "pr_replay_cmd"},
+        "tests": [
+            {"file": "tests/test_a.py", "symbol": None, "kind": "CLI_INVOKE", "hops": None, "via": "pr-replay"},
+            {
+                "file": "tests/test_b.py",
+                "symbol": None,
+                "kind": "MODULE_IMPORT",
+                "hops": None,
+                "via": "roam.commands.cmd_pr_replay",
+            },
+            {"file": "tests/test_c.py", "symbol": None, "kind": "CLI_POSSIBLE", "hops": None, "via": "_COMMANDS[*]"},
+        ],
+    }
+
+    results = affected_tests_to_sarif(envelope)["runs"][0]["results"]
+    by_rule = {r["ruleId"]: r for r in results}
+    assert by_rule["affected-tests/cli-invoke"]["level"] == "error"
+    assert "'pr-replay'" in by_rule["affected-tests/cli-invoke"]["message"]["text"]
+    assert by_rule["affected-tests/module-import"]["level"] == "note"
+    assert "roam.commands.cmd_pr_replay" in by_rule["affected-tests/module-import"]["message"]["text"]
+    # A test the analysis cannot rule out is disclosed, never at a precise kind's level.
+    assert by_rule["affected-tests/cli-possible"]["level"] == "note"
+    assert "_COMMANDS[*]" in by_rule["affected-tests/cli-possible"]["message"]["text"]

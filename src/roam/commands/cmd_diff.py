@@ -1122,9 +1122,9 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             summary["partial_success"] = True
 
         if tests:
-            direct = sum(1 for t in test_results if t["kind"] == "DIRECT")
-            transitive = sum(1 for t in test_results if t["kind"] == "TRANSITIVE")
-            colocated = sum(1 for t in test_results if t["kind"] == "COLOCATED")
+            from roam.commands.cmd_affected_tests import count_kinds
+
+            kind_counts = count_kinds(test_results)
             test_files = []
             seen = set()
             for t in test_results:
@@ -1135,9 +1135,12 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
             summary["affected_tests"] = len(test_results)
             envelope_data["affected_tests"] = {
                 "total": len(test_results),
-                "direct": direct,
-                "transitive": transitive,
-                "colocated": colocated,
+                "direct": kind_counts["direct"],
+                "transitive": kind_counts["transitive"],
+                "colocated": kind_counts["colocated"],
+                "cli_invoke": kind_counts["cli_invoke"],
+                "module_import": kind_counts["module_import"],
+                "cli_possible": kind_counts["cli_possible"],
                 "test_files": test_files,
                 "pytest_command": pytest_cmd,
                 "tests": [
@@ -1364,10 +1367,14 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 direct = sum(1 for t in test_results if t["kind"] == "DIRECT")
                 transitive = sum(1 for t in test_results if t["kind"] == "TRANSITIVE")
                 colocated = sum(1 for t in test_results if t["kind"] == "COLOCATED")
+                possible = sum(1 for t in test_results if t["kind"] == "CLI_POSSIBLE")
+                other = len(test_results) - direct - transitive - colocated - possible
+                other_str = f", {other} cli/import" if other else ""
+                other_str += f", {possible} possible" if possible else ""
                 click.echo(
                     f"=== Affected Tests ({len(test_results)}: "
                     f"{direct} direct, {transitive} transitive, "
-                    f"{colocated} colocated) ===\n"
+                    f"{colocated} colocated{other_str}) ===\n"
                 )
 
                 display_tests = test_results if full else test_results[:20]
@@ -1383,6 +1390,12 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                     elif t["kind"] == "TRANSITIVE":
                         via_str = f" via {t['via']}" if t["via"] else ""
                         detail = f"({t['hops']} hops{via_str})"
+                    elif t["kind"] == "CLI_INVOKE":
+                        detail = f"(invokes '{t['via']}')"
+                    elif t["kind"] == "MODULE_IMPORT":
+                        detail = f"(imports {t['via']})"
+                    elif t["kind"] == "CLI_POSSIBLE":
+                        detail = f"(may invoke '{t['via']}')"
                     else:
                         detail = "(same directory)"
 
