@@ -189,7 +189,14 @@ def test_exit_before_invocation(project, monkeypatch):
 def test_actual_alpha_output(project, tmp_path, name):
     config = tmp_path / "pytest.ini"
     config.write_text("[pytest]\n")
-    env = dict(os.environ, PYTHONPATH=str(project / "src"), PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
+    # The shell fixtures launch a bare ``python``; point that name at this test's own
+    # interpreter so the child sees the same packages (CI's PATH python has no click).
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    (shim / "python").chmod(0o755)
+    path = os.pathsep.join([str(shim), os.environ.get("PATH", "")])
+    env = dict(os.environ, PATH=path, PYTHONPATH=str(project / "src"), PYTEST_DISABLE_PLUGIN_AUTOLOAD="1")
     env.pop("CI", None)
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-c", str(config), "-p", "no:cacheprovider", f"tests/test_{name}.py"],
