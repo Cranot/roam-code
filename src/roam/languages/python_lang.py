@@ -1018,6 +1018,57 @@ class PythonExtractor(LanguageExtractor):
                     )
                 )
 
+    def _extract_typevar_refs(self, args_node, source, refs, scope_name) -> None:
+        """Emit type_ref edges for TypeVar constraint and bound arguments.
+
+        Handles two patterns:
+          TypeVar("T", bound=MyBase)           → type_ref to MyBase
+          TypeVar("T", MyType, OtherType)      → type_ref to MyType, OtherType
+
+        The first positional argument is the string name ("T") and is skipped.
+        Subsequent positional identifier arguments are constraint types.
+        A keyword_argument with key "bound" whose value is an identifier is the
+        upper-bound type.
+        """
+        positional_count = 0
+        for child in args_node.children:
+            if child.type in (",", "(", ")"):
+                continue
+            if child.type == "string":
+                # The TypeVar name string — skip it
+                positional_count += 1
+                continue
+            if child.type == "identifier":
+                # Positional constraint: TypeVar("T", MyType, OtherType)
+                positional_count += 1
+                if positional_count > 1:
+                    name = self.node_text(child, source)
+                    if name and name not in _BUILTIN_TYPES:
+                        refs.append(
+                            self._make_reference(
+                                target_name=name,
+                                kind="type_ref",
+                                line=child.start_point[0] + 1,
+                                source_name=scope_name,
+                            )
+                        )
+            elif child.type == "keyword_argument":
+                # bound=MyBase or constraints=[...] keyword form
+                key_node = child.child_by_field_name("name")
+                val_node = child.child_by_field_name("value")
+                if key_node and val_node and self.node_text(key_node, source) == "bound":
+                    if val_node.type == "identifier":
+                        name = self.node_text(val_node, source)
+                        if name and name not in _BUILTIN_TYPES:
+                            refs.append(
+                                self._make_reference(
+                                    target_name=name,
+                                    kind="type_ref",
+                                    line=val_node.start_point[0] + 1,
+                                    source_name=scope_name,
+                                )
+                            )
+
     def _extract_call(self, node, source, refs, scope_name):
         func_node = node.child_by_field_name("function")
         if func_node is None:
@@ -1042,6 +1093,10 @@ class PythonExtractor(LanguageExtractor):
         # Recurse into call arguments for nested calls
         args = node.child_by_field_name("arguments")
         if args:
+            # TypeVar("T", bound=MyBase) and TypeVar("T", MyType, OtherType):
+            # constraint/bound arguments are type references, not value references.
+            if name == "TypeVar":
+                self._extract_typevar_refs(args, source, refs, scope_name)
             self._walk_refs(args, source, "", refs, scope_name)
 
     @staticmethod
