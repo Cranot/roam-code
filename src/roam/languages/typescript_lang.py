@@ -435,7 +435,7 @@ class TypeScriptExtractor(JavaScriptExtractor):
             elif ctype == "import_statement":
                 self._extract_esm_import(child, source, refs, scope_name)
             elif ctype == "export_statement":
-                self._walk_refs(child, source, refs, scope_name)
+                self._extract_export_refs(child, source, refs, scope_name)
             elif ctype == "call_expression":
                 self._extract_call(child, source, refs, scope_name)
             elif ctype == "new_expression":
