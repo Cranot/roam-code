@@ -2509,32 +2509,26 @@ def _tool(
             version=version,
         )
 
-        if mcp is None:
-            return fn
-        # R8.E8 / Fix F: apply the handle-off wrapper UP-FRONT, before the
-        # preset filter. Even when this tool is hidden by the active
-        # preset (so MCP-protocol registration is skipped), an in-process
-        # caller — including the compound tools (``for_*``, ``prepare_*``)
-        # and internal helpers that call the tool directly via module
-        # attribute — still benefits from automatic handle-off when the
-        # response exceeds ``ROAM_MCP_HANDLE_KB``. The cost is one extra
-        # function call when no handle-off fires (sub-microsecond).
+        # R8.E8 / Fix F: apply the handle-off wrapper UP-FRONT — before both
+        # the FastMCP-availability gate (``mcp is None``) and the preset
+        # filter. An in-process caller — compound tools, tests, helpers
+        # that call the tool directly via module attribute — benefits from
+        # automatic handle-off even when FastMCP is absent or this tool is
+        # hidden by the active preset.  Cost: one extra call when handle-off
+        # doesn't fire (sub-microsecond).
         fn = _wrap_with_handle_off(name, fn)
 
-        # W670 / Fix D-extension: apply the alias-normalization wrapper
-        # UP-FRONT, before the preset filter — same rationale as the
-        # handle-off wrapper above. In-process callers (compound tools,
-        # tests, internal helpers that grab the tool by module attribute)
-        # must get param-alias normalization regardless of which preset
-        # is active. Pre-W670 this wrap sat after the preset filter, so
-        # ``roam_plan(file_path=...)`` on a default-core preset would
-        # raise ``TypeError`` instead of normalizing to ``path=...``.
-        # The "outermost so FastMCP sees the synthesised signature"
-        # rationale still holds for the registered path —
-        # ``mcp.tool(**attempt)(fn)`` below is only reached when the
-        # tool is in-preset, and at that point ``fn`` is already
-        # alias-wrapped with the merged signature attached.
+        # W670 / Fix D-extension: apply alias-normalization UP-FRONT —
+        # same rationale as handle-off above.  Pre-W670 this sat after the
+        # preset filter, so ``roam_plan(file_path=...)`` on the core preset
+        # raised ``TypeError`` instead of normalising to ``path=...``.
+        # The "outermost so FastMCP sees the synthesised signature" rationale
+        # still holds: ``mcp.tool(**attempt)(fn)`` is only reached when the
+        # tool is in-preset, and by then ``fn`` is already alias-wrapped.
         fn = _wrap_with_alias_normalization(name, fn)
+
+        if mcp is None:
+            return fn
 
         # Meta-tool is always registered; others are filtered by preset.
         # When filtered out, return the alias-wrapped + handle-off-wrapped
