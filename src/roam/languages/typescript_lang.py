@@ -497,6 +497,11 @@ class TypeScriptExtractor(JavaScriptExtractor):
                             parent_name=class_name,
                         )
                     )
+                    # TypeScript constructor parameter properties:
+                    # constructor(private db: Db, public name: string)
+                    # → emit a property symbol for each access-modified param
+                    if name == "constructor":
+                        self._extract_constructor_param_properties(child, source, symbols, class_name)
                 else:
                     type_ann = child.child_by_field_name("type")
                     sig = name
@@ -514,3 +519,53 @@ class TypeScriptExtractor(JavaScriptExtractor):
                             parent_name=class_name,
                         )
                     )
+
+    def _extract_constructor_param_properties(self, constructor_node, source, symbols, class_name):
+        """Extract TypeScript constructor parameter properties.
+
+        Handles patterns like:
+            constructor(private db: Database, public readonly name: string)
+
+        A `required_parameter` (or `optional_parameter`) with an
+        `accessibility_modifier` child declares a class property, not just
+        a local parameter.  Emit one property symbol per such parameter.
+        """
+        params = constructor_node.child_by_field_name("parameters")
+        if params is None:
+            return
+        for param in params.children:
+            if param.type not in ("required_parameter", "optional_parameter"):
+                continue
+            # Check for accessibility modifier (private / protected / public)
+            has_modifier = any(c.type == "accessibility_modifier" for c in param.children)
+            if not has_modifier:
+                continue
+            # The parameter name is the `identifier` or `pattern` field
+            name_node = param.child_by_field_name("pattern")
+            if name_node is None:
+                name_node = next((c for c in param.children if c.type == "identifier"), None)
+            if name_node is None:
+                continue
+            prop_name = self.node_text(name_node, source)
+            type_ann = param.child_by_field_name("type")
+            sig = prop_name
+            if type_ann:
+                sig += f": {self.node_text(type_ann, source)}"
+            visibility = "public"
+            for mod in param.children:
+                if mod.type == "accessibility_modifier":
+                    visibility = self.node_text(mod, source)
+                    break
+            qualified = f"{class_name}.{prop_name}"
+            symbols.append(
+                self._make_symbol(
+                    name=prop_name,
+                    kind="property",
+                    line_start=param.start_point[0] + 1,
+                    line_end=param.end_point[0] + 1,
+                    qualified_name=qualified,
+                    signature=sig,
+                    visibility=visibility,
+                    parent_name=class_name,
+                )
+            )
