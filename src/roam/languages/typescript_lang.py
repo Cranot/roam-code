@@ -101,6 +101,30 @@ class TypeScriptExtractor(JavaScriptExtractor):
             )
         )
 
+        # Emit edges for interface extends (so roam impact tracks subtypes)
+        for child in node.children:
+            if child.type == "extends_type_clause":
+                for extends_child in child.children:
+                    base_name = None
+                    if extends_child.type in ("type_identifier", "identifier"):
+                        base_name = self.node_text(extends_child, source)
+                    elif extends_child.type == "generic_type":
+                        name_part = extends_child.child_by_field_name("name")
+                        if name_part:
+                            base_name = self.node_text(name_part, source)
+                    if base_name:
+                        if not hasattr(self, "_pending_inherits"):
+                            self._pending_inherits = []
+                        self._pending_inherits.append(
+                            self._make_reference(
+                                target_name=base_name,
+                                kind="inherits",
+                                line=node.start_point[0] + 1,
+                                source_name=qualified,
+                            )
+                        )
+                break
+
         # Extract interface members
         body = node.child_by_field_name("body")
         if body:
