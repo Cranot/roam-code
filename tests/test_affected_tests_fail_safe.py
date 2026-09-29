@@ -928,6 +928,14 @@ def test_environment_fixtures_really_run_alpha(project, tmp_path, name):
     marker.unlink()
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason=(
+        "Fixture test files use Unix-specific programs: ./wrapper_exec (shebang script), "
+        "/bin/true, /bin/echo, echo, sleep, sh, bash, and relative-path executables that "
+        "do not exist or behave differently on non-Linux platforms."
+    ),
+)
 @pytest.mark.parametrize(
     "name",
     [

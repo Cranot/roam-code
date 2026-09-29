@@ -33,6 +33,10 @@ from roam.commands.cmd_oracle import (
 from roam.db.connection import open_db
 from tests.conftest import make_src_project as _make_project
 
+# All tests share a module-scoped oracle_project fixture. xdist_group ensures
+# they run on the same worker so the fixture is built once, not once per worker.
+pytestmark = pytest.mark.xdist_group("oracle")
+
 # ---------------------------------------------------------------------------
 # Fixture: a tiny indexed project with both production + test code
 # ---------------------------------------------------------------------------
