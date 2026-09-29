@@ -81,7 +81,8 @@ def _check_audit_trail_has_records(project_root: Path) -> dict:
     record_count = 0
     if trail_path.exists():
         try:
-            record_count = sum(1 for line in trail_path.open(encoding="utf-8") if line.strip())
+            with trail_path.open(encoding="utf-8") as _fh:
+                record_count = sum(1 for line in _fh if line.strip())
         except OSError:
             record_count = 0
     return {
