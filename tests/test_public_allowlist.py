@@ -8,6 +8,8 @@ import subprocess
 from tests._helpers.repo_root import repo_root
 
 PUBLIC_ALLOWLIST = (
+    ".agents/**",
+    ".claude/**",
     ".claude-plugin/**",
     ".github/**",
     ".githooks/**",
