@@ -45,12 +45,13 @@ from __future__ import annotations
 import os
 import subprocess
 from collections import Counter
+from pathlib import Path
 
 import click
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index, file_not_found_hint
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.db.queries import FILE_BY_PATH, FILE_IMPORTED_BY, FILE_IMPORTS
 from roam.output.formatter import (
     ENVELOPE_SCHEMA_VERSION,
@@ -80,8 +81,15 @@ def _deps_git_literal_pathspec_env() -> dict[str, str]:
     return env
 
 
-def _git_shas_for_deps_temporal_signal(target: str, limit: int = 200) -> list[str]:
-    """Find commits for the target while preserving deps' empty-list degrade."""
+def _git_shas_for_deps_temporal_signal(target: str, limit: int = 200, *, root: Path | None = None) -> list[str]:
+    """Find commits for the target while preserving deps' empty-list degrade.
+
+    ``root`` is the project root directory used as ``cwd`` for the git
+    subprocess.  When omitted, ``find_project_root()`` is called so that
+    parallel test workers and MCP callers with a shifted process-cwd all
+    resolve to the correct repository.
+    """
+    project_root = root if root is not None else find_project_root()
     try:
         proc = subprocess.run(
             ["git", "log", f"--max-count={limit}", "--format=%H", "--", target],
@@ -89,6 +97,7 @@ def _git_shas_for_deps_temporal_signal(target: str, limit: int = 200) -> list[st
             text=True,
             timeout=5.0,
             env=_deps_git_literal_pathspec_env(),
+            cwd=str(project_root),
         )
     except (OSError, subprocess.TimeoutExpired):
         return []
@@ -97,16 +106,26 @@ def _git_shas_for_deps_temporal_signal(target: str, limit: int = 200) -> list[st
     return [sha.strip() for sha in proc.stdout.splitlines() if sha.strip()]
 
 
-def _git_changed_paths_for_deps_temporal_signal(shas: list[str], limit: int = 200) -> list[str]:
-    """Read the sampled commit paths without making git history mandatory."""
+def _git_changed_paths_for_deps_temporal_signal(
+    shas: list[str], limit: int = 200, *, root: Path | None = None
+) -> list[str]:
+    """Read the sampled commit paths without making git history mandatory.
+
+    ``root`` is the project root directory used as ``cwd`` for the git
+    subprocess.  When omitted, ``find_project_root()`` is called so that
+    parallel test workers and MCP callers with a shifted process-cwd all
+    resolve to the correct repository.
+    """
     if not shas:
         return []
+    project_root = root if root is not None else find_project_root()
     try:
         proc = subprocess.run(
             ["git", "show", "--name-only", "--pretty=format:__commit__"] + shas[:limit],
             capture_output=True,
             text=True,
             timeout=10.0,
+            cwd=str(project_root),
         )
     except (OSError, subprocess.TimeoutExpired):
         return []
@@ -115,11 +134,14 @@ def _git_changed_paths_for_deps_temporal_signal(shas: list[str], limit: int = 20
     return proc.stdout.splitlines()
 
 
-def _rank_deps_paths_by_temporal_coupling(target: str, limit: int = 200) -> list[tuple[str, int]]:
+def _rank_deps_paths_by_temporal_coupling(
+    target: str, limit: int = 200, *, root: Path | None = None
+) -> list[tuple[str, int]]:
     """Preserve temporal-coupling signal without risking the deps envelope."""
     changed_paths = _git_changed_paths_for_deps_temporal_signal(
-        _git_shas_for_deps_temporal_signal(target, limit=limit),
+        _git_shas_for_deps_temporal_signal(target, limit=limit, root=root),
         limit=limit,
+        root=root,
     )
     counts: Counter[str] = Counter()
     for raw_path in changed_paths:
@@ -132,9 +154,12 @@ def _rank_deps_paths_by_temporal_coupling(target: str, limit: int = 200) -> list
     return counts.most_common(20)
 
 
-def _deps_multi_temporal_coupling_pairs(target: str) -> list[dict]:
+def _deps_multi_temporal_coupling_pairs(target: str, *, root: Path | None = None) -> list[dict]:
     """Adapt ranked co-change tuples to the stable deps --multi envelope."""
-    return [{"file": filename, "count": count} for filename, count in _rank_deps_paths_by_temporal_coupling(target)]
+    return [
+        {"file": filename, "count": count}
+        for filename, count in _rank_deps_paths_by_temporal_coupling(target, root=root)
+    ]
 
 
 @roam_capability(
@@ -190,6 +215,15 @@ def deps(ctx, path, full, multi):
     detail = (ctx.obj.get("detail", False) if ctx.obj else False) or full
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
+
+    # Resolve the project root once so every git subprocess call uses an
+    # explicit cwd= regardless of the process working directory.  Under
+    # pytest-xdist, workers share a process and a chdir() in one test can
+    # shift the cwd for git commands running concurrently in another.
+    try:
+        _project_root: Path | None = find_project_root()
+    except Exception:  # noqa: BLE001 -- best-effort; git calls degrade gracefully
+        _project_root = None
 
     path = path.replace("\\", "/")
 
@@ -356,6 +390,7 @@ def deps(ctx, path, full, multi):
                     "compute_cochange_pairs",
                     _deps_multi_temporal_coupling_pairs,
                     frow["path"],
+                    root=_project_root,
                     default=[],
                 )
                 or []

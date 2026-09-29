@@ -20,8 +20,21 @@ _STALE_AGE_HOURS = 24
 _STALE_AGE_HOURS_HIGH_SENSITIVITY = 1
 
 
-def _git_head_short() -> str | None:
-    """Current git HEAD (short) or None if not a git checkout."""
+def _git_head_short(root: Path | None = None) -> str | None:
+    """Current git HEAD (short) or None if not a git checkout.
+
+    ``root`` is the project root directory used as ``cwd`` for the git
+    subprocess.  When omitted, ``find_project_root()`` is called lazily so
+    that parallel test workers (pytest-xdist) with a shifted process-cwd all
+    resolve to the correct repository.
+    """
+    if root is None:
+        try:
+            from roam.db.connection import find_project_root  # lazy to avoid circular imports
+
+            root = find_project_root()
+        except Exception:  # noqa: BLE001 -- best-effort; fall back to process cwd
+            pass
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -30,6 +43,7 @@ def _git_head_short() -> str | None:
             encoding="utf-8",
             errors="replace",
             timeout=2,
+            cwd=str(root) if root is not None else None,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -38,8 +52,21 @@ def _git_head_short() -> str | None:
     return None
 
 
-def _git_dirty() -> bool:
-    """True if there are uncommitted changes."""
+def _git_dirty(root: Path | None = None) -> bool:
+    """True if there are uncommitted changes.
+
+    ``root`` is the project root directory used as ``cwd`` for the git
+    subprocess.  When omitted, ``find_project_root()`` is called lazily so
+    that parallel test workers (pytest-xdist) with a shifted process-cwd all
+    resolve to the correct repository.
+    """
+    if root is None:
+        try:
+            from roam.db.connection import find_project_root  # lazy to avoid circular imports
+
+            root = find_project_root()
+        except Exception:  # noqa: BLE001 -- best-effort; fall back to process cwd
+            pass
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -48,6 +75,7 @@ def _git_dirty() -> bool:
             encoding="utf-8",
             errors="replace",
             timeout=2,
+            cwd=str(root) if root is not None else None,
         )
         if result.returncode == 0:
             return bool(result.stdout.strip())
@@ -60,6 +88,7 @@ def check_stale(
     db_path: Path | str | None = None,
     *,
     sensitivity: str = "medium",
+    root: Path | None = None,
 ) -> tuple[bool, str | None]:
     """Determine whether the local index is stale.
 
@@ -69,6 +98,10 @@ def check_stale(
       - 'high'   — anything older than 1h or any git-HEAD difference is stale.
       - 'medium' — older than 24h is stale; git-HEAD difference is a soft warning.
       - 'low'    — only mtime > 7d is stale; git-HEAD differences ignored.
+
+    ``root`` is the project root directory used as ``cwd`` for git subprocess
+    calls.  When omitted, ``_git_head_short`` / ``_git_dirty`` resolve it via
+    ``find_project_root()``.
     """
     if db_path is None:
         try:
@@ -106,7 +139,7 @@ def check_stale(
             conn.close()
             if row is not None:
                 indexed_head, _ = row
-                current_head = _git_head_short()
+                current_head = _git_head_short(root=root)
                 if indexed_head and current_head and indexed_head[:7] != current_head[:7]:
                     if sensitivity == "high":
                         return True, f"git HEAD changed since index ({indexed_head[:7]} -> {current_head[:7]})"
