@@ -1,9 +1,10 @@
 """Shared file-reading and AST-parsing helpers for world-model detectors.
 
-``_read_source`` and ``_parse_function`` are duplicated across several
-detectors (``none_eq_comparison``, ``redundant_boolean_return``,
-``self_comparison``, ``unreachable_after_return``).  Centralising them here
-removes the duplication and ensures consistent behaviour:
+Used by: ``none_eq_comparison``, ``redundant_boolean_return``,
+``restore_loss`` (``_read_source`` only), ``self_comparison``,
+``unchecked_result``, ``unreachable_after_return``, ``unreachable_except``.
+
+Centralising here removes duplicate copies and ensures consistent behaviour:
 
 * ``_read_source`` always uses ``read_text`` with ``errors="replace"`` and
   returns ``("", [])`` on any I/O failure — callers gate on ``not lines``.
