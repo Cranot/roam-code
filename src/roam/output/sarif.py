@@ -2727,9 +2727,24 @@ _AFFECTED_TESTS_RULES = (
         "error",
     ),
     _ParameterizedRule(
+        "affected-tests/cli-invoke",
+        "Test invokes the changed command by its registered CLI name",
+        "error",
+    ),
+    _ParameterizedRule(
         "affected-tests/transitive",
         "Test reaches the changed symbol through intermediate callers",
         "warning",
+    ),
+    _ParameterizedRule(
+        "affected-tests/module-import",
+        "Test imports the module of the changed symbol",
+        "note",
+    ),
+    _ParameterizedRule(
+        "affected-tests/cli-possible",
+        "Test may invoke the changed command; the analysis cannot rule it out",
+        "note",
     ),
     _ParameterizedRule(
         "affected-tests/colocated",
@@ -2740,7 +2755,10 @@ _AFFECTED_TESTS_RULES = (
 
 _AFFECTED_TESTS_KIND_TO_RULE_LEVEL = {
     "DIRECT": ("affected-tests/direct", "error"),
+    "CLI_INVOKE": ("affected-tests/cli-invoke", "error"),
     "TRANSITIVE": ("affected-tests/transitive", "warning"),
+    "MODULE_IMPORT": ("affected-tests/module-import", "note"),
+    "CLI_POSSIBLE": ("affected-tests/cli-possible", "note"),
     "COLOCATED": ("affected-tests/colocated", "note"),
 }
 
@@ -2767,6 +2785,12 @@ def _affected_tests_message(entry: dict, target: Any) -> str:
         symbol_suffix = f"::{symbol}" if symbol else ""
         via_suffix = f" via {via}" if via else ""
         return f"Transitive test ({hops} hops{via_suffix}) for '{target}': {file_path}{symbol_suffix}"
+    if kind == "CLI_INVOKE":
+        return f"CLI test (invokes '{via}') for '{target}': {file_path}"
+    if kind == "MODULE_IMPORT":
+        return f"Module-import test (imports {via}) for '{target}': {file_path}"
+    if kind == "CLI_POSSIBLE":
+        return f"Possible CLI test (may invoke '{via}') for '{target}': {file_path}"
     return f"Colocated test (same directory) for '{target}': {file_path}"
 
 
@@ -2775,17 +2799,27 @@ def affected_tests_to_sarif(data: dict) -> dict:
 
     *data* is the JSON envelope built by
     :mod:`roam.commands.cmd_affected_tests`. Each ``tests[]`` entry is
-    projected onto one of three closed-enum rule ids, with severity
+    projected onto one of six closed-enum rule ids, with severity
     determined by the entry's ``kind`` field:
 
     - ``affected-tests/direct`` (defaultLevel ``error``): test directly
       calls a changed symbol (``kind == "DIRECT"``, hops == 1). Highest
       severity — the test exercises the changed code path with no
       indirection.
+    - ``affected-tests/cli-invoke`` (defaultLevel ``error``): test drives
+      the changed command by its registered name through the dispatcher
+      (``kind == "CLI_INVOKE"``; ``via`` carries the name).
     - ``affected-tests/transitive`` (defaultLevel ``warning``): test
       reaches the changed symbol through intermediate callers
       (``kind == "TRANSITIVE"``, hops > 1). The ``via`` field surfaces
       in the message so consumers can see the first hop on the path.
+    - ``affected-tests/module-import`` (defaultLevel ``note``): test
+      imports the changed symbol's module without a resolved call edge
+      (``kind == "MODULE_IMPORT"``; ``via`` carries the module).
+    - ``affected-tests/cli-possible`` (defaultLevel ``note``): the
+      analysis cannot rule out that the test runs the changed command
+      (``kind == "CLI_POSSIBLE"``; ``via`` carries the key, or
+      ``"<registry>[*]"`` when any key may run).
     - ``affected-tests/colocated`` (defaultLevel ``note``): test file
       lives in the same directory as a changed source file (filename
       convention; no graph edge). Weakest signal — included so a

@@ -295,7 +295,10 @@ def _snapshot_cases() -> dict[str, tuple[Callable[..., dict], object, dict[str, 
 
 
 _EXPECTED_SNAPSHOTS: dict[str, tuple[int, str]] = {
-    "affected_tests": (3162, "50158399bf22f48c68679658adba8196989d3794fb64c06d49ce374c47cac0d2"),
+    # The cli-invoke, module-import and cli-possible rules extend the
+    # catalogue; removing cli-possible reproduces the 3920-byte snapshot,
+    # and removing all three the prior (3162-byte) one.
+    "affected_tests": (4315, "8a9fb1b4192d0d236f0b5bb18012286f0fcaef4c8e3dd1aae599ee5be51c0a1e"),
     # The incomplete-search REVIEW rule extends the catalogue; existing results
     # are unchanged (removing that one rule reproduces the prior byte snapshot).
     "delete_check": (4455, "c32a9d45ade01e75f0e6fda86875d8e3c1c907cd566cf6c0ce3146757298085a"),
