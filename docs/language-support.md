@@ -11,9 +11,9 @@ for the overview. This table was moved from the README on 2026-09-12.
 
 | Language | Extensions | Symbols | References | Inheritance |
 |----------|-----------|---------|------------|-------------|
-| Python | `.py` `.pyi` | classes, functions, methods, decorators, variables | imports, calls, inheritance | extends, `__all__` exports |
-| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | classes, functions, arrow functions, CJS exports | imports, require(), calls | extends |
-| TypeScript | `.ts` `.tsx` `.mts` `.cts` | interfaces, type aliases, enums + all JS | imports, calls, type refs | extends, implements |
+| Python | `.py` `.pyi` | classes (`protocol`/`dataclass`/`typeddict` semantic kinds), functions, methods, decorators, variables, TypeVar/ParamSpec/TypeVarTuple (`typevar` kind) | imports, calls, attribute refs, inheritance | extends, `__all__` exports |
+| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | classes, functions, arrow functions, CJS exports | imports, require(), calls, JSX component call edges (uppercase elements) | extends |
+| TypeScript | `.ts` `.tsx` `.mts` `.cts` | interfaces, type aliases, enums, namespaces, abstract methods + all JS | imports, calls, type refs (annotations, generics, union/intersection/conditional, as-expression, satisfies, type predicates), JSX component call edges | extends, implements |
 | Java | `.java` | classes, interfaces, enums, constructors, fields | imports, calls | extends, implements |
 | Go | `.go` | structs, interfaces, functions, methods, fields | imports, calls | embedded structs |
 | Rust | `.rs` | structs, traits, impls, enums, functions | use, calls | impl Trait for Struct |
