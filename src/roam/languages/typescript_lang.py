@@ -88,6 +88,14 @@ _TS_TYPE_CONTEXT_NODES = frozenset(
         # index_signature is the container for both mapped-type clauses
         # ({ [K in keyof T]: V }) and regular index signatures ({ [k: string]: V })
         "index_signature",
+        # Wave 10: function/constructor type expressions — the return type is a
+        # direct type_identifier child of these nodes.  Without them in the set
+        # the return-type identifier falls through to _walk_refs which never
+        # emits type_ref edges for bare identifiers.
+        # function_type covers: type F = (x: A) => ReturnType
+        "function_type",
+        # constructor_type covers: type C = new (x: A) => ReturnType
+        "constructor_type",
     }
 )
 
@@ -495,6 +503,18 @@ class TypeScriptExtractor(JavaScriptExtractor):
                 for sub in child.children:
                     if sub.type in ("type_arguments", "type_annotation"):
                         self._walk_type_node(sub, source, refs, scope_name)
+            elif ctype == "formal_parameters":
+                # Parameter list inside function_type / constructor_type.
+                # Each parameter may carry a type_annotation; walk those.
+                for param in child.children:
+                    if param.type in (
+                        "required_parameter",
+                        "optional_parameter",
+                        "rest_parameter",
+                    ):
+                        type_ann = param.child_by_field_name("type")
+                        if type_ann is not None:
+                            self._walk_type_node(type_ann, source, refs, scope_name)
             elif ctype in _TS_TYPE_CONTEXT_NODES:
                 self._walk_type_node(child, source, refs, scope_name)
 
