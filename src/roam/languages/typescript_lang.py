@@ -77,6 +77,9 @@ _TS_TYPE_CONTEXT_NODES = frozenset(
         "index_type_query",
         "lookup_type",
         "template_literal_type",
+        # Wave 8: type predicate return types — function (x: T): x is UserModel
+        "type_predicate_annotation",
+        "type_predicate",
     }
 )
 
@@ -514,6 +517,31 @@ class TypeScriptExtractor(JavaScriptExtractor):
             # Type part — type_ref edges only
             self._walk_type_node(node.children[as_idx + 1], source, refs, scope_name)
 
+    def _extract_satisfies_expression(self, node, source, refs, scope_name):
+        """Handle a TypeScript ``satisfies_expression`` (TS 4.9+).
+
+        ``value satisfies TypeName`` — walk the value part normally for
+        call/import edges and walk the type part with ``_walk_type_node`` for
+        type_ref edges.  The ``satisfies`` keyword is the separator.
+        """
+        sat_idx = next((i for i, c in enumerate(node.children) if c.type == "satisfies"), -1)
+        if sat_idx > 0:
+            for i in range(sat_idx):
+                vn = node.children[i]
+                vtype = vn.type
+                if vtype == "call_expression":
+                    self._extract_call(vn, source, refs, scope_name)
+                elif vtype == "new_expression":
+                    self._extract_new(vn, source, refs, scope_name)
+                elif vtype == "as_expression":
+                    self._extract_as_expression(vn, source, refs, scope_name)
+                elif vtype == "satisfies_expression":
+                    self._extract_satisfies_expression(vn, source, refs, scope_name)
+                else:
+                    self._walk_refs(vn, source, refs, self._scope_name_for_child(vn, source, scope_name))
+        if sat_idx >= 0 and sat_idx + 1 < len(node.children):
+            self._walk_type_node(node.children[sat_idx + 1], source, refs, scope_name)
+
     def _walk_refs(self, node, source, refs, scope_name):
         """Walk the AST collecting call/import/type references.
 
@@ -538,6 +566,8 @@ class TypeScriptExtractor(JavaScriptExtractor):
                 self._extract_jsx_element_refs(child, source, refs, scope_name)
             elif ctype == "as_expression":
                 self._extract_as_expression(child, source, refs, scope_name)
+            elif ctype == "satisfies_expression":
+                self._extract_satisfies_expression(child, source, refs, scope_name)
             elif ctype == "identifier" and node.type in ("arguments", "jsx_expression"):
                 self._emit_argument_identifier_ref(child, source, refs, scope_name)
             elif ctype == "shorthand_property_identifier":
