@@ -258,3 +258,87 @@ class Dog extends Animal {
     _, refs = _parse(source, "animals.ts")
     inherits_targets = {r["target_name"] for r in refs if r.get("kind") == "inherits"}
     assert "Animal" in inherits_targets, f"class extends broke; got {inherits_targets}"
+
+
+# ---------------------------------------------------------------------------
+# TS-6  type_ref edges from type annotations
+# ---------------------------------------------------------------------------
+
+
+def test_ts_type_ref_parameter_annotation():
+    """Function parameter type annotations emit type_ref edges."""
+    source = """\
+function process(svc: UserService): void {}
+"""
+    _, refs = _parse(source, "app.ts")
+    type_ref_targets = {r["target_name"] for r in refs if r.get("kind") == "type_ref"}
+    assert "UserService" in type_ref_targets, f"type_ref to UserService missing; got {type_ref_targets}"
+
+
+def test_ts_type_ref_return_type():
+    """Return type annotations emit type_ref edges."""
+    source = """\
+function getConfig(): AppConfig {
+    return config;
+}
+"""
+    _, refs = _parse(source, "app.ts")
+    type_ref_targets = {r["target_name"] for r in refs if r.get("kind") == "type_ref"}
+    assert "AppConfig" in type_ref_targets, f"type_ref to AppConfig missing; got {type_ref_targets}"
+
+
+def test_ts_type_ref_skips_primitives():
+    """Primitive types must NOT produce type_ref edges."""
+    source = """\
+function add(a: number, b: number): string {
+    return String(a + b);
+}
+"""
+    _, refs = _parse(source, "app.ts")
+    type_ref_targets = {r["target_name"] for r in refs if r.get("kind") == "type_ref"}
+    assert "number" not in type_ref_targets, "number should not get a type_ref"
+    assert "string" not in type_ref_targets, "string should not get a type_ref"
+
+
+def test_ts_type_ref_generic_type_argument():
+    """Type identifiers inside generic type arguments emit type_ref edges."""
+    source = """\
+function fetchUser(id: string): Observable<User> {
+    return http.get(id);
+}
+"""
+    _, refs = _parse(source, "app.ts")
+    type_ref_targets = {r["target_name"] for r in refs if r.get("kind") == "type_ref"}
+    assert "Observable" in type_ref_targets, f"Observable type_ref missing; got {type_ref_targets}"
+    assert "User" in type_ref_targets, f"User type_ref missing; got {type_ref_targets}"
+    assert "string" not in type_ref_targets, "string should not be a type_ref"
+
+
+def test_ts_type_ref_implements_clause():
+    """Class implements clause emits type_ref edges for each interface."""
+    source = """\
+class HttpService implements OnInit, OnDestroy {
+    ngOnInit() {}
+    ngOnDestroy() {}
+}
+"""
+    _, refs = _parse(source, "service.ts")
+    type_ref_targets = {r["target_name"] for r in refs if r.get("kind") == "type_ref"}
+    assert "OnInit" in type_ref_targets, f"OnInit type_ref missing; got {type_ref_targets}"
+    assert "OnDestroy" in type_ref_targets, f"OnDestroy type_ref missing; got {type_ref_targets}"
+
+
+def test_ts_type_ref_no_duplicates_with_call_refs():
+    """Call references and type_ref edges are both emitted without duplicates."""
+    source = """\
+function build(factory: FactoryService): Widget {
+    return factory.create();
+}
+"""
+    _, refs = _parse(source, "app.ts")
+    call_targets = {r["target_name"] for r in refs if r.get("kind") in ("call", "method_call")}
+    type_ref_targets = {r["target_name"] for r in refs if r.get("kind") == "type_ref"}
+    assert "FactoryService" in type_ref_targets
+    assert "Widget" in type_ref_targets
+    # create() call should still be present
+    assert "create" in call_targets, f"create() call missing; got {call_targets}"

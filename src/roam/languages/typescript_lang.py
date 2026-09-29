@@ -4,6 +4,82 @@ import os
 
 from .javascript_lang import JavaScriptExtractor
 
+# Built-in TypeScript / JavaScript type names that never create user-defined type edges.
+# Includes primitives AND common globals/utility types so type_ref edges don't pollute
+# the graph with unresolvable entries.
+_TS_BUILTIN_TYPES = frozenset(
+    {
+        # Primitives
+        "string",
+        "number",
+        "boolean",
+        "void",
+        "never",
+        "any",
+        "unknown",
+        "object",
+        "null",
+        "undefined",
+        "symbol",
+        "bigint",
+        # Built-in global types
+        "Array",
+        "Promise",
+        "Map",
+        "Set",
+        "WeakMap",
+        "WeakSet",
+        "WeakRef",
+        "Error",
+        "Function",
+        "Date",
+        "RegExp",
+        "URL",
+        "Event",
+        # TS utility types
+        "Partial",
+        "Required",
+        "Readonly",
+        "Record",
+        "Pick",
+        "Omit",
+        "Exclude",
+        "Extract",
+        "NonNullable",
+        "ReturnType",
+        "InstanceType",
+        "Parameters",
+        "ConstructorParameters",
+        "ThisType",
+        "Awaited",
+    }
+)
+
+# Tree-sitter node types that form a "type context" (never contain calls/values)
+_TS_TYPE_CONTEXT_NODES = frozenset(
+    {
+        "type_annotation",
+        "implements_clause",
+        "type_parameters",
+        "type_parameter",
+        "constraint",
+        "type_arguments",
+        "union_type",
+        "intersection_type",
+        "parenthesized_type",
+        "array_type",
+        "predefined_type",
+        "object_type",
+        "tuple_type",
+        "conditional_type",
+        "mapped_type_clause",
+        "literal_type",
+        "index_type_query",
+        "lookup_type",
+        "template_literal_type",
+    }
+)
+
 
 class TypeScriptExtractor(JavaScriptExtractor):
     """TypeScript extractor extending JavaScript with TS-specific constructs."""
@@ -304,6 +380,72 @@ class TypeScriptExtractor(JavaScriptExtractor):
             if child.type == "decorator":
                 decorators.append(self.node_text(child, source))
         return decorators
+
+    def _walk_type_node(self, node, source, refs, scope_name):
+        """Collect type_ref edges from a TS type annotation / constraint / implements clause.
+
+        Recurses into the nested type AST to emit one type_ref edge per
+        user-defined type identifier, skipping primitives and known builtins.
+        """
+        for child in node.children:
+            ctype = child.type
+            if ctype == "type_identifier":
+                name = self.node_text(child, source)
+                if name not in _TS_BUILTIN_TYPES:
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+            elif ctype == "generic_type":
+                name_part = child.child_by_field_name("name")
+                if name_part:
+                    name = self.node_text(name_part, source)
+                    if name not in _TS_BUILTIN_TYPES:
+                        refs.append(
+                            self._make_reference(
+                                target_name=name,
+                                kind="type_ref",
+                                line=child.start_point[0] + 1,
+                                source_name=scope_name,
+                            )
+                        )
+                # Recurse into type arguments for nested generics like Foo<Bar<Baz>>
+                for sub in child.children:
+                    if sub.type in ("type_arguments", "type_annotation"):
+                        self._walk_type_node(sub, source, refs, scope_name)
+            elif ctype in _TS_TYPE_CONTEXT_NODES:
+                self._walk_type_node(child, source, refs, scope_name)
+
+    def _walk_refs(self, node, source, refs, scope_name):
+        """Walk the AST collecting call/import/type references.
+
+        Overrides the JS base to also emit type_ref edges from TS type
+        annotations, implements clauses, and type parameter constraints.
+        Mirrors js._walk_refs exactly for value nodes so that call-graph
+        and import edges are not affected.
+        """
+        for child in node.children:
+            ctype = child.type
+            if ctype in _TS_TYPE_CONTEXT_NODES:
+                self._walk_type_node(child, source, refs, scope_name)
+            elif ctype == "import_statement":
+                self._extract_esm_import(child, source, refs, scope_name)
+            elif ctype == "export_statement":
+                self._walk_refs(child, source, refs, scope_name)
+            elif ctype == "call_expression":
+                self._extract_call(child, source, refs, scope_name)
+            elif ctype == "new_expression":
+                self._extract_new(child, source, refs, scope_name)
+            elif ctype == "identifier" and node.type == "arguments":
+                self._emit_argument_identifier_ref(child, source, refs, scope_name)
+            elif ctype == "shorthand_property_identifier":
+                self._emit_shorthand_property_ref(child, source, refs, scope_name)
+            else:
+                self._walk_refs(child, source, refs, self._scope_name_for_child(child, source, scope_name))
 
     def _extract_class_members(self, body_node, source, symbols, class_name):
         """Override to handle TS-specific class members."""
