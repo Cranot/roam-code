@@ -311,6 +311,24 @@ class PythonExtractor(LanguageExtractor):
         if decorators:
             sig = "\n".join(decorators) + "\n" + sig
 
+        # Semantic kind: protocol > dataclass > class
+        kind = "class"
+        if bases:
+            for base_child in bases.children:
+                if base_child.type == "identifier":
+                    if self.node_text(base_child, source) == "Protocol":
+                        kind = "protocol"
+                        break
+                elif base_child.type == "attribute":
+                    if self.node_text(base_child, source).endswith(".Protocol"):
+                        kind = "protocol"
+                        break
+        if kind == "class":
+            for d in decorators:
+                if d.lstrip("@").split("(")[0].split(".")[-1] == "dataclass":
+                    kind = "dataclass"
+                    break
+
         qualified = f"{parent_name}.{name}" if parent_name else name
         vis = self._visibility(name)
         is_exported = self._is_exported(name, dunder_all)
@@ -319,7 +337,7 @@ class PythonExtractor(LanguageExtractor):
         symbols.append(
             self._make_symbol(
                 name=name,
-                kind="class",
+                kind=kind,
                 line_start=outer.start_point[0] + 1,
                 line_end=node.end_point[0] + 1,
                 qualified_name=qualified,
@@ -380,6 +398,14 @@ class PythonExtractor(LanguageExtractor):
 
         # Check if it looks like a constant (ALL_CAPS)
         kind = "constant" if name.isupper() or (name.upper() == name and "_" in name) else "variable"
+
+        # TypeVar / ParamSpec / TypeVarTuple assignments get their own kind
+        if right is not None and right.type == "call":
+            func_node = right.child_by_field_name("function")
+            if func_node is not None:
+                func_name = self.node_text(func_node, source)
+                if func_name in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+                    kind = "typevar"
 
         symbols.append(
             self._make_symbol(

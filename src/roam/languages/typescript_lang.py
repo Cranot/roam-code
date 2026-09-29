@@ -140,9 +140,39 @@ class TypeScriptExtractor(JavaScriptExtractor):
             elif child.type == "abstract_class_declaration":
                 self._extract_class(child, source, file_path, symbols, parent_name, exported)
             elif child.type == "expression_statement":
-                self._extract_module_exports(child, source, symbols, parent_name)
+                ns_node = next((c for c in child.children if c.type == "internal_module"), None)
+                if ns_node is not None:
+                    self._extract_namespace(ns_node, source, file_path, symbols, parent_name, exported)
+                else:
+                    self._extract_module_exports(child, source, symbols, parent_name)
+            elif child.type == "internal_module":
+                self._extract_namespace(child, source, file_path, symbols, parent_name, exported)
             else:
                 self._walk_symbols(child, source, file_path, symbols, parent_name, is_exported)
+
+    def _extract_namespace(self, node, source, file_path, symbols, parent_name, is_exported):
+        """Extract a TypeScript namespace/module declaration as a ``namespace``
+        symbol and recurse into its body to collect nested members."""
+        name_node = next((c for c in node.children if c.type == "identifier"), None)
+        if name_node is None:
+            return
+        name = self.node_text(name_node, source)
+        qualified = f"{parent_name}.{name}" if parent_name else name
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="namespace",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=f"namespace {qualified}",
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
+        body = next((c for c in node.children if c.type == "statement_block"), None)
+        if body is not None:
+            self._walk_symbols(body, source, file_path, symbols, qualified, is_exported=False)
 
     def _extract_interface(self, node, source, symbols, parent_name, is_exported):
         name_node = node.child_by_field_name("name")
@@ -440,7 +470,9 @@ class TypeScriptExtractor(JavaScriptExtractor):
                 self._extract_call(child, source, refs, scope_name)
             elif ctype == "new_expression":
                 self._extract_new(child, source, refs, scope_name)
-            elif ctype == "identifier" and node.type == "arguments":
+            elif ctype in ("jsx_self_closing_element", "jsx_opening_element"):
+                self._extract_jsx_element_refs(child, source, refs, scope_name)
+            elif ctype == "identifier" and node.type in ("arguments", "jsx_expression"):
                 self._emit_argument_identifier_ref(child, source, refs, scope_name)
             elif ctype == "shorthand_property_identifier":
                 self._emit_shorthand_property_ref(child, source, refs, scope_name)
