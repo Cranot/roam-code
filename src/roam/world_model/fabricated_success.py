@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import ast
 import re
-import textwrap
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +34,7 @@ from typing import Optional
 
 from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
+from roam.world_model._source_helpers import _parse_function, _read_source
 from roam.world_model.causal_graph import CausalGraph, classify_causal_graph
 from roam.world_model.side_effects import SideEffectClassification, classify_side_effects
 
@@ -94,19 +94,6 @@ _EXTERNAL_EFFECT_KINDS = frozenset({"io_read", "io_write", "process"})
 _FLOW_TO_EFFECT_KINDS = frozenset({"param_to_effect", "global_to_effect"})
 _HTTP_SUCCESS_CODES = frozenset({200, 201})
 _EXTERNAL_SINK_PREFIXES = ("io_read:", "io_write:", "process:")
-
-
-def _read_source(repo_root: Path, rel_path: str) -> tuple[str, list[str]]:
-    """Read one source file, preserving empty slices for missing content."""
-    try:
-        p = repo_root / rel_path
-        if not p.exists():
-            return "", []
-        text = p.read_text(encoding="utf-8", errors="replace")
-        return text, text.splitlines(keepends=True)
-    except OSError as exc:
-        log_swallowed(f"world_model.fabricated_success:body_read:{rel_path}", exc)
-        return "", []
 
 
 def _split_identifier_words(text: str) -> list[str]:
@@ -209,15 +196,6 @@ class _SuccessLiteralVisitor(ast.NodeVisitor):
     def visit_Yield(self, node: ast.Yield) -> None:  # noqa: N802
         if self.shape is None:
             self.shape = _success_shape(node.value)
-
-
-def _parse_function(body_text: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    """Parse a source slice and return its outer function declaration."""
-    try:
-        tree = ast.parse(textwrap.dedent(body_text))
-    except (SyntaxError, ValueError):
-        return None
-    return next((node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))), None)
 
 
 def _find_success_shape(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> str | None:

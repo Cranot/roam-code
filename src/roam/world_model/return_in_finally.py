@@ -12,13 +12,12 @@ statement in each symbol.
 from __future__ import annotations
 
 import ast
-import textwrap
 from dataclasses import dataclass, field
 from typing import Optional
 
 from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
-from roam.world_model.fabricated_success import _read_source
+from roam.world_model._source_helpers import _parse_function, _read_source
 from roam.world_model.side_effects import SideEffectClassification, classify_side_effects
 
 RETURN_IN_FINALLY_KINDS = ("return_in_finally",)
@@ -105,17 +104,6 @@ class _FinallyControlFlowVisitor(ast.NodeVisitor):
 
     def visit_While(self, node: ast.While) -> None:  # noqa: N802
         self._visit_loop(node)
-
-
-def _parse_function(body_text: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    try:
-        tree = ast.parse(textwrap.dedent(body_text))
-    except (SyntaxError, ValueError, TypeError):
-        return None
-    return next(
-        (node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))),
-        None,
-    )
 
 
 class _TryFinder(ast.NodeVisitor):
