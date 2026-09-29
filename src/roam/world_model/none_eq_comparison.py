@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import textwrap
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Optional
 
 from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
+from roam.world_model._source_helpers import _parse_function, _read_source
 from roam.world_model.side_effects import SideEffectClassification, classify_side_effects
 
 
@@ -41,30 +41,6 @@ class NoneEqComparisonFinding:
             "line_start": self.line_start,
             "line_end": self.line_end,
         }
-
-
-def _read_source(repo_root: Path, rel_path: str) -> tuple[str, list[str]]:
-    try:
-        p = repo_root / rel_path
-        if not p.exists():
-            return "", []
-        with open(p, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
-        return text, text.splitlines(keepends=True)
-    except OSError as exc:
-        log_swallowed(f"world_model.none_eq_comparison:body_read:{rel_path}", exc)
-        return rel_path, []
-
-
-def _parse_function(body_text: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    try:
-        tree = ast.parse(textwrap.dedent(body_text))
-    except (SyntaxError, ValueError, TypeError):
-        return None
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return node
-    return None
 
 
 def _is_none_literal(node: ast.AST) -> bool:
