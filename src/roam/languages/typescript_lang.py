@@ -250,7 +250,8 @@ class TypeScriptExtractor(JavaScriptExtractor):
                     sig = f"{name}({self._params_text(params, source)})"
                     ret = child.child_by_field_name("return_type")
                     if ret:
-                        sig += f": {self.node_text(ret, source)}"
+                        ret_text = self.node_text(ret, source).lstrip(": ").lstrip(":")
+                        sig += f": {ret_text}"
                     symbols.append(
                         self._make_symbol(
                             name=name,
@@ -266,7 +267,8 @@ class TypeScriptExtractor(JavaScriptExtractor):
                     type_ann = child.child_by_field_name("type")
                     sig = name
                     if type_ann:
-                        sig += f": {self.node_text(type_ann, source)}"
+                        ta_text = self.node_text(type_ann, source).lstrip(": ").lstrip(":")
+                        sig += f": {ta_text}"
                     symbols.append(
                         self._make_symbol(
                             name=name,
@@ -416,7 +418,42 @@ class TypeScriptExtractor(JavaScriptExtractor):
 
         Recurses into the nested type AST to emit one type_ref edge per
         user-defined type identifier, skipping primitives and known builtins.
+
+        May be called either on a CONTAINER node (type_annotation, union_type, …)
+        or directly on a type leaf (type_identifier, generic_type) — the
+        self-node check at the top handles both cases.
         """
+        # Handle being called directly on the type leaf itself
+        ntype = node.type
+        if ntype == "type_identifier":
+            name = self.node_text(node, source)
+            if name and name not in _TS_BUILTIN_TYPES:
+                refs.append(
+                    self._make_reference(
+                        target_name=name,
+                        kind="type_ref",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
+            return
+        if ntype == "generic_type":
+            name_part = node.child_by_field_name("name")
+            if name_part:
+                name = self.node_text(name_part, source)
+                if name and name not in _TS_BUILTIN_TYPES:
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=node.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+            for sub in node.children:
+                if sub.type in ("type_arguments", "type_annotation"):
+                    self._walk_type_node(sub, source, refs, scope_name)
+            return
         for child in node.children:
             ctype = child.type
             if ctype == "type_identifier":
@@ -450,6 +487,33 @@ class TypeScriptExtractor(JavaScriptExtractor):
             elif ctype in _TS_TYPE_CONTEXT_NODES:
                 self._walk_type_node(child, source, refs, scope_name)
 
+    def _extract_as_expression(self, node, source, refs, scope_name):
+        """Handle a TypeScript ``as_expression`` (type assertion).
+
+        ``value as TypeName`` — walk the value part normally for call/import
+        edges and walk the type part with ``_walk_type_node`` for type_ref
+        edges.  Handles chained assertions like ``fn() as unknown as Foo``
+        because the outer value is itself an ``as_expression``, which hits
+        this handler again recursively.
+        """
+        as_idx = next((i for i, c in enumerate(node.children) if c.type == "as"), -1)
+        if as_idx > 0:
+            # Value part — dispatch as if each child were encountered in _walk_refs
+            for i in range(as_idx):
+                vn = node.children[i]
+                vtype = vn.type
+                if vtype == "call_expression":
+                    self._extract_call(vn, source, refs, scope_name)
+                elif vtype == "new_expression":
+                    self._extract_new(vn, source, refs, scope_name)
+                elif vtype == "as_expression":
+                    self._extract_as_expression(vn, source, refs, scope_name)
+                else:
+                    self._walk_refs(vn, source, refs, self._scope_name_for_child(vn, source, scope_name))
+        if as_idx >= 0 and as_idx + 1 < len(node.children):
+            # Type part — type_ref edges only
+            self._walk_type_node(node.children[as_idx + 1], source, refs, scope_name)
+
     def _walk_refs(self, node, source, refs, scope_name):
         """Walk the AST collecting call/import/type references.
 
@@ -472,6 +536,8 @@ class TypeScriptExtractor(JavaScriptExtractor):
                 self._extract_new(child, source, refs, scope_name)
             elif ctype in ("jsx_self_closing_element", "jsx_opening_element"):
                 self._extract_jsx_element_refs(child, source, refs, scope_name)
+            elif ctype == "as_expression":
+                self._extract_as_expression(child, source, refs, scope_name)
             elif ctype == "identifier" and node.type in ("arguments", "jsx_expression"):
                 self._emit_argument_identifier_ref(child, source, refs, scope_name)
             elif ctype == "shorthand_property_identifier":
@@ -484,6 +550,7 @@ class TypeScriptExtractor(JavaScriptExtractor):
         for child in body_node.children:
             if child.type in (
                 "method_definition",
+                "abstract_method_signature",
                 "public_field_definition",
                 "field_definition",
                 "method_signature",
@@ -503,12 +570,19 @@ class TypeScriptExtractor(JavaScriptExtractor):
                         visibility = text
                         break
 
-                if child.type in ("method_definition", "method_signature"):
+                if child.type in (
+                    "method_definition",
+                    "method_signature",
+                    "abstract_method_signature",
+                ):
                     params = child.child_by_field_name("parameters")
                     sig = f"{name}({self._params_text(params, source)})"
+                    if child.type == "abstract_method_signature":
+                        sig = "abstract " + sig
                     ret = child.child_by_field_name("return_type")
                     if ret:
-                        sig += f": {self.node_text(ret, source)}"
+                        ret_text = self.node_text(ret, source).lstrip(": ").lstrip(":")
+                        sig += f": {ret_text}"
 
                     # Decorators
                     decorators = self._get_ts_decorators(child, source)
@@ -538,7 +612,8 @@ class TypeScriptExtractor(JavaScriptExtractor):
                     type_ann = child.child_by_field_name("type")
                     sig = name
                     if type_ann:
-                        sig += f": {self.node_text(type_ann, source)}"
+                        ta_text = self.node_text(type_ann, source).lstrip(": ").lstrip(":")
+                        sig += f": {ta_text}"
                     symbols.append(
                         self._make_symbol(
                             name=name,

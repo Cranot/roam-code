@@ -311,17 +311,25 @@ class PythonExtractor(LanguageExtractor):
         if decorators:
             sig = "\n".join(decorators) + "\n" + sig
 
-        # Semantic kind: protocol > dataclass > class
+        # Semantic kind: protocol > typeddict > dataclass > class
         kind = "class"
         if bases:
             for base_child in bases.children:
                 if base_child.type == "identifier":
-                    if self.node_text(base_child, source) == "Protocol":
+                    base_name = self.node_text(base_child, source)
+                    if base_name == "Protocol":
                         kind = "protocol"
                         break
+                    if base_name == "TypedDict":
+                        kind = "typeddict"
+                        break
                 elif base_child.type == "attribute":
-                    if self.node_text(base_child, source).endswith(".Protocol"):
+                    attr = self.node_text(base_child, source)
+                    if attr.endswith(".Protocol"):
                         kind = "protocol"
+                        break
+                    if attr.endswith(".TypedDict"):
+                        kind = "typeddict"
                         break
         if kind == "class":
             for d in decorators:
