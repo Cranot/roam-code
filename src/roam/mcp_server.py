@@ -2899,6 +2899,13 @@ _PARAM_ALIASES: dict[str, dict[str, str]] = {
         "filepath": "path",
     },
     "query": {"pattern": "query"},
+    # W1451 — result-count canonical. ``top`` and ``top_n`` are used in 18
+    # and 5 wrappers respectively as a max-N-results parameter; ``limit`` is
+    # the most common spelling (29 wrappers) and is therefore canonical. The
+    # alias lets clients use ``limit`` uniformly against any tool that accepts
+    # it. Wrappers that declare ``top`` or ``top_n`` natively are unaffected —
+    # the alias fires only when the tool's accepted set contains ``limit``.
+    "limit": {"top": "limit", "top_n": "limit"},
     # W332 — single-input-file canonical. Four legacy names collapse here.
     "input_path": {
         "rules_path": "input_path",
