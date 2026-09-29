@@ -652,12 +652,54 @@ class JavaScriptExtractor(LanguageExtractor):
                 self._extract_call(child, source, refs, scope_name)
             elif ctype == "new_expression":
                 self._extract_new(child, source, refs, scope_name)
-            elif ctype == "identifier" and node.type == "arguments":
+            elif ctype in ("jsx_self_closing_element", "jsx_opening_element"):
+                self._extract_jsx_element_refs(child, source, refs, scope_name)
+            elif ctype == "identifier" and node.type in ("arguments", "jsx_expression"):
                 self._emit_argument_identifier_ref(child, source, refs, scope_name)
             elif ctype == "shorthand_property_identifier":
                 self._emit_shorthand_property_ref(child, source, refs, scope_name)
             else:
                 self._walk_refs(child, source, refs, self._scope_name_for_child(child, source, scope_name))
+
+    def _extract_jsx_element_refs(self, node, source, refs, scope_name):
+        """Emit a call edge for user-defined JSX components and recurse into
+        attribute expressions to capture prop callback references.
+
+        User-defined components start with an uppercase letter (React convention).
+        Native elements (div, span, input…) are lowercase and are skipped.
+        ``<Foo.Bar />`` is emitted as a reference to the full dotted name.
+        """
+        for ch in node.children:
+            if ch.type == "<":
+                continue
+            if ch.type == "identifier":
+                name = self.node_text(ch, source)
+                if name and name[0].isupper():
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="call",
+                            line=ch.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+                break
+            if ch.type == "member_expression":
+                name = self.node_text(ch, source)
+                if name:
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="reference",
+                            line=ch.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+                break
+            # Stop scanning tag name on anything that is not '<'
+            break
+        # Recurse to capture jsx_attribute → jsx_expression → identifier refs
+        self._walk_refs(node, source, refs, scope_name)
 
     def _extract_export_refs(self, export_stmt, source, refs, scope_name):
         """Emit reference edges for named export and re-export statements.
