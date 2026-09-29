@@ -89,21 +89,32 @@ class PythonExtractor(LanguageExtractor):
         return text
 
     def _find_dunder_all(self, root, source: bytes) -> set[str] | None:
-        """Parse __all__ = [...] to determine explicit exports."""
+        """Parse __all__ = [...] and __all__ += [...] to determine explicit exports."""
+        found: set[str] | None = None
         for child in root.children:
-            if child.type == "assignment":
-                left = child.child_by_field_name("left")
-                right = child.child_by_field_name("right")
-                if left and self.node_text(left, source) == "__all__" and right:
-                    return self._parse_all_list(right, source)
-            elif child.type == "expression_statement":
+            node = child
+            if child.type == "expression_statement":
                 for sub in child.children:
-                    if sub.type == "assignment":
-                        left = sub.child_by_field_name("left")
-                        right = sub.child_by_field_name("right")
-                        if left and self.node_text(left, source) == "__all__" and right:
-                            return self._parse_all_list(right, source)
-        return None
+                    if sub.type in ("assignment", "augmented_assignment"):
+                        node = sub
+                        break
+                else:
+                    continue
+            if node.type == "assignment":
+                left = node.child_by_field_name("left")
+                right = node.child_by_field_name("right")
+                if left and self.node_text(left, source) == "__all__" and right:
+                    found = self._parse_all_list(right, source)
+            elif node.type == "augmented_assignment":
+                left = node.child_by_field_name("left")
+                right = node.child_by_field_name("right")
+                if left and self.node_text(left, source) == "__all__" and right:
+                    extra = self._parse_all_list(right, source)
+                    if found is None:
+                        found = extra
+                    else:
+                        found.update(extra)
+        return found
 
     def _parse_all_list(self, node, source: bytes) -> set[str]:
         names = set()
@@ -187,6 +198,22 @@ class PythonExtractor(LanguageExtractor):
                 else:
                     # Class-level assignments (properties)
                     self._extract_class_property(child, source, symbols, parent_name)
+            elif child.type == "match_statement":
+                # Python 3.10+ match/case — body block contains case_clause nodes;
+                # each case_clause's body is in its "consequence" field (tree-sitter-python)
+                match_body = child.child_by_field_name("body")
+                container = match_body if match_body else child
+                for sub in container.children:
+                    if sub.type == "case_clause":
+                        case_body = sub.child_by_field_name("consequence")
+                        if case_body is None:
+                            # fall back: last block child
+                            for sub_child in reversed(sub.children):
+                                if sub_child.type == "block":
+                                    case_body = sub_child
+                                    break
+                        if case_body:
+                            self._walk_node(case_body, source, file_path, symbols, parent_name, dunder_all)
             elif child.type == "expression_statement":
                 for sub in child.children:
                     if sub.type == "assignment":
@@ -217,6 +244,9 @@ class PythonExtractor(LanguageExtractor):
             sig = "\n".join(decorators) + "\n" + sig
 
         kind = "method" if parent_name else "function"
+        # @property decorated methods get their own kind for accurate search/dead-code
+        if parent_name and any(d.strip() == "@property" for d in decorators):
+            kind = "property"
         qualified = f"{parent_name}.{name}" if parent_name else name
         vis = self._visibility(name)
         is_exported = self._is_exported(name, dunder_all)
@@ -367,6 +397,27 @@ class PythonExtractor(LanguageExtractor):
         if "." in name or "[" in name:
             return
         if name == "__all__":
+            return
+
+        # __slots__ = ('x', 'y') — emit one property per slot name instead of __slots__ itself
+        if name == "__slots__":
+            right = node.child_by_field_name("right")
+            if right and right.type in ("tuple", "list"):
+                for slot_child in right.children:
+                    if slot_child.type == "string":
+                        slot_name = self._extract_string_content(slot_child, source)
+                        if slot_name:
+                            symbols.append(
+                                self._make_symbol(
+                                    name=slot_name,
+                                    kind="property",
+                                    line_start=node.start_point[0] + 1,
+                                    line_end=node.end_point[0] + 1,
+                                    qualified_name=f"{parent_name}.{slot_name}",
+                                    visibility=self._visibility(slot_name),
+                                    parent_name=parent_name,
+                                )
+                            )
             return
 
         right = node.child_by_field_name("right")
