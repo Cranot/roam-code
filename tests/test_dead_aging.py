@@ -20,6 +20,10 @@ from conftest import invoke_cli, parse_json_output
 
 from roam.commands.cmd_dead import _decay_score, _decay_tier, _estimate_removal_minutes
 
+# All tests share a module-scoped indexed_project fixture. xdist_group ensures
+# they run on the same worker so the fixture is built once, not once per worker.
+pytestmark = pytest.mark.xdist_group("dead_aging")
+
 
 # W414: All CLI integration tests below are read-only against the indexed
 # project (they invoke `roam dead` variants and validate output). Re-

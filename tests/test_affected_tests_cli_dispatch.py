@@ -32,6 +32,11 @@ from click.testing import CliRunner
 
 from tests.conftest import invoke_cli
 
+# This file has two module-scoped fixtures (registry_project, project).
+# xdist_group ensures all tests land on the same worker so each fixture
+# is built once, not once per worker.
+pytestmark = pytest.mark.xdist_group("affected_tests_cli_dispatch")
+
 _OTHER_COMMANDS = [f"cmd{i:02d}" for i in range(12)]
 
 

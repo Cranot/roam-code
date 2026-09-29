@@ -15,6 +15,10 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
+# All tests share a module-scoped indexed_project fixture. xdist_group ensures
+# they run on the same worker so the fixture is built once, not once per worker.
+pytestmark = pytest.mark.xdist_group("dashboard")
+
 
 # W414: All dashboard tests in this file are read-only against the indexed
 # project (text output, JSON output, section presence). Re-indexing on

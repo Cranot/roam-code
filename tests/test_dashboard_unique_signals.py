@@ -32,6 +32,10 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output
 
+# All tests share a module-scoped indexed_project fixture. xdist_group ensures
+# they run on the same worker so the fixture is built once, not once per worker.
+pytestmark = pytest.mark.xdist_group("dashboard_unique_signals")
+
 
 # W414b: module-scoped indexed_project override — every test in this file
 # is a read-only `roam dashboard`/`understand`/`audit --json` invocation.
