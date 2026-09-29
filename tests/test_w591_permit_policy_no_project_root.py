@@ -32,7 +32,7 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init  # noqa: E402
+from conftest import git_commit, git_init  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Unit-level tests on _gather_permit_policy_decisions
@@ -152,10 +152,13 @@ def test_pr_replay_envelope_surfaces_permit_policy_warning(tmp_path: Path, monke
     from roam.commands import cmd_pr_replay
 
     # Build a tiny git repo so pr-replay's git rev-list call succeeds.
+    # We need at least two commits so HEAD~1..HEAD resolves cleanly.
     proj = tmp_path / "tinyproj"
     proj.mkdir()
     (proj / "README.md").write_text("x\n")
     git_init(proj)
+    (proj / "extra.txt").write_text("extra\n")
+    git_commit(proj, "second commit")
 
     canonical_marker = (
         "permits: project_root_not_found — find_project_root returned None "
@@ -181,6 +184,8 @@ def test_pr_replay_envelope_surfaces_permit_policy_warning(tmp_path: Path, monke
         [
             "--json",
             "pr-replay",
+            "--range",
+            "HEAD~1..HEAD",
             "--tier",
             "sample",
             "--evidence",
