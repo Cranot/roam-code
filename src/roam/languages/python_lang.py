@@ -247,6 +247,12 @@ class PythonExtractor(LanguageExtractor):
         # @property decorated methods get their own kind for accurate search/dead-code
         if parent_name and any(d.strip() == "@property" for d in decorators):
             kind = "property"
+        # Pydantic validators: @validator / @field_validator / @root_validator / @model_validator
+        elif parent_name and any(
+            d.lstrip("@").split("(")[0] in ("validator", "field_validator", "root_validator", "model_validator")
+            for d in decorators
+        ):
+            kind = "validator"
         qualified = f"{parent_name}.{name}" if parent_name else name
         vis = self._visibility(name)
         is_exported = self._is_exported(name, dunder_all)
@@ -621,7 +627,7 @@ class PythonExtractor(LanguageExtractor):
                 self._extract_except_refs(child, source, refs, scope_name)
                 self._walk_refs(child, source, file_path, refs, scope_name)
             elif (
-                child.type == "identifier"
+                child.type in ("identifier", "attribute")
                 and node.type in ("argument_list", "list", "tuple", "set")
                 and not self._is_class_base_list(node)
             ):
@@ -639,7 +645,14 @@ class PythonExtractor(LanguageExtractor):
                 # `argument_list` there already gets an `inherits` edge from
                 # `_pending_inherits`; adding a `reference` edge too would
                 # just double the row for no precision gain.
-                self._emit_bare_identifier_ref(child, source, refs, scope_name)
+                # Attribute form covers Django/DRF patterns like
+                # `router.register(r'users', viewsets.UserViewSet)` where
+                # the view class is referenced via dotted path rather than
+                # a bare name.
+                if child.type == "identifier":
+                    self._emit_bare_identifier_ref(child, source, refs, scope_name)
+                else:
+                    self._emit_bare_attribute_ref(child, source, refs, scope_name)
             elif child.type == "keyword_argument":
                 # `safe(name="disk", fn=probe_disk)` — same higher-order
                 # reference as a positional argument, just named.
@@ -1110,6 +1123,32 @@ class PythonExtractor(LanguageExtractor):
             cur = cur.parent
         return False
 
+    def _emit_bare_attribute_ref(self, node, source, refs, scope_name) -> None:
+        """Record a dotted attribute used in VALUE position as a reference.
+
+        Covers Django/DRF patterns like `router.register(r'users',
+        viewsets.UserViewSet)` where the class is referenced via a
+        dotted module path rather than a bare name.  `self.x` and
+        `cls.x` are skipped — those are instance/class attribute
+        accesses, not inter-module symbol references.
+        """
+        obj = node.child_by_field_name("object")
+        if obj is not None and obj.type == "identifier":
+            obj_name = self.node_text(obj, source)
+            if obj_name in ("self", "cls"):
+                return
+        name = self.node_text(node, source)
+        if not name:
+            return
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="reference",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
+
     def _extract_keyword_argument_ref(self, node, source, refs, scope_name):
         """``fn=probe_disk`` in a call: the VALUE is a higher-order
         reference (see ``_emit_bare_identifier_ref``); the parameter NAME
@@ -1122,6 +1161,8 @@ class PythonExtractor(LanguageExtractor):
             return
         if value.type == "identifier":
             self._emit_bare_identifier_ref(value, source, refs, scope_name)
+        elif value.type == "attribute":
+            self._emit_bare_attribute_ref(value, source, refs, scope_name)
         else:
             self._walk_refs(node, source, "", refs, scope_name)
 
@@ -1136,5 +1177,7 @@ class PythonExtractor(LanguageExtractor):
             return
         if value.type == "identifier":
             self._emit_bare_identifier_ref(value, source, refs, scope_name)
+        elif value.type == "attribute":
+            self._emit_bare_attribute_ref(value, source, refs, scope_name)
         else:
             self._walk_refs(node, source, "", refs, scope_name)
