@@ -35,6 +35,7 @@ from roam.commands.cmd_affected_tests import (
     _gather_affected_tests,
     _looks_like_file,
     _resolve_file_symbols,
+    count_kinds,
 )
 from roam.commands.cmd_conventions import classify_case
 
@@ -94,8 +95,8 @@ def _blast_severity(affected_syms: int, affected_files: int) -> str:
     return "LOW"
 
 
-def _test_severity(direct: int, transitive: int, colocated: int) -> str:
-    total = direct + transitive + colocated
+def _test_severity(direct: int, transitive: int, colocated: int, *file_level: int) -> str:
+    total = direct + transitive + colocated + sum(file_level)
     if total == 0:
         return "WARNING"
     return "OK"
@@ -294,9 +295,13 @@ def _check_affected_tests(conn, sym_ids, file_paths):
     # ``_gather_affected_tests`` (internal vocabulary), not envelope
     # severity slots. They flow into the count fields below, never into
     # a ``"severity"`` key — out of W762 scope by design.
-    direct = sum(1 for r in results if r["kind"] == "DIRECT")
-    transitive = sum(1 for r in results if r["kind"] == "TRANSITIVE")
-    colocated = sum(1 for r in results if r["kind"] == "COLOCATED")
+    kind_counts = count_kinds(results)
+    direct = kind_counts["direct"]
+    transitive = kind_counts["transitive"]
+    colocated = kind_counts["colocated"]
+    cli_invoke = kind_counts["cli_invoke"]
+    module_import = kind_counts["module_import"]
+    cli_possible = kind_counts["cli_possible"]
 
     # Unique test files
     seen = set()
@@ -338,12 +343,15 @@ def _check_affected_tests(conn, sym_ids, file_paths):
         pytest_cmd = f"{runner_token} " + " ".join(suggested) + suffix
     else:
         pytest_cmd = f"{runner_token} " + " ".join(test_files) if test_files else ""
-    severity = _test_severity(direct, transitive, colocated)
+    severity = _test_severity(direct, transitive, colocated, cli_invoke, module_import)
 
     return {
         "direct": direct,
         "transitive": transitive,
         "colocated": colocated,
+        "cli_invoke": cli_invoke,
+        "module_import": module_import,
+        "cli_possible": cli_possible,
         "total": len(results),
         "test_files": test_files,
         "pytest_command": pytest_cmd,
@@ -1226,6 +1234,9 @@ def preflight(ctx, target, staged):
                 "direct": 0,
                 "transitive": 0,
                 "colocated": 0,
+                "cli_invoke": 0,
+                "module_import": 0,
+                "cli_possible": 0,
                 "total": 0,
                 "test_files": [],
                 "pytest_command": "",
@@ -1496,6 +1507,9 @@ def preflight(ctx, target, staged):
                     "direct": tests["direct"],
                     "transitive": tests["transitive"],
                     "colocated": tests["colocated"],
+                    "cli_invoke": tests["cli_invoke"],
+                    "module_import": tests["module_import"],
+                    "cli_possible": tests["cli_possible"],
                     "total": tests["total"],
                     "test_files": tests["test_files"],
                     "pytest_command": tests["pytest_command"],
@@ -1688,6 +1702,10 @@ def preflight(ctx, target, staged):
             test_desc = f"{tests['direct']} direct, {tests['transitive']} transitive"
             if tests["colocated"]:
                 test_desc += f", {tests['colocated']} colocated"
+            if tests["cli_invoke"] or tests["module_import"]:
+                test_desc += f", {tests['cli_invoke'] + tests['module_import']} cli/import"
+            if tests["cli_possible"]:
+                test_desc += f", {tests['cli_possible']} possible"
             click.echo(f"  Affected tests:   {test_desc:<40s} {_severity_tag(tests['severity'])}")
 
             # Complexity

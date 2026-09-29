@@ -367,21 +367,23 @@ def _collect_breaking(conn, root, base_ref):
 def _collect_affected_tests_evidence(conn, sym_by_file):
     """Gather affected tests.
 
-    Returns {selected, direct, transitive, colocated, command, tests}.
+    Returns {selected, direct, transitive, colocated, cli_invoke,
+    module_import, cli_possible, command, tests}.
     """
+    from roam.commands.cmd_affected_tests import count_kinds
     from roam.commands.cmd_diff import _collect_affected_tests
 
     test_results, pytest_cmd = _collect_affected_tests(conn, sym_by_file)
-
-    direct = sum(1 for t in test_results if t["kind"] == "DIRECT")
-    transitive = sum(1 for t in test_results if t["kind"] == "TRANSITIVE")
-    colocated = sum(1 for t in test_results if t["kind"] == "COLOCATED")
+    kind_counts = count_kinds(test_results)
 
     return {
         "selected": len(test_results),
-        "direct": direct,
-        "transitive": transitive,
-        "colocated": colocated,
+        "direct": kind_counts["direct"],
+        "transitive": kind_counts["transitive"],
+        "colocated": kind_counts["colocated"],
+        "cli_invoke": kind_counts["cli_invoke"],
+        "module_import": kind_counts["module_import"],
+        "cli_possible": kind_counts["cli_possible"],
         "command": pytest_cmd,
         "tests": [
             {
@@ -1297,7 +1299,17 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             _collect_affected_tests_evidence,
             conn,
             sym_by_file,
-            default={"selected": 0, "direct": 0, "transitive": 0, "colocated": 0, "command": "", "tests": []},
+            default={
+                "selected": 0,
+                "direct": 0,
+                "transitive": 0,
+                "colocated": 0,
+                "cli_invoke": 0,
+                "module_import": 0,
+                "cli_possible": 0,
+                "command": "",
+                "tests": [],
+            },
         )
 
         # 7. Effects
@@ -1689,7 +1701,9 @@ def _append_attestation_tests_section(lines, plan, is_md):
             lines.append(
                 f"- {tests.get('direct', 0)} direct, "
                 f"{tests.get('transitive', 0)} transitive, "
-                f"{tests.get('colocated', 0)} colocated"
+                f"{tests.get('colocated', 0)} colocated, "
+                f"{tests.get('cli_invoke', 0) + tests.get('module_import', 0)} cli/import, "
+                f"{tests.get('cli_possible', 0)} possible"
             )
             cmd = plan["test_command"]
             if cmd:
@@ -1700,7 +1714,9 @@ def _append_attestation_tests_section(lines, plan, is_md):
                 f"AFFECTED TESTS ({tests['selected']}: "
                 f"{tests.get('direct', 0)} direct, "
                 f"{tests.get('transitive', 0)} transitive, "
-                f"{tests.get('colocated', 0)} colocated):"
+                f"{tests.get('colocated', 0)} colocated, "
+                f"{tests.get('cli_invoke', 0) + tests.get('module_import', 0)} cli/import, "
+                f"{tests.get('cli_possible', 0)} possible):"
             )
             cmd = plan["test_command"]
             if cmd:
