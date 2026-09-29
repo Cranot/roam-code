@@ -18,13 +18,12 @@ real dictionary is literally named one of those components.
 from __future__ import annotations
 
 import ast
-import textwrap
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
 from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
+from roam.world_model._source_helpers import _parse_function, _read_source
 from roam.world_model.side_effects import SideEffectClassification, classify_side_effects
 
 _OPTIONAL_RETURNERS = {
@@ -67,27 +66,6 @@ class UncheckedResultFinding:
             "line_start": self.line_start,
             "line_end": self.line_end,
         }
-
-
-def _read_source(repo_root: Path, rel_path: str) -> tuple[str, list[str]]:
-    try:
-        text = (repo_root / rel_path).read_text(encoding="utf-8", errors="replace")
-        return text, text.splitlines(keepends=True)
-    except (OSError, UnicodeError) as exc:
-        log_swallowed(f"world_model.unchecked_result:body_read:{rel_path}", exc)
-        return "", []
-
-
-def _parse_function(body_text: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    try:
-        tree = ast.parse(textwrap.dedent(body_text))
-        return next(
-            (node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))),
-            None,
-        )
-    except (SyntaxError, ValueError, TypeError, MemoryError) as exc:
-        log_swallowed("world_model.unchecked_result:parse", exc)
-        return None
 
 
 def _receiver_component(node: ast.Call) -> str | None:
