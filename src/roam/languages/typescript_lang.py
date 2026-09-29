@@ -80,6 +80,14 @@ _TS_TYPE_CONTEXT_NODES = frozenset(
         # Wave 8: type predicate return types — function (x: T): x is UserModel
         "type_predicate_annotation",
         "type_predicate",
+        # Wave 9: tuple element wrappers and index signatures
+        # rest_type covers ...OtherTypes in tuple position
+        "rest_type",
+        # optional_type covers MyType? in tuple position
+        "optional_type",
+        # index_signature is the container for both mapped-type clauses
+        # ({ [K in keyof T]: V }) and regular index signatures ({ [k: string]: V })
+        "index_signature",
     }
 )
 
