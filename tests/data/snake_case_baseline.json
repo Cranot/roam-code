@@ -32,37 +32,37 @@
   {
     "file": "src/roam/world_model/fabricated_success.py",
     "function": "visit_FunctionDef",
-    "line": 196
+    "line": 183
   },
   {
     "file": "src/roam/world_model/fabricated_success.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 199
+    "line": 186
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_FunctionDef",
-    "line": 66
+    "line": 65
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 69
+    "line": 68
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFor",
-    "line": 103
+    "line": 102
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_FunctionDef",
-    "line": 127
+    "line": 115
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 130
+    "line": 118
   },
   {
     "file": "src/roam/world_model/unchecked_result.py",
