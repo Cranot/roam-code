@@ -42,37 +42,37 @@
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_FunctionDef",
-    "line": 65
+    "line": 73
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 68
+    "line": 76
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFor",
-    "line": 102
-  },
-  {
-    "file": "src/roam/world_model/return_in_finally.py",
-    "function": "visit_FunctionDef",
-    "line": 115
-  },
-  {
-    "file": "src/roam/world_model/return_in_finally.py",
-    "function": "visit_AsyncFunctionDef",
-    "line": 118
-  },
-  {
-    "file": "src/roam/world_model/unchecked_result.py",
-    "function": "visit_FunctionDef",
-    "line": 107
-  },
-  {
-    "file": "src/roam/world_model/unchecked_result.py",
-    "function": "visit_AsyncFunctionDef",
     "line": 110
+  },
+  {
+    "file": "src/roam/world_model/return_in_finally.py",
+    "function": "visit_FunctionDef",
+    "line": 123
+  },
+  {
+    "file": "src/roam/world_model/return_in_finally.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 126
+  },
+  {
+    "file": "src/roam/world_model/unchecked_result.py",
+    "function": "visit_FunctionDef",
+    "line": 114
+  },
+  {
+    "file": "src/roam/world_model/unchecked_result.py",
+    "function": "visit_AsyncFunctionDef",
+    "line": 117
   },
   {
     "file": "src/roam/world_model/unreachable_except.py",
