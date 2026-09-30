@@ -20,3 +20,5 @@ No public Python API lives here — the file's only job is to make the
 directory a regular package so the wheel-safe resource loader resolves
 correctly. The YAML rule files (``*.yaml``) remain the data surface.
 """
+
+from __future__ import annotations
