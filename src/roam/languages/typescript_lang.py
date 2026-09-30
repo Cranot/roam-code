@@ -105,6 +105,12 @@ _TS_TYPE_CONTEXT_NODES = frozenset(
         "template_type",
         # Note: "asserts x is T" uses type_predicate (Wave 8), not a separate
         # asserts_type_predicate node — no such tree-sitter node type exists.
+        # Wave 12: readonly tuple/array types — readonly [A, B] or readonly B[]
+        # When used as a property type or function parameter (inside type_annotation),
+        # the readonly_type node is not in a type-context path unless it is here.
+        # Type aliases work via the _walk_refs fallback, but interface properties,
+        # function params and class properties all go through _walk_type_node.
+        "readonly_type",
     }
 )
 
