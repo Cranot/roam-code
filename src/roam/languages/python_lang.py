@@ -942,6 +942,22 @@ class PythonExtractor(LanguageExtractor):
                 if base is not None:
                     self._walk_type_node(base, source, refs, scope_name)
                 return
+            if base_name == "Annotated":
+                # PEP 593: Annotated[type, *metadata].  Only the first argument
+                # is the type; remaining arguments are runtime metadata (e.g.
+                # Field(...), validators, constraints) — NOT type references.
+                # Walk the base (``Annotated`` itself) and only the first arg
+                # inside the ``type_parameter`` bracket.
+                if base is not None:
+                    self._walk_type_node(base, source, refs, scope_name)
+                for child in node.children:
+                    if child.type == "type_parameter":
+                        for sub in child.children:
+                            if sub.type in ("[", "]", ","):
+                                continue
+                            self._walk_type_node(sub, source, refs, scope_name)
+                            break  # only the first arg
+                return
             for child in node.children:
                 self._walk_type_node(child, source, refs, scope_name)
         else:

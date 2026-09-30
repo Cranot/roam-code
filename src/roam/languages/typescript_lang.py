@@ -96,6 +96,17 @@ _TS_TYPE_CONTEXT_NODES = frozenset(
         "function_type",
         # constructor_type covers: type C = new (x: A) => ReturnType
         "constructor_type",
+        # Wave 11: template literal type substitutions — `prefix${MyType}suffix`
+        # template_literal_type is already in the set (above); each ${...}
+        # substitution inside it is a template_type node whose children are the
+        # actual type identifiers.  Without template_type in the set those
+        # identifiers are skipped when _walk_type_node iterates the children of
+        # template_literal_type.
+        "template_type",
+        # Wave 11: asserts type predicate — function assert(): asserts x is T
+        # type_predicate_annotation (already in set) wraps asserts_type_predicate;
+        # without the inner node in the set its type_identifier child is skipped.
+        "asserts_type_predicate",
     }
 )
 
