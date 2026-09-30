@@ -15,3 +15,5 @@
 # Do not force directory-wide uniformity — each cluster's shape carries the
 # author's framing. New files should pick the convention whose cluster they
 # belong to, not invent a fourth.
+
+from __future__ import annotations

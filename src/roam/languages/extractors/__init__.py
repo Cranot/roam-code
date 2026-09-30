@@ -32,3 +32,5 @@ directory a regular package so the wheel-safe resource loader resolves
 correctly. The YAML extractor files (``*.yaml``) remain the data
 surface.
 """
+
+from __future__ import annotations

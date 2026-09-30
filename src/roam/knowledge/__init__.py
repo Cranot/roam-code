@@ -8,6 +8,8 @@ stoa checkout. The canonical upstream copy lives at
 change to mirror upstream when the owner chooses to deploy.
 """
 
+from __future__ import annotations
+
 from roam.knowledge.knowledge_claim import (  # noqa: F401
     KnowledgeClaim,
     KnowledgeRegistry,

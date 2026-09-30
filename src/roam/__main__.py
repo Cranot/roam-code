@@ -1,5 +1,7 @@
 """Allow running as python -m roam."""
 
+from __future__ import annotations
+
 import sys
 
 from roam.cli import cli

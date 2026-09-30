@@ -6,6 +6,8 @@ replay-gate (:mod:`replay_gate`). Consumed by ``roam sibling-patch apply`` and
 gated behind ``ROAM_EXPERIMENTAL_REPAIR_SIBLINGS`` (default-off).
 """
 
+from __future__ import annotations
+
 from roam.sibling_patch.repair_scorer import (  # noqa: F401
     DEFECT_KINDS,
     RankedSibling,
