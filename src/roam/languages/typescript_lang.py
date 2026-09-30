@@ -103,10 +103,8 @@ _TS_TYPE_CONTEXT_NODES = frozenset(
         # identifiers are skipped when _walk_type_node iterates the children of
         # template_literal_type.
         "template_type",
-        # Wave 11: asserts type predicate — function assert(): asserts x is T
-        # type_predicate_annotation (already in set) wraps asserts_type_predicate;
-        # without the inner node in the set its type_identifier child is skipped.
-        "asserts_type_predicate",
+        # Note: "asserts x is T" uses type_predicate (Wave 8), not a separate
+        # asserts_type_predicate node — no such tree-sitter node type exists.
     }
 )
 
