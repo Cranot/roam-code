@@ -3,6 +3,14 @@
 Heuristic detector — false negatives expected, false positives should be rare.
 The goal is precision.
 
+Design: the public ``classify_*`` function wraps its entire body in
+``except Exception: return []``.  This is intentional fail-open behaviour —
+a missing file, unparseable source, or broken tree-sitter grammar produces an
+empty result rather than crashing the caller.  Tests that mutate
+``_read_source`` will not break this detector: the outer except absorbs the
+error before any inner check runs.  This is a conservation control, not weak
+test coverage.
+
 Only literal Python AST structure is inspected.  A ``return``, ``break``, or
 ``continue`` in a ``finally`` block can discard an exception propagating from
 the corresponding ``try`` statement, so this detector reports the first such

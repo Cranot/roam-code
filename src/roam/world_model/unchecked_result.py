@@ -1,5 +1,12 @@
 """Detect inline dereferences of narrowly known optional stdlib results.
 
+Design: the public ``classify_*`` function wraps its entire body in
+``except Exception: return []`` — intentional fail-open behaviour.  Tests that
+mutate ``_read_source`` are conservation controls: the outer except absorbs any
+error before reaching the inner per-file logic.
+
+
+
 This detector reports only an attribute or subscript applied directly to a
 call with a hardcoded possibly-empty return shape: ``re.match``/
 ``re.search``/``re.fullmatch``, a one-argument ``.get``, ``os.getenv``, or
