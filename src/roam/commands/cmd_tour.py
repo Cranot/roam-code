@@ -303,11 +303,11 @@ def _patterns(conn):
     # Test file ratio
     test_files = conn.execute("SELECT COUNT(*) FROM files WHERE path LIKE '%test%' OR path LIKE '%spec%'").fetchone()[0]
 
-    # Health score
+    # Health score — suppress when no source symbols (vacuous-max W805-JJJ-2)
     health_row = conn.execute(
         "SELECT AVG(health_score) as avg_hs FROM file_stats WHERE health_score IS NOT NULL"
     ).fetchone()
-    avg_health = round(health_row["avg_hs"], 1) if health_row and health_row["avg_hs"] else None
+    avg_health = round(health_row["avg_hs"], 1) if (health_row and health_row["avg_hs"] and total_symbols > 0) else None
 
     return {
         "files": total_files,
@@ -438,6 +438,8 @@ def _starting_file_info(conn, order, langs):
 
 
 def _tour_verdict(conn, langs, stats, order):
+    if stats["symbols"] == 0:
+        return f"empty corpus: {stats['files']} files, 0 source symbols — no tour available"
     start_file, lang_label = _starting_file_info(conn, order, langs)
     n_layers = len({item["layer"] for item in order}) if order else 0
     return (
@@ -447,13 +449,18 @@ def _tour_verdict(conn, langs, stats, order):
 
 
 def _tour_summary(verdict, stats, langs, top):
-    return {
+    summary: dict = {
         "verdict": verdict,
         "files": stats["files"],
         "symbols": stats["symbols"],
         "languages": len(langs),
         "top_symbols": len(top),
     }
+    if stats["symbols"] == 0:
+        summary["partial_success"] = True
+        summary["state"] = "empty_corpus"
+        summary["resolution"] = "unresolved"
+    return summary
 
 
 def _tour_json_envelope(verdict, token_budget, langs, stats, top, order, entries, mermaid_text=None):
