@@ -459,10 +459,10 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
         if _partial:
             # Degraded verdict — names the failed subcommands so the agent
             # sees the cascade rather than a fabricated READY/NOT-READY.
-            _verdict = "PARTIAL — failed subcommands: " + ", ".join(_failed)
+            _verdict = "PARTIAL - failed subcommands: " + ", ".join(_failed)
         elif _ready:
             _verdict = (
-                f"READY — diff: {_diff_summary.get('changed_files', 0)} files / "
+                f"READY - diff: {_diff_summary.get('changed_files', 0)} files / "
                 f"{_diff_summary.get('affected_symbols', 0)} affected; "
                 f"critique: clean; pr-risk: {_pr_risk_score}"
             )
@@ -472,7 +472,7 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
                 _reasons.append(f"{_high_severity} high-severity finding(s)")
             if _pr_risk_score >= 70:
                 _reasons.append(f"pr-risk score {_pr_risk_score} ≥ 70")
-            _verdict = "NOT READY — " + ", ".join(_reasons or ["see sections"])
+            _verdict = "NOT READY - " + ", ".join(_reasons or ["see sections"])
         return _verdict, _partial, _ready
 
     _verdict_result = _run_check(
@@ -482,17 +482,34 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
         high_severity,
         pr_risk_score,
         diff_summary,
-        default=("REVIEW — pr_prep_compute_verdict_w607ac_default", True, False),
+        default=("REVIEW - pr_prep_compute_verdict_w607ac_default", True, False),
     )
     verdict, partial_success, ready = (
         _verdict_result
         if _verdict_result is not None
         else (
-            "REVIEW — pr_prep_compute_verdict_w607ac_default",
+            "REVIEW - pr_prep_compute_verdict_w607ac_default",
             True,
             False,
         )
     )
+
+    # W805-G: detect when every child explicitly reports an empty/no-diff state
+    # so we never emit READY when there is no diff to gate.
+    _diff_verdict_lower = ((diff_payload.get("summary") or {}).get("verdict") or "").lower()
+    _critique_verdict_lower = ((critique_payload.get("summary") or {}).get("verdict") or "").lower()
+    _pr_risk_verdict_lower = ((pr_risk_payload.get("summary") or {}).get("verdict") or "").lower()
+    _w805g_all_empty = (
+        "no change" in _diff_verdict_lower
+        and ("no diff" in _critique_verdict_lower or "no change" in _critique_verdict_lower)
+        and ("no-change" in _pr_risk_verdict_lower or "no change" in _pr_risk_verdict_lower)
+    )
+    _w805g_state: str | None = None
+    if _w805g_all_empty:
+        verdict = "NOCHANGES - no diff to gate"
+        partial_success = True
+        ready = False
+        _w805g_state = "no_changes"
 
     # W607-CC -- score_classify boundary. Map the composite pr-prep verdict
     # (READY / NOT READY / PARTIAL) onto the internal 4-tier risk vocabulary
@@ -574,6 +591,9 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
             "risk_level_canonical": risk_level_canonical,
             "risk_rank": risk_rank_int,
             "score_classification": _score_classification_state,
+            # W805-G: propagate the no-changes state so consumers can switch on
+            # it instead of text-matching the verdict string.
+            **({} if _w805g_state is None else {"state": _w805g_state}),
         },
         "diff": diff_payload,
         "critique": critique_payload,
