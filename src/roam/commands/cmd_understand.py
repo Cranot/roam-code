@@ -928,11 +928,16 @@ def understand_cmd(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir)
             # ``roam health`` prints it. (Was a divergent inline >=70
             # "healthy" cutoff — F2 in (internal memo).)
             _health_label = health_band(health["health_score"])
-            _understand_verdict = (
-                f"{_health_label} {len(languages)}-lang project "
-                f"({health['health_score']}/100), "
-                f"{len(clusters_data)} clusters, {len(hotspots)} hotspots"
-            )
+            # W805-J: empty-corpus disclosure (0 symbols = no code to comprehend).
+            _w805j_empty = sym_count == 0
+            if _w805j_empty:
+                _understand_verdict = f"empty corpus project: {file_count} files, 0 symbols indexed"
+            else:
+                _understand_verdict = (
+                    f"{_health_label} {len(languages)}-lang project "
+                    f"({health['health_score']}/100), "
+                    f"{len(clusters_data)} clusters, {len(hotspots)} hotspots"
+                )
             # Unique-signal discovery hints (LAW 11: server-side hints).
             # Several roam commands produce signal not available elsewhere
             # (danger_score, AI-rot, AI-ratio, AI-readiness, cohesion,
@@ -1023,6 +1028,11 @@ def understand_cmd(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir)
                 understand_summary["warnings_out"] = list(combined_warnings)
                 understand_summary["partial_success"] = True
                 envelope_kwargs["warnings_out"] = list(combined_warnings)
+
+            # W805-J: empty-corpus state disclosure.
+            if _w805j_empty:
+                understand_summary["state"] = "no_symbols"
+                understand_summary["partial_success"] = True
             # W607-BC: wrap JSON serialization itself — the last
             # downstream substrate. On serialize raise, fall back to a
             # minimal envelope so the contract still holds.

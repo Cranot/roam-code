@@ -313,16 +313,6 @@ class TestUnderstandEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-J BUG: cmd_understand.py L843-854 does not disclose "
-        "empty-corpus state. Verdict says 'healthy 1-lang project "
-        "(100/100), 0 clusters, 1 hotspots' on a 0-symbol corpus "
-        "indistinguishably from a healthy project. Pattern 2 silent "
-        "fallback (flagship class); awaiting separate fix wave."
-    ),
-)
 def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     """``summary.partial_success`` should be True on the empty branch.
 
@@ -340,15 +330,6 @@ def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-J BUG: cmd_understand.py L883-940 does not emit summary.state. "
-        "Empty corpus and healthy corpus are indistinguishable in the "
-        "envelope state field. Pattern 2 silent fallback (flagship class); "
-        "awaiting fix wave."
-    ),
-)
 def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
     """``summary.state`` should disclose the empty condition explicitly.
 
@@ -367,17 +348,6 @@ def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-J BUG: cmd_understand.py L843-854 emits a 'healthy ... project' "
-        "verdict identically on healthy and empty corpora. Worse, the "
-        "health_score reads 100/100 on a 0-symbol corpus because there are "
-        "no findings to deduct from. The verdict must mention 'empty' / "
-        "'no symbols' / 'no data' / 'not initialized' on the empty branch. "
-        "Pattern 2 silent fallback (flagship class); awaiting fix wave."
-    ),
-)
 def test_no_silent_understood_on_empty(cli_runner, empty_corpus):
     """Verdict on the empty branch should NOT match the 'healthy N-lang
     project' shape - it must call out the empty condition explicitly so a
@@ -403,17 +373,6 @@ def test_no_silent_understood_on_empty(cli_runner, empty_corpus):
     assert any(t in verdict for t in empty_tokens), f"verdict must disclose empty-corpus state; got {verdict!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-J BUG: cmd_understand.py L843-854 emits a 'healthy ... project' "
-        "verdict on a 0-symbol corpus. Pattern 2 silent-SAFE: the flagship "
-        "comprehension command claims architectural health when there is "
-        "no architecture to comprehend. Pinned separately from the verdict "
-        "test so the fix wave can address the architectural-overview "
-        "guarantee independently."
-    ),
-)
 def test_no_silent_architecture_overview_on_zero_symbols(cli_runner, empty_corpus):
     """The understand command must NOT emit a positive architectural
     verdict when every architectural axis (clusters, layers,
@@ -449,16 +408,6 @@ def test_no_silent_architecture_overview_on_zero_symbols(cli_runner, empty_corpu
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-J BUG: cmd_understand.py never emits an explicit no_clusters / "
-        "no_symbols / empty_corpus state on the architecture sub-envelope. "
-        "Same root cause as test_empty_corpus_explicit_state; kept separate "
-        "so the fix wave can verify the zero-clusters branch independently. "
-        "Pattern 2 silent fallback."
-    ),
-)
 def test_zero_clusters_explicit_state(cli_runner, empty_corpus):
     """A corpus with zero indexed clusters should emit either
     ``state == "empty_corpus" / "no_symbols"`` explicitly, OR a verdict
