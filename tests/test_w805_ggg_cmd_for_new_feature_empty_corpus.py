@@ -359,34 +359,6 @@ class TestForNewFeatureEmptyComplexityChildDisclosesState:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-GGG REAL BUG - agent-safety HIGH "
-        "(Pattern-2 silent fallback / Variant-D silent success on "
-        "degraded child resolution). Same root cause as W805-F/KK/LL: "
-        "_compound_envelope at src/roam/mcp_server.py:4448-4470 "
-        "computes failed_subcommands ONLY from per-child top-level "
-        "'error' keys. The complexity_report child returns a "
-        "structured envelope with NO top-level error AND no "
-        "summary.partial_success flag, but DOES disclose "
-        "summary.state='no_complexity_data' -- i.e. self-disclosing "
-        "degraded execution via the state-only channel. The "
-        "aggregator never reads the nested state signal, so "
-        "complexity_report is placed in 'sections' (the success "
-        "bucket) rather than in failed_subcommands. Agent-safety "
-        "HIGH: an agent reading the compound verdict on an empty / "
-        "not-yet-indexed workspace sees 'complexity_report: No "
-        "complexity data' inline AND complexity_report in sections, "
-        "and may proceed with feature planning assuming the "
-        "complexity check ran cleanly. Fix: at mcp_server.py:4470, "
-        "also add child to failed_subcommands whenever child.summary."
-        "state is in a closed-enum degradation set (empty_corpus / "
-        "no_complexity_data / not_found / not_initialized). Bundled "
-        "with W805-F/KK/LL fix wave; separate from this pin per W978 "
-        "+ accumulate-only constraint."
-    ),
-)
 def test_no_silent_no_feature_planning_on_empty(empty_corpus):
     """Pin: compound must lift complexity_report child's
     no_complexity_data disclosure into failed_subcommands.
@@ -410,18 +382,6 @@ def test_no_silent_no_feature_planning_on_empty(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-GGG partial_success aggregator pin: the compound "
-        "summary.partial_success MUST flip True whenever ANY child "
-        "discloses a degraded state token (no_complexity_data / "
-        "empty_corpus / not_found). Today it stays False because "
-        "the aggregator only reads top-level 'error' keys. Bundled "
-        "with the failed_subcommands propagation fix; separate wave "
-        "per W978."
-    ),
-)
 def test_empty_corpus_partial_success_set(empty_corpus):
     """Pin: ``summary.partial_success`` is True on empty corpus."""
     r = for_new_feature(area="", root=".")
@@ -433,19 +393,6 @@ def test_empty_corpus_partial_success_set(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-GGG state-disclosure pin (Pattern-2 fix template): the "
-        "compound envelope SHOULD carry an explicit summary.state "
-        "field naming the empty-data shape (e.g. 'no_data' / "
-        "'no_complexity_data' / 'empty_corpus'). Today the compound "
-        "emits no state key at all -- only its children do. "
-        "Closed-enum state-disclosure is the Pattern-2 canonical fix "
-        "per CLAUDE.md Pattern-2. Bundled with the partial_success / "
-        "failed_subcommands propagation fix; separate wave per W978."
-    ),
-)
 def test_empty_corpus_state_explicit(empty_corpus):
     """Pin: compound discloses no_data / empty_corpus state on the
     empty-corpus path. Today the key is absent."""
