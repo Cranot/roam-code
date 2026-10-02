@@ -569,6 +569,10 @@ class PythonExtractor(LanguageExtractor):
                 # `except ValueError as e:` → type_ref to ValueError
                 self._extract_except_refs(child, source, refs, scope_name)
                 self._walk_refs(child, source, file_path, refs, scope_name)
+            elif child.type == "class_pattern":
+                # `case MyType(x=1):` in a match statement — MyType is a type
+                # reference, not a call. The dotted_name holds the class name.
+                self._extract_class_pattern_refs(child, source, refs, scope_name)
             elif (
                 child.type == "identifier"
                 and node.type in ("argument_list", "list", "tuple", "set")
@@ -609,6 +613,11 @@ class PythonExtractor(LanguageExtractor):
                     # Extract type annotation refs from function parameters and return
                     if child.type == "function_definition":
                         self._extract_type_refs(child, source, refs, new_scope)
+                    # PEP 695 type parameter bounds: def f[T: MyBound](...) / class C[T: B]:
+                    self._extract_type_parameter_refs(child, source, refs, new_scope)
+                    # Generic base type args: class C(Generic[MyItem]) — walk subscript args
+                    if child.type == "class_definition":
+                        self._extract_class_base_type_args(child, source, refs, new_scope)
                 self._walk_refs(child, source, file_path, refs, new_scope)
 
     def _extract_decorator_refs(self, decorated_node, source, refs, scope_name):
@@ -717,6 +726,77 @@ class PythonExtractor(LanguageExtractor):
             elif child.type in ("tuple", "attribute"):
                 self._except_types_from_node(child, source, refs, scope_name)
                 return
+
+    def _extract_class_pattern_refs(self, class_pattern_node, source, refs, scope_name):
+        """Emit a type_ref for the class name in a match-case class pattern.
+
+        ``case MyType(x=1):`` — the ``dotted_name`` child of ``class_pattern``
+        names the matched type; sub-patterns may themselves be class patterns
+        and are recursed into so nested patterns are also captured.
+        """
+        for child in class_pattern_node.children:
+            if child.type == "dotted_name":
+                name = self.node_text(child, source)
+                if name not in _BUILTIN_TYPES:
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+            elif child.type == "class_pattern":
+                # Nested class pattern inside keyword/positional patterns
+                self._extract_class_pattern_refs(child, source, refs, scope_name)
+
+    def _extract_type_parameter_refs(self, def_node, source, refs, scope_name):
+        """Walk PEP 695 type parameter bounds: ``def f[T: MyBound]`` or ``class C[T: B]``.
+
+        The ``type_parameter`` child of a function or class definition holds
+        ``constrained_type`` nodes whose second ``type`` child is the bound.
+        Without this, ``MyBound`` in ``[T: MyBound]`` is silently skipped.
+        """
+        for child in def_node.children:
+            if child.type != "type_parameter":
+                continue
+            for param in child.children:
+                if param.type != "type":
+                    continue
+                # The param's child may be a constrained_type (T: Bound)
+                for sub in param.children:
+                    if sub.type == "constrained_type":
+                        # constrained_type: [type(name), :, type(bound)]
+                        type_children = [c for c in sub.children if c.type == "type"]
+                        # Bound is the last type child (after the colon)
+                        if len(type_children) >= 2:
+                            self._walk_type_node(type_children[-1], source, refs, scope_name)
+
+    def _extract_class_base_type_args(self, class_node, source, refs, scope_name):
+        """Walk subscript type arguments in class base-class list.
+
+        ``class C(Generic[MyItem]):`` — the ``argument_list`` of a
+        ``class_definition`` uses ``subscript`` nodes for generic bases.
+        The subscript arguments (e.g. ``MyItem``) are type references but
+        are not visited by the identifier branch (which skips the base list
+        to avoid duplicating the ``inherits`` edge).
+        """
+        bases = class_node.child_by_field_name("superclasses")
+        if bases is None:
+            # Tree-sitter-python uses argument_list for base classes
+            for child in class_node.children:
+                if child.type == "argument_list":
+                    bases = child
+                    break
+        if bases is None:
+            return
+        for base in bases.children:
+            if base.type == "subscript":
+                # subscript: identifier [ type_args ]
+                # Walk the slice/index part as a type context
+                for sub in base.children:
+                    if sub.type not in ("[", "]") and sub != base.children[0]:
+                        self._walk_type_node(sub, source, refs, scope_name)
 
     def _extract_type_refs(self, func_node, source, refs, scope_name):
         """Extract references from type annotations in function signatures."""
