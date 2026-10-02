@@ -310,19 +310,6 @@ class TestEmptyDiffSilentSafe:
     because the human reading is more specific, but the machine-readable
     state contract is the same: no ``state`` / no ``partial_success``."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-Z shape parity with W805-W: "
-            "src/roam/commands/cmd_delete_check.py:290-315 (empty-diff "
-            "branch) emits ``verdict: 'no deletions detected'`` with no "
-            "``summary.state`` disclosure. The canonical Pattern-2 contract "
-            "is to name the empty-input condition explicitly so machine "
-            "consumers can switch on state, not text-match the verdict. "
-            "Pinned strict so a future cleanup that adds "
-            "``state: 'no_diff'`` graduates to PASS."
-        ),
-    )
     def test_empty_diff_explicit_state(self, cli_runner, empty_corpus, monkeypatch):
         """Empty-diff path discloses ``state`` explicitly."""
         monkeypatch.chdir(empty_corpus)
@@ -355,22 +342,6 @@ class TestZeroSurvivorsSilentSafe:
     path. An agent acting on this verdict could ship a deletion of a
     load-bearing symbol the corpus simply couldn't scan."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-Z REAL BUG: src/roam/commands/cmd_delete_check.py:566-579 "
-            "(``_verdict``) emits SAFE on the zero-survivors path with no "
-            "``summary.state`` disclosure. An agent or CI gate switching "
-            "on machine-readable state cannot tell 'genuinely no callers' "
-            "from 'corpus couldn't be scanned'. CRITICAL agent-safety "
-            "class -- the gate that should BLOCK destructive deletions "
-            "rubber-stamps them on the empty-corpus path (and exit 5 "
-            "never fires under --ci because overall != BREAK-RISK). "
-            "Structural peer of W805-W on cmd_refs_text. Pinned strict so "
-            "a future cleanup that adds ``state: 'empty_corpus'`` (or "
-            "equivalent) graduates this to PASS."
-        ),
-    )
     def test_zero_survivors_explicit_state(self, cli_runner, empty_corpus_with_deletion, monkeypatch):
         """Zero-survivors path discloses ``state`` explicitly."""
         monkeypatch.chdir(empty_corpus_with_deletion)
@@ -389,19 +360,6 @@ class TestZeroSurvivorsSilentSafe:
             f"scan callers'; got {state!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-Z REAL BUG: src/roam/commands/cmd_delete_check.py:566-579 "
-            "emits ``partial_success: false`` on the zero-survivors path. "
-            "When the underlying outcome is 'we couldn't find any "
-            "survivors' AND the verdict is SAFE, an agent reading "
-            "partial_success would conclude no degradation occurred. The "
-            "canonical Pattern-2 contract sets partial_success=True on any "
-            "'empty input / degraded scan' outcome. Pinned strict; "
-            "CRITICAL agent-safety class."
-        ),
-    )
     def test_zero_survivors_partial_success_set(self, cli_runner, empty_corpus_with_deletion, monkeypatch):
         """Pattern-2 guard: zero-survivors path sets partial_success=True."""
         monkeypatch.chdir(empty_corpus_with_deletion)
@@ -418,23 +376,6 @@ class TestZeroSurvivorsSilentSafe:
             f"partial_success=True; got {summary.get('partial_success')!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-Z REAL BUG -- CRITICAL agent-safety class: "
-            "src/roam/commands/cmd_delete_check.py:566-579 unconditionally "
-            "stamps per-target ``verdict: 'SAFE'`` on every zero-survivors "
-            "target. An agent or CI gate acting on this verdict against an "
-            "empty / unindexed corpus could ship a deletion of a symbol "
-            "that IS load-bearing in source files the engine couldn't "
-            "read. The canonical contract on a zero-survivors path with an "
-            "effectively empty corpus should be ``UNKNOWN`` / "
-            "``INSUFFICIENT-DATA`` (or the existing SAFE PLUS a "
-            "state='empty_corpus' disclosure agents can switch on). Pinned "
-            "strict so the fix graduates to PASS. Peer of W805-W on "
-            "cmd_refs_text -- same severity class."
-        ),
-    )
     def test_no_silent_safe_on_empty(self, cli_runner, empty_corpus_with_deletion, monkeypatch):
         """CRITICAL: SAFE on an unscannable corpus is agent-unsafe.
 
@@ -465,21 +406,6 @@ class TestZeroSurvivorsSilentSafe:
             f"state={summary_state!r}."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-Z REAL BUG -- CRITICAL CI gate semantics: "
-            "src/roam/commands/cmd_delete_check.py:562-563 only raises exit 5 "
-            "when ``any_break`` is True. On the zero-survivors path the "
-            "verdict is SAFE so ``any_break`` is False and the gate exits 0 "
-            "under ``--ci``, SILENTLY PASSING the deletion. The gate's "
-            "exit-5 BREAK-RISK semantic should ALSO fire on the "
-            "insufficient-data path (empty corpus + ``--ci``) -- a CI "
-            "runner that can't gate the deletion must NOT pass it. "
-            "Pinned strict so a future cleanup that escalates the "
-            "empty-corpus case to exit 5 under ``--ci`` graduates to PASS."
-        ),
-    )
     def test_no_silent_no_break_risk_on_empty_ci(self, cli_runner, empty_corpus_with_deletion, monkeypatch):
         """CI gate exit-5 should NOT degrade to 0 silently on empty corpus."""
         monkeypatch.chdir(empty_corpus_with_deletion)
