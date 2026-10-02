@@ -350,6 +350,18 @@ def history_grep_cmd(ctx, positional, patterns, fixed, regexp_mode, ci, since, u
             "total_commits": total,
             "partial_success": bool(git_errors),
         }
+        # W805-DD: disclose empty-history state so agents can distinguish
+        # "pattern truly absent across rich history" from "no history to scan".
+        if total == 0 and not git_errors:
+            _summary["state"] = "empty_history"
+            _summary["partial_success"] = True
+        elif git_errors:
+            _summary["state"] = "git_error"
+        else:
+            _summary["state"] = "matches_found"
+        # Disclose polarity_requested so agents can detect feature-flag degradation.
+        if polarity:
+            _summary["polarity_requested"] = True
         # W607-H: non-empty bucket → summary mirror + partial_success
         # flip + top-level mirror. Empty bucket → byte-identical
         # envelope (hash-stable). ``warnings_out`` is complementary to

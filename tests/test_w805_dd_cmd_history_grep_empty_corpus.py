@@ -266,22 +266,6 @@ class TestEmptyCorpusSilentVerdict:
     "couldn't scan".
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-DD REAL BUG: src/roam/commands/cmd_history_grep.py:258-294 "
-            '(``history_grep_cmd``) emits ``verdict: "0 commit(s) across '
-            '0/N pattern(s)"`` on the genuine zero-matches path with no '
-            "``summary.state`` disclosure. An agent switching on "
-            "machine-readable state cannot tell 'pattern truly absent "
-            "across rich history' from 'shallow / fresh repo with nothing "
-            "to scan'. MEDIUM agent-safety class -- not directly "
-            "destructive but invites incorrect provenance inference. "
-            "Pinned strict so a future cleanup that adds "
-            '``state: "empty_history"`` (or equivalent) on the '
-            "zero-matches path graduates this to PASS."
-        ),
-    )
     def test_empty_corpus_state_explicit(self, cli_runner, empty_history, monkeypatch):
         """Empty-history zero-matches discloses ``state`` explicitly."""
         monkeypatch.chdir(empty_history)
@@ -302,18 +286,6 @@ class TestEmptyCorpusSilentVerdict:
             f"to scan'; got {state!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-DD REAL BUG: src/roam/commands/cmd_history_grep.py:258-294 "
-            "emits ``partial_success: false`` on the zero-commits / "
-            "no-history path. When the underlying outcome is 'no commits "
-            "exist in this repo' the canonical Pattern-2 contract sets "
-            "partial_success=True so an agent can detect degradation. "
-            "Today the genuine no-history path looks identical to a "
-            "successful scan that found nothing. Pinned strict."
-        ),
-    )
     def test_empty_corpus_partial_success_set(self, cli_runner, empty_history, monkeypatch):
         """Pattern-2 guard: zero-commits empty-history sets partial_success=True."""
         monkeypatch.chdir(empty_history)
@@ -330,24 +302,6 @@ class TestEmptyCorpusSilentVerdict:
             f"partial_success=True; got {summary.get('partial_success')!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-DD REAL BUG -- MEDIUM agent-safety class, peer of "
-            "W805-W (refs-text SAFE-TO-REMOVE) and W805-Z (delete-check "
-            "SAFE): src/roam/commands/cmd_history_grep.py:272 emits "
-            '``verdict: "0 commit(s) across 0/N pattern(s)"`` '
-            "unconditionally on the zero-matches branch. An agent "
-            "reading this against an unindexed / shallow / fresh corpus "
-            "could draw the wrong provenance conclusion: 'this string "
-            "never appeared in history, so removing/migrating it is "
-            "fine'. The canonical contract on a zero-matches path with "
-            "no scannable history should explicitly disclose the "
-            "no-history condition (state='empty_history' or equivalent) "
-            "so agents can switch on it. Pinned strict so the fix "
-            "graduates to PASS."
-        ),
-    )
     def test_no_silent_no_matches_on_empty(self, cli_runner, empty_history, monkeypatch):
         """MEDIUM: '0 commit(s)' on unscannable history is agent-misleading.
 
@@ -381,19 +335,6 @@ class TestEmptyCorpusSilentVerdict:
             f"scan'. Got verdict={verdict!r}, state={summary_state!r}."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-DD shape parity bug: ``--polarity`` is requested but "
-            "produces no observable signal on the zero-commits path. The "
-            "envelope has no ``polarity_requested`` / ``polarity_applied`` "
-            "field, so an agent that passed ``--polarity`` cannot tell "
-            "'no commits to annotate' from 'polarity feature silently "
-            "degraded'. Pinned strict for symmetry with the main "
-            "zero-matches bug -- the underlying contract should require "
-            "feature-flag disclosure on ANY zero-results path."
-        ),
-    )
     def test_polarity_disclosure_on_empty(self, cli_runner, empty_history, monkeypatch):
         """--polarity request must surface on the envelope even on empty."""
         monkeypatch.chdir(empty_history)
