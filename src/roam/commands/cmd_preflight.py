@@ -268,12 +268,16 @@ def _check_blast_radius(conn, sym_ids, file_paths):
 
     severity = _blast_severity(len(all_affected_syms), len(all_affected_files))
 
-    return {
+    _blast_result: dict = {
         "affected_symbols": len(all_affected_syms),
         "affected_files": len(all_affected_files),
         "affected_file_list": sorted(all_affected_files)[:20],
         "severity": severity,
     }
+    # W805-L Bug 5: 0 callers must disclose the no-callers state.
+    if len(all_affected_syms) == 0 and len(all_affected_files) == 0:
+        _blast_result["state"] = "no_callers"
+    return _blast_result
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +349,7 @@ def _check_affected_tests(conn, sym_ids, file_paths):
         pytest_cmd = f"{runner_token} " + " ".join(test_files) if test_files else ""
     severity = _test_severity(direct, transitive, colocated, cli_invoke, module_import)
 
-    return {
+    _tests_result: dict = {
         "direct": direct,
         "transitive": transitive,
         "colocated": colocated,
@@ -358,6 +362,10 @@ def _check_affected_tests(conn, sym_ids, file_paths):
         "pytest_command_truncated": truncated_files,
         "severity": severity,
     }
+    # W805-L Bug 2: disclose when no tests are indexed at all.
+    if len(results) == 0:
+        _tests_result["state"] = "no_tests_indexed"
+    return _tests_result
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +403,8 @@ def _check_complexity(conn, sym_ids):
             "max_nesting_depth": 0,
             "high_complexity_symbols": [],
             "severity": "low",
+            # W805-L Bug 3: no metrics rows — unknown, not low complexity.
+            "state": "no_complexity_data",
         }
 
     max_cc = max(r["cognitive_complexity"] for r in rows)
@@ -415,12 +425,16 @@ def _check_complexity(conn, sym_ids):
 
     severity = _complexity_severity(max_cc, max_nest)
 
-    return {
+    _compl_result: dict = {
         "max_cognitive_complexity": round(max_cc, 1),
         "max_nesting_depth": max_nest,
         "high_complexity_symbols": high[:10],
         "severity": severity,
     }
+    # W805-L Bug 3: cc=0 with no high-complexity symbols is no-data, not low.
+    if round(max_cc, 1) == 0.0 and not high:
+        _compl_result["state"] = "no_complexity_data"
+    return _compl_result
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +449,7 @@ def _check_coupling(conn, file_ids, file_paths):
             "coupled_files": 0,
             "missing_partners": [],
             "severity": "OK",
+            "state": "no_coupling_data",
         }
 
     change_set = set(file_ids)
@@ -491,11 +506,15 @@ def _check_coupling(conn, file_ids, file_paths):
 
     severity = _coupling_severity(len(missing))
 
-    return {
+    _coupl_result: dict = {
         "coupled_files": len(missing),
         "missing_partners": missing[:10],
         "severity": severity,
     }
+    # W805-L Bug 6: no coupling partners found — disclose explicitly.
+    if len(missing) == 0:
+        _coupl_result["state"] = "no_coupling_data"
+    return _coupl_result
 
 
 # ---------------------------------------------------------------------------
@@ -572,13 +591,21 @@ def _check_conventions(conn, sym_ids, min_majority_pct: float = 70.0):
 
     severity = _convention_severity(len(violations))
 
-    return {
+    _conv_result: dict = {
         "violations": violations,
         "violation_count": len(violations),
         "severity": severity,
         "majority_threshold_pct": min_majority_pct,
         "kinds_with_majority": len(expected_by_kind),
     }
+    # W805-L Bug 7: disclose OK sub-state so agents can distinguish
+    # "all symbols pass" from "no majority convention exists to violate".
+    if len(violations) == 0:
+        if len(expected_by_kind) == 0:
+            _conv_result["state"] = "no_majority_convention"
+        else:
+            _conv_result["state"] = "all_conventions_passed"
+    return _conv_result
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +646,8 @@ def _check_fitness(conn, root, target_paths: set[str] | None = None, *, warnings
             "errored_rules": [],
             "rule_details": [],
             "severity": "OK",
+            # W805-L Bug 1: disclose that no rules were configured vs all rules passing.
+            "state": "no_rules_configured",
         }
 
     target_set = {p.replace("\\", "/").lower() for p in (target_paths or set())}
@@ -1491,75 +1520,107 @@ def preflight(ctx, target, staged):
                 # agents don't conflate it with a per-dimension severity.
                 "risk_level_definition": PREFLIGHT_RISK_LEVEL_DEFINITION,
             }
+            _blast_envelope: dict = {
+                "affected_symbols": blast["affected_symbols"],
+                "affected_files": blast["affected_files"],
+                "affected_file_list": blast["affected_file_list"],
+                "severity": blast["severity"],
+                # W331: same definition as cmd_impact so two commands
+                # don't disagree on what "affected_symbols" means.
+                "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
+                "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
+            }
+            if blast.get("state") is not None:
+                _blast_envelope["state"] = blast["state"]
+
+            _tests_envelope: dict = {
+                "direct": tests["direct"],
+                "transitive": tests["transitive"],
+                "colocated": tests["colocated"],
+                "cli_invoke": tests["cli_invoke"],
+                "module_import": tests["module_import"],
+                "cli_possible": tests["cli_possible"],
+                "total": tests["total"],
+                "test_files": tests["test_files"],
+                "pytest_command": tests["pytest_command"],
+                "severity": tests["severity"],
+            }
+            if tests.get("state") is not None:
+                _tests_envelope["state"] = tests["state"]
+
+            _compl_envelope: dict = {
+                "max_cognitive_complexity": compl["max_cognitive_complexity"],
+                "max_nesting_depth": compl["max_nesting_depth"],
+                "high_complexity_symbols": compl["high_complexity_symbols"],
+                "severity": compl["severity"],
+                # W331: same canonical definition as cmd_complexity.
+                "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
+            }
+            if compl.get("state") is not None:
+                _compl_envelope["state"] = compl["state"]
+
+            _coupl_envelope: dict = {
+                "coupled_files": coupl["coupled_files"],
+                "missing_partners": coupl["missing_partners"],
+                "severity": coupl["severity"],
+            }
+            if coupl.get("state") is not None:
+                _coupl_envelope["state"] = coupl["state"]
+
+            _convs_envelope: dict = {
+                "violation_count": convs["violation_count"],
+                "violations": convs["violations"],
+                "severity": convs["severity"],
+                "majority_threshold_pct": convs.get("majority_threshold_pct"),
+                "kinds_with_majority": convs.get("kinds_with_majority"),
+            }
+            if convs.get("state") is not None:
+                _convs_envelope["state"] = convs["state"]
+
+            _fitns_envelope: dict = {
+                "rules_checked": fitns["rules_checked"],
+                "rules_failed": fitns["rules_failed"],
+                "rules_failing_on_target": fitns.get("rules_failing_on_target", 0),
+                "rules_failing_on_siblings": fitns.get("rules_failing_on_siblings", 0),
+                # W1449 — ``rules_checked`` counts rules ATTEMPTED.
+                # A consumer that wants "how many rules actually
+                # produced a verdict" must read ``rules_evaluated``,
+                # and ``rules_errored`` / ``errored_rules`` name the
+                # ones whose checker raised.
+                "rules_evaluated": fitns.get("rules_evaluated", fitns["rules_checked"]),
+                "rules_errored": fitns.get("rules_errored", 0),
+                "errored_rules": fitns.get("errored_rules", []),
+                "total_violations": fitns["total_violations"],
+                "failed_rules": fitns["failed_rules"],
+                "failed_rules_on_siblings": fitns.get("failed_rules_on_siblings", []),
+                "rule_details": fitns["rule_details"],
+                "severity": fitns["severity"],
+            }
+            if fitns.get("state") is not None:
+                _fitns_envelope["state"] = fitns["state"]
+
             _envelope_kwargs: dict = {
                 "summary": _summary_dict,
-                "blast_radius": {
-                    "affected_symbols": blast["affected_symbols"],
-                    "affected_files": blast["affected_files"],
-                    "affected_file_list": blast["affected_file_list"],
-                    "severity": blast["severity"],
-                    # W331: same definition as cmd_impact so two commands
-                    # don't disagree on what "affected_symbols" means.
-                    "affected_symbols_definition": BLAST_RADIUS_AFFECTED_SYMBOLS,
-                    "affected_files_definition": BLAST_RADIUS_AFFECTED_FILES,
-                },
-                "tests": {
-                    "direct": tests["direct"],
-                    "transitive": tests["transitive"],
-                    "colocated": tests["colocated"],
-                    "cli_invoke": tests["cli_invoke"],
-                    "module_import": tests["module_import"],
-                    "cli_possible": tests["cli_possible"],
-                    "total": tests["total"],
-                    "test_files": tests["test_files"],
-                    "pytest_command": tests["pytest_command"],
-                    "severity": tests["severity"],
-                },
-                "complexity": {
-                    "max_cognitive_complexity": compl["max_cognitive_complexity"],
-                    "max_nesting_depth": compl["max_nesting_depth"],
-                    "high_complexity_symbols": compl["high_complexity_symbols"],
-                    "severity": compl["severity"],
-                    # W331: same canonical definition as cmd_complexity.
-                    "complexity_definition": COGNITIVE_COMPLEXITY_DEFINITION,
-                },
-                "coupling": {
-                    "coupled_files": coupl["coupled_files"],
-                    "missing_partners": coupl["missing_partners"],
-                    "severity": coupl["severity"],
-                },
-                "conventions": {
-                    "violation_count": convs["violation_count"],
-                    "violations": convs["violations"],
-                    "severity": convs["severity"],
-                    "majority_threshold_pct": convs.get("majority_threshold_pct"),
-                    "kinds_with_majority": convs.get("kinds_with_majority"),
-                },
-                "fitness": {
-                    "rules_checked": fitns["rules_checked"],
-                    "rules_failed": fitns["rules_failed"],
-                    "rules_failing_on_target": fitns.get("rules_failing_on_target", 0),
-                    "rules_failing_on_siblings": fitns.get("rules_failing_on_siblings", 0),
-                    # W1449 — ``rules_checked`` counts rules ATTEMPTED.
-                    # A consumer that wants "how many rules actually
-                    # produced a verdict" must read ``rules_evaluated``,
-                    # and ``rules_errored`` / ``errored_rules`` name the
-                    # ones whose checker raised.
-                    "rules_evaluated": fitns.get("rules_evaluated", fitns["rules_checked"]),
-                    "rules_errored": fitns.get("rules_errored", 0),
-                    "errored_rules": fitns.get("errored_rules", []),
-                    "total_violations": fitns["total_violations"],
-                    "failed_rules": fitns["failed_rules"],
-                    "failed_rules_on_siblings": fitns.get("failed_rules_on_siblings", []),
-                    "rule_details": fitns["rule_details"],
-                    "severity": fitns["severity"],
-                },
+                "blast_radius": _blast_envelope,
+                "tests": _tests_envelope,
+                "complexity": _compl_envelope,
+                "coupling": _coupl_envelope,
+                "conventions": _convs_envelope,
+                "fitness": _fitns_envelope,
             }
             if disclosure is not None:
                 _summary_dict["resolution"] = disclosure["resolution"]
                 _summary_dict["partial_success"] = disclosure["partial_success"]
                 _envelope_kwargs["resolution"] = disclosure["resolution"]
                 _envelope_kwargs["partial_success"] = disclosure["partial_success"]
+            # W805-L Bug 4: when most signals have no underlying data, set
+            # partial_success=True regardless of resolution tier. This check
+            # must run unconditionally (not only on the no-disclosure path)
+            # because a "symbol" resolution can still have 5/6 no-data signals.
+            _no_data_signals = sum(1 for sig in (blast, tests, compl, coupl, fitns) if sig.get("state") is not None)
+            if _no_data_signals >= 3:
+                _summary_dict["partial_success"] = True
+                _envelope_kwargs["partial_success"] = True
             return {"summary_dict": _summary_dict, "envelope_kwargs": _envelope_kwargs}
 
         # Floor on degrade: minimal summary + empty kwargs so the
