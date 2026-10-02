@@ -2,7 +2,7 @@
 
 > **Generated — do not hand-edit.** Regenerate with `python scripts/build_commands_doc.py`. Kept in sync by `tests/test_commands_doc_synced.py` (a command dropped from this index, or a new command left undocumented, fails CI — the reconcile-survival invariant).
 
-**287 commands** (280 canonical + aliases) across 7 categories · 246 MCP tools · roam v14.1.0
+**287 commands** (280 canonical + aliases) across 7 categories · 258 MCP tools · roam v14.1.0
 
 ## Getting Started (41)
 
@@ -41,7 +41,7 @@
 | `schema` | internal | — | — |
 | `stats` | internal | ✓ | — |
 | `surface` | stable | — | — |
-| `surface-gaps` | stable | — | — |
+| `surface-gaps` | stable | ✓ | — |
 | `telemetry` | internal | — | — |
 | `tour` | stable | ✓ | — |
 | `understand` | stable | ✓ | onboard |
@@ -84,10 +84,10 @@
 | `diagnose` | stable | ✓ | — |
 | `diff` | stable | ✓ | — |
 | `disambiguate` | stable | ✓ | — |
-| `dispatch-trace` | stable | — | — |
+| `dispatch-trace` | stable | ✓ | — |
 | `dogfood` | internal | ✓ | — |
 | `dogfood-aggregate` | stable | ✓ | — |
-| `envelope-diff` | stable | — | — |
+| `envelope-diff` | stable | ✓ | — |
 | `evidence-diff` | stable | ✓ | — |
 | `evidence-doctor` | stable | ✓ | — |
 | `evidence-oscal` | stable | ✓ | — |
@@ -163,11 +163,11 @@
 | `calc-probe` | stable | — | — |
 | `check-rules` | stable | ✓ | — |
 | `collapse` | stable | ✓ | — |
-| `compiler-corpus` | stable | — | — |
-| `compiler-health` | stable | — | — |
+| `compiler-corpus` | stable | ✓ | — |
+| `compiler-health` | stable | ✓ | — |
 | `complexity` | stable | ✓ | — |
 | `debt` | stable | ✓ | — |
-| `dict-consistency` | stable | — | — |
+| `dict-consistency` | stable | ✓ | — |
 | `eval-retrieve` | stable | ✓ | — |
 | `fitness` | stable | ✓ | — |
 | `forecast` | experimental | ✓ | — |
@@ -175,7 +175,7 @@
 | `hotspots` | stable | ✓ | — |
 | `ingest-trace` | stable | ✓ | — |
 | `llm-smells` | stable | ✓ | — |
-| `magic-numbers` | stable | — | — |
+| `magic-numbers` | stable | ✓ | — |
 | `missing-index` | stable | ✓ | — |
 | `n1` | stable | ✓ | — |
 | `observability-opt` | stable | ✓ | — |
@@ -184,13 +184,13 @@
 | `py-modern` | stable | ✓ | — |
 | `py-types` | stable | ✓ | — |
 | `pytest-fixtures` | stable | ✓ | — |
-| `rules-suggest` | stable | — | — |
+| `rules-suggest` | stable | ✓ | — |
 | `smells` | stable | ✓ | — |
 | `test-hermeticity` | stable | ✓ | — |
 | `timeline` | stable | ✓ | — |
 | `trends` | stable | ✓ | digest, snapshot, trend |
 | `vibe-check` | experimental | ✓ | — |
-| `vue-emits` | stable | — | — |
+| `vue-emits` | stable | ✓ | — |
 | `weather` | experimental | ✓ | churn |
 | `why-slow` | stable | ✓ | — |
 
@@ -204,7 +204,7 @@
 | `clusters` | stable | ✓ | — |
 | `coupling` | stable | ✓ | — |
 | `cut` | stable | ✓ | — |
-| `cycle-break` | stable | — | — |
+| `cycle-break` | stable | ✓ | — |
 | `cycles` | stable | ✓ | — |
 | `dark-matter` | experimental | ✓ | — |
 | `effects` | stable | ✓ | — |
@@ -258,7 +258,7 @@
 |---------|----------|-----|---------|
 | `api-drift` | stable | ✓ | — |
 | `auth-gaps` | stable | ✓ | — |
-| `blame-reviewers` | stable | — | — |
+| `blame-reviewers` | stable | ✓ | — |
 | `breaking` | stable | ✓ | — |
 | `budget` | stable | ✓ | — |
 | `bus-factor` | stable | ✓ | — |
@@ -270,7 +270,7 @@
 | `coverage-gaps` | stable | ✓ | — |
 | `dev-profile` | stable | ✓ | — |
 | `drift` | stable | ✓ | — |
-| `ignore-drift` | stable | — | — |
+| `ignore-drift` | stable | ✓ | — |
 | `migration-safety` | stable | ✓ | — |
 | `orphan-routes` | stable | ✓ | — |
 | `owner` | stable | ✓ | — |
