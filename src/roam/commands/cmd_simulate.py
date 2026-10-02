@@ -138,17 +138,30 @@ def _simulation_next_commands(degraded: int, warnings: list[str]) -> list[str]:
     return cmds
 
 
-def _emit_simulation_error(json_mode: bool, op_name: str, error: str, before: dict, warnings_out: list[str]) -> None:
+def _emit_simulation_error(
+    json_mode: bool,
+    op_name: str,
+    error: str,
+    before: dict,
+    warnings_out: list[str],
+    state: str = "symbol_not_found",
+) -> None:
     """Emit the transform-resolution error path."""
     if json_mode:
+        # W805-EE: error path always sets partial_success=True and state —
+        # the transform aborted so no meaningful result was produced.
+        health_score = before.get("health_score")
+        health_val = health_score if health_score is not None else 0
         envelope_summary: dict = {
             "verdict": error,
             "operation": op_name,
             "health_delta": 0,
-            "health_before": before.get("health_score", 0),
-            "health_after": before.get("health_score", 0),
+            "health_before": health_val,
+            "health_after": health_val,
             "improved_metrics": 0,
             "degraded_metrics": 0,
+            "partial_success": True,
+            "state": state,
         }
         envelope_kwargs: dict = dict(
             summary=envelope_summary,
@@ -157,7 +170,6 @@ def _emit_simulation_error(json_mode: bool, op_name: str, error: str, before: di
             warnings=[error],
         )
         if warnings_out:
-            envelope_summary["partial_success"] = True
             envelope_summary["warnings_out"] = list(warnings_out)
             envelope_kwargs["warnings_out"] = list(warnings_out)
         click.echo(to_json(json_envelope("simulate", **envelope_kwargs)))
@@ -314,6 +326,12 @@ def _simulate_baseline(_run_check_ef, conn, build_symbol_graph, compute_graph_me
     G, before = baseline
     if before is None:
         before = dict(empty_metrics_floor)
+    # W805-EE: empty graph produces health_score=100 via _approx_health(0,0,0,0),
+    # which is mathematically correct but indistinguishable from "perfectly healthy
+    # populated graph". Override to None so consumers know this is a no-data state.
+    if G is not None and len(G) == 0 and before.get("health_score") == 100:
+        before = dict(before)
+        before["health_score"] = None
     return G, before
 
 
@@ -548,7 +566,20 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
         )
 
         if error:
-            _emit_simulation_error(json_mode, op_name, error, before, _w607ef_warnings_out)
+            _err_state = "symbol_not_found" if "symbol not found" in error else "simulation_error"
+            _emit_simulation_error(json_mode, op_name, error, before, _w607ef_warnings_out, state=_err_state)
+            return
+
+        # W805-EE pin #4: detect no-op transform (apply_move sets from_file==to_file
+        # when symbol is already in target). Disclose rather than emitting a
+        # SAFE-looking "health unchanged" verdict.
+        import os as _os_noop
+
+        _op_from = (op_result.get("from_file") or "") if isinstance(op_result, dict) else ""
+        _op_to = (op_result.get("to_file") or "") if isinstance(op_result, dict) else ""
+        if _op_from and _op_to and _os_noop.path.normpath(_op_from) == _os_noop.path.normpath(_op_to):
+            _noop_msg = f"no-op: {op_name} target is the same as current location ({_op_to})"
+            _emit_simulation_error(json_mode, op_name, _noop_msg, before, _w607ef_warnings_out, state="no_op_transform")
             return
 
     after = _simulate_after_metrics(_run_check_ef, G, G_sim, before, compute_graph_metrics, empty_metrics_floor)
