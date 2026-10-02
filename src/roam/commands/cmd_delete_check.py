@@ -390,6 +390,10 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
                 "deletions": 0,
                 "partial_success": True,
                 "git_error": git_err,
+                # W805-AAAA: closed-enum state + resolution so agents can
+                # switch on failure class instead of text-matching the verdict.
+                "state": "git_error",
+                "resolution": "unresolved_diff_source",
             }
             _extra: dict = {}
             if warnings_out:
@@ -429,7 +433,13 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
                     json_envelope(
                         "delete-check",
                         budget=token_budget,
-                        summary={"verdict": "no deletions detected", "deletions": 0},
+                        summary={
+                            "verdict": "no deletions detected",
+                            "deletions": 0,
+                            # W805-Z: explicit state so agents can distinguish
+                            # "no diff" from "diff scanned, found nothing".
+                            "state": "no_diff",
+                        },
                         deletions=[],
                     )
                 )
@@ -657,6 +667,10 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
     scan_incomplete = bool(warnings_out)
     if scan_incomplete:
         overall = "BREAK-RISK" if breaks else "REVIEW"
+    # W805-Z: when all targets resolved as SAFE with no scan errors, the corpus
+    # may lack indexed symbols. Agents cannot distinguish "truly no callers" from
+    # "unindexed corpus" without explicit state disclosure.
+    _w805z_all_safe = overall == "SAFE" and not scan_incomplete and bool(decorated)
 
     if sarif_mode:
         # W1192: SARIF projection for CI / GitHub Code Scanning integration.
@@ -742,6 +756,11 @@ def delete_check_cmd(ctx, source, base_ref, commit_range, reachable_from, ci, co
             summary["warnings_out"] = list(warnings_out)
             summary["partial_success"] = True
             extra["warnings_out"] = list(warnings_out)
+        # W805-Z: disclose potential empty-corpus on all-SAFE path so agents
+        # can switch on state rather than assuming "truly no callers".
+        if _w805z_all_safe:
+            summary["state"] = "empty_corpus"
+            summary["partial_success"] = True
         click.echo(
             to_json(
                 json_envelope(

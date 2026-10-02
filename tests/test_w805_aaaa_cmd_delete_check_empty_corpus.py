@@ -278,24 +278,6 @@ class TestBogusCommitRangeResolutionDisclosure:
     disclosure. An agent acting on the verdict cannot distinguish a
     user-fixable typo from an operational failure."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-AAAA REAL BUG: src/roam/commands/cmd_delete_check.py:296-343 "
-            "(the ``if git_err is not None:`` branch) emits "
-            '``partial_success: true`` + ``git_error: "git_error"`` but NO '
-            "``summary.state`` closed-enum disclosure. Two distinct USER "
-            "errors (bogus --commit-range, bogus --source pr --base-ref) "
-            "collapse into the same generic ``git_error`` sentinel. "
-            "Pattern-1-V-D resolution-disclosure gap -- an agent cannot "
-            "switch on the failure class without text-matching the verdict "
-            "string. Pinned strict; graduates when the envelope adds "
-            "``summary.state`` with a closed-enum value (e.g. "
-            "``git_not_available`` / ``git_timeout`` / ``unknown_ref`` / "
-            "``git_error``) that mirrors the existing ``_GIT_*`` module "
-            "constants."
-        ),
-    )
     def test_bogus_commit_range_emits_state(self, cli_runner, populated_corpus_with_deletion, monkeypatch):
         """Bogus commit-range path must emit ``summary.state``."""
         monkeypatch.chdir(populated_corpus_with_deletion)
@@ -314,21 +296,6 @@ class TestBogusCommitRangeResolutionDisclosure:
             f"failure; got {state!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-AAAA REAL BUG: the same code path emits no "
-            "``summary.resolution`` field on the bogus-diff-source path. "
-            "Pattern-1-V-D contract: when a command resolves a target "
-            "through a fallback chain (diff source -> git subprocess -> "
-            "non-zero return), disclose the resolution state via a "
-            "``resolution`` field on the envelope. The current envelope "
-            "lacks both ``state`` AND ``resolution`` -- the agent has only "
-            "``partial_success: true`` + a text verdict to switch on. "
-            "Pinned strict so a future cleanup adding "
-            "``resolution: 'unresolved_diff_source'`` graduates to PASS."
-        ),
-    )
     def test_bogus_commit_range_emits_resolution(self, cli_runner, populated_corpus_with_deletion, monkeypatch):
         """Bogus commit-range path must emit ``summary.resolution``."""
         monkeypatch.chdir(populated_corpus_with_deletion)
@@ -353,19 +320,6 @@ class TestBogusPrBaseRefResolutionDisclosure:
     class that collapses into the generic ``git_error`` sentinel. Same
     Pattern-1-V-D gap as the bogus-commit-range path."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-AAAA REAL BUG (mirror): --source pr with a bogus "
-            '--base-ref emits the same generic ``git_error: "git_error"`` '
-            "as the bogus commit-range path. Pattern-1-V-D resolution-"
-            "disclosure gap: an agent running ``delete-check --source pr "
-            "--base-ref <typo>`` should receive a state disclosure that "
-            "names ``unknown_base_ref`` (or equivalent closed-enum), not "
-            "the same generic sentinel used for git-binary-missing. "
-            "Pinned strict."
-        ),
-    )
     def test_bogus_pr_base_ref_emits_state(self, cli_runner, populated_corpus_with_deletion, monkeypatch):
         """--source pr with bogus base-ref must emit ``summary.state``."""
         monkeypatch.chdir(populated_corpus_with_deletion)
