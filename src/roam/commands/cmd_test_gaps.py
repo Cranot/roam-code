@@ -20,7 +20,8 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
-    get_changed_files,
+    GIT_ERROR,
+    get_changed_files_status,
     is_test_file,
     resolve_changed_to_db,
 )
@@ -268,21 +269,36 @@ def test_gaps_cmd(ctx, files, changed, min_severity):
     # Resolve target files
     target_paths = list(files) if files else []
 
+    _changed_git_err: str | None = None
     if changed:
         root = find_project_root()
-        diff_files = get_changed_files(root)
+        # W805-RRRR: use get_changed_files_status so the --changed path
+        # discloses state/git_error when the helper returns [] (either
+        # genuinely clean tree or git failure).
+        try:
+            diff_files, _changed_git_err = get_changed_files_status(root)
+        except Exception:  # noqa: BLE001
+            diff_files, _changed_git_err = [], GIT_ERROR
         target_paths.extend(diff_files)
 
     if not target_paths:
         if json_mode:
+            _no_files_summary: dict = {
+                "verdict": "No changed files to analyze",
+                "total_gaps": 0,
+            }
+            # W805-RRRR: disclose whether --changed was passed and what
+            # the helper resolved. No-args path keeps the same bare envelope
+            # (no state/git_error) so agents can distinguish the two modes.
+            if changed:
+                _no_files_summary["state"] = "git_error" if _changed_git_err else "no_changed_files"
+                _no_files_summary["git_error"] = _changed_git_err or "no_changed_files"
+                _no_files_summary["partial_success"] = bool(_changed_git_err)
             click.echo(
                 to_json(
                     json_envelope(
                         "test-gaps",
-                        summary={
-                            "verdict": "No changed files to analyze",
-                            "total_gaps": 0,
-                        },
+                        summary=_no_files_summary,
                         high_gaps=[],
                         medium_gaps=[],
                         low_gaps=[],
