@@ -6992,6 +6992,19 @@ def _compound_envelope(
     """Build a compound operation response from multiple sub-command results."""
     errors: list[dict] = []
     sections: dict = {}
+    # W805-OOO: children that went to sections but disclosed degraded
+    # execution via nested partial_success / state / resolution signals.
+    _degraded_sections: list[str] = []
+    # Closed-enum degradation tokens (mirrors the W805 test contracts).
+    _CHILD_DEGRADED_STATES = {
+        "empty_corpus",
+        "no_complexity_data",
+        "not_found",
+        "not_initialized",
+        "no_data",
+        "unresolved",
+    }
+    _CHILD_DEGRADED_RESOLUTIONS = {"unresolved", "fuzzy"}
     workflow_recipe = meta.pop("workflow_recipe", None) or _COMPOUND_WORKFLOW_RECIPES.get(command)
     # Round 4 #9: replace the static recipe pick with a signal-based
     # scorer when we have enough data to choose intelligently.
@@ -7027,6 +7040,21 @@ def _compound_envelope(
             errors.append({"command": name, "error": err_msg})
         else:
             sections[name] = data
+            # W805-OOO: child reached sections but discloses degraded
+            # execution via state/resolution signals. Track for
+            # failed_subcommands propagation (Pattern-2 + Pattern-1-V-D).
+            # NOTE: partial_success=True alone is intentionally NOT checked
+            # here — a resolved child may set partial_success=True for
+            # data-quality reasons (no tests, no complexity rows, etc.)
+            # that do NOT indicate symbol resolution failure. Using only
+            # state and resolution avoids false positives on clean corpora
+            # where the symbol resolves but the project is minimal.
+            _csummary = data.get("summary") or {}
+            if (
+                _csummary.get("state") in _CHILD_DEGRADED_STATES
+                or _csummary.get("resolution") in _CHILD_DEGRADED_RESOLUTIONS
+            ):
+                _degraded_sections.append(name)
 
     # Build compound verdict from sub-verdicts
     verdicts: list[str] = []
@@ -7037,6 +7065,11 @@ def _compound_envelope(
                 verdicts.append(f"{name}: {summary['verdict']}")
 
     failed_subcommands = [e.get("command", "?") for e in errors] if errors else []
+    # W805-OOO: also include children that disclosed degraded execution
+    # via nested signals (partial_success / state / resolution).
+    for _dn in _degraded_sections:
+        if _dn not in failed_subcommands:
+            failed_subcommands.append(_dn)
     # SYNTHESIS Pattern 2 (silent fallback) — partial_success MUST flip
     # True whenever ANY subcommand failed, not only the mixed-result
     # case. ``for_refactor`` previously reported ``partial_success:
@@ -7044,6 +7077,20 @@ def _compound_envelope(
     # required at least one survivor. Drop the guard so an all-failed
     # compound is correctly partial_success=True.
     partial_success = bool(failed_subcommands)
+    # W805-OOO: derive compound state from the most informative child
+    # disclosure signal so agents reading summary.state can branch on it.
+    _compound_state: str | None = None
+    if failed_subcommands:
+        for _fn in failed_subcommands:
+            _cd = sections.get(_fn) or {}
+            _cs = (_cd.get("summary") or {}).get("state")
+            _cr = (_cd.get("summary") or {}).get("resolution")
+            if _cs in _CHILD_DEGRADED_STATES and _compound_state is None:
+                _compound_state = _cs
+            if _cr in _CHILD_DEGRADED_RESOLUTIONS and _compound_state is None:
+                _compound_state = _cr
+        if _compound_state is None:
+            _compound_state = "unresolved"
     all_failed = bool(failed_subcommands) and not bool(sections)
     # Default verdict pick: aggregate sub-verdicts; fall back to a
     # diagnostic string that names the count instead of the silent
@@ -7077,6 +7124,8 @@ def _compound_envelope(
             # subcommand silently failed.
             "partial_success": partial_success,
             "failed_subcommands": failed_subcommands,
+            # W805-OOO: compound state from most informative child signal.
+            **({} if _compound_state is None else {"state": _compound_state}),
             **meta,
         },
     }
