@@ -1073,6 +1073,32 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
             default="smells completed",
         )
 
+        # W805-FFFF: gate-collapse disclosure for AST-similarity detectors.
+        # When --only restricts to a single paired-scoring detector and it
+        # found zero smells, distinguish "empty corpus (no symbols to score)"
+        # from "symbols exist but gate excluded every pair". Both currently
+        # collapse to the same "Clean: no code smells detected" verdict.
+        _ffff_gate_state: str | None = None
+        _ffff_gate_partial: bool = False
+        if total_smells == 0 and only_dispatch:
+            try:
+                _fn_row = conn.execute(
+                    "SELECT COUNT(*) FROM symbols WHERE kind IN ('function','method','class')"
+                ).fetchone()
+                _fn_count = _fn_row[0] if _fn_row else 0
+            except Exception:  # noqa: BLE001
+                _fn_count = None
+            if _fn_count is not None:
+                _only_label = ", ".join(sorted(only_dispatch))
+                if _fn_count == 0:
+                    _ffff_gate_state = "empty_corpus"
+                    _ffff_gate_partial = True
+                    verdict = f"no symbols to score ({_only_label}: 0 functions/classes indexed)"
+                else:
+                    _ffff_gate_state = "no_pairs_above_threshold"
+                    _ffff_gate_partial = True
+                    verdict = f"{_fn_count} symbols indexed but {_only_label} gate excluded every candidate pair"
+
         # SARIF output (W1171): projection for CI / GitHub Code Scanning.
         # Branches BEFORE json/text so the pre-existing paths stay
         # byte-identical to pre-W1171. The rules catalogue is derived
@@ -1208,6 +1234,13 @@ def smells(ctx, file_path, min_severity, include_tooling, persist, no_suppress, 
                 # the key) -- NOT ``.get("state", expensive_default)``.
                 "run_state": _score_dict["state"],
             }
+            # W805-FFFF: stamp gate-collapse state on the summary when an
+            # AST-similarity --only detector found zero pairs.
+            if _ffff_gate_state is not None:
+                summary["state"] = _ffff_gate_state
+                summary["verdict"] = verdict
+            if _ffff_gate_partial:
+                summary["partial_success"] = True
             # W987 (Pattern 1 — surface silent fallbacks on the envelope):
             # any unknown ``--kind`` value or unknown ``kind:`` in the
             # suppression YAML appended to ``warnings_list``. Surface
