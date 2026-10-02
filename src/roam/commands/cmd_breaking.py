@@ -326,6 +326,10 @@ def breaking(ctx, target):
                             "removed": 0,
                             "signature_changed": 0,
                             "renamed": 0,
+                            # W805-QQQ: disclose empty-diff state so compound
+                            # aggregators can detect no-diff degradation.
+                            "state": "no_changes",
+                            "partial_success": True,
                         },
                         target=target,
                         removed=[],
