@@ -226,10 +226,10 @@ class TestCmdAttestConsumesSharedHelper:
             "get_changed_files; if this changed, re-audit the "
             "shared-helper family membership."
         )
-        assert "get_changed_files(root" in src, (
-            "W805-OOOO W978-precondition: cmd_attest must CALL "
-            "get_changed_files(root, ...); if the call site moved, "
-            "re-audit the shared-helper family membership."
+        assert "get_changed_files" in src, (
+            "W805-OOOO W978-precondition: cmd_attest must reference "
+            "get_changed_files (or get_changed_files_status); if this "
+            "changed, re-audit the shared-helper family membership."
         )
 
 
@@ -291,27 +291,6 @@ class TestBogusCommitRangeStateDisclosure:
     from a clean working tree on every machine-state field. There is no
     closed-enum disclosure separating the two paths."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-OOOO REAL BUG: src/roam/commands/cmd_attest.py:769-805 "
-            "(the ``if not changed:`` branch downstream of "
-            '``get_changed_files``) emits ``state: "no_changes"`` + '
-            "``partial_success: true`` + ``safe_to_merge: null`` on a "
-            "bogus commit-range -- byte-identical to the clean-tree "
-            "envelope on every machine-state field. The root cause is "
-            "``src/roam/commands/changed_files.py:142,145`` swallowing "
-            "``returncode != 0`` / FileNotFoundError / TimeoutExpired into "
-            "an empty list. Pattern-1-V-D silent-success-on-degraded-"
-            "resolution. THIRD strict shared-helper consumer; FAMILY IS "
-            "NOW STRUCTURAL (3-strong on the get_changed_files axis: "
-            "cmd_diff + cmd_pr_diff + cmd_attest). Pinned strict; "
-            "graduates when the bogus-ref path emits ``state`` with a "
-            "non-``no_changes`` closed-enum value -- ideally atomically "
-            "with the W805-EEEE and W805-JJJJ graduation when the shared "
-            "helper is upgraded to ``(paths, error_kind)``."
-        ),
-    )
     def test_bogus_commit_range_state_disclosure(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus commit-range path must emit a non-``no_changes`` ``state``."""
         monkeypatch.chdir(clean_indexed_project)
@@ -337,17 +316,6 @@ class TestBogusCommitRangeResolutionDisclosure:
     enum ``resolution`` field, since the bogus-ref invocation IS a
     degraded-resolution path under the shared helper."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-OOOO REAL BUG (resolution axis): bogus commit_range "
-            "path emits no ``resolution`` field. Pattern-1-V-D contract "
-            "requires AT LEAST ONE closed-enum disclosure (state OR "
-            "resolution) on the degraded-resolution path. Pinned strict; "
-            "graduates when the envelope distinguishes bogus-ref from "
-            "clean-tree on either field."
-        ),
-    )
     def test_bogus_commit_range_resolution_disclosure(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus commit_range must emit ``summary.resolution`` OR a non-empty state."""
         monkeypatch.chdir(clean_indexed_project)
@@ -377,22 +345,6 @@ class TestSilentSafeInheritedFromSharedHelper:
     Pins the inheritance so a fix to the shared helper unblocks ALL THREE
     consumers atomically."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-OOOO FAMILY-CONFIRMATION: cmd_attest's bogus-ref path "
-            "emits no ``git_error`` field -- the same gap W805-EEEE pins "
-            "on cmd_diff and W805-JJJJ pins on cmd_pr_diff. The shared "
-            "helper ``src/roam/commands/changed_files.py:131-146`` returns "
-            "an empty list on three distinct failure classes "
-            "(returncode != 0, FileNotFoundError, TimeoutExpired). All "
-            "THREE consumers (cmd_diff, cmd_pr_diff, cmd_attest) inherit "
-            "silent-SAFE -- the family is now STRUCTURAL. Pinned strict; "
-            "graduates when ``get_changed_files`` returns a "
-            "``(paths, error_kind)`` tuple and cmd_attest surfaces "
-            "``summary.git_error`` on the failure branch."
-        ),
-    )
     def test_bogus_ref_envelope_has_git_error_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref path must emit ``summary.git_error`` distinct from clean tree."""
         monkeypatch.chdir(clean_indexed_project)
@@ -417,20 +369,6 @@ class TestCleanTreeDistinctFromBogusRef:
     git-error path MUST produce distinguishable envelopes. Today they
     are byte-identical on every machine-state field cmd_attest emits."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-OOOO REAL BUG (invariant): clean-tree envelope and "
-            "bogus-ref envelope are byte-identical on every machine-state "
-            "field (state, resolution, git_error, safe_to_merge, "
-            "partial_success). Only the verdict-text echoes the user-"
-            "supplied label, which is a TEXT-ONLY difference -- agents "
-            "reading machine-state fields see no degradation. Pattern-2 "
-            "silent-fallback contract violated. Pinned strict; graduates "
-            "when the two envelopes differ on at least one closed-enum "
-            "machine-state field."
-        ),
-    )
     def test_clean_tree_distinct_from_bogus_ref(self, cli_runner, clean_indexed_project, monkeypatch):
         """Clean-tree envelope must differ from bogus-ref envelope on a machine-state field."""
         monkeypatch.chdir(clean_indexed_project)
