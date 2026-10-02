@@ -287,17 +287,6 @@ class TestVisualizeEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-QQ Pattern-2: cmd_visualize.py:373-382 empty-graph envelope "
-        "emits summary.verdict='EMPTY' -- a bare token that violates LAW 6 "
-        "(verdict must work without any other field). The agent reading "
-        "only the verdict cannot tell WHAT is empty (project? graph? index? "
-        "focus filter?). Fix: verdict='visualize cannot render: 0 symbols "
-        "in index -- run roam init'. Pinned for separate fix wave."
-    ),
-)
 def test_empty_corpus_law6_verdict_standalone(empty_corpus):
     """LAW 6: the empty-corpus verdict must work without other fields.
 
@@ -318,16 +307,6 @@ def test_empty_corpus_law6_verdict_standalone(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-QQ Pattern-2 explicit-absence: cmd_visualize.py:373-382 empty-graph "
-        "envelope does NOT disclose summary.state. Pattern-2 requires "
-        "state='index_empty' (or 'not_indexed') so agents can distinguish "
-        "intentional absence (empty repo) from broken absence (index not "
-        "built). Pinned for separate fix wave."
-    ),
-)
 def test_empty_corpus_state_explicit(empty_corpus):
     """Pattern-2 explicit-absence: empty corpus discloses state."""
     runner = CliRunner()
@@ -339,16 +318,6 @@ def test_empty_corpus_state_explicit(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-QQ Pattern-2 silent-SAFE: cmd_visualize.py:373-382 empty-graph "
-        "envelope reports summary.partial_success=False (auto-injected default) "
-        "but the command FAILED to produce its analytical product (diagram is "
-        "''). Pattern-2 mandates partial_success=True on degraded output. "
-        "Pinned for separate fix wave."
-    ),
-)
 def test_empty_corpus_partial_success_set(empty_corpus):
     """Pattern-2 silent-SAFE: empty corpus sets ``partial_success=True``."""
     runner = CliRunner()
@@ -359,15 +328,6 @@ def test_empty_corpus_partial_success_set(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-QQ CONSTRAINT 12: cmd_visualize.py:373-382 empty-graph envelope "
-        "emits agent_contract.next_commands=[] -- no copy-pasteable next step. "
-        "On an empty corpus the obvious next command is 'roam init' to build "
-        "the index; the envelope must name it. Pinned for separate fix wave."
-    ),
-)
 def test_no_silent_empty_graph_export_on_empty(empty_corpus):
     """Empty-corpus envelope names the next command (CONSTRAINT 12)."""
     runner = CliRunner()
