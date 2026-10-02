@@ -15,7 +15,7 @@ code and evaluate changes without building each analysis from scratch.
 <sub>Runs on your machine · free and open source · no account or API key for local analysis · no automatic source-code or telemetry upload</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>287 commands · 246 MCP tools (17 in the default `core` preset) · 28 languages</sub>
+<sub>287 commands · 258 MCP tools (17 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 [Connect your agent](#connect-your-agent) · [Try a task](#try-a-task) ·
@@ -166,7 +166,7 @@ Core preset tools: `roam_alerts`, `roam_ask`, `roam_batch_search`, `roam_couplin
 31-recipe registry. It is a deterministic dispatcher, not a model conversation.
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-link -->
-The full 246-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md).
+The full 258-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md).
 <!-- END auto-count:readme-mcp-tool-list-link -->
 
 **Which preset ships where.** The Claude Code plugin selects `core` for a

@@ -6,7 +6,7 @@ decorations in `src/roam/mcp_server.py` by `dev/build_readme_counts.py`. Edit
 tool docstrings in source before regenerating the inventory.
 
 <!-- BEGIN auto-count:mcp-tools-headline -->
-**246 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
+**258 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
 <!-- END auto-count:mcp-tools-headline -->
 
 ```bash
@@ -43,7 +43,7 @@ first-run flow and the canonical agent sequence, and the
 [README](../README.md#mcp-server) for the preset overview.
 
 <!-- BEGIN auto-count:mcp-tools-list-summary -->
-## MCP tool list (all 246)
+## MCP tool list (all 258)
 <!-- END auto-count:mcp-tools-list-summary -->
 
 <!-- BEGIN auto-count:mcp-tools-list-table -->
@@ -80,6 +80,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_batch_get` | Get details for up to 50 symbols in one call. Replaces 50 sequential roam_symbol calls. |
 | `roam_batch_search` | Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls. |
 | `roam_bisect_blame` | Find snapshots that caused architectural degradation, ranked by impact. |
+| `roam_blame_reviewers` | Suggest code reviewers for a diff by git-blame line-ownership. Returns a ranked list of author handles by lines-added share. Use before requesting PR review to target the most informed reviewers. |
 | `roam_boundary` | Surface public-by-accident exports + changed-range layer violations. Two closed-enum kinds: public_by_accident (warning, _-prefixed name in __all__) and wrong_direction_import (high, lower-layer module imports from higher-layer caller). |
 | `roam_breaking_changes` | Detect breaking API changes between git refs: removed exports, changed signatures. |
 | `roam_brief` | Compose a one-page agent briefing covering five sections: ``next`` (what ``roam next`` would recommend), ``highlights`` (stack / top danger zones / top mined laws from ``roam agents-md``), ``pr_bundle`` (current PR-bundle status on the active branch), ``mode`` (active agent mode and its allow-list size), and ``runs`` (the N most-recent runs from the ledger). Designed as the FIRST command an agent runs when joining a roam-indexed repo. Different from ``roam_next`` (single-command router) -- this is the verdict-first session kickoff packet. |
@@ -102,6 +103,8 @@ first-run flow and the canonical agent sequence, and the
 | `roam_compare` | Diff two roam indices structurally: reports symbols added/removed/moved, per-file complexity deltas above a threshold, language counts, and a one-line health verdict (improved / regressed / sideways). Different from ``roam_graph_diff`` (commit-range graph delta from one index) -- this is the cross-index structural delta for release-vs-release comparisons. |
 | `roam_compatibility` | Detect outbound surface regressions vs a baseline snapshot. Closed-enum verdicts: no regressions / surface additions / surface drift / baseline stale / breaking changes. Compares commands, flags, envelope summary fields, MCP tools, MCP tool parameters, and preset counts; does NOT compare parameter types, defaults, tool descriptions, command categories or runtime behavior. Capture the baseline via CLI: roam compatibility --write-baseline PATH. |
 | `roam_compile` | Compile a freeform coding task into a structured envelope an AI agent can consume. Returns the ArtifactSelector verdict (facts / lean / full envelope) plus the deterministic plan. Empirically validated on Opus 4.8 (2026-05-28): FactsEnvelope delivers 99% of vanilla quality at 54% of vanilla cost. Different from roam_plan (symbol-centric execution plan) -- this is the freeform-task compiler. |
+| `roam_compiler_corpus` | Analyze a saved prompt corpus through the roam compiler. Reports L1-route rate, artifact distribution, latency p50/p95, and top misses. Use to measure classifier regressions after a change. |
+| `roam_compiler_health` | Daily-dashboard view of roam compiler quality: env-drift vs baselines, routing distribution, per-mode KPIs, self magic-numbers scan. Returns a 0-100 score and actionable alerts. |
 | `roam_complete` | Prefix completion for symbols / file paths / commands. Faster than search; returns just names. |
 | `roam_complexity_report` | Functions ranked by cognitive complexity above threshold. |
 | `roam_congestion` | Detect developer congestion: files with too many concurrent authors within a sliding time window. Combines author count, churn intensity, and complexity into a congestion score that predicts merge conflicts and coordination failures. Different from ``roam_bus_factor`` (knowledge-loss risk) and ``roam_owner`` (per-file blame breakdown) -- this measures too-many-cooks contention. |
@@ -112,6 +115,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_critique` | Post-edit patch verifier. Pass `git diff` output as diff_text. Catches clones-not-edited (sibling duplicates the agent missed) and high-blast-radius edits. Uses indexed relationships and heuristic checks; incomplete evidence is disclosed. Triggers: 'review my patch', 'is this PR safe?', after generating any non-trivial diff. |
 | `roam_cut` | Find fragile domain boundaries via minimum-cut analysis. Computes the thinnest edge cuts between architectural clusters and the highest-impact 'leak edges' whose removal would best improve domain isolation. Different from ``roam_split`` (decomposes a single file) -- this finds boundaries between clusters. |
 | `roam_cut_analysis` | Minimum cut analysis: fragile domain boundaries, highest-impact leak edges. |
+| `roam_cycle_break` | Recommend the smallest extraction that breaks each import/call cycle. Returns one actionable refactor suggestion per cycle: which symbols to extract and where to move them. Use after roam_cycles to get fix advice. |
 | `roam_cycles` | Show import/call cycles (Tarjan strongly-connected components) of the symbol graph. Returns per-cycle size, member files/symbols, and an `actionable` flag (spans >=2 distinct non-test files). The focused counterpart to the cycles section of ``roam_health``; sibling of ``roam_clusters`` / ``roam_layers``. |
 | `roam_dark_matter` | File pairs that co-change without structural links (hidden coupling). |
 | `roam_dashboard` | Unified single-screen codebase status: health, hotspots, bus factor, dead code, AI rot. |
@@ -123,8 +127,10 @@ first-run flow and the canonical agent sequence, and the
 | `roam_dev_profile` | Developer behavioral profiling: commit time patterns, change scatter (Gini), burst detection. |
 | `roam_diagnose` | Root cause analysis: upstream/downstream suspects ranked by composite risk. |
 | `roam_diagnose_issue` | Root-cause triage for a failing symbol. Pass the suspect symbol. Ranks upstream / downstream callers by risk + lists side effects + transactional boundaries. Replaces manual call-graph Grep+Read. Triggers: 'X is broken', 'test Y fails', 'why does Z return null?'. |
+| `roam_dict_consistency` | W210 guard: check that computed-numeric fields and their formulas are internally consistent. Returns mismatches between declared and derived values -- a class of silent regression that caused W181. |
 | `roam_diff` | Show the blast radius of your edits BEFORE you commit. Run after Edit/Write tools to see affected symbols, files, tests, plus coupling and fitness warnings. Use when user asks 'what did my change break?', 'safe to commit?'. Replaces ad-hoc `git diff --stat` inspection with graph-aware impact data. For PR-level risk verdict, use roam_pr_risk. |
 | `roam_disambiguate` | List every symbol matching a name with file/line/kind/signature/PageRank — pick the right overload. |
+| `roam_dispatch_trace` | Trace the classifier path for a prompt: per-probe fire/skip reasons, procedure decision, and confidence. Use to debug unexpected routing or to understand why a prompt went to a specific procedure. |
 | `roam_doc_drift` | Run a mechanical prose-doc gate over Markdown path, count, and project-version claims. Use it before release or in CI to find objective documentation drift without model calls. |
 | `roam_doc_intent` | Link documentation to code: find drift, dead refs, undocumented symbols. |
 | `roam_doc_staleness` | Run a semantic docstring-drift audit: flag documented parameters, returns, or raises that no longer match code. Pass ``include_prose_drift`` to include optional blame-only summary drift. Different from ``roam_docs_coverage`` (missing docs ranked by PageRank) and ``roam_stale_refs`` (dangling doc links) -- this audits concrete claims in existing docs. |
@@ -137,6 +143,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_effects` | Side effects of functions: DB writes, network, filesystem (direct + transitive). |
 | `roam_endpoints` | List all REST/GraphQL/gRPC endpoints with handlers, methods, and locations. |
 | `roam_entry_points` | Catalog every entry point into the codebase: HTTP routes, CLI commands, scheduled jobs, event handlers, message consumers, main functions, and exports. Reports per-entry reachability coverage -- what fraction of symbols each entry transitively reaches through the call graph. |
+| `roam_envelope_diff` | Diff two roam compile envelopes: probe families, classifier, artifact distribution, confidence. Use for regression CI or to compare before/after a classifier change. Pass two prompt strings or two cache keys. |
 | `roam_eval_retrieve` | Run the retrieval eval harness over a labeled task set. Reports recall@K, mean reciprocal rank, and per-task diagnostics. Supports a weight sweep and CodeRAG-Bench / BEIR emit formats for public leaderboard submission. |
 | `roam_evidence_diff` | Diff two ``ChangeEvidence`` packets: shows hash drift, schema drift, added/removed refs, missing evidence, and changed verdicts. Useful for reviewing PR re-runs, comparing replay windows, or auditing whether a fresh evidence packet has improved or regressed against a stored baseline. Different from ``roam_compare`` (two-index structural delta) -- this is the two-packet evidence delta. |
 | `roam_evidence_doctor` | Diagnose a ChangeEvidence packet's health: schema validity, closed-enum conformance, content_hash integrity, completeness banner tier (STRONG / PARTIAL / INSUFFICIENT), declared redactions, and actionable next steps for partial / missing evidence questions. Read-only. |
@@ -178,6 +185,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_hotspots` | Show runtime hotspots: symbols ranked by static analysis vs real production traces (requires ``roam ingest-trace`` to have populated ``runtime_stats``). Each row is tagged UPGRADE (runtime-critical but statically safe), CONFIRMED (both agree), or DOWNGRADE (statically risky but low traffic). Different from ``roam_why_slow`` (top-N by latency alone) -- this classifies static vs runtime mismatch. |
 | `roam_hover` | One-line architectural summary for a symbol — kind, location, blast-radius bucket, top caller, top callee. |
 | `roam_idempotency` | Classify symbols by retry safety: ``idempotent`` (pure, read-only I/O, write-with-check patterns like ``mkdir(exist_ok=True)`` / ``INSERT OR IGNORE`` / ``UPSERT`` / ``if not exists: create``), ``non_idempotent`` (naive writes, mutations, appends), or ``unknown`` (process spawn / unreadable body). Composes on top of ``roam_side_effects``. Different from ``roam_tx_boundaries`` (transaction correctness) -- this answers ``is it safe to retry?``. |
+| `roam_ignore_drift` | Find files git tracks despite a .gitignore rule that claims to exclude them. Returns a list of drifted files and the rule that should have excluded each. Use before a release to catch accidentally-tracked files. |
 | `roam_impact` | Inspect indexed dependents and files a symbol change could affect. Use the reported scope, traversal limits and partial-result fields to choose follow-up checks; reachability is not proven breakage. |
 | `roam_ingest_trace` | Ingest runtime traces (OTel/Jaeger/Zipkin), match spans to symbols. |
 | `roam_init` | Initialize roam and build the first index. Task-mode for non-blocking setup. |
@@ -185,6 +193,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_invariants` | Discover implicit contracts for a symbol or the public API surface: signature shape, parameter count and ordering, usage spread across files, dependency set. Different from ``roam_check_rules`` (explicit governance rules) -- this is the AUTO-discovered implicit-contract surface so agents know what must stay stable when modifying a symbol. |
 | `roam_layers` | Show topological dependency layers and violations. Returns each layer's symbol count, directory breakdown, and any back-edges that violate the topological order. Different from ``roam_clusters`` (community detection) -- this measures dependency depth. |
 | `roam_llm_smells` | Run LLM-API integration linter over indexed files: detects unpinned model versions, missing max_tokens, prompt injection via user-input concatenation, unvalidated json.loads on LLM output, and missing temperature. Different from ``roam_vibe_check`` (AI-generated code shape) and ``roam_smells`` (structural anti-patterns) -- this is the production gate for human-authored LLM-using code. |
+| `roam_magic_numbers` | Scan source for hardcoded numeric constants that should be named. Covers Python (AST) and 9 other languages (tree-sitter). With cluster=True, groups by semantic role (size_or_limit, http_status, etc.). |
 | `roam_map` | Show project skeleton: directory tree, entry points, top symbols by PageRank, language counts. Different from ``roam_describe`` (prose description) and ``roam_minimap`` (sentinel-block one-pager for CLAUDE.md) -- this is the structured skeleton with directories, entry points, and ranked symbols for agent onboarding. |
 | `roam_metrics` | Show unified per-file or per-symbol metrics: cognitive complexity, fan-in / fan-out, SNA centrality vector (PageRank / betweenness / closeness / eigenvector / clustering coefficient), composite debt score, churn, test coverage, and comprehension difficulty in a single view. |
 | `roam_metrics_push` | Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.** |
@@ -239,6 +248,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_review_change` | Change review bundle: pr-risk + breaking changes + structural diff in one call. |
 | `roam_risk` | Rank symbols by domain-weighted risk: combines static risk (fan-in + fan-out + betweenness) with domain criticality weights so financial / auth / data-integrity symbols rank higher than UI symbols. Different from ``roam_fan`` (raw fan-in/out degree) and ``roam_hotspots`` (runtime hotspot classification) -- this is the semantic-domain-weighted risk heatmap. |
 | `roam_rules_check` | Evaluate custom governance rules from .roam/rules/ YAML files. |
+| `roam_rules_suggest` | Suggest .roam/rules.yml entries and CI gates from repository history. Promotes the review-suggestion capability from roam_guard_rules. Returns candidate rules ranked by historical evidence. |
 | `roam_rules_validate` | Lint a `.roam/rules.yml` for shippability before customers see it. |
 | `roam_runtime_hotspots` | Runtime hotspots where static and runtime rankings disagree (UPGRADE/DOWNGRADE). |
 | `roam_safe_delete` | Fuse dead-code, blast-radius, and test-coverage signals into a single deletion verdict: SAFE / REVIEW / UNSAFE. Reports direct callers (non-test), transitive dependents, affected files, and a public-API bump that flips SAFE -> REVIEW for exported symbols whose name matches a common public-API prefix. Different from ``roam_dead_code`` (all unreferenced symbols) and ``roam_impact`` (transitive blast radius) -- this is the focused deletion review. Imported files with unresolved symbol use require REVIEW; absent indexed references do not prove absence of use. |
@@ -261,6 +271,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_suggest_refactoring` | Rank proactive refactoring candidates using complexity/coupling/churn/smells. |
 | `roam_suggest_reviewers` | Suggest optimal code reviewers for changed files. |
 | `roam_supply_chain` | Dependency risk dashboard: pin coverage, risk scoring, supply-chain health. |
+| `roam_surface_gaps` | Reconcile the CLI command surface, MCP tool surface, and documentation surface. Reports commands that are wrapped but undocumented, documented but unwrapped, or in the CLI but in neither. Use to audit surface drift after a release. |
 | `roam_symbol` | Symbol definition, callers, callees, PageRank, fan-in/out metrics. |
 | `roam_syntax_check` | Tree-sitter syntax validation. Finds ERROR/MISSING AST nodes. No index needed. |
 | `roam_taint` | Graph-reach taint analysis. Returns OpenVEX-shaped findings (spec-legal status + justification — never `code_not_reachable`). 10 starter rule packs: sqli, xss, ssrf, path-traversal, command-injection, deserialization, open-redirect, urllib, socketio, fileupload. Pair with --ci to gate on findings (exit 5). |
@@ -285,6 +296,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_verify_imports` | Hallucination firewall: validate import statements resolve to indexed symbols. |
 | `roam_vibe_check` | AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns. |
 | `roam_visualize` | Generate Mermaid/DOT architecture diagram with smart filtering. |
+| `roam_vue_emits` | Find Vue child emits that have no handler at a resolved parent usage. Returns unhandled emit events with file and line. Use in Vue 3 codebases to catch missing event handler wiring. |
 | `roam_vuln_map` | Ingest vulnerability scanner reports (npm/pip/trivy/osv), match to symbols. |
 | `roam_vuln_reach` | Vulnerability reachability through call graph: paths, hops, blast radius. |
 | `roam_weather` | Churn x complexity hotspot ranking: highest-leverage refactoring targets. |
