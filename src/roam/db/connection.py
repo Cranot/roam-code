@@ -28,6 +28,15 @@ DEFAULT_DB_NAME = "index.db"
 INDEX_LOCK_NAME = "index.lock"
 INDEX_STATE_NAME = "index.state"
 
+# SQLite lock-wait timeout used both for the python-level sqlite3.connect(timeout=)
+# and for the PRAGMA busy_timeout (in milliseconds).  Both represent the same
+# budget: how long a writer waits for another connection to release its lock
+# before raising OperationalError.  A single constant prevents the two from
+# drifting apart (busy_timeout supersedes the Python-level timeout for most
+# locking waits, but the connect-level timeout still guards the initial open).
+_SQLITE_LOCK_TIMEOUT_S: int = 30
+_SQLITE_BUSY_TIMEOUT_MS: int = _SQLITE_LOCK_TIMEOUT_S * 1000
+
 
 class StaleDbDirError(RuntimeError):
     """Raised when a configured db_dir cannot be created or written to.
@@ -300,14 +309,14 @@ def _open_sqlite_connection(
     the URI form fails and the caller loses the driver-level read-only rail.
     """
     if not readonly:
-        return sqlite3.connect(str(db_path), timeout=30)
+        return sqlite3.connect(str(db_path), timeout=_SQLITE_LOCK_TIMEOUT_S)
     try:
         uri = db_path.as_uri() + "?mode=ro"
-        return sqlite3.connect(uri, uri=True, timeout=30)
+        return sqlite3.connect(uri, uri=True, timeout=_SQLITE_LOCK_TIMEOUT_S)
     except (sqlite3.OperationalError, ValueError) as exc:
         if warnings_out is not None:
             warnings_out.append(f"roam_readonly_uri_fallback:{db_path}:{type(exc).__name__}:{exc}")
-        return sqlite3.connect(str(db_path), timeout=30)
+        return sqlite3.connect(str(db_path), timeout=_SQLITE_LOCK_TIMEOUT_S)
 
 
 def _apply_journal_and_checkpoint(conn: sqlite3.Connection, db_path: Path, readonly: bool) -> None:
@@ -357,7 +366,7 @@ def _apply_base_pragmas(conn: sqlite3.Connection) -> None:
     # to further bound aggregate memory under parallel workers.
     _temp = os.environ.get("ROAM_SQLITE_TEMP_STORE", "MEMORY").upper()
     conn.execute(f"PRAGMA temp_store={_temp if _temp in ('MEMORY', 'FILE', 'DEFAULT') else 'MEMORY'}")
-    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
     # 1 GB default. Env-tunable (digits-only, injection-safe) so CI can shrink
     # it: under pytest-xdist each worker mmaps up to this per connection, and
     # N workers x 1 GB x several index DBs exhausts a memory-limited runner ->

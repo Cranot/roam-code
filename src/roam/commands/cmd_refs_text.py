@@ -10,8 +10,10 @@ messages, route patterns, or identifiers), it groups every reference by
 *surface* (code, test, docs, config, generated, vendored), annotates
 reachability for code hits, and emits a per-string verdict:
 
-  * SAFE-TO-REMOVE    — only doc / test / dead-code references
-  * REVIEW            — referenced in one or two reachable code symbols
+  * SAFE-TO-REMOVE    — no source-code hits in the selected search scope;
+                        not deletion approval
+  * REVIEW            — unknown reachability, indexed-unreachable hits,
+                        incomplete search, or one or two reachable code symbols
   * LOAD-BEARING      — referenced in many reachable code symbols, or
                         in symbols with non-trivial PageRank
 
@@ -59,6 +61,12 @@ from roam.output.formatter import echo_text_warnings, json_envelope, loc, to_jso
 
 _PR_HOT_THRESHOLD = 0.0005  # PageRank above this counts as "hot"
 _REVIEW_REACHABLE_MAX = 2  # ≤ this → REVIEW; more → LOAD-BEARING
+_VERDICT_DEFINITION = (
+    "static_reference_evidence_v2: SAFE-TO-REMOVE means no source-code matches "
+    "in the selected search scope, not deletion approval. REVIEW includes "
+    "unknown reachability and indexed-unreachable matches. LOAD-BEARING means "
+    "observed indexed reachability/importance, not complete runtime coverage."
+)
 
 
 def _validate_verdict(verdict: str) -> str:
@@ -77,20 +85,29 @@ def _validate_verdict(verdict: str) -> str:
 
 def _verdict_for(per_string: dict) -> tuple[str, str]:
     """Return (verdict, reason) given a per-string analysis dict."""
-    code = per_string["surfaces"].get("code", [])
-    reachable = [m for m in code if m.get("reachable", True)]
+    code = per_string["surfaces"].get("code", []) + per_string["surfaces"].get("dead", [])
+    reachable = [m for m in code if m.get("reachable") is True]
+    unknown = [m for m in code if m.get("reachable") is not True and m.get("reachable") is not False]
     hot = [m for m in reachable if (m.get("pagerank") or 0.0) >= _PR_HOT_THRESHOLD]
 
     if not code:
-        return _validate_verdict("SAFE-TO-REMOVE"), "no references in source code"
-    if not reachable:
-        return _validate_verdict("SAFE-TO-REMOVE"), f"{len(code)} code reference(s), none reachable"
+        return _validate_verdict("SAFE-TO-REMOVE"), "no source-code matches in the selected search scope"
+    # Positive observations survive incomplete membership. Missing graph
+    # evidence must never become a negative fact or erase an observed caller.
     if hot:
         return _validate_verdict("LOAD-BEARING"), f"{len(reachable)} reachable, {len(hot)} in hot symbols"
-    if len(reachable) <= _REVIEW_REACHABLE_MAX:
+    if len(reachable) > _REVIEW_REACHABLE_MAX:
+        return _validate_verdict("LOAD-BEARING"), f"{len(reachable)} reachable code references"
+    if unknown:
+        return _validate_verdict("REVIEW"), (
+            f"{len(unknown)} code reference(s) with unknown reachability: no enclosing indexed symbol"
+        )
+    if reachable:
         names = ", ".join(heapq.nsmallest(3, {m.get("enclosing_symbol") or m["path"] for m in reachable}))
         return _validate_verdict("REVIEW"), f"{len(reachable)} reachable: {names}"
-    return _validate_verdict("LOAD-BEARING"), f"{len(reachable)} reachable code references"
+    return _validate_verdict("REVIEW"), (
+        f"{len(code)} code reference(s) not reached in the indexed graph; runtime use is not ruled out"
+    )
 
 
 def _classify_match(m: dict, reach_set: set[int] | None, orphans: set[int]) -> str:
@@ -316,27 +333,9 @@ def refs_text_cmd(
     # Tag each match with which target string(s) it matches (literal/case-aware).
     _tag_matches(all_matches, targets, fixed=fixed_mode, ci=ci)  # W421
 
-    if not all_matches:
-        _emit_empty(json_mode, targets, token_budget, used_engine, warnings_out=warnings_out)
-        return
-
     with open_db(readonly=True) as conn:
-        match_paths = {m["path"] for m in all_matches}
-        interval_idx = build_interval_index(conn, match_paths)
-        for m in all_matches:
-            sym = find_enclosing(interval_idx, m["path"], m["line"])
-            m["_enclosing"] = sym
-            m["enclosing_symbol"] = sym["qualified_name"] if sym else None
-            m["enclosing_kind"] = sym["kind"] if sym else None
-
-        # PageRank for every code-surface enclosing symbol
-        pr_rows = conn.execute("SELECT symbol_id, pagerank FROM graph_metrics").fetchall()
-        pr = {r["symbol_id"]: float(r["pagerank"] or 0.0) for r in pr_rows}
-        for m in all_matches:
-            sym = m.get("_enclosing")
-            m["pagerank"] = pr.get(sym["id"], 0.0) if sym else 0.0
-
-        # Reachability set (or orphan fallback)
+        # Validate the requested anchor even when the text search is empty.
+        # No matches cannot silently waive a requested resolution obligation.
         reach_set = build_reachable_set(conn, reachable_from) if reachable_from else None
         if reachable_from and reach_set is None:
             # Pattern 1B/1D: degraded resolution — anchor symbol not in
@@ -380,6 +379,34 @@ def refs_text_cmd(
                 echo_text_warnings(warnings_out)
                 click.echo(f"VERDICT: {msg}")
             raise SystemExit(1)
+
+        if not all_matches:
+            _emit_empty(
+                json_mode,
+                targets,
+                token_budget,
+                used_engine,
+                warnings_out=warnings_out,
+                globs=glob_filter,
+                reachable_from=reachable_from,
+            )
+            return
+
+        match_paths = {m["path"] for m in all_matches}
+        interval_idx = build_interval_index(conn, match_paths)
+        for m in all_matches:
+            sym = find_enclosing(interval_idx, m["path"], m["line"])
+            m["_enclosing"] = sym
+            m["enclosing_symbol"] = sym["qualified_name"] if sym else None
+            m["enclosing_kind"] = sym["kind"] if sym else None
+
+        # PageRank for every code-surface enclosing symbol
+        pr_rows = conn.execute("SELECT symbol_id, pagerank FROM graph_metrics").fetchall()
+        pr = {r["symbol_id"]: float(r["pagerank"] or 0.0) for r in pr_rows}
+        for m in all_matches:
+            sym = m.get("_enclosing")
+            m["pagerank"] = pr.get(sym["id"]) if sym else None
+
         orphans = build_orphan_set(conn) if reach_set is None else set()
 
         clone_idx = build_clone_index(conn) if with_clones else {}
@@ -399,10 +426,15 @@ def refs_text_cmd(
                 bucket = analyses[s]
                 # Per-match reachability annotation (set BEFORE classification so 'reachable' is correct on m)
                 sym = m["_enclosing"]
-                if reach_set is not None:
-                    m["reachable"] = bool(sym and sym["id"] in reach_set)
+                m["resolution"] = "resolved" if sym is not None else "unresolved"
+                if sym is None:
+                    # A missing file, unsupported syntax or a top-level hit
+                    # supplies no enclosing graph identity, not a dead symbol.
+                    m["reachable"] = None
+                elif reach_set is not None:
+                    m["reachable"] = sym["id"] in reach_set
                 else:
-                    m["reachable"] = bool(sym and sym["id"] not in orphans)
+                    m["reachable"] = sym["id"] not in orphans
 
                 surface = _classify_match(m, reach_set, orphans)
                 bucket["surfaces"].setdefault(surface, []).append(m)
@@ -430,10 +462,11 @@ def refs_text_cmd(
             reachable_from,
             per_match_detail,
             warnings_out=warnings_out,
+            globs=glob_filter,
         )
         return
     echo_text_warnings(warnings_out)
-    _emit_text(analyses, targets, reachable_from, warnings_out=warnings_out)
+    _emit_text(analyses, targets, reachable_from, warnings_out=warnings_out, engine=used_engine, globs=glob_filter)
 
 
 # ---------------------------------------------------------------------------
@@ -470,102 +503,93 @@ def _tag_matches(matches, targets, *, fixed: bool, ci: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _emit_empty(json_mode, targets, budget, engine, *, warnings_out=None):
-    """Engine returned zero matches — emit a SAFE-TO-REMOVE row per target.
-
-    W607-I: when ``warnings_out`` is non-empty, surface the bucket on both
-    summary and top-level (preserved-list-field discipline) and flip
-    ``partial_success`` so agents can distinguish "engine ran cleanly, no
-    matches" from "engine degraded / fanout fallback / pin missing".
-    Empty bucket → byte-identical envelope (hash-stable).
-    """
-    results = [
-        {
-            "string": s,
-            "verdict": "REVIEW" if warnings_out else "SAFE-TO-REMOVE",
-            "reason": "search incomplete; absence is unconfirmed" if warnings_out else "no references in source code",
-            "total": 0,
-            "by_surface": {},
-        }
-        for s in targets
-    ]
-    verdict = f"{len(targets)} string(s) checked, 0 load-bearing"
-    if warnings_out:
-        verdict = f"Search incomplete: review {len(targets)} string(s)"
+def _emit_empty(json_mode, targets, budget, engine, *, warnings_out=None, globs=(), reachable_from=None):
+    """Share the same scoped verdict and completeness contract for zero hits."""
+    analyses = {s: {"string": s, "total": 0, "surfaces": {}} for s in targets}
     if json_mode:
-        _summary: dict = {
-            "verdict": verdict,
-            "load_bearing": 0,
-            "engine": engine,
-        }
-        _extra: dict = {}
-        if warnings_out:
-            _summary["warnings_out"] = list(warnings_out)
-            _summary["partial_success"] = True
-            _extra["warnings_out"] = list(warnings_out)
-        click.echo(
-            to_json(
-                json_envelope(
-                    "refs-text",
-                    budget=budget,
-                    summary=_summary,
-                    strings=list(targets),
-                    results=results,
-                    **_extra,
-                )
-            )
+        _emit_json(
+            analyses,
+            targets,
+            budget,
+            engine,
+            reachable_from,
+            False,
+            warnings_out=warnings_out,
+            globs=globs,
         )
     else:
         echo_text_warnings(warnings_out)
-        click.echo(f"VERDICT: {verdict}")
-        for result in results:
-            click.echo(f"--- {result['string']} — {result['verdict']} ({result['reason']}) ---")
-            click.echo("  total references: 0")
-            click.echo()
+        _emit_text(analyses, targets, reachable_from, warnings_out=warnings_out, engine=engine, globs=globs)
 
 
-def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_detail, *, warnings_out=None):
-    """Emit the populated-matches envelope.
+def _reference_result(analysis, *, search_incomplete=False):
+    """One decision shared by compact/detail JSON and the human display."""
+    code = analysis["surfaces"].get("code", []) + analysis["surfaces"].get("dead", [])
+    unknown = sum(m.get("reachable") is not True and m.get("reachable") is not False for m in code)
+    verdict, reason = _verdict_for(analysis)
+    if search_incomplete and verdict == "SAFE-TO-REMOVE":
+        verdict, reason = "REVIEW", "search incomplete; absence is unconfirmed"
+    resolution = "not_applicable" if not code else "resolved"
+    if unknown:
+        resolution = "unresolved" if unknown == len(code) else "partial"
+    return {
+        "string": analysis["string"],
+        "verdict": verdict,
+        "reason": reason,
+        "total": analysis["total"],
+        "by_surface": {k: len(v) for k, v in analysis["surfaces"].items()},
+        "resolution": resolution,
+        "unresolved_code_references": unknown,
+        "partial_success": bool(search_incomplete or unknown),
+    }
 
-    W607-I: when ``warnings_out`` is non-empty, surface the bucket on both
-    summary and top-level (preserved-list-field discipline) and flip
-    ``partial_success`` so agents can detect subprocess-degrade lineage
-    even on a fully successful audit. Empty bucket → byte-identical
-    envelope (hash-stable).
-    """
+
+def _reference_summary(results, engine, reachable_from, globs, warnings_out):
+    """Protect question-level qualifications even when detail is budgeted away."""
+    overall_load = sum(row["verdict"] == "LOAD-BEARING" for row in results)
+    unknown = sum(row["unresolved_code_references"] for row in results)
+    verdict = f"{len(results)} string(s) checked, {overall_load} load-bearing"
+    if warnings_out:
+        verdict = f"Partial search: {verdict}; review before removal"
+    elif unknown:
+        verdict = f"Partial reference evidence: {verdict}"
+    if unknown:
+        verdict += f"; {unknown} code reference(s) unresolved"
+    return {
+        "verdict": verdict,
+        "verdict_definition": _VERDICT_DEFINITION,
+        "load_bearing": overall_load,
+        "engine": engine,
+        "reachable_from": reachable_from,
+        "unresolved_code_references": unknown,
+        "partial_success": any(row["partial_success"] for row in results),
+        "search_scope": {
+            "population": {
+                "git": "git_tracked_nonbinary_files",
+                "ripgrep": "ripgrep_searchable_files",
+                "indexed_scan": "indexed_files",
+            }.get(engine, "unknown"),
+            "globs": list(globs),
+            "complete": not bool(warnings_out),
+        },
+    }
+
+
+def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_detail, *, warnings_out=None, globs=()):
+    """Emit complete or partial observations without changing their meaning."""
     results = []
-    overall_load = 0
     for s in targets:
         a = analyses[s]
-        verdict, reason = _verdict_for(a)
-        if warnings_out and verdict == "SAFE-TO-REMOVE":
-            verdict, reason = "REVIEW", "search incomplete; absence is unconfirmed"
-        if verdict == "LOAD-BEARING":
-            overall_load += 1
-        per_surface = {k: len(v) for k, v in a["surfaces"].items()}
-        entry = {
-            "string": s,
-            "verdict": verdict,
-            "reason": reason,
-            "total": a["total"],
-            "by_surface": per_surface,
-        }
+        entry = _reference_result(a, search_incomplete=bool(warnings_out))
         if per_match_detail:
             entry["matches_by_surface"] = {
                 surface: [_serialise_match(m) for m in items] for surface, items in a["surfaces"].items()
             }
         results.append(entry)
-    summary: dict = {
-        "verdict": f"{len(targets)} string(s) checked, {overall_load} load-bearing",
-        "load_bearing": overall_load,
-        "engine": engine,
-        "reachable_from": reachable_from,
-    }
+    summary = _reference_summary(results, engine, reachable_from, globs, warnings_out)
     extra: dict = {}
     if warnings_out:
-        summary["verdict"] = f"Partial search: {summary['verdict']}; review before removal"
         summary["warnings_out"] = list(warnings_out)
-        summary["partial_success"] = True
         extra["warnings_out"] = list(warnings_out)
     click.echo(
         to_json(
@@ -582,8 +606,15 @@ def _emit_json(analyses, targets, budget, engine, reachable_from, per_match_deta
 
 
 def _serialise_match(m):
-    out = {"path": m["path"], "line": m["line"], "content": m["content"]}
-    for k in ("enclosing_symbol", "enclosing_kind", "reachable", "pagerank", "clone_siblings", "bridge_links"):
+    out = {
+        "path": m["path"],
+        "line": m["line"],
+        "content": m["content"],
+        "reachable": m.get("reachable"),
+        "resolution": m["resolution"],
+        "pagerank": m.get("pagerank"),
+    }
+    for k in ("enclosing_symbol", "enclosing_kind", "clone_siblings", "bridge_links"):
         if m.get(k) not in (None, [], {}):
             out[k] = m[k]
     return out
@@ -594,8 +625,11 @@ def _emit_surface_items(items, surface):
     for m in items[:3]:
         sym = m.get("enclosing_symbol")
         tag = ""
-        if surface == "code":
-            tag = " [reachable]" if m.get("reachable") else " [unreachable]"
+        if surface in {"code", "dead"}:
+            if m.get("reachable") is None:
+                tag = " [reachability unknown]"
+            else:
+                tag = " [reachable]" if m["reachable"] else " [unreachable in indexed graph]"
         bridges = m.get("bridge_links")
         clones = m.get("clone_siblings")
         extra = ""
@@ -608,18 +642,17 @@ def _emit_surface_items(items, surface):
         click.echo(f"    ... +{len(items) - 3} more")
 
 
-def _emit_text(analyses, targets, reachable_from, *, warnings_out=None):
-    overall_load = sum(1 for s in targets if _verdict_for(analyses[s])[0] == "LOAD-BEARING")
-    prefix = "Partial search: " if warnings_out else ""
-    click.echo(f"VERDICT: {prefix}{len(targets)} string(s) checked, {overall_load} load-bearing")
+def _emit_text(analyses, targets, reachable_from, *, warnings_out=None, engine=None, globs=()):
+    results = [_reference_result(analyses[s], search_incomplete=bool(warnings_out)) for s in targets]
+    summary = _reference_summary(results, engine, reachable_from, globs, warnings_out)
+    click.echo(f"VERDICT: {summary['verdict']}")
+    click.echo("  Scope: selected text search and indexed graph; not deletion approval.")
     if reachable_from:
         click.echo(f"  reachability anchored at entry: {reachable_from}")
     click.echo()
-    for s in targets:
+    for s, result in zip(targets, results):
         a = analyses[s]
-        verdict, reason = _verdict_for(a)
-        if warnings_out and verdict == "SAFE-TO-REMOVE":
-            verdict, reason = "REVIEW", "search incomplete; absence is unconfirmed"
+        verdict, reason = result["verdict"], result["reason"]
         click.echo(f"--- {s} — {verdict} ({reason}) ---")
         click.echo(f"  total references: {a['total']}")
         for surface, items in sorted(a["surfaces"].items()):

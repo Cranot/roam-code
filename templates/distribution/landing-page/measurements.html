@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Roam measurements — Results, limits, and reproduction</title>
+  <meta name="description" content="Inspect real Roam outputs, a recorded cross-repository miss, and historical agent comparisons. Each record separates what was measured from what remains unknown.">
+  <link rel="canonical" href="https://roam-code.com/measurements">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/landing.css" as="style">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Roam measurements — Results, limits, and reproduction">
+  <meta property="og:description" content="Inspect real Roam outputs, a recorded cross-repository miss, and historical agent comparisons. Each record separates what was measured from what remains unknown.">
+  <meta property="og:url" content="https://roam-code.com/measurements">
+  <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta property="og:image:width" content="1731">
+  <meta property="og:image:height" content="909">
+  <meta property="og:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og-code-analysis.png">
+  <meta name="twitter:image:alt" content="Roam — Code analysis your agent can query. Checks it can run.">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    "name": "Roam measurements",
+    "url": "https://roam-code.com/measurements",
+    "description": "Command examples and historical measurement records, with reproduction status and limits.",
+    "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"}
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo" aria-label="Roam — home">
+        <svg class="site-logo-mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" aria-hidden="true" focusable="false">
+          <line x1="16" y1="16" x2="0" y2="8" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="32" y2="22" stroke-width="1" opacity="0.55"/>
+          <line x1="16" y1="16" x2="16" y2="32" stroke-width="1" opacity="0.35"/>
+          <circle cx="16" cy="16" r="4.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="16" r="7.5" stroke-width="1" opacity="0.30"/>
+        </svg>
+        <span>roam<span class="logo-dot">.</span></span>
+      </a>
+      <input type="checkbox" id="nav-toggle" class="nav-toggle-checkbox" aria-label="Toggle navigation menu" aria-controls="site-navigation">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-burger" aria-hidden="true"></span><span class="visually-hidden">Menu</span>
+      </label>
+      <ul class="nav-links" id="site-navigation">
+        <li><a href="/explore">Explore the map</a></li>
+        <li><a href="/docs/">Docs</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="/setup" class="nav-start">Set up your agent</a></li>
+      </ul>
+    </div>
+  </nav>
+  <main tabindex="-1" id="main" class="docs-page">
+    <p class="eyebrow">The measurement record</p>
+    <h1>See the result.<br>Keep its limits.</h1>
+    <p class="subtitle">A useful example shows what a tool returns. A useful
+      comparison also shows its baseline, misses and unknowns. Here are both,
+      clearly separated.</p>
+    <nav aria-label="On this page">
+      <a href="#examples">Runnable examples</a> ·
+      <a href="#transfer">A recorded miss</a> ·
+      <a href="#history">Historical comparisons</a> ·
+      <a href="#reproduce">Measure your workflow</a>
+    </nav>
+    <section id="examples">
+      <h2>Start with an answer you can inspect</h2>
+      <p>These small, deliberately chosen fixtures demonstrate command behavior.
+        They are not studies of detector accuracy or agent productivity.</p>
+      <h3>What else uses this function?</h3>
+      <p><code>roam --json impact calculate_total</code> returned three direct
+        callers in a four-function Python checkout fixture. The captured response
+        reports <code>partial_success: false</code>, <code>truncated: false</code>
+        and <code>cap_applied: false</code>. That establishes the returned
+        traversal's reported completion, not complete runtime coverage.</p>
+      <ul>
+        <li><strong>Recorded:</strong> 13 September 2026, Roam 14.1.0; one
+          synthetic fixture, no model involved. This is not a timing comparison.</li>
+        <li><strong>Inspect:</strong> <a href="/data/examples/checkout-impact-2026-09-13.json">full captured JSON</a>
+          and the <a href="/#home-example-heading">explained result</a>.</li>
+        <li><strong>Reproduce:</strong> the public
+          <a href="https://github.com/Cranot/roam-code/blob/main/tests/test_homepage_contract.py">homepage contract test</a>
+          creates the fixture, runs the real CLI and compares selected fields.
+          Timestamps and index metadata can differ in a new run.</li>
+      </ul>
+      <h3>Does a different lookup preserve the behavior?</h3>
+      <p>The <a href="/docs/command-reference#algorithm-choices">algorithm example</a>
+        includes JavaScript source, captured detector output and behavior tests.
+        One control deliberately shows why replacing every <code>indexOf</code>
+        check with a Set is unsafe: handling <code>NaN</code> can change the answer.</p>
+      <p><strong>Recorded:</strong> 13 September 2026, Roam 14.1.0; a selected
+        synthetic example, not a speed study. Its
+        <a href="https://github.com/Cranot/roam-code/blob/main/tests/test_site_algorithm_example.py">public regression</a>
+        tests candidate behavior. No workload speedup is established.</p>
+    </section>
+    <section id="transfer">
+      <h2>A recorded miss: pre-executed answer coverage</h2>
+      <p><strong>Historical result, not rerun for this page.</strong> On
+        27 July 2026, a fixed set of 60 repository-agnostic prompts was replayed
+        through Roam's task compiler on FastAPI, Gin and Svelte, plus Roam as
+        the home-repository control. The question was how often an envelope
+        carried a pre-executed answer, called an <code>l1_probe</code>.
+        This measured routing, not answer accuracy. The historical 45% target
+        came from a different corpus; even the home-repository control fell
+        below it on this one.</p>
+      <div class="table-wrap" tabindex="0" role="region" aria-labelledby="transfer-caption">
+        <table>
+          <caption id="transfer-caption">Reported pre-executed-answer envelopes, not correct-answer scores; target derived from a different corpus</caption>
+          <thead><tr><th scope="col">Repository</th><th scope="col">Envelopes / prompts</th><th scope="col">Against the historical 45% target</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">FastAPI · Python</th><td>7 / 60</td><td>Miss</td></tr>
+            <tr><th scope="row">Gin · Go</th><td>6 / 60</td><td>Miss</td></tr>
+            <tr><th scope="row">Svelte · JavaScript/TypeScript</th><td>8 / 60</td><td>Miss</td></tr>
+            <tr><th scope="row">Roam · control</th><td>10 / 60</td><td>Non-gating control; also below 45%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>The control changes the interpretation.</strong> The target was
+        based on an earlier, unavailable prompt set. Roam itself did not reach
+        that target on this corpus. The miss is retained; it does not by itself
+        establish a cross-repository transfer failure. Nor does an answer-carrying
+        envelope establish that its answer is correct.</p>
+      <dl>
+        <dt>Engine and environment</dt><dd>Roam 13.10.0, commit
+          <code>b6a8e87f</code>, fresh environment from an archived checkout.
+          Hardware and full dependency lock are not given in the public record.
+          The record notes a missing NumPy dependency during indexing.</dd>
+        <dt>Population and model</dt><dd>60 authored prompts × four repositories,
+          one recorded sweep per repository. Mechanical compiler replay, not a
+          comparison of coding-agent models or accepted code changes.</dd>
+        <dt>Metric and uncertainty</dt><dd>L1 envelope count over reported successful
+          compiles. The record reports no compile errors or empty-probe findings.
+          No repeated-run distribution or independently graded answer accuracy is
+          available. A routing fraction is not a token- or cost-saving estimate.</dd>
+        <dt>Public artifacts</dt><dd>
+          <a href="https://github.com/Cranot/roam-code/blob/main/benchmarks/cross-repo-l1/PREREGISTRATION.md">Protocol and target</a> ·
+          <a href="https://github.com/Cranot/roam-code/blob/main/benchmarks/cross-repo-l1/CORPUS_L1_TRANSFER_60.txt">60-prompt corpus</a> ·
+          <a href="https://github.com/Cranot/roam-code/blob/main/benchmarks/cross-repo-l1/TARGET_SHAS.md">Target revisions</a> ·
+          <a href="https://github.com/Cranot/roam-code/blob/main/benchmarks/cross-repo-l1/RESULTS.md">Full reported result and caveats</a>.</dd>
+        <dt>Reproduction status</dt><dd>Protocol, corpus and target revisions are
+          public. Raw per-run envelopes are not in that published directory;
+          this page does not claim an independently reproduced result. Use the
+          recorded engine and target revisions for a historical rerun; a run on
+          today's source is a new observation.</dd>
+      </dl>
+    </section>
+    <section id="history">
+      <h2>Older agent comparisons: useful history, not a current promise</h2>
+      <p>The <a href="https://github.com/Cranot/roam-code/blob/main/docs/measurements.md">May–July 2026 measurement archive</a>
+        preserves compiler/no-compiler comparisons, turns, input tokens, dollar
+        cost and wall time, including losses and later remeasurements. It names
+        the original model and engine where known. Raw cells for those agent
+        comparisons are retained privately, so the public tables alone cannot
+        reproduce the aggregates.</p>
+      <p>Some treatments cost more. A larger early run reversed the apparent
+        winner of a smaller one after an instruction confounder was removed.
+        Small repeated cells and changed task sets limit what can be generalized.
+        Passing the same ten planted bugs in both arms did not establish quality
+        parity; lower dollars could coincide with more input tokens.</p>
+      <h3>Repair-sibling retrieval has public saved cases</h3>
+      <p>The archive's 576 multi-site fixes from 12 Python repositories are
+        available in the <a href="https://github.com/Cranot/roam-code/blob/main/tests/data/1c_frozen.json">frozen corpus</a>,
+        with <a href="https://github.com/Cranot/roam-code/blob/main/tests/data/1c_fourarm_results.json">per-case results and arm definitions</a>.
+        This is a narrower question than general code search: given one repair,
+        rank other places that need the same repair.</p>
+      <p>The saved results report average ranking quality at ten results
+        (<code>nDCG@10</code>) of about 0.6045 for repair-intent reranking versus
+        0.5406 for the lexical baseline. The graph candidate pool without that
+        reranking scores about 0.2579—worse than lexical search. The archive's
+        recall interval includes no improvement. A ranking gain is not a
+        measured reduction in bugs, agent cost or elapsed time.</p>
+      <p><strong>Reproduction boundary:</strong> the
+        <a href="https://github.com/Cranot/roam-code/blob/main/tests/test_repair_intent_frozen.py">public regression</a>
+        pins the frozen corpus, executes the current scorer on its saved repair
+        sites, and checks the saved treatment-versus-lexical metric. It does not
+        rerun candidate collection and all four rankings from the original
+        repositories. The frozen protocol describes reranking the same lexical
+        pool; the results describe reranking a graph pool. Keep that protocol
+        discrepancy visible rather than treating a passing regression as full
+        reproduction or confirmed preregistration adherence.</p>
+      <p>The saved repair artifacts do not identify the full original engine and
+        environment or a clear measurement timestamp. A present-day regression
+        run does not fill in that missing provenance.</p>
+      <p><strong>These measurements do not imply general accuracy, token, cost,
+        or latency improvements across arbitrary repositories and agents.</strong></p>
+    </section>
+    <section id="reproduce">
+      <h2>Measure the question that matters to your workflow</h2>
+      <p>Roam makes repository relationships and repeatable checks available
+        without asking a model to derive each result anew. That mechanism is
+        useful to test—not a universal savings claim. Count index creation,
+        refreshes, tool calls and the agent's work consuming the results.</p>
+      <ol>
+        <li>Choose a recurring task and a capable baseline using your current
+          tools. Fix the source revision, inputs, model and acceptance tests.</li>
+        <li>Compare with Roam on the same task. Keep failed attempts, missing
+          answers, false findings and cases where Roam adds no useful result.</li>
+        <li>Verify outcomes independently. Report time, tokens and cost separately,
+          with sample counts and missing measurements—not just the best run.</li>
+      </ol>
+      <p>See the <a href="https://github.com/Cranot/roam-code/blob/main/docs/concepts/verification-evidence.md#comparing-analytical-approaches">comparison method</a>
+        and <a href="https://github.com/Cranot/roam-code/blob/main/docs/concepts/verification-evidence.md#benchmark-accounting">benchmark accounting rules</a>.
+        The available <a href="https://github.com/Cranot/roam-code/blob/main/scripts/bench_analyze.py">saved-cell analyzer</a>
+        accounts for observed artifacts; it does not establish assignments or task success.</p>
+      <h3>Run the public example checks</h3>
+      <p>In a trusted Roam source checkout with its locked development environment
+        installed, run these regression tests. The algorithm behavior control also
+        requires Node.js. These are example checks, not an agent benchmark:</p>
+      <pre><code>uv run --no-sync pytest tests/test_homepage_contract.py::test_homepage_walkthrough_and_connection_example_execute tests/test_site_algorithm_example.py -n 0</code></pre>
+      <p><a href="/setup#first-result">Try one result on your own code</a> ·
+        <a href="/compare#local-code-graphs">Compare the kinds of tools</a> ·
+        <a href="/trust">Read the trust boundaries</a></p>
+    </section>
+  </main>
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col"><strong>Roam</strong><span>Built in Athens. Made in the EU.</span></div>
+      <div class="footer-col"><a href="/setup">Setup</a><a href="/docs/">Docs</a><a href="/compare">Compare</a></div>
+      <div class="footer-col"><a href="/pricing">Pricing</a><a href="/trust">Trust</a><a href="/privacy">Privacy</a></div>
+      <div class="footer-col"><a href="https://github.com/Cranot/roam-code">GitHub</a><a href="mailto:hello@roam-code.com">hello@roam-code.com</a></div>
+    </div>
+  </footer>
+</body>
+</html>

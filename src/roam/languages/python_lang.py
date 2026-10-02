@@ -89,21 +89,32 @@ class PythonExtractor(LanguageExtractor):
         return text
 
     def _find_dunder_all(self, root, source: bytes) -> set[str] | None:
-        """Parse __all__ = [...] to determine explicit exports."""
+        """Parse __all__ = [...] and __all__ += [...] to determine explicit exports."""
+        found: set[str] | None = None
         for child in root.children:
-            if child.type == "assignment":
-                left = child.child_by_field_name("left")
-                right = child.child_by_field_name("right")
-                if left and self.node_text(left, source) == "__all__" and right:
-                    return self._parse_all_list(right, source)
-            elif child.type == "expression_statement":
+            node = child
+            if child.type == "expression_statement":
                 for sub in child.children:
-                    if sub.type == "assignment":
-                        left = sub.child_by_field_name("left")
-                        right = sub.child_by_field_name("right")
-                        if left and self.node_text(left, source) == "__all__" and right:
-                            return self._parse_all_list(right, source)
-        return None
+                    if sub.type in ("assignment", "augmented_assignment"):
+                        node = sub
+                        break
+                else:
+                    continue
+            if node.type == "assignment":
+                left = node.child_by_field_name("left")
+                right = node.child_by_field_name("right")
+                if left and self.node_text(left, source) == "__all__" and right:
+                    found = self._parse_all_list(right, source)
+            elif node.type == "augmented_assignment":
+                left = node.child_by_field_name("left")
+                right = node.child_by_field_name("right")
+                if left and self.node_text(left, source) == "__all__" and right:
+                    extra = self._parse_all_list(right, source)
+                    if found is None:
+                        found = extra
+                    else:
+                        found.update(extra)
+        return found
 
     def _parse_all_list(self, node, source: bytes) -> set[str]:
         names = set()
@@ -187,6 +198,22 @@ class PythonExtractor(LanguageExtractor):
                 else:
                     # Class-level assignments (properties)
                     self._extract_class_property(child, source, symbols, parent_name)
+            elif child.type == "match_statement":
+                # Python 3.10+ match/case — body block contains case_clause nodes;
+                # each case_clause's body is in its "consequence" field (tree-sitter-python)
+                match_body = child.child_by_field_name("body")
+                container = match_body if match_body else child
+                for sub in container.children:
+                    if sub.type == "case_clause":
+                        case_body = sub.child_by_field_name("consequence")
+                        if case_body is None:
+                            # fall back: last block child
+                            for sub_child in reversed(sub.children):
+                                if sub_child.type == "block":
+                                    case_body = sub_child
+                                    break
+                        if case_body:
+                            self._walk_node(case_body, source, file_path, symbols, parent_name, dunder_all)
             elif child.type == "expression_statement":
                 for sub in child.children:
                     if sub.type == "assignment":
@@ -217,6 +244,15 @@ class PythonExtractor(LanguageExtractor):
             sig = "\n".join(decorators) + "\n" + sig
 
         kind = "method" if parent_name else "function"
+        # @property decorated methods get their own kind for accurate search/dead-code
+        if parent_name and any(d.strip() == "@property" for d in decorators):
+            kind = "property"
+        # Pydantic validators: @validator / @field_validator / @root_validator / @model_validator
+        elif parent_name and any(
+            d.lstrip("@").split("(")[0] in ("validator", "field_validator", "root_validator", "model_validator")
+            for d in decorators
+        ):
+            kind = "validator"
         qualified = f"{parent_name}.{name}" if parent_name else name
         vis = self._visibility(name)
         is_exported = self._is_exported(name, dunder_all)
@@ -275,6 +311,32 @@ class PythonExtractor(LanguageExtractor):
         if decorators:
             sig = "\n".join(decorators) + "\n" + sig
 
+        # Semantic kind: protocol > typeddict > dataclass > class
+        kind = "class"
+        if bases:
+            for base_child in bases.children:
+                if base_child.type == "identifier":
+                    base_name = self.node_text(base_child, source)
+                    if base_name == "Protocol":
+                        kind = "protocol"
+                        break
+                    if base_name == "TypedDict":
+                        kind = "typeddict"
+                        break
+                elif base_child.type == "attribute":
+                    attr = self.node_text(base_child, source)
+                    if attr.endswith(".Protocol"):
+                        kind = "protocol"
+                        break
+                    if attr.endswith(".TypedDict"):
+                        kind = "typeddict"
+                        break
+        if kind == "class":
+            for d in decorators:
+                if d.lstrip("@").split("(")[0].split(".")[-1] == "dataclass":
+                    kind = "dataclass"
+                    break
+
         qualified = f"{parent_name}.{name}" if parent_name else name
         vis = self._visibility(name)
         is_exported = self._is_exported(name, dunder_all)
@@ -283,7 +345,7 @@ class PythonExtractor(LanguageExtractor):
         symbols.append(
             self._make_symbol(
                 name=name,
-                kind="class",
+                kind=kind,
                 line_start=outer.start_point[0] + 1,
                 line_end=node.end_point[0] + 1,
                 qualified_name=qualified,
@@ -345,6 +407,14 @@ class PythonExtractor(LanguageExtractor):
         # Check if it looks like a constant (ALL_CAPS)
         kind = "constant" if name.isupper() or (name.upper() == name and "_" in name) else "variable"
 
+        # TypeVar / ParamSpec / TypeVarTuple assignments get their own kind
+        if right is not None and right.type == "call":
+            func_node = right.child_by_field_name("function")
+            if func_node is not None:
+                func_name = self.node_text(func_node, source)
+                if func_name in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+                    kind = "typevar"
+
         symbols.append(
             self._make_symbol(
                 name=name,
@@ -367,6 +437,27 @@ class PythonExtractor(LanguageExtractor):
         if "." in name or "[" in name:
             return
         if name == "__all__":
+            return
+
+        # __slots__ = ('x', 'y') — emit one property per slot name instead of __slots__ itself
+        if name == "__slots__":
+            right = node.child_by_field_name("right")
+            if right and right.type in ("tuple", "list"):
+                for slot_child in right.children:
+                    if slot_child.type == "string":
+                        slot_name = self._extract_string_content(slot_child, source)
+                        if slot_name:
+                            symbols.append(
+                                self._make_symbol(
+                                    name=slot_name,
+                                    kind="property",
+                                    line_start=node.start_point[0] + 1,
+                                    line_end=node.end_point[0] + 1,
+                                    qualified_name=f"{parent_name}.{slot_name}",
+                                    visibility=self._visibility(slot_name),
+                                    parent_name=parent_name,
+                                )
+                            )
             return
 
         right = node.child_by_field_name("right")
@@ -574,7 +665,7 @@ class PythonExtractor(LanguageExtractor):
                 # reference, not a call. The dotted_name holds the class name.
                 self._extract_class_pattern_refs(child, source, refs, scope_name)
             elif (
-                child.type == "identifier"
+                child.type in ("identifier", "attribute")
                 and node.type in ("argument_list", "list", "tuple", "set")
                 and not self._is_class_base_list(node)
             ):
@@ -592,7 +683,14 @@ class PythonExtractor(LanguageExtractor):
                 # `argument_list` there already gets an `inherits` edge from
                 # `_pending_inherits`; adding a `reference` edge too would
                 # just double the row for no precision gain.
-                self._emit_bare_identifier_ref(child, source, refs, scope_name)
+                # Attribute form covers Django/DRF patterns like
+                # `router.register(r'users', viewsets.UserViewSet)` where
+                # the view class is referenced via dotted path rather than
+                # a bare name.
+                if child.type == "identifier":
+                    self._emit_bare_identifier_ref(child, source, refs, scope_name)
+                else:
+                    self._emit_bare_attribute_ref(child, source, refs, scope_name)
             elif child.type == "keyword_argument":
                 # `safe(name="disk", fn=probe_disk)` — same higher-order
                 # reference as a positional argument, just named.
@@ -924,6 +1022,22 @@ class PythonExtractor(LanguageExtractor):
                 if base is not None:
                     self._walk_type_node(base, source, refs, scope_name)
                 return
+            if base_name == "Annotated":
+                # PEP 593: Annotated[type, *metadata].  Only the first argument
+                # is the type; remaining arguments are runtime metadata (e.g.
+                # Field(...), validators, constraints) — NOT type references.
+                # Walk the base (``Annotated`` itself) and only the first arg
+                # inside the ``type_parameter`` bracket.
+                if base is not None:
+                    self._walk_type_node(base, source, refs, scope_name)
+                for child in node.children:
+                    if child.type == "type_parameter":
+                        for sub in child.children:
+                            if sub.type in ("[", "]", ","):
+                                continue
+                            self._walk_type_node(sub, source, refs, scope_name)
+                            break  # only the first arg
+                return
             for child in node.children:
                 self._walk_type_node(child, source, refs, scope_name)
         else:
@@ -1000,6 +1114,57 @@ class PythonExtractor(LanguageExtractor):
                     )
                 )
 
+    def _extract_typevar_refs(self, args_node, source, refs, scope_name) -> None:
+        """Emit type_ref edges for TypeVar constraint and bound arguments.
+
+        Handles two patterns:
+          TypeVar("T", bound=MyBase)           → type_ref to MyBase
+          TypeVar("T", MyType, OtherType)      → type_ref to MyType, OtherType
+
+        The first positional argument is the string name ("T") and is skipped.
+        Subsequent positional identifier arguments are constraint types.
+        A keyword_argument with key "bound" whose value is an identifier is the
+        upper-bound type.
+        """
+        positional_count = 0
+        for child in args_node.children:
+            if child.type in (",", "(", ")"):
+                continue
+            if child.type == "string":
+                # The TypeVar name string — skip it
+                positional_count += 1
+                continue
+            if child.type == "identifier":
+                # Positional constraint: TypeVar("T", MyType, OtherType)
+                positional_count += 1
+                if positional_count > 1:
+                    name = self.node_text(child, source)
+                    if name and name not in _BUILTIN_TYPES:
+                        refs.append(
+                            self._make_reference(
+                                target_name=name,
+                                kind="type_ref",
+                                line=child.start_point[0] + 1,
+                                source_name=scope_name,
+                            )
+                        )
+            elif child.type == "keyword_argument":
+                # bound=MyBase or constraints=[...] keyword form
+                key_node = child.child_by_field_name("name")
+                val_node = child.child_by_field_name("value")
+                if key_node and val_node and self.node_text(key_node, source) == "bound":
+                    if val_node.type == "identifier":
+                        name = self.node_text(val_node, source)
+                        if name and name not in _BUILTIN_TYPES:
+                            refs.append(
+                                self._make_reference(
+                                    target_name=name,
+                                    kind="type_ref",
+                                    line=val_node.start_point[0] + 1,
+                                    source_name=scope_name,
+                                )
+                            )
+
     def _extract_call(self, node, source, refs, scope_name):
         func_node = node.child_by_field_name("function")
         if func_node is None:
@@ -1024,6 +1189,10 @@ class PythonExtractor(LanguageExtractor):
         # Recurse into call arguments for nested calls
         args = node.child_by_field_name("arguments")
         if args:
+            # TypeVar("T", bound=MyBase) and TypeVar("T", MyType, OtherType):
+            # constraint/bound arguments are type references, not value references.
+            if name == "TypeVar":
+                self._extract_typevar_refs(args, source, refs, scope_name)
             self._walk_refs(args, source, "", refs, scope_name)
 
     @staticmethod
@@ -1139,6 +1308,32 @@ class PythonExtractor(LanguageExtractor):
             cur = cur.parent
         return False
 
+    def _emit_bare_attribute_ref(self, node, source, refs, scope_name) -> None:
+        """Record a dotted attribute used in VALUE position as a reference.
+
+        Covers Django/DRF patterns like `router.register(r'users',
+        viewsets.UserViewSet)` where the class is referenced via a
+        dotted module path rather than a bare name.  `self.x` and
+        `cls.x` are skipped — those are instance/class attribute
+        accesses, not inter-module symbol references.
+        """
+        obj = node.child_by_field_name("object")
+        if obj is not None and obj.type == "identifier":
+            obj_name = self.node_text(obj, source)
+            if obj_name in ("self", "cls"):
+                return
+        name = self.node_text(node, source)
+        if not name:
+            return
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="reference",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
+
     def _extract_keyword_argument_ref(self, node, source, refs, scope_name):
         """``fn=probe_disk`` in a call: the VALUE is a higher-order
         reference (see ``_emit_bare_identifier_ref``); the parameter NAME
@@ -1151,6 +1346,8 @@ class PythonExtractor(LanguageExtractor):
             return
         if value.type == "identifier":
             self._emit_bare_identifier_ref(value, source, refs, scope_name)
+        elif value.type == "attribute":
+            self._emit_bare_attribute_ref(value, source, refs, scope_name)
         else:
             self._walk_refs(node, source, "", refs, scope_name)
 
@@ -1165,5 +1362,7 @@ class PythonExtractor(LanguageExtractor):
             return
         if value.type == "identifier":
             self._emit_bare_identifier_ref(value, source, refs, scope_name)
+        elif value.type == "attribute":
+            self._emit_bare_attribute_ref(value, source, refs, scope_name)
         else:
             self._walk_refs(node, source, "", refs, scope_name)

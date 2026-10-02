@@ -6,7 +6,6 @@ Author: Cranot.
 from __future__ import annotations
 
 import ast
-import textwrap
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +13,7 @@ from typing import Optional
 
 from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
+from roam.world_model._source_helpers import _parse_function, _read_source
 from roam.world_model.side_effects import SideEffectClassification, classify_side_effects
 
 
@@ -44,28 +44,6 @@ class UnreachableAfterReturnFinding:
             "line_start": self.line_start,
             "line_end": self.line_end,
         }
-
-
-def _read_source(repo_root: Path, rel_path: str) -> tuple[str, list[str]]:
-    """Read one source file, preserving empty slices for missing content."""
-    try:
-        p = repo_root / rel_path
-        if not p.exists():
-            return "", []
-        text = p.read_text(encoding="utf-8", errors="replace")
-        return text, text.splitlines(keepends=True)
-    except OSError as exc:
-        log_swallowed(f"world_model.unreachable_after_return:body_read:{rel_path}", exc)
-        return "", []
-
-
-def _parse_function(body_text: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    """Parse a source slice and return its outer function declaration."""
-    try:
-        tree = ast.parse(textwrap.dedent(body_text))
-    except (SyntaxError, ValueError):
-        return None
-    return next((node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))), None)
 
 
 _TERMINATORS = (ast.Return, ast.Raise, ast.Break, ast.Continue)

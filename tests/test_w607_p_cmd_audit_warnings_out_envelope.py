@@ -125,6 +125,8 @@ def audit_project(tmp_path, monkeypatch):
         'def format_name(first, last):\n    return f"{first} {last}"\n\ndef shout(msg):\n    return msg.upper()\n',
         encoding="utf-8",
     )
+    # A clean-control audit needs tests: no_test_files is genuinely partial.
+    (proj / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
     git_init(proj)
     monkeypatch.chdir(proj)
     out, rc = index_in_process(proj, "--force")

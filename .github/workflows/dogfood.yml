@@ -88,13 +88,36 @@ jobs:
       - name: Sync the exact runtime graph
         run: |
           python -I -S -B scripts/verify_uv_runtime.py
-          uv sync --locked --no-default-groups --python python
+          uv sync --locked --no-default-groups --extra metrics --python python
           uv pip check --python .venv/bin/python
 
       - name: Index repo
         run: .venv/bin/roam index
 
+      - name: Prepare immutable dogfood diff
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$EVENT_BASE_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            base="$(git rev-parse --verify HEAD^)"
+          fi
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]] || [[ "$base" =~ ^0+$ ]]; then
+            echo "::error::Dogfood needs a nonempty immutable base commit."
+            exit 1
+          fi
+          head="$(git rev-parse --verify HEAD)"
+          git cat-file -e "$base^{commit}"
+          git diff --no-ext-diff --no-textconv "$base" "$head" -- > "$RUNNER_TEMP/roam-dogfood.diff"
+          test -s "$RUNNER_TEMP/roam-dogfood.diff" || { echo "::error::No diff to analyze."; exit 1; }
+          echo "Dogfood diff: $base..$head"
+
       - name: Run dogfood (audit + pr-analyze + audit-trail + conformance)
+        env:
+          # Explicit finite source/anchor budget for this repo's large histories.
+          # Indexing retains its separate default cap; larger files still refuse.
+          ROAM_STALE_REFS_MAX_BYTES: "4000000"
         run: |
           set -euo pipefail
           # --audit-trail is the default (no flag needed) -- a prior
@@ -105,7 +128,9 @@ jobs:
           # from a fresh checkout (.roam/ is gitignored, never persisted
           # across runs), so this appends exactly one genesis record and
           # reports that trail's real Article 12 conformance score.
-          .venv/bin/roam --json dogfood > dogfood.json
+          # Collect complete JSON detail into the artifact. The strict gate
+          # below still rejects scan failures, unavailable inputs and child caps.
+          .venv/bin/roam --json --budget 0 dogfood --input "$RUNNER_TEMP/roam-dogfood.diff" > dogfood.json
           .venv/bin/python - <<'PY'
           import json
           import os
@@ -133,8 +158,15 @@ jobs:
           gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
           if gh_summary:
               pathlib.Path(gh_summary).write_text(summary_md, encoding="utf-8")
-          if s.get("partial_success"):
-              failed = s.get("failed_sections") or s.get("warnings_out") or "undisclosed sections"
+          # An absent or malformed completion flag is UNKNOWN. A false flag
+          # cannot override failed sections or a root-level partial result.
+          if (
+              s.get("partial_success") is not False
+              or env.get("partial_success", False) is not False
+              or s.get("failed_sections")
+              or s.get("incomplete_sections")
+          ):
+              failed = s.get("failed_sections") or s.get("incomplete_sections") or s.get("warnings_out") or "undisclosed sections"
               raise SystemExit(f"dogfood execution degraded: {failed}")
           PY
 

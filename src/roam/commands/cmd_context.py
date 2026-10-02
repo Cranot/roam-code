@@ -596,7 +596,8 @@ def _render_inline_text(data) -> None:
         click.echo()
         click.echo(f"=== {path} ===")
         try:
-            text = open(path, encoding="utf-8", errors="replace").read()
+            with open(path, encoding="utf-8", errors="replace") as _fh:
+                text = _fh.read()
         except OSError as exc:
             click.echo(f"  [unreadable: {exc}]")
             continue

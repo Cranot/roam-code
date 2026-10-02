@@ -107,9 +107,13 @@ def test_ci_runner_platform_is_pinned_to_the_locked_wheel_abi() -> None:
     text = _workflow()
 
     assert "ubuntu-latest" not in text
-    # One per job: the seven above plus self-analysis. W1491 added
-    # `compatibility`, taking this from 7 to 8.
-    assert text.count("runs-on: ubuntu-24.04") == 8
+    # Inspect every job, including new site-only jobs, instead of freezing an
+    # unrelated job count. A missing or different runner must still fail.
+    jobs = re.split(r"^  ([a-z][\w-]*):[ \t]*$", text.split("\njobs:\n", 1)[1], flags=re.MULTILINE)
+    assert len(jobs) > 1, "No workflow jobs were inspected"
+    for name, body in zip(jobs[1::2], jobs[2::2]):
+        runners = re.findall(r"^    runs-on:[ \t]*([^\n]+)$", body, flags=re.MULTILINE)
+        assert runners == ["ubuntu-24.04"], (name, runners)
 
 
 def test_fallback_lane_stays_minimal_and_locked() -> None:

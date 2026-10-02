@@ -1,5 +1,11 @@
 """W805-RR — Empty-corpus Pattern-2 smoke for ``roam audit``.
 
+The reproduction below is historical, before the current child-evidence
+propagation repair. The active tests now require ``partial_success: True``
+and named incomplete children on an empty corpus. The remaining expected
+failure concerns only a missing aggregate ``summary.state`` label; child
+states and incomplete evidence are no longer silently lost.
+
 Forty-fourth-in-batch W805 sweep. ``audit`` is the multi-section
 codebase architecture audit aggregator. It composes ``health``, ``debt``,
 ``dead``, ``test-pyramid``, ``api``, ``stats``, ``hotspots --danger``,
@@ -149,9 +155,9 @@ def empty_corpus(tmp_path, monkeypatch):
     The indexer runs cleanly but produces zero function/class/method
     symbols. The ``health`` child reports ``health_score=None`` +
     ``state='empty_corpus'``; the ``test_pyramid`` child reports
-    ``state='no_test_files'``. The compound's silent-null axis: it
-    surfaces ``health_score=None`` and ``partial_success=False``
-    without disclosing any of this state.
+    ``state='no_test_files'``. The repaired compound preserves
+    ``health_score=None`` with ``partial_success=True`` and child evidence.
+    Its separate aggregate state-label obligation remains an expected failure.
     """
     repo = tmp_path / "empty-audit-repo"
     repo.mkdir()
@@ -317,29 +323,7 @@ class TestAuditEmptyChildrenDiscloseState:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-RR REAL BUG (silent-null-leak axis) — Pattern-2 null "
-        "leak. On empty corpus, cmd_audit.py:138 reads "
-        "health_score=None from the health child (the child correctly "
-        "discloses partial_success=True + state='empty_corpus'), then "
-        "cmd_audit.py:173 surfaces health_score=None onto the compound "
-        "summary while cmd_audit.py:171/176 leaves partial_success at "
-        "the auto-injected default of False (json_envelope substrate "
-        "guarantee at formatter.py:975-976). An agent reading "
-        "audit.summary.health_score gets a null value with no "
-        "indication that the underlying corpus produced no symbols. "
-        "Agent-safety: audit is the documented PR Replay backbone "
-        "(cmd_audit.py:5-6); a CI runner consuming audit.summary."
-        "health_score on a freshly-bootstrapped repo either crashes on "
-        "null arithmetic (e.g. `if health_score < 60`) or assumes "
-        "clean audit. Fix: at cmd_audit.py:171, when health_score is "
-        "None AND symbol_total == 0, set partial_success=True AND emit "
-        "summary.state='empty_corpus'. Per W978: do NOT fix this wave; "
-        "pin only."
-    ),
-)
+# Regression promoted after child partial-state propagation was repaired.
 def test_no_silent_null_health_on_empty(empty_corpus):
     """Pin: compound must NOT leak ``health_score: None`` silently.
 
@@ -393,26 +377,7 @@ def test_empty_corpus_state_explicit(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-RR REAL BUG (partial_success propagation axis) — same "
-        "root cause as W805-F/KK/LL/OO on the audit aggregator. On "
-        "empty corpus the health child discloses partial_success=True "
-        "+ state='empty_corpus' and the test_pyramid child discloses "
-        "partial_success=True + state='no_test_files'. The cmd_audit "
-        "aggregator at cmd_audit.py:171-183 NEVER inspects child "
-        "summary.partial_success — it only computes top-level fields "
-        "(verdict, health_score, debt_total, ...). The auto-injected "
-        "compound.summary.partial_success defaults to False (json_"
-        "envelope substrate guarantee at formatter.py:975-976), so "
-        "the compound emits partial_success=False while two children "
-        "disclosed True. Fix: at cmd_audit.py:171, also flip "
-        "partial_success=True whenever any child section's "
-        "summary.partial_success is True. Per W978: do NOT fix this "
-        "wave; pin only. Bundled with W805-F/KK/LL/OO propagation fix."
-    ),
-)
+# Regression promoted after child partial-state propagation was repaired.
 def test_empty_corpus_partial_success_set_to_true(empty_corpus):
     """Pin: compound lifts child partial_success disclosure.
 

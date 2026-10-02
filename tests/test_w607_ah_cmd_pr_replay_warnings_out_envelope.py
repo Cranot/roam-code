@@ -98,6 +98,9 @@ def _invoke_pr_replay(runner: CliRunner, cwd, *extra, json_mode: bool = True):
     if json_mode:
         args.append("--json")
     args.append("pr-replay")
+    # This fixture has one commit. Exercise the populated replay stages;
+    # the default HEAD~5 range is unavailable and must stop before them.
+    args.extend(["--range", "HEAD"])
     args.extend(extra)
 
     old_cwd = os.getcwd()

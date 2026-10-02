@@ -594,27 +594,32 @@ and
 
 ### 11.1 Local evidence substrate (CLI; live in v13.2)
 
-The CLI ships a portable evidence substrate stored under `.roam/` in
-the repo. All four streams are local-filesystem, zero-network, and
-schema-stable for v13.x. None require Provider infrastructure to
-operate:
+The local evidence features introduced in v13.2 store repo-local state under
+`.roam/`. Their current formats and collection paths are command-specific;
+signing and connected-agent features have the documented network boundaries.
+Local collection does not require a hosted Roam service:
 
 | Substrate | Storage | Purpose | Verification |
 |---|---|---|---|
-| **HMAC-chained run ledger** | `.roam/runs/` (per-run event JSONL + signed `meta.json`) | Tamper-evident record of every gated agent action (preflight, impact, critique, diff). | `roam runs verify` (offline; detects chain breaks without contacting Provider). |
+| **HMAC-chained run ledger** | `.roam/runs/` (per-run event JSONL + signed `meta.json`) | Tamper-evident record of supported commands collected in the configured run, not every agent action. | `roam runs verify` checks local integrity; it does not independently authenticate the actor or observe actions outside Roam. |
 | **4-mode policy substrate** | `.roam/modes/` + `.roam/constitution.yml` | Declares the action surface per run: `read_only` / `safe_edit` / `migration` / `autonomous_pr`. Each mode is a cumulative authority envelope. | `roam mode` reads + prints the active mode; the run ledger records the mode in force at each event. |
-| **Findings registry** | `.roam/findings.sqlite` | Normalised cross-detector finding table (30 detectors are wired for findings-registry persistence as of v13.2 — clones, dead, complexity, smells, n1, missing-index, over-fetch, bus-factor, auth-gaps, vulns, invariants, hotspots, taint, vibe-check, orphan-imports, conventions, pr-risk, duplicates, audit-trail-conformance/-verify, boundary, test-hermeticity, agent-opt, observability-opt, plus aggregators; the registry stores last-run state per detector, not a cumulative tally). | `roam findings list / show / count` for per-detector totals; `<DETECTOR>_DETECTOR_VERSION` stamps for drift tracking. |
-| **`ChangeEvidence` packet** | Emitted by `roam pr-bundle emit` (signed, hash-stable) | One portable evidence packet per change scope. Carries actor identity, authority refs, environment, policy decisions, blast radius, findings, redactions, content hash, schema version. | Hash-stable golden parity tests pin canonical JSON byte-output across releases. Validates with `roam pr-bundle validate --strict --strict-resolved` (CI flag `--ci` implies both). |
+| **Findings registry** | `findings` table in the configured index database (default `.roam/index.db`) | 30 detectors are wired for findings persistence through configured command paths, counted from command modules with an emission call. Saved findings are not evidence that every detector ran or that an absent finding is a clean scan. | `roam findings list / show / count`; inspect each producer's scope, version and completion state. |
+| **Evidence packets and bundles** | Explicit exporter output paths and `.roam/pr-bundles/` preparation state | Supplied observations, checks, decisions, source references and gaps for a named change. | Validate the chosen format and required evidence. Signing is an explicit, separate operation; canonical serialization does not make later runs or versions byte-identical. |
 
 ### 11.2 Signed PR bundles, CGA, and VSA
 
-`roam pr-bundle emit` produces a proof-carrying PR bundle (preflight +
-impact + critique + diff + verdict envelope). When combined with the
-CGA (`roam cga`) and VSA sibling outputs, the bundle is a self-contained
-proof of what an agent saw, what it was authorised to do, and what was
-verified. Verification is offline and signature-rooted — receiving
-teams need only the public Cosign / Sigstore key and the bundle file.
-See `roam attest` for the in-toto v1 attestation surface.
+`roam pr-bundle emit` saves collected preparation evidence. CGA and VSA are
+separate, explicitly requested outputs. Records show the context and checks
+Roam observed within the configured flow, plus supplied decisions and gaps;
+they do not prove everything the agent read or reasoned about, authenticate its
+identity, or observe arbitrary activity outside Roam. Mode enforcement is at
+Roam's tool boundary, not a general execution sandbox.
+
+Inspect the actual signing result and verify the expected subject and identity
+under the chosen format's trust policy. A valid signature alone does not establish
+complete verification, approval, or compliance. Follow the public
+[worked evidence flow](https://roam-code.com/docs/canonical-demo) and
+[verification guide](https://github.com/Cranot/roam-code/blob/main/docs/concepts/verification-evidence.md).
 
 ### 11.3 MCP per-tool-call decision receipts
 

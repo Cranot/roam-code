@@ -32,7 +32,7 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init  # noqa: E402
+from conftest import git_commit, git_init  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Unit-level tests on _gather_permit_policy_decisions
@@ -129,6 +129,7 @@ def test_permit_policy_silent_when_find_project_root_resolves(monkeypatch: pytes
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xdist_group("pr_replay_git_integration")
 def test_pr_replay_envelope_surfaces_permit_policy_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end: a warning emitted by ``_gather_permit_policy_decisions``
     must surface on the JSON envelope's top-level ``warnings_out`` field.
@@ -147,15 +148,24 @@ def test_pr_replay_envelope_surfaces_permit_policy_warning(tmp_path: Path, monke
     inject the canonical W591 marker string — the propagation chain is
     what's under test here; the gatherer's own emission is verified by
     the three unit-level tests above.
+
+    xdist_group("pr_replay_git_integration"): mirrors the rationale on
+    the W590 sibling -- see that test's docstring for the full explanation.
+    The inner postmortem subprocess resolves ``HEAD~1..HEAD`` against the
+    process CWD; grouping with W590 ensures both tests run sequentially on
+    a single dedicated worker, immune to CWD relocation by other tests.
     """
     from roam.cli import cli
     from roam.commands import cmd_pr_replay
 
     # Build a tiny git repo so pr-replay's git rev-list call succeeds.
+    # We need at least two commits so HEAD~1..HEAD resolves cleanly.
     proj = tmp_path / "tinyproj"
     proj.mkdir()
     (proj / "README.md").write_text("x\n")
     git_init(proj)
+    (proj / "extra.txt").write_text("extra\n")
+    git_commit(proj, "second commit")
 
     canonical_marker = (
         "permits: project_root_not_found — find_project_root returned None "
@@ -181,6 +191,8 @@ def test_pr_replay_envelope_surfaces_permit_policy_warning(tmp_path: Path, monke
         [
             "--json",
             "pr-replay",
+            "--range",
+            "HEAD~1..HEAD",
             "--tier",
             "sample",
             "--evidence",

@@ -647,17 +647,127 @@ class JavaScriptExtractor(LanguageExtractor):
             if ctype == "import_statement":
                 self._extract_esm_import(child, source, refs, scope_name)
             elif ctype == "export_statement":
-                self._walk_refs(child, source, refs, scope_name)
+                self._extract_export_refs(child, source, refs, scope_name)
             elif ctype == "call_expression":
                 self._extract_call(child, source, refs, scope_name)
             elif ctype == "new_expression":
                 self._extract_new(child, source, refs, scope_name)
-            elif ctype == "identifier" and node.type == "arguments":
+            elif ctype in ("jsx_self_closing_element", "jsx_opening_element"):
+                self._extract_jsx_element_refs(child, source, refs, scope_name)
+            elif ctype == "identifier" and node.type in ("arguments", "jsx_expression"):
                 self._emit_argument_identifier_ref(child, source, refs, scope_name)
             elif ctype == "shorthand_property_identifier":
                 self._emit_shorthand_property_ref(child, source, refs, scope_name)
             else:
                 self._walk_refs(child, source, refs, self._scope_name_for_child(child, source, scope_name))
+
+    def _extract_jsx_element_refs(self, node, source, refs, scope_name):
+        """Emit a call edge for user-defined JSX components and recurse into
+        attribute expressions to capture prop callback references.
+
+        User-defined components start with an uppercase letter (React convention).
+        Native elements (div, span, input…) are lowercase and are skipped.
+        ``<Foo.Bar />`` is emitted as a reference to the full dotted name.
+        """
+        for ch in node.children:
+            if ch.type == "<":
+                continue
+            if ch.type == "identifier":
+                name = self.node_text(ch, source)
+                if name and name[0].isupper():
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="call",
+                            line=ch.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+                break
+            if ch.type == "member_expression":
+                name = self.node_text(ch, source)
+                if name:
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="reference",
+                            line=ch.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+                break
+            # Stop scanning tag name on anything that is not '<'
+            break
+        # Recurse to capture jsx_attribute → jsx_expression → identifier refs
+        self._walk_refs(node, source, refs, scope_name)
+
+    def _extract_export_refs(self, export_stmt, source, refs, scope_name):
+        """Emit reference edges for named export and re-export statements.
+
+        Handles:
+          export { X }             -> reference edge to X (local re-export)
+          export { X as Y }        -> reference edge to X (local name)
+          export { X } from '...'  -> import edge for X from the module
+          export * from '...'      -> import edge for wildcard re-export
+        Delegates everything else (export function/class/let/const) to the
+        normal _walk_refs recursion so call-graph edges are not lost.
+        """
+        # Find the from-string child, if present
+        from_path = None
+        for ch in export_stmt.children:
+            if ch.type == "string":
+                frags = [c for c in ch.children if c.type == "string_fragment"]
+                if frags:
+                    from_path = self.node_text(frags[0], source)
+                break
+
+        # Named export clause: export { X } or export { X } from '...'
+        for ch in export_stmt.children:
+            if ch.type == "export_clause":
+                for spec in ch.children:
+                    if spec.type == "export_specifier":
+                        # First identifier is the local name being exported
+                        local_id = next((s for s in spec.children if s.type == "identifier"), None)
+                        if local_id:
+                            local_name = self.node_text(local_id, source)
+                            if from_path:
+                                refs.append(
+                                    self._make_reference(
+                                        target_name=local_name,
+                                        kind="import",
+                                        line=spec.start_point[0] + 1,
+                                        source_name=scope_name,
+                                        import_path=from_path,
+                                    )
+                                )
+                            else:
+                                refs.append(
+                                    self._make_reference(
+                                        target_name=local_name,
+                                        kind="reference",
+                                        line=spec.start_point[0] + 1,
+                                        source_name=scope_name,
+                                    )
+                                )
+                return  # Handled — no further recursion needed
+
+        # export * from '...' — wildcard re-export
+        for ch in export_stmt.children:
+            if ch.type == "*" or (hasattr(ch, "text") and ch.text == b"*"):
+                if from_path:
+                    refs.append(
+                        self._make_reference(
+                            target_name="*",
+                            kind="import",
+                            line=export_stmt.start_point[0] + 1,
+                            source_name=scope_name,
+                            import_path=f"{from_path}.*",
+                        )
+                    )
+                return
+
+        # export function/class/const/let/var — recurse normally
+        self._walk_refs(export_stmt, source, refs, scope_name)
 
     def _resolve_salesforce_import(self, path: str) -> tuple[str, str] | None:
         """Resolve @salesforce/* import paths to (target_name, edge_kind).

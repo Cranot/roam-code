@@ -536,7 +536,13 @@ def _group_by_directory(items):
 )
 @click.command()
 @click.option(
-    "--limit", "--top", "-n", "limit", default=20, help="Number of files to show (default 20)"
+    "--limit",
+    "--top",
+    "-n",
+    "limit",
+    type=click.IntRange(min=0),
+    default=20,
+    help="Number of files to show (default 20; 0 = all). In grouped JSON, applies per directory.",
 )  # W1142: --top alias
 @click.option("--by-kind", "by_kind", is_flag=True, help="Group results by parent directory")
 @click.option("--threshold", type=float, default=None, help="Only show files above this debt score")
@@ -746,7 +752,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
                 "estimate_refactoring_roi",
                 _estimate_refactoring_roi,
                 all_items,
-                top_n=max(limit, 10),
+                top_n=max(limit, 10) if limit else len(all_items),
                 default=({}, {}),
             )
             if _roi_result is None:
@@ -776,15 +782,31 @@ def debt(ctx, limit, by_kind, threshold, roi):
             if groups is None:
                 groups = []
 
+            grouped_count = sum(len(g["files"][: limit or None]) for g in groups)
+            grouped_population = sum(len(g["files"]) for g in groups)
+            grouped_truncated = grouped_count < grouped_population
+            grouped_warnings = list(_w607bg_warnings_out)
+            if grouped_truncated:
+                grouped_warnings.append(
+                    f"truncated to {grouped_count} of {grouped_population} — pass --limit larger to see more"
+                )
+
             if json_mode:
                 # W607-BG: thread substrate markers into BOTH
                 # summary.warnings_out (with partial_success=True flip)
                 # AND top-level warnings_out (preserved-list-field
                 # discipline). Empty bucket -> no field added -> byte-
                 # identical envelope on the happy path.
-                _grouped_summary = {**stats, "verdict": _debt_verdict}
-                if _w607bg_warnings_out:
-                    _grouped_summary["warnings_out"] = list(_w607bg_warnings_out)
+                _grouped_summary = {
+                    **stats,
+                    "verdict": _debt_verdict,
+                    "count": grouped_count,
+                    "total_count": len(all_items),
+                    "limit": limit,
+                    "truncated": grouped_truncated,
+                }
+                if grouped_warnings:
+                    _grouped_summary["warnings_out"] = grouped_warnings
                     _grouped_summary["partial_success"] = True
                 payload = {
                     "summary": _grouped_summary,
@@ -806,7 +828,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
                                     "hotspot_factor": f["hotspot_factor"],
                                     **({"roi": _roi_payload(f["path"])} if roi and _roi_payload(f["path"]) else {}),
                                 }
-                                for f in g["files"][:limit]
+                                for f in g["files"][: limit or None]
                             ],
                         }
                         for g in groups
@@ -814,8 +836,8 @@ def debt(ctx, limit, by_kind, threshold, roi):
                 }
                 if roi:
                     payload["roi"] = roi_summary
-                if _w607bg_warnings_out:
-                    payload["warnings_out"] = list(_w607bg_warnings_out)
+                if grouped_warnings:
+                    payload["warnings_out"] = list(grouped_warnings)
                 click.echo(to_json(json_envelope("debt", **payload)))
                 return
 
@@ -836,7 +858,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
                 )
             click.echo()
 
-            for g in groups[:limit]:
+            for g in groups[: limit or None]:
                 click.echo(
                     f"  {g['directory']}/  "
                     f"({g['file_count']} files, "
@@ -845,9 +867,11 @@ def debt(ctx, limit, by_kind, threshold, roi):
                     f"max={g['max_debt']:.3f})"
                 )
                 # Show top 5 files per group
-                for f in g["files"][:5]:
+                for f in g["files"][: 5 if limit else None]:
                     click.echo(f"    {f['debt_score']:.3f}  {os.path.basename(f['path'])}")
-            if len(groups) > limit:
+                if limit and len(g["files"]) > 5:
+                    click.echo(f"    (+{len(g['files']) - 5} more files; use --limit 0 to show all)")
+            if limit and len(groups) > limit:
                 click.echo(f"\n  (+{len(groups) - limit} more directories)")
             return
 
@@ -855,7 +879,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
         # W1142-followup: cap-hit disclosure. ``all_items`` is the
         # post-threshold full population; ``display`` is the limited slice.
         total_items_full = len(all_items)
-        display = all_items[:limit]
+        display = all_items[: limit or None]
         items_truncated = total_items_full > len(display)
         _cap_summary = {
             "count": len(display),
@@ -975,7 +999,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
 
         click.echo(format_table(headers, table_rows))
 
-        remaining = len(all_items) - limit
+        remaining = len(all_items) - len(display)
         if remaining > 0:
             click.echo(f"\n  (+{remaining} more files, use --limit to show more)")
 

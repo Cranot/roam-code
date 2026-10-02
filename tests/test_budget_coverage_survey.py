@@ -153,8 +153,6 @@ _BUDGET_EXEMPT: frozenset[str] = frozenset(
         # --- Compound recipes (delegate budget downstream) -------------------
         "ask",  # router — delegates downstream
         "pr-prep",  # compound recipe
-        "audit",  # compound recipe
-        "dogfood",  # dogfood snapshot
         # --- Single-symbol / single-target outputs ---------------------------
         "vuln-map",  # tiny vulnerability list (mapped to symbols)
         "vuln-reach",  # reachability triple per vuln (small)

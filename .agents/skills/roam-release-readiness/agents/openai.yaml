@@ -1,0 +1,3 @@
+interface:
+  display_name: "Roam Release Readiness"
+  short_description: "Qualify Roam releases across source, CI and live"

@@ -1,4 +1,4 @@
-"""Show blast radius: what breaks if a symbol changes."""
+"""Show indexed dependents a symbol change could affect."""
 
 from __future__ import annotations
 
@@ -328,7 +328,7 @@ def _impact_verdict(dependents, affected_files, total_syms, *, affected_count=No
 
 @roam_capability(
     category="exploration",
-    summary="Show blast radius: what breaks if a symbol changes.",
+    summary="Show indexed dependents a symbol change could affect.",
     inputs=["name"],
     outputs=["affected_symbols", "verdict"],
     examples=[
@@ -393,12 +393,14 @@ def _impact_verdict(dependents, affected_files, total_syms, *, affected_count=No
 )
 @click.pass_context
 def impact_cmd(ctx, name, hops, depth, max_callers, timeout):
-    """Show blast radius: what breaks if SYMBOL changes.
+    """Show indexed dependents a change to SYMBOL could affect.
 
     SYMBOL is a symbol identifier (bare name or qualified name). Unlike
     ``uses`` (which lists direct callers), this command computes the
     transitive blast radius (bounded by default) including affected
-    files and PageRank-weighted importance.
+    files and PageRank-weighted importance. Indexed reachability identifies
+    investigation targets, not proven breakage or every possible runtime caller.
+    Inspect traversal limits and partial-result fields before acting.
 
     \b
     Examples:

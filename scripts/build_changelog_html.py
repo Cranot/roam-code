@@ -61,16 +61,22 @@ def _escape(text: str) -> str:
 def _inline(text: str) -> str:
     """Inline-format a single line of prose."""
     text = _escape(text)
-    # Code: prefer double-backtick span first so single-backtick inside
-    # doesn't get re-matched.
-    text = _INLINE_CODE.sub(
-        lambda m: f"<code>{m.group(1) or m.group(2)}</code>",
-        text,
-    )
+    # Protect literal code from emphasis/link parsing. Choose a sentinel absent
+    # from the input so a real changelog cannot impersonate a saved code span.
+    sentinel = "\x00code"
+    while sentinel in text:
+        sentinel += "_"
+    spans: list[str] = []
+
+    def save_code(match: re.Match[str]) -> str:
+        spans.append(f"<code>{match.group(1) or match.group(2)}</code>")
+        return f"{sentinel}{len(spans) - 1}\x00"
+
+    text = _INLINE_CODE.sub(save_code, text)
     text = _BOLD.sub(r"<strong>\1</strong>", text)
     text = _ITALIC.sub(r"<em>\1</em>", text)
     text = _LINK.sub(r'<a href="\2">\1</a>', text)
-    return text
+    return re.sub(re.escape(sentinel) + r"(\d+)\x00", lambda m: spans[int(m.group(1))], text)
 
 
 def render_markdown(md: str) -> str:

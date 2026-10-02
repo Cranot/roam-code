@@ -30,6 +30,10 @@ from click.testing import CliRunner
 
 from roam.cli import _COMMANDS, _DEPRECATED_COMMANDS, cli
 
+# The module-scoped indexed_self_repo fixture must run once per worker.
+# xdist_group ensures all tests in this file land on the same worker.
+pytestmark = pytest.mark.xdist_group("cli_contract")
+
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------

@@ -19,10 +19,10 @@ from pathlib import Path
 import pytest
 
 from roam.commands.cmd_verify import (
-    _mask_import_type_calls,
     _reparse_without_import_types,
     _tree_sitter_error_violations,
 )
+from roam.parser_pack import mask_import_type_calls as _mask_import_type_calls
 
 # Every one of these is valid TypeScript that the bundled grammar cannot parse.
 GRAMMAR_GAP_SOURCES = [

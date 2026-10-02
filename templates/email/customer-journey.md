@@ -32,7 +32,8 @@ cold-introduce  ->  /audit visit  ->  SOW sign  ->  engagement-kickoff
   with SOC 2, ISO 42001, the EU AI Act, or any other framework (mirrors
   SOW §12.1).
 - Pricing is fixed at `$2,500` (Team) / `$6,000` (Deep) with `$1,250` /
-  `$3,000` Roam Review credits within 60 days of delivery. Match
+  `$3,000` Roam Review credits redeemable within 60 calendar days after
+  Roam Review reaches general availability, not after report delivery. Match
   `/audit` and SOW §1 / §7 verbatim; do not improvise.
 
 ## Honest-banner discipline (mandatory canonical wording)
@@ -115,7 +116,7 @@ Links are live before quoting).
 
 > "Based on what you described, **PR Replay [Team/Deep]** is the right fit.
 > Team is `$2,500` (30 PRs, 30-min walk-through, `$1,250` credits toward
-> Roam Review within 60 days). Deep is `$6,000` (90 PRs, 90-min walk-through,
+> Roam Review within 60 calendar days after its general availability). Deep is `$6,000` (90 PRs, 90-min walk-through,
 > per-detector deep-dive + 90-day remediation plan, `$3,000` credits).
 >
 > Same credit math + sample report at roam-code.com/audit. Want me to send
@@ -137,7 +138,8 @@ SOW package).
 > per-detector deep-dive + written 90-day remediation plan].
 >
 > **Investment**: `$[2,500 / 6,000]`. **`$[1,250 / 3,000]` credits toward
-> Roam Review** if you subscribe within 60 days of delivery. Credit math
+> Roam Review** if you subscribe within 60 calendar days after its general availability.
+> Review is not available to subscribe to today; the window does not start at report delivery. Credit math
 > + sample report shape: [roam-code.com/audit](https://roam-code.com/audit).
 >
 > **What it does NOT do**: certify compliance with any framework. The
@@ -263,9 +265,10 @@ to confirm the buyer is silent (= accepted) or surface objections early.
 
 ## 9. Roam Review follow-up pitch — funnel stage: Roam Review upsell
 
-For PR Replay clients 7–30 days post-delivery.
-Triggers: playbook **Day N+60** (credit window closes); send the soft
-nudge at D+45 per the playbook reminder.
+For PR Replay clients after Roam Review reaches general availability.
+Confirm the actual launch date and available subscription terms before sending.
+The credit window closes 60 calendar days after general availability, not
+60 days after report delivery. Time any reminder from that launch date.
 
 > **Subject**: Apply your `$[1,250 / 3,000]` Review credit — [Company]
 >
@@ -281,7 +284,7 @@ nudge at D+45 per the playbook reminder.
 >
 > **Investment**: `[REVIEW_TIER]`, with **`$[1,250 / 3,000]` credit from
 > PR Replay** applied to the first year if signed by `[CREDIT_EXPIRY —
-> 60 calendar days from delivery per SOW §7]`.
+> 60 calendar days after Roam Review reaches general availability per SOW §7]`.
 >
 > Want a 20-minute call to walk through what would land first?
 > [TBD: Calendly link]

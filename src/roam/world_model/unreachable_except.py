@@ -9,13 +9,12 @@ also stays silent and is recorded through :func:`log_swallowed`.
 from __future__ import annotations
 
 import ast
-import textwrap
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
 from roam.db.connection import find_project_root
 from roam.observability import log_swallowed
+from roam.world_model._source_helpers import _parse_function, _read_source
 from roam.world_model.side_effects import SideEffectClassification, classify_side_effects
 
 _BUILTIN_SUPERTYPES: dict[str, set[str]] = {
@@ -117,27 +116,6 @@ class UnreachableExceptFinding:
             "line_start": self.line_start,
             "line_end": self.line_end,
         }
-
-
-def _read_source(repo_root: Path, rel_path: str) -> tuple[str, list[str]]:
-    try:
-        text = (repo_root / rel_path).read_text(encoding="utf-8", errors="replace")
-        return text, text.splitlines(keepends=True)
-    except Exception as exc:  # noqa: BLE001 — detector must fail open
-        log_swallowed(f"world_model.unreachable_except:body_read:{rel_path}", exc)
-        return "", []
-
-
-def _parse_function(body_text: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    try:
-        tree = ast.parse(textwrap.dedent(body_text))
-    except Exception as exc:  # noqa: BLE001 — malformed slices stay silent
-        log_swallowed("world_model.unreachable_except:parse", exc)
-        return None
-    return next(
-        (node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))),
-        None,
-    )
 
 
 def _caught_type_names(node: ast.AST | None) -> set[str]:
