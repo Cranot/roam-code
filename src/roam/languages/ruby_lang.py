@@ -47,7 +47,31 @@ class RubyExtractor(LanguageExtractor):
 
     _ATTR_METHODS = frozenset({"attr_reader", "attr_writer", "attr_accessor"})
 
-    def _walk_symbols(self, node, source, symbols, parent_name):
+    def _check_visibility_modifier(self, node, source) -> str | None:
+        """Return "private"|"protected"|"public" if this is a bare visibility call, else None."""
+        method_node = node.child_by_field_name("method")
+        if method_node is None:
+            return None
+        method_name = self.node_text(method_node, source)
+        if method_name not in ("private", "protected", "public"):
+            return None
+        if node.child_by_field_name("receiver") is not None:
+            return None
+        args_node = node.child_by_field_name("arguments")
+        if args_node is not None:
+            # Has args — could be `private :foo` (handled in ref extraction) or
+            # `private def foo; end` (inline visibility).  Walk the arg children
+            # for an inline method definition and extract it with the right visibility.
+            for arg in args_node.children:
+                if arg.type == "method":
+                    return method_name  # signal: inline def follows
+            return None
+        return method_name
+
+    _VISIBILITY_KEYWORDS = frozenset({"private", "protected", "public"})
+
+    def _walk_symbols(self, node, source, symbols, parent_name, _visibility: str = "public"):
+        visibility = _visibility
         for child in node.children:
             ntype = child.type
             if ntype == "module":
@@ -55,15 +79,30 @@ class RubyExtractor(LanguageExtractor):
             elif ntype == "class":
                 self._extract_class(child, source, symbols, parent_name)
             elif ntype == "method":
-                self._extract_method(child, source, symbols, parent_name)
+                self._extract_method(child, source, symbols, parent_name, visibility)
             elif ntype == "singleton_method":
-                self._extract_singleton_method(child, source, symbols, parent_name)
+                self._extract_singleton_method(child, source, symbols, parent_name, visibility)
             elif ntype == "assignment":
                 self._extract_assignment(child, source, symbols, parent_name)
+            elif ntype == "identifier":
+                # Bare `private` / `protected` / `public` statement.
+                kw = self.node_text(child, source)
+                if kw in self._VISIBILITY_KEYWORDS:
+                    visibility = kw
             elif ntype == "call":
-                self._maybe_extract_attr(child, source, symbols, parent_name)
+                new_vis = self._check_visibility_modifier(child, source)
+                if new_vis is not None:
+                    # Inline `private def foo; end` form.
+                    visibility = new_vis
+                    args_node = child.child_by_field_name("arguments")
+                    if args_node is not None:
+                        for arg in args_node.children:
+                            if arg.type == "method":
+                                self._extract_method(arg, source, symbols, parent_name, visibility)
+                else:
+                    self._maybe_extract_attr(child, source, symbols, parent_name)
             elif ntype in ("body_statement", "program", "then", "else", "begin"):
-                self._walk_symbols(child, source, symbols, parent_name)
+                self._walk_symbols(child, source, symbols, parent_name, visibility)
 
     def _extract_module(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -139,7 +178,7 @@ class RubyExtractor(LanguageExtractor):
         if body:
             self._walk_symbols(body, source, symbols, qualified)
 
-    def _extract_method(self, node, source, symbols, parent_name):
+    def _extract_method(self, node, source, symbols, parent_name, visibility: str = "public"):
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return
@@ -159,13 +198,13 @@ class RubyExtractor(LanguageExtractor):
                 qualified_name=qualified,
                 signature=sig,
                 docstring=self.get_docstring(node, source),
-                visibility="public",
-                is_exported=True,
+                visibility=visibility,
+                is_exported=visibility == "public",
                 parent_name=parent_name,
             )
         )
 
-    def _extract_singleton_method(self, node, source, symbols, parent_name):
+    def _extract_singleton_method(self, node, source, symbols, parent_name, visibility: str = "public"):
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return
@@ -190,8 +229,8 @@ class RubyExtractor(LanguageExtractor):
                 qualified_name=qualified,
                 signature=sig,
                 docstring=self.get_docstring(node, source),
-                visibility="public",
-                is_exported=True,
+                visibility=visibility,
+                is_exported=visibility == "public",
                 parent_name=parent_name,
             )
         )
