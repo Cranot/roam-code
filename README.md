@@ -468,7 +468,7 @@ Roam's surfaces differ in how rigorously they've been validated — know which i
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Start with these five commands.** Use `understand`, `context`, `retrieve`, `preflight`, and `critique` for everyday exploration and change review. You can discover the rest as you need them: **287 commands (280 canonical + 7 aliases) organised into 7 categories**. An alias is another name for the same command; you do not need to memorize them. Explore the remaining 282 commands when you need more detail.
+**Start with these five commands.** Use `understand`, `context`, `retrieve`, `preflight`, and `critique` for everyday exploration and change review. You can discover the rest as you need them: **287 commands (280 canonical + 7 aliases) organised into 7 categories**. An alias is another name for the same command; you do not need to memorize them. The remaining ~282 commands beyond those five are detail surface for specialised workflows — they are called by agents on demand, not memorised.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -678,7 +678,7 @@ jobs:
           persist-credentials: false
       # For production, replace the tag with the reviewed 40-character SHA it
       # points at — a release tag is readable but remains movable.
-      - uses: Cranot/roam-code@v14.0.4
+      - uses: Cranot/roam-code@v14.1.0
         with:
           version: '14.0.4'
           commands: health
