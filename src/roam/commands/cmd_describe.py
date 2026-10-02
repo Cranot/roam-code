@@ -1160,21 +1160,17 @@ def describe(ctx, write, force, agent_prompt, out_file):
             # share the same ``describe_*`` family).
             _ap_combined_wo = list(warnings_out) + list(_w607dg_warnings_out)
             if _ap_combined_wo:
-                # W607-K: surface marker bucket on summary mirror so the
-                # consumer sees the substrate-degrade lineage. We do NOT
-                # flip ``partial_success`` on the agent-prompt branch
-                # here — that flip is what W805-I's strict-xfail
-                # ``test_agent_prompt_empty_corpus_partial_success_coupled_to_na``
-                # is pinning as a SEPARATE Pattern-2 fix wave (the
-                # health=N/A + partial_success=False mismatch). W607-K
-                # adds the marker disclosure only; W805-I will graduate
-                # the partial_success contract on its own wave.
-                # W607-DG: aggregation-phase markers DO flip
-                # partial_success (distinct contract from substrate-only
-                # W607-K markers).
+                # W607-K: surface marker bucket on summary mirror.
+                # W607-DG: aggregation-phase markers DO flip partial_success.
                 ap_summary["warnings_out"] = list(_ap_combined_wo)
                 if _w607dg_warnings_out:
                     ap_summary["partial_success"] = True
+
+            # W805-I: agent-prompt branch — verdict embedding ``N/A`` sentinels
+            # (health=N/A, cycles=N/A on empty corpus) must set partial_success=True
+            # so the success flag and the verdict content agree.
+            if "N/A" in _ap_verdict or "n/a" in _ap_verdict.lower():
+                ap_summary["partial_success"] = True
 
             # W607-DG -- serialize_envelope boundary. Wraps the envelope
             # serialization itself. A downstream schema-shape refactor
@@ -1244,6 +1240,7 @@ def describe(ctx, write, force, agent_prompt, out_file):
 
             # Gather compact verdict data
             _total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+            _total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
             _lang_counts = Counter(
                 f["language"] for f in conn.execute("SELECT language FROM files").fetchall() if f["language"]
             )
@@ -1256,6 +1253,7 @@ def describe(ctx, write, force, agent_prompt, out_file):
         warnings_out.append(f"describe_pipeline_failed:{type(exc).__name__}:{exc}")
         output = "# Project Architecture\n"
         _total_files = 0
+        _total_symbols = 0
         _top_lang = "unknown"
         _n_langs = 0
 
@@ -1271,7 +1269,10 @@ def describe(ctx, write, force, agent_prompt, out_file):
     # W978 KWARG-DEFAULT EAGERNESS TRAP: raw scalars passed as args;
     # f-string interpolation lives INSIDE the closure. Floor is a
     # literal string constant.
-    def _build_desc_verdict_str(_top_lang_in, _total_files_in, _n_langs_in):
+    def _build_desc_verdict_str(_top_lang_in, _total_files_in, _n_langs_in, _total_syms_in):
+        # W805-I: 0-symbol corpus must disclose via verdict (LAW 6).
+        if _total_syms_in == 0:
+            return f"empty corpus: {_total_files_in} files, 0 symbols indexed"
         return f"{_top_lang_in} project, {_total_files_in} files, {_n_langs_in} languages"
 
     _desc_verdict = _run_check_dg(
@@ -1280,6 +1281,7 @@ def describe(ctx, write, force, agent_prompt, out_file):
         _top_lang,
         _total_files,
         _n_langs,
+        _total_symbols,
         default="describe analysis completed",
     )
 
@@ -1399,6 +1401,14 @@ def describe(ctx, write, force, agent_prompt, out_file):
         _desc_combined_wo = list(warnings_out) + list(_w607dg_warnings_out)
         if _desc_combined_wo:
             desc_summary["warnings_out"] = list(_desc_combined_wo)
+            desc_summary["partial_success"] = True
+
+        # W805-I: empty-corpus and no-language disclosure.
+        # Check AFTER warnings_out block so we don't clobber a warning-driven True.
+        if _total_symbols == 0:
+            desc_summary["state"] = "no_symbols"
+            desc_summary["partial_success"] = True
+        elif _n_langs == 0:
             desc_summary["partial_success"] = True
 
         # W607-DG -- serialize_envelope boundary. Wraps the envelope

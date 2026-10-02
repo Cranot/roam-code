@@ -312,21 +312,6 @@ class TestDescribeEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-I REAL BUG: cmd_describe.py L982-1012 (default JSON branch) "
-        "emits verdict='python project, 2 files, 1 languages' with "
-        "summary.partial_success=False when the corpus has 0 indexed "
-        "symbols. The Pattern-2 silent-SAFE shape: verdict reads as a "
-        "confident project description even though _section_key_abstractions "
-        "/ _section_complexity_guide / _section_domain all silently emit "
-        "nothing because there are no symbols to draw from. Fix: count "
-        "total_symbols + total_edges BEFORE building the verdict; on "
-        "0-symbol corpora set summary.partial_success=True and "
-        "summary.state='no_symbols'. Separate fix wave."
-    ),
-)
 def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     """Pin: ``summary.partial_success`` should be True on 0-symbol corpus."""
     result = _invoke_describe(cli_runner, empty_corpus, json_mode=True)
@@ -337,18 +322,6 @@ def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-I REAL BUG: cmd_describe.py L982-1012 does not emit a "
-        "summary.state field on the empty branch. Pattern-2 requires "
-        "closed-enum state disclosure ('no_symbols' / 'empty_corpus' / "
-        "'no_indexed_symbols'). Cohort precedent: cmd_owner emits "
-        "state='path_not_found'; cmd_path_coverage emits state from "
-        "{'no_entry_points','no_sinks','no_paths_connecting','ok'}; "
-        "explain-command emits state='unknown_command'. Separate fix wave."
-    ),
-)
 def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
     """Pin: ``summary.state`` should disclose the empty-corpus state."""
     result = _invoke_describe(cli_runner, empty_corpus, json_mode=True)
@@ -361,18 +334,6 @@ def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-I REAL BUG: cmd_describe.py L982 builds the verdict as "
-        "f'{_top_lang} project, {_total_files} files, {_n_langs} languages' "
-        "regardless of whether symbols/edges exist. On a 0-symbol corpus "
-        "this reads as a confident description (LAW 6 violation: verdict "
-        "must be honest standalone). Fix: when total_symbols==0, emit a "
-        "verdict like 'no symbols indexed - run roam index first' OR "
-        "'empty corpus: 2 files, 0 symbols indexed'. Separate fix wave."
-    ),
-)
 def test_empty_corpus_verdict_discloses_empty(cli_runner, empty_corpus):
     """Pin: the verdict must name the empty-corpus state.
 
@@ -398,17 +359,6 @@ def test_empty_corpus_verdict_discloses_empty(cli_runner, empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-I REAL BUG (no-source branch): cmd_describe.py L979-982 "
-        "emits verdict='unknown project, 2 files, 0 languages' with "
-        "partial_success=False on a 0-language corpus. Verdict literally "
-        "contains 'unknown' AND '0 languages' yet declares success. "
-        "Anti-shape: verdict must NOT start with 'unknown project' while "
-        "claiming partial_success=False. Separate fix wave."
-    ),
-)
 def test_no_source_corpus_unknown_project_partial_success(cli_runner, no_source_corpus):
     """Pin: a 0-language corpus must set partial_success=True.
 
@@ -435,18 +385,6 @@ def test_no_source_corpus_unknown_project_partial_success(cli_runner, no_source_
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-I REAL BUG (agent-prompt branch): cmd_describe.py L934-956 "
-        "emits verdict='<project>: 2 files, python | health=N/A' with "
-        "partial_success=False on a 0-symbol corpus. health=N/A + "
-        "key_abstractions=[] + hotspots=[] + cycles=N/A are ALL sentinel "
-        "values yet verdict declares success. Pattern-2 silent-SAFE: a "
-        "verdict containing '=N/A' must be coupled with "
-        "partial_success=True. Separate fix wave."
-    ),
-)
 def test_agent_prompt_empty_corpus_partial_success_coupled_to_na(cli_runner, empty_corpus):
     """Pin: --agent-prompt verdict containing 'N/A' must set partial_success.
 
