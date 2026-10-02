@@ -32,66 +32,66 @@
   {
     "file": "src/roam/world_model/fabricated_success.py",
     "function": "visit_FunctionDef",
-    "line": 196
+    "line": 183
   },
   {
     "file": "src/roam/world_model/fabricated_success.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 199
+    "line": 186
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_FunctionDef",
-    "line": 66
+    "line": 73
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 69
+    "line": 76
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFor",
-    "line": 103
+    "line": 110
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_FunctionDef",
-    "line": 127
+    "line": 123
   },
   {
     "file": "src/roam/world_model/return_in_finally.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 130
+    "line": 126
   },
   {
     "file": "src/roam/world_model/unchecked_result.py",
     "function": "visit_FunctionDef",
-    "line": 129
+    "line": 114
   },
   {
     "file": "src/roam/world_model/unchecked_result.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 132
+    "line": 117
   },
   {
     "file": "src/roam/world_model/unreachable_except.py",
     "function": "visit_FunctionDef",
-    "line": 180
+    "line": 158
   },
   {
     "file": "src/roam/world_model/unreachable_except.py",
     "function": "visit_AsyncFunctionDef",
-    "line": 183
+    "line": 161
   },
   {
     "file": "src/roam/world_model/unreachable_except.py",
     "function": "visit_ClassDef",
-    "line": 186
+    "line": 164
   },
   {
     "file": "src/roam/world_model/unreachable_except.py",
     "function": "visit_TryStar",
-    "line": 199
+    "line": 177
   }
 ]

@@ -8,6 +8,8 @@ CLUSTER_FOR_SYMBOL, FILE_STATS_BY_ID, COCHANGE_FOR_FILE, BLAME_FOR_FILE).
 Re-add via this module only when a real caller lands — never speculatively.
 """
 
+from __future__ import annotations
+
 # File queries
 FILE_BY_PATH = "SELECT * FROM files WHERE path = ?"
 ALL_FILES = "SELECT * FROM files ORDER BY path"

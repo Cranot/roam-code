@@ -346,21 +346,6 @@ def verify_receipt(
             receipt,
             derived,
         )
-    if builder == reviewer:
-        # NOT a refusal. Measured: a same-family review finds the decisive
-        # architectural defect at the same rate as cross-family (3/3 vs 3/3),
-        # and is weaker only on the parser/encoding class (0/3 vs 2/3). So this
-        # is a disclosed coverage limitation, not an invalid review.
-        return _result(
-            "same_family",
-            f"reviewer_family {reviewer!r} equals builder_family: the review stands, but "
-            "measured coverage is narrower on encoding/parser defect classes "
-            "(normalization collisions, duplicate-key parsing) that a different family found "
-            "and this one did not",
-            receipt,
-            derived,
-        )
-
     # Binding: the review must be OF the artifact under judgement. Both
     # sides are compared against a digest THIS function computed.
     if receipt["artifact_sha256"] != artifact_sha256:
@@ -386,6 +371,18 @@ def verify_receipt(
             f"decision was 'accept' but {blocking} blocking finding(s) are recorded "
             "(severity in "
             f"{sorted(BLOCKING_SEVERITIES)}); the findings override the stated decision",
+            receipt,
+            derived,
+        )
+    if builder == reviewer:
+        # Family diversity is a coverage qualification, never a substitute for
+        # current artifact binding or an accepted, nonblocking outcome above.
+        return _result(
+            "same_family",
+            f"reviewer_family {reviewer!r} equals builder_family: the review stands, but "
+            "measured coverage is narrower on encoding/parser defect classes "
+            "(normalization collisions, duplicate-key parsing) that a different family found "
+            "and this one did not",
             receipt,
             derived,
         )

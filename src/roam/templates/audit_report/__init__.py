@@ -16,3 +16,5 @@ pr-replay-template.md prose reference) intentionally stays at the
 project-root ``templates/audit-report/`` location — it is dev-tree
 documentation, not runtime data.
 """
+
+from __future__ import annotations

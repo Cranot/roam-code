@@ -154,9 +154,9 @@ def _default_rehearsal_paths(*, tier: str, client: str | None) -> dict[str, Path
 def _run_postmortem(commit_range: str, *, limit: int) -> dict:
     """Invoke ``roam --json postmortem <range> --limit N`` in-process.
 
-    Returns the parsed JSON envelope. On any error, returns an envelope
-    with empty ``commits`` so the renderer can still emit a sensible
-    "no findings" report rather than crashing on the buyer. Defends in
+    Returns the parsed JSON envelope. Missing or invalid output yields an
+    unavailable envelope with empty ``commits``; the caller withholds report
+    writes rather than treating missing evidence as no findings. Defends in
     depth against argv injection by passing ``--`` between the option
     list and the positional ``commit_range`` so a value beginning with
     ``-`` cannot be re-interpreted as a Click flag of ``postmortem``.
@@ -4569,6 +4569,51 @@ def pr_replay_cmd(
     )
     summary = postmortem.get("summary") or {}
     commits = postmortem.get("commits") or []
+    if not commits and not summary.get("commits_scanned"):
+        # Stop before report/evidence/payment-engagement writes. No observed
+        # commits cannot support either a clean report or a numeric risk score.
+        state = summary.get("state", "replay_unavailable")
+        resolution = summary.get("resolution", "unresolved")
+        verdict = summary.get("verdict") or "Replay unavailable: no commits were analyzed"
+        report_md = (
+            f"# PR Replay unavailable\n\n{verdict}.\n\n"
+            "No risk assessment was made. Check the requested Git range and "
+            "available history, then rerun with an explicit --range. "
+            "Requested report and evidence files were not written.\n"
+        )
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "pr-replay",
+                        summary={
+                            "verdict": f"No replay performed: {verdict}",
+                            "state": state,
+                            "resolution": resolution,
+                            "partial_success": True,
+                            "tier": tier,
+                            "commit_range": commit_range,
+                            "commits_scanned": 0,
+                            "commits_with_findings": 0,
+                            "risk_level_canonical": None,
+                            "risk_rank": None,
+                            "score_classification": "unknown",
+                            "output_path": None,
+                            "evidence_path": None,
+                            "review_suggestions_present": False,
+                            "warnings_out": summary.get("warnings_out", []) + _w607ah_warnings_out,
+                        },
+                        commits=[],
+                        by_detector=[],
+                        report_markdown=report_md,
+                        warnings_out=summary.get("warnings_out", []) + _w607ah_warnings_out,
+                        child_evidence={"postmortem": summary},
+                    )
+                )
+            )
+        else:
+            click.echo(report_md)
+        return
     by_detector = (
         _run_check_ah(
             "aggregate_by_detector",

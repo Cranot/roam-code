@@ -38,6 +38,9 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Callable
+from pathlib import Path
+
+from roam.db.connection import find_project_root
 
 
 def _build_symbol_lookups(conn) -> tuple[dict[str, list[int]], dict[tuple[str, str], list[int]]]:
@@ -210,13 +213,10 @@ def _scan_file_for_dispatch(
 ) -> None:
     """Read, parse, and walk one Python file for dispatch-table assignments.
 
-    Best-effort — silently skips unreadable files and parse errors.
+    Propagate read errors before the caller replaces any existing edges.
     """
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fp:
-            source = fp.read()
-    except OSError:
-        return
+    with open(path, encoding="utf-8", errors="replace") as fp:
+        source = fp.read()
     # Cheap prefilter: skip files with neither the package prefix nor the
     # ``[(`` / ``[<newline>`` patterns that hint at list-of-tuples shape.
     if package_prefix not in source and "[(" not in source and "[\n" not in source:
@@ -242,12 +242,14 @@ def _scan_file_for_dispatch(
             )
 
 
-def resolve_registry_dispatch(conn, package_prefix: str = "roam.") -> int:
+def resolve_registry_dispatch(conn, package_prefix: str = "roam.", *, root: Path | None = None) -> int:
     """Insert ``dispatch`` edges for ``(module, fn)`` tuples in
     module-level dict registries.
 
     Returns the number of edges inserted. Idempotent: existing edges
-    with ``kind='dispatch'`` are dropped and re-derived each run.
+    with ``kind='dispatch'`` are replaced only after all source reads succeed.
+    Read failures propagate to the indexer's failed-step report and preserve
+    the existing dispatch edges. Relative paths are rooted at the repository.
     """
     rows = conn.execute(
         """
@@ -260,6 +262,7 @@ def resolve_registry_dispatch(conn, package_prefix: str = "roam.") -> int:
     if not rows:
         return 0
 
+    root = Path(root) if root is not None else find_project_root()
     by_qualified, by_module_dotted = _build_symbol_lookups(conn)
     file_symbol_ranges = _build_file_symbol_ranges(conn)
 
@@ -267,7 +270,7 @@ def resolve_registry_dispatch(conn, package_prefix: str = "roam.") -> int:
     seen: set[tuple[int, int]] = set()
     for r in rows:
         _scan_file_for_dispatch(
-            r["file_path"],
+            str(root / r["file_path"]),
             r["file_id"],
             package_prefix,
             file_symbol_ranges,

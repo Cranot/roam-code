@@ -149,12 +149,32 @@ def _index_html_jsonld_version() -> str | None:
 
 
 def _status_html_current_version() -> str | None:
-    """``status.html`` ``(current: vN.N)`` Changelog pointer."""
+    """Generated source-version binding, not a claim about installed releases."""
     p = _LANDING_PAGE / "status.html"
     if not p.exists():
         return None
-    m = re.search(r"current:\s*v(\d+\.\d+(?:\.\d+)?)", p.read_text(encoding="utf-8"))
-    return m.group(1) if m else None
+    matches = re.findall(
+        r"<!-- product-fact:sourceVersion -->\s*(\d+\.\d+\.\d+)\s*<!-- /product-fact -->",
+        p.read_text(encoding="utf-8"),
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
+@pytest.mark.parametrize("damage", ["stale", "missing", "duplicate", "valid"])
+def test_status_version_guard_requires_one_current_generated_binding(tmp_path, monkeypatch, damage):
+    monkeypatch.setitem(globals(), "_LANDING_PAGE", tmp_path)
+    version = "0.0.0" if damage == "stale" else _truth_version()
+    binding = f"<!-- product-fact:sourceVersion -->{version}<!-- /product-fact -->"
+    if damage == "missing":
+        binding = f"current: v{version}"
+    elif damage == "duplicate":
+        binding *= 2
+    (tmp_path / "status.html").write_text(binding, encoding="utf-8")
+    if damage == "valid":
+        TestVersionConsistency().test_status_html_current_version_matches_pyproject()
+    else:
+        with pytest.raises(AssertionError):
+            TestVersionConsistency().test_status_html_current_version_matches_pyproject()
 
 
 def _changelog_html_latest_release_version() -> str | None:
@@ -311,19 +331,17 @@ class TestVersionConsistency:
         )
 
     def test_status_html_current_version_matches_pyproject(self):
-        """``status.html`` Changelog pointer ``(current: vN.N)`` must equal
-        pyproject — it said ``v13.2`` after the v13.3/v13.4 releases."""
+        """The generated Status source snapshot must match pyproject."""
         truth = _truth_version()
         actual = _status_html_current_version()
         if actual is None:
             p = _LANDING_PAGE / "status.html"
             if not p.exists():
                 pytest.skip("landing-page status.html not present (dev-local)")
-            raise AssertionError("status.html missing '(current: vN.N)' Changelog pointer")
+            raise AssertionError("status.html needs exactly one valid product-fact:sourceVersion binding")
         assert actual == truth, (
-            f"status.html says 'current: v{actual}' but pyproject is {truth!r} — "
-            f"update the '(current: v...)' pointer in "
-            f"templates/distribution/landing-page/status.html to v{truth}"
+            f"status.html source snapshot {actual!r} differs from pyproject {truth!r}; "
+            "regenerate with scripts/build_site_product_facts.py --write"
         )
 
     def test_changelog_html_latest_release_matches_pyproject(self):
@@ -348,16 +366,18 @@ class TestVersionConsistency:
         )
 
     def test_canonical_demo_driver_version_matches_pyproject(self):
-        """The SARIF ``driver.version`` baked into the
-        ``docs/canonical-demo.html`` expected-output excerpt must equal
-        pyproject — a stale demo prints a wrong version to every reader."""
+        """Any copied SARIF version must agree; the command-only demo has none."""
         truth = _truth_version()
         actual = _canonical_demo_driver_version()
         if actual is None:
             p = _LANDING_PAGE / "docs" / "canonical-demo.html"
             if not p.exists():
                 pytest.skip("landing-page docs/canonical-demo.html not present (dev-local)")
-            raise AssertionError("canonical-demo.html missing SARIF driver 'version' in the output excerpt")
+            text = p.read_text(encoding="utf-8")
+            assert '"driver"' not in text, "A copied driver must retain its version"
+            assert "roam --json runs verify" in text
+            assert "missing_proofs" in text
+            return
         assert actual == truth, (
             f"canonical-demo.html SARIF driver.version={actual!r} != pyproject {truth!r} — "
             f'bump the SARIF driver "version" in '
@@ -1058,11 +1078,11 @@ def test_release_docs_track_current_mcp_security_and_setup_contracts():
     assert "MCP summarization with <code>ROAM_AI_ENABLED=1</code>" in security
     assert "opt-in MCP model summarization" in privacy
     assert "summarize selected MCP report" in trust
-    assert "Ordinary analysis is\n      local" in integration
+    assert "Ordinary analysis is local" in " ".join(integration.split())
     assert "opt-in MCP model summarization" in procurement
     assert "your code never leaves your machine" not in landing
     assert "active valid run" in install
-    assert "require a server restart" in mcp_usage
+    assert "requires a server restart" in " ".join(mcp_usage.split())
     assert 'roam_expand_toolset(preset="full")</code> exposes all' not in mcp_usage
     assert "Every command is local" not in command_reference
     assert "ROAM_TREE_SITTER_CACHE_DIR" in network_boundary

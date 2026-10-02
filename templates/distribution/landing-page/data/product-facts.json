@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "description": "Local code analysis and mechanical checks for coding agents.",
+  "license": "Apache-2.0",
+  "currency": "USD",
+  "teamReplayPrice": 2500,
+  "teamReplayPrCount": 30,
+  "deepReplayPrice": 6000,
+  "deepReplayPrCount": 90,
+  "reviewTeamProposedMonthlyPrice": 299,
+  "reviewCreditPercent": 50,
+  "sampleCommitRange": "HEAD~5..HEAD",
+  "productAvailability": {
+    "cli": "AVAILABLE",
+    "mcp": "AVAILABLE",
+    "prReplay": "AVAILABLE",
+    "review": "PLANNED",
+    "cloud": "PLANNED"
+  },
+  "offerSource": "templates/legal/sow-pr-replay.md",
+  "availabilityMeaning": "AVAILABLE means free tools can be installed or a report can be requested. Paid work requires agreed scope, availability and written terms; no online checkout is implied.",
+  "sourceVersion": "14.1.0",
+  "cliCommandCount": 287,
+  "mcpToolCount": 246,
+  "defaultMcpToolCount": 17,
+  "languageCount": 28,
+  "reviewAnnualPrice": 3588,
+  "teamCreditPrice": 1250.0,
+  "teamRemainingPrice": 2338.0,
+  "teamCombinedPrice": 4838.0,
+  "deepCreditPrice": 3000.0,
+  "deepRemainingPrice": 588.0,
+  "deepCombinedPrice": 6588.0,
+  "provenance": {
+    "counts": "src/roam/surface_counts.py and src/roam/languages/registry.py",
+    "sourceVersion": "pyproject.toml (source identity, not a fresh PyPI observation)",
+    "policy": "dev/site-product-policy.json"
+  }
+}

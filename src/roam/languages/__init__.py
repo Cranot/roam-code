@@ -1,5 +1,7 @@
 """Language detection, grammar loading, and symbol extraction."""
 
+from __future__ import annotations
+
 from .base import LanguageExtractor
 from .registry import (
     JS_FAMILY_LANGUAGES,

@@ -105,10 +105,10 @@ def _build_metrics_push_project(tmp_path: Path) -> Path:
     """Build a minimal indexed project root for cmd_metrics_push.
 
     The metrics-push command calls ``ensure_index()`` then invokes
-    ``roam audit`` in-process. The audit envelope can be EMPTY (no
-    metrics rows) and metrics-push still composes a payload -- the
-    ``danger_score`` zero-default is its own signal. So the fixture
-    only needs an indexable repo, not a populated metrics schema.
+    ``roam audit`` in-process. This intentionally sparse fixture exposes
+    incomplete audit evidence: metrics must remain unavailable rather than
+    becoming zero-valued counters. Tests that isolate later payload/HTTP
+    failures supply an explicitly completed audit fixture separately.
     """
     import sqlite3
     import subprocess
@@ -841,7 +841,18 @@ def test_post_metrics_failure_graceful_degradation(cli_runner, metrics_push_proj
     degrades to the canonical (False, 0, "...") tuple and the verdict
     composes a ``push failed (0)`` string.
     """
+    from copy import deepcopy
+
     from roam.commands import cmd_metrics_push
+    from tests.test_metrics_push import _FAKE_AUDIT_ENVELOPE
+
+    # Isolate the HTTP failure behind valid Audit evidence. The minimal DB
+    # fixture's incomplete Audit is correctly refused before HTTP dispatch.
+    complete = deepcopy(_FAKE_AUDIT_ENVELOPE)
+    complete["summary"]["partial_success"] = False
+    for section in complete["sections"].values():
+        section["summary"]["partial_success"] = False
+    monkeypatch.setattr(cmd_metrics_push, "_capture_audit", lambda: complete)
 
     def _raise(*args, **kwargs):
         raise RuntimeError("synthetic-post-from-W607-DI")

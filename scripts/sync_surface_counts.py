@@ -995,6 +995,25 @@ def build_replacements(counts: dict, languages: int) -> None:
             )
         )
 
+    # Press uses emphasis around the numeral, which the plain-text cardinal
+    # patterns above cannot see. Keep these tied to the same registry counts,
+    # including the default preset; unrelated bold statistics are not counts
+    # this writer owns. Tests exercise check -> write -> check on a shadow page.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "templates" / "distribution" / "landing-page" / "press.html",
+            [
+                (re.compile(r"<strong>\d+</strong>(\s+CLI commands\b)"), rf"<strong>{cmds}</strong>\g<1>"),
+                (re.compile(r"<strong>\d+</strong>(\s+MCP tools\b)"), rf"<strong>{mcp}</strong>\g<1>"),
+                (
+                    re.compile(r"<strong>\d+</strong>(\s+programming languages\b)"),
+                    rf"<strong>{langs}</strong>\g<1>",
+                ),
+                (re.compile(r"\(\d+ in the default core preset\)"), f"({core} in the default core preset)"),
+            ],
+        )
+    )
+
     # Explicit MCP preset counts on the command-reference / MCP usage pages.
     REPLACEMENTS.append(
         (

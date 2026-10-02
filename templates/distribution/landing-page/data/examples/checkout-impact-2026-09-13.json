@@ -1,0 +1,119 @@
+{
+  "_meta": {
+    "cache_ttl_s": 300,
+    "cacheable": true,
+    "index_age_s": 2,
+    "latency_ms": null,
+    "response_tokens": 737,
+    "roam_version": "14.1.0",
+    "timestamp": "2026-09-13T17:22:53Z"
+  },
+  "affected_file_list": [
+    {
+      "importance": 0.147929,
+      "path": "checkout/discounts.py"
+    },
+    {
+      "importance": 0.147929,
+      "path": "checkout/orders.py"
+    },
+    {
+      "importance": 0.147929,
+      "path": "checkout/preview.py"
+    }
+  ],
+  "affected_files": 3,
+  "affected_files_total": 3,
+  "affected_metric_definition": "full transitive reverse-reachability (nx.descendants) over call+ref edges from the target, excluding the target's own file; identical to preflight's blast-radius gate (uncapped).",
+  "affected_symbols": 3,
+  "affected_symbols_total": 3,
+  "agent_contract": {
+    "confidence": null,
+    "facts": [
+      "Large blast radius — 3 symbols (75.0%) in 3 files affected (risk_level high)",
+      "3 affected symbols",
+      "3 affected files",
+      "3 affected symbols total",
+      "3 affected files total"
+    ],
+    "next_commands": [],
+    "risks": []
+  },
+  "cap_applied": false,
+  "command": "impact",
+  "direct_dependents": {
+    "call": [
+      {
+        "file": "checkout/discounts.py",
+        "kind": "fn",
+        "name": "apply_discount"
+      },
+      {
+        "file": "checkout/orders.py",
+        "kind": "fn",
+        "name": "place_order"
+      },
+      {
+        "file": "checkout/preview.py",
+        "kind": "fn",
+        "name": "preview_order"
+      }
+    ]
+  },
+  "displayed": 3,
+  "displayed_files": 3,
+  "indirect_refs": [],
+  "limits": {
+    "depth": 3,
+    "max_callers": 100,
+    "timeout_s": 30
+  },
+  "partial_success": false,
+  "project": "checkout-fixture",
+  "reach_pct": 75,
+  "resolution": "symbol",
+  "risk_level_canonical": "high",
+  "risk_rank": 3,
+  "schema": "roam-envelope-v1",
+  "schema_version": "1.2.0",
+  "sf_convention_tests": [],
+  "state": "ok",
+  "summary": {
+    "affected_files": 3,
+    "affected_files_definition": "distinct file_path values of every symbol reached by the reverse-BFS.",
+    "affected_files_total": 3,
+    "affected_metric_definition": "full transitive reverse-reachability (nx.descendants) over call+ref edges from the target, excluding the target's own file; identical to preflight's blast-radius gate (uncapped).",
+    "affected_symbols": 3,
+    "affected_symbols_definition": "transitive reverse-BFS over edges; bounded by --depth + --max-callers + --timeout.",
+    "affected_symbols_total": 3,
+    "cap_applied": false,
+    "displayed": 3,
+    "displayed_files": 3,
+    "limits": {
+      "depth": 3,
+      "max_callers": 100,
+      "timeout_s": 30
+    },
+    "partial_success": false,
+    "reach_pct": 75,
+    "reach_pct_definition": "affected_symbols / total_symbols_in_graph * 100, rounded to 1 decimal.",
+    "resolution": "symbol",
+    "risk_classification": "classified",
+    "risk_level_canonical": "high",
+    "risk_rank": 3,
+    "sf_convention_tests": 0,
+    "state": "ok",
+    "target": "calculate_total",
+    "total": 3,
+    "truncated": false,
+    "verdict": "Large blast radius — 3 symbols (75.0%) in 3 files affected (risk_level high)",
+    "weighted_impact": 0.45946,
+    "weighted_impact_definition": "sum of personalized PageRank (alpha=0.85) over the reverse-graph from the target, rounded to 6 decimals."
+  },
+  "symbol": "calculate_total",
+  "target": "calculate_total",
+  "total": 3,
+  "truncated": false,
+  "version": "14.1.0",
+  "weighted_impact": 0.45946
+}

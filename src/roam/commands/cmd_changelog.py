@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import re
 import subprocess
+from pathlib import Path
 
 import click
 
 from roam.capability import roam_capability
+from roam.db.connection import find_project_root
 from roam.output.formatter import json_envelope, to_json
 
 _PREFIX_BUCKETS: list[tuple[re.Pattern[str], str]] = [
@@ -38,7 +40,15 @@ _PREFIX_BUCKETS: list[tuple[re.Pattern[str], str]] = [
 _FALLBACK_BUCKET = "Other"
 
 
-def _last_tag() -> str | None:
+def _last_tag(root: Path | None = None) -> str | None:
+    """Return the most recent git tag, or None when there are no tags or git is unavailable.
+
+    ``root`` is the project root directory used as ``cwd`` for the git
+    subprocess.  When omitted, ``find_project_root()`` is called so that
+    parallel test workers and MCP callers with a shifted process-cwd all
+    resolve to the correct repository.
+    """
+    project_root = root if root is not None else find_project_root()
     try:
         proc = subprocess.run(
             ["git", "describe", "--tags", "--abbrev=0"],
@@ -46,6 +56,7 @@ def _last_tag() -> str | None:
             text=True,
             timeout=5,
             check=False,
+            cwd=str(project_root),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -54,7 +65,15 @@ def _last_tag() -> str | None:
     return proc.stdout.strip() or None
 
 
-def _commits_since(rev_range: str) -> list[tuple[str, str]]:
+def _commits_since(rev_range: str, root: Path | None = None) -> list[tuple[str, str]]:
+    """Return (sha, subject) pairs for commits in ``rev_range``.
+
+    ``root`` is the project root directory used as ``cwd`` for the git
+    subprocess.  When omitted, ``find_project_root()`` is called so that
+    parallel test workers and MCP callers with a shifted process-cwd all
+    resolve to the correct repository.
+    """
+    project_root = root if root is not None else find_project_root()
     try:
         proc = subprocess.run(
             ["git", "log", rev_range, "--pretty=%h%x09%s"],
@@ -64,6 +83,7 @@ def _commits_since(rev_range: str) -> list[tuple[str, str]]:
             errors="replace",
             timeout=10,
             check=False,
+            cwd=str(project_root),
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -125,17 +145,26 @@ def changelog_command(ctx, since_ref, suggest) -> None:
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
+    # Resolve the project root once so every git subprocess call uses an
+    # explicit cwd= regardless of the process working directory.  Under
+    # pytest-xdist, workers share a process and a chdir() in one test can
+    # shift the cwd for git commands running concurrently in another.
+    try:
+        _project_root = find_project_root()
+    except Exception:  # noqa: BLE001 -- best-effort; git calls degrade gracefully
+        _project_root = Path(".")
+
     base_rev = since_ref
     inferred_from_tag = False
     if base_rev is None:
-        last = _last_tag()
+        last = _last_tag(root=_project_root)
         if last:
             base_rev = last
             inferred_from_tag = True
         else:
             base_rev = "HEAD~30"
     rev_range = f"{base_rev}..HEAD"
-    commits = _commits_since(rev_range)
+    commits = _commits_since(rev_range, root=_project_root)
     buckets: dict[str, list[dict]] = {}
     for sha, subject in commits:
         bucket, cleaned = _classify(subject)

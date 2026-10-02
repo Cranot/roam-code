@@ -46,6 +46,7 @@ def test_external_cli_producers_remain_explicit() -> None:
     producer_markers = {
         "src/roam/commands/cmd_pr_analyze.py": '["gh", "pr", "diff"',
         "src/roam/evidence/github_reviews.py": 'gh_executable: str = "gh"',
+        "src/roam/commands/cmd_bench.py": '["claude", "-p", prompt',
         "src/roam/attest/cga.py": '"cosign",\n        "sign-blob"',
     }
     for relative, marker in producer_markers.items():
@@ -69,9 +70,21 @@ def test_boundary_doc_names_every_builtin_trigger_class() -> None:
         "roam watch --webhook-port",
         "roam compile-daemon start",
         "roam verify",
+        "roam bench-compile",
     )
     for phrase in required:
         assert phrase in text, f"network-boundary inventory is missing {phrase!r}"
+
+
+def test_benchmark_model_egress_is_disclosed_at_the_homepage_destination() -> None:
+    # This built-in subprocess path is separate from opt-in MCP sampling.
+    from tests.test_homepage_contract import SITE, HomepageParser, normalized
+
+    page = HomepageParser((SITE / "security.html").read_text(encoding="utf-8"))
+    rows = [normalized(row.text()).casefold() for row in page.root.find("tr")]
+    row = next((row for row in rows if "bench-compile" in row), "")
+    assert row, "The linked network table omits the model-backed benchmark command"
+    assert all(term in row for term in ("claude -p", "task", "context", "provider", "usage", "explicit"))
 
 
 def test_network_boundary_is_linked_from_primary_public_surfaces() -> None:

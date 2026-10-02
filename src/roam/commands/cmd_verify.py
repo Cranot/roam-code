@@ -2073,43 +2073,6 @@ def _tree_sitter_error_violations(path: str, tree) -> list[dict]:
     return violations
 
 
-# A type-position `import('...')` is TypeScript the bundled grammar can only
-# parse as a bare terminal. Apply ANY postfix to it and the parse breaks.
-# Measured against tree-sitter typescript in language-pack 1.13.3:
-#
-#   import('x').Y          ok      typeof import('x')        ok
-#   import('x').Y[]        ERROR   Array<import('x').Y>      ok
-#   import('x').Y<number>  ERROR   N.Y[]                     ok
-#   import('x').N.Y[]      ERROR
-#
-# The first column is ordinary modern TypeScript -- `import()` types are the
-# standard way to reference a type without a circular import, and an array of
-# them is the common case. Reporting that as "syntax error" is a gate claiming
-# more than it measured: what was observed is that THIS build's grammar could
-# not parse the construct, which is not the same as the code being invalid, and
-# syntax is the check a reader trusts most absolutely.
-#
-# So: when the grammar reports an error, mask these calls and parse again. The
-# mask is an identifier of IDENTICAL byte length, so every line and column in a
-# genuine error is still correct on the second parse. Substituting an
-# identifier for a parenthesised call is valid in both type and value position,
-# so this can only ever remove this specific false positive -- a file with a
-# real syntax error still fails, at the same line.
-_IMPORT_TYPE_CALL_RE = re.compile(rb"""import\s*\(\s*(['"])[^'"\r\n]*\1\s*\)""")
-
-
-def _mask_import_type_calls(source: bytes) -> bytes | None:
-    """Blank out `import('...')` calls, preserving every byte offset."""
-
-    def _same_length_identifier(match: re.Match) -> bytes:
-        # All-underscore is a valid identifier in TS/JS at any length, and the
-        # shortest possible match -- `import('')` -- is already 10 bytes.
-        return b"_" * (match.end() - match.start())
-
-    masked, count = _IMPORT_TYPE_CALL_RE.subn(_same_length_identifier, source)
-    return masked if count else None
-
-
 def _reparse_without_import_types(fpath: Path, lang: str):
     """Re-parse with the known grammar gap masked, or ``None`` if not possible.
 
@@ -3690,7 +3653,7 @@ def _rank_affected_test_entries(entries) -> list[tuple[int, int, str]]:
         path = entry.get("file")
         if not (path and path.endswith(".py")):
             continue
-        priority = {"DIRECT": 1, "COLOCATED": 2}.get(entry.get("kind"), 3)
+        priority = {"DIRECT": 1, "CLI_INVOKE": 1, "COLOCATED": 2}.get(entry.get("kind"), 3)
         ranked.append((priority, int(entry.get("hops") or 9), path.replace("\\", "/")))
     return ranked
 

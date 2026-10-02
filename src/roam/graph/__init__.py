@@ -1,5 +1,7 @@
 """Graph algorithms for codebase analysis."""
 
+from __future__ import annotations
+
 from roam.graph.builder import build_file_graph, build_symbol_graph
 from roam.graph.clusters import (
     compare_with_directories,

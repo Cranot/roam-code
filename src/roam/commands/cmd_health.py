@@ -1329,6 +1329,11 @@ def _emit_baseline_diff(
 )
 @click.command()
 @click.option(
+    "--all-issues",
+    is_flag=True,
+    help="Classify all qualifying indexed candidates; keep the historical top-candidate score. Incompatible with --baseline.",
+)
+@click.option(
     "--no-framework",
     is_flag=True,
     help="Filter out framework/boilerplate symbols from god components and bottlenecks",
@@ -1368,7 +1373,7 @@ def _emit_baseline_diff(
     ),
 )
 @click.pass_context
-def health(ctx, no_framework, gate, explain, baseline_ref, persist):
+def health(ctx, no_framework, gate, explain, baseline_ref, persist, all_issues=False):
     """Show code health: cycles, god components, bottlenecks.
 
     \b
@@ -1386,6 +1391,9 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     detail = ctx.obj.get("detail", False) if ctx.obj else False
+    if all_issues and baseline_ref is not None:
+        raise click.UsageError("--all-issues cannot compare --baseline snapshots with a different candidate scope.")
+    issue_collection_scope = "all_qualifying_indexed_symbols" if all_issues else "top_candidates"
     # W107/W120 composition: global `roam --ci` also flips on the local
     # --gate flag so `roam --ci health` exits 5 on quality-gate failure
     # without having to repeat the per-command toggle. LAW 11: explicit
@@ -1674,6 +1682,65 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             bn_items = [b for b in bn_items if b["name"] not in _FRAMEWORK_NAMES]
             filtered_count = before - len(god_items) - len(bn_items)
 
+        # Preserve the historical score inputs independently of the requested
+        # classification scope. Baselines and the shared snapshot scorer use
+        # the existing top-candidate profile, not an all-candidate census.
+        score_god_items, score_bn_items = god_items, bn_items
+        if all_issues:
+            try:
+                rows = conn.execute(
+                    """SELECT s.name, s.kind, f.path AS file_path, gm.in_degree, gm.out_degree
+                    FROM graph_metrics gm JOIN symbols s ON gm.symbol_id = s.id
+                    JOIN files f ON s.file_id = f.id
+                    WHERE COALESCE(gm.in_degree,0) + COALESCE(gm.out_degree,0) > ?
+                    ORDER BY (COALESCE(gm.in_degree,0) + COALESCE(gm.out_degree,0)) DESC, s.id""",
+                    (_GOD_COMPONENT_MIN_DEGREE,),
+                ).fetchall()
+                god_items = [
+                    {
+                        "name": r["name"],
+                        "kind": r["kind"],
+                        "degree": (r["in_degree"] or 0) + (r["out_degree"] or 0),
+                        "file": r["file_path"],
+                    }
+                    for r in rows
+                ]
+                if god_population is not None and len(god_items) != god_population:
+                    _w607m_warnings_out.append("health_full_god_population_mismatch:inspect index joins")
+            except Exception as exc:
+                god_items = []
+                _w607m_warnings_out.append(f"health_full_god_components_failed:{type(exc).__name__}:{exc}")
+            try:
+                rows = conn.execute(
+                    """SELECT s.name, s.kind, f.path AS file_path, gm.betweenness
+                    FROM graph_metrics gm JOIN symbols s ON gm.symbol_id = s.id
+                    JOIN files f ON s.file_id = f.id WHERE gm.betweenness > ?
+                    ORDER BY gm.betweenness DESC, s.id""",
+                    (_BOTTLENECK_MIN_BETWEENNESS,),
+                ).fetchall()
+                bn_items = [
+                    {
+                        "name": r["name"],
+                        "kind": r["kind"],
+                        "betweenness": round(r["betweenness"], 1),
+                        "file": r["file_path"],
+                    }
+                    for r in rows
+                ]
+                qualifying_bn = conn.execute(
+                    "SELECT COUNT(*) FROM graph_metrics WHERE betweenness > ?", (_BOTTLENECK_MIN_BETWEENNESS,)
+                ).fetchone()[0]
+                if len(bn_items) != qualifying_bn:
+                    _w607m_warnings_out.append("health_full_bottleneck_population_mismatch:inspect index joins")
+            except Exception as exc:
+                bn_items = []
+                _w607m_warnings_out.append(f"health_full_bottlenecks_failed:{type(exc).__name__}:{exc}")
+            if no_framework:
+                before = len(god_items) + len(bn_items)
+                god_items = [g for g in god_items if g["name"] not in _FRAMEWORK_NAMES]
+                bn_items = [b for b in bn_items if b["name"] not in _FRAMEWORK_NAMES]
+                filtered_count = before - len(god_items) - len(bn_items)
+
         # W1448 — disclose that these sections are a TOP-N LIST, not a census.
         #
         # Saturation is detected on the RAW row counts, before framework
@@ -1695,11 +1762,15 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         # clears the qualifying threshold. A full list is not a truncated one.
         # Asserting truncation off saturation alone would fire on a tiny clean
         # project whose real population is zero, which is its own false claim.
-        if len(degree_rows) >= _GOD_COMPONENT_LIST_LIMIT and (god_population or 0) > _GOD_COMPONENT_LIST_LIMIT:
+        if (
+            not all_issues
+            and len(degree_rows) >= _GOD_COMPONENT_LIST_LIMIT
+            and (god_population or 0) > _GOD_COMPONENT_LIST_LIMIT
+        ):
             _w1448_truncation_warnings.append(
                 f"health_god_components_list_capped:showing_top_{_GOD_COMPONENT_LIST_LIMIT}_of_{god_population}"
             )
-        if len(bw_rows) >= _BOTTLENECK_LIST_LIMIT and (bw_population or 0) > _BOTTLENECK_LIST_LIMIT:
+        if not all_issues and len(bw_rows) >= _BOTTLENECK_LIST_LIMIT and (bw_population or 0) > _BOTTLENECK_LIST_LIMIT:
             _w1448_truncation_warnings.append(
                 f"health_bottlenecks_list_capped:showing_top_{_BOTTLENECK_LIST_LIMIT}_of_{bw_population}"
             )
@@ -1979,8 +2050,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
         def _compute_health_score():
             return _compute_canonical_health_score(
                 tangle_ratio=tangle_ratio,
-                god_items=god_items,
-                bn_items=bn_items,
+                god_items=score_god_items,
+                bn_items=score_bn_items,
                 bn_p90=bn_p90,
                 layer_violations=len(violations),
                 total_symbols=total_symbols,
@@ -2181,6 +2252,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
 
             if json_mode:
                 gate_summary: dict = {
+                    "issue_collection_scope": issue_collection_scope,
+                    "health_score_scope": "legacy_top_candidates",
                     "verdict": verdict,
                     "health_score": health_score,
                     "gate_passed": all_passed,
@@ -2396,7 +2469,13 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             # and returns the document UNCHANGED when the bucket is empty,
             # preserving health_to_sarif's byte-identical-without-kwargs
             # invariant for every uncapped repo.
-            sarif = with_sarif_disclosures(sarif, list(_w1448_truncation_warnings))
+            # Collection/analysis failures must travel with the SARIF artifact,
+            # including --all-issues where there is no list-cap notice. Stderr
+            # alone is lost when a CI consumer uploads only the SARIF file.
+            sarif = with_sarif_disclosures(
+                sarif,
+                list(_w607m_warnings_out) + list(_w607ba_warnings_out) + list(_w1448_truncation_warnings),
+            )
             click.echo(write_sarif(sarif))
             # W1331: nothing in a SARIF document carries these markers.
             # The W1448 cap markers ride the SARIF document itself (above)
@@ -2437,6 +2516,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                 summary={
                     "verdict": verdict,
                     "health_score": health_score,
+                    "issue_collection_scope": issue_collection_scope,
+                    "health_score_scope": "legacy_top_candidates",
                     "tangle_ratio": tangle_ratio,
                     "propagation_cost": prop_cost,
                     # W607-M honesty: export null (not a fake 0.0 sentinel) when the
@@ -2530,7 +2611,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                 # limit < population) from a genuinely short list.
                 god_component_thresholds={
                     "min_degree": _GOD_COMPONENT_MIN_DEGREE,
-                    "list_limit": _GOD_COMPONENT_LIST_LIMIT,
+                    "list_limit": None if all_issues else _GOD_COMPONENT_LIST_LIMIT,
                     "population": god_population,
                 },
                 bottleneck_thresholds={
@@ -2542,7 +2623,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
                     # section's: `population` alone did not tell a reader that
                     # `bottlenecks` was capped, so the two numbers sat side by
                     # side (15 against 3019) with nothing naming the relation.
-                    "list_limit": _BOTTLENECK_LIST_LIMIT,
+                    "list_limit": None if all_issues else _BOTTLENECK_LIST_LIMIT,
                 },
                 bottlenecks=[{**b, "severity": b["severity"], "category": b["category"]} for b in bn_items],
                 layer_violations=[
@@ -2626,13 +2707,21 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist):
             god_detail = f"{len(god_items)} god component{'s' if len(god_items) != 1 else ''}"
             # W1448 — say "top N of M" when the SQL cap decided the list, so
             # the text reader is not left inferring a census from a LIMIT.
-            if len(degree_rows) >= _GOD_COMPONENT_LIST_LIMIT and (god_population or 0) > _GOD_COMPONENT_LIST_LIMIT:
+            if (
+                not all_issues
+                and len(degree_rows) >= _GOD_COMPONENT_LIST_LIMIT
+                and (god_population or 0) > _GOD_COMPONENT_LIST_LIMIT
+            ):
                 god_detail = f"top {len(god_items)} of {god_population} god components"
             god_detail += f" ({actionable_count} actionable, {utility_count} expected utilities)"
             parts.append(god_detail)
         if bn_items:
             bn_detail = f"{len(bn_items)} bottleneck{'s' if len(bn_items) != 1 else ''}"
-            if len(bw_rows) >= _BOTTLENECK_LIST_LIMIT and (bw_population or 0) > _BOTTLENECK_LIST_LIMIT:
+            if (
+                not all_issues
+                and len(bw_rows) >= _BOTTLENECK_LIST_LIMIT
+                and (bw_population or 0) > _BOTTLENECK_LIST_LIMIT
+            ):
                 bn_detail = f"top {len(bn_items)} of {bw_population} bottlenecks"
             bn_detail += f" ({bn_actionable} actionable, {bn_utility} expected utilities)"
             parts.append(bn_detail)

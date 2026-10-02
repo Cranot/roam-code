@@ -29,7 +29,7 @@ from typing import Optional
 
 from roam.db.connection import find_project_root
 from roam.graph.dark_matter import _extract_sql_tables
-from roam.observability import log_swallowed
+from roam.world_model._source_helpers import _read_source
 from roam.world_model.side_effects import SideEffectClassification, classify_side_effects
 
 # ---------------------------------------------------------------------------
@@ -98,19 +98,6 @@ _DELETE_ORDER_LOOP_RE = re.compile(
 )
 
 _QUOTED_TABLE_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""")
-
-
-def _read_source(repo_root: Path, rel_path: str) -> tuple[str, list[str]]:
-    """Read one source file, preserving empty slices for missing content."""
-    try:
-        p = repo_root / rel_path
-        if not p.exists():
-            return "", []
-        text = p.read_text(encoding="utf-8", errors="replace")
-        return text, text.splitlines(keepends=True)
-    except OSError as exc:
-        log_swallowed(f"world_model.restore_loss:body_read:{rel_path}", exc)
-        return "", []
 
 
 def _iter_sql_literals(body_text: str) -> list[str]:

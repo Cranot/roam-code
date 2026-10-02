@@ -21,6 +21,10 @@ from conftest import (
     parse_json_output,
 )
 
+# All tests share module-scoped fixtures (onboard_project, understand_project).
+# xdist_group ensures they run on the same worker so each fixture is built once.
+pytestmark = pytest.mark.xdist_group("onboard")
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -53,6 +53,10 @@ def test_web_reference_discloses_partial_static_analysis():
 
 
 def test_deletion_demo_does_not_invent_runtime_telemetry():
-    text = (SITE / "demos.html").read_text(encoding="utf-8")
+    from tests.test_homepage_contract import HomepageParser, normalized
+
+    text = normalized(HomepageParser((SITE / "demos.html").read_text(encoding="utf-8")).root.text())
     assert "runtime hits:" not in text
-    assert "VERDICT: REVIEW" in text
+    # The JSON commands are illustrative; do not require invented text stdout.
+    assert "A REVIEW result for unresolved use is not deletion clearance." in text
+    assert "zero indexed callers does not settle those questions." in text

@@ -42,17 +42,26 @@ import json as _json
 import subprocess
 import sys
 from collections import Counter
+from pathlib import Path
 
 import click
 from click.testing import CliRunner
 
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root
 from roam.exit_codes import EXIT_SUCCESS
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 
 
-def _git_log_in_range(commit_range: str, *, limit: int = 100) -> list[dict]:
-    """Return [{sha, short_sha, subject, author, date}, ...] for commits in range."""
+def _git_log_in_range(commit_range: str, *, limit: int = 100, root: Path | None = None) -> list[dict]:
+    """Return [{sha, short_sha, subject, author, date}, ...] for commits in range.
+
+    ``root`` is the project root directory used as ``cwd`` for the git
+    subprocess.  When omitted, ``find_project_root()`` is called so that
+    parallel test workers and MCP callers with a shifted process-cwd all
+    resolve to the correct repository.
+    """
+    project_root = root if root is not None else find_project_root()
     try:
         result = subprocess.run(
             [
@@ -68,11 +77,12 @@ def _git_log_in_range(commit_range: str, *, limit: int = 100) -> list[dict]:
             timeout=30,
             encoding="utf-8",
             errors="replace",
+            cwd=str(project_root),
         )
         if result.returncode != 0:
-            return []
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
+            raise RuntimeError(f"Git could not enumerate the requested range (exit {result.returncode})")
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Git range enumeration unavailable: {type(exc).__name__}") from exc
     out: list[dict] = []
     for line in result.stdout.splitlines():
         parts = line.split("\t")
@@ -90,8 +100,15 @@ def _git_log_in_range(commit_range: str, *, limit: int = 100) -> list[dict]:
     return out
 
 
-def _diff_for_commit(sha: str) -> str:
-    """Return the unified diff `git show --pretty='' SHA` produces."""
+def _diff_for_commit(sha: str, *, root: Path | None = None) -> str:
+    """Return the unified diff `git show --pretty='' SHA` produces.
+
+    ``root`` is the project root directory used as ``cwd`` for the git
+    subprocess.  When omitted, ``find_project_root()`` is called so that
+    parallel test workers and MCP callers with a shifted process-cwd all
+    resolve to the correct repository.
+    """
+    project_root = root if root is not None else find_project_root()
     try:
         result = subprocess.run(
             ["git", "show", "--pretty=", "--unified=3", sha],
@@ -100,6 +117,7 @@ def _diff_for_commit(sha: str) -> str:
             timeout=30,
             encoding="utf-8",
             errors="replace",
+            cwd=str(project_root),
         )
         return result.stdout if result.returncode == 0 else ""
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -191,6 +209,15 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
     "if it retroactively flags my Q1 incidents, the gate is worth wiring."
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+
+    # Resolve the project root once so every git subprocess call uses an
+    # explicit cwd= regardless of the process working directory.  Under
+    # pytest-xdist, workers share a process and a chdir() in one test can
+    # shift the cwd for git commands running concurrently in another.
+    try:
+        _project_root = find_project_root()
+    except Exception:  # noqa: BLE001 -- best-effort; git calls degrade gracefully
+        _project_root = Path(".")
 
     # W607-DR -- ADDITIONAL substrate-CALL plumbing beneath W607-AN /
     # W607-CV. cmd_postmortem already had two W607 layers landed:
@@ -377,14 +404,25 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
             _git_log_in_range,
             commit_range,
             limit=limit,
+            root=_project_root,
             default=[],
         )
         or []
     )
     if not commits:
+        range_unavailable = bool(_w607an_warnings_out)
+        no_scan_state = "range_unavailable" if range_unavailable else "no_commits_in_range"
+        no_scan_verdict = (
+            "Replay unavailable: Git commit range could not be enumerated"
+            if range_unavailable
+            else "No replay performed: requested range contains no commits"
+        )
         if json_mode:
             no_commits_summary = {
-                "verdict": "no commits matched",
+                "verdict": no_scan_verdict,
+                "state": no_scan_state,
+                "resolution": "unresolved" if range_unavailable else "empty_range",
+                "partial_success": True,
                 "commit_range": commit_range,
                 "commits_scanned": 0,
                 "commits_with_findings": 0,
@@ -410,7 +448,7 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
                 )
             )
         else:
-            click.echo(f"VERDICT: no commits matched {commit_range}", err=True)
+            click.echo(f"VERDICT: {no_scan_verdict}: {commit_range}", err=True)
         # Use return — ctx.exit() can swallow output when invoked via CliRunner.
         _ = EXIT_SUCCESS  # exit code surfaces via Click's normal return path
         return
@@ -475,6 +513,7 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
                     "parse_event_payload",
                     _diff_for_commit,
                     _fields["sha"],
+                    root=_project_root,
                     default="",
                 )
                 or ""

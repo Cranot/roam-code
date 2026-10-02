@@ -62,6 +62,23 @@ def test_workflow_inventory_is_closed_for_dependency_policy_review() -> None:
     assert {path.name for path in _workflow_paths()} == EXPECTED_WORKFLOWS
 
 
+def test_atlas_model_runs_in_ci_without_package_install_or_soft_failure() -> None:
+    workflow = yaml.safe_load(_text("roam-ci.yml"))
+    job = workflow["jobs"]["site-atlas"]
+    assert job["timeout-minutes"] == 5
+    assert "if" not in job and "continue-on-error" not in job
+    steps = job["steps"]
+    node = next(step for step in steps if step.get("uses", "").startswith("actions/setup-node@"))
+    assert node["with"] == {"node-version": "26.2.0", "package-manager-cache": False}
+    commands = [line.strip() for step in steps for line in step.get("run", "").splitlines() if line.strip()]
+    assert commands == [
+        "node --check templates/distribution/landing-page/atlas-model.mjs",
+        "node --check templates/distribution/landing-page/atlas.mjs",
+        "node --test tests/atlas_model.test.mjs tests/atlas_interaction.test.mjs",
+    ]
+    assert all("if" not in step and "continue-on-error" not in step for step in steps)
+
+
 def test_all_workflows_pin_runner_images_and_remote_actions() -> None:
     for path in _workflow_paths():
         text = path.read_text(encoding="utf-8")
@@ -162,7 +179,9 @@ def test_advisory_findings_and_expected_failures_are_narrowly_encoded() -> None:
     assert "isinstance(failed, int)" in guardian
 
     dogfood = _text("dogfood.yml")
-    assert 'if s.get("partial_success")' in dogfood
+    # The gate now requires an explicit False; missing/numeric/null states must
+    # also refuse. Executable paired controls live in test_dogfood_workflow_evidence_gate.
+    assert 's.get("partial_success") is not False' in dogfood
     assert "--gate is deliberately omitted" in dogfood
     assert 'report.get("command") == "pr-analyze"' in dogfood
     assert "if-no-files-found: error" in dogfood

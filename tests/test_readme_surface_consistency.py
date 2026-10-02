@@ -175,22 +175,21 @@ def test_readme_cli_command_count_matches_source():
 
 
 def test_readme_has_whats_new_section():
-    """Lock in the load-bearing README narrative blocks.
+    """Keep release history and measurement evidence reachable after cleanup.
 
-    The README rewrite (d2ab065) replaced the v11-anchored narrative
-    with a per-release ``## What's New`` block keyed on the current
-    versions. The test was historically pinned to v11 strings; it now
-    asserts the structural contract instead: a What's New section
-    must exist, must surface at least one current-release ``### vX.Y``
-    sub-heading, and must keep the SARIF + FTS5 cross-cuts that the
-    perf narrative depends on so a future rewrite cannot accidentally
-    drop them.
+    The changelog now owns release history; requiring a v13 heading or the
+    old FTS5 campaign in the entry page would restore obsolete duplication.
+    Protect the actual destinations and the unreleased/released distinction.
     """
     text = _readme_text()
-    assert "## What's New" in text, "README must keep the What's New section header"
-    assert re.search(r"### v13\.\d", text), "README What's New must surface at least one current-release sub-heading"
+    section = re.search(r"^## What's New\n(.+?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
+    assert section, "README must keep its release-history entry point"
+    assert re.search(r"\[[^\]]+\]\(CHANGELOG\.md\)", section.group(1))
+    assert "Unreleased" in section.group(1)
+    assert "## [Unreleased]" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "SARIF" in text, "README must keep the SARIF cross-cut"
-    assert "FTS5" in text, "README must keep the FTS5 perf narrative anchor"
+    assert re.search(r"\[[^\]]+\]\(docs/measurements\.md(?:#[^)]*)?\)", text)
+    assert (ROOT / "docs/measurements.md").is_file()
 
 
 def test_cli_deprecated_commands_is_ast_literal():

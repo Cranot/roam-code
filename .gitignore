@@ -90,7 +90,8 @@ reports/
 internal/
 
 # Claude Code internal state (lockfiles, scheduled tasks, etc.)
-.claude/
+.claude/*
+!.claude/skills/
 
 # dev/ has NO special rules. Everything in dev/ is public — public dev
 # scripts, public docs, the example plugin subtree. Private content

@@ -991,6 +991,7 @@
       "flags": [
         "--audit",
         "--audit-trail",
+        "--input",
         "--pr-analyze",
         "--rules"
       ],
@@ -1356,6 +1357,7 @@
     },
     "health": {
       "flags": [
+        "--all-issues",
         "--baseline",
         "--explain",
         "--gate",
@@ -4014,6 +4016,7 @@
     "roam_dogfood": [
       "audit",
       "audit_trail_on",
+      "diff_path",
       "input_path",
       "pr_analyze_on",
       "root"
@@ -4299,6 +4302,7 @@
       "subcommand"
     ],
     "roam_health": [
+      "all_issues",
       "root",
       "summarize"
     ],

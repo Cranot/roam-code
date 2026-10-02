@@ -1,6 +1,6 @@
 # Mutual Non-Disclosure Agreement
 
-> **REVIEW BEFORE USE.** v2 draft, 2026-05-18. Have a qualified attorney
+> **REVIEW BEFORE USE.** v3 draft, 2026-09-09. Have a qualified attorney
 > review before binding execution. Bracketed placeholders `[LIKE_THIS]`
 > are filled in per engagement. This NDA is part of Provider's
 > procurement cluster alongside the
@@ -91,8 +91,9 @@ default and the agreed forum applies. The agreed election must be
 recorded in `[GOVERNING_LAW_OVERRIDE]` / `[FORUM_OVERRIDE]` and signed
 by both Parties.
 
-For EU consumer disputes only, the EU Online Dispute Resolution
-platform (`https://ec.europa.eu/consumers/odr`) is also available.
+The EU Online Dispute Resolution platform closed on 20 July 2025.
+The European Commission provides current
+[consumer redress information](https://consumer-redress.ec.europa.eu/site-relocation_en).
 
 ## 10A. Relationship to SOW and DPA
 

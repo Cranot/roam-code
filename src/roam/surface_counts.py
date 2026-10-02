@@ -224,8 +224,23 @@ def command_module_counts() -> dict[str, int]:
 
 def canonical_cli_commands() -> list[str]:
     """Return canonical command names (aliases collapsed to one primary name)."""
+    commands = cli_commands()
+    deprecated = _literal_assignment(_load_ast(_package_file("cli.py")), "_DEPRECATED_COMMANDS")
+    if not isinstance(deprecated, dict):
+        raise ValueError("_DEPRECATED_COMMANDS must be a mapping")
+    for alias, record in deprecated.items():
+        replacement = record.get("replacement") if isinstance(record, dict) else record
+        if (
+            not isinstance(alias, str)
+            or not isinstance(replacement, str)
+            or alias not in commands
+            or replacement not in commands
+            or replacement in deprecated
+            or commands[alias] != commands[replacement]
+        ):
+            raise ValueError(f"Invalid CLI alias replacement for {alias!r}: {replacement!r}")
     by_target: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for name, target in cli_commands().items():
+    for name, target in commands.items():
         if not isinstance(name, str):
             continue
         if not isinstance(target, (tuple, list)) or len(target) != 2:
@@ -237,6 +252,9 @@ def canonical_cli_commands() -> list[str]:
 
     canonical = []
     for (mod_name, attr_name), names in by_target.items():
+        # Public aliases are declared by the CLI; an old callback name such as
+        # math_cmd must not override its canonical replacement, algo.
+        names = [name for name in names if name not in deprecated]
         if not names:
             continue
         # Prefer the name matching the Click function attr (primary), else first

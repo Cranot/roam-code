@@ -517,6 +517,9 @@ def _import_mcp_server():
         ("path", "filename"),
         ("path", "filepath"),
         ("symbol", "subject"),
+        # W1451 — result-count cluster
+        ("limit", "top"),
+        ("limit", "top_n"),
     ],
 )
 def test_param_alias_resolves_to_canonical(canonical, alias):

@@ -34,7 +34,7 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init  # noqa: E402
+from conftest import git_commit, git_init  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Unit-level tests on _gather_lease_policy_decisions
@@ -125,6 +125,7 @@ def test_lease_policy_silent_when_find_project_root_resolves(monkeypatch: pytest
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xdist_group("pr_replay_git_integration")
 def test_pr_replay_envelope_surfaces_lease_policy_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end: a warning emitted by ``_gather_lease_policy_decisions``
     must surface on the JSON envelope's top-level ``warnings_out`` field.
@@ -143,15 +144,30 @@ def test_pr_replay_envelope_surfaces_lease_policy_warning(tmp_path: Path, monkey
     string — the propagation chain is what's under test here; the
     gatherer's own emission is verified by the three unit-level tests
     above.
+
+    xdist_group("pr_replay_git_integration"): This test calls
+    ``monkeypatch.chdir(proj)`` and then runs pr-replay + postmortem via
+    CliRunner. The inner postmortem subprocess (``_git_log_in_range``)
+    resolves ``HEAD~1..HEAD`` against the process CWD rather than an
+    explicit ``cwd=`` argument. Under xdist, a test on the same worker
+    that leaves the CWD in a non-git state (even transiently) causes the
+    subprocess to exit 128, triggering pr-replay's early-exit path BEFORE
+    ``_gather_lease_policy_decisions`` is ever invoked -- so the canonical
+    W590 marker never reaches ``warnings_out``. Grouping this test
+    together with its sibling (W591) ensures they share one dedicated
+    worker and are never interleaved with tests that relocate the CWD.
     """
     from roam.cli import cli
     from roam.commands import cmd_pr_replay
 
     # Build a tiny git repo so pr-replay's git rev-list call succeeds.
+    # We need at least two commits so HEAD~1..HEAD resolves cleanly.
     proj = tmp_path / "tinyproj"
     proj.mkdir()
     (proj / "README.md").write_text("x\n")
     git_init(proj)
+    (proj / "extra.txt").write_text("extra\n")
+    git_commit(proj, "second commit")
 
     canonical_marker = (
         "leases: project_root_not_found — find_project_root returned None "
@@ -177,6 +193,8 @@ def test_pr_replay_envelope_surfaces_lease_policy_warning(tmp_path: Path, monkey
         [
             "--json",
             "pr-replay",
+            "--range",
+            "HEAD~1..HEAD",
             "--tier",
             "sample",
             "--evidence",
