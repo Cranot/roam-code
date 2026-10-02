@@ -800,6 +800,14 @@ def ai_readiness(ctx, threshold):
             if empty_corpus:
                 _summary["partial_success"] = True
                 _summary["state"] = "no_symbols_indexed"
+                # W805-TTT: vacuous-max suppression. Individual dimensions return
+                # 100 as an "empty input" sentinel (no symbols to penalise), so
+                # the composite is ~83 (OPTIMIZED) on a zero-symbol corpus.
+                # Remove the misleading numeric readout; the text verdict already
+                # carries the correct empty-corpus disclosure. Pop (not None) so
+                # that `summary.get("score", 0)` returns the 0 default, not None.
+                _summary.pop("score", None)
+                _summary["label"] = "UNKNOWN"
 
             envelope = json_envelope(
                 "ai-readiness",

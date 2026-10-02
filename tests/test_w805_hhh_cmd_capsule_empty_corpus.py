@@ -167,18 +167,6 @@ class TestEmptyCorpusEnvelopeShape:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-HHH Pattern-2 bug: cmd_capsule emits "
-        "verdict='capsule exported (N files, 0 symbols, 0 edges)' + "
-        "partial_success=false + health_score=100 + no 'state' field on a "
-        "degenerate (0-symbol) corpus. Fix: disclose state='empty_corpus' "
-        "or similar, set partial_success=true, and downgrade the verdict "
-        "from a SAFE-shaped string. See CLAUDE.md 'Six systemic "
-        "anti-patterns' section 2."
-    ),
-)
 class TestEmptyCorpusPattern2Bug:
     def test_empty_corpus_state_explicit(self, empty_corpus_project, cli_runner):
         """Pattern-2: empty-corpus envelope must disclose state explicitly."""
@@ -234,15 +222,6 @@ class TestEmptyCorpusPattern2Bug:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Pattern-1 variant D: degraded-corpus resolution state not "
-        "disclosed via 'resolution' / 'state' field. Same Fix template "
-        "as W805-HHH primary bug — surfaced separately because Pattern-1-V-D "
-        "is the resolution-axis pin."
-    ),
-)
 def test_missing_target_resolution_disclosed(empty_corpus_project, cli_runner):
     """Pattern-1-V-D: degraded corpus must disclose resolution state."""
     result = _invoke_capsule(cli_runner, cwd=empty_corpus_project, json_mode=True)

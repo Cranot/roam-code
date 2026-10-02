@@ -816,6 +816,17 @@ def brief_cmd(
     next_commands = _compose_next_commands(next_section, pr_bundle_section)
 
     partial_success = bool(section_failures) or not index_present
+    # W805-TT: Pattern-2 gate-collapse disclosure. When sections have
+    # degraded-but-non-exception states (empty highlights, no runs, no
+    # active PR bundle) the prior logic treated them as "ok". Treat any
+    # known degraded section state as partial so consumers are not misled.
+    _degraded_section_states = {"empty", "no_runs", "no_active_bundle", "unavailable", "idle"}
+    if not partial_success:
+        partial_success = (
+            highlights_section.get("state") in _degraded_section_states
+            or runs_section.get("state") in _degraded_section_states
+            or pr_bundle_section.get("state") in _degraded_section_states
+        )
 
     summary = {
         "verdict": verdict,
