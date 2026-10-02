@@ -179,24 +179,11 @@ class TestEmptyCorpusEnvelopeShape:
 
 # ---------------------------------------------------------------------------
 # REAL BUG #1 — Pattern-2 silent SAFE on empty corpus
-# Pinned xfail(strict=True): a fix will flip these to xpass → test failure.
+# Fixed 2026-10-02: cmd_tour now emits partial_success=True + state='empty_corpus'
+# + resolution='unresolved' + downgraded verdict on 0-symbol corpus.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-JJJ Pattern-2 bug: cmd_tour emits "
-        "verdict='tour: N files, 0 symbols, 0 layers, start at ? (markdown)' + "
-        "partial_success=false + no 'state' field on a degenerate (0-symbol) "
-        "corpus. The verdict reads as a successful tour and embeds the "
-        "sentinel '?' as if it were a filename. Fix: disclose "
-        "state='empty_corpus' (or 'no_source_symbols'), set "
-        "partial_success=true, and downgrade the verdict from a SAFE-shaped "
-        "string. See CLAUDE.md 'Six systemic anti-patterns' section 2 + "
-        "src/roam/commands/cmd_tour.py:460-465."
-    ),
-)
 class TestEmptyCorpusPattern2Bug:
     def test_empty_corpus_state_explicit(self, empty_corpus_project, cli_runner):
         """Pattern-2: empty-corpus envelope must disclose state explicitly."""
@@ -252,20 +239,6 @@ class TestEmptyCorpusPattern2Bug:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-JJJ-2 vacuous-max axis: cmd_tour._patterns() emits "
-        "statistics.avg_file_health=10.0 on a corpus with 0 source symbols "
-        "(only markdown / non-source files). The 10.0 is a degenerate "
-        "average — file_stats includes README.md but the user reads it as "
-        "'codebase health is 10/10'. Same SHAPE as W805-HHH "
-        "metrics_history.collect_metrics vacuous-max, different call path. "
-        "Fix: suppress avg_file_health when total source symbols == 0 OR "
-        "attach a state='empty_corpus' qualifier so consumers don't read "
-        "10.0 as 'healthy'. See src/roam/commands/cmd_tour.py:291-302."
-    ),
-)
 def test_no_vacuous_max_health_on_empty(empty_corpus_project, cli_runner):
     """avg_file_health=10.0 on 0 symbols is a degenerate-denominator artifact."""
     result = _invoke_tour(cli_runner, cwd=empty_corpus_project, json_mode=True)
@@ -288,17 +261,6 @@ def test_no_vacuous_max_health_on_empty(empty_corpus_project, cli_runner):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-JJJ-3 Pattern-1 variant D: when reading_order is empty, "
-        "cmd_tour falls back to start_file='?' at "
-        "src/roam/commands/cmd_tour.py:460 with no resolution disclosure. "
-        "The '?' leaks into the verdict but no 'resolution' or 'state' "
-        "field on the envelope signals the degraded resolution. Fix: emit "
-        "resolution='unresolved' (or 'no_starting_file') + partial_success=true."
-    ),
-)
 def test_missing_target_resolution_disclosed(empty_corpus_project, cli_runner):
     """Pattern-1-V-D: degraded corpus must disclose resolution state."""
     result = _invoke_tour(cli_runner, cwd=empty_corpus_project, json_mode=True)
