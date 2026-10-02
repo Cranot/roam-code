@@ -20,7 +20,8 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
-    get_changed_files,
+    GIT_ERROR,
+    get_changed_files_status,
     is_test_file,
     resolve_changed_to_db,
 )
@@ -1139,17 +1140,14 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
     base_ref, head_ref = _resolve_git_range(root, commit_range)
     hashes = _get_git_hashes(root, base_ref, head_ref)
 
-    def _changed_files_for_attest():
-        return get_changed_files(root, staged=staged, commit_range=commit_range)
-
-    changed = (
-        _run_check_ad(
-            "get_changed_files",
-            _changed_files_for_attest,
-            default=[],
-        )
-        or []
-    )
+    # W805-OOOO: use get_changed_files_status so a bogus commit-range emits
+    # state="git_error" + git_error=<kind> instead of being byte-identical to
+    # a genuinely clean working tree (both previously got state="no_changes").
+    try:
+        changed, _git_err_kind = get_changed_files_status(root, staged=staged, commit_range=commit_range)
+    except Exception as exc:  # noqa: BLE001 — W607-AD outer-guard
+        _w607ad_warnings_out.append(f"attest_get_changed_files_failed:{type(exc).__name__}:{exc}")
+        changed, _git_err_kind = [], GIT_ERROR
     if not changed:
         # Pattern 1D / Pattern 2: no-changes is a degraded-resolution path,
         # NOT a fully-assessed "safe to merge" verdict. An agent reading
@@ -1165,15 +1163,25 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         # None-handling.
         _empty_risk_level_canonical = "low"
         _empty_risk_rank = risk_rank(_empty_risk_level_canonical)
+        # W805-OOOO: distinguish git-error (bogus ref) from genuinely clean
+        # tree by emitting state="git_error" + git_error=<kind> on the error
+        # path. Clean tree still gets state="no_changes".
+        if _git_err_kind is not None:
+            _empty_state = "git_error"
+            _empty_summary_extra: dict = {"git_error": _git_err_kind}
+        else:
+            _empty_state = "no_changes"
+            _empty_summary_extra = {}
         _attest_empty_envelope = json_envelope(
             "attest",
             summary={
                 "verdict": (f"no changes found for {label} (risk_level {_empty_risk_level_canonical})"),
-                "state": "no_changes",
+                "state": _empty_state,
                 "partial_success": True,
                 "safe_to_merge": None,
                 "risk_level_canonical": _empty_risk_level_canonical,
                 "risk_rank": _empty_risk_rank,
+                **_empty_summary_extra,
             },
             risk_level_canonical=_empty_risk_level_canonical,
             risk_rank=_empty_risk_rank,
