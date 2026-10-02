@@ -782,6 +782,15 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
             if total == 0 and cochange_count == 0:
                 _summary["partial_success"] = True
                 _summary["state"] = "no_cochange"
+            elif total == 0 and cochange_count > 0:
+                # W805-WWW: rows exist but min_cochanges threshold excluded all.
+                _summary["partial_success"] = True
+                _summary["state"] = "no_pairs_above_threshold"
+                _summary["verdict"] = (
+                    f"{cochange_count} raw cochange rows but all below "
+                    f"min_cochanges={min_cochanges} threshold "
+                    f"(risk_level {risk_level_canonical})"
+                )
             elif total > 0 and parts:
                 _summary["verdict"] += f" ({', '.join(parts)})"
 

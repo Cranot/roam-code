@@ -375,28 +375,6 @@ def test_below_threshold_findings_registry_no_phantom_emissions(below_threshold_
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-ZZZ Pattern-1-V-D / Pattern-2 bug: cmd_duplicates emits "
-        "verdict='No semantic duplicates detected' + partial_success=False "
-        "+ NO state stamp when the corpus HAS >=2 function candidates but "
-        "the bucket pre-filter at cmd_duplicates.py:734 (or the threshold "
-        "gate at line 782) silently excludes every candidate pair. The "
-        "W805-sealed early-return at cmd_duplicates.py:612-664 only "
-        "discloses the ``len(candidates) < 2`` axis; it misses the "
-        "downstream gate-collapse path where candidates entered but no "
-        "pair survived to scoring. Three distinct input shapes (clean "
-        "populated graph with no duplicates / candidates dropped by "
-        "shape pre-filter / candidates scored but all below threshold) "
-        "collapse to the same SAFE verdict. Fix: when "
-        "(original_candidate_count >= 2 AND cluster_list == []), stamp "
-        "state in {'no_pairs_after_prefilter','no_pairs_above_threshold'} "
-        "+ partial_success=True + name the gate in the verdict. See "
-        "CLAUDE.md 'Six systemic anti-patterns' section 1 variant D + "
-        "section 2. Mirror of W805-WWW on cmd_dark_matter."
-    ),
-)
 class TestBelowThresholdPattern1VD:
     def test_partial_success_when_prefilter_excludes_all(self, below_threshold_project, cli_runner):
         """Pre-filter excluded every pair => MUST NOT report silent SAFE."""
@@ -457,15 +435,6 @@ class TestBelowThresholdPattern1VD:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-ZZZ: today the below-threshold path emits the same SAFE "
-        "verdict as a truly-empty no-functions corpus would IF the early-"
-        "return guard didn't fire. After the fix, the two paths MUST "
-        "emit distinct verdicts. Pinned xfail-strict so the fix flips it."
-    ),
-)
 def test_below_threshold_verdict_distinct_from_no_duplicates_legitimate(below_threshold_project, cli_runner):
     """The verdict on the below-threshold (buggy) path MUST become distinct
     from the legitimate 'no semantic duplicates' string after the fix."""

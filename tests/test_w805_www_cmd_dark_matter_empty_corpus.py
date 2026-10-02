@@ -301,25 +301,6 @@ class TestEmptyCorpusEnvelopeShape:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-WWW Pattern-1-V-D / Pattern-2 bug: cmd_dark_matter emits "
-        "verdict='0 dark-matter couplings found' + partial_success=False "
-        "+ NO state stamp when the corpus HAS co-change rows but all are "
-        "below min_cochanges threshold (default 3). The W805-followup-D "
-        "guard at cmd_dark_matter.py:389-393 only checks "
-        "COUNT(*) FROM git_cochange == 0; it misses the much more common "
-        "'rows exist but threshold filter excluded all'. Two distinct "
-        "input shapes (clean populated graph w/ no hidden coupling vs "
-        "low-signal corpus where filter ate every candidate) collapse to "
-        "the same SAFE verdict. Fix: when "
-        "(cochange_rows_total > 0 AND pairs == []), stamp "
-        "state='no_pairs_above_threshold' + partial_success=True + name "
-        "the threshold in the verdict. See CLAUDE.md 'Six systemic "
-        "anti-patterns' section 1 variant D + section 2."
-    ),
-)
 class TestThresholdNotMetPattern1VD:
     def test_partial_success_when_threshold_not_met(self, threshold_not_met_project, cli_runner):
         """Threshold-excluded corpus must NOT report silent SAFE."""
