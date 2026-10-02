@@ -393,18 +393,6 @@ class TestDiagnoseNoSuspectsSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-M REAL BUG 1 (Pattern-2): cmd_diagnose.py:319-332 emits "
-        "verdict 'N symbol(s) diagnosed' with partial_success=false on "
-        "empty batch input. A consumer cannot distinguish 'empty input "
-        "intentionally' from 'all names stripped to empty' from 'input "
-        "file unreadable'. Fix: when len(names)==0, set "
-        "partial_success=true + state='empty_batch' + verdict that names "
-        "the empty state. Separate fix wave."
-    ),
-)
 def test_empty_batch_partial_success_set(empty_corpus):
     """Pin: empty-batch must set ``partial_success: true``."""
     result = _invoke_diagnose(empty_corpus, "--batch", "-", json_mode=True, stdin="")
@@ -413,17 +401,6 @@ def test_empty_batch_partial_success_set(empty_corpus):
     assert summary.get("partial_success") is True, f"empty batch must set partial_success=True; got summary={summary!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-M REAL BUG 1 (Pattern-2): cmd_diagnose.py:319-332 does not "
-        "emit a summary.state field on the empty-batch branch. Pattern-2 "
-        "requires closed-enum state disclosure ('empty_batch' / "
-        "'no_input' / 'empty_input'). Sibling precedent: cmd_describe "
-        "W805-I emits state='no_symbols'; cmd_module W805-K emits "
-        "state='path_not_found'. Separate fix wave."
-    ),
-)
 def test_empty_batch_explicit_state(empty_corpus):
     """Pin: empty-batch discloses ``summary.state`` via closed enum."""
     result = _invoke_diagnose(empty_corpus, "--batch", "-", json_mode=True, stdin="")
@@ -436,17 +413,6 @@ def test_empty_batch_explicit_state(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-M REAL BUG 1 (Pattern-2): cmd_diagnose.py:323 builds verdict "
-        "as 'N symbol(s) diagnosed' regardless of whether N==0. On empty "
-        "input this reads as a confident success ('successfully diagnosed "
-        "zero symbols') rather than disclosing the empty-input state. "
-        "Fix: when N==0, verdict like 'no symbols to diagnose: empty "
-        "batch input' or 'empty batch: 0 symbols supplied'. Separate fix wave."
-    ),
-)
 def test_no_silent_diagnose_success_on_empty(empty_corpus):
     """Pin: empty-batch verdict must name the empty state.
 
@@ -477,19 +443,6 @@ def test_no_silent_diagnose_success_on_empty(empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-M REAL BUG 2 (Pattern-2): cmd_diagnose.py:509-519 emits "
-        "verdict 'No upstream/downstream symbols found within depth range.' "
-        "with partial_success=false when a target resolves cleanly but has "
-        "0 upstream/downstream suspects. The entire purpose of the command "
-        "is to rank root-cause suspects; a 0-suspect diagnosis is by "
-        "definition a degraded result. Fix: set partial_success=true + "
-        "state='no_suspects' (or 'isolated_in_graph' if the depth window "
-        "is the limiter). Separate fix wave."
-    ),
-)
 def test_no_root_cause_explicit_state(single_symbol_corpus):
     """Pin: 0-suspect diagnosis discloses ``summary.state``.
 
@@ -512,16 +465,6 @@ def test_no_root_cause_explicit_state(single_symbol_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-M REAL BUG 2 (Pattern-2): cmd_diagnose.py:509-519 emits "
-        "partial_success=false on the no-suspects branch. A diagnosis "
-        "with zero ranked suspects has produced zero actionable signal -- "
-        "it is by definition partial-success. Fix: set partial_success=true "
-        "whenever upstream_count + downstream_count == 0. Separate fix wave."
-    ),
-)
 def test_no_suspects_partial_success_set(single_symbol_corpus):
     """Pin: 0-suspect diagnosis sets ``partial_success: true``."""
     result = _invoke_diagnose(single_symbol_corpus, "lonely", json_mode=True)
