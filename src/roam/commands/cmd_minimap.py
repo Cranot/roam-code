@@ -767,8 +767,13 @@ def minimap(ctx, update_claude, output_file, init_notes):
             _w607az_warnings_out.append(f"minimap_notes_migration_failed:{type(exc).__name__}:{exc}")
             migration_failed = True
 
+    _w805b_symbol_count: int = -1  # -1 = unknown (DB error on count query)
     try:
         with open_db(readonly=True) as conn:
+            try:
+                _w805b_symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+            except Exception:  # noqa: BLE001
+                pass
             content = _render_minimap(conn, root, warnings_out=warnings_out)
     except Exception as exc:
         # W607-L outer-guard: the full minimap DB pipeline raised (db
@@ -870,21 +875,25 @@ def minimap(ctx, update_claude, output_file, init_notes):
     else:
         # Print to stdout
         if json_mode:
-            mm_summary = {
-                # LAW 4 (W17.3): name the analytical subject
-                # (the rendered block) + a size cue, not bare "ok".
-                "verdict": (f"minimap rendered ({len(block)} chars) — wrap in CLAUDE.md with --update-claude"),
-                "content_char_count": len(block),
-                "caller_metric_definition": "direct_in_degree (Touch carefully + file annotations)",
-            }
+            # W805-B: disclose empty-corpus state when 0 symbols indexed.
+            if _w805b_symbol_count == 0:
+                mm_summary = {
+                    "verdict": "minimap empty: no symbols indexed — run roam index first",
+                    "content_char_count": len(block),
+                    "caller_metric_definition": "direct_in_degree (Touch carefully + file annotations)",
+                    "state": "no_symbols",
+                    "partial_success": True,
+                }
+            else:
+                mm_summary = {
+                    # LAW 4 (W17.3): name the analytical subject
+                    # (the rendered block) + a size cue, not bare "ok".
+                    "verdict": (f"minimap rendered ({len(block)} chars) — wrap in CLAUDE.md with --update-claude"),
+                    "content_char_count": len(block),
+                    "caller_metric_definition": "direct_in_degree (Touch carefully + file annotations)",
+                }
             # W607-L + W607-AZ: surface combined marker bucket on summary
-            # mirror + top-level on the stdout JSON-mode path. Note: we DO
-            # flip partial_success here when substrate failures fire, but
-            # this is orthogonal to W805-B's empty-corpus xfail-strict
-            # tests — on empty corpus the helpers return empty results
-            # (not exceptions), so combined_warnings is empty and
-            # partial_success is NOT flipped, preserving W805-B's pinned
-            # bug-state.
+            # mirror + top-level on the stdout JSON-mode path.
             if combined_warnings:
                 mm_summary["warnings_out"] = list(combined_warnings)
                 mm_summary["partial_success"] = True

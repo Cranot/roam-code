@@ -228,15 +228,6 @@ class TestMinimapEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-B BUG: cmd_minimap.py L588-605 does not disclose "
-        "empty-corpus state. Verdict says 'minimap rendered (N chars)' "
-        "identically on healthy and 0-symbol corpora. Pattern 2 silent "
-        "fallback; awaiting separate fix wave."
-    ),
-)
 def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     """``summary.partial_success`` should be True on the empty branch.
 
@@ -254,14 +245,6 @@ def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-B BUG: cmd_minimap.py L588-605 does not emit summary.state. "
-        "Empty corpus and healthy corpus are indistinguishable in the "
-        "envelope state field. Pattern 2 silent fallback; awaiting fix wave."
-    ),
-)
 def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
     """``summary.state`` should disclose the empty condition explicitly.
 
@@ -278,16 +261,6 @@ def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-B BUG: cmd_minimap.py L596-598 emits 'minimap rendered "
-        "(N chars)' identically on healthy and empty corpora. The verdict "
-        "must mention 'empty' / 'no symbols' / 'no data' on the empty "
-        "branch (LAW 6 standalone). Pattern 2 silent fallback; awaiting "
-        "fix wave."
-    ),
-)
 def test_empty_corpus_no_silent_healthy_minimap(cli_runner, empty_corpus):
     """Verdict on the empty branch should NOT match the healthy-corpus
     'minimap rendered (N chars)' shape - it must call out the empty
@@ -305,15 +278,6 @@ def test_empty_corpus_no_silent_healthy_minimap(cli_runner, empty_corpus):
     assert any(t in verdict for t in empty_tokens), f"verdict must disclose empty-corpus state; got {verdict!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-B BUG: cmd_minimap.py never emits an explicit no_symbols "
-        "state. Same root cause as test_empty_corpus_explicit_state; "
-        "kept as a separate test so the fix wave can verify the "
-        "no_symbols branch independently. Pattern 2 silent fallback."
-    ),
-)
 def test_no_symbols_emits_explicit_no_symbols_state(cli_runner, empty_corpus):
     """A corpus with zero indexed symbols should emit either
     ``state == "no_symbols"`` explicitly, OR a verdict that names the
