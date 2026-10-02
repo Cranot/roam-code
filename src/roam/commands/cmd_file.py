@@ -31,7 +31,11 @@ _DEPS_PREVIEW = 8
 
 
 def _resolve_file(conn, path):
-    """Resolve a file path to its DB row, or None."""
+    """Resolve a file path to its DB row. Returns (frow_or_None, was_fuzzy).
+
+    W805-N Bug 2: the secondary LIKE %{path} fallback is a degraded
+    resolution; callers check was_fuzzy to disclose it.
+    """
     path = path.replace("\\", "/")
     frow = conn.execute(FILE_BY_PATH, (path,)).fetchone()
     if frow is None:
@@ -39,7 +43,8 @@ def _resolve_file(conn, path):
             "SELECT * FROM files WHERE path LIKE ? LIMIT 1",
             (f"%{path}",),
         ).fetchone()
-    return frow
+        return frow, frow is not None
+    return frow, False
 
 
 def _get_changed_files():
@@ -341,7 +346,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
 
         # --- Single-file mode (backward compat) ---
         if len(unique_paths) == 1:
-            frow = _resolve_file(conn, unique_paths[0])
+            frow, _fuzzy = _resolve_file(conn, unique_paths[0])
             if frow is None:
                 if json_mode:
                     click.echo(
@@ -351,13 +356,19 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                                 summary={
                                     "verdict": f"file not found: '{unique_paths[0]}'",
                                     "error": "file_not_found",
+                                    # W805-N Bug 1c: promote to canonical state field.
+                                    "state": "file_not_found",
+                                    "partial_success": True,
                                 },
                                 file=unique_paths[0],
                                 hint=file_not_found_hint(unique_paths[0]),
                             )
                         )
                     )
-                    raise SystemExit(1)
+                    # W805-N Bug 1a: exit 0 (not 1) so MCP bridge keeps the envelope.
+                    return
+                # W805-N Bug 1b: emit a VERDICT: line in non-json mode for consistency.
+                click.echo(f"VERDICT: file not found: '{unique_paths[0]}'")
                 click.echo(file_not_found_hint(unique_paths[0]))
                 raise SystemExit(1)
 
@@ -368,15 +379,25 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                 _fname = frow["path"].split("/")[-1] if "/" in frow["path"] else frow["path"]
                 _kind_str = ", ".join(f"{c} {k}" for k, c in kind_counts.most_common(3))
                 _file_verdict = f"{_fname}: {len(symbols)} symbols ({_kind_str}), {frow['line_count']} LOC"
+                _summary: dict = {
+                    "verdict": _file_verdict,
+                    "symbols": len(symbols),
+                    "line_count": frow["line_count"],
+                }
+                # W805-N Bug 3: 0-symbol file must disclose empty state.
+                if len(symbols) == 0:
+                    _summary["state"] = "no_symbols"
+                    _summary["partial_success"] = True
+                    _summary["verdict"] = f"file {frow['path']} empty: 0 symbols indexed"
+                # W805-N Bug 2: fuzzy-suffix fallback must disclose resolution.
+                if _fuzzy:
+                    _summary.setdefault("partial_success", True)
+                    _summary["resolution"] = "fuzzy_substring"
                 click.echo(
                     to_json(
                         json_envelope(
                             "file",
-                            summary={
-                                "verdict": _file_verdict,
-                                "symbols": len(symbols),
-                                "line_count": frow["line_count"],
-                            },
+                            summary=_summary,
                             path=obj["path"],
                             language=obj["language"],
                             line_count=obj["line_count"],
@@ -404,7 +425,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         file_results = []
         missing = []
         for p in unique_paths:
-            frow = _resolve_file(conn, p)
+            frow, _ = _resolve_file(conn, p)
             if frow is None:
                 missing.append(p)
                 continue

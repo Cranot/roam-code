@@ -313,19 +313,6 @@ class TestFileEmptyCorpusSmoke:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-N REAL BUG 1 (Pattern-1B): cmd_file.py:285 raises "
-        "SystemExit(1) on unresolved path EVEN AFTER emitting a "
-        "structured JSON envelope. The MCP wrapper's _run_roam_* bridge "
-        "with _success_codes = {0, EXIT_GATE_FAILURE} converts the "
-        "non-zero exit to a generic COMMAND_FAILED envelope - burying "
-        "the structured 'file_not_found' signal. Fix template: same as "
-        "W362 on cmd_owner - exit 0 with structured envelope. "
-        "Separate fix wave."
-    ),
-)
 def test_nonexistent_file_exit_code_not_1_on_json(real_file_corpus):
     """Pin: unresolved file in --json mode SHOULD exit 0 with structured envelope.
 
@@ -338,18 +325,6 @@ def test_nonexistent_file_exit_code_not_1_on_json(real_file_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-N REAL BUG 1 (Pattern-1B/C): cmd_file.py:286-287 emits "
-        "plain text 'File not found in index: ...' and exit 1 in "
-        "non-json mode. The Pattern-1B/C fix template requires "
-        "structured signal even on the error path; non-json mode "
-        "should at minimum include a recognisable VERDICT: line for "
-        "consistency with the rest of the roam surface. "
-        "Separate fix wave."
-    ),
-)
 def test_nonexistent_file_emits_json_envelope_not_plain_text(real_file_corpus):
     """Pin: unresolved file in non-json mode should emit a structured signal.
 
@@ -365,18 +340,6 @@ def test_nonexistent_file_emits_json_envelope_not_plain_text(real_file_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-N REAL BUG 1: cmd_file.py:271-284 emits a JSON envelope "
-        "but does not set summary.state to a closed-enum value. "
-        "Pattern-2 requires closed-enum state disclosure "
-        "('file_not_found' to mirror cmd_owner's W362 contract). "
-        "summary.error='file_not_found' exists but state is not "
-        "promoted to the canonical envelope.state field. "
-        "Separate fix wave."
-    ),
-)
 def test_nonexistent_file_explicit_state(real_file_corpus):
     """Pin: unresolved file discloses ``state="file_not_found"`` (closed enum)."""
     result = _invoke_file("does/not/exist.py", json_mode=True)
@@ -395,20 +358,6 @@ def test_nonexistent_file_explicit_state(real_file_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-N REAL BUG 2 (Pattern-1 Variant D): cmd_file.py:33-36 "
-        "(_resolve_file) silently re-queries with the SUBSTRING fuzzy "
-        "pattern 'LIKE %{path}' when the primary FILE_BY_PATH exact "
-        "match returns None. The verdict reports the matched path as a "
-        "confident success even though the input did not match exactly. "
-        "Canonical degraded-resolution silent SAFE: success verdict "
-        "indistinguishable from a fully-resolved success. Fix: disclose "
-        "via summary.resolution='fuzzy_substring' + partial_success=True + "
-        "verdict that names the degraded match. Separate fix wave."
-    ),
-)
 def test_fuzzy_match_discloses_resolution(fuzzy_fallback_file_corpus):
     """Pin: fuzzy substring fallback should disclose ``resolution``.
 
@@ -434,15 +383,6 @@ def test_fuzzy_match_discloses_resolution(fuzzy_fallback_file_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-N REAL BUG 2 (Pattern-1 Variant D): cmd_file.py:33-36 "
-        "fuzzy substring fallback emits partial_success=False, masking "
-        "a degraded-resolution branch. Fix: partial_success=True when "
-        "the suffix fallback matched. Separate fix wave."
-    ),
-)
 def test_fuzzy_match_partial_success_set(fuzzy_fallback_file_corpus):
     """Pin: fuzzy fallback must set ``partial_success: True``."""
     result = _invoke_file("real.py", json_mode=True)
@@ -459,18 +399,6 @@ def test_fuzzy_match_partial_success_set(fuzzy_fallback_file_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-N REAL BUG 3 (Pattern-2): cmd_file.py:289-323 emits "
-        "verdict 'empty.py: 0 symbols (), 0 LOC' with "
-        "summary.partial_success=False when the file resolved but "
-        "contains 0 symbols. A consumer cannot distinguish 'real empty "
-        "file' from 'extractor failed silently' from 'file uncoded'. "
-        "Fix: set partial_success=True + state='no_symbols' + verdict "
-        "that names the empty state. Separate fix wave."
-    ),
-)
 def test_zero_symbol_file_partial_success(empty_symbol_file_corpus):
     """Pin: ``summary.partial_success`` should be True on 0-symbol file."""
     result = _invoke_file("src/blank.py", json_mode=True)
@@ -481,15 +409,6 @@ def test_zero_symbol_file_partial_success(empty_symbol_file_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-N REAL BUG 3 (Pattern-2): cmd_file.py:289-323 does not "
-        "emit a summary.state field on the 0-symbol branch. Pattern-2 "
-        "requires closed-enum state disclosure. Acceptable: 'no_symbols', "
-        "'empty_file', 'no_definitions'. Separate fix wave."
-    ),
-)
 def test_zero_symbol_file_explicit_state(empty_symbol_file_corpus):
     """Pin: ``summary.state`` discloses the 0-symbol state."""
     result = _invoke_file("src/blank.py", json_mode=True)
@@ -500,17 +419,6 @@ def test_zero_symbol_file_explicit_state(empty_symbol_file_corpus):
     assert state in accepted, f"summary.state should disclose 0-symbol state; got {state!r}; expected one of {accepted}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-N REAL BUG 3 (Pattern-2): cmd_file.py:319 emits verdict "
-        "'<file>: N symbols (<kinds>), N LOC' which reads as a "
-        "confident file description when 0 symbols indicates a "
-        "degraded state. The verdict should explicitly name the empty "
-        "state, e.g. 'file src/empty.py empty: 0 symbols indexed'. "
-        "Separate fix wave."
-    ),
-)
 def test_no_silent_file_success(empty_symbol_file_corpus):
     """Pin: verdict must NOT read as confident file success on 0 symbols.
 
