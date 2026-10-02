@@ -430,20 +430,6 @@ class TestEnvelopeShapePreserved:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFFF Pattern-1-V-D + Pattern-2: cmd_smells --only "
-        "cross-layer-clone collapses (empty corpus / below pre-filter / "
-        "below jaccard threshold) to a single silent 'Clean: no code "
-        "smells detected' verdict. Fix: stamp summary.state in "
-        "{'empty_corpus','no_pairs_above_threshold'} + "
-        "partial_success=True when --only restricts to a single "
-        "AST-similarity detector that produced zero findings. Mirror of "
-        "W805-WWW + W805-ZZZ + W805-CCCC. FOURTH detector in the "
-        "paired-scoring-detector below-threshold collapse family."
-    ),
-)
 class TestCrossLayerClonePattern1VD:
     def test_partial_success_when_pre_filter_excludes_all(self, cross_layer_below_threshold_project, cli_runner):
         result = _invoke(
@@ -483,15 +469,6 @@ class TestCrossLayerClonePattern1VD:
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFFF: cmd_smells --only parallel-hierarchy emits silent "
-        "SAFE when subclass-marker Jaccard falls below 0.7 across all "
-        "hierarchy pairs. Mirror of cross-layer-clone variant; fix MUST "
-        "stamp state + partial_success."
-    ),
-)
 class TestParallelHierarchyPattern1VD:
     def test_partial_success_when_below_jaccard_threshold(self, parallel_hierarchy_below_threshold_project, cli_runner):
         result = _invoke(
@@ -536,17 +513,6 @@ class TestParallelHierarchyPattern1VD:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFFF FAMILY invariant: cmd_smells --only cross-layer-clone "
-        "collapses empty-corpus AND below-pre-filter input shapes to a "
-        "byte-identical 'Clean: no code smells detected' verdict. Mirror "
-        "of W805-WWW/ZZZ/CCCC: distinct gate-collapse states MUST emit "
-        "distinct verdicts after the fix. Pinned xfail-strict so the "
-        "fix flips xpass -> test failure."
-    ),
-)
 def test_family_shape_match_w805_www_zzz_cccc(
     empty_corpus_project,
     cross_layer_below_threshold_project,
@@ -598,18 +564,6 @@ def test_family_shape_match_w805_www_zzz_cccc(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFFF aggregate invariant: at least one of the two "
-        "registered AST-similarity smell detectors (cross-layer-clone, "
-        "parallel-hierarchy) MUST surface partial_success=True on its "
-        "gate-collapse fixture after the fix. Today neither of them "
-        "does — both collapse to the shared cmd_smells empty verdict. "
-        "Pinned xfail-strict; flips xpass when EITHER detector lands "
-        "the disclosure path."
-    ),
-)
 def test_pair_scoring_smells_collapse_disclosed(
     cross_layer_below_threshold_project,
     parallel_hierarchy_below_threshold_project,
