@@ -321,21 +321,20 @@ def deps(ctx, path, full, multi):
                 _nf_summary: dict = {
                     "verdict": f"file not found: '{path}'",
                     "error": "file_not_found",
+                    # W805-Q Bug 1: promote error to closed-enum state field.
+                    "state": "file_not_found",
+                    "partial_success": True,
                 }
                 _nf_kwargs: dict = {
                     "summary": _nf_summary,
                     "file": path,
                     "hint": file_not_found_hint(path),
+                    "partial_success": True,
                 }
-                # W607-V -- surface substrate-CALL markers on the not-found
-                # path. Flip partial_success when any marker landed so
-                # consumers can distinguish a clean miss from a degraded
-                # resolution attempt.
+                # W607-V -- surface substrate-CALL markers on the not-found path.
                 if _w607v_warnings_out:
                     _nf_summary["warnings_out"] = list(_w607v_warnings_out)
-                    _nf_summary["partial_success"] = True
                     _nf_kwargs["warnings_out"] = list(_w607v_warnings_out)
-                    _nf_kwargs["partial_success"] = True
                 click.echo(
                     to_json(
                         json_envelope(
@@ -344,7 +343,10 @@ def deps(ctx, path, full, multi):
                         )
                     )
                 )
-                raise SystemExit(1)
+                # W805-Q Bug 1: exit 0 so MCP wrapper preserves structured envelope.
+                return
+            # W805-Q Bug 1: non-json mode emits VERDICT: line for consistency.
+            click.echo(f"VERDICT: file not found: '{path}'")
             click.echo(file_not_found_hint(path))
             raise SystemExit(1)
 
@@ -487,6 +489,12 @@ def deps(ctx, path, full, multi):
                 _success_summary["warnings_out"] = list(_combined_warnings_out)
                 _success_summary["partial_success"] = True
                 _success_kwargs["warnings_out"] = list(_combined_warnings_out)
+                _success_kwargs["partial_success"] = True
+            # W805-Q Bug 2: disclose when a file is fully isolated (0 imports AND
+            # 0 importers) so consumers see "no_deps" rather than a clean SAFE.
+            if _imports_count == 0 and _imported_by_count == 0:
+                _success_summary["state"] = "no_deps"
+                _success_summary["partial_success"] = True
                 _success_kwargs["partial_success"] = True
 
             # W607-DB -- serialize_envelope boundary. Wraps the envelope
