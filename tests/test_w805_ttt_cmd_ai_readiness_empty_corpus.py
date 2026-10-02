@@ -243,22 +243,6 @@ class TestEmptyCorpusEnvelopeShape:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-TTT Pattern-2 bug: cmd_ai_readiness emits summary.score=83 + "
-        "summary.label='OPTIMIZED' on a 0-symbol corpus because 5/7 "
-        "dimensions return their 'empty input' 100 sentinel without "
-        "disclosing the degeneracy. The W1084 fix landed the *text-verdict* "
-        "axis (verdict reads 'no files scanned…') and the *state* axis "
-        "(state='no_symbols_indexed', partial_success=True), but the "
-        "machine-readable summary.score + summary.label fields still encode "
-        "vacuous-max. Fix: either zero out / null out the score and label "
-        "when state='no_symbols_indexed', or compute the composite only "
-        "over dimensions that had a non-zero input set. See CLAUDE.md "
-        "'Six systemic anti-patterns' section 2; companion pin W805-HHH."
-    ),
-)
 class TestEmptyCorpusPattern2VacuousMax:
     def test_no_vacuous_max_score(self, empty_corpus_project, cli_runner):
         """Vacuous-max axis: empty corpus must not earn a >= 50 composite."""

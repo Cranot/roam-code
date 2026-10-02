@@ -766,6 +766,18 @@ def relate(ctx, symbols, files, depth):
                 _summary["partial_success"] = True
                 _kwargs["warnings_out"] = list(_combined_warnings_out)
                 _kwargs["partial_success"] = True
+            # W805-II: Pattern-2 no-relation disclosure. cmd_trace fixes this
+            # as W1248 (state='no_path_within_hops'). Mirror: when both inputs
+            # resolve exactly AND no direct edges OR indirect path exist, stamp
+            # a closed-enum state so consumers can distinguish "no relation
+            # found" from "weak relation found" without re-parsing the verdict.
+            if _score_dict.get("state") == "NO_PATH":
+                # W805-II: disclose the no-relation state without touching
+                # partial_success — resolution-axis partial_success is already
+                # governed by the W1245 tier logic above, and forcing True here
+                # would break the positive test that asserts partial_success=False
+                # when both targets resolve exactly but have no shared path.
+                _summary["state"] = "no_relation"
 
             # W607-DA -- serialize_envelope boundary. Wraps the envelope
             # serialization itself. A downstream schema-shape refactor that

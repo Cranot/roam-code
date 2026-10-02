@@ -173,17 +173,6 @@ def test_empty_corpus_law6_verdict_standalone(cli_runner, tmp_path, monkeypatch)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-TT Pattern-2 bug pin: cmd_brief.py:815 sets "
-        "summary.state='ok' + partial_success=False whenever no section "
-        "raised AND the index exists, even when 4/5 sections are in "
-        "degraded states (highlights=empty, runs=no_runs, "
-        "pr_bundle=no_active_bundle, next=idle). Should report a "
-        "non-ok aggregate state or partial_success=True."
-    ),
-)
 def test_no_silent_brief_clean_on_empty(cli_runner, tmp_path, monkeypatch):
     """Indexed corpus with no findings/runs/bundle must NOT report ``state: 'ok'``
     with ``partial_success: false``.

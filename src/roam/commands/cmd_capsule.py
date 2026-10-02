@@ -678,6 +678,21 @@ def capsule(ctx, redact_paths, no_signatures, output):
                 _summary["partial_success"] = True
                 _summary["warnings_out"] = list(_all_markers)
                 _envelope_extra["warnings_out"] = list(_all_markers)
+            # W805-HHH: Pattern-2 empty-corpus disclosure. 0-symbol corpus
+            # produces health_score=100 (vacuous denominator) and a clean
+            # "capsule exported" verdict — indistinguishable from a healthy
+            # export. Stamp state + partial_success and suppress the vacuous
+            # score so consumers read the degenerate case correctly.
+            if symbols_n == 0:
+                _summary["state"] = "empty_corpus"
+                _summary["partial_success"] = True
+                _summary["health_score"] = None
+                _summary["resolution"] = "empty_corpus"
+                _summary["verdict"] = (
+                    f"empty corpus: 0 symbols indexed "
+                    f"({files_n} file{'s' if files_n != 1 else ''} scanned, "
+                    f"no code symbols found)"
+                )
             return json_envelope(
                 "capsule",
                 summary=_summary,
