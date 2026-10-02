@@ -375,27 +375,6 @@ class TestOrchestrateEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-U REAL BUG (CRITICAL): cmd_orchestrate.py L176-179 emits "
-        "'orchestrated 3 agents with 0 write conflicts across 0 shared "
-        "interfaces' when the graph has 0 nodes and partition_for_agents "
-        "short-circuited to _empty_result(n_agents). The 3 stub agents "
-        "have cluster_label='empty-N' which is internal signal that the "
-        "stub path fired - but that signal is never lifted into the "
-        "verdict. An agent reading 'orchestrated 3 agents with 0 write "
-        "conflicts' proceeds under a false-partition signal, "
-        "indistinguishable from a real partition where 3 agents each "
-        "have non-trivial work zones and decided no edges crossed them. "
-        "Fix template: at cmd_orchestrate.py before building the verdict, "
-        'detect \'all(a["cluster_label"].startswith("empty-") for a in '
-        "agents)' and emit verdict='no signal in indexed corpus (0 "
-        "symbols, 0 edges)' OR similar. Reference: graph/partition.py "
-        "L46-47 (the len(G)==0 short-circuit) + L162-181 "
-        "(_empty_result). Separate fix wave."
-    ),
-)
 def test_no_silent_partition_success_on_empty(cli_runner, empty_corpus):
     """Pin: empty corpus must NOT emit the canonical partition verdict.
 
@@ -438,23 +417,6 @@ def test_no_silent_partition_success_on_empty(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-U REAL BUG (HIGH): cmd_orchestrate.py L201-209 builds the "
-        "summary dict without setting partial_success, so the "
-        "json_envelope auto-derive defaults it to False. On the empty "
-        "corpus (0 symbols, 0 edges), partition_for_agents falls through "
-        "to _empty_result which returns 3 stub agents - no exception was "
-        "raised, so partial_success stays False. Same cascading silent "
-        "fallback as W805-L #4 (preflight cascade), W805-R #3 "
-        "(adversarial cascade), W805-T #2 (uses cascade). Fix template: "
-        'when _empty_result fired (detect via \'all(a["cluster_label"]'
-        '.startswith("empty-") for a in agents)\'), set '
-        "partial_success=True + state='insufficient_signal_data'. "
-        "Separate fix wave."
-    ),
-)
 def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     """Pin: when _empty_result stubbed the agents, partial_success=True.
 
@@ -478,24 +440,6 @@ def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-U REAL BUG (HIGH): cmd_orchestrate.py L201-209 builds "
-        "summary={verdict, n_agents, write_conflicts, "
-        "shared_interfaces_count, conflict_probability} - NO state field. "
-        "Peer multi-signal commands (cmd_adversarial, cmd_preflight, "
-        "cmd_diagnose) carry a closed-enum 'state' field whose purpose is "
-        "exactly this: disclose post-run conditions like 'all_checks_ran' "
-        "/ 'partial_*' / 'insufficient_input'. cmd_orchestrate has NO "
-        "state field at all - agents have no machine-readable way to "
-        "distinguish 'real partition with N agents' from 'stub partition "
-        "from _empty_result'. Fix template: add summary.state with closed "
-        "enum {partition_emitted, no_data_in_corpus, no_matching_files} "
-        "and emit 'no_data_in_corpus' when _empty_result fired. Separate "
-        "fix wave."
-    ),
-)
 def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
     """Pin: summary.state must distinguish 'real partition' from 'stub partition'.
 
@@ -524,25 +468,6 @@ def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-U REAL BUG (HIGH, multi-signal): cmd_orchestrate composes 4 "
-        "signals (agents, merge_order, shared_interfaces, "
-        "write_conflicts/conflict_probability) but the envelope reports "
-        "each as a bare count without disclosing whether the underlying "
-        "computation had real graph input. On the isolated_symbol_corpus "
-        "(1 node + 0 edges), Louvain returns 0 clusters (no edges to "
-        "modularize), _find_shared_interfaces returns [] (no cross-"
-        "partition edges to share), compute_conflict_probability returns "
-        "0.0 (len(G.edges)==0 branch). The envelope reports all 4 as 0 - "
-        "indistinguishable from 'real partition, 4 clean signals'. Fix "
-        "template: stamp a per-signal '_definition' or 'state' sidecar "
-        "(e.g. shared_interfaces_state='no_edges_to_share', "
-        "conflict_probability_state='no_edges_in_graph'). Separate fix "
-        "wave."
-    ),
-)
 def test_signal_level_explicit_no_data(cli_runner, isolated_symbol_corpus):
     """Pin: each multi-signal slot must disclose ran-with-data vs ran-on-empty.
 

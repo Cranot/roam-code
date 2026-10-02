@@ -287,6 +287,11 @@ def orchestrate_cmd(ctx, n_agents, file_args, staged):
             descriptors = ([], [], 0.0, [], 0)
         agents, merge_order, conflict_prob, shared_interfaces, write_conflicts = descriptors
 
+        # W805-U: detect stub-partition path (_empty_result fired when graph
+        # had 0 nodes); also detect no-edges for sidecar disclosure.
+        _w805u_no_data = bool(agents) and all(str(a.get("cluster_label", "")).startswith("empty") for a in agents)
+        _w805u_no_edges = len(G.edges()) == 0
+
         # W607-DS: ``compose_verdict`` substrate -- LAW 6 single-line
         # verdict + LAW 4 concrete-noun terminal. A raise inside the
         # f-string (e.g. len() on a poisoned object) degrades to a
@@ -295,6 +300,8 @@ def orchestrate_cmd(ctx, n_agents, file_args, staged):
         # the degraded path. W978 #1: f-string verdict floor is plain
         # text, no Name references.
         def _compose_verdict():
+            if _w805u_no_data:
+                return "no signal in indexed corpus (0 symbols, 0 edges) — partition not possible"
             return (
                 f"orchestrated {len(agents)} agents with {write_conflicts} write conflicts "
                 f"across {len(shared_interfaces)} shared interfaces"
@@ -383,6 +390,12 @@ def orchestrate_cmd(ctx, n_agents, file_args, staged):
                 envelope_summary["partial_success"] = True
                 envelope_summary["warnings_out"] = list(_w607ds_warnings_out)
                 envelope_kwargs["warnings_out"] = list(_w607ds_warnings_out)
+            # W805-U: disclose stub-partition and no-edges states.
+            if _w805u_no_data:
+                envelope_summary["state"] = "no_data_in_corpus"
+                envelope_summary["partial_success"] = True
+            if _w805u_no_edges:
+                envelope_summary["conflict_probability_state"] = "no_edges_in_graph"
 
             def _serialize_envelope():
                 click.echo(to_json(json_envelope("orchestrate", **envelope_kwargs)))
