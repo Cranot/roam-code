@@ -436,13 +436,25 @@ def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level)
                     to_json(
                         json_envelope(
                             "visualize",
-                            summary={"verdict": "EMPTY", "nodes": 0, "edges": 0},
+                            summary={
+                                "verdict": "no diagram: 0 symbols indexed — run roam index first",
+                                "nodes": 0,
+                                "edges": 0,
+                                "state": "index_empty",
+                                "partial_success": True,
+                            },
                             diagram="",
+                            agent_contract={
+                                "facts": ["0 nodes indexed", "0 edges in graph"],
+                                "risks": [],
+                                "next_commands": ["roam index"],
+                                "confidence": None,
+                            },
                         )
                     )
                 )
             else:
-                click.echo("VERDICT: EMPTY -- no symbols in index")
+                click.echo("VERDICT: no diagram: 0 symbols indexed -- run roam index first")
             return
 
         # Filter
