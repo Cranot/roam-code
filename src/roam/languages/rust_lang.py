@@ -650,13 +650,52 @@ class RustExtractor(LanguageExtractor):
                 self._walk_refs(child, source, refs, scope_name)
 
     def _extract_use(self, node, source, refs, scope_name):
-        """Extract use declarations."""
-        # Get the full use path text
+        """Extract use declarations, splitting brace-list imports into individual edges."""
         for child in node.children:
-            if child.type in (
+            if child.type == "scoped_use_list":
+                # use std::io::{Read, Write} — find the use_list child and emit per item
+                use_list_node = None
+                for sub in child.children:
+                    if sub.type == "use_list":
+                        use_list_node = sub
+                import_path = self.node_text(child, source)
+                if use_list_node is not None:
+                    for item in use_list_node.children:
+                        if item.type == "identifier":
+                            name = self.node_text(item, source)
+                            if name and name != "self":
+                                refs.append(
+                                    self._make_reference(
+                                        target_name=name,
+                                        kind="import",
+                                        line=node.start_point[0] + 1,
+                                        source_name=scope_name,
+                                        import_path=import_path,
+                                    )
+                                )
+                        elif item.type == "scoped_use_list":
+                            # nested braces: recurse via a synthetic node proxy
+                            self._extract_use_list_item(
+                                item, source, refs, scope_name, import_path, node.start_point[0] + 1
+                            )
+                else:
+                    # No use_list found — fall back to emitting the last segment
+                    path = import_path
+                    target = path.rsplit("::", 1)[-1] if "::" in path else path
+                    target = target.strip("{}*, ")
+                    if target:
+                        refs.append(
+                            self._make_reference(
+                                target_name=target,
+                                kind="import",
+                                line=node.start_point[0] + 1,
+                                source_name=scope_name,
+                                import_path=path,
+                            )
+                        )
+            elif child.type in (
                 "use_as_clause",
                 "use_list",
-                "scoped_use_list",
                 "scoped_identifier",
                 "identifier",
                 "use_wildcard",
@@ -675,6 +714,24 @@ class RustExtractor(LanguageExtractor):
                             import_path=path,
                         )
                     )
+
+    def _extract_use_list_item(self, node, source, refs, scope_name, import_path, line):
+        """Recursively emit import edges for nested scoped_use_list items."""
+        for sub in node.children:
+            if sub.type == "use_list":
+                for item in sub.children:
+                    if item.type == "identifier":
+                        name = self.node_text(item, source)
+                        if name and name != "self":
+                            refs.append(
+                                self._make_reference(
+                                    target_name=name,
+                                    kind="import",
+                                    line=line,
+                                    source_name=scope_name,
+                                    import_path=import_path,
+                                )
+                            )
 
     def _extract_call(self, node, source, refs, scope_name):
         func_node = node.child_by_field_name("function")
