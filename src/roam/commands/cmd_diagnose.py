@@ -586,12 +586,20 @@ def diagnose_cmd(ctx, name, depth, batch_input):
             # row), but include it for shape uniformity so a future
             # batch-path BH wrap lands cleanly.
             _combined_batch = list(_w607dn_warnings_out) + list(_w607s_warnings_out) + list(_w607bh_warnings_out)
-            batch_partial = any_degraded or bool(_combined_batch)
+            # W805-M Bug 1: empty batch must disclose via verdict + state + partial_success.
+            _w805m_empty_batch = len(results) == 0
+            if _w805m_empty_batch:
+                _batch_verdict = "empty batch: 0 symbols supplied"
+            else:
+                _batch_verdict = f"{len(results)} symbol(s) diagnosed"
+            batch_partial = any_degraded or bool(_combined_batch) or _w805m_empty_batch
             batch_summary: dict = {
-                "verdict": f"{len(results)} symbol(s) diagnosed",
+                "verdict": _batch_verdict,
                 "count": len(results),
                 "partial_success": batch_partial,
             }
+            if _w805m_empty_batch:
+                batch_summary["state"] = "empty_batch"
             batch_kwargs: dict = {
                 "summary": batch_summary,
                 "results": results,
@@ -1078,6 +1086,17 @@ def diagnose_cmd(ctx, name, depth, batch_input):
                 _success_summary["partial_success"] = True
                 _success_kwargs["warnings_out"] = list(_combined_warnings_out)
                 _success_kwargs["partial_success"] = True
+
+            # W805-M Bug 2: 0-suspect clean resolution must disclose
+            # via state + partial_success (Pattern-2 silent SAFE).
+            if (
+                len(upstream_ranked) == 0
+                and len(downstream_ranked) == 0
+                and _success_summary.get("resolution") == "symbol"
+            ):
+                _success_summary["state"] = "no_suspects"
+                _success_summary["partial_success"] = True
+
             # W607-BH -- wrap the envelope serialization itself. A
             # downstream schema-shape refactor that breaks
             # ``json_envelope("diagnose", ...)`` would otherwise crash
