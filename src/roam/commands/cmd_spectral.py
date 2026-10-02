@@ -141,6 +141,33 @@ def spectral(ctx, depth, compare, gap_only, k):
 
         G = build_symbol_graph(conn)
 
+        # W805-CC: empty-graph guard — spectral_gap returns 0.0 on empty G,
+        # which maps to "Poorly modularized" via verdict_from_gap — a silent
+        # false-verdict on a corpus with no symbols.
+        if len(G) == 0:
+            _no_graph_msg = "no graph nodes: 0 symbols indexed — run roam index first"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "spectral",
+                            summary={
+                                "verdict": _no_graph_msg,
+                                "spectral_gap": 0.0,
+                                "partitions": 0,
+                                "state": "no_graph_nodes",
+                                "partial_success": True,
+                                "symbol_count": sym_count,
+                            },
+                            budget=token_budget,
+                            partitions=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {_no_graph_msg}")
+            return
+
         # Spectral gap
         gap = spectral_gap(G)
         verdict = verdict_from_gap(gap)

@@ -248,19 +248,6 @@ class TestNoSilentWellConnectedOnEmpty:
     """The empty-corpus branch must NOT emit a clean-corpus
     spectral-gap shape verdict on a graph that was never analysed."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-CC #1 CRITICAL: empty corpus emits "
-            'verdict="Poorly modularized" from verdict_from_gap(0.0); '
-            "the 0.0 sentinel is overloaded between "
-            "trivial-graph / disconnected / clean-but-poorly-connected. "
-            "cmd_spectral.py:146,191,205 must short-circuit BEFORE the "
-            "gap pipeline when sym_count == 0 and emit an empty-state "
-            "verdict + state=no_graph_nodes (peer pattern: "
-            "cmd_layers.py:360-392 W807)."
-        ),
-    )
     def test_no_silent_poorly_modularized_on_empty(self, cli_runner, empty_corpus, monkeypatch):
         """Verdict on empty corpus must not reuse a clean-corpus
         spectral-gap shape label (Well-modularized / Moderately
@@ -290,18 +277,6 @@ class TestNoSilentZeroGapOnEmpty:
     """The empty-corpus envelope must not silently report
     ``partial_success=False`` when the underlying check didn't run."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-CC #2 HIGH: cmd_spectral.py:188-200 emits "
-            "summary.partial_success=False on the empty-corpus path. "
-            "spectral_gap(G) returned the trivial-graph sentinel 0.0 -- "
-            "the architectural analysis didn't actually evaluate. "
-            "partial_success must be true so consumers know the "
-            "verdict is degraded (Pattern-2 mandate; peer pattern: "
-            "cmd_layers W807 + W805-Y partition pin #1)."
-        ),
-    )
     def test_empty_corpus_partial_success_set(self, cli_runner, empty_corpus, monkeypatch):
         """``summary.partial_success`` is True on the empty branch.
 
@@ -322,18 +297,6 @@ class TestEmptyCorpusStateExplicit:
     """The empty-corpus envelope must carry a machine-readable
     ``summary.state`` slot disclosing the empty-corpus condition."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-CC #3 HIGH: cmd_spectral.py:188-200 envelope has NO "
-            "summary.state slot. Peer commands (cmd_layers W807 "
-            "no_graph_nodes; cmd_orchestrate W805-U; cmd_partition "
-            "W805-Y) either carry a closed-enum state field on the "
-            "empty branch or are pinned to add one. Agents reading "
-            '"0 partitions" must parse the verdict string instead of '
-            'reading state="no_graph_nodes".'
-        ),
-    )
     def test_empty_corpus_state_explicit(self, cli_runner, empty_corpus, monkeypatch):
         """``summary.state`` discloses the empty-corpus condition.
 
@@ -362,18 +325,6 @@ class TestLaw6VerdictStandalone:
     """LAW 6: summary.verdict must convey the empty-state condition
     WITHOUT any other field."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-CC #1 corollary: verdict on empty corpus does not "
-            "signal the empty-state condition standalone. An agent "
-            "consuming only data['summary']['verdict'] cannot tell "
-            "the corpus was empty -- the verdict reads "
-            '"Poorly modularized" identical to a real architectural '
-            "finding. Same fix-template as #1: short-circuit + "
-            'verdict="No graph nodes: 0 symbols".'
-        ),
-    )
     def test_empty_corpus_law6_verdict_standalone(self, cli_runner, empty_corpus, monkeypatch):
         """Verdict must convey the empty-state condition standalone."""
         monkeypatch.chdir(empty_corpus)
