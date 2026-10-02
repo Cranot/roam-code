@@ -1566,6 +1566,24 @@ def duplicates(
             }
             if partial_success:
                 summary_payload["partial_success"] = True
+            # W805-ZZZ: gate-collapse disclosure when candidates entered
+            # but no clusters formed. Two distinct collapse shapes:
+            # (I) shape pre-filter excluded all pairs (pairs_to_check==0)
+            # (II) pairs scored but all below similarity threshold.
+            if not cluster_list and original_candidate_count >= 2:
+                if len(pairs_to_check) == 0:
+                    _gate_state = "no_pairs_after_prefilter"
+                    summary_payload["verdict"] = (
+                        f"{original_candidate_count} candidates but shape "
+                        f"pre-filter excluded all pairs (param/line-count mismatch)"
+                    )
+                else:
+                    _gate_state = "no_pairs_above_threshold"
+                    summary_payload["verdict"] = (
+                        f"{len(pairs_to_check)} pairs scored but all below threshold={threshold}"
+                    )
+                summary_payload["state"] = _gate_state
+                summary_payload["partial_success"] = True
             if sampled:
                 summary_payload["sampled"] = True
                 summary_payload["sample_size"] = sample_size
