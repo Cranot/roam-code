@@ -93,11 +93,25 @@ internal/
 .claude/*
 !.claude/skills/
 
-# dev/ has NO special rules. Everything in dev/ is public — public dev
-# scripts, public docs, the example plugin subtree. Private content
-# (planning memos, sprint plans, monetization research, dogfood batches,
-# generated test fixtures, smoke results, scratch notes) goes under
-# internal/ — the wholesale-ignored folder above. No magic.
+# dev/ tooling scripts and docs are public. Session memos, handover notes,
+# wave-audit scratch, and strategy docs accumulate in dev/ during active
+# development and must not ride into the public repo. The naming conventions
+# below cover them; any file not matching these patterns is public by default.
+dev/*-2026-[0-9][0-9]-*.md
+dev/SESSION-SNAPSHOT-*.md
+dev/HANDOVER-*.md
+dev/WAVE*-*.md
+dev/W[0-9]*-*.md
+dev/_audit_*.py
+
+# Private service-report drafts (not public offers or contracts)
+templates/services-reports/
+
+# Recheck-agent per-session scratch
+.recheck/
+
+# Root-level conversation-output scratch
+_conv_out.json
 
 # Sibling-platform session profile (per-machine local state)
 .stoa/
