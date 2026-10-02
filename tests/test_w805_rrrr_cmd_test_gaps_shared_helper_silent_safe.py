@@ -226,10 +226,10 @@ class TestCmdTestGapsConsumesSharedHelper:
             "get_changed_files; if this changed, re-audit the shared-"
             "helper family membership."
         )
-        assert "get_changed_files(root" in src, (
+        assert "get_changed_files" in src, (
             "W805-RRRR W978-precondition: cmd_test_gaps must CALL "
-            "get_changed_files(root, ...); if the call site moved, "
-            "re-audit the shared-helper family membership."
+            "get_changed_files (or get_changed_files_status); if the "
+            "call site moved, re-audit the shared-helper family membership."
         )
 
 
@@ -294,28 +294,6 @@ class TestChangedFlagStateDisclosure:
     indistinguishable from a no-args invocation on every machine-state
     field. There is no closed-enum disclosure separating the two paths."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-RRRR REAL BUG: src/roam/commands/cmd_test_gaps.py:271-293 "
-            "(the ``if not target_paths:`` branch downstream of "
-            '``get_changed_files``) emits ``verdict: "No changed files to '
-            'analyze"`` with NO ``state`` field and ``partial_success: '
-            "False`` on the --changed-on-clean-tree path -- byte-identical "
-            "to the no-args path on every machine-state field. The root "
-            "cause is ``src/roam/commands/changed_files.py:142,145`` "
-            "swallowing ``returncode != 0`` / FileNotFoundError / "
-            "TimeoutExpired into an empty list. Pattern-1-V-D silent-"
-            "success-on-degraded-resolution. FOURTH strict shared-helper "
-            "consumer; FAMILY IS NOW 4-STRONG STRUCTURAL on the "
-            "get_changed_files axis (cmd_diff + cmd_pr_diff + cmd_attest "
-            "+ cmd_test_gaps). Pinned strict; graduates when the --changed "
-            "path emits ``state`` with a closed-enum value distinct from "
-            "the no-args path -- ideally atomically with W805-EEEE / "
-            "W805-JJJJ / W805-OOOO graduation when the shared helper is "
-            "upgraded to ``(paths, error_kind)``."
-        ),
-    )
     def test_changed_flag_emits_state_distinct_from_no_args(self, cli_runner, clean_indexed_project, monkeypatch):
         """--changed path must emit ``summary.state`` distinct from no-args."""
         monkeypatch.chdir(clean_indexed_project)
@@ -344,17 +322,6 @@ class TestChangedFlagResolutionDisclosure:
     must emit a closed-enum ``resolution`` field, since this IS a
     degraded-resolution path under the shared helper."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-RRRR REAL BUG (resolution axis): --changed-on-clean-tree "
-            "path emits no ``resolution`` field. Pattern-1-V-D contract "
-            "requires AT LEAST ONE closed-enum disclosure (state OR "
-            "resolution) on the degraded-resolution path. Pinned strict; "
-            "graduates when the envelope distinguishes --changed-empty "
-            "from no-args on either field."
-        ),
-    )
     def test_changed_flag_emits_resolution_or_state(self, cli_runner, clean_indexed_project, monkeypatch):
         """--changed-on-clean must emit ``summary.resolution`` OR ``summary.state``."""
         monkeypatch.chdir(clean_indexed_project)
@@ -384,24 +351,6 @@ class TestSilentSafeInheritedFromSharedHelper:
     family to 4-STRONG STRUCTURAL. Pins the inheritance so a fix to the
     shared helper unblocks ALL FOUR consumers atomically."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-RRRR FAMILY-CONFIRMATION: cmd_test_gaps's --changed-on-"
-            "clean path emits no ``git_error`` field -- the same gap "
-            "W805-EEEE pins on cmd_diff, W805-JJJJ pins on cmd_pr_diff, "
-            "and W805-OOOO pins on cmd_attest. The shared helper "
-            "``src/roam/commands/changed_files.py:131-146`` returns "
-            "an empty list on three distinct failure classes "
-            "(returncode != 0, FileNotFoundError, TimeoutExpired). All "
-            "FOUR consumers (cmd_diff, cmd_pr_diff, cmd_attest, "
-            "cmd_test_gaps) inherit silent-SAFE -- the family is now "
-            "4-STRONG STRUCTURAL. Pinned strict; graduates when "
-            "``get_changed_files`` returns a ``(paths, error_kind)`` "
-            "tuple and cmd_test_gaps surfaces ``summary.git_error`` on "
-            "the failure branch."
-        ),
-    )
     def test_changed_flag_envelope_has_git_error_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """--changed-on-clean must emit ``summary.git_error`` distinct from no-args."""
         monkeypatch.chdir(clean_indexed_project)
@@ -427,20 +376,6 @@ class TestNoArgsDistinctFromChangedEmpty:
     they are byte-identical on every machine-state field cmd_test_gaps
     emits."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-RRRR REAL BUG (invariant): no-args envelope and "
-            "--changed-on-clean envelope are byte-identical on every "
-            "machine-state field (state, resolution, git_error, "
-            "partial_success, total_gaps). Pattern-2 silent-fallback "
-            "contract violated: the --changed path took a git-diff "
-            "round-trip that the no-args path did not; the envelope "
-            "should disclose that the helper ran and returned []. "
-            "Pinned strict; graduates when the two envelopes differ on "
-            "at least one closed-enum machine-state field."
-        ),
-    )
     def test_no_args_distinct_from_changed_empty(self, cli_runner, clean_indexed_project, monkeypatch):
         """No-args envelope must differ from --changed-on-clean envelope on a machine-state field."""
         monkeypatch.chdir(clean_indexed_project)
@@ -537,7 +472,11 @@ class TestW805JjjjInvariantsPreserved:
             f"still emit ``no change`` verdict; "
             f"got {summary.get('verdict')!r}"
         )
-        assert summary.get("partial_success") is False
+        # W805-QQQ deliberately sets partial_success=True on the no-diff path
+        # so compound aggregators can detect no-diff degradation via the
+        # machine-readable channel. Updated from False to True to reflect
+        # this intentional change.
+        assert summary.get("partial_success") is True
 
 
 class TestW805EeeeInvariantsPreserved:

@@ -33,7 +33,8 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
-    get_changed_files,
+    GIT_ERROR,
+    get_changed_files_status,
     is_test_file,
     resolve_changed_to_db,
 )
@@ -2757,9 +2758,31 @@ def affected_tests_cmd(ctx, target, staged, show_command):
         # --staged mode: resolve changed files to symbols
         if staged:
             root = find_project_root()
-            changed = get_changed_files(root, staged=True)
+            # W805-SSSS: use get_changed_files_status so the --staged path
+            # emits a JSON envelope (not plain text) and discloses
+            # state/git_error when the helper returns [].
+            try:
+                changed, _staged_git_err = get_changed_files_status(root, staged=True)
+            except Exception:  # noqa: BLE001
+                changed, _staged_git_err = [], GIT_ERROR
             if not changed:
-                click.echo("No staged changes found.")
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "affected-tests",
+                                summary={
+                                    "verdict": "no staged changes found",
+                                    "state": "git_error" if _staged_git_err else "no_staged_changes",
+                                    "git_error": _staged_git_err or "no_staged_changes",
+                                    "partial_success": True,
+                                    "tests": [],
+                                },
+                            )
+                        )
+                    )
+                else:
+                    click.echo("No staged changes found.")
                 return
             file_map = resolve_changed_to_db(conn, changed)
             if not file_map:

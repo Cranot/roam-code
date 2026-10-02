@@ -226,10 +226,10 @@ class TestCmdAffectedTestsConsumesSharedHelper:
             "get_changed_files; if this changed, re-audit the shared-"
             "helper family membership."
         )
-        assert "get_changed_files(root" in src, (
+        assert "get_changed_files" in src, (
             "W805-SSSS W978-precondition: cmd_affected_tests must CALL "
-            "get_changed_files(root, ...); if the call site moved, "
-            "re-audit the shared-helper family membership."
+            "get_changed_files (or get_changed_files_status); if the "
+            "call site moved, re-audit the shared-helper family membership."
         )
 
 
@@ -250,24 +250,6 @@ class TestStagedOnCleanEmitsJsonEnvelope:
     envelope in --json mode (Pattern-1 Variant C). Today it emits plain
     text -- strictly worse than all four sister consumers."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-SSSS REAL BUG: src/roam/commands/cmd_affected_tests.py:"
-            "318-323 (the ``if not changed:`` branch downstream of "
-            "``get_changed_files(root, staged=True)``) emits "
-            "``click.echo('No staged changes found.')`` as PLAIN TEXT "
-            "without honoring --json mode. Pattern-1 Variant C: any "
-            "JSON-mode invocation MUST emit a structured envelope. "
-            "STRICTLY WORSE than W805-EEEE / W805-JJJJ / W805-OOOO / "
-            "W805-RRRR which all emit a JSON envelope (with varying "
-            "degrees of state-field disclosure). FIFTH strict shared-"
-            "helper consumer; FAMILY IS NOW 5-STRONG STRUCTURAL on the "
-            "get_changed_files axis. Pinned strict; graduates when the "
-            "--staged-on-clean path emits a parseable JSON envelope in "
-            "--json mode."
-        ),
-    )
     def test_staged_clean_tree_emits_parseable_json(self, cli_runner, clean_indexed_project, monkeypatch):
         """--staged-on-clean must emit a parseable JSON envelope in --json mode."""
         monkeypatch.chdir(clean_indexed_project)
@@ -298,16 +280,6 @@ class TestStagedStateDisclosure:
     """The --staged-on-clean-tree path must emit a closed-enum ``state``
     field disclosing the degraded-resolution branch."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-SSSS REAL BUG (state axis): --staged-on-clean path "
-            "emits plain text -- no envelope, so no ``state`` field. "
-            "Compound bug: must first emit a JSON envelope (Pattern-1-V-C) "
-            "AND then populate ``summary.state`` (Pattern-1-V-D). Pinned "
-            "strict; graduates when both conditions hold."
-        ),
-    )
     def test_staged_emits_state_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """--staged-on-clean must emit ``summary.state`` distinct from no-args."""
         monkeypatch.chdir(clean_indexed_project)
@@ -332,18 +304,6 @@ class TestStagedResolutionDisclosure:
     must emit a closed-enum ``resolution`` field, since this IS a
     degraded-resolution path under the shared helper."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-SSSS REAL BUG (resolution axis): --staged-on-clean path "
-            "emits no envelope so no ``resolution`` field either. "
-            "Pattern-1-V-D contract requires AT LEAST ONE closed-enum "
-            "disclosure (state OR resolution) on the degraded-resolution "
-            "path. Pinned strict; graduates when the envelope is emitted "
-            "AND distinguishes --staged-empty from no-args on either "
-            "field."
-        ),
-    )
     def test_staged_emits_resolution_or_state(self, cli_runner, clean_indexed_project, monkeypatch):
         """--staged-on-clean must emit ``summary.resolution`` OR ``summary.state``."""
         monkeypatch.chdir(clean_indexed_project)
@@ -374,25 +334,6 @@ class TestSilentSafeInheritedFromSharedHelper:
     Pins the inheritance so a fix to the shared helper unblocks ALL
     FIVE consumers atomically."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-SSSS FAMILY-CONFIRMATION: cmd_affected_tests's --staged-"
-            "on-clean path emits no envelope so no ``git_error`` field "
-            "-- the same gap W805-EEEE pins on cmd_diff, W805-JJJJ pins "
-            "on cmd_pr_diff, W805-OOOO pins on cmd_attest, and W805-RRRR "
-            "pins on cmd_test_gaps. The shared helper "
-            "``src/roam/commands/changed_files.py:131-146`` returns an "
-            "empty list on three distinct failure classes (returncode "
-            "!= 0, FileNotFoundError, TimeoutExpired). All FIVE consumers "
-            "(cmd_diff, cmd_pr_diff, cmd_attest, cmd_test_gaps, "
-            "cmd_affected_tests) inherit silent-SAFE -- the family is "
-            "now 5-STRONG STRUCTURAL. Pinned strict; graduates when "
-            "``get_changed_files`` returns a ``(paths, error_kind)`` "
-            "tuple and cmd_affected_tests surfaces ``summary.git_error`` "
-            "on the failure branch."
-        ),
-    )
     def test_staged_envelope_has_git_error_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """--staged-on-clean must emit ``summary.git_error`` distinct from no-args."""
         monkeypatch.chdir(clean_indexed_project)
