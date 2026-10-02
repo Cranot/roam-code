@@ -1149,6 +1149,10 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
                 "risk_level_canonical": "low",
                 "risk_rank": risk_rank("low"),
                 "label": label,
+                # W805-QQQ: disclose empty-diff state so compound aggregators
+                # can detect no-diff degradation via the machine-readable channel.
+                "state": "no_changes",
+                "partial_success": True,
             }
             _nochange_envelope_kwargs: dict[str, Any] = {
                 "summary": _nochange_summary,

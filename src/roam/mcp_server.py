@@ -7003,6 +7003,9 @@ def _compound_envelope(
         "not_initialized",
         "no_data",
         "unresolved",
+        # W805-QQQ: no-diff children disclose via state="no_changes".
+        "no_changes",
+        "empty_diff",
     }
     _CHILD_DEGRADED_RESOLUTIONS = {"unresolved", "fuzzy"}
     workflow_recipe = meta.pop("workflow_recipe", None) or _COMPOUND_WORKFLOW_RECIPES.get(command)
