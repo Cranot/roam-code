@@ -64,9 +64,7 @@ These documents answer different questions from the current user guides:
 
 | Document | How to use it |
 | --- | --- |
-| [Algorithm research](algo-polish-research.md) | Historical design ideas, with a current routing note. Recheck each proposed task against implementation before scheduling it. |
 | [Sibling patch experiment](sibling-patch-network-v1.md) | Default-off experimental behavior and its trust limits; not a general repair guarantee or an enabled integration. |
-| [Legacy audit template](audit_report_template.md) | Superseded example material, not a current command/output contract. |
 | [Fresh-install transcript](fresh-install-smoke.md) | The stated historical fixture and version, not a live installation or performance claim. |
 
 ## Keeping the docs useful
