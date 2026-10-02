@@ -305,19 +305,6 @@ class TestDepsEmptyCorpusSmoke:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-Q REAL BUG 1 (Pattern-1B): cmd_deps.py:84 raises "
-        "SystemExit(1) on unresolved path EVEN AFTER emitting a "
-        "structured JSON envelope. The MCP wrapper's _run_roam_* bridge "
-        "with _success_codes = {0, EXIT_GATE_FAILURE} converts the "
-        "non-zero exit to a generic COMMAND_FAILED envelope - burying "
-        "the structured 'file_not_found' signal. Fix template: same as "
-        "W362 on cmd_owner / W805-N on cmd_file - exit 0 with "
-        "structured envelope. Separate fix wave."
-    ),
-)
 def test_nonexistent_file_exit_code_not_1_on_json(real_deps_corpus):
     """Pin: unresolved file in --json mode SHOULD exit 0 with structured envelope.
 
@@ -330,17 +317,6 @@ def test_nonexistent_file_exit_code_not_1_on_json(real_deps_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-Q REAL BUG 1 (Pattern-1B/C): cmd_deps.py:85-86 emits "
-        "plain text from file_not_found_hint() + exit 1 in non-json "
-        "mode. The Pattern-1B/C fix template requires structured "
-        "signal even on the error path; non-json mode should at "
-        "minimum include a recognisable VERDICT: line for consistency "
-        "with the rest of the roam surface. Separate fix wave."
-    ),
-)
 def test_nonexistent_file_emits_json_envelope_not_plain_text(real_deps_corpus):
     """Pin: unresolved file in non-json mode should emit a structured signal.
 
@@ -354,18 +330,6 @@ def test_nonexistent_file_emits_json_envelope_not_plain_text(real_deps_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-Q REAL BUG 1: cmd_deps.py:71-83 emits a JSON envelope "
-        "but does not set summary.state to a closed-enum value. "
-        "Pattern-2 requires closed-enum state disclosure "
-        "('file_not_found' to mirror cmd_owner's W362 contract). "
-        "summary.error='file_not_found' exists but state is not "
-        "promoted to the canonical envelope.state field. "
-        "Separate fix wave."
-    ),
-)
 def test_nonexistent_file_explicit_state(real_deps_corpus):
     """Pin: unresolved file discloses ``state="file_not_found"`` (closed enum)."""
     result = _invoke_deps("does/not/exist.py", json_mode=True)
@@ -384,19 +348,6 @@ def test_nonexistent_file_explicit_state(real_deps_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-Q REAL BUG 2 (Pattern-2): cmd_deps.py:108-134 emits "
-        "verdict '<file>: 0 imports, 0 importers' with "
-        "summary.partial_success=False when the file resolved but has "
-        "0 imports AND 0 importers. A consumer cannot distinguish "
-        "'real isolated file by design' from 'extractor failed silently' "
-        "from 'indexer missed imports'. Fix: set partial_success=True + "
-        "state='no_deps' + verdict that names the isolated state. "
-        "Separate fix wave."
-    ),
-)
 def test_zero_deps_file_partial_success(zero_deps_corpus):
     """Pin: ``summary.partial_success`` should be True on 0-deps file."""
     result = _invoke_deps("src/isolated.py", json_mode=True)
@@ -407,15 +358,6 @@ def test_zero_deps_file_partial_success(zero_deps_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-Q REAL BUG 2 (Pattern-2): cmd_deps.py:108-134 does not "
-        "emit a summary.state field on the 0-deps branch. Pattern-2 "
-        "requires closed-enum state disclosure. Acceptable: 'no_deps', "
-        "'isolated', 'no_imports_no_importers'. Separate fix wave."
-    ),
-)
 def test_zero_deps_file_explicit_state(zero_deps_corpus):
     """Pin: ``summary.state`` discloses the 0-deps state."""
     result = _invoke_deps("src/isolated.py", json_mode=True)
