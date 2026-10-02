@@ -266,9 +266,12 @@ def replay_cmd(ctx, run_id, execute, dry_run):
     verdicts = [e.get("summary_verdict", "") for e in events if e.get("summary_verdict")]
 
     # State: missing_run handled above; here we discriminate between an
-    # in-progress (not yet ended) run and a properly-closed one.
+    # in-progress (not yet ended) run, a properly-closed one, and a run
+    # that completed without logging any events (W805-UU: empty_ledger).
     if meta.status == "in_progress" or not meta.ended_at:
         state = "incomplete_run"
+    elif events_count == 0:
+        state = "empty_ledger"
     else:
         state = "ok"
 
@@ -279,6 +282,11 @@ def replay_cmd(ctx, run_id, execute, dry_run):
     safe_reached = any(isinstance(v, str) and v.strip().upper().startswith("SAFE") for v in verdicts)
     if state == "incomplete_run":
         verdict = f"replayed {events_count} event(s) from {run_id} (in progress, agent={meta.agent})"
+    elif state == "empty_ledger":
+        # W805-UU LAW 6: verdict names the cause and next action.
+        verdict = (
+            f"0 events logged by agent {meta.agent} -- agent ran but never called roam runs log; run roam runs list"
+        )
     else:
         parts = [
             f"agent {meta.agent} ran {gate_count} gate command(s)"
@@ -391,10 +399,14 @@ def replay_cmd(ctx, run_id, execute, dry_run):
     next_commands: list[str] = []
     if state == "incomplete_run":
         next_commands.append(f"roam runs end --run-id {run_id}")
+    elif state == "empty_ledger":
+        # W805-UU: recovery actions for a run with no logged events.
+        next_commands.append("roam runs list")
+        next_commands.append("roam runs start")
     next_commands.append(f"roam runs show {run_id}")
     if execute and dry_run is True and execute_report and execute_report["would_run_count"]:
         next_commands.append(f"roam replay {run_id} --execute --no-dry-run")
-    if not execute:
+    if not execute and state not in ("empty_ledger",):
         next_commands.append("roam agent-score")
 
     # --- JSON envelope --------------------------------------------------
@@ -428,7 +440,7 @@ def replay_cmd(ctx, run_id, execute, dry_run):
                     "replay",
                     summary={
                         "verdict": verdict,
-                        "partial_success": partial_count > 0 or state == "incomplete_run",
+                        "partial_success": partial_count > 0 or state in ("incomplete_run", "empty_ledger"),
                         "state": state,
                         "run_id": run_id,
                         "next_commands": next_commands,
