@@ -194,15 +194,6 @@ def test_empty_corpus_envelope_has_verdict(cli_runner, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFF Pattern-2 bug: cmd_cga emits no `state` field on empty corpus. "
-        "Verdict reads 'CGA emitted: 0 symbols / 0 edges' indistinguishable from "
-        "a populated-graph attestation. Fix: cmd_cga.py:340-344 must set "
-        "summary.state='empty_corpus' (or similar) when symbol_count == 0."
-    ),
-)
 def test_empty_corpus_state_explicit(cli_runner, tmp_path, monkeypatch):
     """Empty corpus -> ``summary.state`` MUST be explicitly set (e.g.
     ``"empty_corpus"`` / ``"degenerate_graph"``), NOT a silent green
@@ -232,15 +223,6 @@ def test_empty_corpus_state_explicit(cli_runner, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFF Pattern-2 bug: cmd_cga emits partial_success=false on empty "
-        "corpus. The predicate is the empty-string SHA-256 stub -- not a real "
-        "attestation. Fix: set partial_success=True whenever symbol_count == 0 "
-        "(or edge_count == 0, or both digests equal _EMPTY_SHA256)."
-    ),
-)
 def test_empty_corpus_partial_success_set(cli_runner, tmp_path, monkeypatch):
     proj = tmp_path / "partial"
     proj.mkdir()
@@ -264,17 +246,6 @@ def test_empty_corpus_partial_success_set(cli_runner, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFF Pattern-2 bug: empty-corpus verdict reads 'CGA emitted: 0 "
-        "symbols / 0 edges, merkle=e3b0c44298fc...'. LAW 6 requires the "
-        "verdict to stand alone; an agent reading just this string cannot "
-        "tell the corpus was empty. Fix: include 'empty corpus' / "
-        "'degenerate' / '(no symbols indexed)' in the verdict prefix when "
-        "symbol_count == 0."
-    ),
-)
 def test_empty_corpus_law6_verdict_standalone(cli_runner, tmp_path, monkeypatch):
     """LAW 6 (compression forces domain neutrality): the verdict alone
     must signal degeneracy on empty corpus. An agent consuming only the
@@ -317,17 +288,6 @@ def test_empty_corpus_law6_verdict_standalone(cli_runner, tmp_path, monkeypatch)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFF Pattern-1-V-D bug: cmd_cga emits no `resolution` field "
-        "(closed enum: graph / empty_graph / unindexed / ...). The CGA "
-        "predicate built over an empty index is byte-identical to ANY other "
-        "empty-index CGA -- the merkle is SHA-256('') -- yet the envelope "
-        "reads as a successful emission. Fix: stamp resolution='empty_graph' "
-        "(or similar) on the summary when symbol_count + edge_count == 0."
-    ),
-)
 def test_missing_graph_disclosure(cli_runner, tmp_path, monkeypatch):
     """Pattern-1-V-D: the resolution state of the graph-read MUST be
     disclosed via a ``resolution`` field on the summary. Without it,
@@ -359,15 +319,6 @@ def test_missing_graph_disclosure(cli_runner, tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFF Pattern-2 bug: empty-corpus verdict starts with 'CGA emitted:' "
-        "exactly like a populated-graph attestation. An agent reading the verdict "
-        "cannot tell which one ran. Fix: prefix with 'CGA stub' / 'EMPTY CORPUS:' "
-        "/ 'no symbols indexed' when symbol_count == 0."
-    ),
-)
 def test_no_silent_predicate_emitted_on_empty(cli_runner, tmp_path, monkeypatch):
     """The verdict MUST NOT start with the same green prefix used for
     real-graph emissions. Agent-safety: a silent 'CGA emitted' on empty
@@ -410,17 +361,6 @@ def test_no_silent_predicate_emitted_on_empty(cli_runner, tmp_path, monkeypatch)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-FFF cryptographic-meaninglessness bug: empty-corpus CGA "
-        "predicate has merkle_root = edge_bundle_digest = SHA-256(empty "
-        "string) = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78"
-        "52b855. Two empty CGAs are byte-identical -- the predicate is "
-        "cryptographically meaningless. Fix: refuse with EXIT_DEGRADED or "
-        "stamp summary.empty_predicate=True so verifier can reject."
-    ),
-)
 def test_empty_corpus_predicate_not_silently_empty_string_sha(cli_runner, tmp_path, monkeypatch):
     """Smoking-gun: when symbol_count == 0 AND merkle_root equals the
     empty-string SHA-256, the producer must EITHER refuse (non-zero

@@ -558,6 +558,9 @@ def cga_emit(
         )
         merkle_local = fields["merkle_root"]
         merkle_short = merkle_local[:12] if merkle_local else ""
+        # W805-FFF: empty corpus discloses degeneracy (LAW 6 + Pattern-2).
+        if fields["symbol_count"] == 0:
+            return f"CGA (empty corpus): 0 symbols / 0 edges, merkle={merkle_short}…{claim_summary_local}"
         return (
             f"CGA emitted: {fields['symbol_count']} symbols / "
             f"{fields['edge_count']} edges, merkle={merkle_short}…"
@@ -604,12 +607,23 @@ def cga_emit(
             "signed": bool(sign_result and sign_result.get("signed")),
             "vsa_emitted": bool(vsa_result and vsa_result.get("vsa_path")),
         }
+        # W805-FFF: empty corpus → disclose state, resolution, partial_success
+        # explicitly (Pattern-2 + Pattern-1-V-D). symbol_count == 0 means
+        # the predicate is over an empty graph; the merkle is SHA-256(""),
+        # identical across all empty-corpus repos — not a real attestation.
+        _w805_empty_corpus = _w489_a_summary.get("symbol_count", -1) == 0
+        if _w805_empty_corpus:
+            _w489_a_summary["state"] = "empty_corpus"
+            _w489_a_summary["resolution"] = "empty_graph"
+            _w489_a_summary["partial_success"] = True
         _w489_a_envelope_extra: dict = {
             "budget": token_budget,
             "statement": statement,
             "sign_result": sign_result,
             "vsa_result": vsa_result,
         }
+        if _w805_empty_corpus:
+            _w489_a_envelope_extra["partial_success"] = True
         # W489-A pre-existing bucket: qualified_only lint flag (rules-shape
         # disclosure). W607-AF bucket: substrate-CALL markers (helper raised).
         # Both axes feed the SAME ``summary.warnings_out`` field on emission;
