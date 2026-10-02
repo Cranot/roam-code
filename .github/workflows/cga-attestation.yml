@@ -12,13 +12,22 @@
 #
 # Triggers:
 #   - push to main when attest/, security/, or this workflow changes
+#   - pull_request when the same paths change (offline-key job only;
+#     keyless-oidc is skipped on PRs to avoid Sigstore availability flakes)
 #   - manual workflow_dispatch
-# Not gated on PRs to avoid flaking on Sigstore availability issues.
 
 name: CGA Attestation
 
 on:
   push:
+    branches: [main]
+    paths:
+      - 'src/roam/attest/**'
+      - 'src/roam/security/taint_engine.py'
+      - 'src/roam/commands/cmd_cga.py'
+      - 'src/roam/commands/cmd_taint.py'
+      - '.github/workflows/cga-attestation.yml'
+  pull_request:
     branches: [main]
     paths:
       - 'src/roam/attest/**'
@@ -161,10 +170,13 @@ jobs:
   # code path. The offline-key job (above) is the deterministic gate
   # that always runs without network — this one is the production-path
   # smoke. If Sigstore has an outage, re-run the job after they recover.
+  # Skipped on pull_request to avoid Sigstore availability flakes on PRs;
+  # offline-key provides deterministic coverage for PR attestation checks.
   keyless-oidc:
     name: Keyless OIDC attestation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    if: github.event_name != 'pull_request'
     permissions:
       contents: read
       id-token: write   # required only for keyless OIDC signing
