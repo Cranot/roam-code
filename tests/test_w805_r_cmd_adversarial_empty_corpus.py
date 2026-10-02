@@ -342,24 +342,6 @@ class TestAdversarialEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-R REAL BUG (CRITICAL): cmd_adversarial.py L872 emits "
-        "'No architectural challenges found -- changes look clean' "
-        "when every check ran on empty input (empty.py with 0 symbols, "
-        "0 edges, 0 detector findings). The 6 helpers stamp "
-        "status='ran' after their underlying graph/detector call "
-        "returns regardless of input size, so the orchestrator "
-        "concludes 'all 6 checks ran cleanly' when reality is 'all 6 "
-        "checks ran on empty input'. An agent reading 'changes look "
-        "clean' proceeds under a false-clean signal. Fix template: "
-        "emit verdict='no signal in changed files (corpus has 0 "
-        "indexed symbols)' OR set partial_success=True + "
-        "state='insufficient_signal_data' when changed_sym_ids is "
-        "empty. Separate fix wave."
-    ),
-)
 def test_empty_corpus_no_silent_clean_verdict(cli_runner, empty_corpus):
     """Pin: empty corpus must NOT emit the canonical clean verdict.
 
@@ -388,25 +370,6 @@ def test_empty_corpus_no_silent_clean_verdict(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-R REAL BUG (HIGH): each _check_* helper in "
-        "cmd_adversarial.py stamps status='ran' after its underlying "
-        "call (find_cycles / detect_layers / run_detectors / "
-        "detect_clusters / batched_in) returns, regardless of whether "
-        "the input set was empty. On the isolated_symbol_corpus the "
-        "graph has 1 node + 0 edges, run_detectors finds 0 findings, "
-        "detect_clusters returns 0 clusters, detect_layers returns "
-        "{1:0}. Every helper returns [] but stamps 'ran'. The "
-        "orchestrator cannot distinguish 'helper ran on real graph + "
-        "found 0 violations' from 'helper ran on trivial graph + had "
-        "nothing to inspect'. Fix template: emit 'ran:no_data' or "
-        "'ran:empty_input' when the underlying result set was empty. "
-        "Reference lines: L119, L196, L267, L360, L446, L520. "
-        "Separate fix wave."
-    ),
-)
 def test_check_status_discloses_no_data_state(cli_runner, isolated_symbol_corpus):
     """Pin: check_status entries must disclose ran-with-data vs ran-empty.
 
@@ -439,21 +402,6 @@ def test_check_status_discloses_no_data_state(cli_runner, isolated_symbol_corpus
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-R REAL BUG (HIGH): cmd_adversarial.py L855 sets "
-        "partial_success=bool(errored_checks). On the empty corpus, "
-        "errored_checks is [] (every check 'ran' on empty input), so "
-        "partial_success=False. Same cascading silent fallback as "
-        "W805-L #4 (preflight cascade). The verdict 'changes look "
-        "clean' is being driven by 6 silent no-ops while the envelope "
-        "claims partial_success=False. Fix template: count helpers "
-        "whose underlying result set had real signal; when 0 of 6 had "
-        "real signal AND challenges=[], set partial_success=True + "
-        "state='insufficient_signal_data'. Separate fix wave."
-    ),
-)
 def test_empty_corpus_partial_success_when_no_signal(cli_runner, empty_corpus):
     """Pin: when 6/6 checks ran on empty input, partial_success=True.
 
@@ -475,21 +423,6 @@ def test_empty_corpus_partial_success_when_no_signal(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-R REAL BUG (MEDIUM): cmd_adversarial.py L930 emits "
-        "summary.state='all_checks_ran' on the empty corpus, "
-        "indistinguishable from the state emitted by a populated "
-        "corpus where every check ran cleanly. The closed enum today "
-        "is {partial_adversarial, all_checks_ran}; neither member "
-        "discloses 'all 6 checks ran on empty input'. Fix template: "
-        "add a third enum member 'no_data_in_corpus' or "
-        "'insufficient_input' and emit it when changed_sym_ids is "
-        "empty OR when all 6 helpers report ran:no_data. Separate "
-        "fix wave."
-    ),
-)
 def test_empty_corpus_state_discloses_no_data(cli_runner, empty_corpus):
     """Pin: summary.state must distinguish 'all checks ran cleanly' from
     'all checks ran on empty input'.

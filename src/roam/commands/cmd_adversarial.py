@@ -1204,7 +1204,42 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # silently-degraded checks BEFORE deciding the verdict. If any
         # check errored, the "clean" verdict is a lie.
         errored_checks = sorted(name for name, s in check_status.items() if s.startswith("errored:"))
-        partial_success = bool(errored_checks)
+
+        # W805-R: detect trivial graph (0 edges for changed symbols) so we
+        # can disclose that the "no challenges" verdict reflects empty input,
+        # not a real clean review. changed_sym_ids may be non-empty (e.g.
+        # a single variable assignment) but with 0 edges the checks are
+        # no-ops: no cycles to find, no layers to violate, no clusters to cross.
+        _w805r_no_graph_edges = False
+        if changed_sym_ids:
+            try:
+                _sym_ids_list = list(changed_sym_ids)
+                _ph = ",".join("?" * len(_sym_ids_list))
+                _edge_cnt = conn.execute(
+                    f"SELECT COUNT(*) FROM edges WHERE source_id IN ({_ph}) OR target_id IN ({_ph})",
+                    _sym_ids_list + _sym_ids_list,
+                ).fetchone()[0]
+                _w805r_no_graph_edges = _edge_cnt == 0
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            _w805r_no_graph_edges = True  # no symbols → no edges either
+
+        # Disclose no-data: trivial graph with 0 challenges and no errors.
+        _w805r_no_signal = _w805r_no_graph_edges and not challenges
+        if _w805r_no_signal:
+            for _ck in (
+                "new_cycles",
+                "layer_violations",
+                "anti_patterns",
+                "cross_cluster",
+                "dead_imports",
+                "complexity",
+            ):
+                if _ck not in check_status or check_status[_ck].startswith("skipped:"):
+                    check_status[_ck] = "ran:no_data"
+
+        partial_success = bool(errored_checks) or _w805r_no_signal
 
         # W607-EK: compose_verdict substrate -- LAW 6 single-line
         # verdict floor. A raise here degrades to the literal zero-count
@@ -1213,12 +1248,14 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # ``challenges`` (anchored).
         def _compose_verdict():
             if not challenges:
-                if partial_success:
+                if errored_checks:
                     return (
                         f"PARTIAL ({len(errored_checks)} check(s) errored: "
                         f"{', '.join(errored_checks)}) -- adversarial review degraded, "
                         "cannot certify clean"
                     )
+                if _w805r_no_signal:
+                    return "no signal in changed files — 0 graph edges in changed symbols"
                 return "No architectural challenges found -- changes look clean"
             if critical > 0:
                 verdict_local = f"{critical} critical of {len(challenges)} challenges"
@@ -1293,7 +1330,11 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                 "partial_success": partial_success,
                 "failed_checks": errored_checks,
                 "check_status": dict(check_status),
-                "state": ("partial_adversarial" if partial_success else "all_checks_ran"),
+                "state": (
+                    "partial_adversarial"
+                    if errored_checks
+                    else ("no_data_in_corpus" if _w805r_no_signal else "all_checks_ran")
+                ),
             }
             envelope_kwargs: dict = dict(
                 summary=envelope_summary,
