@@ -107,7 +107,7 @@ features have separate costs and data paths; see the network boundary above.
 ## Current product snapshot
 
 <!-- product-block:snapshot -->
-Source version: 14.1.0; 287 CLI commands; 246 MCP tools; 17 default core tools; 28 languages; Apache-2.0.
+Source version: 14.1.0; 287 CLI commands; 258 MCP tools; 17 default core tools; 28 languages; Apache-2.0.
 Product states: cli: AVAILABLE; mcp: AVAILABLE; prReplay: AVAILABLE; review: PLANNED; cloud: PLANNED.
 Local code analysis and mechanical checks for coding agents.
 Source snapshot, not a fresh installed-package check. Paid reports require agreed written scope.

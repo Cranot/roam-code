@@ -20629,6 +20629,239 @@ else:
 
 
 # ---------------------------------------------------------------------------
+# Wave 4 gap-fill: analysis commands that benefit agents through MCP
+# ---------------------------------------------------------------------------
+
+
+# roam_blame_reviewers
+@_tool(
+    name="roam_blame_reviewers",
+    description=(
+        "Suggest code reviewers for a diff by git-blame line-ownership. "
+        "Returns a ranked list of author handles by lines-added share. "
+        "Use before requesting PR review to target the most informed reviewers."
+    ),
+)
+def roam_blame_reviewers(
+    commit_range: str = "",
+    staged: bool = False,
+    top_n: int = 5,
+    root: str = ".",
+) -> dict:
+    """Suggest reviewers by blame ownership."""
+    args: list[str] = ["blame-reviewers", "--top-n", str(top_n)]
+    if staged:
+        args.append("--staged")
+    if commit_range:
+        args.append(commit_range)
+    return _run_roam(args, root)
+
+
+# roam_compiler_health
+@_tool(
+    name="roam_compiler_health",
+    description=(
+        "Daily-dashboard view of roam compiler quality: env-drift vs baselines, "
+        "routing distribution, per-mode KPIs, self magic-numbers scan. "
+        "Returns a 0-100 score and actionable alerts."
+    ),
+)
+def roam_compiler_health(root: str = ".") -> dict:
+    """Compiler health dashboard."""
+    return _run_roam(["compiler-health"], root)
+
+
+# roam_compiler_corpus
+@_tool(
+    name="roam_compiler_corpus",
+    description=(
+        "Analyze a saved prompt corpus through the roam compiler. "
+        "Reports L1-route rate, artifact distribution, latency p50/p95, "
+        "and top misses. Use to measure classifier regressions after a change."
+    ),
+)
+def roam_compiler_corpus(
+    corpus_path: str = "",
+    limit: int = 50,
+    root: str = ".",
+) -> dict:
+    """Analyze a saved prompt corpus."""
+    args: list[str] = ["compiler-corpus", "--limit", str(limit)]
+    if corpus_path:
+        args.extend(["--corpus", corpus_path])
+    return _run_roam(args, root)
+
+
+# roam_cycle_break
+@_tool(
+    name="roam_cycle_break",
+    description=(
+        "Recommend the smallest extraction that breaks each import/call cycle. "
+        "Returns one actionable refactor suggestion per cycle: which symbols to "
+        "extract and where to move them. Use after roam_cycles to get fix advice."
+    ),
+)
+def roam_cycle_break(root: str = ".") -> dict:
+    """Recommend cycle-breaking refactors."""
+    return _run_roam(["cycle-break"], root)
+
+
+# roam_dict_consistency
+@_tool(
+    name="roam_dict_consistency",
+    description=(
+        "W210 guard: check that computed-numeric fields and their formulas are "
+        "internally consistent. Returns mismatches between declared and derived "
+        "values -- a class of silent regression that caused W181."
+    ),
+)
+def roam_dict_consistency(
+    prefix: str = "",
+    contains: str = "",
+    root: str = ".",
+) -> dict:
+    """Check computed-numeric field consistency."""
+    args: list[str] = ["dict-consistency"]
+    if prefix:
+        args.extend(["--prefix", prefix])
+    if contains:
+        args.extend(["--contains", contains])
+    return _run_roam(args, root)
+
+
+# roam_dispatch_trace
+@_tool(
+    name="roam_dispatch_trace",
+    description=(
+        "Trace the classifier path for a prompt: per-probe fire/skip reasons, "
+        "procedure decision, and confidence. Use to debug unexpected routing or "
+        "to understand why a prompt went to a specific procedure."
+    ),
+)
+def roam_dispatch_trace(
+    prompt: str,
+    counterfactual: bool = False,
+    root: str = ".",
+) -> dict:
+    """Trace compiler dispatch for a prompt."""
+    args: list[str] = ["dispatch-trace", prompt]
+    if counterfactual:
+        args.append("--counterfactual")
+    return _run_roam(args, root)
+
+
+# roam_envelope_diff
+@_tool(
+    name="roam_envelope_diff",
+    description=(
+        "Diff two roam compile envelopes: probe families, classifier, artifact "
+        "distribution, confidence. Use for regression CI or to compare before/after "
+        "a classifier change. Pass two prompt strings or two cache keys."
+    ),
+)
+def roam_envelope_diff(
+    a: str,
+    b: str = "",
+    from_cache: bool = False,
+    root: str = ".",
+) -> dict:
+    """Diff two compile envelopes."""
+    args: list[str] = ["envelope-diff", a]
+    if b:
+        args.append(b)
+    if from_cache:
+        args.append("--from-cache")
+    return _run_roam(args, root)
+
+
+# roam_ignore_drift
+@_tool(
+    name="roam_ignore_drift",
+    description=(
+        "Find files git tracks despite a .gitignore rule that claims to exclude them. "
+        "Returns a list of drifted files and the rule that should have excluded each. "
+        "Use before a release to catch accidentally-tracked files."
+    ),
+)
+def roam_ignore_drift(root: str = ".") -> dict:
+    """Find .gitignore drift."""
+    return _run_roam(["ignore-drift"], root)
+
+
+# roam_magic_numbers
+@_tool(
+    name="roam_magic_numbers",
+    description=(
+        "Scan source for hardcoded numeric constants that should be named. "
+        "Covers Python (AST) and 9 other languages (tree-sitter). "
+        "With cluster=True, groups by semantic role (size_or_limit, http_status, etc.)."
+    ),
+)
+def roam_magic_numbers(
+    threshold: int = 2,
+    include_trivial: bool = False,
+    cluster: bool = False,
+    root: str = ".",
+) -> dict:
+    """Scan for magic numbers."""
+    args: list[str] = ["magic-numbers", "--threshold", str(threshold)]
+    if include_trivial:
+        args.append("--include-trivial")
+    if cluster:
+        args.append("--cluster")
+    return _run_roam(args, root)
+
+
+# roam_rules_suggest
+@_tool(
+    name="roam_rules_suggest",
+    description=(
+        "Suggest .roam/rules.yml entries and CI gates from repository history. "
+        "Promotes the review-suggestion capability from roam_guard_rules. "
+        "Returns candidate rules ranked by historical evidence."
+    ),
+)
+def roam_rules_suggest(
+    tier: str = "team",
+    commit_range: str = "",
+    root: str = ".",
+) -> dict:
+    """Suggest rules from history."""
+    args: list[str] = ["rules-suggest", "--tier", tier]
+    if commit_range:
+        args.extend(["--commit-range", commit_range])
+    return _run_roam(args, root)
+
+
+# roam_surface_gaps
+@_tool(
+    name="roam_surface_gaps",
+    description=(
+        "Reconcile the CLI command surface, MCP tool surface, and documentation surface. "
+        "Reports commands that are wrapped but undocumented, documented but unwrapped, "
+        "or in the CLI but in neither. Use to audit surface drift after a release."
+    ),
+)
+def roam_surface_gaps(root: str = ".") -> dict:
+    """Find surface gaps between CLI, MCP, and docs."""
+    return _run_roam(["surface-gaps"], root)
+
+
+# roam_vue_emits
+@_tool(
+    name="roam_vue_emits",
+    description=(
+        "Find Vue child emits that have no handler at a resolved parent usage. "
+        "Returns unhandled emit events with file and line. "
+        "Use in Vue 3 codebases to catch missing event handler wiring."
+    ),
+)
+def roam_vue_emits(root: str = ".") -> dict:
+    """Find unhandled Vue child emits."""
+    return _run_roam(["vue-emits"], root)
+
+
+# ---------------------------------------------------------------------------
 # ROADMAP A1 / W74 + W99 + W105 + W108: derived-view finalization
 # ---------------------------------------------------------------------------
 # Collapse the legacy split-brain dicts into derived views of

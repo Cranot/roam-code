@@ -8,7 +8,7 @@ A cold parser cache retrieves one checksum-verified grammar bundle; prewarm it
 before air-gap use. Explicit network features are inventoried in
 `docs/network-boundary.md`.
 <!-- BEGIN auto-count:llms-install-headline -->
-287 commands, 246 MCP tools, 28 languages, local analysis, zero API keys.
+287 commands, 258 MCP tools, 28 languages, local analysis, zero API keys.
 <!-- END auto-count:llms-install-headline -->
 
 ## Cross-references

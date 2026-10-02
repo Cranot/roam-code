@@ -91,6 +91,17 @@ _KNOWN_SETUP_COMMANDS: set[str] = {
     "surface",  # canonical capability registry inventory
     "telemetry",  # local telemetry ring buffer
     "lsp",  # Language Server Protocol stdio server (not MCP)
+    # Compiler evaluation harness — internal measurement tools; one-shot or
+    # human-driven; no agent value through a stateless call.
+    "bench-compile",  # benchmarking harness (one-shot measurement)
+    "calc-golden",  # golden-master oracle for evaluation (internal eval harness)
+    "calc-inventory",  # formula enumeration for eval (internal eval harness)
+    "calc-probe",  # rounding-differential probe (internal eval harness)
+    "docs-index",  # planning-doc index hygiene (writes on disk)
+    "guard-init",  # bootstraps repo for Roam Guard adoption (writes on disk)
+    "profile-import",  # one-time profiler data ingestion (writes to local index)
+    "savings-backfill",  # one-time backfill of savings episode records
+    "service-report",  # generates service-engagement deliverables on disk
 }
 
 # 2) Local-state only — the value lives on disk in ``.roam/``; running it
@@ -125,11 +136,22 @@ _KNOWN_LOCAL_STATE_COMMANDS: set[str] = {
     # revisit ``validate`` as a read-only CI-gate tool, but the
     # producer surface stays CLI-only by design.
     "pr-bundle",
+    # Compiler telemetry — reads from .roam/compile-runs.jsonl; no extra value
+    # through stateless MCP (agents can read the JSONL directly).
+    "compile-cache",  # local compile-run cache management
+    "compile-stats",  # distribution reports over local .roam/compile-runs.jsonl
+    # Code-review workflow state stored on disk; agents interact via CLI.
+    "review-accept",  # accept a pending code review (.roam/ state)
+    "review-request",  # request a code review (.roam/ state)
+    "review-verify",  # verify review obligations (.roam/ state)
+    # Episode evidence — admissibility check on local corpus files.
+    "savings",  # reads local episode evidence from disk; no MCP value
 }
 
 # 3) Daemon / long-running — incompatible with stateless MCP invocations.
 _KNOWN_DAEMON_COMMANDS: set[str] = {
     "watch",  # poll-for-changes auto-reindex daemon
+    "compile-daemon",  # S2-lite warm compile server background process
 }
 
 # 4) REPL / interactive helpers — N/A in MCP context.
