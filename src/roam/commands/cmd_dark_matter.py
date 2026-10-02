@@ -114,6 +114,7 @@ def _dark_matter_risk_level(
     total_pairs: int,
     max_strength: float,
     *,
+    min_pair_support: int = 0,
     warnings_out: list[str] | None = None,
 ) -> str:
     """Project dark-matter rollup metrics onto the canonical W631 risk-LEVEL set.
@@ -143,7 +144,12 @@ def _dark_matter_risk_level(
         if warnings_out is not None:
             warnings_out.append(f"dark_matter_unknown_severity:negative({total_pairs},{max_strength})")
         return "low"
-    if total_pairs >= 20 or max_strength >= 0.7:
+    # Require sufficient support before strength alone drives "high".
+    # Pairs at the minimum support threshold (default 3) have NPMI=1.0 when
+    # they always co-change, which inflates strength without real evidence of
+    # pervasive hidden coupling.
+    _strength_qualifies_high = max_strength >= 0.7 and (min_pair_support == 0 or min_pair_support > 3)
+    if total_pairs >= 20 or _strength_qualifies_high:
         return "high"
     if total_pairs >= 5 or max_strength >= 0.4:
         return "medium"
@@ -598,6 +604,7 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
             # escape the wrap. cmd_taint W607-CJ 5th-discipline anchor.
             def _compute_predicate_fields(_pairs, _by_cat) -> dict:
                 _max_str = 0.0
+                _min_sup = 0
                 for _p in _pairs:
                     _s = _p.get("strength") or 0.0
                     try:
@@ -606,10 +613,14 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                         _sf = 0.0
                     if _sf > _max_str:
                         _max_str = _sf
+                    _cc = _p.get("cochange_count") or 0
+                    if _min_sup == 0 or _cc < _min_sup:
+                        _min_sup = _cc
                 return {
                     "total_pairs": len(_pairs),
                     "hidden_pair_count": len(_pairs),
                     "max_coupling": _max_str,
+                    "min_pair_support": _min_sup,
                     "by_category": dict(_by_cat),
                 }
 
@@ -672,10 +683,12 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
             # the computation is wrapped by the compute_predicate boundary
             # (defensive lift on the floored dict guarantees the key).
             _max_strength = _pred_fields["max_coupling"]
+            _min_pair_support = _pred_fields.get("min_pair_support", 0)
             _dm_warnings_out: list[str] = []
             _dm_domain_level = _dark_matter_risk_level(
                 total,
                 _max_strength,
+                min_pair_support=_min_pair_support,
                 warnings_out=_dm_warnings_out,
             )
             risk_level_canonical = normalize_risk_level(_dm_domain_level) or "low"
@@ -900,6 +913,7 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
         # cochange-strength so reviewers reading the terminal output see
         # the same closed-enum token as the JSON envelope.
         _dm_text_max_strength = 0.0
+        _dm_text_min_support = 0
         for _p in pairs:
             _s = _p.get("strength") or 0.0
             try:
@@ -908,7 +922,10 @@ def hidden_coupling_cmd(ctx, limit, min_npmi, min_cochanges, explain, category, 
                 _sf = 0.0
             if _sf > _dm_text_max_strength:
                 _dm_text_max_strength = _sf
-        _dm_text_level = _dark_matter_risk_level(total, _dm_text_max_strength)
+            _cc = _p.get("cochange_count") or 0
+            if _dm_text_min_support == 0 or _cc < _dm_text_min_support:
+                _dm_text_min_support = _cc
+        _dm_text_level = _dark_matter_risk_level(total, _dm_text_max_strength, min_pair_support=_dm_text_min_support)
         risk_level_canonical_text = normalize_risk_level(_dm_text_level) or "low"
 
         if total_pairs_full == 0:

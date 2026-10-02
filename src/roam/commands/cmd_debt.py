@@ -724,8 +724,13 @@ def debt(ctx, limit, by_kind, threshold, roi):
         _n_cycles = stats["files_with_cycles"]
         _n_gods = stats["files_with_god_components"]
         _n_hotspots = stats["hotspot_files"]
+        _has_structural_signals = _n_cycles > 0 or _n_gods > 0 or _n_hotspots > 0
         _debt_label = (
-            "low debt" if stats["mean_debt"] < 0.1 else "moderate debt" if stats["mean_debt"] < 0.3 else "high debt"
+            "low debt"
+            if stats["mean_debt"] < 0.1
+            else "high debt"
+            if stats["mean_debt"] >= 0.3 and _has_structural_signals
+            else "moderate debt"
         )
         # append top-1 hotspot to the verdict so the
         # one-line summary tells you WHERE to look first, not just IF
