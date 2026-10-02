@@ -362,21 +362,6 @@ class TestPreflightEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-L REAL BUG (CRITICAL): cmd_preflight.py L568-579 emits "
-        "fitness.severity='OK' when rules_checked=0 (no .roam-fitness.yml "
-        "in the project). 'OK' is indistinguishable from 'all rules pass' - "
-        "agents reading fitness.severity=OK cannot tell whether fitness "
-        "evaluated cleanly or whether no rules existed to evaluate. This is "
-        "the canonical Pattern-2 silent-fallback shape on the canonical "
-        "agent-safety gate (CLAUDE.md: 'Run roam preflight <sym> before "
-        "editing'). Fix template: emit severity='info' + "
-        "state='no_rules_configured' on the rules_checked==0 branch. "
-        "Separate fix wave."
-    ),
-)
 def test_fitness_signal_explicit_no_rules(cli_runner, isolated_symbol_corpus):
     """Pin: when no fitness rules are configured, fitness must NOT claim OK.
 
@@ -407,20 +392,6 @@ def test_fitness_signal_explicit_no_rules(cli_runner, isolated_symbol_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-L REAL BUG (HIGH): cmd_preflight.py L82-86 _test_severity "
-        "returns 'WARNING' whenever direct+transitive+colocated==0. This "
-        "conflates 'no tests indexed in the repo' with 'tests exist but "
-        "none reach this symbol'. Both are legitimate observations but "
-        "they imply different agent actions: the first means 'add a test'; "
-        "the second means 'investigate why coverage is missing'. Fix "
-        "template: emit a state sub-field disclosing which case fired "
-        "(e.g. state='no_tests_indexed' when the global test corpus is "
-        "empty). Separate fix wave."
-    ),
-)
 def test_tests_signal_explicit_no_tests_state(cli_runner, isolated_symbol_corpus):
     """Pin: when no tests are indexed at all, tests signal must disclose state.
 
@@ -443,19 +414,6 @@ def test_tests_signal_explicit_no_tests_state(cli_runner, isolated_symbol_corpus
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-L REAL BUG (MEDIUM): cmd_preflight.py L361-367 _check_complexity "
-        "returns severity='low' when the symbol_metrics join returns 0 rows. "
-        "A symbol can exist in symbols WITHOUT a symbol_metrics row (older "
-        "indexer build, partial reindex, language extractor not emitting "
-        "metrics). severity=LOW here means 'no data', not 'low complexity'. "
-        "Fix template: emit state='no_complexity_data' on the not-rows "
-        "branch so agents distinguish 'low complexity' from 'unknown "
-        "complexity'. Separate fix wave."
-    ),
-)
 def test_complexity_signal_explicit_no_data(cli_runner, isolated_symbol_corpus):
     """Pin: when symbol_metrics has 0 rows for the target, disclose state.
 
@@ -491,22 +449,6 @@ def test_complexity_signal_explicit_no_data(cli_runner, isolated_symbol_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-L REAL BUG (MEDIUM): cmd_preflight.py L1023-1029 emits "
-        "summary.partial_success=False on the isolated-symbol corpus where "
-        "5 of 6 signals (blast/tests/complexity/coupling/fitness, but not "
-        "conventions) have NO underlying data. The verdict 'Proceed with "
-        "caution - MEDIUM risk' is driven by tests.severity=WARNING, "
-        "which is itself driven by 'no tests indexed'. Cascading silent "
-        "fallback: the canonical agent-safety gate emits a MEDIUM verdict "
-        "from a cascading chain of no-data signals while claiming "
-        "partial_success=False. Fix template: count signals with "
-        "underlying data; if <=2 have real signal, set partial_success=True "
-        "+ summary.state='insufficient_signal_data'. Separate fix wave."
-    ),
-)
 def test_no_silent_safe_to_edit_on_empty_corpus(cli_runner, isolated_symbol_corpus):
     """CRITICAL agent-safety pin: when most signals lack data, partial_success=True.
 
@@ -535,17 +477,6 @@ def test_no_silent_safe_to_edit_on_empty_corpus(cli_runner, isolated_symbol_corp
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-L REAL BUG (LOW): cmd_preflight.py L244 _blast_severity "
-        "returns 'LOW' on (0,0). This conflates 'no callers at all (the "
-        "symbol is unreachable / dead / unwired)' with 'low blast radius'. "
-        "Fix template: emit state='no_callers' / 'unreachable_symbol' on "
-        "the (0,0) branch so agents know whether the symbol is isolated "
-        "by design or accidentally unwired. Separate fix wave."
-    ),
-)
 def test_blast_signal_explicit_no_data(cli_runner, isolated_symbol_corpus):
     """Pin: 0 affected symbols + 0 affected files must disclose blast state.
 
@@ -572,19 +503,6 @@ def test_blast_signal_explicit_no_data(cli_runner, isolated_symbol_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-L REAL BUG (LOW): cmd_preflight.py L405-407 returns "
-        "severity='OK' on the empty file_ids branch, and the populated-but-"
-        "no-partners path also yields coupled_files=0 + severity='OK'. "
-        "These two states are not the same: 'file has 0 git_cochange rows' "
-        "(new repo, fresh files, single-commit history) vs 'file has "
-        "co-change history but no partners crossed the strength threshold'. "
-        "Fix template: emit state='no_git_history' when file_stats has no "
-        "row for this file. Separate fix wave."
-    ),
-)
 def test_coupling_signal_explicit_no_data(cli_runner, isolated_symbol_corpus):
     """Pin: when there's no git history, coupling signal must disclose state.
 
@@ -609,19 +527,6 @@ def test_coupling_signal_explicit_no_data(cli_runner, isolated_symbol_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-L REAL BUG (LOW): cmd_preflight.py L491-497 / L542-550 emit "
-        "severity='OK' + violation_count=0 in TWO different states: "
-        "(a) no symbols in the corpus to apply convention to, and "
-        "(b) symbols exist + match the convention. These are not the same. "
-        "Fix template: emit state='no_majority_convention' when "
-        "kinds_with_majority==0 OR state='no_symbols_for_convention' when "
-        "the target's kind has no majority convention to violate. "
-        "Separate fix wave."
-    ),
-)
 def test_conventions_signal_explicit_no_data(cli_runner, empty_corpus):
     """Pin: empty corpus convention signal must disclose state.
 
