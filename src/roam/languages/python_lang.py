@@ -323,6 +323,9 @@ class PythonExtractor(LanguageExtractor):
                     if base_name == "TypedDict":
                         kind = "typeddict"
                         break
+                    if base_name == "NamedTuple":
+                        kind = "namedtuple"
+                        break
                 elif base_child.type == "attribute":
                     attr = self.node_text(base_child, source)
                     if attr.endswith(".Protocol"):
@@ -330,6 +333,9 @@ class PythonExtractor(LanguageExtractor):
                         break
                     if attr.endswith(".TypedDict"):
                         kind = "typeddict"
+                        break
+                    if attr.endswith(".NamedTuple"):
+                        kind = "namedtuple"
                         break
         if kind == "class":
             for d in decorators:
@@ -638,13 +644,22 @@ class PythonExtractor(LanguageExtractor):
                 #   type X = list[Item]
                 self._extract_type_alias_refs(child, source, refs, scope_name)
                 if child.type == "assignment":
-                    value = child.child_by_field_name("right")
-                    if value is not None and value.type == "identifier":
+                    left = child.child_by_field_name("left")
+                    right = child.child_by_field_name("right")
+                    if left is not None and self.node_text(left, source) == "__all__" and right is not None:
+                        self._extract_dunder_all_refs(right, source, refs, scope_name)
+                    elif right is not None and right.type == "identifier":
                         # Preserve the actual callback in `alias = callback`;
                         # later uses of the local alias must not resolve to an
                         # unrelated global symbol with the alias's name.
-                        self._emit_bare_identifier_ref(value, source, refs, scope_name)
+                        self._emit_bare_identifier_ref(right, source, refs, scope_name)
                 self._walk_refs(child, source, file_path, refs, scope_name)
+            elif child.type == "augmented_assignment":
+                # __all__ += [...] at module or class level
+                aug_left = child.child_by_field_name("left")
+                aug_right = child.child_by_field_name("right")
+                if aug_left is not None and self.node_text(aug_left, source) == "__all__" and aug_right is not None:
+                    self._extract_dunder_all_refs(aug_right, source, refs, scope_name)
             elif child.type == "type_alias_statement":
                 # PEP 695 type aliases: `type Alias = Expr`
                 self._extract_type_alias_refs(child, source, refs, scope_name)
@@ -716,6 +731,7 @@ class PythonExtractor(LanguageExtractor):
                     # Generic base type args: class C(Generic[MyItem]) — walk subscript args
                     if child.type == "class_definition":
                         self._extract_class_base_type_args(child, source, refs, new_scope)
+                        self._extract_class_base_identifier_type_refs(child, source, refs, new_scope)
                 self._walk_refs(child, source, file_path, refs, new_scope)
 
     def _extract_decorator_refs(self, decorated_node, source, refs, scope_name):
@@ -1193,7 +1209,81 @@ class PythonExtractor(LanguageExtractor):
             # constraint/bound arguments are type references, not value references.
             if name == "TypeVar":
                 self._extract_typevar_refs(args, source, refs, scope_name)
+            bare = name.rsplit(".", 1)[-1]
+            if bare == "cast":
+                self._extract_cast_type_ref(args, source, refs, scope_name)
+            elif bare in ("isinstance", "issubclass"):
+                self._extract_isinstance_type_refs(args, source, refs, scope_name)
             self._walk_refs(args, source, "", refs, scope_name)
+
+    def _extract_cast_type_ref(self, args_node, source, refs, scope_name) -> None:
+        """Emit a type_ref for the first argument of cast(Type, value)."""
+        positional = [c for c in args_node.children if c.type not in (",", "(", ")")]
+        if positional:
+            self._walk_type_node(positional[0], source, refs, scope_name)
+
+    def _extract_isinstance_type_refs(self, args_node, source, refs, scope_name) -> None:
+        """Emit type_ref(s) for the type argument of isinstance/issubclass."""
+        positional = [c for c in args_node.children if c.type not in (",", "(", ")")]
+        if len(positional) < 2:
+            return
+        type_arg = positional[1]
+        if type_arg.type in ("identifier", "attribute"):
+            self._walk_type_node(type_arg, source, refs, scope_name)
+        elif type_arg.type == "tuple":
+            for sub in type_arg.children:
+                if sub.type in ("identifier", "attribute"):
+                    self._walk_type_node(sub, source, refs, scope_name)
+
+    def _extract_dunder_all_refs(self, list_node, source, refs, scope_name) -> None:
+        """Emit export refs for names declared in __all__ = [...] or __all__ += [...]."""
+        items = list_node.children if list_node.type == "list" else [list_node]
+        for child in items:
+            if child.type == "string":
+                content = self._extract_string_content(child, source)
+                if content and content.isidentifier():
+                    refs.append(
+                        self._make_reference(
+                            target_name=content,
+                            kind="export",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+
+    def _extract_class_base_identifier_type_refs(self, class_node, source, refs, scope_name) -> None:
+        """Emit type_ref edges for plain identifier/attribute base classes."""
+        bases = class_node.child_by_field_name("superclasses")
+        if bases is None:
+            for child in class_node.children:
+                if child.type == "argument_list":
+                    bases = child
+                    break
+        if bases is None:
+            return
+        for base in bases.children:
+            if base.type == "identifier":
+                name = self.node_text(base, source)
+                if name and name not in _BUILTIN_TYPES:
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=base.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
+            elif base.type == "attribute":
+                name = self.node_text(base, source)
+                if name:
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=base.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
 
     @staticmethod
     def _is_class_base_list(node) -> bool:
