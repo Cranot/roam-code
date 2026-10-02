@@ -14,8 +14,8 @@ WORKFLOW_DIR = ROOT / ".github" / "workflows"
 UV_ACTION_SHA = "11f9893b081a58869d3b5fccaea48c9e9e46f990"
 UV_VERSION = EXPECTED_UV_VERSION
 UV_RUNTIME_GUARD = "python -I -S -B scripts/verify_uv_runtime.py"
-EXAMPLE_ACTION_SHA = "b1aacbc753488ff529f0cb2c761421bf6108efdf"
-EXAMPLE_ROAM_VERSION = "14.0.4"
+EXAMPLE_ACTION_SHA = "ff436f85aee8e6c47aa210eecc54886c455b85de"
+EXAMPLE_ROAM_VERSION = "14.1.0"
 
 EXPECTED_WORKFLOWS = {
     "actions-pinning.yml",

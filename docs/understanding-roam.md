@@ -374,13 +374,13 @@ private companion; the rules themselves are public.
   Retrieval now qualifies the same saved evidence: unqualified pairs stay
   visible, but cannot add a ranking boost. Read `clone_evidence` and
   `summary.partial_success` alongside the candidate list.
-  Working tree, not yet released (2026-09-07). See
+  See
   [detector evidence](concepts/detector-evidence.md#clone-scans-and-patch-review).
 - `test-impact` reports a failed Git diff as `state: "diff_unavailable"`,
   `partial_success: true`, and exit 6. Read that state before using the test
   list: no rows were emitted because the change could not be measured.
   Even a successful empty selection is not evidence to skip CI; selection
-  depends on indexed symbols, resolution, and the requested hop limit. Working tree, not yet released (2026-09-06).
+  depends on indexed symbols, resolution, and the requested hop limit.
 - `partition` auto-caps at 8 partitions; `conventions` standalone is noisy on
   large identifier sets; `pr-analyze` reads `--input` and stdin but `critique`
   has the graph-aware checks.

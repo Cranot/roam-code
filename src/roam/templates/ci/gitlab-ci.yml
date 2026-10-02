@@ -4,7 +4,7 @@
 # Generates SARIF artifacts and posts a quality summary as an MR comment.
 #
 # Supply-chain pins:
-#   - roam-code is exactly 13.10.0.
+#   - roam-code is exactly 14.1.0.
 #   - The Docker Official Image tag and OCI index digest were verified against
 #     Docker Hub. The digest, not the tag, is the runtime trust anchor.
 #
