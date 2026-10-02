@@ -152,7 +152,7 @@ jobs:
           SHA: ${{ steps.resolve.outputs.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Workflow names, as they appear in the Actions UI.
-          REQUIRED_WORKFLOWS: 'CI;Secret Scan'
+          REQUIRED_WORKFLOWS: 'CI;Secret Scan;CGA Attestation;Dogfood (roam on roam)'
         run: |
           set -euo pipefail
 

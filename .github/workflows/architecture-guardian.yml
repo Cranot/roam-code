@@ -6,6 +6,7 @@ name: Architecture Guardian
 # installation, indexing, command, and envelope failures still fail closed.
 
 on:
+  pull_request:
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * *"
