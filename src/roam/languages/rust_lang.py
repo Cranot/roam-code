@@ -448,6 +448,140 @@ class RustExtractor(LanguageExtractor):
             )
         )
 
+    # ---- Type-ref helpers ----
+
+    def _collect_type_param_names(self, type_params_node, source) -> frozenset:
+        """Return the set of type parameter names declared in a type_parameters node."""
+        if type_params_node is None:
+            return frozenset()
+        names: set[str] = set()
+        for child in type_params_node.children:
+            if child.type in ("type_parameter", "constrained_type_parameter"):
+                n = child.child_by_field_name("name")
+                if n:
+                    names.add(self.node_text(n, source))
+        return frozenset(names)
+
+    def _get_type_base_name(self, type_node, source) -> str:
+        """Return the leaf identifier of a type (strips generics and scope prefix)."""
+        if type_node.type == "generic_type":
+            base = type_node.child_by_field_name("type")
+            if base:
+                return self._get_type_base_name(base, source)
+        elif type_node.type == "scoped_type_identifier":
+            name_n = type_node.child_by_field_name("name")
+            if name_n:
+                return self.node_text(name_n, source)
+        return self.node_text(type_node, source)
+
+    def _walk_type_node(self, type_node, source, refs, scope_name, skip_names: frozenset = frozenset()) -> None:
+        """Emit type_ref edges by recursively walking a type AST node."""
+        if type_node is None:
+            return
+        t = type_node.type
+        line = type_node.start_point[0] + 1
+
+        if t == "type_identifier":
+            name = self.node_text(type_node, source)
+            if name not in skip_names:
+                refs.append(self._make_reference(target_name=name, kind="type_ref", line=line, source_name=scope_name))
+
+        elif t == "primitive_type":
+            return  # u8, i32, bool, str, char, etc. — not user-defined
+
+        elif t in ("self_type", "lifetime", "abstract_type"):
+            return  # Self, 'a, impl Trait — skip
+
+        elif t == "generic_type":
+            # e.g. Vec<Item> — emit the base type and walk the type arguments
+            base = type_node.child_by_field_name("type")
+            self._walk_type_node(base, source, refs, scope_name, skip_names)
+            for child in type_node.children:
+                if child.type == "type_arguments":
+                    for arg in child.children:
+                        if arg.is_named and arg.type not in ("lifetime",):
+                            self._walk_type_node(arg, source, refs, scope_name, skip_names)
+
+        elif t == "scoped_type_identifier":
+            # e.g. std::fmt::Display — emit just the last component
+            name_n = type_node.child_by_field_name("name")
+            if name_n:
+                name = self.node_text(name_n, source)
+                if name not in skip_names:
+                    refs.append(
+                        self._make_reference(target_name=name, kind="type_ref", line=line, source_name=scope_name)
+                    )
+
+        elif t in ("reference_type", "pointer_type"):
+            inner = type_node.child_by_field_name("type")
+            self._walk_type_node(inner, source, refs, scope_name, skip_names)
+
+        elif t == "array_type":
+            inner = type_node.child_by_field_name("element")
+            self._walk_type_node(inner, source, refs, scope_name, skip_names)
+
+        elif t == "tuple_type":
+            for child in type_node.children:
+                if child.is_named:
+                    self._walk_type_node(child, source, refs, scope_name, skip_names)
+
+        elif t == "dynamic_type":
+            # dyn Trait
+            for child in type_node.children:
+                if child.is_named and child.type not in ("lifetime",):
+                    self._walk_type_node(child, source, refs, scope_name, skip_names)
+
+        elif t == "function_type":
+            params = type_node.child_by_field_name("parameters")
+            if params:
+                for child in params.children:
+                    if child.is_named:
+                        self._walk_type_node(child, source, refs, scope_name, skip_names)
+            ret = type_node.child_by_field_name("return_type")
+            self._walk_type_node(ret, source, refs, scope_name, skip_names)
+
+    def _walk_type_param_bounds(
+        self, type_params_node, source, refs, scope_name, skip_names: frozenset = frozenset()
+    ) -> None:
+        """Emit type_refs for trait bounds inside type_parameters: <T: Display+Clone> → Display, Clone."""
+        for child in type_params_node.children:
+            if child.type in ("type_parameter", "constrained_type_parameter"):
+                bounds = child.child_by_field_name("bounds")
+                if bounds:
+                    for bound in bounds.children:
+                        if bound.is_named and bound.type not in ("lifetime",):
+                            self._walk_type_node(bound, source, refs, scope_name, skip_names)
+
+    def _walk_where_clause(self, where_node, source, refs, scope_name, skip_names: frozenset = frozenset()) -> None:
+        """Emit type_refs for bounds in a where clause: where T: Serialize → Serialize."""
+        for pred in where_node.children:
+            if pred.type == "where_predicate":
+                bounds = pred.child_by_field_name("bounds")
+                if bounds:
+                    for bound in bounds.children:
+                        if bound.is_named and bound.type not in ("lifetime",):
+                            self._walk_type_node(bound, source, refs, scope_name, skip_names)
+
+    def _emit_fn_type_refs(self, node, source, refs, scope_name) -> None:
+        """Emit type_refs for a function's params, return type, generic bounds, and where clause."""
+        type_params = node.child_by_field_name("type_parameters")
+        skip_names = self._collect_type_param_names(type_params, source)
+        if type_params:
+            self._walk_type_param_bounds(type_params, source, refs, scope_name, skip_names)
+        params = node.child_by_field_name("parameters")
+        if params:
+            for param in params.children:
+                if param.type == "parameter":
+                    ptype = param.child_by_field_name("type")
+                    self._walk_type_node(ptype, source, refs, scope_name, skip_names)
+        ret = node.child_by_field_name("return_type")
+        self._walk_type_node(ret, source, refs, scope_name, skip_names)
+        # where_clause is a named child but NOT a named field in tree-sitter-rust
+        for child in node.children:
+            if child.type == "where_clause":
+                self._walk_where_clause(child, source, refs, scope_name, skip_names)
+                break
+
     # ---- Reference extraction ----
 
     def _walk_refs(self, node, source, refs, scope_name):
@@ -458,18 +592,62 @@ class RustExtractor(LanguageExtractor):
                 self._extract_call(child, source, refs, scope_name)
             elif child.type == "macro_invocation":
                 self._extract_macro_call(child, source, refs, scope_name)
+            elif child.type in ("function_item", "function_signature_item"):
+                n = child.child_by_field_name("name")
+                fname = self.node_text(n, source) if n else None
+                new_scope = f"{scope_name}::{fname}" if scope_name and fname else (fname or scope_name)
+                self._emit_fn_type_refs(child, source, refs, new_scope)
+                body = child.child_by_field_name("body")
+                if body:
+                    self._walk_refs(body, source, refs, new_scope)
+            elif child.type == "struct_item":
+                name_n = child.child_by_field_name("name")
+                struct_name = self.node_text(name_n, source) if name_n else None
+                new_scope = (
+                    f"{scope_name}::{struct_name}" if scope_name and struct_name else (struct_name or scope_name)
+                )
+                type_params = child.child_by_field_name("type_parameters")
+                skip_names = self._collect_type_param_names(type_params, source)
+                body = child.child_by_field_name("body")
+                if body:
+                    for field in body.children:
+                        if field.type == "field_declaration":
+                            ftype = field.child_by_field_name("type")
+                            self._walk_type_node(ftype, source, refs, new_scope, skip_names)
+            elif child.type == "type_item":
+                type_params = child.child_by_field_name("type_parameters")
+                skip_names = self._collect_type_param_names(type_params, source)
+                rhs = child.child_by_field_name("type")
+                self._walk_type_node(rhs, source, refs, scope_name, skip_names)
+            elif child.type == "impl_item":
+                type_node = child.child_by_field_name("type")
+                trait_node = child.child_by_field_name("trait")
+                if type_node:
+                    type_name = self._get_type_base_name(type_node, source)
+                    if trait_node:
+                        trait_name = self._get_type_base_name(trait_node, source)
+                        refs.append(
+                            self._make_reference(
+                                target_name=trait_name,
+                                kind="implements",
+                                line=child.start_point[0] + 1,
+                                source_name=type_name,
+                            )
+                        )
+                    new_scope = type_name
+                    type_params = child.child_by_field_name("type_parameters")
+                    skip_names = self._collect_type_param_names(type_params, source)
+                    if type_params:
+                        self._walk_type_param_bounds(type_params, source, refs, new_scope, skip_names)
+                    for sub in child.children:
+                        if sub.type == "where_clause":
+                            self._walk_where_clause(sub, source, refs, new_scope, skip_names)
+                            break
+                    body = child.child_by_field_name("body")
+                    if body:
+                        self._walk_refs(body, source, refs, new_scope)
             else:
-                new_scope = scope_name
-                if child.type == "function_item":
-                    n = child.child_by_field_name("name")
-                    if n:
-                        fname = self.node_text(n, source)
-                        new_scope = f"{scope_name}::{fname}" if scope_name else fname
-                elif child.type == "impl_item":
-                    t = child.child_by_field_name("type")
-                    if t:
-                        new_scope = self.node_text(t, source)
-                self._walk_refs(child, source, refs, new_scope)
+                self._walk_refs(child, source, refs, scope_name)
 
     def _extract_use(self, node, source, refs, scope_name):
         """Extract use declarations."""
