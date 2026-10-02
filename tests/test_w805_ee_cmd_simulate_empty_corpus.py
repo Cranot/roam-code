@@ -271,24 +271,6 @@ class TestSimulateEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-EE REAL BUG (CRITICAL): graph/simulate.py L38-54 _approx_health "
-        "on a 0-node graph returns 100. The cascade: compute_graph_metrics "
-        "on len(G)==0 -> tangle=0.0, god_count=0, bn_count=0, lv_count=0 -> "
-        "every _hf() decay = exp(-0/scale) = 1 -> weighted log-sum = 0 -> "
-        "raw = 100 * exp(0) = 100. Envelope reports health_before=100 + "
-        "health_after=100 on the EMPTY corpus, indistinguishable from a "
-        "real perfectly-healthy codebase. Same fabricated-metric family as "
-        "W805-CC fiedler-on-empty. Agents reading 'health_before=100' on "
-        "their actual project will assume the index is healthy when in "
-        "fact 0 symbols indexed. Fix template: when len(G)==0 in "
-        "compute_graph_metrics, return health_score=None (or omit the field) "
-        "so the empty-graph case is distinguishable from a real 100. "
-        "Separate fix wave."
-    ),
-)
 def test_no_fabricated_health_on_empty_graph(cli_runner, empty_corpus):
     """Pin: health_score on empty graph MUST be None / N/A, not 100.
 
@@ -314,20 +296,6 @@ def test_no_fabricated_health_on_empty_graph(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-EE REAL BUG (HIGH): cmd_simulate.py L60-83 builds the error "
-        "envelope summary without partial_success - json_envelope auto-derive "
-        "defaults it to False. When resolve_target returned [] (symbol not "
-        "found) or simulate_merge found no symbols in file_b, the simulation "
-        "DID NOT RUN - yet partial_success=False signals 'success'. Same "
-        "Pattern-2 axis as W805-U #2 (orchestrate), W805-Y #1 (partition), "
-        "W805-L #4 (preflight), W805-T #2 (uses). Fix template: error path "
-        "MUST set partial_success=True since the transform aborted. "
-        "Separate fix wave."
-    ),
-)
 def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
     """Pin: error envelope on missing target MUST have partial_success=True.
 
@@ -348,20 +316,6 @@ def test_empty_corpus_partial_success_set(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-EE REAL BUG (HIGH): cmd_simulate.py L60-83 (error envelope) "
-        "AND L122-141 (success envelope) build summary={verdict, operation, "
-        "health_delta, health_before, health_after, improved_metrics, "
-        "degraded_metrics} - NO state field. Agents have no machine-readable "
-        "way to distinguish 'symbol_not_found' / 'no_data_in_corpus' / "
-        "'no_op_transform' / 'transform_applied'. Same gap as W805-Y #2 / "
-        "W805-U #3. Fix template: add closed-enum summary.state ∈ "
-        "{transform_applied, no_op_transform, symbol_not_found, "
-        "no_data_in_corpus}. Separate fix wave."
-    ),
-)
 def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
     """Pin: summary.state must distinguish error/no-op/real-transform."""
     result = _invoke_simulate(cli_runner, empty_corpus, "move", "ghost", "foo.py", json_mode=True)
@@ -387,25 +341,6 @@ def test_empty_corpus_explicit_state(cli_runner, empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-EE REAL BUG (HIGH): cmd_simulate.py L115-120 emits "
-        "'health unchanged at 100, modularity unchanged, 0 new cycles' when "
-        "the move is a no-op (symbol already in target file). apply_move "
-        "(graph/simulate.py L177-189) blindly sets data['file_path'] = "
-        "target_file without checking if old_file == target_file. before == "
-        "after, the verdict is structurally indistinguishable from a real "
-        "'this transform is safe' result. Agents reading the verdict will "
-        "treat the no-op as a green-light to apply the transform — when in "
-        "fact the transform would do nothing. Same Pattern-2 axis as W805-Y "
-        "#3 stub-padding silent overprovisioning. Fix template: detect "
-        "no-op transforms in simulate_move (compare resolved source file == "
-        "target_file) and surface state='no_op_transform' + "
-        "partial_success=True + verdict='no-op: <symbol> already in "
-        "<target>'. Separate fix wave."
-    ),
-)
 def test_no_op_transform_explicit_disclosure(cli_runner, clean_corpus):
     """Pin: no-op move (helper -> a.py where helper already lives) must NOT
     emit a SAFE-looking 'health unchanged' verdict.
