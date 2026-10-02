@@ -303,19 +303,6 @@ class TestModuleEmptyCorpusSmoke:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-K REAL BUG 1 (Pattern-1B+1C): cmd_module.py:150-151 emits "
-        "plain text 'No files found under: <path>/' and calls "
-        "raise SystemExit(1) EVEN IN --json mode. The MCP wrapper's "
-        "_run_roam_* bridge will try-parse this as JSON, fail, and "
-        "collapse to a generic COMMAND_FAILED envelope - burying the "
-        "structured 'path not found' signal. Fix template: same as W362 "
-        "on cmd_owner - emit state='path_not_found' envelope + exit 0. "
-        "Separate fix wave."
-    ),
-)
 def test_unresolved_path_emits_json_envelope_in_json_mode(empty_module_corpus):
     """Pin: unresolved path MUST emit a JSON envelope in --json mode.
 
@@ -330,15 +317,6 @@ def test_unresolved_path_emits_json_envelope_in_json_mode(empty_module_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-K REAL BUG 1 (Pattern-1B): cmd_module.py:151 raises "
-        "SystemExit(1) on unresolved path. The W362 / W805-A precedent "
-        "on cmd_owner is to exit 0 with state='path_not_found'. "
-        "Separate fix wave."
-    ),
-)
 def test_unresolved_path_exits_zero(empty_module_corpus):
     """Pin: unresolved path SHOULD exit 0 with structured envelope.
 
@@ -351,15 +329,6 @@ def test_unresolved_path_exits_zero(empty_module_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-K REAL BUG 1: cmd_module.py:150-151 does not emit a "
-        "summary.state field on the path-not-found branch. Pattern-2 "
-        "requires closed-enum state disclosure ('path_not_found' to "
-        "mirror cmd_owner's W362 contract). Separate fix wave."
-    ),
-)
 def test_unresolved_path_explicit_state(empty_module_corpus):
     """Pin: unresolved path discloses ``state="path_not_found"``."""
     result = _invoke_module("does/not/exist", json_mode=True)
@@ -378,20 +347,6 @@ def test_unresolved_path_explicit_state(empty_module_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-K REAL BUG 2 (Pattern-1 Variant D): cmd_module.py:147-148 "
-        "silently re-queries with the SUBSTRING fuzzy pattern "
-        "'%{path}/%' when the primary '{path}/%' returns 0 rows. The "
-        "verdict reports the requested input as 'path' even though the "
-        "files come from a different directory. Canonical degraded-"
-        "resolution silent SAFE: success verdict indistinguishable "
-        "from a fully-resolved success. Fix: disclose via "
-        "summary.resolution='fuzzy_substring' + partial_success=True + "
-        "verdict that names the degraded match. Separate fix wave."
-    ),
-)
 def test_fuzzy_fallback_discloses_resolution(fuzzy_fallback_corpus):
     """Pin: fuzzy substring fallback should disclose ``resolution``.
 
@@ -414,15 +369,6 @@ def test_fuzzy_fallback_discloses_resolution(fuzzy_fallback_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-K REAL BUG 2 (Pattern-1 Variant D): cmd_module.py:147-148 "
-        "fuzzy substring fallback emits partial_success=False, masking "
-        "a degraded-resolution branch. Fix: partial_success=True when "
-        "the fuzzy fallback matched. Separate fix wave."
-    ),
-)
 def test_fuzzy_fallback_partial_success_set(fuzzy_fallback_corpus):
     """Pin: fuzzy fallback must set ``partial_success: True``."""
     result = _invoke_module("nested", json_mode=True)
@@ -439,18 +385,6 @@ def test_fuzzy_fallback_partial_success_set(fuzzy_fallback_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-K REAL BUG 3 (Pattern-2): cmd_module.py:176-208 emits "
-        "verdict 'src/: 1 files, 0 symbols, 0 importers' with "
-        "summary.partial_success=False when the module resolved but "
-        "contains 0 symbols. A consumer cannot distinguish 'real empty "
-        "module' from 'indexing failed' from 'module uncoded'. Fix: "
-        "set partial_success=True + state='no_symbols' + verdict that "
-        "names the empty state. Separate fix wave."
-    ),
-)
 def test_empty_module_partial_success_set(empty_module_corpus):
     """Pin: ``summary.partial_success`` should be True on 0-symbol module."""
     result = _invoke_module("src", json_mode=True)
@@ -461,15 +395,6 @@ def test_empty_module_partial_success_set(empty_module_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-K REAL BUG 3 (Pattern-2): cmd_module.py:176-208 does not "
-        "emit a summary.state field on the 0-symbol branch. Pattern-2 "
-        "requires closed-enum state disclosure. Acceptable: 'no_symbols', "
-        "'empty_module', 'no_exports'. Separate fix wave."
-    ),
-)
 def test_empty_module_explicit_state(empty_module_corpus):
     """Pin: ``summary.state`` discloses the 0-symbol state."""
     result = _invoke_module("src", json_mode=True)
@@ -480,17 +405,6 @@ def test_empty_module_explicit_state(empty_module_corpus):
     assert state in accepted, f"summary.state should disclose 0-symbol state; got {state!r}; expected one of {accepted}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-K REAL BUG 3 (Pattern-2): cmd_module.py:177 emits verdict "
-        "'<path>/: N files, 0 symbols, 0 importers' which reads as a "
-        "confident module description when 0 symbols indicates a "
-        "degraded state. The verdict should explicitly name the empty "
-        "state, e.g. 'module src/ empty: 0 symbols indexed across 1 "
-        "files'. Separate fix wave."
-    ),
-)
 def test_no_silent_module_success(empty_module_corpus):
     """Pin: verdict must NOT read as confident module success on 0 symbols.
 

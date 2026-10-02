@@ -131,6 +131,7 @@ def module(ctx, path):
     ensure_index()
 
     path = path.replace("\\", "/").rstrip("/")
+    _fuzzy = False  # W805-K Bug 2: track fuzzy-substring fallback
 
     with open_db(readonly=True) as conn:
         if path == ".":
@@ -146,7 +147,25 @@ def module(ctx, path):
             files = conn.execute(FILES_IN_DIR, (pattern,)).fetchall()
             if not files:
                 files = conn.execute(FILES_IN_DIR, (f"%{path}/%",)).fetchall()
+                if files:
+                    _fuzzy = True
         if not files:
+            # W805-K Bug 1: path-not-found must emit JSON envelope in --json mode.
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "module",
+                            summary={
+                                "verdict": f"no files found under: {path}/",
+                                "state": "path_not_found",
+                                "partial_success": True,
+                            },
+                            isError=True,
+                        )
+                    )
+                )
+                return
             click.echo(f"No files found under: {path}/")
             raise SystemExit(1)
 
@@ -163,6 +182,8 @@ def module(ctx, path):
             symbols = conn.execute(SYMBOLS_IN_DIR, (sym_pattern,)).fetchall()
             if not symbols:
                 symbols = conn.execute(SYMBOLS_IN_DIR, (f"%{path}/%",)).fetchall()
+                if symbols:
+                    _fuzzy = True
 
         file_ids = [f["id"] for f in files]
         imports_external, imported_by_external = _module_deps(conn, file_ids)
@@ -175,16 +196,26 @@ def module(ctx, path):
 
         if json_mode:
             _verdict = f"{path}/: {len(files)} files, {exported_count} symbols, {ext_importers} importers"
+            _summary: dict = {
+                "verdict": _verdict,
+                "file_count": len(files),
+                "cohesion_pct": round(cohesion),
+                "external_importers": ext_importers,
+            }
+            # W805-K Bug 3: 0-symbol module must disclose empty state.
+            if exported_count == 0:
+                _summary["state"] = "no_symbols"
+                _summary["partial_success"] = True
+                _summary["verdict"] = f"module {path}/ empty: 0 symbols indexed across {len(files)} files"
+            # W805-K Bug 2: fuzzy-substring fallback must disclose resolution.
+            if _fuzzy:
+                _summary.setdefault("partial_success", True)
+                _summary["resolution"] = "fuzzy_substring"
             click.echo(
                 to_json(
                     json_envelope(
                         "module",
-                        summary={
-                            "verdict": _verdict,
-                            "file_count": len(files),
-                            "cohesion_pct": round(cohesion),
-                            "external_importers": ext_importers,
-                        },
+                        summary=_summary,
                         path=path,
                         file_count=len(files),
                         files=[{"path": f["path"], "language": f["language"], "lines": f["line_count"]} for f in files],
