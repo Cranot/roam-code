@@ -446,19 +446,6 @@ class TestGateCollapseEnvelopeShape:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-CCCC FAMILY invariant: cmd_clones collapses three "
-        "distinguishable input shapes (empty_corpus / "
-        "no_pairs_after_prefilter / no_pairs_above_threshold) to a "
-        "single silent SAFE verdict='No structural clones detected'. "
-        "Mirror of W805-WWW (cmd_dark_matter cochange_count) + W805-ZZZ "
-        "(cmd_duplicates pair_similarity). Three distinct states MUST "
-        "produce three distinct verdicts after the fix. Pinned "
-        "xfail-strict so the fix flips xpass -> test failure."
-    ),
-)
 def test_distinct_verdicts_for_three_input_shapes(
     empty_corpus_project,
     pre_filter_collapse_project,
@@ -515,24 +502,6 @@ def test_distinct_verdicts_for_three_input_shapes(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-CCCC Pattern-1-V-D / Pattern-2 bug: cmd_clones emits "
-        "verdict='No structural clones detected' WITHOUT partial_success "
-        "+ WITHOUT state stamp when the bucket pre-filter at "
-        "clone_detect._compare_func_pair (ratio<0.5 at "
-        "clone_detect.py:527) silently excludes every candidate pair. "
-        "Three distinct input shapes collapse to the same SAFE verdict. "
-        "Fix: when (clusters == [] AND funcs_extracted >= 2), stamp "
-        "state in {'no_pairs_after_prefilter',"
-        "'no_pairs_above_threshold','empty_corpus'} + "
-        "partial_success=True + name the gate in the verdict. See "
-        "CLAUDE.md 'Six systemic anti-patterns' section 1 variant D + "
-        "section 2. Mirror of W805-WWW + W805-ZZZ. THIRD detector in "
-        "the paired-scoring-detector below-threshold collapse family."
-    ),
-)
 class TestPreFilterCollapsePattern1VD:
     def test_partial_success_when_prefilter_excludes_all(self, pre_filter_collapse_project, cli_runner):
         """Pre-filter excluded every pair => MUST NOT report silent SAFE."""
@@ -589,19 +558,6 @@ class TestPreFilterCollapsePattern1VD:
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-CCCC Pattern-1-V-D / Pattern-2 bug: cmd_clones emits "
-        "silent SAFE verdict when pairs are scored but all fall below "
-        "the Jaccard ``min_similarity`` threshold "
-        "(clone_detect._compare_func_pair line 530). The third "
-        "distinguishable input shape in the paired-scoring detector "
-        "family. Fix: stamp state='no_pairs_above_threshold' + "
-        "partial_success=True + name the threshold in the verdict. "
-        "Pinned xfail-strict per the W805-WWW + W805-ZZZ template."
-    ),
-)
 class TestBelowThresholdPattern1VD:
     def test_partial_success_when_all_below_threshold(self, below_threshold_project, cli_runner):
         """All pairs scored below threshold => MUST NOT report silent SAFE."""

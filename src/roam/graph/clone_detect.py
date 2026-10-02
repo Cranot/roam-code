@@ -958,7 +958,7 @@ def _find_clone_pairs(
                 pairs.append(pair)
                 pair_scores[(ia, ib)] = sim
                 uf.union(ia, ib)
-            return pairs, uf, pair_scores
+            return pairs, uf, pair_scores, len(candidate_pairs)
         except Exception as exc:  # noqa: BLE001 — any pool failure falls through to serial
             # Parallel clone-pair detection is an optimization over the
             # always-correct serial path; never let a pool failure crash
@@ -983,7 +983,7 @@ def _find_clone_pairs(
             pairs.append(pair)
             pair_scores[(ia, ib)] = pair.similarity
             uf.union(ia, ib)
-    return pairs, uf, pair_scores
+    return pairs, uf, pair_scores, len(candidate_pairs)
 
 
 def detect_clones(
@@ -1036,7 +1036,7 @@ def detect_clones(
         for i, f in enumerate(funcs):
             f.idx = i
 
-    pairs, uf, pair_scores = _find_clone_pairs(funcs, min_similarity)
+    pairs, uf, pair_scores, candidate_pairs_count = _find_clone_pairs(funcs, min_similarity)
     pairs.sort(key=lambda p: -p.similarity)
 
     func_by_idx = {f.idx: f for f in funcs}
@@ -1120,6 +1120,8 @@ def detect_clones(
         scan_out.update(
             compared_functions=len(funcs),
             complete=bool(files) and unavailable == 0 and eligible_functions <= max_functions,
+            candidate_pairs_count=candidate_pairs_count,
+            pairs_above_threshold=len(pair_scores),
         )
     return pairs, clusters
 

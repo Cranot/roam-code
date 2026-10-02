@@ -919,6 +919,28 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             if _empty is not None:
                 verdict_with_conf = "no structural clones — no symbols indexed in corpus (run `roam index --force`)"
 
+            # W805-CCCC: gate-collapse disclosure. When clusters==[] but the
+            # corpus is NOT empty, distinguish the three collapse shapes:
+            # (I) no candidate pairs after size-bucket pre-filter,
+            # (II) pairs scored but all below Jaccard threshold.
+            # Exposes state + partial_success so consumers can distinguish
+            # from a genuinely clone-free corpus.
+            _collapse_state: str | None = None
+            if not clusters and _empty is None:
+                _funcs_count = scan.get("eligible_functions", 0)
+                _cand_pairs = scan.get("candidate_pairs_count")
+                _pairs_above = scan.get("pairs_above_threshold")
+                if _funcs_count > 0 and _cand_pairs is not None:
+                    if _cand_pairs == 0:
+                        _collapse_state = "no_pairs_after_prefilter"
+                        verdict_with_conf = (
+                            f"no candidate pairs after size pre-filter "
+                            f"({_funcs_count} functions extracted, no size-adjacent pairs)"
+                        )
+                    elif _pairs_above == 0:
+                        _collapse_state = "no_pairs_above_threshold"
+                        verdict_with_conf = f"{_cand_pairs} pairs scored but all below threshold={threshold}"
+
             summary_payload = {
                 "verdict": verdict_with_conf,
                 "scan": {k: v for k, v in scan.items() if k != "sources"},
@@ -948,6 +970,10 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file, exclude_test
             # field is not clobbered.
             if _empty is not None:
                 summary_payload.update(_empty)
+            # W805-CCCC: stamp gate-collapse state onto summary.
+            if _collapse_state is not None:
+                summary_payload["state"] = _collapse_state
+                summary_payload["partial_success"] = True
             # W607-BQ + DC: union the cap-hit disclosure list with the
             # substrate-CALL marker list AND the aggregation-phase
             # marker list. All three bins flush into the same
