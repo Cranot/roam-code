@@ -451,38 +451,6 @@ class TestExploreEmptyContextChildDisclosesDegradation:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-VVV REAL BUG - agent-safety MEDIUM "
-        "(Pattern-2 silent fallback / Variant-D silent success on "
-        "degraded child resolution). Same root cause as "
-        "W805-F/KK/LL/GGG/KKK/OOO/QQQ: _compound_envelope at "
-        "src/roam/mcp_server.py:4448-4470 computes failed_subcommands "
-        "ONLY from per-child top-level 'error' keys. The context child "
-        "returns a structured envelope with NO top-level error but DO "
-        "disclose summary.partial_success=True AND summary.state="
-        "'not_found' AND summary.resolution='unresolved' -- self-"
-        "disclosing degraded execution on three channels. The "
-        "aggregator never reads any of the nested signals, so context "
-        "is placed in 'sections' (the success bucket) rather than in "
-        "failed_subcommands. Agent-safety MEDIUM: explore is the "
-        "canonical 'call FIRST when starting work on a new codebase' "
-        "tool per docstring at mcp_server.py:4563. An agent prompt-"
-        "cached on compound.summary.partial_success reads False on an "
-        "empty / not-yet-indexed workspace + bogus symbol and proceeds "
-        "to analyze a symbol that doesn't exist in the index. "
-        "BRANCHING-recipe peer: distinct from sextet in that the bug "
-        "ONLY manifests on the symbol branch (no-symbol branch's "
-        "understand child runs cleanly on the empty-file corpus). "
-        "Fix: at mcp_server.py:4470, also add child to "
-        "failed_subcommands whenever child.summary.partial_success is "
-        "True OR child.summary.state is in a closed-enum degradation "
-        "set OR child.summary.resolution is in {'unresolved', 'fuzzy'}. "
-        "Bundled with W805-F/KK/LL/GGG/KKK/OOO/QQQ fix wave; separate "
-        "from this pin per W978 + accumulate-only constraint."
-    ),
-)
 def test_no_silent_explore_complete_on_empty_with_bogus_symbol(empty_corpus):
     """Pin: compound must lift context child's degraded-execution
     disclosure into failed_subcommands.
@@ -507,18 +475,6 @@ def test_no_silent_explore_complete_on_empty_with_bogus_symbol(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-VVV partial_success aggregator pin: the compound "
-        "summary.partial_success MUST flip True whenever ANY child "
-        "discloses degraded execution via partial_success / state / "
-        "resolution channel. Today it stays False because the "
-        "aggregator only reads top-level 'error' keys. Bundled with "
-        "the failed_subcommands propagation fix; separate wave per "
-        "W978."
-    ),
-)
 def test_empty_corpus_partial_success_set(empty_corpus):
     """Pin: ``summary.partial_success`` is True on empty corpus when
     the underlying symbol does not resolve."""
@@ -532,20 +488,6 @@ def test_empty_corpus_partial_success_set(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-VVV state-disclosure pin (Pattern-2 fix template): the "
-        "compound envelope SHOULD carry an explicit summary.state "
-        "field naming the not-found / unresolved shape (e.g. "
-        "'not_found' / 'unresolved' / 'empty_corpus'). Today the "
-        "compound emits no state key at all -- only the context child "
-        "does. Closed-enum state-disclosure is the Pattern-2 canonical "
-        "fix per CLAUDE.md Pattern-2. Bundled with the "
-        "partial_success / failed_subcommands propagation fix; "
-        "separate wave per W978."
-    ),
-)
 def test_empty_corpus_state_explicit(empty_corpus):
     """Pin: compound discloses not_found / no_data / empty_corpus
     state on the empty-corpus + bogus-symbol path."""
@@ -561,17 +503,6 @@ def test_empty_corpus_state_explicit(empty_corpus):
     }, f"compound.summary.state={state!r} not in closed-enum"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-VVV child-partial-success propagation pin "
-        "(W805-F/KK/LL/GGG/KKK/OOO/QQQ axis). When ANY child discloses "
-        "degraded execution via summary.partial_success=True, the "
-        "compound's failed_subcommands MUST include that child name. "
-        "VVV's context child sets partial_success=True; the aggregator "
-        "must propagate. Bundled fix wave."
-    ),
-)
 def test_empty_corpus_child_partial_success_propagates(empty_corpus):
     """Pin: every child whose summary discloses degraded execution
     must be named in compound.summary.failed_subcommands."""
@@ -603,19 +534,6 @@ def test_empty_corpus_child_partial_success_propagates(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-VVV child-state propagation pin (W805-GGG state-only "
-        "channel). Even if partial_success / resolution propagation "
-        "ships, a defensive parallel pin on the state-only channel "
-        "stays warranted: when ANY child's summary.state is in a "
-        "closed-enum degradation set, the compound's "
-        "failed_subcommands MUST include that child. VVV's context "
-        "child sets state='not_found' which exercises this channel. "
-        "Bundled fix wave."
-    ),
-)
 def test_empty_corpus_child_state_propagates(empty_corpus):
     """Pin (W805-GGG state-only channel axis): every child whose
     summary.state names a degradation token must be in
@@ -643,18 +561,6 @@ def test_empty_corpus_child_state_propagates(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-VVV child-resolution propagation pin (W805-F/KK/KKK "
-        "resolution-only channel axis). Even if partial_success / "
-        "state propagation ships, a defensive parallel pin on the "
-        "resolution-only channel stays warranted: when ANY child's "
-        "summary.resolution is in {'unresolved', 'fuzzy'}, the "
-        "compound's failed_subcommands MUST include that child. VVV's "
-        "context child sets resolution='unresolved'. Bundled fix wave."
-    ),
-)
 def test_empty_corpus_child_resolution_propagates(empty_corpus):
     """Pin (W805-F/KK/KKK resolution-only channel axis): every child
     whose summary.resolution names a degradation token must be in
