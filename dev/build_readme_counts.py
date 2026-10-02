@@ -337,8 +337,10 @@ def _readme_blocks(c: Counts, root: Path) -> dict[str, str]:
             f"**{c.command_names} commands ({c.canonical_commands} canonical "
             f"+ {c.alias_names} aliases) organised into {c.category_count} "
             f"categories**. An alias is another name for the same command; "
-            f"you do not need to memorize them. Explore the remaining "
-            f"{c.command_names - 5} commands when you need more detail."
+            f"you do not need to memorize them. The remaining "
+            f"~{c.command_names - 5} commands beyond those five are detail "
+            f"surface for specialised workflows — they are called by agents "
+            f"on demand, not memorised."
         ),
         # Line 1023: "Default preset: core (N tools: M core + roam_expand_toolset meta-tool)"
         "readme-default-preset": (
