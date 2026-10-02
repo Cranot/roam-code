@@ -468,6 +468,12 @@ def findings_show(ctx, finding_id_str):
     with open_db(readonly=True) as conn:
         try:
             record = get_finding(conn, finding_id_str)
+            # Fallback: if arg is numeric, try subject_id so the id shown by
+            # `roam findings list` text output is also accepted here.
+            if record is None and finding_id_str.isdigit():
+                rows = list_findings(conn, subject_id=int(finding_id_str))
+                if len(rows) == 1:
+                    record = rows[0]
         except Exception as exc:
             warnings_out.append(f"findings_query_failed:{type(exc).__name__}:{exc}")
             record = None

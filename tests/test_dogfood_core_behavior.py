@@ -411,15 +411,6 @@ def test_verify_imports_should_not_flag_stdlib_in_yaml(yaml_import_repo):
     assert "json" not in unresolved_names, "stdlib module 'json' embedded in a YAML snippet was reported unresolved"
 
 
-@pytest.mark.xfail(
-    reason="DEFECT: debt labels a clean corpus 'high debt' from mean_debt alone, "
-    "ignoring the structural signal counts. A 1-file repo with 0 cycles / 0 god "
-    "components / 0 hotspots is reported as 'high debt: 0 cycle files, 0 god "
-    "components, 0 hotspots' because mean_debt (0.467, driven only by 2 dead exports) "
-    "> 0.3. Fix: src/roam/commands/cmd_debt.py:~720 -- the 0.1/0.3 mean_debt "
-    "thresholds do not scale to tiny corpora and the label ignores signal counts.",
-    strict=True,
-)
 def test_debt_should_not_be_high_when_no_structural_signals(py_repo):
     d, _ = run_json(py_repo, "debt")
     verdict = (d.get("summary", {}).get("verdict") or "").lower()
@@ -427,15 +418,6 @@ def test_debt_should_not_be_high_when_no_structural_signals(py_repo):
     assert not (signals_zero and "high debt" in verdict), f"degenerate verdict: {verdict!r}"
 
 
-@pytest.mark.xfail(
-    reason="DEFECT: dark-matter labels minimum-support pairs 'high' risk. Two files "
-    "that co-changed exactly 3 times (min-cochanges default) and never apart get "
-    "NPMI=1.0 / lift=870 and sort to the top; on the roam repo 28/30 top pairs have "
-    "cochange_count==3 with category=UNKNOWN yet risk_level='high'. Fix: "
-    "src/roam/commands/cmd_dark_matter.py -- add support-weighted shrinkage or raise "
-    "the effective min-support so n=3 co-adds (docs/fixtures) do not dominate as 'high'.",
-    strict=True,
-)
 def test_dark_matter_should_not_high_risk_a_3_cochange_pair(cochange_repo):
     d, _ = run_json(cochange_repo, "dark-matter")
     pairs = d.get("dark_matter_pairs") or []
@@ -448,15 +430,6 @@ def test_dark_matter_should_not_high_risk_a_3_cochange_pair(cochange_repo):
     )
 
 
-@pytest.mark.xfail(
-    reason="DEFECT/UX-TRAP: `findings show` rejects the id `findings list` shows. The "
-    "text `list` prints the subject_id (e.g. 10888) and the show error hint says 'run "
-    "`roam findings list` to discover valid ids', but show requires the finding_id_str "
-    "(e.g. dead:export:ec75fae120fc) which text-mode list never prints. A user copies "
-    "the visible id into show and gets exit 2 'not found'. Fix: cmd_findings show "
-    "should accept subject_id, or list text should surface finding_id_str.",
-    strict=True,
-)
 def test_findings_show_accepts_the_id_list_displays():
     d, p = run_json(MAIN_REPO, "findings", "list")
     findings = d.get("findings") or []
