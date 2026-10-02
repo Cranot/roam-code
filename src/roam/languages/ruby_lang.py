@@ -348,6 +348,22 @@ class RubyExtractor(LanguageExtractor):
             self._extract_include_extend(node, method_name, args_node, source, refs, scope_name)
             return
 
+        # Handle visibility modifiers: private/protected/public :symbol
+        if method_name in ("private", "protected", "public") and receiver_node is None and args_node:
+            for arg in args_node.children:
+                if arg.type == "simple_symbol":
+                    sym = self.node_text(arg, source).lstrip(":")
+                    if sym:
+                        refs.append(
+                            self._make_reference(
+                                target_name=sym,
+                                kind="call",
+                                line=arg.start_point[0] + 1,
+                                source_name=scope_name,
+                            )
+                        )
+            return
+
         # Regular method call
         if receiver_node:
             receiver_text = self.node_text(receiver_node, source)
