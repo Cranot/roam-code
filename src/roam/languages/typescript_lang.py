@@ -615,6 +615,51 @@ class TypeScriptExtractor(JavaScriptExtractor):
                 self._emit_argument_identifier_ref(child, source, refs, scope_name)
             elif ctype == "shorthand_property_identifier":
                 self._emit_shorthand_property_ref(child, source, refs, scope_name)
+            elif ctype == "decorator":
+                # @Name → bare identifier; @Name() → call_expression; @ns.Name → member_expression
+                for dec_child in child.children:
+                    if dec_child.type == "identifier":
+                        name = self.node_text(dec_child, source)
+                        if name:
+                            refs.append(
+                                self._make_reference(
+                                    target_name=name,
+                                    kind="call",
+                                    line=dec_child.start_point[0] + 1,
+                                    source_name=scope_name,
+                                )
+                            )
+                    elif dec_child.type == "call_expression":
+                        self._extract_call(dec_child, source, refs, scope_name)
+                    elif dec_child.type == "member_expression":
+                        obj = dec_child.child_by_field_name("object")
+                        if obj and obj.type == "identifier":
+                            refs.append(
+                                self._make_reference(
+                                    target_name=self.node_text(obj, source),
+                                    kind="call",
+                                    line=obj.start_point[0] + 1,
+                                    source_name=scope_name,
+                                )
+                            )
+            elif ctype == "ambient_declaration":
+                # declare module 'name' → emit import ref to the module name string.
+                # declare global {} → no ref (name would be "global", skipped).
+                for amb_child in child.children:
+                    if amb_child.type == "module":
+                        for mod_child in amb_child.children:
+                            if mod_child.type == "string":
+                                raw = self.node_text(mod_child, source)
+                                name = raw.strip("'\"")
+                                if name and name != "global":
+                                    refs.append(
+                                        self._make_reference(
+                                            target_name=name,
+                                            kind="import",
+                                            line=mod_child.start_point[0] + 1,
+                                            source_name=scope_name,
+                                        )
+                                    )
             else:
                 self._walk_refs(child, source, refs, self._scope_name_for_child(child, source, scope_name))
 
