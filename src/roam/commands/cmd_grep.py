@@ -672,6 +672,10 @@ def grep_cmd(
             token_budget,
             used_engine,
             warnings_out=_combined_empty,
+            # W805-UUU: pass active reachability filters so the empty verdict
+            # discloses the filter scope instead of silently dropping it.
+            reachable_from=reachable_from,
+            unreachable=unreachable,
         )
         return
 
@@ -1174,9 +1178,25 @@ def _pat_label(pats: list[str]) -> str:
     return f"{len(pats)} patterns"
 
 
-def _emit_empty(json_mode, patterns, budget, engine, filtered=False, *, warnings_out=None):
+def _emit_empty(
+    json_mode,
+    patterns,
+    budget,
+    engine,
+    filtered=False,
+    *,
+    warnings_out=None,
+    reachable_from=None,
+    unreachable=False,
+):
     label = _pat_label(patterns)
     suffix = " after filters" if filtered else ""
+    # W805-UUU: disclose active reachability filters in the verdict so
+    # consumers don't see a silent "no matches" when filters were active.
+    if reachable_from:
+        suffix = f"{suffix} — reachable from {reachable_from}"
+    elif unreachable:
+        suffix = f"{suffix} — unreachable code only"
     verdict = f"no matches for {label}{suffix}"
     if warnings_out:
         verdict = f"Search incomplete: {verdict}; absence is unconfirmed"
@@ -1193,9 +1213,19 @@ def _emit_empty(json_mode, patterns, budget, engine, filtered=False, *, warnings
         if warnings_out:
             _summary["warnings_out"] = list(warnings_out)
             _summary["partial_success"] = True
+        # W805-UUU: when an unresolvable entry was passed to --reachable-from
+        # we degrade: the filter could not be applied, so partial_success=True.
+        if reachable_from and not warnings_out:
+            _summary["partial_success"] = True
         extra: dict = {}
         if warnings_out:
             extra["warnings_out"] = list(warnings_out)
+        # W805-UUU: echo active filters at the top-level envelope so consumers
+        # that skip summary can still detect the active scope.
+        if reachable_from:
+            extra["reachable_from"] = reachable_from
+        if unreachable:
+            extra["unreachable"] = True
         click.echo(
             to_json(
                 json_envelope(
