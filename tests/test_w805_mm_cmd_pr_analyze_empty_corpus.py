@@ -321,28 +321,6 @@ class TestMissingPrRefDisclosure:
         data = json.loads(out)
         assert "summary" in data
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-MM REAL BUG (agent-safety class): "
-            "src/roam/commands/cmd_pr_analyze.py:278-297 "
-            "(_fetch_diff_from_pr_url) silently returns empty string on "
-            "TWO distinct failure modes: (1) URL doesn't match "
-            "_GITHUB_PR_URL_RE -- regex fails -> return ''; (2) gh pr "
-            "diff returns non-zero / raises -> return ''. Neither path "
-            "stamps any disclosure on the envelope. The CALLER then sees "
-            "an empty diff_text identical to 'clean working tree', and "
-            "the downstream NOCHANGES override emits "
-            "verdict='NOCHANGES', state='no_changes', "
-            "reasons=['no changes to analyze'] -- structurally "
-            "indistinguishable from a legitimately-clean tree. An agent "
-            "reading verdict=NOCHANGES would merge a PR whose diff was "
-            "never fetched. Pinned strict so a future fix that adds "
-            "state='fetch_failed' / state='url_invalid' / "
-            "diff_source_error / partial_success=True (NOT masquerading "
-            "as NOCHANGES) graduates to PASS."
-        ),
-    )
     def test_missing_pr_ref_disclosure(self, cli_runner, empty_corpus, monkeypatch):
         """W805-MM REAL BUG sentinel: malformed --diff-from-pr is silently
         equivalent to clean working tree.
@@ -392,19 +370,6 @@ class TestMissingPrRefDisclosure:
             f"Got summary={summary!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-MM REAL BUG (agent-safety): _fetch_diff_from_pr_url "
-            "silent-fall-through to '' on bad URL is indistinguishable "
-            "from clean working tree on the verdict axis. A NOCHANGES "
-            "verdict from a failed fetch is the dangerous case -- an "
-            "agent reading verdict=NOCHANGES could merge a PR whose diff "
-            "was never fetched. The fix MUST emit a distinct verdict "
-            "(e.g. 'FETCH_FAILED', 'URL_INVALID', 'CANNOT_ANALYZE') "
-            "rather than NOCHANGES on the bad-URL path."
-        ),
-    )
     def test_no_silent_pr_clean_on_empty(self, cli_runner, empty_corpus, monkeypatch):
         """Agent-safety pin: malformed --diff-from-pr MUST NOT emit a
         verdict that an agent could read as 'PR is clean, merge it'.
