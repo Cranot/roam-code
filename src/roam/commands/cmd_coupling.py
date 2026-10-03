@@ -313,6 +313,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                                 summary={
                                     "verdict": f"No changes for {label} — nothing to score",
                                     "error": f"No changes for {label}",
+                                    "state": "no_changes",
                                 },
                             )
                         )
