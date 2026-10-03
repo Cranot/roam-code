@@ -410,26 +410,6 @@ class TestForRefactorEmptyChildrenDiscloseDegradedResolution:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-KK REAL BUG (Pattern-2 silent SAFE / Variant-D silent "
-        "success on degraded resolution): _compound_envelope at "
-        "src/roam/mcp_server.py:4448-4470 computes partial_success ONLY "
-        "from per-child top-level 'error' keys. Children that returned a "
-        "structured envelope with no top-level error but "
-        "summary.partial_success=True (resolution=unresolved / "
-        "state=not_found) are NOT propagated upward. On empty corpus + "
-        "unresolved target, preflight + impact each disclose "
-        "partial_success=True while the compound emits "
-        "partial_success=False -- canonical Variant-D bug, same class as "
-        "W805-F (for_bug_fix). Fix: at mcp_server.py:4470, also flip "
-        "partial_success to True whenever any sections[name]['summary']"
-        "['partial_success'] is True. Bundled fix wave resolves W805-F "
-        "+ W805-KK together. Separate fix wave per W978 + accumulate-only "
-        "constraint."
-    ),
-)
 def test_empty_corpus_partial_success_set(empty_corpus):
     """Pin (Pattern-2 axis): compound must disclose partial_success=True
     when symbol-anchored children disclose partial_success=True.
@@ -446,16 +426,6 @@ def test_empty_corpus_partial_success_set(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-KK aggregator-axis pin: when child envelopes disclose "
-        "summary.partial_success=True with NO top-level error key, "
-        "_compound_envelope at mcp_server.py:4448-4470 fails to propagate "
-        "the nested signal into compound.summary.failed_subcommands. "
-        "Same bug class as W805-F; bundled fix."
-    ),
-)
 def test_empty_corpus_child_partial_success_propagates(empty_corpus):
     """Pin (aggregator-bug axis): failed_subcommands names the children
     that disclosed partial_success=True.
@@ -474,21 +444,6 @@ def test_empty_corpus_child_partial_success_propagates(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-KK verdict-prefix pin: when symbol-anchored children "
-        "disclose unresolved resolution, the compound verdict MUST NOT "
-        "read like four clean successes. The current verdict joins the "
-        'per-child verdicts ("preflight: target not found | impact: '
-        'Symbol not found | complexity_report: ... | clones: ...") -- '
-        "technically truthful per child, but the absence of the "
-        "PARTIAL prefix (which _compound_envelope:4498-4502 only adds "
-        "when failed_subcommands is non-empty) reads as a successful "
-        "refactor bundle. Fix bundled with the partial_success "
-        "propagation fix above."
-    ),
-)
 def test_no_silent_no_refactor_opportunities_on_empty(empty_corpus):
     """Pin (silent-SAFE axis): compound verdict must not read like a
     clean success when symbol-anchored children disclose unresolved

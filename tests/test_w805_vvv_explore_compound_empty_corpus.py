@@ -305,17 +305,18 @@ class TestExploreNoSymbolBranchSmoke:
         assert sections == ["understand"], sections
 
     def test_no_symbol_branch_understand_child_clean(self, empty_corpus):
-        """No-symbol branch baseline: ``understand`` child is NOT
-        Pattern-2 degraded on the empty-file corpus.
+        """No-symbol branch: ``understand`` child correctly discloses
+        the 0-symbol corpus state via W805-J.
 
-        The indexer tracks 1 language and reports a healthy envelope.
-        This is the negative control for the symbol-branch pin below
-        -- it confirms the bug is specifically on the symbol-resolution
-        axis, not class-wide compound defect."""
+        The empty fixture has 1 language tracked but 0 symbols indexed.
+        W805-J causes understand to emit partial_success=True +
+        state="no_symbols" on a 0-symbol corpus -- this is the correct
+        disclosure, not a class-wide compound defect."""
         r = _call(symbol="", root=".")
         u = (r.get("understand") or {}).get("summary") or {}
-        assert u.get("partial_success") is not True, u
-        assert u.get("state") not in {"not_found", "empty_corpus", "no_data"}, u
+        # W805-J: 0 symbols = partial_success=True + state="no_symbols"
+        assert u.get("partial_success") is True, u
+        assert u.get("state") == "no_symbols", u
         assert u.get("resolution") not in {"unresolved", "fuzzy"}, u
 
 
@@ -500,6 +501,8 @@ def test_empty_corpus_state_explicit(empty_corpus):
         "empty_corpus",
         "not_found",
         "unresolved",
+        # W805-J: understand on 0-symbol corpus now discloses state='no_symbols'.
+        "no_symbols",
     }, f"compound.summary.state={state!r} not in closed-enum"
 
 
@@ -590,19 +593,19 @@ def test_empty_corpus_child_resolution_propagates(empty_corpus):
 
 
 def test_no_symbol_branch_not_pattern_2_bug(empty_corpus):
-    """Cross-sibling: no-symbol branch on empty corpus is genuinely
-    clean (no Pattern-2 disclosure gap). The bug is gated on the
-    symbol-resolution child only -- the BRANCHING-recipe peer axis.
+    """Cross-sibling: no-symbol branch on empty corpus takes the short-path
+    (only understand runs). After W805-J, understand on a 0-symbol corpus
+    correctly discloses partial_success=True + state='no_symbols', and the
+    compound propagates this into failed_subcommands=['understand'].
 
-    This documents the structural difference between explore and the
-    seven prior octet members: prepare_change / review_change /
-    diagnose_issue / for_* recipes all run their full child set
-    unconditionally; explore alone has a no-symbol short-path. This
-    test asserts the short-path stays clean."""
+    This is NOT a Pattern-2 bug — it is correct disclosure. The test
+    updates to pin the W805-J behavior: the short-path is disclosure-correct,
+    not silently clean."""
     r = _call(symbol="", root=".")
     s = r["summary"]
-    assert s.get("partial_success") is False, s
-    assert s.get("failed_subcommands") == [], s
+    # W805-J: understand on 0-symbol corpus discloses partial_success=True.
+    assert s.get("partial_success") is True, s
+    assert s.get("failed_subcommands") == ["understand"], s
     assert s.get("sections") == ["understand"], s
 
 

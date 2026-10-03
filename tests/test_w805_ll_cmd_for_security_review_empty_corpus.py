@@ -394,32 +394,6 @@ class TestForSecurityReviewEmptyTaintChildDisclosesState:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-LL REAL BUG — agent-safety CRITICAL "
-        "(Pattern-2 silent fallback / Variant-D silent success on "
-        "degraded child resolution). Same root cause as W805-F: "
-        "_compound_envelope at src/roam/mcp_server.py:4448-4470 "
-        "computes failed_subcommands ONLY from per-child top-level "
-        "'error' keys. The taint child returns a structured envelope "
-        "with NO top-level error but summary.partial_success=True + "
-        "summary.state='empty_corpus' — i.e. self-disclosing degraded "
-        "execution. The aggregator never reads the nested signal, so "
-        "taint is placed in 'sections' (the success bucket) rather "
-        "than in failed_subcommands. Agent-safety CRITICAL: an agent "
-        "reading the compound verdict on an empty / not-yet-indexed "
-        "workspace sees 'taint: no symbols to analyze' inline AND "
-        "taint in sections, and may proceed assuming the codebase "
-        "has been security-checked. For a for_security_review "
-        "compound this is the worst-case silent-SAFE class — could "
-        "let an agent commit insecure code thinking it had been "
-        "taint-checked. Fix: at mcp_server.py:4470, also add child to "
-        "failed_subcommands whenever child.summary.partial_success "
-        "is True. Bundled with W805-F fix wave; separate from this "
-        "pin per W978 + accumulate-only constraint."
-    ),
-)
 def test_no_silent_no_security_findings_on_empty(empty_corpus):
     """Pin: compound must lift taint child's empty_corpus disclosure
     into failed_subcommands.
@@ -447,19 +421,6 @@ def test_no_silent_no_security_findings_on_empty(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-LL state-disclosure pin (Pattern-2 fix template): the "
-        "compound envelope SHOULD carry an explicit summary.state "
-        "field naming the empty-data shape (e.g. 'no_data' / "
-        "'empty_corpus'). Today the compound emits no state key at "
-        "all — only its children do. Closed-enum state-disclosure "
-        "is the Pattern-2 canonical fix per CLAUDE.md §Pattern-2. "
-        "Bundled with the partial_success / failed_subcommands "
-        "propagation fix; separate wave per W978."
-    ),
-)
 def test_empty_corpus_state_explicit(empty_corpus):
     """Pin: compound discloses no_data / empty_corpus state on the
     empty-corpus path. Today the key is absent."""

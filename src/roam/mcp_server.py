@@ -7003,9 +7003,14 @@ def _compound_envelope(
         "not_initialized",
         "no_data",
         "unresolved",
-        # W805-QQQ: no-diff children disclose via state="no_changes".
-        "no_changes",
-        "empty_diff",
+        # W805-J: understand on 0-symbol corpus discloses via state="no_symbols".
+        "no_symbols",
+        # "no_changes" / "empty_diff" intentionally omitted: cmd_diff returning
+        # no changes on a clean working tree is normal for symbol-anchored
+        # compounds (for_bug_fix, for_refactor, etc.). Including them caused
+        # false-positive partial_success=True on every clean-tree invocation.
+        # The pr_diff command already discloses partial_success=True at its own
+        # level; review_change consumers can read it there.
     }
     _CHILD_DEGRADED_RESOLUTIONS = {"unresolved", "fuzzy"}
     workflow_recipe = meta.pop("workflow_recipe", None) or _COMPOUND_WORKFLOW_RECIPES.get(command)

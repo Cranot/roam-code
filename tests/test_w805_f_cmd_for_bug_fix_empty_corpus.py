@@ -381,24 +381,6 @@ class TestForBugFixEmptyChildrenDiscloseDegradedResolution:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-F REAL BUG (Pattern-2 silent SAFE / Variant-D silent success "
-        "on degraded resolution): _compound_envelope at "
-        "src/roam/mcp_server.py:4448-4470 computes partial_success ONLY "
-        "from per-child top-level 'error' keys. Children that returned a "
-        "structured envelope with no top-level error but "
-        "summary.partial_success=True (resolution=unresolved, "
-        "state=not_found) are NOT propagated upward. On empty corpus + "
-        "unresolved target, 3/4 children disclose partial_success=True "
-        "while the compound emits partial_success=False — the canonical "
-        "Variant-D bug. Fix: at mcp_server.py:4470, also flip "
-        "partial_success to True whenever any sections[name]['summary']"
-        "['partial_success'] is True. Separate fix wave per W978 + "
-        "accumulate-only constraint."
-    ),
-)
 def test_empty_corpus_compound_partial_success_propagation(empty_corpus):
     """Pin: compound must lift child-disclosed partial_success.
 

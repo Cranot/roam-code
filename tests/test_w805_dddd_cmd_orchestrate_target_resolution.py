@@ -238,23 +238,6 @@ class TestOrchestrateBogusInputsSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-DDDD REAL BUG (HIGH, Pattern-2): graph/partition.py L46-47 "
-        "+ _empty_result L162-181 fabricate N empty-stub agents on a "
-        "zero-symbol corpus and return SAFE verdict 'orchestrated N agents "
-        "with 0 write conflicts across 0 shared interfaces' with "
-        "summary.partial_success=false. Agents reading the envelope cannot "
-        "tell that the underlying graph is EMPTY (G.number_of_nodes() == 0) "
-        "vs that the partition genuinely had no cross-agent conflicts. "
-        "CLAUDE.md Pattern-2: 'Never emit verdict SAFE / completed when the "
-        "underlying check failed or didn't run. Make absent state explicit: "
-        "state: not_initialized.' Fix template: empty-corpus branch must "
-        "emit verdict 'no symbols indexed' + summary.state='empty_corpus' + "
-        "summary.partial_success=true. Separate fix wave."
-    ),
-)
 def test_empty_corpus_partition_disclosure(cli_runner, empty_corpus):
     """Pin (Pattern-2): empty corpus MUST be disclosed via state or partial_success.
 
