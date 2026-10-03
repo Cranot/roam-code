@@ -341,29 +341,21 @@ class TestW805CCCCCInvariantsPreserved:
     obscure) the cmd_why_slow signature bug -- that is a separately-
     tracked latent."""
 
-    def test_cmd_why_slow_signature_bug_still_present(self):
-        """Source-level: cmd_why_slow line 168 still has the broken
-        ``get_changed_files(base=base)`` call signature."""
+    def test_cmd_why_slow_signature_bug_fixed(self):
+        """Source-level: cmd_why_slow W805-CCCCC signature bug has been
+        repaired. The broken ``get_changed_files(base=base)`` call is
+        gone; W805-CCCCC xfail-strict pins have graduated in lockstep."""
         src = (Path(__file__).resolve().parent.parent / "src" / "roam" / "commands" / "cmd_why_slow.py").read_text(
             encoding="utf-8"
         )
-        # Find all get_changed_files( calls in cmd_why_slow.
-        matches = list(re.finditer(r"get_changed_files\(([^)]*)\)", src))
-        assert len(matches) >= 1, (
-            "W805-EEEEE sister cross-check: cmd_why_slow must still call "
-            "get_changed_files (W805-CCCCC W978-precondition)."
+        old_matches = list(re.finditer(r"get_changed_files\(([^)]*)\)", src))
+        any_has_base_kw = any("base=" in m.group(1) for m in old_matches)
+        assert not any_has_base_kw, (
+            "W805-EEEEE sister cross-check: cmd_why_slow still has the "
+            "broken ``base=`` keyword. Graduate the W805-CCCCC xfail-strict "
+            "pins and use get_changed_files_status(project_root, "
+            "commit_range=...)."
         )
-        # If the W805-CCCCC bug has been silently fixed by a drive-by,
-        # surface that here -- this assert WILL FAIL if cmd_why_slow's
-        # call signature has been repaired, which is the desired surface
-        # because W805-CCCCC's xfail-strict pins also need to graduate
-        # in lockstep.
-        any_has_base_kw = any("base=" in m.group(1) for m in matches)
-        assert any_has_base_kw, (
-            "W805-EEEEE sister cross-check: cmd_why_slow's W805-CCCCC "
-            "signature bug appears to have been repaired (no ``base=`` "
-            "keyword in any get_changed_files call). If this is "
-            "intentional, graduate the W805-CCCCC xfail-strict pins "
-            "(TestChangedPathRaisesTypeError + TestStateFieldOnFailure) "
-            "in tandem."
+        assert "get_changed_files_status(" in src, (
+            "W805-EEEEE sister cross-check: cmd_why_slow must use get_changed_files_status after the W805-CCCCC fix."
         )
