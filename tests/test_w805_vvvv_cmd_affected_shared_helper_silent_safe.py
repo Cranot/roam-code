@@ -157,8 +157,10 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
+import subprocess
+
 from conftest import (  # noqa: E402 -- relative-to-tests-dir import after sys.path mutation
-    git_init,
+    git_commit,
     index_in_process,
     invoke_cli,
     parse_json_output,
@@ -190,7 +192,20 @@ def clean_indexed_project(tmp_path):
     (proj / "app.py").write_text(
         "def greet(name):\n    return f'hi {name}'\n\ndef main():\n    return greet('world')\n"
     )
-    git_init(proj)
+    # Bootstrap with git directly to guarantee a 'main' branch and two
+    # commits, so HEAD~1 is a valid ref. The default branch name varies
+    # (master on older systems) and cmd_affected defaults to HEAD~1.
+    subprocess.run(["git", "init"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "checkout", "-b", "main"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=proj, capture_output=True)
+    # Second commit so HEAD~1 is a valid ref for the default affected call.
+    (proj / "app.py").write_text(
+        "def greet(name):\n    return f'hi {name}'\n\ndef main():\n    return greet('world')\n\n# v2\n"
+    )
+    git_commit(proj, "second")
     out, rc = index_in_process(proj)
     assert rc == 0, f"index failed:\n{out}"
     return proj
@@ -226,9 +241,9 @@ class TestCmdAffectedConsumesSharedHelperBothCallSites:
             "roam.commands.changed_files; if this changed, re-audit the "
             "shared-helper family membership."
         )
-        assert "get_changed_files" in src, (
+        assert "get_changed_files_status" in src, (
             "W805-VVVV W978-precondition: cmd_affected must reference "
-            "get_changed_files; if this changed, re-audit the shared-"
+            "get_changed_files_status; if this changed, re-audit the shared-"
             "helper family membership."
         )
 
@@ -246,10 +261,10 @@ class TestCmdAffectedConsumesSharedHelperBothCallSites:
         )
         # Count "get_changed_files(" call sites — at least two distinct
         # invocations (one bare, one with commit_range=).
-        call_count = src.count("get_changed_files(root")
+        call_count = src.count("get_changed_files_status(root")
         assert call_count >= 2, (
             f"W805-VVVV W978-precondition: cmd_affected must have at least "
-            f"TWO ``get_changed_files(root...)`` call sites (one bare, one "
+            f"TWO ``get_changed_files_status(root...)`` call sites (one bare, one "
             f"with commit_range=). Got {call_count}; if collapsed to one, "
             f"re-audit the shared-helper family membership."
         )
@@ -301,25 +316,6 @@ class TestBogusRefDistinctFromEmptyDiff:
     both emit the IDENTICAL ``"No changes detected"`` verdict --
     Pattern-1 Variant D silent-fallback on a degraded resolution."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-VVVV REAL BUG: src/roam/commands/cmd_affected.py:209 "
-            "(``get_changed_files(root, commit_range=f'{base_ref}..HEAD')`` "
-            "in the ``else`` branch) inherits silent-SAFE from the shared "
-            "helper at src/roam/commands/changed_files.py:131-146. When "
-            "``--base totally-bogus-ref-99`` is passed, the helper "
-            "swallows the returncode != 0 and returns []; cmd_affected's "
-            "``if not changed:`` branch (lines 211-234) emits the same "
-            "``'No changes detected'`` verdict as a legitimately-clean "
-            "tree. Pattern-1 Variant D: degraded-resolution paths must "
-            "be distinguishable from full-resolution-with-no-changes "
-            "paths. SIXTH strict shared-helper consumer; family is now "
-            "6-STRONG STRUCTURAL on the get_changed_files axis. Pinned "
-            "strict; graduates when the bogus-ref verdict differs from "
-            "the clean-tree verdict."
-        ),
-    )
     def test_bogus_ref_verdict_differs_from_clean_tree(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref verdict must differ from clean-tree verdict."""
         monkeypatch.chdir(clean_indexed_project)
@@ -358,22 +354,6 @@ class TestStateFieldOnFailure:
     ``state`` field disclosing the degraded-resolution branch (helper
     returncode != 0 vs legitimately-empty diff)."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-VVVV REAL BUG (state axis): cmd_affected's "
-            "``if not changed:`` branch (lines 211-234) emits a JSON "
-            "envelope WITHOUT a ``summary.state`` field. The branch "
-            "merges three distinct conditions: (1) legitimately-empty "
-            "diff, (2) helper returncode != 0 (bogus ref / git not "
-            "found), (3) FileNotFoundError / TimeoutExpired in the "
-            "helper subprocess call. Pattern-1-V-D requires a closed-"
-            "enum disclosure (state OR git_error OR resolution) on the "
-            "degraded-resolution branch. Pinned strict; graduates when "
-            "cmd_affected populates ``summary.state`` distinct between "
-            "the no-changes and helper-failure classes."
-        ),
-    )
     def test_bogus_ref_emits_state_or_git_error(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref envelope must emit ``summary.state`` or ``summary.git_error``."""
         monkeypatch.chdir(clean_indexed_project)
@@ -416,26 +396,6 @@ class TestSilentSafeInheritedFromSharedHelper:
     Pins the inheritance so a fix to the shared helper unblocks ALL SIX
     consumers atomically."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-VVVV FAMILY-CONFIRMATION: cmd_affected's bogus-ref "
-            "``if not changed:`` branch emits a JSON envelope without "
-            "any ``git_error`` field -- the same gap W805-EEEE pins on "
-            "cmd_diff, W805-JJJJ pins on cmd_pr_diff, W805-OOOO pins on "
-            "cmd_attest, W805-RRRR pins on cmd_test_gaps, and W805-SSSS "
-            "pins on cmd_affected_tests. The shared helper "
-            "``src/roam/commands/changed_files.py:131-146`` returns an "
-            "empty list on three distinct failure classes (returncode "
-            "!= 0, FileNotFoundError, TimeoutExpired). All SIX consumers "
-            "(cmd_diff, cmd_pr_diff, cmd_attest, cmd_test_gaps, "
-            "cmd_affected_tests, cmd_affected) inherit silent-SAFE -- "
-            "the family is now 6-STRONG STRUCTURAL. Pinned strict; "
-            "graduates when ``get_changed_files`` returns a "
-            "``(paths, error_kind)`` tuple and cmd_affected surfaces "
-            "``summary.git_error`` on the failure branch."
-        ),
-    )
     def test_bogus_ref_envelope_has_git_error_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref envelope must emit ``summary.git_error``."""
         monkeypatch.chdir(clean_indexed_project)

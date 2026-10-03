@@ -99,6 +99,9 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
                             "new_issues": 0,
                             "partial_success": True,
                             "git_error": git_error,
+                            # W805-JJJJ: closed-enum state so agents can
+                            # distinguish git failure from a clean tree.
+                            "state": git_error,
                         },
                         changed_files=[],
                         metric_deltas={},
