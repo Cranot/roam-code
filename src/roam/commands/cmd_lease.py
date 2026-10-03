@@ -514,6 +514,10 @@ def lease_list(ctx, agent, include_expired, do_gc):
             budget=token_budget,
             leases=[],
             path=str(lroot),
+            agent_contract={
+                "facts": ["0 leases"],
+                "next_commands": ["roam lease claim --agent NAME --file PATH"],
+            },
         )
         if json_mode:
             click.echo(to_json(envelope))

@@ -317,19 +317,6 @@ class TestRelateRealBugsXfail:
             f"verdict must be single-line, non-placeholder; got {verdict!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG #2 Pattern-2 silent SAFE: cmd_relate.py:403-409 emits a generic "
-            "'N symbols analyzed, cohesion X.XX, 0 direct edges, 0 conflict risks' "
-            "verdict with partial_success=False and NO closed-enum state when "
-            "BOTH inputs resolve exactly AND no relation connects them. cmd_trace "
-            "(structural peer) emits state='no_path_within_hops' on the same "
-            "shape (W1248). Fix: when direct_edges=0 AND every pairwise distance "
-            "is None, emit state='no_relation' + adjust verdict to name the "
-            "absent relation."
-        ),
-    )
     def test_no_relation_disambiguation(self, disconnected_resolved_repo):
         """Both resolved exactly + no edges between them MUST emit closed-enum state.
 

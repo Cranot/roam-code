@@ -414,6 +414,17 @@ def audit(ctx, brief) -> None:
         if incomplete:
             verdict = "AUDIT — incomplete checks: " + ", ".join(incomplete) + "; " + verdict
             summary["verdict"] = verdict
+    # W805-RR: lift the most-pressing child state to the compound summary
+    # so consumers reading only summary.state can detect the empty-corpus
+    # shape without descending into sections[*].summary.state.
+    if "state" not in summary:
+        _state_priority = ("empty_corpus", "no_test_files", "no_data", "not_initialized")
+        for _child_name in ("health", "test_pyramid", "debt", "dead", "hotspots_danger", "stats", "stale_refs"):
+            _child_sum = (sections.get(_child_name) or {}).get("summary") or {}
+            _child_state = _child_sum.get("state")
+            if _child_state in _state_priority:
+                summary["state"] = _child_state
+                break
     if combined_warnings_out:
         summary["partial_success"] = True
         summary["warnings_out"] = list(combined_warnings_out)
