@@ -335,21 +335,6 @@ class TestUnknownOracleClosestMatch:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-C REAL BUG: cmd_oracle.py:244-250 ``route-exists`` no-route "
-        "branch returns OracleResult(value=False, reason_class="
-        "'indeterminate_no_data', confidence='low'). _emit collapses "
-        "value=False to verdict='false', so an agent reading only "
-        "summary.verdict cannot distinguish 'definitively no route' from "
-        "'no route-handler symbols indexed to check against'. The sibling "
-        "is-test-only orphan branch (cmd_oracle.py:320-325) returns "
-        "OracleResult(value=None, ...) and emits verdict='indeterminate' "
-        "correctly. Fix: cmd_oracle.py:246 OracleResult(False, ...) -> "
-        "OracleResult(None, ...). Separate fix wave."
-    ),
-)
 def test_oracle_no_data_distinguishable_from_false_route_exists(empty_corpus):
     """Pin: ``route-exists`` on empty corpus must NOT emit a verdict
     indistinguishable from a definitive no.

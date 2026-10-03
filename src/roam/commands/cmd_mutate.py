@@ -135,9 +135,12 @@ def _emit_error(ctx, operation: str, message: str, warnings: list[str] | None = 
                         "operation": operation,
                         "files_modified": 0,
                         "conflicts": 0,
+                        "partial_success": True,
+                        "state": "unresolved",
                     },
                     changes=[],
                     warnings=warnings or [message],
+                    isError=True,
                 )
             )
         )

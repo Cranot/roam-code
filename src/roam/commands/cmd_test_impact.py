@@ -139,7 +139,7 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
                 to_json(
                     json_envelope(
                         "test-impact",
-                        summary={"verdict": verdict, "count": 0},
+                        summary={"verdict": verdict, "count": 0, "state": "no_changed_files", "partial_success": True},
                         tests=[],
                     )
                 )
@@ -183,7 +183,20 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
                 )
                 return
             if json_mode:
-                click.echo(to_json(json_envelope("test-impact", summary={"verdict": verdict, "count": 0}, tests=[])))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "test-impact",
+                            summary={
+                                "verdict": verdict,
+                                "count": 0,
+                                "state": "no_test_coverage",
+                                "partial_success": True,
+                            },
+                            tests=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"VERDICT: {verdict}")
             return
@@ -258,6 +271,9 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
             "truncated": items_truncated,
             "limit": limit,
         }
+        if not test_hits:
+            _summary["state"] = "no_test_coverage"
+            _summary["partial_success"] = True
         if _cap_warnings_out:
             _summary["warnings_out"] = list(_cap_warnings_out)
             _summary["partial_success"] = True
