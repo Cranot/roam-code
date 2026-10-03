@@ -51,7 +51,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
-from roam.commands.changed_files import get_changed_files
+from roam.commands.changed_files import get_changed_files_status
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.db.findings import (
@@ -487,6 +487,7 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
     # ``all`` widens the scope to every indexed file. The other four
     # values delegate to ``get_changed_files``.
     changed_files: set[str] = set()
+    _git_error_kind: str | None = None
     cr = changed_range.lower()
     with open_db(readonly=not persist) as conn:
         if cr == "all":
@@ -494,13 +495,13 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
             changed_files = {(r[0] or "").replace("\\", "/") for r in rows}
         else:
             if cr == "pr":
-                paths = get_changed_files(project_root, pr=True, base_ref=base_ref)
+                paths, _git_error_kind = get_changed_files_status(project_root, pr=True, base_ref=base_ref)
             elif cr == "staged":
-                paths = get_changed_files(project_root, staged=True)
+                paths, _git_error_kind = get_changed_files_status(project_root, staged=True)
             elif cr == "head":
-                paths = get_changed_files(project_root, commit_range="HEAD~1..HEAD")
+                paths, _git_error_kind = get_changed_files_status(project_root, commit_range="HEAD~1..HEAD")
             else:
-                paths = get_changed_files(project_root)
+                paths, _git_error_kind = get_changed_files_status(project_root)
             changed_files = {p.replace("\\", "/") for p in paths}
 
         # --- Kind A: public_by_accident (always scans full corpus) ---
@@ -569,7 +570,10 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
     # is derived (not config-pinned) per CLAUDE.md. Surface both cuts
     # in the verdict so agents don't mistake a clean run for full
     # coverage.
-    if empty_corpus:
+    if _git_error_kind and total == 0:
+        # W805-AAAAA: git failure must be distinguishable from a legitimately-empty diff.
+        verdict = f"0 boundary findings (scope: {cr}; git error: {_git_error_kind})"
+    elif empty_corpus:
         verdict = "no imports to analyze (corpus has 0 import edges — run `roam index --force` to populate)"
     elif total == 0:
         verdict = f"0 boundary findings (scope: {cr})"
@@ -619,6 +623,11 @@ def boundary(ctx, changed_range, base_ref, ci, sarif_path, persist) -> None:
             # W805: closed-enum state for the empty-corpus path so agents
             # can distinguish "no imports yet" from "scope-clean run".
             _summary["state"] = "no_imports"
+        if _git_error_kind:
+            # W805-AAAAA: surface the error_kind from get_changed_files_status
+            # so agents can distinguish a bogus-ref/git-failure from a
+            # legitimately-empty diff.
+            _summary["git_error"] = _git_error_kind
         click.echo(
             to_json(
                 json_envelope(

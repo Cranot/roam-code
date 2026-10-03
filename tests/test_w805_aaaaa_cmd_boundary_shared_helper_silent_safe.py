@@ -106,8 +106,9 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
+import subprocess
+
 from conftest import (  # noqa: E402 -- relative-to-tests-dir import after sys.path mutation
-    git_init,
     index_in_process,
     invoke_cli,
     parse_json_output,
@@ -146,7 +147,16 @@ def clean_indexed_project(tmp_path):
     (proj / "app.py").write_text(
         "def greet(name):\n    return f'hi {name}'\n\ndef main():\n    return greet('world')\n"
     )
-    git_init(proj)
+    # Explicitly create the repo with a 'main' branch so --base-ref main is a
+    # valid ref on all platforms (git default branch varies: master on older
+    # systems, main on newer ones with init.defaultBranch=main).
+    subprocess.run(["git", "init"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=proj, capture_output=True)
+    # Rename current branch to main (works for both master and main defaults).
+    subprocess.run(["git", "checkout", "-b", "main"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=proj, capture_output=True)
     out, rc = index_in_process(proj)
     assert rc == 0, f"index failed:\n{out}"
     return proj
@@ -176,9 +186,9 @@ class TestCmdBoundaryConsumesSharedHelper:
             "roam.commands.changed_files; if this changed, re-audit the "
             "shared-helper family membership."
         )
-        assert "get_changed_files(" in src, (
+        assert "get_changed_files_status(" in src, (
             "W805-AAAAA W978-precondition: cmd_boundary must call "
-            "get_changed_files; if this changed, re-audit the shared-"
+            "get_changed_files_status; if this changed, re-audit the shared-"
             "helper family membership."
         )
 
@@ -226,25 +236,6 @@ class TestBogusRefDistinctFromEmptyDiff:
     emit the IDENTICAL ``"0 boundary findings (scope: pr)"`` verdict --
     Pattern-1 Variant D silent-fallback on a degraded resolution."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-AAAAA REAL BUG: src/roam/commands/cmd_boundary.py:491 "
-            "(``get_changed_files(project_root, pr=True, base_ref=base_ref)``) "
-            "inherits silent-SAFE from the shared helper at "
-            "src/roam/commands/changed_files.py:131-146. When "
-            "``--base-ref totally-bogus-99`` is passed, the helper "
-            "swallows the returncode != 0 and returns []; cmd_boundary's "
-            "``total == 0`` branch (lines 550-551) emits the same "
-            "``'0 boundary findings (scope: pr)'`` verdict as a clean "
-            "tree run against the real base ref. Pattern-1 Variant D: "
-            "degraded-resolution paths must be distinguishable from "
-            "full-resolution-with-no-changes paths. EIGHTH strict shared-"
-            "helper consumer; family is now 8-STRONG STRUCTURAL on the "
-            "get_changed_files axis. Pinned strict; graduates when the "
-            "bogus-ref verdict differs from the clean-tree verdict."
-        ),
-    )
     def test_bogus_ref_verdict_differs_from_clean_tree(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref verdict must differ from clean-tree verdict."""
         monkeypatch.chdir(clean_indexed_project)
@@ -286,27 +277,6 @@ class TestStateFieldOnFailure:
     (line 593) -- the bogus-ref path needs the same disclosure
     discipline."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-AAAAA REAL BUG (state axis): cmd_boundary's "
-            "``total == 0`` branch (lines 550-551, 582-589) emits a JSON "
-            "envelope WITHOUT a ``summary.state`` field on the bogus-ref "
-            "path. cmd_boundary DOES emit ``state: 'no_imports'`` when "
-            "the corpus has 0 import edges (line 593) -- proving the "
-            "command knows how to disclose closed-enum state -- but the "
-            "bogus-ref failure class is silently merged into the "
-            "no-findings success path. The branch covers three distinct "
-            "conditions: (1) legitimately-empty diff with imports, (2) "
-            "helper returncode != 0 (bogus ref / git not found), (3) "
-            "FileNotFoundError / TimeoutExpired in the helper subprocess "
-            "call. Pattern-1-V-D requires a closed-enum disclosure "
-            "(state OR git_error OR resolution) on the degraded-"
-            "resolution branch. Pinned strict; graduates when "
-            "cmd_boundary populates ``summary.state`` distinct between "
-            "the no-changes and helper-failure classes."
-        ),
-    )
     def test_bogus_ref_emits_state_or_git_error(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref envelope must emit ``summary.state`` or ``summary.git_error``."""
         monkeypatch.chdir(clean_indexed_project)
@@ -354,26 +324,6 @@ class TestSilentSafeInheritedFromSharedHelper:
     family to 8-STRONG STRUCTURAL. Pins the inheritance so a fix to the
     shared helper unblocks ALL EIGHT consumers atomically."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-AAAAA FAMILY-CONFIRMATION: cmd_boundary's bogus-ref "
-            "``total == 0`` branch emits a JSON envelope without any "
-            "``git_error`` field -- the same gap W805-EEEE pins on cmd_diff, "
-            "W805-JJJJ pins on cmd_pr_diff, W805-OOOO pins on cmd_attest, "
-            "W805-RRRR pins on cmd_test_gaps, W805-SSSS pins on "
-            "cmd_affected_tests, W805-VVVV pins on cmd_affected, and "
-            "W805-XXXX pins on cmd_adversarial. The shared helper "
-            "``src/roam/commands/changed_files.py:131-146`` returns an "
-            "empty list on three distinct failure classes (returncode != "
-            "0, FileNotFoundError, TimeoutExpired). All EIGHT consumers "
-            "inherit silent-SAFE -- the family is now 8-STRONG "
-            "STRUCTURAL. Pinned strict; graduates when "
-            "``get_changed_files`` returns a ``(paths, error_kind)`` tuple "
-            "and cmd_boundary surfaces ``summary.git_error`` on the "
-            "failure branch."
-        ),
-    )
     def test_bogus_ref_envelope_has_git_error_field(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref envelope must emit ``summary.git_error``."""
         monkeypatch.chdir(clean_indexed_project)
