@@ -339,7 +339,7 @@ def suggest_reviewers(ctx, files, top_n, excludes, use_changed):
                 to_json(
                     json_envelope(
                         "suggest-reviewers",
-                        summary={"verdict": "No changed files found"},
+                        summary={"verdict": "No changed files found", "state": "no_changes"},
                         reviewers=[],
                         coverage={"covered": 0, "total": 0, "uncovered_files": []},
                         changed_files=[],

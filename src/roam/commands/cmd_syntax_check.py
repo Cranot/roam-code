@@ -258,6 +258,7 @@ def syntax_check(ctx, paths, changed):
                             "files_with_errors": 0,
                             "total_errors": 0,
                             "clean": True,
+                            "state": "no_changes",
                         },
                         files=[],
                     )

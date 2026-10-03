@@ -216,9 +216,10 @@ class TestCmdWhySlowConsumesSharedHelper:
             "roam.commands.changed_files; if this changed, re-audit the "
             "shared-helper family membership."
         )
-        assert "get_changed_files(" in src, (
+        assert "get_changed_files_status(" in src, (
             "W805-CCCCC W978-precondition: cmd_why_slow must call "
-            "get_changed_files; if this changed, re-audit the shared-"
+            "get_changed_files_status (W805-CCCCC fix: was get_changed_files "
+            "with a broken signature); if this changed, re-audit the shared-"
             "helper family membership."
         )
 
@@ -241,23 +242,6 @@ class TestChangedPathRaisesTypeError:
     non-functional. Pinned strict; graduates when the call signature
     is fixed."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-CCCCC REAL BUG #1 (HARD-BROKEN): "
-            "src/roam/commands/cmd_why_slow.py:168 calls "
-            "``get_changed_files(base=base)`` but the helper at "
-            "src/roam/commands/changed_files.py:98-105 requires "
-            "``root: Path`` POSITIONALLY and uses ``base_ref=`` NOT "
-            "``base=``. Live ``--changed`` invocation raises ``TypeError: "
-            "get_changed_files() got an unexpected keyword argument "
-            "'base'``. The ``--changed`` path is non-functional today --"
-            "STRICTLY-WORSE than the silent-SAFE family pattern. Pinned "
-            "strict; graduates when the call signature is corrected "
-            "(``get_changed_files(project_root, base_ref=base)`` or "
-            "similar)."
-        ),
-    )
     def test_changed_flag_exits_cleanly(self, cli_runner, clean_indexed_project, monkeypatch):
         """``roam why-slow --changed`` must exit 0 (not raise TypeError)."""
         monkeypatch.chdir(clean_indexed_project)
@@ -291,22 +275,6 @@ class TestStateFieldOnFailure:
     SAFE branch; the day the signature is fixed AND the family is also
     fixed, this graduates."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-CCCCC REAL BUG #2 (LATENT silent-SAFE family member): "
-            "once cmd_why_slow line 168 is repaired, the ``if not "
-            "changed_files`` branch (lines 169-185) inherits the silent-"
-            "SAFE family shape from the shared helper. The summary today "
-            "(lines 175-181) carries only ``verdict / base / total_traced "
-            "/ hotspots`` -- no closed-enum state / git_error / "
-            "resolution field disclosing the failure class. Pattern-1-V-D "
-            "requires the bogus-ref path to be distinguishable from the "
-            "clean-tree path. Pinned strict; graduates when the call "
-            "signature is fixed AND a closed-enum disclosure is added on "
-            "the failure branch."
-        ),
-    )
     def test_bogus_ref_emits_state_or_git_error(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus-ref envelope must emit ``summary.state`` or ``summary.git_error``."""
         monkeypatch.chdir(clean_indexed_project)

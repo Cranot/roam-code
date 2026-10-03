@@ -36,9 +36,9 @@ import math
 import click
 
 from roam.capability import roam_capability
-from roam.commands.changed_files import get_changed_files
+from roam.commands.changed_files import get_changed_files_status
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, loc, to_json
 
 
@@ -165,25 +165,35 @@ def why_slow(ctx, top: int, changed: bool, base: str, min_calls: int):
 
         changed_files: set[str] | None = None
         if changed:
-            changed_files = set(get_changed_files(base=base))
+            project_root = find_project_root()
+            _paths, _git_error = get_changed_files_status(project_root, commit_range=f"{base}..HEAD")
+            changed_files = set(_paths)
             if not changed_files:
                 if json_mode:
+                    _summary: dict = {
+                        "verdict": "NO CHANGES",
+                        "base": base,
+                        "total_traced": total_traced,
+                        "hotspots": 0,
+                    }
+                    if _git_error is not None:
+                        _summary["git_error"] = _git_error
+                        _summary["state"] = _git_error
+                        _summary["verdict"] = f"NO CHANGES (git error: {_git_error})"
                     click.echo(
                         to_json(
                             json_envelope(
                                 "why-slow",
-                                summary={
-                                    "verdict": "NO CHANGES",
-                                    "base": base,
-                                    "total_traced": total_traced,
-                                    "hotspots": 0,
-                                },
+                                summary=_summary,
                                 hotspots=[],
                             )
                         )
                     )
                     return
-                click.echo(f"VERDICT: NO CHANGES vs {base}")
+                if _git_error is not None:
+                    click.echo(f"VERDICT: NO CHANGES (git error: {_git_error}) vs {base}")
+                else:
+                    click.echo(f"VERDICT: NO CHANGES vs {base}")
                 return
 
         hotspots = _query_hotspots(conn, top=top, changed_files=changed_files)

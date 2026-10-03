@@ -303,24 +303,6 @@ class TestStateFieldOnFailure:
     be distinguishable. Pinned strict; graduates when a closed-enum
     disclosure is added."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-JJJJJ REAL BUG #1 (silent-SAFE family member, "
-            "11th structural consumer): "
-            "src/roam/commands/cmd_suggest_reviewers.py:338-353 emits "
-            "``verdict: 'No changed files found'`` with no closed-enum "
-            "state / git_error / resolution field on the empty-files "
-            "branch. The summary is indistinguishable between (a) clean "
-            "working tree and (b) shared-helper silent-empty-list on git "
-            "failure (returncode != 0 OR FileNotFoundError). "
-            "Pattern-1-Variant-D requires the no-changes path to disclose "
-            "the resolution state. Pinned strict; graduates when "
-            "``summary.state`` (e.g. ``no_changes`` / ``git_unavailable`` "
-            "/ ``empty_diff``) or ``summary.resolution`` is added on the "
-            "empty-files branch."
-        ),
-    )
     def test_empty_diff_emits_state_or_resolution(self, cli_runner, clean_indexed_project, monkeypatch):
         """Empty-diff envelope must emit ``summary.state`` or
         ``summary.resolution`` to disambiguate the clean-tree path from
@@ -355,21 +337,6 @@ class TestBogusRefDistinctFromEmptyDiff:
     LATENT invariant that the empty-files branch carries a disambiguation
     field so a future bogus-ref extension can reuse the same field."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-JJJJJ REAL BUG #1 ECHO (forward-looking): "
-            "cmd_suggest_reviewers's empty-files branch (lines 338-353) "
-            "emits the same envelope shape that a future ``--base`` / "
-            "``--commit-range`` extension would exercise on a bogus-"
-            "ref. Today the surface only exposes ``--changed`` "
-            "(working-tree unstaged), but the silent-SAFE shape is "
-            "shared. Once a state / resolution field is added "
-            "(graduating REAL BUG #1), the same field disambiguates "
-            "bogus-ref future-extensions. Pinned as a strict invariant "
-            "on the empty-files envelope shape."
-        ),
-    )
     def test_empty_diff_distinguishable_from_hypothetical_bogus_ref(
         self, cli_runner, clean_indexed_project, monkeypatch
     ):
@@ -437,23 +404,22 @@ class TestW805HHHHHInvariantsPreserved:
         assert "def _discover_verify_targets(root: Path) -> dict:" in src
         assert "_discover_verify_targets(root)" in src
 
-    def test_cmd_why_slow_signature_bug_still_present(self):
-        """Source-level: cmd_why_slow still has the broken ``base=``
-        keyword pattern from W805-CCCCC. If silently repaired, surface
-        here so the W805-CCCCC xfail-strict pins graduate in lockstep."""
+    def test_cmd_why_slow_signature_bug_fixed(self):
+        """Source-level: cmd_why_slow W805-CCCCC signature bug has been
+        repaired. The broken ``get_changed_files(base=base)`` call is gone
+        and replaced with ``get_changed_files_status(project_root, ...)``.
+        W805-CCCCC xfail-strict pins have graduated in lockstep."""
         src = (Path(__file__).resolve().parent.parent / "src" / "roam" / "commands" / "cmd_why_slow.py").read_text(
             encoding="utf-8"
         )
-        matches = list(re.finditer(r"get_changed_files\(([^)]*)\)", src))
-        assert len(matches) >= 1, (
-            "W805-JJJJJ sister cross-check: cmd_why_slow must still "
-            "call get_changed_files (W805-CCCCC W978-precondition)."
+        old_matches = list(re.finditer(r"get_changed_files\(([^)]*)\)", src))
+        any_has_base_kw = any("base=" in m.group(1) for m in old_matches)
+        assert not any_has_base_kw, (
+            "W805-JJJJJ sister cross-check: cmd_why_slow still has the "
+            "broken ``base=`` keyword. Graduate the W805-CCCCC xfail-strict "
+            "pins and use get_changed_files_status(project_root, "
+            "commit_range=...)."
         )
-        any_has_base_kw = any("base=" in m.group(1) for m in matches)
-        assert any_has_base_kw, (
-            "W805-JJJJJ sister cross-check: cmd_why_slow's W805-CCCCC "
-            "signature bug appears to have been repaired (no ``base=`` "
-            "keyword in any get_changed_files call). If this is "
-            "intentional, graduate the W805-CCCCC xfail-strict pins in "
-            "tandem."
+        assert "get_changed_files_status(" in src, (
+            "W805-JJJJJ sister cross-check: cmd_why_slow must use get_changed_files_status after the W805-CCCCC fix."
         )
