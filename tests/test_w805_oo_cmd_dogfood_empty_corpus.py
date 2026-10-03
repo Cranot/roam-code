@@ -339,34 +339,6 @@ class TestDogfoodEmptyPrAnalyzeChildDisclosesState:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-OO REAL BUG — Pattern-2 silent fallback / Variant-D "
-        "silent success on degraded child resolution. Same root cause "
-        "as W805-F/KK/LL but on the CLI standalone aggregator at "
-        "src/roam/commands/cmd_dogfood.py:191 (NOT the MCP shared "
-        "_compound_envelope at mcp_server.py:4448-4470). The aggregator "
-        "computes failed_sections ONLY from per-child top-level "
-        "_subcommand_failed sentinels (JSON-parse failure or non-zero "
-        "exit). The pr_analyze child returns a structured envelope "
-        "with NO _subcommand_failed key but summary.partial_success=True "
-        "+ summary.state='no_changes' — i.e. self-disclosing degraded "
-        "execution. The aggregator never reads the nested signal, so "
-        "pr_analyze stays in sections (the implicit success bucket) "
-        "and the compound emits partial_success=False (or absent) "
-        "while a child analyzer ran on a degraded input. Agent-safety "
-        "impact: dogfood is the documented first-touch / new-user "
-        "demo surface; an agent or user reading "
-        "compound.summary.partial_success on the very first "
-        "invocation against a freshly-indexed not-yet-populated "
-        "workspace sees False and assumes the v2 stack ran cleanly. "
-        "Fix: at cmd_dogfood.py:191, also flip partial_success=True "
-        "AND include child name in failed_sections whenever child."
-        "summary.partial_success is True. Bundled with W805-F/KK/LL "
-        "fix wave; separate from this pin per W978 + accumulate-only."
-    ),
-)
 def test_no_silent_no_findings_on_empty(empty_corpus):
     """Pin: compound must lift pr_analyze child's no_changes disclosure
     into partial_success + failed_sections.
@@ -395,19 +367,6 @@ def test_no_silent_no_findings_on_empty(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-OO state-disclosure pin (Pattern-2 fix template): the "
-        "compound envelope SHOULD carry an explicit summary.state "
-        "field naming the empty-data shape (e.g. 'no_data' / "
-        "'empty_corpus' / 'no_changes'). Today the compound emits no "
-        "state key at all — only its children do. Closed-enum state-"
-        "disclosure is the Pattern-2 canonical fix per CLAUDE.md "
-        "§Pattern-2. Bundled with the partial_success / "
-        "failed_sections propagation fix; separate wave per W978."
-    ),
-)
 def test_empty_corpus_state_explicit(empty_corpus):
     """Pin: compound discloses no_data / no_changes state on the empty-
     corpus path. Today the key is absent on the compound."""

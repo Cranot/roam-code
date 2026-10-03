@@ -335,22 +335,6 @@ class TestWhyEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-O REAL BUG 1 (Pattern-2): cmd_why.py:257-258 in "
-        "_emit_why_json builds verdict 'N symbol(s) - none critical' "
-        "(or 'N of M symbol(s) critical') based on len(results) and the "
-        "crit count -- NOT on whether entries actually resolved. For a "
-        "single unresolved target this yields verdict='1 symbol(s) - none "
-        "critical' which reads as confident SAFE. A LAW-6 verdict-only "
-        "consumer cannot tell the symbol failed to resolve. "
-        "summary.partial_success IS flipped (W1245), but the verdict "
-        "axis is silent. Fix: when ALL results are unresolved or "
-        "error-bearing, override verdict to name the empty state "
-        "('No symbols resolved' / 'unresolved: <name>'). Separate fix wave."
-    ),
-)
 def test_no_silent_why_success_on_empty(empty_corpus):
     """Pin: verdict must name the unresolved state, not say 'none critical'.
 
@@ -384,22 +368,6 @@ def test_no_silent_why_success_on_empty(empty_corpus):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-O REAL BUG 2 (Pattern-2): cmd_why.py never sets a "
-        "summary.state field on any branch. Pattern-2 requires "
-        "closed-enum state disclosure so a machine consumer can "
-        "distinguish unresolved / isolated_in_graph / empty_corpus / "
-        "all_unresolved without parsing free-form verdict text. "
-        "Sibling precedent: cmd_describe (W805-I) emits "
-        "state='no_symbols'; cmd_module (W805-K) emits "
-        "state='path_not_found'; cmd_diagnose (W805-M, when fixed) "
-        "will emit state='empty_batch'. Fix: in _emit_why_json, when "
-        "all results are unresolved set summary.state='all_unresolved'. "
-        "Separate fix wave."
-    ),
-)
 def test_empty_corpus_explicit_state(empty_corpus):
     """Pin: unresolved single-target must disclose summary.state via closed enum."""
     result = _invoke_why(empty_corpus, "nonexistent_xyz", json_mode=True)

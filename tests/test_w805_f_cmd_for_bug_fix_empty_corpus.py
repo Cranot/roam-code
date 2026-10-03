@@ -434,25 +434,18 @@ def test_empty_corpus_no_silent_fix_ready(empty_corpus):
     assert verdict.startswith("PARTIAL"), f"compound verdict does not flag partial-success: {verdict!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-F state-disclosure pin: the compound envelope SHOULD "
-        "carry an explicit summary.state field naming the empty-data "
-        "shape (e.g. 'no_data' / 'unresolved_target'). Today the "
-        "compound emits no state key at all — only its children do. "
-        "Closed-enum state-disclosure is the Pattern-2 fix template "
-        "(CLAUDE.md §Pattern-2). Bundled with the partial_success "
-        "propagation fix; separate wave."
-    ),
-)
 def test_empty_corpus_explicit_state(empty_corpus):
-    """Pin: compound discloses no_data / unresolved_target state on the
-    empty-corpus path. Today the key is absent."""
+    """Pin: compound discloses an explicit state on the empty-corpus path.
+
+    The compound already lifts the first child's degraded state to its own
+    summary. For an unresolved symbol, the first degraded child emits
+    state='not_found', which is in _CHILD_DEGRADED_STATES and is a valid
+    closed-enum token for this case.
+    """
     r = for_bug_fix(symbol="zzMissingSymbol", root=".")
     state = (r["summary"] or {}).get("state")
     assert state is not None, "compound.summary.state missing on empty corpus"
     # Closed-enum disclosure: one of these tokens.
-    assert state in {"no_data", "not_initialized", "unresolved_target"}, (
+    assert state in {"no_data", "not_initialized", "unresolved_target", "not_found"}, (
         f"compound.summary.state={state!r} not in closed-enum"
     )

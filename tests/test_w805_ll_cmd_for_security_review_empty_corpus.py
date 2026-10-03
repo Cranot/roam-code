@@ -433,18 +433,6 @@ def test_empty_corpus_state_explicit(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-LL child-partial-success propagation pin (W805-F axis). "
-        "When ANY child (here: taint) discloses summary."
-        "partial_success=True, the compound's failed_subcommands MUST "
-        "include that child name. This is the same one-line fix as "
-        "W805-F's compound_partial_success_propagation pin, exercised "
-        "on a different child mechanism (state-disclosure rather than "
-        "resolution=unresolved). Bundled fix wave."
-    ),
-)
 def test_empty_corpus_child_partial_success_propagates(empty_corpus):
     """Pin (W805-F axis): every child whose summary.partial_success is
     True must be named in compound.summary.failed_subcommands."""

@@ -275,7 +275,13 @@ def dogfood_cmd(
         conf_score = conf_summary.get("score")
 
         failed_sections = sorted(
-            k for k, v in sections.items() if not isinstance(v, dict) or v.get("_subcommand_failed")
+            k
+            for k, v in sections.items()
+            if not isinstance(v, dict)
+            or v.get("_subcommand_failed")
+            # W805-OO: also lift children that self-disclose summary.partial_success=True
+            # (structured degraded-execution, NOT a sentinel _subcommand_failed).
+            or section_summaries.get(k, {}).get("partial_success") is True
         )
         incomplete_sections = sorted(
             k
@@ -306,6 +312,20 @@ def dogfood_cmd(
             parts.append(f"incomplete sections: {', '.join(incomplete_sections)}")
         verdict_text = " · ".join(parts) if parts else "no sections enabled"
 
+        # W805-OO: lift summary.state from the first degraded child.
+        compound_state: str | None = None
+        for _k in failed_sections:
+            _cs = section_summaries.get(_k, {}).get("state")
+            if _cs:
+                compound_state = _cs
+                break
+        if compound_state is None:
+            for _k in incomplete_sections:
+                _cs = section_summaries.get(_k, {}).get("state")
+                if _cs:
+                    compound_state = _cs
+                    break
+
         summary = {
             "verdict": verdict_text,
             "health_score": health_score,
@@ -316,6 +336,7 @@ def dogfood_cmd(
             "git_sha": git_meta.get("git_sha"),
             "git_branch": git_meta.get("git_branch"),
             "sections_run": sorted(sections.keys()),
+            **({"state": compound_state} if compound_state else {}),
         }
         if failed_sections:
             summary["partial_success"] = True
