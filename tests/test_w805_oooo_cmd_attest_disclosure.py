@@ -437,7 +437,8 @@ class TestW805JjjjInvariantsPreserved:
             f"still emit ``no change`` verdict; "
             f"got {summary.get('verdict')!r}"
         )
-        assert summary.get("partial_success") is False
+        # W805-QQQ: clean-tree pr-diff now emits partial_success=True.
+        assert summary.get("partial_success") is True
 
 
 class TestW805MmmmInvariantsPreserved:

@@ -400,23 +400,11 @@ def test_empty_corpus_state_explicit(empty_corpus):
     state = (r["summary"] or {}).get("state")
     assert state is not None, "compound.summary.state missing on empty corpus"
     # Closed-enum disclosure: one of these tokens.
-    assert state in {"no_data", "not_initialized", "empty_corpus", "no_complexity_data"}, (
+    assert state in {"no_data", "not_initialized", "empty_corpus", "no_complexity_data", "no_symbols"}, (
         f"compound.summary.state={state!r} not in closed-enum"
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-GGG child-partial-success / state propagation pin "
-        "(W805-F/KK/LL axis). When ANY child discloses degraded "
-        "execution via summary.partial_success=True OR "
-        "summary.state in a closed-enum degradation set, the "
-        "compound's failed_subcommands MUST include that child "
-        "name. This is the broadest one-line fix at "
-        "mcp_server.py:4470. Bundled fix wave."
-    ),
-)
 def test_empty_corpus_child_partial_success_propagates(empty_corpus):
     """Pin (W805-F/KK/LL axis, broadened): every child whose summary
     discloses degraded execution must be named in

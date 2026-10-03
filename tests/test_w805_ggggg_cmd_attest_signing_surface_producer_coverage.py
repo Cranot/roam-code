@@ -407,9 +407,10 @@ class TestW805OoooInvariantsPreserved:
             "broken -- cmd_attest must still import from "
             "roam.commands.changed_files."
         )
-        assert "get_changed_files(root" in src, (
+        # W805-OOOO upgraded cmd_attest to get_changed_files_status (tuple form).
+        assert "get_changed_files_status" in src, (
             "W805-GGGGG sister cross-check: W805-OOOO precondition "
-            "broken -- cmd_attest must still call get_changed_files."
+            "broken -- cmd_attest must still call get_changed_files_status."
         )
 
 
