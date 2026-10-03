@@ -389,26 +389,6 @@ def test_missing_vs_empty_envelope_command_parity(bare_project, empty_memory_fil
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-BBB Pattern-2 silent-divergence (peer of cmd_lease W805-XX): "
-        "cmd_memory.py:254-289 (memory_list) and cmd_memory.py:355-393 "
-        "(memory_relevant) emit state='ok' with empty next_commands when "
-        ".roam/memory.jsonl exists but is empty / whitespace-only. The "
-        "sibling missing-file branch at 226-252 / 321-353 emits "
-        "state='no_memory' with next_commands=['roam memory add ...']. "
-        "Two empty-corpus paths produce divergent structured next-step "
-        "fields -- agents auto-routing on next_commands[0] get a recovery "
-        "hint on one path and a dead 'state=ok' envelope on the other "
-        "(also Pattern-1 variant D: silent success on degraded resolution). "
-        "Fix: when total==0 on the walked-file path, mirror the missing-"
-        "file shape -- set state='no_memory' (or new state='empty_memory') "
-        "and pass agent_contract={'facts':[...], 'next_commands':"
-        "['roam memory add --kind fact --subject TOPIC --body TEXT']}. "
-        "Pinned for separate fix wave."
-    ),
-)
 def test_no_silent_no_memory_on_empty(empty_memory_file_project):
     """Pattern-2 + CONSTRAINT 12: empty-file walk discloses no_memory.
 

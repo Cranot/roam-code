@@ -325,20 +325,6 @@ class TestExplainCommandEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-H Pattern-2 milder shape: cmd_explain_command.py L282 (JSON) "
-        "and L308 (text) emit a bare 'OK' verdict on the happy path. "
-        "LAW 6 says the verdict must work without any other field; bare "
-        "'OK' carries no command identifier and is explicitly in the LAW 4 "
-        "blocklist at tests/test_law4_lint.py:278 (alongside 'completed', "
-        "'see details', 'n/a'). Cohort alternative: "
-        "'<command> metadata read' or 'explain-command <name> loaded' "
-        "(terminal anchors 'read' / 'loaded' are in _CONCRETE_NOUN_ANCHORS). "
-        "Separate fix wave."
-    ),
-)
 def test_happy_path_law6_verdict_standalone(cli_runner, empty_corpus):
     """Pin: the happy-path verdict must work as a standalone line.
 
@@ -366,19 +352,6 @@ def test_happy_path_law6_verdict_standalone(cli_runner, empty_corpus):
     ), f"LAW 6: verdict must self-describe; got {verdict!r}"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-H Pattern-2 milder shape: cmd_explain_command.py L282 emits "
-        "verdict='OK' which is auto-derived as agent_contract.facts=['OK'] "
-        "by formatter._derive_agent_contract. Bare 'OK' is explicitly "
-        "blocklisted by tests/test_law4_lint.py:278. LAW 4 says facts must "
-        "anchor on a concrete-noun terminal. Cohort alternative: emit a "
-        "structured fact like '<command> metadata read' OR set "
-        "summary.verdict to a LAW 4-compliant string so the auto-derive "
-        "produces an anchored fact. Separate fix wave."
-    ),
-)
 def test_happy_path_law4_facts_anchored(cli_runner, empty_corpus):
     """Pin: ``agent_contract.facts`` must be LAW 4 anchored on a concrete noun.
 
@@ -403,18 +376,6 @@ def test_happy_path_law4_facts_anchored(cli_runner, empty_corpus):
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-H Pattern-2 milder shape: cmd_explain_command.py L276-306 "
-        "happy path emits NO closed-enum summary.state. The unknown-command "
-        "branch ALREADY emits state='unknown_command' via "
-        "structured_unknown_filter (W1083-followup). Cohort uniformity gap: "
-        "the happy path should mirror with state='ok' / 'known_command' so "
-        "a consumer can switch on a single closed-enum value rather than "
-        "parsing the verdict string. Separate fix wave."
-    ),
-)
 def test_happy_path_state_closed_enum_disclosed(cli_runner, empty_corpus):
     """Pin: the happy path should expose a closed-enum ``state`` field.
 

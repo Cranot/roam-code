@@ -245,7 +245,7 @@ def oracle_route_exists(conn: sqlite3.Connection, path: str) -> OracleResult:
     count = int(row[0]) if row else 0
     if count == 0:
         return OracleResult(
-            False,
+            None,
             "no route-handler symbols indexed; try `roam ws resolve` first",
             "indeterminate_no_data",
             "low",

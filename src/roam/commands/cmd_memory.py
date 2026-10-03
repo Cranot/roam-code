@@ -256,6 +256,34 @@ def memory_list(ctx, since, kind, top):
         entries = entries[:top]
 
     total = len(entries)
+
+    if total == 0:
+        verdict = "no memory yet -- run `roam memory add` to store the first entry"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "memory-list",
+                        summary={
+                            "verdict": verdict,
+                            "partial_success": False,
+                            "state": "no_memory",
+                            "total": 0,
+                        },
+                        budget=token_budget,
+                        entries=[],
+                        path=str(path),
+                        agent_contract={
+                            "facts": ["no memory entries stored for this repo"],
+                            "next_commands": ["roam memory add --kind fact --subject TOPIC --body TEXT"],
+                        },
+                    )
+                )
+            )
+            return
+        click.echo(f"VERDICT: {verdict}")
+        return
+
     verdict = f"{total} memory entr{'y' if total == 1 else 'ies'}"
 
     if json_mode:

@@ -306,19 +306,6 @@ class TestWorkflowEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-D Pattern-2 milder shape: cmd_workflow.py L183-213 (--next "
-        "branch) does NOT emit a closed-enum summary.state when the prior "
-        "command name is unknown to _NEXT_HINTS. Verdict text ALREADY "
-        "discloses the absence ('no canned next-command for `roam X`') so "
-        "this is NOT a canonical silent SAFE - but partial_success stays "
-        "False and summary.state is absent. Surface-uniformity gap, not a "
-        "silent bug. Separate fix wave: set partial_success=True + "
-        "state='no_canned_hint' on the empty-suggestions branch."
-    ),
-)
 def test_next_after_unknown_command_partial_success(cli_runner, empty_corpus):
     """Pin: ``--next <unknown>`` should set ``partial_success=True``.
 
@@ -334,15 +321,6 @@ def test_next_after_unknown_command_partial_success(cli_runner, empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-D Pattern-2 milder shape: cmd_workflow.py L183-213 does not "
-        "emit a closed-enum summary.state on the --next <unknown> branch. "
-        "Acceptable values: 'no_canned_hint' / 'unknown_prior_command'. "
-        "Surface-uniformity gap with the W805 cohort. Separate fix wave."
-    ),
-)
 def test_next_after_unknown_command_explicit_state(cli_runner, empty_corpus):
     """Pin: ``--next <unknown>`` should expose a closed-enum state field.
 

@@ -144,7 +144,24 @@ def owner(ctx, path):
             if len(dir_files) == 1:
                 info = _ownership_for_file(project_root, dir_files[0]["path"])
                 data = {"path": dir_files[0]["path"], "type": "file"}
-                if info:
+                if not info:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "owner",
+                                budget=token_budget,
+                                summary={
+                                    "verdict": "no blame data: run `git blame` or `roam index` to collect ownership",
+                                    "partial_success": True,
+                                    "state": "no_blame_data",
+                                    "main_dev": None,
+                                    "fragmentation": 0,
+                                },
+                                **data,
+                            )
+                        )
+                    )
+                else:
                     data["main_dev"] = info["main_dev"]
                     data["fragmentation"] = info["fragmentation"]
                     data["authors"] = [
@@ -156,24 +173,24 @@ def owner(ctx, path):
                         }
                         for a, n in info["authors"]
                     ]
-                main_dev = data.get("main_dev", "?")
-                frag = data.get("fragmentation", 0)
-                n_authors = len(info["authors"]) if info else 0
-                owner_verdict = f"top owner: {main_dev}, {n_authors} contributor{'s' if n_authors != 1 else ''}, fragmentation={frag}"
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "owner",
-                            budget=token_budget,
-                            summary={
-                                "verdict": owner_verdict,
-                                "main_dev": main_dev,
-                                "fragmentation": frag,
-                            },
-                            **data,
+                    main_dev = data.get("main_dev", "?")
+                    frag = data.get("fragmentation", 0)
+                    n_authors = len(info["authors"])
+                    owner_verdict = f"top owner: {main_dev}, {n_authors} contributor{'s' if n_authors != 1 else ''}, fragmentation={frag}"
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "owner",
+                                budget=token_budget,
+                                summary={
+                                    "verdict": owner_verdict,
+                                    "main_dev": main_dev,
+                                    "fragmentation": frag,
+                                },
+                                **data,
+                            )
                         )
                     )
-                )
             else:
                 file_ids = [f["id"] for f in dir_files]
                 # Batched per-author churn (safe on >999-file directories).

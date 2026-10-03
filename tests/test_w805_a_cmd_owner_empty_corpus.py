@@ -208,18 +208,6 @@ class TestOwnerEmptyCorpusSmoke:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-A REAL BUG: cmd_owner.py:142-175 (single-file JSON branch) "
-        "emits 'top owner: ?, 0 contributors, fragmentation=0' with "
-        "summary.partial_success=False when blame data is absent. "
-        "Pattern-2 silent SAFE: verdict reads as confident ownership "
-        "when the underlying _ownership_for_file returned None. "
-        "Fix: emit state='no_blame_data' + partial_success=True + a "
-        "verdict that names the absent-data state. Separate fix wave."
-    ),
-)
 def test_empty_corpus_partial_success_set(empty_blame_corpus):
     """Pin: ``summary.partial_success`` should be True when blame is empty.
 
@@ -237,15 +225,6 @@ def test_empty_corpus_partial_success_set(empty_blame_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-A REAL BUG: cmd_owner.py:142-175 does not emit a "
-        "summary.state field on the empty-blame branch. Pattern-2 "
-        "requires closed-enum state disclosure ('no_blame_data' "
-        "alongside the existing 'path_not_found'). Separate fix wave."
-    ),
-)
 def test_empty_corpus_explicit_state(empty_blame_corpus):
     """Pin: ``summary.state`` should disclose absent blame data.
 
@@ -263,16 +242,6 @@ def test_empty_corpus_explicit_state(empty_blame_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-A REAL BUG: cmd_owner.py:161 emits verdict "
-        "'top owner: ?, 0 contributors, fragmentation=0' when blame "
-        "data is absent. That is the canonical silent-SAFE shape - the "
-        "verdict reads as confident ownership ('top owner: ?') when "
-        "the underlying check produced no signal. Separate fix wave."
-    ),
-)
 def test_empty_corpus_no_silent_ownership(empty_blame_corpus):
     """Pin: the verdict must NOT claim ownership when blame is absent.
 

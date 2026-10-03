@@ -152,8 +152,12 @@ def _emit_next_after(next_after: str, json_mode: bool) -> None:
     )
     if json_mode:
         next_commands = list(suggestions) if suggestions else ["roam workflow --list"]
+        summary: dict = {"verdict": verdict, "after": next_after}
+        if not suggestions:
+            summary["partial_success"] = True
+            summary["state"] = "no_canned_hint"
         _emit_workflow_json_contract(
-            summary={"verdict": verdict, "after": next_after},
+            summary=summary,
             suggestions=suggestions,
             agent_contract={
                 "facts": [verdict],

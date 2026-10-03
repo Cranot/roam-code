@@ -264,21 +264,6 @@ class TestEmptyCorpusNoCrash:
 class TestEmptyCorpusStateDisclosure:
     """Branch 1 (no changed files): no machine-readable state field."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-HH REAL BUG (branch 1): "
-            "src/roam/commands/cmd_test_impact.py:73-103 (the ``not files`` "
-            "branch) emits an envelope with no ``state`` field. cmd_impact's "
-            "analogous zero-result paths set machine-readable state markers "
-            "via the W1272 hardening. cmd_test_impact missed this. Pinned "
-            "strict so a future cleanup that adds "
-            "``state='no_changed_files'`` (or equivalent) graduates this "
-            "to PASS; until then, agents reading ``summary.state`` get "
-            "None on the empty-changeset path and cannot distinguish it "
-            "from the no-symbols or no-tests branches."
-        ),
-    )
     def test_empty_corpus_state_explicit(self, cli_runner, empty_corpus, monkeypatch):
         """Empty-changeset path discloses ``state`` explicitly."""
         monkeypatch.chdir(empty_corpus)
@@ -300,22 +285,6 @@ class TestEmptyCorpusStateDisclosure:
             f"summary.state for cross-branch disambiguation; got {state!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-HH REAL BUG (branch 1): "
-            "src/roam/commands/cmd_test_impact.py:73-103 emits "
-            "``partial_success: false`` on the empty-changeset path. "
-            "Pattern-2 discipline (silent fallback rule from CLAUDE.md): "
-            "never emit verdict='SAFE'/'completed' when an underlying "
-            "check did not run. The 'no source files changed' state is "
-            "literally 'the test-coverage check did not run', so an "
-            "agent switching on partial_success interprets it as a "
-            "passing run. Pinned strict; a fix that sets "
-            "``partial_success=True`` (or moves state to a non-success "
-            "vocabulary) graduates to PASS."
-        ),
-    )
     def test_empty_corpus_partial_success_set(self, cli_runner, empty_corpus, monkeypatch):
         """Pattern-2 guard: empty-changeset path sets partial_success=True."""
         monkeypatch.chdir(empty_corpus)
@@ -394,26 +363,6 @@ class TestZeroAffectedTestsDisclosure:
             f"fixture should trigger branch 3 ('no tests reach the N changed file(s)'); got verdict={verdict!r}"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-HH REAL BUG (branch 3, CRITICAL): "
-            "src/roam/commands/cmd_test_impact.py:174-178 (the no-tests-"
-            "reach branch) emits ``count: 0, tests: [], partial_success: "
-            "false`` with no machine-readable state field. This is the "
-            "single most acute Pattern-2 silent SAFE on this command: "
-            "a coverage-aware agent gating on test-impact OUTPUT cannot "
-            "tell 'real symbols changed but ZERO tests cover them' "
-            "(true coverage gap, partial_success SHOULD be True) from "
-            "'changeset is empty, no check needed' (also count=0, "
-            "tests=[], partial_success=false). Pinned strict; the fix "
-            "either adds ``state='no_test_coverage'`` + "
-            "``partial_success=True`` OR emits a distinct verdict-level "
-            "marker that downstream consumers can switch on. "
-            "Disambiguation matters: this is the signal a CI gate or "
-            "an autonomous-PR mode would block on."
-        ),
-    )
     def test_zero_affected_tests_disclosure(self, cli_runner, no_test_coverage_corpus, monkeypatch):
         """Pattern-2 disambiguation: 'no test coverage' state is explicit.
 

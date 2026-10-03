@@ -192,20 +192,6 @@ def test_dry_run_explicit_disclosure(empty_indexed_project, monkeypatch):
 # ===========================================================================
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-GG pin: cmd_mutate._emit_error does NOT set summary.partial_success, "
-        "summary.state, or top-level isError on missing-target / empty-corpus. "
-        "Per CLAUDE.md 'canonical failure envelope' (Pattern 1, variant D), a "
-        "degraded resolution must set partial_success=true + state='unresolved' + "
-        "isError=true so an MCP consumer reading summary.partial_success cannot "
-        "mistake 'symbol not found' for a successful no-op transform. Agent-safety "
-        "CRITICAL: today the verdict text carries the only signal — a wrapper that "
-        "JSON-parses summary.partial_success and routes on False will believe the "
-        "transform succeeded. Fix: extend _emit_error to stamp these three fields."
-    ),
-)
 def test_no_silent_transform_applied_on_empty(empty_indexed_project):
     """AGENT-SAFETY pin: a missing-target envelope MUST set
     ``summary.partial_success=true`` AND ``summary.state="unresolved"``

@@ -279,7 +279,10 @@ def explain_command(ctx, name: str):
                 json_envelope(
                     "explain-command",
                     summary={
-                        "verdict": "OK" if not load_error else "DEGRADED",
+                        "verdict": f"{name}: command metadata available"
+                        if not load_error
+                        else f"{name}: command metadata partially available",
+                        "state": "ok" if not load_error else "degraded",
                         "command": name,
                         "category": match["category"],
                         "maturity": match["maturity"],
