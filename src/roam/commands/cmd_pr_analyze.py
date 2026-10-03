@@ -329,14 +329,19 @@ def _capture_pr_prep(
 _GITHUB_PR_URL_RE = re.compile(r"https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<num>\d+)")
 
 
-def _fetch_diff_from_pr_url(url: str) -> str:
+def _fetch_diff_from_pr_url(url: str, error_out: list[str] | None = None) -> str:
     """Fetch a GitHub PR diff via ``gh pr diff`` (delegates auth to gh CLI).
 
-    Returns empty string on any failure; the caller (which already handles
-    empty diffs as the trivial case) gets a clean error path.
+    Returns empty string on any failure.  When *error_out* is provided it
+    receives the error code (``"url_invalid"`` / ``"fetch_failed"``) so the
+    caller can surface the failure rather than silently treating it as a clean
+    working tree.  W805-MM fix: distinguishes explicit fetch failure from a
+    legitimately-empty diff.
     """
     m = _GITHUB_PR_URL_RE.search(url)
     if not m:
+        if error_out is not None:
+            error_out.append("url_invalid")
         return ""
     repo = f"{m.group('owner')}/{m.group('repo')}"
     pr_num = m.group("num")
@@ -352,12 +357,16 @@ def _fetch_diff_from_pr_url(url: str) -> str:
         )
         if proc.returncode == 0:
             return proc.stdout
+        if error_out is not None:
+            error_out.append("fetch_failed")
     except (OSError, subprocess.SubprocessError) as _exc:
         # A gh failure silently yields an empty diff — surface lineage so
         # an empty PR analysis has a discoverable cause.
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_pr_analyze:fetch_diff_from_pr_url", _exc)
+        if error_out is not None:
+            error_out.append("fetch_failed")
     return ""
 
 
@@ -367,6 +376,7 @@ def _acquire_diff(
     staged: bool,
     diff_from_pr: str | None = None,
     source_out: list[str] | None = None,
+    error_out: list[str] | None = None,
 ) -> str:
     """Return the diff text from the highest-priority available source.
 
@@ -384,6 +394,11 @@ def _acquire_diff(
     re-deriving the answer from ``sys.stdin.isatty()`` a second time, which
     is an unreliable proxy under CliRunner/pytest (stdin is a non-tty stream
     there regardless of whether anything was actually piped in).
+
+    *error_out*, when given a list, receives the error code from
+    ``_fetch_diff_from_pr_url`` on failure (``"url_invalid"`` /
+    ``"fetch_failed"``).  W805-MM: allows the caller to distinguish a silent
+    fetch failure from a legitimately-clean working tree.
     """
 
     def _mark(source: str) -> None:
@@ -392,7 +407,7 @@ def _acquire_diff(
 
     if diff_from_pr:
         _mark("diff_from_pr")
-        return _fetch_diff_from_pr_url(diff_from_pr)
+        return _fetch_diff_from_pr_url(diff_from_pr, error_out=error_out)
     if input_file:
         try:
             text = Path(input_file).read_text(encoding="utf-8")
@@ -2301,6 +2316,7 @@ def pr_analyze_command(
         return
 
     _diff_source: list[str] = []
+    _diff_fetch_errors: list[str] = []
     diff_text = (
         _run_check(
             "acquire_diff",
@@ -2310,6 +2326,7 @@ def pr_analyze_command(
             staged,
             diff_from_pr=diff_from_pr,
             source_out=_diff_source,
+            error_out=_diff_fetch_errors,
             default="",
         )
         or ""
@@ -2402,6 +2419,16 @@ def pr_analyze_command(
         prep_state_reason = ""
         failed_subcommands = []
 
+    # W805-MM: when --diff-from-pr was given but the fetch failed (URL invalid
+    # or gh command error), override prep_state so the verdict is NOT "NOCHANGES"
+    # (indistinguishable from a legitimately-clean tree).  Add diff_source_error
+    # to bundle_summary so machine consumers can distinguish a failed fetch from
+    # a legitimately-empty diff.
+    _diff_fetch_error: str | None = _diff_fetch_errors[0] if _diff_fetch_errors else None
+    if _diff_fetch_error and not has_diff_text and prep_state == "no_changes":
+        prep_state = _diff_fetch_error  # "url_invalid" or "fetch_failed"
+        prep_state_reason = f"--diff-from-pr fetch failed: {_diff_fetch_error}"
+
     _verdict_result = _run_check(
         "determine_verdict",
         _determine_verdict,
@@ -2488,6 +2515,11 @@ def pr_analyze_command(
         bundle_summary["partial_success"] = prep_state != "no_changes" or verdict == "NOCHANGES"
     if failed_subcommands:
         bundle_summary["failed_subcommands"] = list(failed_subcommands)
+    # W805-MM: surface the diff-from-pr fetch failure so machine consumers can
+    # distinguish a failed fetch from a legitimately-empty diff.
+    if _diff_fetch_error:
+        bundle_summary["diff_source_error"] = _diff_fetch_error
+        bundle_summary["diff_source"] = "diff_from_pr"
 
     bundle = {
         "summary": bundle_summary,
