@@ -445,7 +445,7 @@ def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level)
                             },
                             diagram="",
                             agent_contract={
-                                "facts": ["0 nodes indexed", "0 edges in graph"],
+                                "facts": ["0 nodes", "0 edges"],
                                 "risks": [],
                                 "next_commands": ["roam index"],
                                 "confidence": None,
