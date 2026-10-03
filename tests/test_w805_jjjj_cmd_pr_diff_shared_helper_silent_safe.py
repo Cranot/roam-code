@@ -250,26 +250,6 @@ class TestBogusCommitRangeStateDisclosure:
     field, NO git_error field, NO partial_success: true. An agent acting
     on the verdict concludes the diff is safe."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-JJJJ REAL BUG: src/roam/commands/cmd_pr_diff.py:78-113 "
-            "(the ``if not changed:`` branch downstream of "
-            '``get_changed_files``) emits ``verdict: "no changes '
-            'detected"`` + ``partial_success: false`` on a bogus '
-            "commit-range -- byte-identical to the clean-tree envelope. "
-            "The root cause is "
-            "``src/roam/commands/changed_files.py:142,145`` swallowing "
-            "``returncode != 0`` / FileNotFoundError / TimeoutExpired into "
-            "an empty list. Pattern-1-V-D silent-success-on-degraded-"
-            "resolution. STRICTLY MORE SEVERE than W805-EEEE (cmd_diff) "
-            'which at least emits ``state: "no_changes"`` -- cmd_pr_diff '
-            "has NO ``state`` field at all. THIRD shared-helper family "
-            "member; SECOND on the strict ``get_changed_files`` axis. "
-            "Pinned strict; graduates when the bogus-ref path emits "
-            "``state`` with a non-``no_changes`` closed-enum value."
-        ),
-    )
     def test_bogus_commit_range_state_disclosure(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus commit-range path must emit a non-``no_changes`` ``state``."""
         monkeypatch.chdir(clean_indexed_project)
@@ -295,17 +275,6 @@ class TestBogusCommitRangeResolutionDisclosure:
     ``resolution`` field. cmd_pr_diff has no positional ref argument
     (uses ``--range``) so the resolution test rides on the same flag."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-JJJJ REAL BUG (resolution axis): bogus --range path "
-            "emits no ``resolution`` field. Pattern-1-V-D contract "
-            "requires AT LEAST ONE closed-enum disclosure (state OR "
-            "resolution) on the degraded-resolution path. Pinned strict; "
-            "graduates when the envelope distinguishes bogus-ref from "
-            "clean-tree on either field."
-        ),
-    )
     def test_bogus_commit_range_resolution_disclosure(self, cli_runner, clean_indexed_project, monkeypatch):
         """Bogus --range must emit ``summary.resolution`` OR a non-empty state."""
         monkeypatch.chdir(clean_indexed_project)

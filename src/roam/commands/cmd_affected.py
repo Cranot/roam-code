@@ -21,7 +21,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
-    get_changed_files,
+    get_changed_files_status,
     is_test_file,
     resolve_changed_to_db,
 )
@@ -219,11 +219,39 @@ def affected(ctx, base_ref, max_depth, use_changed):
 
     # Determine changed files
     if use_changed:
-        changed = get_changed_files(root)
+        changed, _git_error = get_changed_files_status(root)
     else:
-        changed = get_changed_files(root, commit_range=f"{base_ref}..HEAD")
+        changed, _git_error = get_changed_files_status(root, commit_range=f"{base_ref}..HEAD")
 
     if not changed:
+        if _git_error is not None:
+            # W805-VVVV: git failure must be distinguishable from a clean tree.
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "affected",
+                            summary={
+                                "verdict": f"No changes detected (git error: {_git_error})",
+                                "total_affected": 0,
+                                "changed_files": 0,
+                                "partial_success": True,
+                                "git_error": _git_error,
+                                "state": _git_error,
+                            },
+                            changed_files=[],
+                            affected_direct=[],
+                            affected_transitive_1=[],
+                            affected_transitive_2plus=[],
+                            affected_tests=[],
+                            affected_entry_points=[],
+                            by_module={},
+                        )
+                    )
+                )
+                return
+            click.echo(f"No changes detected (git error: {_git_error}).")
+            return
         if json_mode:
             click.echo(
                 to_json(
