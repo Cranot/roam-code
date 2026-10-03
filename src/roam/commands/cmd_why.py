@@ -255,6 +255,7 @@ def _emit_why_json(results: list[dict]) -> None:
     """
     crit = sum(1 for r in results if r.get("critical"))
     any_degraded = any(r.get("resolution", "symbol") != "symbol" for r in results)
+    all_unresolved = bool(results) and all(r.get("resolution") == "unresolved" or "error" in r for r in results)
     base_verdict = (
         f"{crit} of {len(results)} symbol(s) critical" if crit else f"{len(results)} symbol(s) — none critical"
     )
@@ -264,12 +265,20 @@ def _emit_why_json(results: list[dict]) -> None:
     if len(results) == 1 and results[0].get("resolution") == "fuzzy":
         fuzzy_suffix = " [fuzzy resolution]"
     verdict = f"{base_verdict}{fuzzy_suffix}"
+    # W805-O Bug 1: when ALL entries failed to resolve, override the verdict
+    # so a LAW-6 verdict-only consumer sees the unresolved state rather than
+    # the misleading "N symbol(s) — none critical" count-based string.
+    if all_unresolved:
+        names = ", ".join(r.get("name", "?") for r in results)
+        verdict = f"0 symbols resolved (unresolved: {names})"
 
     summary: dict[str, object] = {
         "verdict": verdict,
         "symbols": len(results),
         "critical": crit,
         "partial_success": any_degraded,
+        # W805-O Bug 2: add closed-enum state for machine consumers.
+        **({} if not all_unresolved else {"state": "all_unresolved"}),
     }
     click.echo(
         to_json(

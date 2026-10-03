@@ -6079,6 +6079,15 @@ def _structured_error(error_dict: dict) -> dict:
             _first_error_message[code] = msg
         if command_key and command_key not in _first_error_message:
             _first_error_message[command_key] = msg
+    elif repeat == 1 and code:
+        # W805-UUUUU: no human-readable error string on first fire; synthesize
+        # a default from the error_code so the trim shape is never left without
+        # actionable text. "error: CODE" is machine-readable but survives the
+        # fallback chain that otherwise hits the opaque "empty result" sentinel.
+        synth = f"error: {code}"
+        _first_error_message[code] = synth
+        if command_key:
+            _first_error_message[command_key] = synth
     if repeat >= _ERROR_STORM_THRESHOLD:
         # R9 security recheck #3: keep ``retryable`` and ``doc_link`` in
         # the trimmed envelope. Agents that branch on ``retryable``
@@ -7005,6 +7014,8 @@ def _compound_envelope(
         "unresolved",
         # W805-J: understand on 0-symbol corpus discloses via state="no_symbols".
         "no_symbols",
+        # W805-LL: vulns on un-scanned corpus discloses via state="no_scan".
+        "no_scan",
         # "no_changes" / "empty_diff" intentionally omitted: cmd_diff returning
         # no changes on a clean working tree is normal for symbol-anchored
         # compounds (for_bug_fix, for_refactor, etc.). Including them caused

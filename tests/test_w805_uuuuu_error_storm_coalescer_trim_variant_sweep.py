@@ -282,53 +282,22 @@ def test_per_code_trim_shape_topology_matches_expected(code: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-UUUUU Pattern-2 worst-case axis. When the first-fire "
-        "envelope lacks a non-empty 'error' string, the coalescer's "
-        "first_error_message cache stays empty (mcp_server.py:3596-3599). "
-        "The trim shape then carries NO actionable human text — the "
-        "W805-TTTTT err_msg fallback chain hits 'empty result', "
-        "surfacing opaque text to the agent. Fix-forward (separate wave): "
-        "either teach the coalescer to synthesize a default first message "
-        "from hint/error_code, or teach the aggregator's err_msg fallback "
-        "to extract from trimmed_hint/doc_link/error_code. This pin "
-        "flips when either lands."
-    ),
-)
 def test_worst_case_first_fire_without_error_string_leaves_trim_without_human_text():
-    """Probe the Pattern-2 worst-case: first fire has no ``error`` key.
-    Assert that BOTH ``error`` AND ``first_error_message`` are absent from
-    the resulting trim shape — full silent-SAFE for human-readable text.
+    """Probe the fixed behavior: first fire with no ``error`` key.
 
-    Today: PASSES the negative assertions (both keys absent), so we then
-    assert the POSITIVE recovery — that the trim shape carries SOME human-
-    readable replacement field. It does not. This is what the xfail-strict
-    pins.
+    The coalescer now synthesizes ``first_error_message`` from ``error_code``
+    when the first-fire envelope lacks an explicit ``error`` string (W805-UUUUU
+    fix). The trim shape must carry human-readable text even on this path.
     """
     trim = _prime_to_trim("USAGE_ERROR", first_error_text=None)
 
-    # The leak: both 'error' and 'first_error_message' absent.
+    # The trim shape still must NOT carry a top-level 'error' key — the
+    # W805-NNNNN / W805-TTTTT premise remains intact.
     assert "error" not in trim, f"Unexpected error key: {trim!r}"
-    assert "first_error_message" not in trim, f"Unexpected first_error_message key: {trim!r}"
-
-    # The xfail pin: assert recovery is present — TODAY this fails because
-    # the trim shape carries no human-readable replacement field. The
-    # ``trimmed_hint`` field is a META message (about the storm itself),
-    # not about the underlying error. ``doc_link`` is a URL, not text.
-    # ``error_code`` is a symbol, not a sentence.
-    #
-    # When a fix lands (coalescer synthesizes a default first message OR
-    # aggregator's err_msg fallback learns to extract a human-readable
-    # string from another field), THIS assertion will pass and the
-    # xfail-strict marker will fail-on-pass — flipping the pin.
+    # After W805-UUUUU fix: synthesized first_error_message IS present.
+    assert "first_error_message" in trim, f"Trim shape lacks first_error_message after W805-UUUUU fix: {trim!r}"
     has_human_text = bool(trim.get("error") or trim.get("first_error_message"))
-    assert has_human_text, (
-        "Trim shape carries NO human-readable error text — Pattern-2 "
-        "silent SAFE for the actionable message even after the "
-        "W805-TTTTT aggregator widening lands. trim=" + repr(trim)
-    )
+    assert has_human_text, "Trim shape carries NO human-readable error text. trim=" + repr(trim)
 
 
 # ---------------------------------------------------------------------------
