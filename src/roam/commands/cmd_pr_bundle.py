@@ -1745,18 +1745,18 @@ def _build_envelope(
     # the headline finding without needing the full envelope. Also mention
     # causal-diff additions when present (LAW 4 — concrete-noun anchor:
     # "1 io_write path added since init").
-    io_write_phrase = f" · {io_write_count} io_write symbol(s) auto-flagged" if io_write_count else ""
+    io_write_phrase = f"  -  {io_write_count} io_write symbol(s) auto-flagged" if io_write_count else ""
     cd_phrase = ""
     if cd_high:
-        cd_phrase = f" · {cd_high} io_write path(s) changed since init"
+        cd_phrase = f"  -  {cd_high} io_write path(s) changed since init"
     # W20.5: surface unresolved-symbol count in the verdict so an agent
     # reading only the verdict sees the ghost-symbol warning. Empty
     # string when zero unresolved -- LAW 6 (verdict is standalone).
-    unresolved_phrase = f" · {n_unresolved} affected symbol(s) NOT in index" if n_unresolved else ""
+    unresolved_phrase = f"  -  {n_unresolved} affected symbol(s) NOT in index" if n_unresolved else ""
     if state == "complete":
         verdict = (
-            f"PR proof bundle complete ({n_aff} affected · "
-            f"{n_risk} risks · {n_run}/{n_req or n_run} tests run"
+            f"PR proof bundle complete ({n_aff} affected  -  "
+            f"{n_risk} risks  -  {n_run}/{n_req or n_run} tests run"
             f"{io_write_phrase}{cd_phrase}{unresolved_phrase})"
         )
     else:
@@ -1766,12 +1766,12 @@ def _build_envelope(
         # load-bearing change-tracking signal.
         prefix = ""
         if cd_phrase:
-            # Strip the leading " · " separator for the prefix form.
-            prefix = cd_phrase.lstrip(" ·").strip() + "; "
+            # Strip the leading "  -  " separator for the prefix form.
+            prefix = cd_phrase.lstrip("  - ").strip() + "; "
         if unresolved_phrase:
             # Prepend the unresolved warning so agents see it before the
             # missing-proofs list (which can be long).
-            prefix = unresolved_phrase.lstrip(" ·").strip() + "; " + prefix
+            prefix = unresolved_phrase.lstrip("  - ").strip() + "; " + prefix
         # LAW 6: verdict must work standalone but also stay short enough to
         # survive the agent_contract's 120-char truncation (LAW 4 / W1100).
         # The full hint text for each missing proof lives in

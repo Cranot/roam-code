@@ -300,19 +300,6 @@ class TestLeafSymbolNoDependentsShape:
         # success, not a degraded outcome -- this is NOT Pattern-2.
         assert summary.get("partial_success") is False
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "W805-P shape divergence: the no-dependents branch in cmd_impact.py "
-            "(line 561-608) does NOT emit summary.state, while the full-radius "
-            "branch (line 693-733) does (state='ok'/'timeout'/'caller_cap'/'depth_cap'). "
-            "This is mild shape drift, not a true silent SAFE (the verdict is loud + "
-            "risk_level_canonical floors correctly). Pinned strict so a future "
-            "cleanup pass that adds state='no_dependents' graduates this to PASS. "
-            "If the canonical contract regresses worse (e.g. losing risk_level_canonical), "
-            "the strict xfail will flip and surface the regression."
-        ),
-    )
     def test_no_silent_low_impact_on_empty(self, cli_runner, leaf_corpus, monkeypatch):
         """Shape parity: the no-dependents envelope should expose summary.state.
 

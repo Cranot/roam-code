@@ -279,20 +279,6 @@ def test_no_silent_pass_on_empty(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-LLL Pattern-1-V-B REAL BUG: empty `{}` packet emits "
-        "level=FAIL + verdict='FAIL: packet shape invalid' but exits with "
-        "process exit code 0. Malformed JSON and JSON-array inputs correctly "
-        "exit 2 via the hard-load-failure path. The valid-but-empty packet "
-        "path emits FAIL in the envelope but reaches the normal `return` at "
-        "the end of the JSON branch (no sys.exit). An MCP/CI consumer routing "
-        "on exit code reads success; an agent reading the envelope reads FAIL. "
-        "Fix: when level=='FAIL' in the success-path branch, exit with a "
-        "non-zero code (matching the hard-load FAIL path which exits 2)."
-    ),
-)
 def test_empty_packet_exit_code_matches_fail(tmp_path):
     """The process exit code must agree with the structured FAIL verdict."""
     p = _write_empty(tmp_path / "empty.json")

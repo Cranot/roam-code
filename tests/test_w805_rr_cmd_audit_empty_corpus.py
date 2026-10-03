@@ -348,24 +348,6 @@ def test_no_silent_null_health_on_empty(empty_corpus):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-RR REAL BUG (state-disclosure pin, Pattern-2 fix "
-        "template) — the audit compound envelope SHOULD carry an "
-        "explicit summary.state field naming the empty-data shape "
-        "(e.g. 'empty_corpus' / 'no_data' / 'not_initialized'). Today "
-        "the compound emits no state key at all — only its children "
-        "do (health → 'empty_corpus', test_pyramid → 'no_test_files'). "
-        "Closed-enum state-disclosure is the Pattern-2 canonical fix "
-        "per CLAUDE.md §Pattern-2. The compound at cmd_audit.py:171-"
-        "183 builds summary but never inspects child-section state "
-        "fields to lift the disclosure. Fix-forward: when any child "
-        "section's summary.state is set, lift the most pressing one "
-        "to compound.summary.state. Bundled with the partial_success "
-        "propagation fix; separate wave per W978."
-    ),
-)
 def test_empty_corpus_state_explicit(empty_corpus):
     """Pin: compound discloses empty_corpus / no_data state on the
     empty-corpus path. Today the key is absent on the compound."""

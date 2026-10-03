@@ -778,6 +778,10 @@ def relate(ctx, symbols, files, depth):
                 # would break the positive test that asserts partial_success=False
                 # when both targets resolve exactly but have no shared path.
                 _summary["state"] = "no_relation"
+                # W805-II: also stamp the verdict so LAW-6 verdict-only
+                # consumers can detect the absent relation without the state
+                # field (mirrors cmd_trace W1248 "no_path_within_hops" verdict).
+                _summary["verdict"] = _summary.get("verdict", "") + " -- no path between inputs"
 
             # W607-DA -- serialize_envelope boundary. Wraps the envelope
             # serialization itself. A downstream schema-shape refactor that

@@ -365,23 +365,6 @@ def test_lease_list_empty_dir_state_explicit(empty_leases_dir_project):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-XX CONSTRAINT 12 + Pattern-2 silent-divergence: "
-        "cmd_lease.py:510-528 early-return on missing .roam/leases/ "
-        "omits the agent_contract hand-anchor, so json_envelope auto-"
-        "derives a contract whose next_commands is empty. The sibling "
-        "branch at lines 545-574 sets next_commands=['roam lease claim "
-        "--agent NAME --file PATH'] on the equivalent empty-corpus walk. "
-        "Two empty-corpus paths produce divergent structured next-step "
-        "fields -- agents auto-routing on next_commands[0] get a "
-        "recovery hint on one path and a dead envelope on the other. "
-        "Fix: pass agent_contract={'facts':[...], 'next_commands':"
-        "['roam lease claim --agent NAME --file PATH']} on the early-"
-        "return path to match the sibling. Pinned for separate fix wave."
-    ),
-)
 def test_no_silent_no_leases_on_empty(bare_project):
     """Pattern-2 + CONSTRAINT 12: dir-missing populates ``next_commands``.
 

@@ -1025,6 +1025,11 @@ def _verify_one_run(root, run_id: str) -> dict:
     events = list(read_run_events(root, run_id))
     result = verify_chain(events, key)
     result["run_id"] = run_id
+    # W805-WW: an empty ledger trivially passes verify_chain with state='ok',
+    # making a completed-but-empty run indistinguishable from a real verified
+    # ledger. Stamp 'empty_ledger' so consumers can branch on no-events.
+    if result.get("events_verified", 0) == 0 and result.get("state") == "ok":
+        result["state"] = "empty_ledger"
     return result
 
 

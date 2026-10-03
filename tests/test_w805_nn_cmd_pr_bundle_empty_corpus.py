@@ -483,20 +483,6 @@ class TestPrBundleValidateEmptyCorpusSealed:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-NN drive-by: cmd_pr_bundle.py:1694+1697+1701+1704+1705+1715+1716+1720 "
-        "embed UTF-8 middle-dot (U+00B7 -- '\\xc2\\xb7') in the runtime "
-        "verdict template, violating CLAUDE.md §Conventions ('plain "
-        "ASCII only for token efficiency'). Same root cause family as W937's "
-        "mojibake guard + W805-G's em-dash drive-by on cmd_pr_prep.py:174+177. "
-        "Probe (complete bundle): "
-        "verdict='PR proof bundle complete (1 affected · 0 risks · 0/0 "
-        "tests run) (risk_level low)'. Fix template: replace each U+00B7 "
-        "with ' - '. Separate fix wave per W805 accumulate-only constraint."
-    ),
-)
 def test_complete_bundle_verdict_ascii_only(empty_corpus):
     """Verdict on a complete bundle must be plain ASCII (CLAUDE.md
     §Conventions).

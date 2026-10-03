@@ -1449,6 +1449,10 @@ def evidence_doctor(ctx, packet_path, from_stdin):
             )
 
         click.echo(to_json(envelope))
+        # W805-LLL: FAIL verdict must exit non-zero so MCP/CI consumers
+        # routing on exit code agree with the structured FAIL level.
+        if level == _VERDICT_FAIL:
+            ctx.exit(2)
         return
 
     # Text output

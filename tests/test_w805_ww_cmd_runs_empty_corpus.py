@@ -381,19 +381,6 @@ def test_clean_corpus_emits_real_runs(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "W805-WW Pattern-2 silent-SAFE: cmd_runs.py:920-998 verify-single-run "
-        "state-classification has 'ok' / 'tampered' / 'unsigned' / "
-        "'key_missing' branches but no fifth arm for events_verified == 0. "
-        "A completed run with empty events.jsonl reaches state='ok' via "
-        "verify_chain's trivial-pass, indistinguishable from a real verified "
-        "ledger. The 'details' field DOES carry 'ledger is empty' but that's "
-        "buried below the agent-visible summary. Fix: add 'empty_ledger' "
-        "state token when events_verified == 0. Pinned for separate fix wave."
-    ),
-)
 def test_no_silent_no_runs_on_empty(empty_events_project):
     """Pattern-2 explicit-absence: empty events.jsonl discloses dedicated state.
 

@@ -837,6 +837,7 @@ def impact_cmd(ctx, name, hops, depth, max_callers, timeout):
                 "verdict": no_dep_verdict,
                 "affected_symbols": 0,
                 "affected_files": 0,
+                "state": "no_dependents",
                 "risk_level_canonical": _no_dep_canonical,
                 "risk_rank": risk_rank(_no_dep_canonical),
                 # W331: even on the leaf-symbol path the consumer
