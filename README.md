@@ -337,7 +337,7 @@ Exclude paths with `.roamignore` or `roam config --exclude "*.proto"`.
 
 Choose Roam for callable local code analysis and checks alongside your agent,
 not as another coding agent or a replacement for specialist review.
-Its MCP inventory is 246 (17 in default core preset); select tools for the task.
+Its MCP inventory is 258 (17 in default core preset); select tools for the task.
 [Compare the roles](https://roam-code.com/compare), then evaluate the outputs on
 your own repository: resolution, false positives, latency, and usefulness.
 

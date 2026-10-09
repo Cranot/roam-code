@@ -747,6 +747,10 @@ def build_replacements(counts: dict, languages: int) -> None:
                 (re.compile(r"\bremaining ~\d+ commands\b"), None),
                 (re.compile(r"canonical surface is \*\*\d+ commands"), None),
                 # --- Active: free-form prose OUTSIDE the marker blocks.
+                (
+                    re.compile(r"MCP inventory is \d+ \(\d+ in default core preset\)"),
+                    f"MCP inventory is {mcp} ({core} in default core preset)",
+                ),
                 # "N tools, 10 resources, and 5 prompts are available in the full preset."
                 (
                     re.compile(r"\b\d+ tools, (\d+ resources, and \d+ prompts are available)"),
@@ -944,6 +948,19 @@ def build_replacements(counts: dict, languages: int) -> None:
     # Reviewer (2026-05-08) found 5 different command counts on
     # different surfaces because these files weren't in the script.
     # All of them must match the live counts.
+
+    # The legal inventory sentence is outside the generated marker blocks.
+    REPLACEMENTS.append(
+        (
+            REPO_ROOT / "templates/legal/security-procurement-packet.md",
+            [
+                (
+                    re.compile(r"\d+ commands / \d+ MCP tools, \d+ in the default `core`"),
+                    f"{cmds} commands / {mcp} MCP tools, {core} in the default `core`",
+                ),
+            ],
+        )
+    )
 
     # Cardinal pattern across the landing-page HTML files: any standalone
     # ``N CLI commands``, ``N commands``, ``N MCP tools``, or
