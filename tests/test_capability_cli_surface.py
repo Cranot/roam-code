@@ -23,3 +23,19 @@ def test_compile_cache_is_one_group_with_invocable_subcommands():
     for subcommand in catalog["compile-cache"]["subcommands"]:
         result = runner.invoke(cli, ["compile-cache", subcommand, "--help"])
         assert result.exit_code == 0, result.output
+
+
+def test_mcp_and_deprecated_aliases_are_serialized():
+    from roam.cli import _DEPRECATED_COMMANDS
+
+    catalog = _catalog()
+    assert catalog["mcp"]["requires_index"] is False
+    assert catalog["mcp"]["ai_safe"] is False
+    for alias, record in _DEPRECATED_COMMANDS.items():
+        cap = catalog[alias]
+        assert cap["deprecated"] is True
+        assert cap["maturity"] == "deprecated"
+        assert cap["replacement"] == record["replacement"]
+        assert cap["ai_safe"] == catalog[record["replacement"]]["ai_safe"]
+        result = CliRunner().invoke(cli, [alias, "--help"])
+        assert result.exit_code == 0, result.output

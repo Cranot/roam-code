@@ -50,7 +50,30 @@ import sys
 
 import click
 
+from roam.capability import roam_capability
 
+
+@roam_capability(
+    name="mcp",
+    category="getting-started",
+    summary="Start the MCP server or inspect its tools and compatibility metadata",
+    inputs=(
+        "--transport",
+        "--host",
+        "--port",
+        "--no-auto-index",
+        "--list-tools",
+        "--list-tools-json",
+        "--compat-profile",
+        "--card",
+    ),
+    outputs=("mcp_protocol", "tool_inventory", "server_card"),
+    examples=("roam mcp", "roam mcp --list-tools-json"),
+    requires_index=False,
+    stale_sensitive=False,
+    mcp_expose=False,
+    mcp_preset=(),
+)
 @click.command(name="mcp")
 @click.option(
     "--transport",
