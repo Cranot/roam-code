@@ -480,10 +480,29 @@ def _command_checks_for_compile(plan, env: dict, next_commands: list[str]) -> li
     return validate_command_advice_many(command_advice_items)
 
 
+def _unresolved_plan_signal(plan) -> dict:
+    """Disclose when classification and retrieval supplied no plan evidence."""
+    if plan.likely_files or plan.plan_quality > 0:
+        return {}
+    return {
+        "state": "unresolved_task",
+        "reason": "no_plan_evidence",
+        "resolution": "unresolved",
+        "partial_success": True,
+        "hint": "Name a file or symbol and describe the failing behavior; run `roam index` if source is not indexed.",
+    }
+
+
 def _build_compile_json_envelope(
     task: str, plan, env: dict, art_label: str, verify_hint: str | None, next_evidence: dict
 ) -> dict:
     next_commands = _next_commands_for_compile(verify_hint)
+    unresolved = _unresolved_plan_signal(plan)
+    verdict = (
+        "unresolved_task: no plan evidence; name a file or symbol and describe the failing behavior"
+        if unresolved
+        else f"{art_label}_envelope for {plan.procedure}"
+    )
     # Phased execution contract — implementation-class procedures only (work
     # product = edited code). Query envelopes carry no key at all: absent, not
     # empty, so downstream consumers key on presence.
@@ -499,7 +518,7 @@ def _build_compile_json_envelope(
     return json_envelope(
         "compile",
         summary={
-            "verdict": f"{art_label}_envelope for {plan.procedure}",
+            "verdict": verdict,
             "task": task[:120],
             "procedure": plan.procedure,
             "artifact_type": art_label,
@@ -510,6 +529,7 @@ def _build_compile_json_envelope(
             "injection_advice": injection_advice(plan.procedure, task),
             "partial_success": False,
             "next_evidence": next_evidence,
+            **unresolved,
         },
         agent_contract={
             "facts": [
@@ -521,7 +541,7 @@ def _build_compile_json_envelope(
             ],
             "next_commands": next_commands,
             "command_checks": _command_checks_for_compile(plan, env, next_commands),
-            "risks": [],
+            "risks": [unresolved["hint"]] if unresolved else [],
             "confidence": plan.plan_quality,
         },
         artifact=env,
@@ -562,7 +582,14 @@ def _emit_prefetched_answers(prefetched: dict) -> None:
 def _emit_text_compile(
     task: str, plan, env: dict, art_label: str, verify_hint: str | None, next_evidence: dict
 ) -> None:
-    click.echo(f"VERDICT: {art_label}_envelope for {plan.procedure}")
+    unresolved = _unresolved_plan_signal(plan)
+    if unresolved:
+        click.echo(
+            "VERDICT: unresolved_task (no_plan_evidence): classification and retrieval supplied no plan evidence"
+        )
+        click.echo(f"Hint: {unresolved['hint']}")
+    else:
+        click.echo(f"VERDICT: {art_label}_envelope for {plan.procedure}")
     click.echo(f"task:              {task[:200]}")
     click.echo(f"procedure:         {plan.procedure}")
     click.echo(f"artifact_type:     {art_label}")
