@@ -46,7 +46,7 @@ fixed: inspect the failure, retain valid controls, and use the
 
 ## Claim validation and trust limits
 
-`roam.knowledge.knowledge_claim` (vendored from `stoa/autopilot/knowledge_claim.py`)
+`roam.knowledge.knowledge_claim` (self-contained registry schema)
 gains an optional `repair_transfer` payload and a **write-time PATCH-FUSION
 INVARIANT**: a sibling-detector (locator) record is **inadmissible** without its
 declared remedy — a non-empty `candidate_patch` **and** a green
@@ -85,7 +85,7 @@ attacker-supplied command — the replay command is the consumer's *own*
 
 ## Upstream integration requires separate review
 
-The roam copy is self-contained so `roam sibling-patch` runs without a stoa
+The roam copy is self-contained so `roam sibling-patch` runs without an external platform
 checkout. The original proposal was to mirror these **additions** into the
 upstream autopilot copy of `knowledge_claim.py` (identity hash and all existing
 behavior are unchanged — `repair_transfer` is payload, deliberately NOT part of
@@ -117,3 +117,17 @@ deployment scope before any cross-repository change.
 - **THE falsifier for the next increment:** does the lift survive on a **real
   external user's defects** — a stranger runs `sibling-patch apply` against
   their own repo and lands a substantive fix (Rule 9)?
+
+## Local claim registry
+
+`KnowledgeRegistry()` defaults to `.roam/knowledge/claims.jsonl` in the current
+working directory. Set `ROAM_KNOWLEDGE_CLAIMS` to choose a different JSONL file.
+The deprecated legacy environment name remains a fallback; the new name wins
+when both are set. Pass `path=` to override either environment setting.
+
+The public-tree privacy check runs in `tests/test_no_internal_language.py`
+without extension or changelog exclusions. Its only exceptions are the exact
+deprecated environment lookup, the security collector's root-prefix rejection
+rule, and an immutable benchmark artifact whose complete SHA-256 is pinned.
+The scanner stores private names as digests to avoid republishing its denylist;
+this prevents casual discovery, not recovery by guessing candidate names.

@@ -137,7 +137,7 @@ def _classify_after(calls: list, idx: int) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--since", default=None, help="YYYY-MM-DD; default 14 days ago.")
-    ap.add_argument("--projects-dir", default="/root/.claude/projects")
+    ap.add_argument("--projects-dir", default=os.path.expanduser("~/.claude/projects"))
     ap.add_argument("--max-files", type=int, default=4000)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()

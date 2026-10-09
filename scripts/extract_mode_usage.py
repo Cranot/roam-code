@@ -263,7 +263,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     )
     default_since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
     p.add_argument("--since", type=parse_since, default=parse_since(default_since))
-    p.add_argument("--projects-dir", type=Path, default=Path("/root/.claude/projects"))
+    p.add_argument("--projects-dir", type=Path, default=(Path.home() / ".claude" / "projects"))
     p.add_argument(
         "--modes-dir",
         type=Path,

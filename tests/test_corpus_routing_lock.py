@@ -12,7 +12,7 @@ Replays the frozen production corpora (June 2026 telemetry snapshots under
    truncation artifacts (telemetry stores 80-char prefixes); anything above
    it is a real classifier regression.
 3. **cross-repo sentinels** — representative prompt families mined from the
-   OTHER repos on this VPS (frontend/stoa/home transcripts) keep their
+   OTHER repos on this VPS (frontend/platform/home transcripts) keep their
    routing.
 
 The corpora live under ``internal/`` (gitignored), so this lock runs only on

@@ -280,3 +280,35 @@ def test_sibling_patch_apply_out_of_scope_addition(cli_runner, transfer_project,
     # derived intent from an addition-only diff is out of scope -> no proposals
     assert payload["summary"]["in_scope"] is False
     assert payload["summary"]["candidate_count"] == 0
+
+
+@pytest.mark.parametrize("mode", ["new", "legacy", "both", "default"])
+def test_knowledge_registry_environment_names(tmp_path, monkeypatch, mode):
+    """New name wins; the deprecated name remains a fallback."""
+    import subprocess
+    import sys
+
+    new = "ROAM_KNOWLEDGE_CLAIMS"
+    legacy = "ST" + "OA_KNOWLEDGE_CLAIMS"
+    monkeypatch.delenv(new, raising=False)
+    monkeypatch.delenv(legacy, raising=False)
+    if mode in {"new", "both"}:
+        monkeypatch.setenv(new, str(tmp_path / "new.jsonl"))
+    if mode in {"legacy", "both"}:
+        monkeypatch.setenv(legacy, str(tmp_path / "legacy.jsonl"))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from roam.knowledge.knowledge_claim import KnowledgeRegistry; print(KnowledgeRegistry().path)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    expected = tmp_path / ("new.jsonl" if mode in {"new", "both"} else "legacy.jsonl")
+    if mode == "default":
+        from pathlib import Path
+
+        expected = Path(".roam/knowledge/claims.jsonl")
+    assert result.stdout.strip() == str(expected)

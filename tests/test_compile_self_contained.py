@@ -1,6 +1,6 @@
 """W-BATCH — self_contained_task fast-path (2026-06-09).
 
-Cross-repo transcript mining (721 unique prompts from frontend/stoa/home
+Cross-repo transcript mining (721 unique prompts from frontend/platform/home
 projects): 63% are self-contained batch payloads ("You are validating…",
 "Synthesize the…" with explicit output specs). They need ZERO repo facts,
 yet burned the always-on probe budget and polluted named_paths. The

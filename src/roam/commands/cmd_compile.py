@@ -203,7 +203,7 @@ def _emit_short_task(task: str, json_mode: bool) -> None:
             )
         )
         return
-    # A short task is a RESULT, and harness consumers (stoa's trusted runner)
+    # A short task is a RESULT, and harness consumers (the deployment's trusted runner)
     # only accept the stable envelope grammar on a clean stdout. The old
     # two-line stderr advisory failed both properties at once, which killed
     # every conversational Compiler·Codex turn ("say hi"). Emit a real minimal
@@ -619,7 +619,7 @@ def _emit_text_compile(
     click.echo(f"model_calls_avoided: {plan.model_calls_avoided}")
     # Phased execution contract — implementation-class procedures only.
     # Appended AFTER the stable header block as plain lines: harness
-    # consumers (stoa's trusted runner) parse headers first and ignore
+    # consumers (the deployment's trusted runner) parse headers first and ignore
     # unknown lines, so this adds obligations without touching the
     # envelope grammar.
     contract = execution_contract_for(plan.procedure, task)

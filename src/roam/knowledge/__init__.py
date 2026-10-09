@@ -1,11 +1,9 @@
 """Roam knowledge-claim schema (vendored + extended for Sibling Patch Network v1).
 
-This package hosts a self-contained copy of the dormant ``KnowledgeClaim``
-registry schema so a consumer can run ``roam sibling-patch apply`` without a
-stoa checkout. The canonical upstream copy lives at
-``stoa/autopilot/knowledge_claim.py``; the SPN v1 additions here (the
-``repair_transfer`` payload + the write-time patch-fusion invariant) are the
-change to mirror upstream when the owner chooses to deploy.
+This package hosts a self-contained ``KnowledgeClaim`` registry schema so
+consumers can run ``roam sibling-patch apply`` independently. The SPN v1
+extensions add a ``repair_transfer`` payload and a write-time patch-fusion
+invariant.
 """
 
 from __future__ import annotations

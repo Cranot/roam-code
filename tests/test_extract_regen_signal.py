@@ -4,7 +4,7 @@ from tests._helpers.repo_root import repo_root
 
 """Tests for scripts/extract_regen_signal.py.
 
-Synthetic-only — never touches /root/.claude/projects or /var/log/.
+Synthetic-only — never touches ~/.claude/projects or /var/log/.
 """
 
 import importlib.util

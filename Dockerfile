@@ -38,7 +38,7 @@ RUN pip install 'uv==0.11.29' \
  && uv sync --locked --no-default-groups --extra mcp --no-editable \
  && .venv/bin/roam --version \
  && pip uninstall -y pip uv \
- && rm -rf /root/.cache/uv
+ && rm -rf "$HOME/.cache/uv"
 
 # Bootstrap installers and their vendored/build dependencies are not runtime
 # requirements. Remove them in the same layer; the installed venv is retained.

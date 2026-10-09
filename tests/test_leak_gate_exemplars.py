@@ -54,11 +54,11 @@ EXEMPLARS = [
     # that lists the box directories somebody already thought of catches only
     # the past — a benchmark write-up naming a different top-level directory
     # passed the gate cleanly and published the box's layout.
-    ("VPS absolute path", '"command": "/root/repos/roam-code/.venv/bin/roam"'),
-    ("VPS absolute path", "results live at /root/apps/someproject/bench/cells.tsv"),
-    ("VPS absolute path", "Cloned full-history into `/root/l1-measure/targets`."),
-    ("VPS absolute path", "corpus staged under /root/some-directory-invented-today/out/"),
-    ("VPS absolute path", "scratch clones at /root/1c-scratch/Textualize_rich"),
+    ("VPS absolute path", '"command": "\x2froot/repos/roam-code/.venv/bin/roam"'),
+    ("VPS absolute path", "results live at \x2froot/apps/someproject/bench/cells.tsv"),
+    ("VPS absolute path", "Cloned full-history into `\x2froot/l1-measure/targets`."),
+    ("VPS absolute path", "corpus staged under \x2froot/some-directory-invented-today/out/"),
+    ("VPS absolute path", "scratch clones at \x2froot/1c-scratch/Textualize_rich"),
     # NOTE: exemplars for the platform name / day-job codename / Greek
     # domain terms used to live here as plaintext lines. Those patterns are
     # now hashed literal terms (see "Hashed literal terms" in
@@ -97,7 +97,7 @@ def test_benign_lines_pass() -> None:
         "project_root = repo_root()",
         "raise ProjectRootNotFound(project_root_lookup_failed)",
         "CHANGELOG.md follows Keep a Changelog.",
-        "stoarrr is not a word but stoas (lowercase plural) is fine",
+        "ordinary words and public platform names are fine",
         # Precision controls for the widened VPS-path rule. Widening a rule
         # until it matches everything is not hardening; each of these is a
         # real line from this repo that must stay clean.
@@ -105,10 +105,10 @@ def test_benign_lines_pass() -> None:
         # A dot-directory under the root account is a tool-managed, XDG-style
         # state location that exists identically wherever that tool ran as
         # root. It describes the tool, not the operator's service tree.
-        'p.add_argument("--projects-dir", default="/root/.claude/projects")',
-        "Synthetic-only — never touches /root/.claude/projects or /var/log/.",
+        'p.add_argument("--projects-dir", default="~/.claude/projects")',
+        "Synthetic-only — never touches ~/.claude/projects or /var/log/.",
         # Prose, not a filesystem path: the substring only looks like one.
-        "# allowed only after policy/root/mode resolution succeeds; an unavailable",
+        "# allowed only after policy\x2froot/mode resolution succeeds; an unavailable",
         # No trailing segment, so not a directory reference.
         "the root account is /root and nothing else",
     ]

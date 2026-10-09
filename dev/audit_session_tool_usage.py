@@ -14,7 +14,7 @@ Usage:
 Inputs:
   --project-dir   Repo root the transcripts cover (default: CWD).
                   Used to locate the Claude Code transcripts directory
-                  at `/root/.claude/projects/<slug>/*.jsonl`.
+                  at `~/.claude/projects/<slug>/*.jsonl`.
   --top N         How many most-recent transcripts to read (default: 6).
   --transcripts-dir PATH
                   Override the transcripts directory directly.
@@ -134,9 +134,9 @@ def _is_code_relevant(name: str, inp: dict) -> bool:
 
 def _transcripts_dir_for(project_dir: str) -> str:
     """Claude Code maps a repo path like /home/alice/work/myrepo
-    to a transcripts directory of dashes: /root/.claude/projects/-home-alice-work-myrepo."""
+    to a transcripts directory of dashes: ~/.claude/projects/-home-alice-work-myrepo."""
     slug = "-" + project_dir.lstrip("/").replace("/", "-")
-    return f"/root/.claude/projects/{slug}"
+    return os.path.expanduser(f"~/.claude/projects/{slug}")
 
 
 # Core extraction ------------------------------------------------------------
