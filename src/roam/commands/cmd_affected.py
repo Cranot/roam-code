@@ -187,7 +187,12 @@ def _group_by_module(changed_files, affected_files):
     requires_index=True,
 )
 @click.command("affected")
-@click.option("--base", "base_ref", default="HEAD~1", help="Git ref to diff against (default: HEAD~1)")
+@click.option(
+    "--base",
+    "base_ref",
+    default="HEAD~1",
+    help="Compare committed history with this ref (default: HEAD~1); use --changed for uncommitted files",
+)
 @click.option(
     "--depth",
     "max_depth",
@@ -209,7 +214,8 @@ def affected(ctx, base_ref, max_depth, use_changed):
     exercise it), this command traces forward from changed files to find all
     downstream dependents, entry points, and module-level impact groups.
 
-    Use --base to specify the git ref to diff against (default: HEAD~1).
+    Use --base to compare committed history with a ref (default: HEAD~1).
+    Run ``roam affected --changed`` to include uncommitted working-tree files.
     Use --depth to limit the maximum dependency traversal depth.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -222,6 +228,12 @@ def affected(ctx, base_ref, max_depth, use_changed):
         changed, _git_error = get_changed_files_status(root)
     else:
         changed, _git_error = get_changed_files_status(root, commit_range=f"{base_ref}..HEAD")
+
+    no_changes_verdict = (
+        "No changes detected"
+        if use_changed
+        else f"No changes detected in committed history ({base_ref}..HEAD); run `roam affected --changed` for uncommitted files"
+    )
 
     if not changed:
         if _git_error is not None:
@@ -258,7 +270,7 @@ def affected(ctx, base_ref, max_depth, use_changed):
                     json_envelope(
                         "affected",
                         summary={
-                            "verdict": "No changes detected",
+                            "verdict": no_changes_verdict,
                             "total_affected": 0,
                             "changed_files": 0,
                         },
@@ -273,7 +285,7 @@ def affected(ctx, base_ref, max_depth, use_changed):
                 )
             )
             return
-        click.echo("No changes detected.")
+        click.echo(no_changes_verdict + ".")
         return
 
     with open_db(readonly=True) as conn:
