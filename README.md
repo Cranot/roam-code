@@ -15,7 +15,7 @@ code and evaluate changes without building each analysis from scratch.
 <sub>Runs on your machine · free and open source · no account or API key for local analysis · no automatic source-code or telemetry upload</sub>
 
 <!-- BEGIN auto-count:readme-headline-counts -->
-<sub>287 commands · 258 MCP tools (17 in the default `core` preset) · 28 languages</sub>
+<sub>288 commands · 259 MCP tools (17 in the default `core` preset) · 28 languages</sub>
 <!-- END auto-count:readme-headline-counts -->
 
 [Connect your agent](#connect-your-agent) · [Try a task](#try-a-task) ·
@@ -103,7 +103,7 @@ is not test coverage, and a good health score is not permission to merge.
 ## Core commands
 
 <!-- BEGIN auto-count:readme-canonical-mention -->
-**Start with these five commands.** Use `understand`, `context`, `retrieve`, `preflight`, and `critique` for everyday exploration and change review. You can discover the rest as you need them: **287 commands (280 canonical + 7 aliases) organised into 7 categories**. An alias is another name for the same command; you do not need to memorize them. The remaining ~282 commands beyond those five are detail surface for specialised workflows — they are called by agents on demand, not memorised.
+**Start with these five commands.** Use `understand`, `context`, `retrieve`, `preflight`, and `critique` for everyday exploration and change review. You can discover the rest as you need them: **288 commands (281 canonical + 7 aliases) organised into 7 categories**. An alias is another name for the same command; you do not need to memorize them. The remaining ~283 commands beyond those five are detail surface for specialised workflows — they are called by agents on demand, not memorised.
 <!-- END auto-count:readme-canonical-mention -->
 
 | Verb | What it does |
@@ -125,7 +125,7 @@ The full surface spans **7 categories** — Getting Started, Daily Workflow, Cod
 
 <details>
 <!-- BEGIN auto-count:readme-cli-command-list-summary -->
-<summary><strong>Full command reference — canonical command list (all 280)</strong></summary>
+<summary><strong>Full command reference — canonical command list (all 281)</strong></summary>
 <!-- END auto-count:readme-cli-command-list-summary -->
 
 Use the [complete command index](docs/COMMANDS.md) or the
@@ -166,7 +166,7 @@ Core preset tools: `roam_alerts`, `roam_ask`, `roam_batch_search`, `roam_couplin
 31-recipe registry. It is a deterministic dispatcher, not a model conversation.
 
 <!-- BEGIN auto-count:readme-mcp-tool-list-link -->
-The full 258-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md).
+The full 259-tool table with descriptions lives in [`docs/mcp-tools.md`](docs/mcp-tools.md).
 <!-- END auto-count:readme-mcp-tool-list-link -->
 
 **Which preset ships where.** The Claude Code plugin selects `core` for a
@@ -337,7 +337,7 @@ Exclude paths with `.roamignore` or `roam config --exclude "*.proto"`.
 
 Choose Roam for callable local code analysis and checks alongside your agent,
 not as another coding agent or a replacement for specialist review.
-Its MCP inventory is 258 (17 in default core preset); select tools for the task.
+Its MCP inventory is 259 (17 in default core preset); select tools for the task.
 [Compare the roles](https://roam-code.com/compare), then evaluate the outputs on
 your own repository: resolution, false positives, latency, and usefulness.
 

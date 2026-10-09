@@ -279,6 +279,7 @@ _MODE_EXTRAS: dict[str, set[str]] = {
         "orphan-routes",
         "owner",
         "partition",
+        "case-table",
         "path-coverage",
         "patterns",
         "postmortem",
