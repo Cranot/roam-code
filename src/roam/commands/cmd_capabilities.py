@@ -129,6 +129,10 @@ def capabilities_cmd(ctx, emit: str, category: str | None, ai_safe_only: bool) -
                     "ai_safe": c.ai_safe,
                     "since": c.since,
                     "displaces": list(c.displaces),
+                    "subcommands": list(c.subcommands),
+                    "deprecated": c.deprecated,
+                    "maturity": c.maturity,
+                    "replacement": c.replacement,
                 }
                 for c in items
             ],

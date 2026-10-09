@@ -74,6 +74,8 @@ def _open_db(root: str) -> sqlite3.Connection | None:
     ),
     tags=("planning", "compiler", "cache"),
     side_effect=True,
+    destructive=True,
+    subcommands=("build", "clear", "evict", "stats", "vanilla-stats"),
 )
 def compile_cache() -> None:
     """Manage the persistent envelope cache."""
@@ -136,15 +138,6 @@ def _emit_vanilla_present(summary: dict, json_mode: bool, cache_dir: Path, cells
 
 @compile_cache.command(name="vanilla-stats")
 @click.pass_context
-@roam_capability(
-    name="compile-cache-vanilla-stats",
-    category="planning",
-    summary="W68 — show how many vanilla baseline cells are cached and reusable.",
-    inputs=("",),
-    outputs=("summary_envelope",),
-    examples=("roam compile-cache vanilla-stats",),
-    tags=("planning", "compiler", "cache", "bench"),
-)
 def vanilla_stats(ctx: click.Context) -> None:
     """Show stats on the vanilla-result reuse cache (W65)."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -175,15 +168,6 @@ def _stats_agent_contract(summary: dict) -> dict:
 @compile_cache.command(name="stats")
 @click.option("--root", default=".", show_default=True)
 @click.pass_context
-@roam_capability(
-    name="compile-cache-stats",
-    category="planning",
-    summary="Show row count, size, and age distribution of the W56 envelope cache.",
-    inputs=("--root",),
-    outputs=("summary_envelope",),
-    examples=("roam compile-cache stats",),
-    tags=("planning", "telemetry", "compiler", "cache"),
-)
 def cache_stats(ctx: click.Context, root: str) -> None:
     """Summarize the persistent envelope cache."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -816,16 +800,6 @@ def _emit_build_summary(summary: dict, json_mode: bool) -> None:
     "--stale", "drop_stale", is_flag=True, default=False, help="Drop rows whose repo_head differs from current HEAD."
 )
 @click.pass_context
-@roam_capability(
-    name="compile-cache-clear",
-    category="planning",
-    summary="Drop stale or all rows from the W56 envelope cache.",
-    inputs=("--root", "--all", "--stale"),
-    outputs=("summary_envelope",),
-    examples=("roam compile-cache clear --stale",),
-    tags=("planning", "compiler", "cache"),
-    side_effect=True,
-)
 def cache_clear(ctx: click.Context, root: str, drop_all: bool, drop_stale: bool) -> None:
     """Drop rows from the cache."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -941,16 +915,6 @@ def cache_clear(ctx: click.Context, root: str, drop_all: bool, drop_stale: bool)
     "per-file dep-mtime invalidation.",
 )
 @click.pass_context
-@roam_capability(
-    name="compile-cache-evict",
-    category="planning",
-    summary="W78 — evict env_cache rows whose deps changed since a git ref.",
-    inputs=("--root", "--diff"),
-    outputs=("summary_envelope",),
-    examples=("roam compile-cache evict --diff HEAD~5", "roam compile-cache evict --diff main"),
-    tags=("planning", "compiler", "cache", "diff-aware"),
-    side_effect=True,
-)
 def cache_evict_diff(ctx: click.Context, root: str, diff_ref: str) -> None:
     """W78 — evict cache rows whose deps changed since a git ref."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -1039,20 +1003,6 @@ def cache_evict_diff(ctx: click.Context, root: str, diff_ref: str) -> None:
     "subsequent compiles for those shapes hit cache in ~5ms.",
 )
 @click.pass_context
-@roam_capability(
-    name="compile-cache-build",
-    category="planning",
-    summary="Pre-warm the envelope cache by compiling a task corpus.",
-    inputs=("--root", "--corpus", "--top-misses"),
-    outputs=("summary_envelope",),
-    examples=(
-        "roam compile-cache build",
-        "roam compile-cache build --corpus internal/benchmarks/pilot_ab_tasks.txt",
-        "roam compile-cache build --top-misses --miss-limit 20",
-    ),
-    tags=("planning", "compiler", "cache"),
-    side_effect=True,
-)
 def cache_build(
     ctx: click.Context, root: str, corpus_path: str | None, top_misses: bool, miss_limit: int, all_files: bool
 ) -> None:
