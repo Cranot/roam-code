@@ -145,13 +145,13 @@ class TestSymbolExists:
 
 
 class TestRouteExists:
-    def test_no_workspace_no_routes_returns_false(self, indexed_project):
-        """Without `roam ws resolve` populating cross_repo_edges, AND without
-        any route-handler-shaped symbols indexed, the oracle returns False."""
+    def test_no_workspace_no_routes_is_unknown(self, indexed_project):
+        """Missing route data cannot establish that a URL does not exist."""
         with open_db(readonly=True) as conn:
-            value, reason = oracle_route_exists(conn, "/api/users")
-        assert value is False
-        assert "ws resolve" in reason or "no route" in reason or "needs" in reason
+            result = oracle_route_exists(conn, "/api/users")
+        assert result.value is None
+        assert result.reason_class == "indeterminate_no_data"
+        assert "ws resolve" in result.reason
 
     def test_empty_path_returns_false(self, indexed_project):
         with open_db(readonly=True) as conn:

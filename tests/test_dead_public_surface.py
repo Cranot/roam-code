@@ -110,11 +110,11 @@ def _warnings(data: dict) -> list[str]:
 
 
 def test_unparseable_barrel_downgrades_safe_to_review_and_discloses(project_factory, cli_runner):
+    # Keep the export unreferenced: a recoverable import edge would make it
+    # live and remove the candidate before the public-surface guard runs.
     project = project_factory(
         {
-            "src/acme/__init__.py": (
-                'from .api import public_api\n\n__all__ = ["public_api"]\n\ndef broken(:\n    pass\n'
-            ),
+            "src/acme/__init__.py": "def broken(:\n    pass\n",
             "src/acme/api.py": 'def public_api():\n    return "public"\n',
         }
     )

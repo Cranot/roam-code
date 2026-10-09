@@ -39,23 +39,26 @@ class TestPreflightResolutionDisclosure:
     """W1243 — resolution disclosure on every closed-enum branch."""
 
     def test_symbol_resolution_emits_symbol_kind(self, indexed_project, cli_runner, monkeypatch):
-        """Exact-name match emits ``resolution: "symbol"`` + no partial_success.
+        """Exact resolution remains visible when other measurements lack data.
 
-        ``User`` is defined exactly once in the fixture so it resolves
-        through ``find_symbol``'s simple-name tier without going through
-        the LIKE fallback. The W1241 polarity says ``partial_success``
-        is False ONLY for the ``symbol`` tier.
+        The class target resolves exactly, but the small fixture lacks data
+        for several review signals. Resolution success does not establish
+        that the entire preflight measurement completed.
         """
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["preflight", "User"], json_mode=True)
         data = parse_json_output(result, "preflight")
         assert data["summary"]["resolution"] == "symbol"
-        # symbol-tier is the only non-partial-success polarity
-        assert data["summary"]["partial_success"] is False
+        no_data = sum(
+            data[signal].get("state") is not None
+            for signal in ("blast_radius", "tests", "complexity", "coupling", "fitness")
+        )
+        assert no_data >= 3
+        assert data["summary"]["partial_success"] is True
         # top-level mirror so envelope-shape readers find it without
         # diving into summary
         assert data["resolution"] == "symbol"
-        assert data["partial_success"] is False
+        assert data["partial_success"] is True
         # verdict must NOT carry a degraded-tier suffix on exact matches
         assert "[fuzzy resolution]" not in data["summary"]["verdict"]
         assert "[file fallback]" not in data["summary"]["verdict"]
