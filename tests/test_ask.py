@@ -723,4 +723,4 @@ class TestFieldTraceRecipe:
         assert refs.exit_code == 0, refs.output
         entry = json.loads(refs.output)["results"][0]
         assert entry["verdict"] == "SAFE-TO-REMOVE"
-        assert entry["reason"] == "no references in source code"
+        assert entry["reason"] == "no source-code matches in the selected search scope"

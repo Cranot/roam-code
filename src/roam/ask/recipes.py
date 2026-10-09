@@ -494,12 +494,18 @@ RECIPES: list[Recipe] = [
         intent="Quantify architectural coupling and god-component risk",
         examples=(
             "how coupled is this codebase",
+            "which functions are most coupled",
+            "top 5 most coupled functions",
+            "most tightly coupled functions",
             "show architecture debt",
             "find god components",
             "what modules talk to too many others",
         ),
         keywords=(
             "couple",
+            "coupled",
+            "most coupled",
+            "tightly coupled",
             "coupling",
             "debt",
             "god",
