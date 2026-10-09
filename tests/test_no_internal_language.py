@@ -207,3 +207,37 @@ def test_private_marker_exceptions_are_narrow():
     assert not _patterns.scan_private_markers(
         "README.md", "policy/root/mode; ~/.claude/projects; ROAM_KNOWLEDGE_CLAIMS"
     )
+
+
+@pytest.mark.parametrize("path", ["README.md", ".mailmap", "unknown.extension", "tests/fixture.py"])
+def test_private_emails_detect_personal_domains(path):
+    address = "planted-personal" + "@" + "gmail.com"
+    for spelling in (address, address.upper()):
+        assert _patterns.scan_private_markers(path, spelling)
+
+
+def test_private_email_exceptions_are_exact():
+    mailmap = (REPO_ROOT / ".mailmap").read_text()
+    assert not _patterns.scan_private_markers(".mailmap", mailmap)
+    personal_lines = [line for line in mailmap.splitlines() if "gmail.com" in line]
+    assert personal_lines
+    for line in personal_lines:
+        assert _patterns.scan_private_markers("README.md", line)
+        assert _patterns.scan_private_markers(".mailmap", line + " # extra")
+    for domain in (
+        "users.noreply.github.com",
+        "example.com",
+        "example.org",
+        "example.net",
+        "test.invalid",
+        "roam-code.com",
+    ):
+        assert not _patterns.scan_private_markers("README.md", "fixture" + "@" + domain)
+
+
+def test_private_email_denylist_is_independent_of_domain_policy(monkeypatch):
+    # The exact historical line is exempt only inside .mailmap. Its address
+    # must still be detected elsewhere if the domain catalogue changes.
+    line = next(line for line in (REPO_ROOT / ".mailmap").read_text().splitlines() if "gmail.com" in line)
+    monkeypatch.setattr(_patterns, "_PERSONAL_EMAIL_DOMAINS", frozenset())
+    assert _patterns.scan_private_markers("README.md", line)

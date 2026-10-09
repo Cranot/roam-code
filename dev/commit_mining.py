@@ -10,6 +10,10 @@ Usage::
     python dev/commit_mining.py
     python dev/commit_mining.py --output-dir /tmp/commit-mining
 
+Set ``ROAM_COMMIT_MINING_OWNER_EMAILS`` to comma-separated owner addresses
+in your local environment. It defaults to none; without it the script still
+processes the corpus and writes artifacts, selecting no owner commits.
+
 Every extracted row keeps a full SHA, authored timestamp, and a verbatim quote
 from the commit body.  The semantic clusters are analyst-defined families, not
 exact-string buckets; the matched signal names are included so assignments can
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -32,16 +37,12 @@ from typing import Iterable
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_OUTPUT = _REPO_ROOT / "internal" / "commit-mining"
 
-# These are the owner identities actually present in this clone.  Keep the
-# list explicit: it makes the owner/non-owner boundary visible and auditable.
+# Optional comma-separated owner identities; no configured addresses means no
+# owner commits are selected. Keep personal identities in the local environment.
 _OWNER_EMAILS = frozenset(
-    {
-        "44682693+cranot@users.noreply.github.com",
-        "mojitogr@gmail.com",
-        "cranot@users.noreply.github.com",
-        "bonum.galaxy@gmail.com",
-        "unionwebapps@gmail.com",
-    }
+    email.strip().casefold()
+    for email in os.environ.get("ROAM_COMMIT_MINING_OWNER_EMAILS", "").split(",")
+    if email.strip()
 )
 
 
@@ -851,10 +852,9 @@ def _write_summary(
         f"- Owner commits with an empty body: **{sum(not commit.body.strip() for commit in owner_commits)}** "
         "(processed, but no body excerpt could be extracted).",
         "",
-        "Owner identity boundary: the five lowercase email identities observed in this clone "
-        "for Cranot (`44682693+Cranot@users.noreply.github.com`, `mojitogr@gmail.com`, "
-        "`cranot@users.noreply.github.com`, `bonum.galaxy@gmail.com`, and "
-        "`unionwebapps@gmail.com`).",
+        "Owner identity boundary: configured through `ROAM_COMMIT_MINING_OWNER_EMAILS` "
+        "(comma-separated, case-insensitive; defaults to no owner identities). "
+        "See `corpus.json` for the configured identities.",
         "",
         "## Recurring defect families",
         "",

@@ -969,6 +969,84 @@ _PRIVATE_MARKER_DIGESTS = frozenset(
 )
 
 
+# Personal mailbox domains, rather than public role mailboxes or reserved test
+# domains. Exact historical mailmap lines are the sole personal-mail exception:
+# they map this author's identities already published in Git commit metadata.
+_PERSONAL_EMAIL_DOMAINS = frozenset(
+    {
+        "gmail.com",
+        "googlemail.com",
+        "outlook.com",
+        "hotmail.com",
+        "live.com",
+        "msn.com",
+        "yahoo.com",
+        "ymail.com",
+        "rocketmail.com",
+        "proton.me",
+        "protonmail.com",
+        "pm.me",
+        "icloud.com",
+        "me.com",
+        "mac.com",
+        "aol.com",
+        "mail.com",
+        "gmx.com",
+        "gmx.net",
+        "fastmail.com",
+        "tutanota.com",
+        "tuta.com",
+        "hey.com",
+        "zoho.com",
+        "yandex.com",
+        "yandex.ru",
+    }
+)
+_PRIVATE_EMAIL_DIGESTS = frozenset(
+    {
+        "39b6b607df894f6a4d9e4cad9df3a26a75fb3d94267c548a0ddcd93e328bc6c2",
+        "e40b454b67dcc1f58f86b25c771e5f90c70b0d29f444e3a35ef702fdcdfc64e8",
+        "66ff22ba89d4938702449887a529262ed413f065f2dda77bf4bc5a91f1c94620",
+    }
+)
+_MAILMAP_LINE_DIGESTS = frozenset(
+    {
+        "4cfeece39b53478fcdb682dbd2e59eb5a80788182959ce3987b468b61ffeb97c",
+        "13699c4d955cf36441d1788ed80256555e2ead21bed677207212728a1995e9b6",
+        "24bc2218d3544821b014447aca2b4051b63aa3043465594d880d99f4047d248d",
+        "0f595dd01756c2a89d507ec823b90384fec7b908ebfb88945256e7547ef2078b",
+        "e70fced58c9d5be104881776000521c301e313cc595818246898aca81fcd6749",
+        "41a4e6b9da641db6b2014db70e9abaa86f42f49ab9643a80b1cab4b0da23976d",
+    }
+)
+_EMAIL_RE = re.compile(r"(?<![\w@])[A-Za-z0-9][A-Za-z0-9_.+%\-]*@(?:[A-Za-z0-9\-]+\.)+[A-Za-z]{2,}\b")
+
+
+def scan_private_emails(rel_path: str, text: str) -> list[tuple[int, str]]:
+    """Flag personal mailbox domains and hashed known-private identities.
+
+    Public role addresses and synthetic fixtures on reserved example/test
+    domains remain usable. Mailmap exceptions match the entire exact line,
+    not a mailbox substring or an unrestricted file exemption.
+    """
+    hits = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if rel_path == ".mailmap" and hashlib.sha256(line.encode()).hexdigest() in _MAILMAP_LINE_DIGESTS:
+            continue
+        for match in _EMAIL_RE.finditer(line):
+            address = match.group().casefold()
+            domain = address.rsplit("@", 1)[1]
+            if domain == "users.noreply.github.com":
+                continue
+            if (
+                domain in _PERSONAL_EMAIL_DOMAINS
+                or hashlib.sha256(address.encode()).hexdigest() in _PRIVATE_EMAIL_DIGESTS
+            ):
+                hits.append((number, line.strip()[:200]))
+                break
+    return hits
+
+
 def scan_private_markers(rel_path: str, text: str) -> list[tuple[int, str]]:
     """Strict public-tree scan, independent of historical file whitelists.
 
@@ -977,11 +1055,12 @@ def scan_private_markers(rel_path: str, text: str) -> list[tuple[int, str]]:
     The collector's exact root prefix is a security rejection rule.
     One exact legacy environment lookup remains for backward compatibility.
     """
+    email_hits = scan_private_emails(rel_path, text)
     if rel_path == "tests/data/1c_frozen.json" and hashlib.sha256(text.encode()).hexdigest() == (
         "dc30d31aed6d52baef703531417e52016c2b698694944f9cea5b3f9abf578eb5"
     ):
-        return []
-    hits = []
+        return email_hits
+    hits = email_hits
     for number, line in enumerate(text.splitlines(), 1):
         checked = line
         if rel_path == "src/roam/knowledge/knowledge_claim.py":
