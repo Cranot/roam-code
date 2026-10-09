@@ -24,7 +24,7 @@
 This packet covers:
 
 - **Roam Code CLI** (live; Apache 2.0; local source analysis — `pip install
-  roam-code`; 287 commands / 258 MCP tools, 17 in the default `core`
+  roam-code`; 288 commands / 259 MCP tools, 17 in the default `core`
   preset / 28 languages; evidence: `roam surface --json` generated on
   2026-09-04).
 - **PR Replay** (live; one-shot structural-review engagement priced

@@ -118,13 +118,16 @@ def test_obvious_unbound_offer_cannot_silently_drift(product_site):
     [
         ("mcp_default_preset", 18),
         ("mcp_full", 247),
-        ("command_names", 288),
+        ("command_names", None),
         ("languages", 29),
         ("pyproject_version", "14.1.1"),
     ],
 )
 def test_registry_and_version_changes_reach_static_snapshot(product_site, monkeypatch, field, value):
-    counts = replace(builder.collect_counts(ROOT), **{field: value})
+    current = builder.collect_counts(ROOT)
+    if value is None:
+        value = getattr(current, field) + 1
+    counts = replace(current, **{field: value})
     monkeypatch.setattr(builder, "collect_counts", lambda root: counts)
     assert builder.run(product_site) == 1
     assert builder.run(product_site, write=True) == 0

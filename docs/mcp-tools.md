@@ -6,7 +6,7 @@ decorations in `src/roam/mcp_server.py` by `dev/build_readme_counts.py`. Edit
 tool docstrings in source before regenerating the inventory.
 
 <!-- BEGIN auto-count:mcp-tools-headline -->
-**258 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
+**259 tools · 17 in the default `core` preset · 8 selectable presets** (`core`, `review`, `refactor`, `debug`, `architecture`, `compliance`, `compile-curated`, `full`).
 <!-- END auto-count:mcp-tools-headline -->
 
 ```bash
@@ -43,7 +43,7 @@ first-run flow and the canonical agent sequence, and the
 [README](../README.md#mcp-server) for the preset overview.
 
 <!-- BEGIN auto-count:mcp-tools-list-summary -->
-## MCP tool list (all 258)
+## MCP tool list (all 259)
 <!-- END auto-count:mcp-tools-list-summary -->
 
 <!-- BEGIN auto-count:mcp-tools-list-table -->
@@ -87,6 +87,7 @@ first-run flow and the canonical agent sequence, and the
 | `roam_budget_check` | Check changes against architectural budgets (cycles, health floor, complexity). |
 | `roam_bus_factor` | Score knowledge-concentration risk per directory: Shannon entropy over unique authors, primary-author share, last activity, and a staleness factor. Flags CRITICAL / HIGH / MEDIUM / LOW per module. Different from ``roam_owner`` (per-file blame) and ``roam_congestion`` (too-many-authors merge-conflict risk) -- this measures knowledge-loss risk. |
 | `roam_capsule_export` | Sanitized structural graph export without code bodies (privacy-safe). |
+| `roam_case_table` | Run a pre-change case table with input partitions and observed test calls. |
 | `roam_catalog` | Return the full machine-readable list of every roam MCP tool currently registered, including title, description, and capability flags (core / read_only / destructive). Use this once at session start to discover what's available without enumerating tools. |
 | `roam_causal_graph` | Build per-symbol causal graphs: edges from inputs (parameters / globals / env reads) to sinks (side-effecting calls / return / raise / mutation). Six causal kinds: ``param_to_effect``, ``param_to_return``, ``global_to_effect``, ``global_to_mutation``, ``env_to_effect``, ``param_to_raise``. Heuristic line-level text scan -- false negatives expected. Different from ``roam_taint`` (cross-symbol taint propagation) -- this is intra-symbol dataflow only. |
 | `roam_cga_emit` | Emit a Code Graph Attestation — in-toto v1 statement whose predicateType is the identifier `https://roam-code.com/spec/CodeGraph/v1` (or `https://roam-code.com/spec/CodeGraph-AIBOM/v1` with --aibom). Those are in-toto TypeURIs, not fetchable pages; the predicate schema is documented at https://roam-code.com/docs/architecture. Merkle root over symbol fingerprints + edge-bundle digest. Optional cosign keyless or offline signing. |

@@ -20929,6 +20929,23 @@ def roam_vue_emits(root: str = ".") -> dict:
     return _run_roam(["vue-emits"], root)
 
 
+@_tool(
+    name="roam_case_table",
+    description="Run a pre-change case table with input partitions and observed test calls.",
+    task_mode="optional",
+)
+def case_table_tool(
+    symbol: str, max_rows: int = 64, pairwise: bool = False, call_sites: bool = False, root: str = "."
+) -> dict:
+    """Propose input cases; review expected answers before changing a classifier or helper."""
+    args = ["case-table", symbol, "--max-rows", str(max_rows)]
+    if pairwise:
+        args.append("--pairwise")
+    if call_sites:
+        args.append("--call-sites")
+    return _run_roam(args, root)
+
+
 # ---------------------------------------------------------------------------
 # ROADMAP A1 / W74 + W99 + W105 + W108: derived-view finalization
 # ---------------------------------------------------------------------------

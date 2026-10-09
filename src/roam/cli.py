@@ -17,7 +17,7 @@ from roam.deprecation import set_active_deprecation_notice as _set_active_deprec
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 287 invokable command names (280 canonical commands + 7 alias names).
+# Total: 288 invokable command names (281 canonical commands + 7 alias names).
 # Guarded against registry drift by scripts/sync_surface_counts.py.
 # Deprecated commands map to a structured record. When a user invokes a
 # deprecated name we still resolve it (no breaking change) and print a
@@ -283,6 +283,7 @@ _COMMANDS = {
     "review-accept": ("roam.commands.cmd_review", "review_accept_cmd"),
     "review-verify": ("roam.commands.cmd_review", "review_verify_cmd"),
     "capsule": ("roam.commands.cmd_capsule", "capsule"),
+    "case-table": ("roam.commands.cmd_case_table", "case_table"),
     "path-coverage": ("roam.commands.cmd_path_coverage", "path_coverage"),
     "plugins": ("roam.commands.cmd_plugins", "plugins_cmd"),
     "test-pyramid": ("roam.commands.cmd_test_pyramid", "test_pyramid"),
@@ -738,6 +739,7 @@ _CATEGORIES = {
         "risk",
         "migration-safety",
         "api-drift",
+        "case-table",
         "path-coverage",
         "capsule",
         "rules",

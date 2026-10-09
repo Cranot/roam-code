@@ -55,6 +55,6 @@ def test_invalid_alias_authority_is_unknown_in_serialized_consumer(tmp_path, mon
 
 def test_real_registry_preserves_canonical_names_and_count():
     names = surface_counts.canonical_cli_commands()
-    assert len(names) == 280
+    assert len(names) == 281
     assert {"algo", "understand", "weather", "trends", "uses"} <= set(names)
     assert not {"math", "onboard", "churn", "digest", "refs", "snapshot", "trend"} & set(names)

@@ -84,3 +84,5 @@ what remains uncertain, and the next bounded task with an acceptance check.
 Use public GitHub issues for the community queue. Keep local priorities, raw
 reports, release receipts, and private project details under `internal/`; that
 folder's catalogue is navigation, not proof that every old proposal is active.
+
+- [Pre-change case tables](case-table.md): propose input partitions, pairwise cases, and helper call-site checks.

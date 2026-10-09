@@ -5,11 +5,11 @@
 <!-- BEGIN auto-count:Codex-headline -->
 roam-code is a local codebase intelligence CLI for developers and AI coding agents.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. **287 commands · 258 MCP tools (17 in the default `core` preset) · 28 languages · local analysis · zero API keys.**
+a local SQLite DB. **288 commands · 259 MCP tools (17 in the default `core` preset) · 28 languages · local analysis · zero API keys.**
 <!-- END auto-count:Codex-headline -->
 
 <!-- BEGIN auto-count:Codex-authoritative -->
-Authoritative counts (AST-derived, env-independent): `command_count: 287 · canonical_count: 280 · category_count: 7 · mcp tools registered: 258 · mcp tools in core preset: 17`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
+Authoritative counts (AST-derived, env-independent): `command_count: 288 · canonical_count: 281 · category_count: 7 · mcp tools registered: 259 · mcp tools in core preset: 17`. The `roam surface --json` envelope additionally exposes `mcp_tool_count_by_preset` for per-preset counts.
 <!-- END auto-count:Codex-authoritative -->
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
@@ -180,8 +180,8 @@ maintained documentation map.
 
 ```
 src/roam/
-  cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 287 command names (280 canonical + 7 aliases).
-  mcp_server.py       # FastMCP server (17 tools in core preset; 258 in `full`) + `roam mcp` CLI command
+  cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES. 288 command names (281 canonical + 7 aliases).
+  mcp_server.py       # FastMCP server (17 tools in core preset; 259 in `full`) + `roam mcp` CLI command
   mcp_extras/         # MCP-native enhancements: sampling, watcher, session, progress, completions
     sampling.py       # Sampling-driven result compression (summarize=True) via Context.sample
     watcher.py        # watchdog observer + notifications/resources/updated (opt-in via ROAM_MCP_WATCH)
@@ -260,7 +260,7 @@ src/roam/
     gate_presets.py    # Framework-specific gate rules + .roam-gates.yml loader
     graph_helpers.py   # Shared graph utilities (adjacency builders, BFS helpers)
     context_helpers.py # Data-gathering helpers extracted from cmd_context.py
-    cmd_*.py           # 278 command modules: 276 back the 287 default names; 2 are feature-gated
+    cmd_*.py           # 279 command modules: 277 back the 288 default names; 2 are feature-gated
   output/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
@@ -586,7 +586,7 @@ roam supports third-party `roam-plugin-*` packages — the substrate is in
 `src/roam/plugins/` and the reference example is at `dev/example-plugin/`.
 Framework-specific knowledge (nextjs, laravel, prisma, django, …) should ship
 as a plugin rather than landing in core. Plugin-registered commands do NOT count
-toward the "287 commands" headline (W319) — the figure pins core-tree commands
+toward the "288 commands" headline (W319) — the figure pins core-tree commands
 only; the plugin count surfaces separately in `roam plugins list`.
 
 **Entry-point pattern.** Plugins register via Python entry points; roam
@@ -798,7 +798,7 @@ Index-aware text search (added on top of grep / refs):
 - `roam delete-check [--source working|staged|pr|head] [--ci]` — gates the diff on surviving references; exits 5 on BREAK-RISK or incomplete search with `--ci`.
 - `roam history-grep <pattern> [--polarity]` — git pickaxe (-S/-G) with author/date and introduced/removed annotation.
 
-Run `roam --help` for the 5-verb core; `roam --help-all` for all 287 command names; `roam surface --json` for the machine-readable inventory. Use `roam --json <cmd>` for structured output.
+Run `roam --help` for the 5-verb core; `roam --help-all` for all 288 command names; `roam surface --json` for the machine-readable inventory. Use `roam --json <cmd>` for structured output.
 Use `roam --sarif health` for CI integration (SARIF 2.1.0).
 
 ## Compiler tooling (2026-06-02 wave)

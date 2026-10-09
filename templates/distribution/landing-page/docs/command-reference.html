@@ -217,7 +217,7 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
-          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 17 tools including the <code>roam_expand_toolset</code> meta-tool; 258 in <code>full</code>)</td></tr>
+          <tr><td><code>roam mcp --list-tools</code></td><td>Print every MCP tool exposed by the active preset (default: 17 tools including the <code>roam_expand_toolset</code> meta-tool; 259 in <code>full</code>)</td></tr>
           <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Windsurf, VS Code, Gemini CLI, Codex CLI</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with conflict-aware partitions</td></tr>
@@ -695,6 +695,7 @@ roam --json algo --task loop-lookup --path lookup.js</code></pre>
       <tr id="command-risk"><td><a href="#command-risk"><code>roam risk</code></a></td><td>Show domain-weighted risk ranking of symbols.</td></tr>
       <tr id="command-migration-safety"><td><a href="#command-migration-safety"><code>roam migration-safety</code></a></td><td>Check migration files for non-idempotent (unsafe if run twice) operations.</td></tr>
       <tr id="command-api-drift"><td><a href="#command-api-drift"><code>roam api-drift</code></a></td><td>Detect mismatches between backend API responses and frontend type definitions.</td></tr>
+      <tr id="command-case-table"><td><a href="#command-case-table"><code>roam case-table</code></a></td><td>Propose a known-answer table for SYMBOL before editing code.</td></tr>
       <tr id="command-path-coverage"><td><a href="#command-path-coverage"><code>roam path-coverage</code></a></td><td>Find critical untested paths from entry points to sensitive sinks.</td></tr>
       <tr id="command-capsule"><td><a href="#command-capsule"><code>roam capsule</code></a></td><td>Export the structural graph as a portable JSON capsule.</td></tr>
       <tr id="command-rules"><td><a href="#command-rules"><code>roam rules</code></a></td><td>Evaluate custom governance rules defined in .roam/rules/.</td></tr>
