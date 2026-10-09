@@ -121,3 +121,23 @@ def test_homepage_example_action_reaches_captured_output_without_replacing_the_m
     assert any(
         link.attrs.get("href") == "/data/examples/checkout-impact-2026-09-13.json" for link in details[0].find("a")
     )
+
+
+@pytest.mark.parametrize("relative", ["README.md", "templates/legal/security-procurement-packet.md"])
+def test_inventory_counts_follow_generator(sync, relative):
+    counts = sync._live_counts()
+    changed = dict(counts, mcp_tools=counts["mcp_tools"] + 1, mcp_core_tools=counts["mcp_core_tools"] + 1)
+    text = (
+        "Its MCP inventory is 1 (2 in default core preset)."
+        if relative == "README.md"
+        else "1 commands / 2 MCP tools, 3 in the default `core`"
+    )
+    sync.build_replacements(changed, sync._live_languages())
+    groups = [patterns for path, patterns, _ in sync.iter_replacements() if path == sync.REPO_ROOT / Path(relative)]
+    assert groups
+    for patterns in groups:
+        for pattern, replacement in patterns:
+            if replacement is not None:
+                text = pattern.sub(replacement, text)
+    assert str(changed["mcp_tools"]) in text
+    assert str(changed["mcp_core_tools"]) in text
