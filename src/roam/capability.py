@@ -69,6 +69,8 @@ class Capability:
     # capability is intended to replace. A declaration is never proof of
     # coverage, adoption, or savings; live outcome-conditioned episodes decide.
     displaces: tuple[str, ...] = ()
+    subcommands: tuple[str, ...] = ()
+    replacement: str | None = None
 
 
 @dataclass
@@ -130,6 +132,8 @@ class CapabilityRegistry:
                     "destructive": cap.destructive,
                     "stale_sensitive": cap.stale_sensitive,
                     "displaces": list(cap.displaces),
+                    "subcommands": list(cap.subcommands),
+                    "replacement": cap.replacement,
                 }
                 for cap in self.all()
             ],
@@ -168,6 +172,7 @@ def roam_capability(
     destructive: bool = False,
     stale_sensitive: bool = True,
     displaces: tuple[str, ...] | list[str] = (),
+    subcommands: tuple[str, ...] | list[str] = (),
 ) -> Callable[[F], F]:
     """Mark a Click command as a capability for introspection.
 
@@ -204,6 +209,7 @@ def roam_capability(
             destructive=destructive,
             stale_sensitive=stale_sensitive,
             displaces=tuple(displaces),
+            subcommands=tuple(subcommands),
         )
         REGISTRY.register(cap)
         # Stash on the function for later introspection (e.g. roam capabilities --explain X)
@@ -275,6 +281,10 @@ def emit_yaml() -> str:
         lines.append(f"    requires_index: {str(cap['requires_index']).lower()}")
         if cap["since"]:
             lines.append(f"    since: {_yaml_str(cap['since'])}")
+        if cap["subcommands"]:
+            lines.append(f"    subcommands: [{', '.join(_yaml_str(s) for s in cap['subcommands'])}]")
+        if cap["replacement"]:
+            lines.append(f"    replacement: {_yaml_str(cap['replacement'])}")
         if cap["deprecated"]:
             lines.append("    deprecated: true")
         lines.append(f"    module: {cap['module']}")
