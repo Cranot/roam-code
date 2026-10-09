@@ -68,6 +68,8 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
     See also ``init`` (first-run bootstrap), ``watch`` (auto-reindex
     on file changes), and ``index-stats`` (DB size + symbol counts).
     """
+    t0 = time.monotonic()
+
     # ``--rebuild`` is a forgiving alias for ``--force`` — collapse it here so
     # the rest of the body only reasons about ``force``.
     force = force or rebuild
@@ -79,7 +81,6 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
     # Suppress progress in JSON mode (consumers don't want progress text)
     suppress_progress = quiet or json_mode
 
-    t0 = time.monotonic()
     indexer = Indexer()
     index_completed = indexer.run(
         force=force,
@@ -208,6 +209,35 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
             else:
                 _index_verdict = corpus.detail
 
+            # Snapshot work is part of this command, so finish it before
+            # reporting completion or stopping the elapsed timer.
+            snapshot_message = None
+            snapshot_started = time.monotonic()
+            try:
+                from roam.commands.metrics_history import append_snapshot
+
+                with open_db() as wconn:
+                    snap = append_snapshot(wconn, source="index")
+                if not json_mode and not quiet:
+                    # W1461 — never print "snapshot saved" for a snapshot
+                    # ``append_snapshot`` refused to write, and never print a
+                    # health score that is a floor rather than a measurement.
+                    if snap.get("stored", True):
+                        snapshot_message = f"  Health: {snap['health_score']}/100 (snapshot saved)"
+                    else:
+                        snapshot_message = (
+                            "  Health: UNKNOWN (symbol graph unavailable; no snapshot saved — "
+                            f"unmeasured: {', '.join(snap.get('degraded_metrics') or ())})"
+                        )
+            except Exception as _exc:  # noqa: BLE001 — defensive
+                # Don't fail indexing if snapshot fails
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_index:auto_snapshot", _exc)
+            snapshot_elapsed = time.monotonic() - snapshot_started
+            indexing_elapsed = elapsed
+            elapsed = time.monotonic() - t0
+
             if json_mode:
                 _summary = {
                     "verdict": _index_verdict,
@@ -227,6 +257,8 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                             "index",
                             summary=_summary,
                             elapsed_s=round(elapsed, 1),
+                            indexing_elapsed_s=round(indexing_elapsed, 1),
+                            snapshot_elapsed_s=round(snapshot_elapsed, 1),
                             files=file_count,
                             symbols=sym_count,
                             edges=edge_count,
@@ -245,31 +277,11 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                 click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
                 click.echo(f"  Languages: {lang_str}")
                 click.echo(f"  Avg symbols/file: {avg_sym:.1f}  Parse coverage: {coverage:.0f}%")
+                if snapshot_message:
+                    click.echo(snapshot_message)
                 for line in corpus.text_lines()[1:]:
                     click.echo(line)
 
-            # Auto-snapshot after every index for trend tracking
-            try:
-                from roam.commands.metrics_history import append_snapshot
-
-                with open_db() as wconn:
-                    snap = append_snapshot(wconn, source="index")
-                if not json_mode and not quiet:
-                    # W1461 — never print "snapshot saved" for a snapshot
-                    # ``append_snapshot`` refused to write, and never print a
-                    # health score that is a floor rather than a measurement.
-                    if snap.get("stored", True):
-                        click.echo(f"  Health: {snap['health_score']}/100 (snapshot saved)")
-                    else:
-                        click.echo(
-                            "  Health: UNKNOWN (symbol graph unavailable; no snapshot saved — "
-                            f"unmeasured: {', '.join(snap.get('degraded_metrics') or ())})"
-                        )
-            except Exception as _exc:  # noqa: BLE001 — defensive
-                # Don't fail indexing if snapshot fails
-                from roam.observability import log_swallowed
-
-                log_swallowed("cmd_index:auto_snapshot", _exc)
     else:
         # Pattern 1C (CLAUDE.md): never emit empty stdout. If the indexer ran
         # but the DB isn't visible (race with cloud-sync, write to a different

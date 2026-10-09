@@ -118,6 +118,13 @@ without changing any file contents. The full index path still checks Git
 history and records a manifest in that case. Skipping Git collection requires
 both an unchanged manifest HEAD and that exact commit in the indexed history.
 
+The `roam index` completion time includes index construction, corpus inspection,
+and the automatic health snapshot. Even an unchanged index can spend time
+computing snapshot metrics. JSON output exposes `elapsed_s` for total command
+work, `indexing_elapsed_s` for the indexer phase, and `snapshot_elapsed_s` for
+snapshot collection. Process startup and output serialization can add a small
+amount to an external wall-clock measurement.
+
 Use `uv run --no-sync roam index --force` when a full rebuild is needed. It
 rebuilds derived index data and forces Git-stat collection within the configured
 history window. It does not erase the configured history limit or bypass a
