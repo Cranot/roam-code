@@ -77,7 +77,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("tool", help="bare tool name, e.g. roam_file_info")
     ap.add_argument("--since", default=None)
-    ap.add_argument("--projects-dir", default="/root/.claude/projects")
+    ap.add_argument("--projects-dir", default=os.path.expanduser("~/.claude/projects"))
     ap.add_argument("--max-files", type=int, default=4000)
     args = ap.parse_args()
 

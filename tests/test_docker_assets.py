@@ -31,7 +31,7 @@ def test_dockerfile_runs_roam_cli():
     assert "chown roam:roam /workspace" in text
     assert "apt-get upgrade -y" in text
     assert "pip uninstall -y pip uv" in text
-    assert "rm -rf /root/.cache/uv" in text
+    assert 'rm -rf "$HOME/.cache/uv"' in text
 
 
 def test_container_bootstrap_matches_reviewed_uv_version():

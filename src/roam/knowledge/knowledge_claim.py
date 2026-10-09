@@ -29,7 +29,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-REGISTRY_PATH = Path(os.environ.get("STOA_KNOWLEDGE_CLAIMS", "/var/cache/stoa/knowledge/claims.jsonl"))
+# The legacy environment name is deprecated; the public name takes precedence.
+REGISTRY_PATH = Path(
+    os.environ.get("ROAM_KNOWLEDGE_CLAIMS") or os.environ.get("STOA_KNOWLEDGE_CLAIMS") or ".roam/knowledge/claims.jsonl"
+)
 
 PROVENANCE_SOURCES = frozenset({"council_verdict", "systemic_finding", "mining_synthesis", "planning_decision"})
 EVIDENCE_TYPES = frozenset({"measured", "reproduced", "council_reviewed", "hypothesis"})
@@ -455,7 +458,5 @@ class KnowledgeRegistry:
         ]
 
 
-# NOTE: the upstream stoa copy also ships a small argparse CLI (``--show`` /
-# ``--query`` / ``--stale-sweep``). It is intentionally omitted from the roam
-# vendor: roam consumes the schema classes, not the standalone inspector, and
-# roam bans bare ``print`` in library modules. The CLI stays with the stoa copy.
+# This module exposes schema classes and registry operations. Standalone
+# inspection is left to callers rather than a separate argparse interface.

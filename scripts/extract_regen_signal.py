@@ -291,7 +291,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--projects-dir",
         type=Path,
-        default=Path("/root/.claude/projects"),
+        default=(Path.home() / ".claude" / "projects"),
         help="Root of per-cwd session JSONL trees.",
     )
     p.add_argument(

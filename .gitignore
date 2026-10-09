@@ -114,7 +114,6 @@ templates/services-reports/
 _conv_out.json
 
 # Sibling-platform session profile (per-machine local state)
-.stoa/
 
 # Recheck-agent scratch dirs
 .audit-tmp/

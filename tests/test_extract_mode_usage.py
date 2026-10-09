@@ -5,7 +5,7 @@ from tests._helpers.repo_root import repo_root
 """Tests for scripts/extract_mode_usage.py.
 
 Uses synthetic JSONL fixtures only; never touches the real
-/root/.claude/projects directory.
+~/.claude/projects directory.
 """
 
 import importlib.util

@@ -2,7 +2,7 @@
 
 Background
 ----------
-Measured on a real repo (stoa): ``roam dead --reachable-only`` reported all
+Measured on a real repo (a platform repository): ``roam dead --reachable-only`` reported all
 17 ``probe_*`` functions in ``autopilot/monitor.py`` as dead, even though
 they were the core of a systemd-invoked monitoring dashboard. The functions
 were never *called* directly in the source — they were handed to a

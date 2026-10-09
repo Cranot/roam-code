@@ -168,3 +168,42 @@ def test_no_internal_language_in_tracked_files() -> None:
     lines.append('    see that module\'s "Hashed literal terms" docstring section first).')
 
     pytest.fail("\n".join(lines))
+
+
+@pytest.mark.smoke
+def test_no_private_markers_in_tracked_files() -> None:
+    """Scan ALL tracked files, including changelogs and extensionless configs."""
+    findings = []
+    for path in _git_tracked_files():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for view in _patterns.decode_views(path.read_bytes()):
+            findings.extend((rel, number, snippet) for number, snippet in _patterns.scan_private_markers(rel, view))
+    assert not findings, "Private markers in public files:\n" + "\n".join(
+        f"{rel}:{number}: {snippet}" for rel, number, snippet in findings
+    )
+
+
+@pytest.mark.parametrize(
+    "marker", ["st" + "oa", "prak" + "teon", "het" + "zner", "tail" + "net", "/" + "root/services/private"]
+)
+@pytest.mark.parametrize("path", ["README.md", "CHANGELOG.md", ".mailmap", "unknown.extension"])
+def test_private_markers_detect_case_and_file_roles(marker, path):
+    for spelling in (marker, marker.upper()):
+        assert _patterns.scan_private_markers(path, spelling)
+
+
+def test_private_marker_exceptions_are_narrow():
+    source = "src/roam/knowledge/knowledge_claim.py"
+    legacy = "ST" + "OA_KNOWLEDGE_CLAIMS"
+    lookup = f'os.environ.get("{legacy}")'
+    assert not _patterns.scan_private_markers(source, lookup)
+    assert _patterns.scan_private_markers("CHANGELOG.md", lookup)
+    assert _patterns.scan_private_markers(source, lookup + " # " + "st" + "oa")
+    prefix = "/" + "root/"
+    collector = "src/roam/evidence/collector.py"
+    assert not _patterns.scan_private_markers(collector, f'    "{prefix}",')
+    assert _patterns.scan_private_markers(collector, f'"{prefix}services/private"')
+    assert _patterns.scan_private_markers("tests/data/1c_frozen.json", prefix + "private")
+    assert not _patterns.scan_private_markers(
+        "README.md", "policy/root/mode; ~/.claude/projects; ROAM_KNOWLEDGE_CLAIMS"
+    )

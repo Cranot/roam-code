@@ -996,7 +996,7 @@ def test_savings_aggregate_projects_only_closed_counts_and_static_text() -> None
     assert "next_commands" not in serialized
 
 
-def test_cli_aggregate_is_stoa_compatible_and_private(tmp_path: Path) -> None:
+def test_cli_aggregate_is_platform_compatible_and_private(tmp_path: Path) -> None:
     events, compiles = _fixture_rows()
     opaque_episode_id = "ep_abcdef0123456789abcdef01"
     for event in events:

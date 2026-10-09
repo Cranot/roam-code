@@ -101,7 +101,7 @@ def test_worktree_pointing_at_another_directory_is_caught(repo: Path, tmp_path: 
 
 
 def test_worktree_with_unresolvable_foreign_path_is_caught(repo: Path) -> None:
-    """stoa's case: a WSL /mnt path in a config read by a non-WSL git.
+    """Hosted-workspace case: a WSL /mnt path in a config read by a non-WSL git.
 
     git itself cannot run here, so the check must read the config file
     directly rather than treating the rev-parse failure as "no repo".
