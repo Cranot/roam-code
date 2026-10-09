@@ -127,6 +127,7 @@ def capabilities_cmd(ctx, emit: str, category: str | None, ai_safe_only: bool) -
                     "inputs": list(c.inputs),
                     "outputs": list(c.outputs),
                     "ai_safe": c.ai_safe,
+                    "requires_index": c.requires_index,
                     "since": c.since,
                     "displaces": list(c.displaces),
                     "subcommands": list(c.subcommands),
@@ -206,3 +207,17 @@ def _populate_registry() -> None:
             # Best-effort; missing optional deps shouldn't break the
             # registry dump.
             pass
+
+    # Aliases share callbacks, so derive their metadata from the canonical
+    # decoration rather than duplicating it on the same Click command.
+    from dataclasses import replace
+
+    from roam.cli import _DEPRECATED_COMMANDS
+
+    for alias, record in _DEPRECATED_COMMANDS.items():
+        replacement = record.get("replacement") if isinstance(record, dict) else record
+        canonical = REGISTRY.get(replacement)
+        if alias in _commands and canonical is not None:
+            REGISTRY.register(
+                replace(canonical, name=alias, deprecated=True, maturity="deprecated", replacement=replacement)
+            )
