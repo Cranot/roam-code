@@ -94,7 +94,7 @@ def test_adversarial_pattern2_partial_when_check_errors(monkeypatch, tmp_path):
     assert "clean" not in summary["verdict"].lower() or "cannot certify clean" in summary["verdict"]
 
 
-def test_adversarial_clean_path_unchanged(monkeypatch, tmp_path):
+def test_adversarial_clean_path_unchanged(monkeypatch, indexed_project):
     """The clean-path verdict is unchanged when every check runs cleanly.
 
     Guard must not regress the happy path: when every check reports
@@ -104,15 +104,16 @@ def test_adversarial_clean_path_unchanged(monkeypatch, tmp_path):
     ``"No architectural challenges found"`` branch.
     """
     import roam.commands.cmd_adversarial as mod
+    from roam.db.connection import open_db
 
-    monkeypatch.setattr(mod, "get_changed_files_status", lambda *_a, **_kw: (["src/roam/cli.py"], None))
-    monkeypatch.setattr(mod, "resolve_changed_to_db", lambda _conn, _changed: {"src/roam/cli.py": 1})
+    monkeypatch.chdir(indexed_project)
+    # A clean review needs actual changed symbols with graph edges. An empty
+    # symbol lookup correctly reports no signal instead of certifying clean.
+    with open_db(readonly=True) as conn:
+        file_id = conn.execute("SELECT id FROM files WHERE path = 'src/models.py'").fetchone()[0]
+    monkeypatch.setattr(mod, "get_changed_files_status", lambda *_a, **_kw: (["src/models.py"], None))
+    monkeypatch.setattr(mod, "resolve_changed_to_db", lambda _conn, _changed: {"src/models.py": file_id})
     monkeypatch.setattr(mod, "ensure_index", lambda: None)
-    # W1259 added a symbol_lookup substrate that runs `batched_in` against the
-    # `symbols` table. Without a built index (CI default), that query raises
-    # `no such table: symbols` and pollutes failed_checks. Stub it so the
-    # clean-path test reflects the contract it's testing.
-    monkeypatch.setattr(mod, "batched_in", lambda _conn, _sql, _ids: [])
 
     # Every check returns clean — explicitly mark "ran" in the status
     # so the assertion can pin shape. (The real helpers also do this;
