@@ -48,6 +48,9 @@ def test_verify_declares_its_index_refresh_and_ledger_writes() -> None:
         ("roam_boundary", False, True, "1.1.0"),
         ("roam_cga_emit", False, False, "1.1.0"),
         ("roam_dogfood", False, False, "1.1.0"),
+        # Fresh comparisons compile both prompts, writing cache/telemetry even
+        # though the wrapper omits the CLI's baseline-persistence controls.
+        ("roam_envelope_diff", False, False, "1.1.0"),
         ("roam_evidence_oscal", False, True, "1.1.0"),
         ("roam_fan", False, True, "1.1.0"),
         ("roam_fingerprint", False, True, "1.1.0"),
