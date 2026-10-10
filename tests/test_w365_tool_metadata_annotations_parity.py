@@ -326,6 +326,10 @@ _MCP_READ_ONLY_CLI_MAX_EFFECT_PROJECTIONS: dict[str, tuple[tuple[str, ...], str]
         ("--write-baseline",),
         "MCP compares existing snapshots; CLI --write-baseline creates or replaces baseline state.",
     ),
+    "roam_compiler_health": (
+        ("--emit-guard-findings",),
+        "MCP returns the dashboard; CLI --emit-guard-findings writes an alerts sidecar.",
+    ),
     "roam_complexity_report": (
         ("--persist",),
         "MCP returns complexity findings; CLI --persist writes them to the findings registry.",
@@ -417,6 +421,10 @@ _MCP_READ_ONLY_CLI_MAX_EFFECT_PROJECTIONS: dict[str, tuple[tuple[str, ...], str]
     "roam_reachability_triage": (
         ("--write-baseline",),
         "MCP evaluates reachability; CLI --write-baseline creates or replaces baseline state.",
+    ),
+    "roam_rules_suggest": (
+        ("--write", "--force"),
+        "MCP returns suggestions; CLI --write persists rules and --force permits overwriting them.",
     ),
     "roam_rules_validate": (
         ("--fix",),

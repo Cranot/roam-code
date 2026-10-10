@@ -5279,6 +5279,8 @@ _MCP_READ_ONLY_CAPABILITY_PROJECTIONS: frozenset[str] = frozenset(
         "roam_bus_factor",
         "roam_clones",
         "roam_compatibility",
+        # CLI-only --emit-guard-findings writes the dashboard sidecar.
+        "roam_compiler_health",
         "roam_complexity_report",
         "roam_conventions",
         "roam_coverage_gaps",
@@ -5302,6 +5304,8 @@ _MCP_READ_ONLY_CAPABILITY_PROJECTIONS: frozenset[str] = frozenset(
         "roam_pr_risk",
         "roam_proof_bundle",
         "roam_reachability_triage",
+        # CLI-only --write/--force persist suggested rules.
+        "roam_rules_suggest",
         "roam_rules_validate",
         "roam_sbom",
         "roam_smells",
@@ -20821,6 +20825,12 @@ def roam_dispatch_trace(
 # roam_envelope_diff
 @_tool(
     name="roam_envelope_diff",
+    # Fresh prompt comparisons call compile_for_artifact, which persists
+    # cache entries and may append telemetry. --from-cache is only one form.
+    read_only=False,
+    destructive=False,
+    idempotent=False,
+    version="1.1.0",
     description=(
         "Diff two roam compile envelopes: probe families, classifier, artifact "
         "distribution, confidence. Use for regression CI or to compare before/after "
