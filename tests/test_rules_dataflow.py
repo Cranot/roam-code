@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -218,3 +219,51 @@ def test_sanitizers_unrelated_string_does_not_suppress(tmp_path):
     proj = _make_project(tmp_path, {"src/app.py": _UNSANITIZED}, _sink_rule('["escape("]'))
     results = _run_rules(proj)
     assert results[0]["passed"] is False
+
+
+_QUOTED_THEN_RAW = (
+    "import os\nimport shlex\n\n\ndef run():\n    v = input()\n    os.system(shlex.quote(v))\n    os.system(v)\n"
+)
+_QUOTED_ONLY_TWICE = (
+    "import os\nimport shlex\n\n\ndef run():\n"
+    "    v = input()\n    os.system(shlex.quote(v))\n    os.system(shlex.quote(v))\n"
+)
+_SANITIZED_THEN_RAW_SINK_AFTER_REASSIGN = (
+    "import os\nimport shlex\n\n\ndef run():\n"
+    "    v = input()\n    v = shlex.quote(v)\n    os.system(v)\n    os.system(v)\n"
+)
+
+
+def _check_rules_cli(proj: Path, monkeypatch, rule_name: str = "Command injection"):
+    monkeypatch.chdir(proj)
+    result = invoke_cli(CliRunner(), ["check-rules", "--rule", rule_name], cwd=proj, json_mode=True)
+    # A failing rule exits 1, so parse the JSON directly instead of parse_json_output.
+    data = json.loads(result.output)
+    rows = [r for r in data.get("results", []) if r.get("id") == rule_name]
+    assert rows, data.get("results", [])
+    return result, rows[0]
+
+
+def test_sanitized_sink_then_raw_sink_cli(tmp_path, monkeypatch):
+    # Quoting the first sink's argument does not sanitize v for the second sink.
+    proj = _make_project(tmp_path, {"src/app.py": _QUOTED_THEN_RAW}, _sink_rule('["shlex.quote("]'))
+    result, row = _check_rules_cli(proj, monkeypatch)
+    assert row["passed"] is False
+    assert result.exit_code == 1
+
+
+def test_sanitized_sink_twice_cli_still_clean(tmp_path, monkeypatch):
+    proj = _make_project(tmp_path, {"src/app.py": _QUOTED_ONLY_TWICE}, _sink_rule('["shlex.quote("]'))
+    result, row = _check_rules_cli(proj, monkeypatch)
+    assert row["passed"] is True
+    assert result.exit_code == 0
+
+
+def test_sanitized_value_replacement_cli_clean(tmp_path, monkeypatch):
+    # A sanitizer on its own line replaces the value: later sinks are clean.
+    proj = _make_project(
+        tmp_path, {"src/app.py": _SANITIZED_THEN_RAW_SINK_AFTER_REASSIGN}, _sink_rule('["shlex.quote("]')
+    )
+    result, row = _check_rules_cli(proj, monkeypatch)
+    assert row["passed"] is True
+    assert result.exit_code == 0

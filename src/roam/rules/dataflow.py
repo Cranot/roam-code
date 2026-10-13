@@ -127,34 +127,41 @@ def _find_source_sink(
 ) -> tuple[int, str, int, str] | None:
     """Find the first source-to-sink pair in a body.
 
-    A pair is dropped as sanitized when any ``sanitizers`` string occurs on a
-    line from the source line through the sink line (inclusive); scanning then
-    continues for a later, unsanitized pair.
+    Sanitizer heuristic (line text only, no variable tracking):
+
+    * A sanitizer on the sink's own line is sink-local quoting
+      (``os.system(shlex.quote(v))``): that one sink is skipped and the source
+      stays live, so a later raw sink is still reported.
+    * A sanitizer on a non-sink line after the source is taken to replace the
+      source value (``v = shlex.quote(v)``): the source is dropped, so later
+      sinks are not reported until a new source appears. This does not prove
+      the sanitized expression is the tainted variable.
+    * A source on a line that also carries a sanitizer is not registered.
     """
     source_hit: tuple[int, str] | None = None
-    sink_hit: tuple[int, str] | None = None
+    sanitizers_lc = tuple(x.lower() for x in sanitizers)
 
     for idx, raw in enumerate(body_lines):
         line = raw.lower()
         line_no = start_line + idx
-        if source_hit is None:
-            for src in sources:
-                if src.lower() in line:
-                    source_hit = (line_no, src)
-                    break
+        sanitized_line = any(san in line for san in sanitizers_lc)
+        sink_hit: tuple[int, str] | None = None
         for sink in sinks:
             if sink.lower() in line:
                 sink_hit = (line_no, sink)
                 break
-        if source_hit and sink_hit and source_hit[0] <= sink_hit[0]:
-            if sanitizers and any(
-                san.lower() in body_lines[i - start_line].lower()
-                for i in range(source_hit[0], sink_hit[0] + 1)
-                for san in sanitizers
-            ):
+        if source_hit is None and not sanitized_line:
+            for src in sources:
+                if src.lower() in line:
+                    source_hit = (line_no, src)
+                    break
+        if sink_hit is None:
+            if sanitized_line:
                 source_hit = None
-                sink_hit = None
-                continue
+            continue
+        if sanitized_line:
+            continue
+        if source_hit and source_hit[0] <= sink_hit[0]:
             return source_hit[0], source_hit[1], sink_hit[0], sink_hit[1]
     return None
 
