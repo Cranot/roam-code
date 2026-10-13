@@ -154,3 +154,67 @@ def test_check_rules_includes_custom_dataflow_rule(tmp_path, monkeypatch):
     custom = [r for r in data.get("results", []) if r.get("id") == "Custom dead assignment rule"]
     assert custom, f"custom rule missing from output: {data.get('results', [])}"
     assert custom[0]["passed"] is False
+
+
+def _run_rules(proj: Path):
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(proj))
+        with open_db(readonly=True) as conn:
+            return evaluate_all(proj / ".roam" / "rules", conn)
+    finally:
+        os.chdir(old_cwd)
+
+
+def _sink_rule(sanitizers: str | None) -> dict[str, str]:
+    body = (
+        'name: "Command injection"\n'
+        "severity: error\n"
+        "type: dataflow_match\n"
+        "match:\n"
+        "  patterns: [source_to_sink]\n"
+        '  file_glob: "**/*.py"\n'
+        '  sources: ["input("]\n'
+        '  sinks: ["os.system("]\n'
+    )
+    if sanitizers is not None:
+        body += f"  sanitizers: {sanitizers}\n"
+    return {"cmd.yaml": body}
+
+
+_UNSANITIZED = "import os\n\n\ndef run():\n    v = input()\n    os.system(v)\n"
+_SANITIZED = "import os\nimport shlex\n\n\ndef run():\n    v = input()\n    os.system(shlex.quote(v))\n"
+_SANITIZED_EARLIER = (
+    "import os\nimport shlex\n\n\ndef run():\n    v = input()\n    v = shlex.quote(v)\n    os.system(v)\n"
+)
+
+
+def test_sanitizers_suppress_sanitized_flow(tmp_path):
+    proj = _make_project(tmp_path, {"src/app.py": _SANITIZED}, _sink_rule('["shlex.quote("]'))
+    results = _run_rules(proj)
+    assert results[0]["passed"] is True, results[0]["violations"]
+
+
+def test_sanitizers_suppress_sanitizer_between_source_and_sink(tmp_path):
+    proj = _make_project(tmp_path, {"src/app.py": _SANITIZED_EARLIER}, _sink_rule('["shlex.quote("]'))
+    results = _run_rules(proj)
+    assert results[0]["passed"] is True, results[0]["violations"]
+
+
+def test_sanitizers_control_unsanitized_flow_still_flagged(tmp_path):
+    proj = _make_project(tmp_path, {"src/app.py": _UNSANITIZED}, _sink_rule('["shlex.quote("]'))
+    results = _run_rules(proj)
+    assert results[0]["passed"] is False
+    assert any(v.get("type") == "source_to_sink" for v in results[0]["violations"])
+
+
+def test_sanitizers_control_rule_without_key_unchanged(tmp_path):
+    proj = _make_project(tmp_path, {"src/app.py": _SANITIZED}, _sink_rule(None))
+    results = _run_rules(proj)
+    assert results[0]["passed"] is False
+
+
+def test_sanitizers_unrelated_string_does_not_suppress(tmp_path):
+    proj = _make_project(tmp_path, {"src/app.py": _UNSANITIZED}, _sink_rule('["escape("]'))
+    results = _run_rules(proj)
+    assert results[0]["passed"] is False
