@@ -160,13 +160,14 @@ dev = [
 # their complete transitive graphs and artifact hashes across Python 3.10-3.13.
 ci = [
     "pip-audit==2.10.1",
-    # 6.16.1 carries the fixes for CVE-2026-84309 (fixed in 6.16.0) plus
+    # 6.16.1 carried the fixes for CVE-2026-84309 (fixed in 6.16.0) plus
     # CVE-2026-84310 and CVE-2026-84311 (both fixed in 6.16.1), all published
     # against 6.15.0. CI-only, like pillow above, and like pillow it must still
     # audit clean: the dependency-audit lane fails on ANY known vulnerability
     # in the locked graph, which is what caught this -- twice now, so the pin
-    # is deliberate rather than a floor.
-    "pypdf==6.16.1",
+    # is deliberate rather than a floor. Raised to 6.20.1 for the advisories
+    # fixed in 6.17.0 through 6.19.0.
+    "pypdf==6.20.1",
     "setuptools==83.0.0",
     "wheel==0.48.0",
 ]
