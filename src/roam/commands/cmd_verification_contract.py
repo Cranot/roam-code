@@ -27,6 +27,7 @@ import click
 
 from roam.capability import roam_capability
 from roam.command_graph import build_command_graph
+from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
 from roam.guard_errors import guard_error_envelope
 from roam.guard_rules import get_active_rules
 from roam.output.formatter import json_envelope, to_json
@@ -77,6 +78,13 @@ def _resolve_files(files: tuple[str, ...], files_from: str | None) -> list[str]:
     default=None,
     help="Path to a custom rule pack (YAML). Default: built-in pack.",
 )
+@click.option(
+    "--require-coverage",
+    "require_coverage",
+    is_flag=True,
+    default=False,
+    help="Exit 5 when the contract is empty because no rule matched any changed file.",
+)
 @click.pass_context
 @roam_capability(
     name="verification-contract",
@@ -100,6 +108,7 @@ def verification_contract(
     risk_path: tuple[str, ...],
     risk_reason: tuple[str, ...],
     rules_path: str | None,
+    require_coverage: bool,
 ) -> None:
     """Emit the G3 verification contract for changed files + mode + policy."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -157,6 +166,16 @@ def verification_contract(
 
     n_required = len(contract["required"])
     n_skipped = len(contract["skipped"])
+    unmatched = list(contract["_meta"]["unmatched_changed_files"])
+    n_unmatched = len(unmatched)
+    # An empty contract over files no rule matched is not "nothing to check":
+    # the pack has no opinion about these paths. Report it as partial.
+    vacuous = n_required == 0 and n_unmatched > 0
+    if vacuous:
+        verdict = f"0 required; {n_unmatched} changed file(s) matched no rule"
+    else:
+        verdict = f"{n_required} required, {n_skipped} skipped"
+    fail_coverage = gate_should_fail(require_coverage, findings=False, scan_incomplete=vacuous)
 
     if json_mode:
         click.echo(
@@ -164,14 +183,15 @@ def verification_contract(
                 json_envelope(
                     "verification-contract",
                     summary={
-                        "verdict": f"{n_required} required, {n_skipped} skipped",
+                        "verdict": verdict,
                         "required_count": n_required,
                         "skipped_count": n_skipped,
                         "changed_files_count": len(changed_files),
                         "mode": mode,
                         "policy_profile": policy_profile,
                         "risk_level": risk_level,
-                        "partial_success": False,
+                        "unmatched_count": n_unmatched,
+                        "partial_success": vacuous,
                     },
                     agent_contract={
                         "facts": [
@@ -184,15 +204,23 @@ def verification_contract(
                             "roam pr-bundle emit --auto-collect",
                             "roam verdict",
                         ],
-                        "risks": [],
+                        "risks": [f"{n_unmatched} changed file(s) matched no rule"] if vacuous else [],
                     },
                     contract=contract,
                 )
             )
         )
+        if fail_coverage:
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
-    click.echo(f"VERDICT: {n_required} required, {n_skipped} skipped (mode={mode}, policy={policy_profile})")
+    click.echo(f"VERDICT: {verdict} (mode={mode}, policy={policy_profile})")
+    if vacuous:
+        click.echo("\nChanged files matched by no rule:")
+        for f in unmatched[:10]:
+            click.echo(f"  - {f}")
+        if n_unmatched > 10:
+            click.echo(f"  ... and {n_unmatched - 10} more")
     if contract["required"]:
         click.echo("\nRequired checks:")
         for r in contract["required"]:
@@ -203,3 +231,5 @@ def verification_contract(
             click.echo(f"  - {r['command']} — {r['reason']}")
         if len(contract["skipped"]) > 10:
             click.echo(f"  ... and {len(contract['skipped']) - 10} more")
+    if fail_coverage:
+        ctx.exit(EXIT_GATE_FAILURE)
