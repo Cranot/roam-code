@@ -1395,7 +1395,9 @@ def _evaluate_dataflow_match(rule: dict, conn) -> dict:
       max_matches: 100
       sources: ["input(", "request.args"]
       sinks: ["os.system(", "subprocess.run("]
-      sanitizers: ["escape(", "sanitize("]
+      sanitizers: ["escape(", "sanitize("]   # source_to_sink only: a pair is
+                                             # dropped when one appears on a line
+                                             # from source to sink (inclusive)
       max_chain_length: 5
       min_confidence: 0.5
     """
@@ -1415,6 +1417,7 @@ def _evaluate_dataflow_match(rule: dict, conn) -> dict:
         max_matches=max_matches if max_matches > 0 else 0,
         sources=sources,
         sinks=sinks,
+        sanitizers=match.get("sanitizers"),
     )
 
     findings = _filter_findings_by_threshold(

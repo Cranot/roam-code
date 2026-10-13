@@ -123,7 +123,14 @@ def _find_source_sink(
     *,
     sources: tuple[str, ...],
     sinks: tuple[str, ...],
+    sanitizers: tuple[str, ...] = (),
 ) -> tuple[int, str, int, str] | None:
+    """Find the first source-to-sink pair in a body.
+
+    A pair is dropped as sanitized when any ``sanitizers`` string occurs on a
+    line from the source line through the sink line (inclusive); scanning then
+    continues for a later, unsanitized pair.
+    """
     source_hit: tuple[int, str] | None = None
     sink_hit: tuple[int, str] | None = None
 
@@ -140,6 +147,14 @@ def _find_source_sink(
                 sink_hit = (line_no, sink)
                 break
         if source_hit and sink_hit and source_hit[0] <= sink_hit[0]:
+            if sanitizers and any(
+                san.lower() in body_lines[i - start_line].lower()
+                for i in range(source_hit[0], sink_hit[0] + 1)
+                for san in sanitizers
+            ):
+                source_hit = None
+                sink_hit = None
+                continue
             return source_hit[0], source_hit[1], sink_hit[0], sink_hit[1]
     return None
 
@@ -358,6 +373,7 @@ def _collect_intra_findings_for_symbol(
     body_lines: list[str],
     source_patterns: tuple[str, ...],
     sink_patterns: tuple[str, ...],
+    sanitizer_patterns: tuple[str, ...] = (),
 ) -> list[dict]:
     """Collect intra-procedural findings for one function or method body."""
     if not body_lines:
@@ -409,6 +425,7 @@ def _collect_intra_findings_for_symbol(
             line_start + 1,
             sources=source_patterns,
             sinks=sink_patterns,
+            sanitizers=sanitizer_patterns,
         )
         if hit is not None:
             src_line, source, sink_line, sink = hit
@@ -476,6 +493,7 @@ def _collect_intra_findings_until_budget(
     max_matches: int,
     source_patterns: tuple[str, ...],
     sink_patterns: tuple[str, ...],
+    sanitizer_patterns: tuple[str, ...] = (),
 ) -> list[dict]:
     project_root = find_project_root()
     file_cache: dict[str, list[str]] = {}
@@ -502,6 +520,7 @@ def _collect_intra_findings_until_budget(
                 body_lines=body_lines,
                 source_patterns=source_patterns,
                 sink_patterns=sink_patterns,
+                sanitizer_patterns=sanitizer_patterns,
             )
         )
 
@@ -519,6 +538,7 @@ def collect_dataflow_findings(
     max_matches: int = 0,
     sources: list[str] | tuple[str, ...] | None = None,
     sinks: list[str] | tuple[str, ...] | None = None,
+    sanitizers: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict]:
     """Collect intra- and inter-procedural dataflow findings."""
     target_patterns = _normalize_patterns(patterns)
@@ -543,6 +563,7 @@ def collect_dataflow_findings(
 
     source_patterns = tuple(sources) if sources else _DEFAULT_SOURCES
     sink_patterns = tuple(sinks) if sinks else _DEFAULT_SINKS
+    sanitizer_patterns = tuple(str(x) for x in sanitizers if x) if sanitizers else ()
 
     rows = conn.execute(
         """
@@ -572,6 +593,7 @@ def collect_dataflow_findings(
         max_matches=max_matches,
         source_patterns=source_patterns,
         sink_patterns=sink_patterns,
+        sanitizer_patterns=sanitizer_patterns,
     )
 
     # Merge inter-procedural findings
