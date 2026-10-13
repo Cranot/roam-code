@@ -1407,7 +1407,8 @@ def _emit_auth_gaps_json(
     unreadable = list(_reads.get("files_unreadable") or [])
     unreadable_names = _format_unreadable_names(unreadable)
 
-    verdict_floor = f"{total} auth gap(s) found"
+    no_input = bool(_reads.get("no_input")) and total == 0
+    verdict_floor = _NO_INPUT_VERDICT if no_input else f"{total} auth gap(s) found"
     if scan_incomplete:
         # 0 gaps over files that were never opened is not "no auth gaps".
         verdict_floor += (
@@ -1424,7 +1425,9 @@ def _emit_auth_gaps_json(
         explicit_facts.append(f"{len(unreadable)} discovered file(s) could not be opened: {unreadable_names}")
 
     def _score_classify_run(_total):
-        if _total == 0 and scan_incomplete:
+        if _total == 0 and no_input:
+            _state_label = "NO_INPUT"
+        elif _total == 0 and scan_incomplete:
             # Wins over NO_AUTH_GAPS only. A non-zero finding count is a
             # measurement that stands on its own and keeps its severity tier;
             # the incompleteness rides beside it in `scan_incomplete`.
@@ -1533,7 +1536,8 @@ def _emit_auth_gaps_json(
         "controllers_files_discovered": int(_reads.get("controllers_files_discovered", 0)),
         "controllers_files_read": int(_reads.get("controllers_files_read", 0)),
         "scan_incomplete": scan_incomplete,
-        "partial_success": bool(controllers_only or routes_only or filtered_out or scan_incomplete),
+        "no_input": no_input,
+        "partial_success": bool(controllers_only or routes_only or filtered_out or scan_incomplete or no_input),
     }
     envelope_kwargs: dict = {
         "summary": summary_block,
@@ -1571,6 +1575,9 @@ def _emit_auth_gaps_json(
     click.echo(to_json(envelope))
 
 
+_NO_INPUT_VERDICT = "no input: 0 route/controller files indexed (detector ran but had no input to analyze)"
+
+
 def _emit_auth_gaps_text(
     total,
     n_high,
@@ -1600,7 +1607,8 @@ def _emit_auth_gaps_text(
     unreadable = list(_reads.get("files_unreadable") or [])
     unreadable_names = _format_unreadable_names(unreadable)
 
-    verdict = f"{total} auth gap(s) found"
+    no_input = bool(_reads.get("no_input")) and total == 0
+    verdict = _NO_INPUT_VERDICT if no_input else f"{total} auth gap(s) found"
     if total:
         parts = []
         if n_high:
@@ -1637,6 +1645,8 @@ def _emit_auth_gaps_text(
             )
         )
         click.echo()
+    elif no_input and routes_scanned:
+        click.echo("Routes without auth middleware: NO INPUT (no route file indexed)\n")
     elif not routes_scanned:
         # --controllers-only skipped the route scan entirely. Saying
         # "(none found)" here asserts a result for a scan that never ran.
@@ -1680,6 +1690,8 @@ def _emit_auth_gaps_text(
         click.echo()
     elif not controllers_scanned:
         click.echo("Controllers without authorization: NOT SCANNED (--routes-only)\n")
+    elif no_input:
+        click.echo("Controllers without authorization: NO INPUT (no controller file indexed)\n")
     elif scan_incomplete:
         _cr = int(_reads.get("controllers_files_read", 0))
         _cd = int(_reads.get("controllers_files_discovered", 0))
@@ -1687,7 +1699,9 @@ def _emit_auth_gaps_text(
     else:
         click.echo("Controllers without authorization: (none found)\n")
 
-    if total == 0 and scan_incomplete:
+    if no_input:
+        click.echo("Nothing was analysed: this is NOT 'no auth gaps'.")
+    elif total == 0 and scan_incomplete:
         # Highest-priority branch: a zero count over files that were never
         # opened is the claim this disclosure exists to refuse.
         click.echo(
@@ -1854,6 +1868,9 @@ def _collect_auth_gaps_findings(
                 "files_read": read,
                 "files_unreadable": unreadable,
                 "scan_incomplete": read < discovered,
+                # Nothing to analyse is not a clean result: no route,
+                # provider or controller file was even considered.
+                "no_input": discovered == 0,
                 "routes_files_discovered": _scopes["routes"]["discovered"],
                 "routes_files_read": _scopes["routes"]["read"],
                 "providers_files_discovered": _scopes["providers"]["discovered"],
@@ -2277,6 +2294,9 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence, per
                 f"{len(_sarif_unreadable)} could not be read "
                 f"({_format_unreadable_names(_sarif_unreadable)})"
             )
+
+        if _sarif_reads.get("no_input"):
+            _sarif_scan_markers.append("auth_gaps_no_input:0_route_or_controller_files_indexed")
 
         def _emit_sarif():
             from roam.output.sarif import auth_gaps_to_sarif, with_sarif_disclosures, write_sarif
