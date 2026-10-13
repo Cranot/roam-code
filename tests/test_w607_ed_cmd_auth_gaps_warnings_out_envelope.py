@@ -384,6 +384,7 @@ def test_score_classify_surfaces_run_state(cli_runner, auth_gaps_project):
     summary = data["summary"]
     assert summary.get("run_state") in {
         "NO_AUTH_GAPS",
+        "NO_INPUT",  # B4 contract change: the empty-corpus fixture has no input
         "LIGHT",
         "MODERATE",
         "HEAVY",
@@ -484,9 +485,10 @@ def test_w815_zero_count_verdict_preserved(cli_runner, auth_gaps_project):
     assert result.exit_code == 0, result.output
     data = _json.loads(result.output)
     verdict = data["summary"]["verdict"]
-    assert verdict == "0 auth gap(s) found", (
-        f"W815 invariant violated -- clean empty-corpus auth-gaps must "
-        f"emit ``0 auth gap(s) found`` verdict; got {verdict!r}"
+    # B4 contract change: was ``0 auth gap(s) found``, which read as a clean
+    # result for a repo with no route/controller files to analyze.
+    assert verdict == "no input: 0 route/controller files indexed (detector ran but had no input to analyze)", (
+        f"B4 invariant violated -- empty-corpus auth-gaps must say it had no input; got {verdict!r}"
     )
 
 
@@ -958,8 +960,10 @@ def test_score_classify_isolation_clean_path_not_degraded(cli_runner, auth_gaps_
     data = _json.loads(result.output)
     summary = data["summary"]
     # Clean run -> NO_AUTH_GAPS (0 findings on the Python fixture).
-    assert summary.get("run_state") == "NO_AUTH_GAPS", (
-        f"clean auth-gaps run must surface run_state=NO_AUTH_GAPS; got summary = {summary!r}"
+    # B4 contract change: was NO_AUTH_GAPS; the Python-only fixture has no
+    # route or controller file, so the honest label is NO_INPUT.
+    assert summary.get("run_state") == "NO_INPUT", (
+        f"empty-corpus auth-gaps run must surface run_state=NO_INPUT; got summary = {summary!r}"
     )
     # DEGRADED is the floor -- it must NOT surface on the clean path.
     assert summary.get("run_state") != "DEGRADED", (
