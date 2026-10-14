@@ -9,12 +9,15 @@ of asserting that the repaired usage errors must still occur.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 
 import pytest
+from click.testing import CliRunner
 
 from roam import mcp_server as mcp
+from roam.cli import cli
 from tests.conftest import index_in_process
 
 
@@ -26,12 +29,11 @@ def isolated_compound_state(monkeypatch):
     mcp._reset_error_storm()
 
 
-@pytest.fixture(params=[1, 3], ids=["single-symbol", "ambiguous-symbol"])
-def symbol_corpus(tmp_path, monkeypatch, request):
+def _build_corpus(tmp_path, monkeypatch, count):
     repo = tmp_path / "security-corpus"
     repo.mkdir()
     (repo / ".gitignore").write_text(".roam/\n", encoding="utf-8")
-    for index in range(request.param):
+    for index in range(count):
         (repo / f"auth_{index}.py").write_text("def handleAuth(user):\n    return user\n", encoding="utf-8")
     env = {
         **os.environ,
@@ -46,6 +48,34 @@ def symbol_corpus(tmp_path, monkeypatch, request):
     output, code = index_in_process(repo, "--force")
     assert code == 0, output
     return repo
+
+
+def _import_scan(repo):
+    """Save a vulnerability inventory so the ``vulns`` child has a completed scan.
+
+    The report lives outside the repository so the working tree stays clean.
+    """
+    report = repo.parent / "scan-report.json"
+    report.write_text(
+        json.dumps([{"cve": "CVE-2023-32681", "package": "requests", "severity": "medium", "title": "fixture"}]),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(cli, ["vulns", "--import-file", str(report)], catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+
+
+@pytest.fixture(params=[1, 3], ids=["single-symbol", "ambiguous-symbol"])
+def symbol_corpus(tmp_path, monkeypatch, request):
+    """A corpus whose security inventory was scanned (a completed assessment)."""
+    repo = _build_corpus(tmp_path, monkeypatch, request.param)
+    _import_scan(repo)
+    return repo
+
+
+@pytest.fixture(params=[1, 3], ids=["single-symbol", "ambiguous-symbol"])
+def unscanned_corpus(tmp_path, monkeypatch, request):
+    """The same corpus with no vulnerability inventory ever imported."""
+    return _build_corpus(tmp_path, monkeypatch, request.param)
 
 
 @pytest.mark.parametrize("symbol", ["", "handleAuth"])
@@ -87,6 +117,19 @@ def test_real_children_run_and_disclose_their_actual_scope(symbol_corpus, symbol
         assert not any(
             child_summary.get(key) for key in ("resolved_symbol", "resolved_file", "target_id", "symbol_id", "file_id")
         )
+
+
+@pytest.mark.parametrize("symbol", ["", "handleAuth"])
+def test_unscanned_inventory_is_incomplete_not_complete(unscanned_corpus, symbol):
+    """Control: a valid ``vulns`` run with no saved scan is disclosed as incomplete."""
+    result = mcp.for_security_review(symbol=symbol, root=str(unscanned_corpus))
+    summary = result["summary"]
+    assert "vulns" in summary["sections"]
+    assert "vulns" in summary["failed_subcommands"]
+    assert result["vulns"]["summary"]["state"] == "no_scan"
+    assert not result["vulns"].get("isError")
+    assert not result["vulns"].get("error")
+    assert summary["partial_success"] is True
 
 
 @pytest.mark.parametrize("shape", ["legacy", "structured", "trimmed"])
