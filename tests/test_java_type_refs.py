@@ -313,3 +313,52 @@ class App {}
     _, refs = _parse(source)
     import_targets = {r["target_name"] for r in refs if r.get("kind") == "import"}
     assert "List" in import_targets, f"List import missing from {import_targets}"
+
+
+# ---------------------------------------------------------------------------
+# Generic coverage beyond the named cases: every declaration position and the
+# remaining method-reference shapes.
+# ---------------------------------------------------------------------------
+
+
+def test_java_other_declaration_positions_emit_type_refs():
+    source = """\
+class A<T extends Base> {
+    <U extends Bar> void m(Qux... rest) throws Err {
+        for (Item i : items) {}
+        try (Res r = open()) {} catch (E1 | E2 e) {}
+        Object o = (Cast) y;
+        if (o instanceof Typ t) {}
+        java.util.List<pkg.Inner> q;
+        int n;
+    }
+}
+"""
+    _, refs = _parse(source)
+    targets = _type_ref_targets(refs)
+    expected = {"Base", "Bar", "Qux", "Err", "Item", "Res", "E1", "E2", "Object", "Cast", "Typ", "List", "Inner"}
+    assert expected <= targets, f"missing {expected - targets}"
+    # declared type parameters and package qualifiers are not references
+    assert not {"T", "U", "java", "util", "pkg", "int"} & targets
+
+
+def test_java_inheritance_not_duplicated_as_type_ref():
+    _, refs = _parse("class A extends Base implements Face {}\n")
+    assert not _type_ref_targets(refs) & {"Base", "Face"}
+
+
+def test_java_method_ref_shapes():
+    source = """\
+class A {
+    void f() {
+        g(Z[]::new);
+        h(super::go);
+        k(a.b.C::run);
+        m(make()::use);
+    }
+}
+"""
+    _, refs = _parse(source)
+    calls = _call_targets(refs)
+    assert {"Z", "go", "run", "use", "make"} <= calls, calls
+    assert "Z" in _type_ref_targets(refs)

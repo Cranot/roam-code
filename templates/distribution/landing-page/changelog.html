@@ -90,6 +90,9 @@
 <h2>[Unreleased]</h2>
 <h3>Added</h3>
 <ul>
+<li><strong>Java type and method-reference edges.</strong> The Java extractor now emits <code>type_ref</code> edges for types in declaration positions (field, return, parameter, local, <code>for</code>/<code>try</code>/<code>catch</code>, cast, <code>instanceof</code>, <code>throws</code>, type bounds, generic arguments, arrays; primitives and declared type parameters excluded) and <code>call</code> edges for method references (<code>Type::method</code>, <code>expr::method</code>, <code>Type::new</code>). Inheritance references are unchanged.</li>
+</ul>
+<ul>
 <li><strong>Python extractor depth (Wave 13).</strong> Three additional type-reference gaps closed: <code>match</code>-statement class patterns (<code>case MyType():</code>) now emit a <code>type_ref</code> for the matched class; PEP 695 type-parameter bounds (<code>def f[T: MyBound]()</code>, <code>class C[T: B]:</code>) now emit <code>type_ref</code> for the bound; generic base-class subscript arguments (<code>class C(Generic[MyItem]):</code>) now emit <code>type_ref</code> for each type argument. Each gap was falsified (8 gap tests fail on the unfixed extractor; 2 conservation controls pass on both sides).</li>
 </ul>
 <ul>

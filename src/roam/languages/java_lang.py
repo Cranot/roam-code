@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from .base import LanguageExtractor
 
+# Java type-position nodes; a type_identifier below one of these is a reference.
+_TYPE_NODE_TYPES = frozenset({"type_identifier", "scoped_type_identifier", "generic_type", "array_type"})
+# Parents whose types are already recorded as inheritance references.
+_INHERITANCE_NODE_TYPES = frozenset({"superclass", "super_interfaces", "extends_interfaces", "permits"})
+
 
 class JavaExtractor(LanguageExtractor):
     """Java symbol and reference extractor."""
@@ -344,6 +349,20 @@ class JavaExtractor(LanguageExtractor):
                 self._extract_method_call(child, source, refs, scope_name)
             elif child.type == "object_creation_expression":
                 self._extract_new(child, source, refs, scope_name)
+            elif child.type == "method_reference":
+                self._extract_method_reference(child, source, refs, scope_name)
+            elif child.type in _TYPE_NODE_TYPES:
+                # A type in declaration position (field, return, parameter,
+                # local, catch, cast, instanceof, throws, bound ...).
+                self._emit_type_refs(child, source, refs, scope_name)
+            elif child.type == "type_parameter":
+                # The declared name (T) is not a reference; its bounds are.
+                for sub in child.children:
+                    if sub.type == "type_bound":
+                        self._walk_refs(sub, source, refs, scope_name)
+            elif child.type in _INHERITANCE_NODE_TYPES:
+                # Already captured by _collect_type_refs as inherits/implements.
+                continue
             else:
                 new_scope = scope_name
                 if child.type in ("class_declaration", "interface_declaration", "enum_declaration"):
@@ -357,6 +376,72 @@ class JavaExtractor(LanguageExtractor):
                         mname = self.node_text(n, source)
                         new_scope = f"{scope_name}.{mname}" if scope_name else mname
                 self._walk_refs(child, source, refs, new_scope)
+
+    def _emit_type_refs(self, node, source, refs, scope_name):
+        """Emit a type_ref for every named type inside a Java type tree.
+
+        Primitive types are not ``type_identifier`` nodes, so they are never
+        emitted. For a qualified name (``java.util.List``) only the final
+        segment is emitted, matching how imports are keyed.
+        """
+        if node.type == "type_identifier":
+            refs.append(
+                self._make_reference(
+                    target_name=self.node_text(node, source),
+                    kind="type_ref",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )
+        elif node.type == "scoped_type_identifier":
+            leaf = next((c for c in reversed(node.children) if c.type == "type_identifier"), None)
+            if leaf is not None:
+                self._emit_type_refs(leaf, source, refs, scope_name)
+        else:
+            for child in node.children:
+                self._emit_type_refs(child, source, refs, scope_name)
+
+    def _extract_method_reference(self, node, source, refs, scope_name):
+        """``Type::method``, ``expr::method`` and ``Type::new`` become call edges."""
+        kids = node.children
+        idx = next((i for i, c in enumerate(kids) if c.type == "::"), None)
+        if idx is not None and idx + 1 < len(kids):
+            member = kids[idx + 1]
+            name = None
+            if member.type == "identifier":
+                name = self.node_text(member, source)
+            elif member.type == "new":
+                name = self._method_ref_type_name(kids[:idx], source)
+            if name:
+                refs.append(
+                    self._make_reference(
+                        target_name=name,
+                        kind="call",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
+        # Walk the receiver for nested calls, lambdas and type references.
+        self._walk_refs(node, source, refs, scope_name)
+
+    def _method_ref_type_name(self, receiver_nodes, source):
+        """Class name constructed by ``X::new`` (None if not a plain type)."""
+        for n in receiver_nodes:
+            while n is not None and n.type in ("array_type", "generic_type"):
+                n = (
+                    n.child_by_field_name("element")
+                    or n.child_by_field_name("type")
+                    or (n.children[0] if n.children else None)
+                )
+            if n is None:
+                continue
+            if n.type in ("identifier", "type_identifier"):
+                return self.node_text(n, source)
+            if n.type in ("field_access", "scoped_type_identifier"):
+                tail = [c for c in n.children if c.type in ("identifier", "type_identifier")]
+                if tail:
+                    return self.node_text(tail[-1], source)
+        return None
 
     def _extract_import(self, node, source, refs, scope_name):
         for child in node.children:
