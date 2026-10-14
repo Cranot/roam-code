@@ -305,14 +305,15 @@ class TestDepsEmptyCorpusSmoke:
 # ---------------------------------------------------------------------------
 
 
-def test_nonexistent_file_exit_code_not_1_on_json(real_deps_corpus):
-    """Pin: unresolved file in --json mode SHOULD exit 0 with structured envelope.
+def test_nonexistent_file_exit_code_1_on_json(real_deps_corpus):
+    """Pin: unresolved file in --json mode exits 1 with the structured envelope.
 
-    Mirrors the W362 ``file_not_found`` discipline on cmd_owner.
+    Contract change: this used to expect exit 0. A missing target is a
+    failure (same exit as text mode); the MCP bridge keeps the envelope.
     """
     result = _invoke_deps("does/not/exist.py", json_mode=True)
-    assert result.exit_code == 0, (
-        f"unresolved file should exit 0 with structured envelope; "
+    assert result.exit_code == 1, (
+        f"unresolved file should exit 1 with structured envelope; "
         f"got exit {result.exit_code}, output: {result.output!r}"
     )
 

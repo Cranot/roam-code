@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`roam --json deps` and `roam --json file` exit 1 for a missing file.** The exit code now matches text mode, so a CI caller no longer reads a missing target as success. The `file_not_found` envelope is unchanged, and the MCP tools still return it with `isError` set.
+
 ### Added
 
 - **Java type and method-reference edges.** The Java extractor now emits `type_ref` edges for types in declaration positions (field, return, parameter, local, `for`/`try`/`catch`, cast, `instanceof`, `throws`, type bounds, generic arguments, arrays; primitives and declared type parameters excluded) and `call` edges for method references (`Type::method`, `expr::method`, `Type::new`). Inheritance references are unchanged.
