@@ -365,8 +365,10 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                             )
                         )
                     )
-                    # W805-N Bug 1a: exit 0 (not 1) so MCP bridge keeps the envelope.
-                    return
+                    # Same nonzero exit as text mode: the MCP bridge
+                    # (_maybe_pass_through_structured_json) keeps the
+                    # structured stdout and annotates isError.
+                    raise SystemExit(1)
                 # W805-N Bug 1b: emit a VERDICT: line in non-json mode for consistency.
                 click.echo(f"VERDICT: file not found: '{unique_paths[0]}'")
                 click.echo(file_not_found_hint(unique_paths[0]))

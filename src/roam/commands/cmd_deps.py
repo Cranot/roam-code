@@ -343,8 +343,10 @@ def deps(ctx, path, full, multi):
                         )
                     )
                 )
-                # W805-Q Bug 1: exit 0 so MCP wrapper preserves structured envelope.
-                return
+                # Same nonzero exit as text mode: the MCP bridge
+                # (_maybe_pass_through_structured_json) keeps the structured
+                # stdout and annotates isError, so exit 0 is not needed.
+                raise SystemExit(1)
             # W805-Q Bug 1: non-json mode emits VERDICT: line for consistency.
             click.echo(f"VERDICT: file not found: '{path}'")
             click.echo(file_not_found_hint(path))
