@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Java type and method-reference edges.** The Java extractor now emits `type_ref` edges for types in declaration positions (field, return, parameter, local, `for`/`try`/`catch`, cast, `instanceof`, `throws`, type bounds, generic arguments, arrays; primitives and declared type parameters excluded) and `call` edges for method references (`Type::method`, `expr::method`, `Type::new`). Inheritance references are unchanged.
+
 - **Python extractor depth (Wave 13).** Three additional type-reference gaps closed: `match`-statement class patterns (`case MyType():`) now emit a `type_ref` for the matched class; PEP 695 type-parameter bounds (`def f[T: MyBound]()`, `class C[T: B]:`) now emit `type_ref` for the bound; generic base-class subscript arguments (`class C(Generic[MyItem]):`) now emit `type_ref` for each type argument. Each gap was falsified (8 gap tests fail on the unfixed extractor; 2 conservation controls pass on both sides).
 
 - **TypeScript and Python extractor depth (Waves 10–12).** Three further type-graph gap rounds:
