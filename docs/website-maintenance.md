@@ -7,6 +7,12 @@ Cloudflare Pages project. A Git push alone does not publish it.
 
 ## Homepage
 
+Keep the homepage headline faithful to implemented product behavior and its
+documented limits. When correcting positioning, check the exact headline and
+its supporting explanation against [the product model](understanding-roam.md#the-product-model-behind-the-words)
+and the shipped commands that support each claim. Preserve their prerequisites,
+scope, and limits; a proposed capability is not implemented behavior.
+
 The homepage is frozen for routine marketing additions. Correct demonstrated
 errors, but do not add another slogan, feature section, animation or synthetic
 proof example merely to accommodate a new capability. Prefer an existing
