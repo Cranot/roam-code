@@ -167,7 +167,7 @@ ci = [
     # in the locked graph, which is what caught this -- twice now, so the pin
     # is deliberate rather than a floor. Raised to 6.20.1 for the advisories
     # fixed in 6.17.0 through 6.19.0.
-    "pypdf==6.20.1",
+    "pypdf==6.21.2",
     "setuptools==83.0.0",
     "wheel==0.48.0",
 ]
