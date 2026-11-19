@@ -170,6 +170,17 @@ def _live_languages() -> int:
 # must read exactly the sites this script rewrites — not a copy of them.
 # No single pattern below may use this twice (duplicate group name).
 _PIN_VERSION = r"(?P<ver>\d+\.\d+(?:\.\d+)?)"
+# Everything an action ref carries after its version (``@v14.1.0-r1`` -> ``-r1``).
+# Only the action pattern has this group, and the scanner reads its presence to
+# know that a site names a GitHub ref rather than only a version.
+#
+# The WHOLE token is consumed, not just a well-formed ``-rN``. A ref resolves by
+# exact name, so ``@v14.1.0-r1junk`` has to be seen as the tag ``v14.1.0-r1junk``
+# (which does not exist) and never as ``v14.1.0-r1`` followed by text the scanner
+# ignores: matching a prefix let a malformed ref pass both the rewriter and the
+# existence gate. A dot belongs to the token only when more of it follows, so
+# the full stop that ends a sentence is left alone.
+_PIN_REF_SUFFIX = r"(?P<rev>[\w+-]*(?:\.[\w+-]+)*)"
 
 # path (repo-relative, posix) -> why this file's pin shape must NOT be synced.
 # A stale key is itself drift: ``tests/test_w1501_release_version_pins.py``
@@ -217,11 +228,38 @@ def _pyproject_version() -> str:
     return m.group(1)
 
 
-_RELEASE_TAG = re.compile(r"^v(\d+)\.(\d+)(?:\.(\d+))?$")
+# A final release is ``vX.Y[.Z]``. ``-rN`` marks the SAME release published
+# again under a new ref, which is what remains when a tag had to be replaced:
+# the version is unchanged (PyPI still serves ``X.Y.Z``) and the ref an action
+# pin resolves against is ``vX.Y.Z-rN``. Reading only the plain form made this
+# module see no release newer than the last plain tag and demand every install
+# pin move backwards to it. ``-rc1`` is NOT this shape and stays a pre-release.
+# N counts from 1 in plain digits: ``-r0`` and ``-r01`` are not re-publications.
+_RELEASE_TAG = re.compile(r"^v(\d+)\.(\d+)(?:\.(\d+))?(?:-r([1-9][0-9]*))?$")
+
+
+def release_key(tag: str) -> tuple[int, int, int, int]:
+    """Sort key ``(major, minor, patch, republication)`` of a release tag.
+
+    The version dominates; among tags of one version the highest
+    re-publication is the current ref, and a plain tag counts as zero.
+    """
+    m = _RELEASE_TAG.fullmatch(tag)
+    if m is None:
+        raise ValueError(f"not a final-release tag: {tag!r}")
+    major, minor, patch, republication = (int(part or 0) for part in m.groups())
+    return major, minor, patch, republication
+
+
+def release_version(tag: str) -> str:
+    """The version a release tag publishes: ``v14.1.0-r1`` -> ``14.1.0``."""
+    if _RELEASE_TAG.fullmatch(tag) is None:
+        raise ValueError(f"not a final-release tag: {tag!r}")
+    return tag[1:].partition("-r")[0]
 
 
 def release_tags() -> list[str]:
-    """Every final-release ``vX.Y[.Z]`` tag in this repository.
+    """Every final-release ``vX.Y[.Z]`` or ``vX.Y[.Z]-rN`` tag in this repository.
 
     Hard-fails when git cannot answer. An unreachable tag list rendered as
     "no tags, assume pyproject" is precisely the defect this whole module
@@ -249,6 +287,30 @@ def release_tags() -> list[str]:
 _PUBLISHED_SOURCE = ""
 """How ``_published_version()`` answered. Read by the report so a degraded
 answer is disclosed rather than passed off as a verified one."""
+
+
+class PublishedRelease(str):
+    """The published version, carrying the tag it is published under.
+
+    A release is fetched from two places that name it differently: PyPI by
+    its version (this string), GitHub by ``ref`` (``v14.1.0-r1``). The two are
+    the same text plus a ``v`` only while the release was never re-published,
+    so the ref travels with the version instead of being rebuilt from it at
+    each call site — a rebuilt ref is right until the first re-publication
+    and then names a tag that does not exist.
+    """
+
+    ref: str
+
+    def __new__(cls, version: str, *, ref: str | None = None) -> PublishedRelease:
+        self = super().__new__(cls, version)
+        self.ref = f"v{version}" if ref is None else ref
+        return self
+
+
+def published_ref(published: str) -> str:
+    """The tag ``published`` is fetched by; the plain tag for a bare version."""
+    return published.ref if isinstance(published, PublishedRelease) else f"v{published}"
 
 
 def _remote_release_tags() -> list[str] | None:
@@ -293,7 +355,7 @@ def _remote_release_tags() -> list[str] | None:
     return tags
 
 
-def _published_version() -> str:
+def _published_version() -> PublishedRelease:
     """The last PUBLISHED release — the highest final-release ``v*`` tag.
 
     This is the source of truth for the ``install`` pin class. The tag is used
@@ -337,22 +399,26 @@ def _published_version() -> str:
             "makes this sweep demand pins for a version no consumer can fetch."
         )
 
-    return max(tags, key=lambda t: tuple(int(p or 0) for p in _RELEASE_TAG.fullmatch(t).groups()))[1:]
+    ref = max(tags, key=release_key)
+    return PublishedRelease(release_version(ref), ref=ref)
 
 
-def _install_sweep_patterns(published: str) -> list[tuple[re.Pattern, str]]:
+def _install_sweep_patterns(published: str, ref: str) -> list[tuple[re.Pattern, str]]:
     """INSTALL-class pin shapes swept across EVERY tracked text file.
 
     Every one of these tells a reader or a machine to FETCH something, so all
-    of them take ``published`` — the last released version — and never the
-    declared one.
+    of them take the last RELEASE and never the declared version. A release
+    has two names: ``published`` is the version PyPI serves and
+    ``ref`` is the tag GitHub resolves.
     """
     version = published
     return [
         # `pip install "roam-code==X"`, `roam-code[mcp]==X`.
         (re.compile(rf"(roam-code(?:\[[a-z0-9,._-]+\])?==){_PIN_VERSION}"), rf"\g<1>{version}"),
-        # `uses: Cranot/roam-code@vX` — the published composite action.
-        (re.compile(rf"(Cranot/roam-code@v){_PIN_VERSION}"), rf"\g<1>{version}"),
+        # `uses: Cranot/roam-code@vX` — the published composite action. It
+        # resolves against a TAG, so it takes the ref, and the pattern consumes
+        # the whole existing token so a ref is replaced, never extended.
+        (re.compile(rf"(Cranot/roam-code@)v{_PIN_VERSION}{_PIN_REF_SUFFIX}"), rf"\g<1>{ref}"),
         # The action's `version:` INPUT, anchored to a roam-code `uses:` line
         # within the same `with:` block. Anchoring is load-bearing: a bare
         # `^\s*version:` would also rewrite setup-uv's pinned `0.11.29` and
@@ -558,7 +624,22 @@ def shipped_install_surfaces() -> list[str]:
 
 
 def install_pin_scan() -> tuple[list[tuple[str, int, str]], dict[str, int]]:
+    """``(sites, stats)`` with each site as ``(path, line, version)``.
+
+    The version-only view of :func:`install_target_scan`, for callers that do
+    not need to know which sites also name a GitHub ref.
+    """
+    sites, stats = install_target_scan()
+    return [(rel, line, version) for rel, line, version, _ in sites], stats
+
+
+def install_target_scan() -> tuple[list[tuple[str, int, str, str | None]], dict[str, int]]:
     """``(sites, stats)`` — the INSTALL-class pins AND what the sweep skipped.
+
+    Each site is ``(path, line, version, ref)``. ``ref`` is the tag an action
+    pin names (``v14.1.0-r1``) and ``None`` for every other shape: a package
+    pin is resolved by PyPI from the version alone, an action pin by GitHub
+    from the exact tag, and a re-published release is where those two diverge.
 
     ``sites`` is the answer; ``stats`` is the denominator. A gate that reports
     "44 pins, all fine" without saying how many files it declined to read is
@@ -577,11 +658,11 @@ def install_pin_scan() -> tuple[list[tuple[str, int, str]], dict[str, int]]:
     # replacement strings use it. The sentinel makes that explicit rather than
     # implying the argument is meaningful here.
     sentinel = "0.0.0"
-    sweep = [pat for pat, _ in _install_sweep_patterns(sentinel)]
+    sweep = [pat for pat, _ in _install_sweep_patterns(sentinel, f"v{sentinel}")]
     structural = {rel: [pat for pat, _ in pats] for rel, pats in _install_structural_patterns(sentinel).items()}
 
     stats = {"tracked": 0, "exempt": 0, "no_pin_token": 0, "non_utf8": 0, "unreadable": 0, "scanned": 0}
-    sites: list[tuple[str, int, str]] = []
+    sites: list[tuple[str, int, str, str | None]] = []
     for rel in _tracked_files():
         stats["tracked"] += 1
         if rel in _VERSION_PIN_EXEMPT:
@@ -602,8 +683,10 @@ def install_pin_scan() -> tuple[list[tuple[str, int, str]], dict[str, int]]:
             text = data.decode("utf-8", "replace")
         stats["scanned"] += 1
         for pat in sweep + structural.get(rel, []):
+            names_ref = "rev" in pat.groupindex
             for m in pat.finditer(text):
-                sites.append((rel, text.count("\n", 0, m.end()) + 1, m.group("ver")))
+                ref = f"v{m.group('ver')}{m.group('rev') or ''}" if names_ref else None
+                sites.append((rel, text.count("\n", 0, m.end()) + 1, m.group("ver"), ref))
     return sites, stats
 
 
@@ -643,11 +726,16 @@ def release_pin_drift(version: str, published: str, *, write: bool = False) -> l
     behaviour that made main ship unresolvable install instructions, and it
     would do so at exactly the call site that forgot to pass it.
 
+    Action pins take the TAG the release is published under, which
+    ``published`` carries when it came from ``_published_version()`` (a
+    :class:`PublishedRelease`); a bare version string means the plain
+    ``v<published>`` tag.
+
     Returns one ``"<path>: '<before>' -> '<after>'"`` line per drifted site.
     With ``write=True`` the files are rewritten in place and the same list is
     returned (so the caller can report what it fixed).
     """
-    sweep = _install_sweep_patterns(published)
+    sweep = _install_sweep_patterns(published, published_ref(published))
     structural = _structural_pin_patterns(version, published)
     drift: list[str] = []
 
@@ -1226,6 +1314,8 @@ def main() -> int:
     print(f"               {counts['mcp_tools']} MCP tools, {langs} languages")
     print(f"Declared version (pyproject.toml): {version}   -> identity pins")
     print(f"Published release (highest v* tag): {published}   -> install pins")
+    if published_ref(published) != f"v{published}":
+        print(f"  published under the ref {published_ref(published)}   -> action pins")
     if version != published:
         print(f"  bump-to-release window is OPEN: install pins stay at {published} until v{version} is tagged")
     print()

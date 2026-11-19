@@ -124,7 +124,9 @@ def test_confirmation_page_defers_start_dates_to_the_agreed_schedule():
 
 def test_readme_action_and_package_example_use_the_same_published_version():
     text = (repo_root() / "README.md").read_text(encoding="utf-8")
-    example = re.search(r"uses: Cranot/roam-code@v([\d.]+)\s+with:\s+version: '([\d.]+)'", text)
+    # The action ref may carry a re-publication suffix (``@v14.1.0-r1``); the
+    # version it publishes is still the one the package pin must name.
+    example = re.search(r"uses: Cranot/roam-code@v([\d.]+)(?:-r\d+)?\s+with:\s+version: '([\d.]+)'", text)
     assert example, "The active README action example was not inspected"
     assert example.group(1) == example.group(2)
 

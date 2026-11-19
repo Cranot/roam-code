@@ -12,8 +12,16 @@ The one check that could have noticed
 after the thing it was meant to prevent had already shipped.
 
 This gate runs on the push path instead, and it is offline by default: a
-``v<version>`` tag is what ``Cranot/roam-code@v<version>`` resolves against,
-so tag existence is checkable with no network at all, in milliseconds.
+tag is what ``Cranot/roam-code@<tag>`` resolves against, so tag existence is
+checkable with no network at all, in milliseconds.
+
+**A release has two names.** PyPI serves it by VERSION; GitHub resolves an
+action pin by the exact TAG. They differ once a release is re-published as
+``v<version>-rN``: ``roam-code==<version>`` still installs, while
+``Cranot/roam-code@v<version>`` names a tag that is gone. So a version must be
+published under SOME release tag, and every action pin must name a tag that
+exists -- two checks, because the first passes on the tree where the second
+is the defect.
 
 **What the offline check does and does not prove.** It reads the LOCAL tag
 list. A tag that exists locally and has never been pushed satisfies it while
@@ -77,7 +85,7 @@ FAIL = 1
 UNKNOWN = 2
 
 PYPI_URL = "https://pypi.org/pypi/roam-code/{version}/json"
-GITHUB_REF_URL = "https://api.github.com/repos/Cranot/roam-code/git/ref/tags/v{version}"
+GITHUB_REF_URL = "https://api.github.com/repos/Cranot/roam-code/git/ref/tags/{ref}"
 
 _USER_AGENT = "roam-code-install-target-gate"
 _MAX_BODY = 4 * 1024 * 1024
@@ -193,8 +201,8 @@ def _pypi_has(version: str) -> bool:
     return True
 
 
-def _remote_tag_has(version: str) -> bool:
-    """Whether ``v<version>`` exists on the GitHub remote; ``Unknown`` if unasked.
+def _remote_tag_has(ref: str) -> bool:
+    """Whether the tag ``ref`` exists on the GitHub remote; ``Unknown`` if unasked.
 
     The local tag list cannot see this. ``git tag v14.0.0`` followed by a sync
     and this gate passes offline while every consumer's action ref still
@@ -202,19 +210,19 @@ def _remote_tag_has(version: str) -> bool:
     is exactly the release path.
     """
     try:
-        data = _fetch_json(GITHUB_REF_URL.format(version=version), what=f"GitHub tag v{version}")
+        data = _fetch_json(GITHUB_REF_URL.format(ref=urllib.parse.quote(ref, safe="")), what=f"GitHub tag {ref}")
     except _Absent:
         return False
-    ref = data.get("ref")
-    if ref != f"refs/tags/v{version}":
+    answered = data.get("ref")
+    if answered != f"refs/tags/{ref}":
         raise Unknown(
-            f"GitHub tag v{version}: the 200 response describes ref {ref!r}; "
+            f"GitHub tag {ref}: the 200 response describes ref {answered!r}; "
             "that is not the ref this pin resolves against"
         )
     return True
 
 
-def _unpinned_shipped_surfaces(sites: list[tuple[str, int, str]]) -> list[str]:
+def _unpinned_shipped_surfaces(sites: list[tuple]) -> list[str]:
     """Shipped CI templates that carry NO install pin the sweep can see.
 
     A pin scanner can only check pins that exist. A template whose install
@@ -223,7 +231,7 @@ def _unpinned_shipped_surfaces(sites: list[tuple[str, int, str]]) -> list[str]:
     that never evaluated it. Its install target is "whatever is latest when
     this runs", which is not a target this gate — or anyone — can check.
     """
-    with_pins = {rel for rel, _, _ in sites}
+    with_pins = {site[0] for site in sites}
     return [rel for rel in sync.shipped_install_surfaces() if rel not in with_pins]
 
 
@@ -237,11 +245,13 @@ def check(*, check_pypi: bool, check_remote: bool) -> tuple[int, dict]:
     """
     report: dict = {"checked_pypi": check_pypi, "checked_remote": check_remote}
 
-    sites, scan = sync.install_pin_scan()
+    sites, scan = sync.install_target_scan()
     report["install_pin_sites"] = len(sites)
     report["scan"] = scan
-    versions = sorted({v for _, _, v in sites})
+    versions = sorted({version for _, _, version, _ in sites})
     report["versions"] = versions
+    refs = sorted({ref for _, _, _, ref in sites if ref is not None})
+    report["refs"] = refs
 
     def _refuse(reason: str) -> tuple[int, dict]:
         report["status"] = "UNKNOWN"
@@ -279,26 +289,55 @@ def check(*, check_pypi: bool, check_remote: bool) -> tuple[int, dict]:
     except Unknown as exc:
         return _refuse(str(exc))
 
-    missing_tag = [v for v in versions if f"v{v}" not in tags]
+    # The newest tag each version is published under. A version with none is
+    # not released; an action pin must additionally name a tag that exists.
+    published_under: dict[str, str] = {}
+    for tag in sorted(tags, key=sync.release_key):
+        published_under[sync.release_version(tag)] = tag
+    missing_tag = [v for v in versions if v not in published_under]
     report["missing_tag"] = missing_tag
+    missing_ref = [ref for ref in refs if ref not in tags]
+    report["missing_ref"] = missing_ref
+
+    # What ``--remote`` asks GitHub about, per version: the tags the action
+    # pins name, or -- when only package pins name the version -- the local
+    # tag that vouched for it above. A tag this checkout has and the remote
+    # does not is published to nobody.
+    named_refs: dict[str, list[str]] = {
+        v: sorted({ref for _, _, version, ref in sites if version == v and ref is not None}) for v in versions
+    }
 
     missing_pypi: list[str] = []
     missing_remote: list[str] = []
+    missing_remote_refs: list[str] = []
     for v in versions:
         try:
             if check_pypi and not _pypi_has(v):
                 missing_pypi.append(v)
-            if check_remote and not _remote_tag_has(v):
-                missing_remote.append(v)
+            if check_remote:
+                asked = named_refs[v] or [published_under.get(v, f"v{v}")]
+                absent = [ref for ref in asked if not _remote_tag_has(ref)]
+                if absent:
+                    missing_remote.append(v)
+                    missing_remote_refs.extend(absent)
         except Unknown as exc:
             return _refuse(str(exc))
     report["missing_pypi"] = missing_pypi
     report["missing_remote"] = missing_remote
+    report["missing_remote_refs"] = missing_remote_refs
 
-    if missing_tag or missing_pypi or missing_remote:
+    if missing_tag or missing_ref or missing_pypi or missing_remote:
         report["status"] = "FAIL"
-        gone = set(missing_tag) | set(missing_pypi) | set(missing_remote)
-        report["offending_sites"] = [{"path": rel, "line": line, "version": v} for rel, line, v in sites if v in gone]
+        gone_refs = set(missing_ref) | set(missing_remote_refs)
+        # A missing remote tag takes the version's package pins down with it
+        # only when no action pin named a tag: the local tag was then the sole
+        # evidence that the version is released, and the remote does not have it.
+        gone_versions = set(missing_tag) | set(missing_pypi) | {v for v in missing_remote if not named_refs[v]}
+        report["offending_sites"] = [
+            {"path": rel, "line": line, "version": version, "ref": ref}
+            for rel, line, version, ref in sites
+            if version in gone_versions or ref in gone_refs
+        ]
         return FAIL, report
 
     report["status"] = "OK"
@@ -306,7 +345,7 @@ def check(*, check_pypi: bool, check_remote: bool) -> tuple[int, dict]:
 
 
 def _print_human(code: int, report: dict) -> None:
-    versions = ", ".join(report.get("versions", [])) or "(none)"
+    targets = ", ".join(sorted(set(report.get("versions", [])) | set(report.get("refs", [])))) or "(none)"
     if code == UNKNOWN:
         print("UNKNOWN: cannot determine whether the documented install targets exist.", file=sys.stderr)
         print(f"  reason: {report.get('reason')}", file=sys.stderr)
@@ -318,21 +357,23 @@ def _print_human(code: int, report: dict) -> None:
         return
     if code == FAIL:
         print(
-            f"FAIL: this repository tells readers and machines to install {versions}, which does not exist.",
+            f"FAIL: this repository tells readers and machines to fetch {targets}; not all of it exists.",
             file=sys.stderr,
         )
         for v in report.get("missing_tag", []):
-            print(f"  no tag v{v} in this repository -> `Cranot/roam-code@v{v}` cannot resolve", file=sys.stderr)
-        for v in report.get("missing_remote", []):
+            print(f"  no release tag for {v} in this repository -> {v} was never released", file=sys.stderr)
+        for ref in report.get("missing_ref", []):
+            print(f"  no tag {ref} in this repository -> `Cranot/roam-code@{ref}` cannot resolve", file=sys.stderr)
+        for ref in report.get("missing_remote_refs", []):
             print(
-                f"  no tag v{v} on the GitHub remote -> consumers cannot resolve it even if it exists locally",
+                f"  no tag {ref} on the GitHub remote -> consumers cannot resolve it even if it exists locally",
                 file=sys.stderr,
             )
         for v in report.get("missing_pypi", []):
             print(f"  roam-code=={v} is not on PyPI -> `pip install` fails at the consumer", file=sys.stderr)
         print("  sites:", file=sys.stderr)
         for site in report.get("offending_sites", []):
-            print(f"    {site['path']}:{site['line']}: {site['version']}", file=sys.stderr)
+            print(f"    {site['path']}:{site['line']}: {site['ref'] or site['version']}", file=sys.stderr)
         print(
             "\n  Fix the INSTRUCTION, not the gate: run\n"
             "    python scripts/sync_surface_counts.py --write\n"
@@ -350,7 +391,7 @@ def _print_human(code: int, report: dict) -> None:
     if not (report["checked_pypi"] and report["checked_remote"]):
         scope += "; use --network for the rest"
     scan = report.get("scan", {})
-    print(f"OK: {report['install_pin_sites']} install pin(s) name {versions}, which exists [{scope}].")
+    print(f"OK: {report['install_pin_sites']} install pin(s) name {targets}; all of it exists [{scope}].")
     if scan:
         # The denominator. "44 pins are fine" says nothing about the files the
         # sweep declined to read, and every number below was a silent skip.

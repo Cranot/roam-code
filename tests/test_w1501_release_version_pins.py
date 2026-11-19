@@ -378,6 +378,200 @@ def test_release_tags_ignores_non_release_tags(monkeypatch) -> None:
     assert sync._published_version() == "13.10.0", "13.10.0 > 13.9.0 numerically, not lexically"
 
 
+# ---------------------------------------------------------------------------
+# Re-published releases — ``vX.Y.Z-rN`` is the same release under a new ref
+# ---------------------------------------------------------------------------
+#
+# A release whose tag had to be replaced is published again as ``vX.Y.Z-rN``.
+# The VERSION is unchanged (PyPI still serves ``X.Y.Z``); the REF a
+# ``Cranot/roam-code@...`` pin resolves against is the new tag. A reader that
+# knows only ``vX.Y.Z`` sees no release at all, falls back to the last plain
+# tag, and demands every install pin move BACKWARDS to it — measured on public
+# ``main`` with releases 13.10.0 through 14.1.0 tagged ``-r1``: 54 sites
+# reported as drift against 13.9.0 on an untouched tree.
+
+_REPUBLISHED_REMOTE = ["v13.9.0", "v13.10.0-r1", "v14.0.4-r1", "v14.1.0-r1"]
+
+
+def test_a_republished_release_is_the_published_release(monkeypatch) -> None:
+    """The measured state: the newest releases exist only as ``-r1`` tags."""
+    monkeypatch.setattr(sync, "release_tags", lambda: list(_REPUBLISHED_REMOTE))
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: list(_REPUBLISHED_REMOTE))
+    published = sync._published_version()
+    assert published == "14.1.0", "a re-published release is still the latest release"
+    assert published.ref == "v14.1.0-r1", "the ref an action pin resolves against is the tag that exists"
+
+
+def test_a_plain_release_tag_is_its_own_ref(monkeypatch) -> None:
+    """The control: an ordinary release keeps the ordinary ref."""
+    monkeypatch.setattr(sync, "release_tags", lambda: ["v13.9.0", "v13.10.0"])
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: ["v13.9.0", "v13.10.0"])
+    published = sync._published_version()
+    assert published == "13.10.0"
+    assert published.ref == "v13.10.0"
+
+
+@pytest.mark.parametrize(
+    ("tags", "version", "ref"),
+    [
+        # The newest re-publication of the newest version wins.
+        (["v14.1.0", "v14.1.0-r1", "v14.1.0-r2"], "14.1.0", "v14.1.0-r2"),
+        # Numeric, not lexical: r10 > r9.
+        (["v14.1.0-r9", "v14.1.0-r10"], "14.1.0", "v14.1.0-r10"),
+        # The version dominates the re-publication counter.
+        (["v14.0.4-r9", "v14.1.0"], "14.1.0", "v14.1.0"),
+        (["v14.1.0-r1", "v14.2.0"], "14.2.0", "v14.2.0"),
+    ],
+)
+def test_published_ref_orders_by_version_then_republication(monkeypatch, tags, version, ref) -> None:
+    monkeypatch.setattr(sync, "release_tags", lambda: list(tags))
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: list(tags))
+    published = sync._published_version()
+    assert published == version
+    assert published.ref == ref
+
+
+def test_release_tags_keeps_republications_and_still_drops_prereleases(monkeypatch) -> None:
+    """``-r1`` is a release; ``-rc1`` and its lookalikes are not.
+
+    The two differ by one character, and reading a release candidate as a
+    release would make an unpublished version the install target of the tree.
+    """
+    import subprocess
+
+    out = (
+        b"v14.0.4-r1\nv14.1.0-r1\nv14.1.0-rc1\nv14.1.0-r\nv14.1.0-rx\nv14.1.0-r1-r2\nv14.1.0-r1.dev0\n"
+        # The counter starts at 1 in plain digits: a zero or a padded number is not a re-publication.
+        b"v14.1.0-r0\nv14.1.0-r01\n"
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_a, **_kw: subprocess.CompletedProcess([], returncode=0, stdout=out, stderr=b""),
+    )
+    assert sync.release_tags() == ["v14.0.4-r1", "v14.1.0-r1"]
+
+
+def test_remote_release_tags_keeps_republications(monkeypatch) -> None:
+    """The remote list is the one that decides PUBLISHED; it must read ``-rN`` too."""
+    import subprocess
+
+    payload = b"aaaa\trefs/tags/v13.9.0\nbbbb\trefs/tags/v14.1.0-r1\ncccc\trefs/tags/v14.1.0-r1^{}\ndddd\trefs/tags/v14.2.0-rc1\n"
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0] if a else [], 0, payload, b""),
+    )
+    assert sync._remote_release_tags() == ["v13.9.0", "v14.1.0-r1", "v14.1.0-r1"]
+
+
+def test_action_refs_take_the_published_ref_and_package_pins_the_version(fake_tree) -> None:
+    """One release, two fetch targets: PyPI serves the version, GitHub the ref.
+
+    Writing the bare version into an action ref would name a tag that does not
+    exist; writing the ref into a package pin would name a version PyPI never
+    served. Both are asserted, and so is convergence: a ref already carrying
+    its ``-rN`` must not grow a second one on the next pass.
+    """
+    tree = fake_tree(
+        {
+            "src/roam/templates/ci/gitlab-ci.yml": _STALE_TEMPLATE,
+            "docs/ci-integration.md": (
+                _STALE_WORKFLOW
+                + "      - uses: Cranot/roam-code@v14.0.4-r1\n        with:\n          version: '14.0.4'\n"
+                + "      - uses: Cranot/roam-code@v14.1.0\n        with:\n          version: '14.1.0'\n"
+            ),
+        }
+    )
+    published = sync.PublishedRelease("14.1.0", ref="v14.1.0-r1")
+    assert sync.release_pin_drift("14.1.0", published, write=True) != []
+    assert sync.release_pin_drift("14.1.0", published) == [], "must converge in one pass"
+
+    doc = (tree / "docs/ci-integration.md").read_text(encoding="utf-8")
+    assert doc.count("uses: Cranot/roam-code@v14.1.0-r1\n") == 3, doc
+    assert doc.count("version: '14.1.0'\n") == 3, doc
+    assert "-r1-r1" not in doc
+    template = (tree / "src/roam/templates/ci/gitlab-ci.yml").read_text(encoding="utf-8")
+    assert '"roam-code==14.1.0"' in template, "a package pin names the version, never the ref"
+
+
+def test_a_republished_ref_is_replaced_by_a_later_plain_release(fake_tree) -> None:
+    """The next ordinary release drops the suffix instead of inheriting it."""
+    tree = fake_tree({"docs/ci-integration.md": "      - uses: Cranot/roam-code@v14.1.0-r1\n"})
+    assert sync.release_pin_drift("14.2.0", "14.2.0", write=True) != []
+    assert (tree / "docs/ci-integration.md").read_text(encoding="utf-8") == "      - uses: Cranot/roam-code@v14.2.0\n"
+
+
+@pytest.mark.parametrize("suffix", ["", "-r1", "-r10", "-r100"])
+def test_rewriter_converges_for_every_republication_number(fake_tree, suffix: str) -> None:
+    """One pass, then nothing: also when the counter has more than one digit.
+
+    A suffix pattern that consumed a single digit turned ``-r10`` into ``-r100``
+    on the next pass and into ``-r1000`` on the one after -- a rewriter that
+    never converges, on exactly the tags a much re-published release carries.
+    """
+    ref = f"v1.2.3{suffix}"
+    published = sync.PublishedRelease("1.2.3", ref=ref)
+    tree = fake_tree({"docs/ci-integration.md": "      - uses: Cranot/roam-code@v1.0.0-r7\n"})
+    assert sync.release_pin_drift("1.2.3", published, write=True) != []
+    assert sync.release_pin_drift("1.2.3", published) == []
+    assert (tree / "docs/ci-integration.md").read_text(encoding="utf-8") == f"      - uses: Cranot/roam-code@{ref}\n"
+    # A tree that already names the ref is left exactly as it is.
+    assert sync.release_pin_drift("1.2.3", published, write=True) == []
+    assert (tree / "docs/ci-integration.md").read_text(encoding="utf-8") == f"      - uses: Cranot/roam-code@{ref}\n"
+
+
+@pytest.mark.parametrize("token", ["v14.1.0-r1junk", "v14.1.0-r1-rc1", "v14.1.0-r1-r2", "v14.1.0rc1", "v14.1.0.dev0"])
+def test_an_action_ref_is_read_as_the_whole_token(fake_tree, token: str) -> None:
+    """A ref resolves by exact name, so the scanner must not stop at a prefix.
+
+    Read as ``v14.1.0-r1`` plus ignored text, each of these would be reported
+    in sync and would pass the existence gate, while the tag it actually names
+    does not exist.
+    """
+    tree = fake_tree({"docs/ci-integration.md": f"      - uses: Cranot/roam-code@{token}\n"})
+    sites, _ = sync.install_target_scan()
+    assert [ref for _, _, _, ref in sites] == [token]
+
+    published = sync.PublishedRelease("14.1.0", ref="v14.1.0-r1")
+    assert sync.release_pin_drift("14.1.0", published) != [], "a malformed ref must be reported, not skipped"
+    sync.release_pin_drift("14.1.0", published, write=True)
+    assert (tree / "docs/ci-integration.md").read_text(
+        encoding="utf-8"
+    ) == "      - uses: Cranot/roam-code@v14.1.0-r1\n"
+
+
+def test_a_sentence_ending_after_a_ref_keeps_its_full_stop(fake_tree) -> None:
+    """The control for the whole-token read: prose punctuation is not part of a ref."""
+    body = "Pin the action as `Cranot/roam-code@v14.1.0-r1`. Or write Cranot/roam-code@v14.1.0-r1.\n"
+    fake_tree({"docs/ci-integration.md": body})
+    sites, _ = sync.install_target_scan()
+    assert [ref for _, _, _, ref in sites] == ["v14.1.0-r1", "v14.1.0-r1"]
+    assert sync.release_pin_drift("14.1.0", sync.PublishedRelease("14.1.0", ref="v14.1.0-r1")) == []
+
+
+def test_install_target_scan_reports_the_ref_an_action_pin_names(fake_tree) -> None:
+    """The existence gate needs the REF, which the version alone cannot give."""
+    fake_tree(
+        {
+            "docs/ci-integration.md": (
+                'pip install "roam-code==14.1.0"\n'
+                "      - uses: Cranot/roam-code@v14.1.0-r1\n"
+                "      - uses: Cranot/roam-code@v14.0.4\n"
+            )
+        }
+    )
+    sites, _ = sync.install_target_scan()
+    assert sorted((line, version, ref) for _, line, version, ref in sites) == [
+        (1, "14.1.0", None),
+        (2, "14.1.0", "v14.1.0-r1"),
+        (3, "14.0.4", "v14.0.4"),
+    ]
+    # The version-only view is unchanged for callers that only need versions.
+    pins, _ = sync.install_pin_scan()
+    assert sorted((line, version) for _, line, version in pins) == [(1, "14.1.0"), (2, "14.1.0"), (3, "14.0.4")]
+
+
 def test_write_mode_repairs_every_reported_site(fake_tree) -> None:
     """``--write`` must actually fix what the check reports.
 

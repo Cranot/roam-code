@@ -430,6 +430,109 @@ def test_remote_check_refuses_when_github_does_not_answer(fake_tree, monkeypatch
 
 
 # ---------------------------------------------------------------------------
+# Re-published releases -- the version exists, the plain ref does not
+# ---------------------------------------------------------------------------
+#
+# ``vX.Y.Z-rN`` publishes release X.Y.Z again under a new ref. PyPI keeps
+# serving the version, so a package pin is fine; an action pin resolves
+# against the TAG, so ``Cranot/roam-code@vX.Y.Z`` names nothing once the only
+# tag is ``vX.Y.Z-rN``. Checking the version alone cannot tell those apart.
+
+_PACKAGE_PIN = 'python -m pip install --quiet "roam-code==14.1.0"\n'
+
+
+def test_an_action_ref_whose_tag_does_not_exist_fails_although_the_version_is_released(fake_tree) -> None:
+    """The public defect, reproduced: README says ``@v14.1.0``, GitHub has ``v14.1.0-r1``."""
+    fake_tree(
+        {"src/roam/templates/ci/gitlab-ci.yml": _PACKAGE_PIN + "      - uses: Cranot/roam-code@v14.1.0\n"},
+        tags=["v13.9.0", "v14.1.0-r1"],
+    )
+    code, report = gate.check(check_pypi=False, check_remote=False)
+    assert code == gate.FAIL, report
+    assert report["missing_tag"] == [], "release 14.1.0 is tagged; only the ref is wrong"
+    assert report["missing_ref"] == ["v14.1.0"]
+    assert [(s["line"], s["ref"]) for s in report["offending_sites"]] == [(2, "v14.1.0")], (
+        "the package pin on line 1 names something that exists and must not be blamed"
+    )
+
+
+def test_a_republished_release_satisfies_package_pins_and_its_own_ref(fake_tree) -> None:
+    """The positive half: the same release, named by the ref that exists."""
+    fake_tree(
+        {"src/roam/templates/ci/gitlab-ci.yml": _PACKAGE_PIN + "      - uses: Cranot/roam-code@v14.1.0-r1\n"},
+        tags=["v13.9.0", "v14.1.0-r1"],
+    )
+    code, report = gate.check(check_pypi=False, check_remote=False)
+    assert code == gate.OK, report
+    assert report["versions"] == ["14.1.0"]
+    assert report["refs"] == ["v14.1.0-r1"]
+
+
+@pytest.mark.parametrize("token", ["v14.1.0-r1junk", "v14.1.0-r1-rc1", "v14.1.0-r1-r2"])
+def test_a_ref_with_a_malformed_suffix_is_a_missing_target(fake_tree, token: str) -> None:
+    """``@v14.1.0-r1junk`` names the tag ``v14.1.0-r1junk``, and that tag is absent.
+
+    Reading only the well-formed prefix certified these as ``v14.1.0-r1``.
+    """
+    fake_tree(
+        {"src/roam/templates/ci/gitlab-ci.yml": _PACKAGE_PIN + f"      - uses: Cranot/roam-code@{token}\n"},
+        tags=["v13.9.0", "v14.1.0-r1"],
+    )
+    code, report = gate.check(check_pypi=False, check_remote=False)
+    assert code == gate.FAIL, report
+    assert report["missing_ref"] == [token]
+
+
+def test_the_remote_check_cannot_certify_one_republication_from_another(fake_tree, monkeypatch) -> None:
+    """``-r10`` exists here, only ``-r1`` exists on the remote: the pin does not resolve.
+
+    The negative control for the exact-ref request: an answer about a
+    different tag of the same version is not an answer about this one.
+    """
+    fake_tree(
+        {"src/roam/templates/ci/gitlab-ci.yml": _PACKAGE_PIN + "      - uses: Cranot/roam-code@v14.1.0-r10\n"},
+        tags=["v14.1.0-r1", "v14.1.0-r10"],
+    )
+
+    def _github(req, *_a, **_kw):
+        if req.full_url.endswith("/git/ref/tags/v14.1.0-r1"):
+            return _FakeResponse(body=b'{"ref": "refs/tags/v14.1.0-r1"}', url=req.full_url)
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _github)
+    offline_code, _ = gate.check(check_pypi=False, check_remote=False)
+    assert offline_code == gate.OK, "both tags exist locally, so only the remote can tell"
+    code, report = gate.check(check_pypi=False, check_remote=True)
+    assert code == gate.FAIL, report
+    assert report["missing_remote_refs"] == ["v14.1.0-r10"]
+
+
+def test_the_remote_check_asks_for_the_ref_the_pin_names(fake_tree, monkeypatch) -> None:
+    """``--remote`` must ask GitHub about ``v14.1.0-r1``, not about ``v14.1.0``.
+
+    Asking for the plain tag reports a published release as missing; that is a
+    false assertion of absence, and it would send the operator to "fix" pins
+    that resolve.
+    """
+    fake_tree(
+        {"src/roam/templates/ci/gitlab-ci.yml": _PACKAGE_PIN + "      - uses: Cranot/roam-code@v14.1.0-r1\n"},
+        tags=["v14.1.0-r1"],
+    )
+    asked: list[str] = []
+
+    def _github(req, *_a, **_kw):
+        asked.append(req.full_url)
+        if req.full_url.endswith("/git/ref/tags/v14.1.0-r1"):
+            return _FakeResponse(body=b'{"ref": "refs/tags/v14.1.0-r1"}', url=req.full_url)
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _github)
+    code, report = gate.check(check_pypi=False, check_remote=True)
+    assert code == gate.OK, report
+    assert asked and all(url.endswith("/git/ref/tags/v14.1.0-r1") for url in asked), asked
+
+
+# ---------------------------------------------------------------------------
 # A pin that does not exist is invisible to a pin scanner
 # ---------------------------------------------------------------------------
 
