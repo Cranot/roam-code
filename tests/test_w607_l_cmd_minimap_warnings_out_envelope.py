@@ -461,38 +461,15 @@ def test_top_level_warnings_out_mirror(cli_runner, minimap_project, monkeypatch)
 
 
 def test_w805_b_xfail_still_strict():
-    """W805-B strict-xfail Pattern-2 disclosure must remain xfailed.
-
-    W805-B pins 4 strict-xfail tests on the empty-corpus
-    silent-SAFE path for cmd_minimap:
-
-    * ``test_empty_corpus_partial_success_set``
-    * ``test_empty_corpus_explicit_state``
-    * ``test_empty_corpus_no_silent_healthy_minimap``
-    * ``test_no_symbols_emits_explicit_no_symbols_state``
-
-    W607-L adds a COMPLEMENTARY disclosure axis (DB-shape substrate
-    failure via ``warnings_out``), but does NOT address the
-    empty-corpus Pattern-2 contract — state-on-empty-corpus is a
-    separate fix. The W805-B tests must stay xfailed after W607-L
-    lands — a drive-by graduation of ANY of those four to PASS would
-    mean W607-L accidentally fixed something it wasn't scoped to fix.
-
-    Verify the xfail-strict markers are still present in the W805-B
-    test source. Source-text scan beats invoking pytest-on-pytest;
-    if the strict markers were removed, this assertion catches it.
-    """
+    """Fixed W805 defects must not regain strict expected-failure markers."""
     here = Path(__file__).parent
     w805_b = here / "test_w805_b_cmd_minimap_empty_corpus.py"
     assert w805_b.exists(), f"W805-B test file missing at {w805_b}"
     src = w805_b.read_text(encoding="utf-8")
-    # Count strict-xfail markers — must remain at 4 (the original pin set).
+    # The October W805 repair graduated all of these defects.
     strict_count = src.count("strict=True")
-    assert strict_count == 4, (
-        f"W805-B strict-xfail marker count drift: expected 4, got "
-        f"{strict_count}. W607-L must NOT graduate any W805-B bug; the "
-        f"empty-corpus state disclosure is a separate Pattern-2 contract "
-        f"orthogonal to the W607-L DB-shape substrate-degrade axis."
+    assert strict_count == 0, (
+        f"Fixed W805 defects regained {strict_count} strict expected-failure markers; expected zero."
     )
     # Names of the 4 xfail-strict tests — pin so a future rename without
     # graduation doesn't slip past.

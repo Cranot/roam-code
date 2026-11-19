@@ -452,7 +452,7 @@ class TestCleanPrDiffPositiveRegression:
         assert "no change" in summary.get("verdict", "").lower(), (
             f"Positive regression: clean-tree verdict must mention ``no change``; got {summary.get('verdict')!r}"
         )
-        # W805-QQQ: clean-tree now emits partial_success=True so compound
-        # aggregators (review_change) can detect the no-diff state.
-        assert summary.get("partial_success") is True
+        # Ruling 1: clean empty diffs are complete; compounds consume state.
+        assert summary.get("partial_success") is False
+        assert summary.get("state") == "no_changes"
         assert summary.get("footprint_pct") == 0.0

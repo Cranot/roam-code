@@ -437,8 +437,9 @@ class TestW805JjjjInvariantsPreserved:
             f"still emit ``no change`` verdict; "
             f"got {summary.get('verdict')!r}"
         )
-        # W805-QQQ: clean-tree pr-diff now emits partial_success=True.
-        assert summary.get("partial_success") is True
+        # Ruling 1: clean empty diffs are complete; compounds consume state.
+        assert summary.get("partial_success") is False
+        assert summary.get("state") == "no_changes"
 
 
 class TestW805MmmmInvariantsPreserved:

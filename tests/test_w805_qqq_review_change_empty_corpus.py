@@ -382,23 +382,13 @@ class TestReviewChangeEmptyChildrenDiscloseOnlyOnVerdictChannel:
 
 
 def test_empty_corpus_no_diff_disclosure(empty_corpus):
-    """Pin (W805-QQQ fresh axis per W805-OOO agent hypothesis): every
-    child must set ``summary.partial_success=True`` on the no-diff
-    path. Today all three children report ``partial_success=False``
-    and disclose the no-diff state only via the verdict string."""
+    """Complete empty children disclose state; the review itself is incomplete."""
     r = review_change(root=".")
     children_to_check = ("pr_risk", "breaking_changes", "pr_diff")
     not_disclosing = []
     for name in children_to_check:
         child = r.get(name) or {}
         psum = child.get("summary") or {}
-        if psum.get("partial_success") is not True:
+        if psum.get("state") != "no_changes" or psum.get("partial_success") is not False:
             not_disclosing.append(name)
-    assert not not_disclosing, (
-        f"children {not_disclosing} do NOT set "
-        f"summary.partial_success=True on the no-diff path. They "
-        f"disclose the no-data state only via the verdict-string "
-        f"channel ('no-changes' / 'no changes detected' / 'no "
-        f"breaking changes'). The sextet's machine-readable "
-        f"disclosure template is the canonical fix."
-    )
+    assert not not_disclosing, f"children {not_disclosing} must disclose complete no_changes answers"

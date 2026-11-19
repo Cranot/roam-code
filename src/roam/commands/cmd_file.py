@@ -330,7 +330,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         # Resolve --deps-of imports
         if deps_of:
             dep_path = deps_of.replace("\\", "/")
-            dep_frow = _resolve_file(conn, dep_path)
+            dep_frow, _ = _resolve_file(conn, dep_path)
             if dep_frow is not None:
                 dep_paths = _get_deps_of_file(conn, dep_frow)
                 target_paths.extend(dep_paths)

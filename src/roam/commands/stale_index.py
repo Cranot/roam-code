@@ -16,6 +16,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from roam.observability import log_swallowed
+
 _STALE_AGE_HOURS = 24
 _STALE_AGE_HOURS_HIGH_SENSITIVITY = 1
 
@@ -33,8 +35,8 @@ def _git_head_short(root: Path | None = None) -> str | None:
             from roam.db.connection import find_project_root  # lazy to avoid circular imports
 
             root = find_project_root()
-        except Exception:  # noqa: BLE001 -- best-effort; fall back to process cwd
-            pass
+        except Exception as exc:  # noqa: BLE001 -- best-effort; fall back to process cwd
+            log_swallowed("stale_index:find_project_root", exc)
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -65,8 +67,8 @@ def _git_dirty(root: Path | None = None) -> bool:
             from roam.db.connection import find_project_root  # lazy to avoid circular imports
 
             root = find_project_root()
-        except Exception:  # noqa: BLE001 -- best-effort; fall back to process cwd
-            pass
+        except Exception as exc:  # noqa: BLE001 -- best-effort; fall back to process cwd
+            log_swallowed("stale_index:find_project_root", exc)
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain"],

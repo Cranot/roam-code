@@ -329,7 +329,7 @@ def breaking(ctx, target):
                             # W805-QQQ: disclose empty-diff state so compound
                             # aggregators can detect no-diff degradation.
                             "state": "no_changes",
-                            "partial_success": True,
+                            "partial_success": False,
                         },
                         target=target,
                         removed=[],

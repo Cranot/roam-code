@@ -772,8 +772,10 @@ def minimap(ctx, update_claude, output_file, init_notes):
         with open_db(readonly=True) as conn:
             try:
                 _w805b_symbol_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 -- preserve fallback with lineage
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_minimap:symbol_count", exc)
             content = _render_minimap(conn, root, warnings_out=warnings_out)
     except Exception as exc:
         # W607-L outer-guard: the full minimap DB pipeline raised (db

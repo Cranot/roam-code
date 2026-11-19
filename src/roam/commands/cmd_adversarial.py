@@ -1220,8 +1220,10 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                     _sym_ids_list + _sym_ids_list,
                 ).fetchone()[0]
                 _w805r_no_graph_edges = _edge_cnt == 0
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 -- preserve fallback with lineage
+                from roam.observability import log_swallowed
+
+                log_swallowed("cmd_adversarial:edge_count", exc)
         else:
             _w805r_no_graph_edges = True  # no symbols → no edges either
 

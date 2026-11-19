@@ -6,7 +6,7 @@ roam-code (`pip install roam-code`, Python 3.10+) is a local code-analysis
 toolkit for coding agents. Run `roam index` to refresh the index as code changes.
 The local SQLite index holds symbols, dependencies, call graphs, architecture
 layers, and git history. Imported runtime traces are separate observations,
-not facts inferred from parsing source. Roam exposes analysis through 288 CLI commands and 246 MCP
+not facts inferred from parsing source. Roam exposes analysis through 288 CLI commands and 259 MCP
 tools (17 in the default `core` preset) across 28 languages. AI agents
 (Claude Code, Cursor, Codex, Aider, your own) can call it before, during, and
 after a change when their workflow is configured to do so.

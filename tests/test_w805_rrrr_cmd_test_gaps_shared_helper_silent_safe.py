@@ -472,11 +472,9 @@ class TestW805JjjjInvariantsPreserved:
             f"still emit ``no change`` verdict; "
             f"got {summary.get('verdict')!r}"
         )
-        # W805-QQQ deliberately sets partial_success=True on the no-diff path
-        # so compound aggregators can detect no-diff degradation via the
-        # machine-readable channel. Updated from False to True to reflect
-        # this intentional change.
-        assert summary.get("partial_success") is True
+        # Ruling 1: clean empty diffs are complete; compounds consume state.
+        assert summary.get("partial_success") is False
+        assert summary.get("state") == "no_changes"
 
 
 class TestW805EeeeInvariantsPreserved:

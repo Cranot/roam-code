@@ -493,39 +493,15 @@ def test_top_level_warnings_out_mirror(describe_project, monkeypatch):
 
 
 def test_w805_i_xfail_still_strict():
-    """W805-I strict-xfail Pattern-2 disclosure must remain xfailed.
-
-    W805-I pins 4 strict-xfail tests on the empty-corpus / no-source
-    silent-SAFE path:
-
-    * ``test_empty_corpus_partial_success_set``
-    * ``test_empty_corpus_explicit_state``
-    * ``test_empty_corpus_verdict_discloses_empty``
-    * ``test_no_source_corpus_unknown_project_partial_success``
-    * ``test_agent_prompt_empty_corpus_partial_success_coupled_to_na``
-
-    W607-K adds a COMPLEMENTARY disclosure axis (DB-shape substrate
-    failure via ``warnings_out``), but does NOT address the
-    empty-corpus Pattern-2 contract — state-on-empty-corpus is a
-    separate fix. The W805-I tests must stay xfailed after W607-K
-    lands — a drive-by graduation of ANY of those five to PASS would
-    mean W607-K accidentally fixed something it wasn't scoped to fix.
-
-    Verify the xfail-strict markers are still present in the W805-I
-    test source. Source-text scan beats invoking pytest-on-pytest;
-    if the strict markers were removed, this assertion catches it.
-    """
+    """Fixed W805 defects must not regain strict expected-failure markers."""
     here = Path(__file__).parent
     w805_i = here / "test_w805_i_cmd_describe_empty_corpus.py"
     assert w805_i.exists(), f"W805-I test file missing at {w805_i}"
     src = w805_i.read_text(encoding="utf-8")
-    # Count strict-xfail markers — must remain at 5 (the original pin set).
+    # The October W805 repair graduated all of these defects.
     strict_count = src.count("strict=True")
-    assert strict_count == 5, (
-        f"W805-I strict-xfail marker count drift: expected 5, got "
-        f"{strict_count}. W607-K must NOT graduate any W805-I bug; the "
-        f"empty-corpus state disclosure is a separate Pattern-2 contract "
-        f"orthogonal to the W607-K DB-shape substrate-degrade axis."
+    assert strict_count == 0, (
+        f"Fixed W805 defects regained {strict_count} strict expected-failure markers; expected zero."
     )
     # Names of the 5 xfail-strict tests — pin so a future rename without
     # graduation doesn't slip past.

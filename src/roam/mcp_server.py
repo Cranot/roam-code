@@ -2991,9 +2991,9 @@ def _normalize_aliases(
         if canon not in accepted:
             continue
         for alias in alias_map:
-            if alias == canon:
-                # ``symbol → symbol`` is a no-op identity that lives in the
-                # map only for documentation; skip it.
+            if alias == canon or alias in accepted:
+                # A declared parameter has its own semantics, even when its
+                # name is an alias on other tools. Preserve native inputs.
                 continue
             if alias in out and canon not in out:
                 out[canon] = out.pop(alias)
@@ -3248,7 +3248,7 @@ def _wrap_with_alias_normalization(name: str, fn):
         for alias in aliases_for_tool:
             if alias in kwargs and kwargs[alias] is None:
                 kwargs.pop(alias)
-        return _normalize_aliases(name, kwargs, accepted, defaults=canon_defaults)
+        return _normalize_aliases(name, kwargs, set(sig.parameters), defaults=canon_defaults)
 
     if _inspect.iscoroutinefunction(fn):
 
@@ -7020,13 +7020,11 @@ def _compound_envelope(
         "no_symbols",
         # W805-LL: vulns on un-scanned corpus discloses via state="no_scan".
         "no_scan",
-        # "no_changes" / "empty_diff" intentionally omitted: cmd_diff returning
-        # no changes on a clean working tree is normal for symbol-anchored
-        # compounds (for_bug_fix, for_refactor, etc.). Including them caused
-        # false-positive partial_success=True on every clean-tree invocation.
-        # The pr_diff command already discloses partial_success=True at its own
-        # level; review_change consumers can read it there.
     }
+    # A change review needs an actual diff. Other compounds can legitimately
+    # include a clean diff alongside symbol-specific assessments.
+    if command == "review-change":
+        _CHILD_DEGRADED_STATES.update({"no_changes", "empty_diff"})
     _CHILD_DEGRADED_RESOLUTIONS = {"unresolved", "fuzzy"}
     workflow_recipe = meta.pop("workflow_recipe", None) or _COMPOUND_WORKFLOW_RECIPES.get(command)
     # Round 4 #9: replace the static recipe pick with a signal-based

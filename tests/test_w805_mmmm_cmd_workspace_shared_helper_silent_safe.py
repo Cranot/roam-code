@@ -366,10 +366,9 @@ class TestW805JjjjInvariantsPreserved:
             f"must still emit verdict containing 'no changes'; "
             f"got {verdict!r}"
         )
-        # W805-QQQ: clean-tree pr-diff now emits partial_success=True so
-        # compound aggregators (review_change) can detect the no-diff state.
-        assert summary.get("partial_success") is True, (
-            f"W805-MMMM sister cross-check: cmd_pr-diff clean-tree "
-            f"must emit partial_success=true (W805-QQQ); got "
-            f"{summary.get('partial_success')!r}"
+        # Ruling 1: clean empty diffs are complete; compounds consume state.
+        assert summary.get("partial_success") is False, (
+            f"W805-MMMM sister cross-check: a clean pr-diff is complete; "
+            f"got partial_success={summary.get('partial_success')!r}"
         )
+        assert summary.get("state") == "no_changes"

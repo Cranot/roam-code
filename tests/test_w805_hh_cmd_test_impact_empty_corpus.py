@@ -286,7 +286,7 @@ class TestEmptyCorpusStateDisclosure:
         )
 
     def test_empty_corpus_partial_success_set(self, cli_runner, empty_corpus, monkeypatch):
-        """Pattern-2 guard: empty-changeset path sets partial_success=True."""
+        """Pattern-2 guard: empty-changeset path is complete with a closed state."""
         monkeypatch.chdir(empty_corpus)
         result = invoke_cli(
             cli_runner,
@@ -296,9 +296,9 @@ class TestEmptyCorpusStateDisclosure:
         )
         data = parse_json_output(result, "test-impact")
         summary = data["summary"]
-        assert summary.get("partial_success") is True, (
-            f"W805-HH Pattern-2: empty-changeset 'no check ran' state "
-            f"must set partial_success=True so agents can distinguish "
+        assert summary.get("partial_success") is False, (
+            f"W805-HH Pattern-2: valid empty changeset "
+            f"must set partial_success=False so agents can distinguish "
             f"it from a real zero-results success; "
             f"got partial_success={summary.get('partial_success')!r}"
         )

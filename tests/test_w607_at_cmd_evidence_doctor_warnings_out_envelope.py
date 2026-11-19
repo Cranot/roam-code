@@ -263,7 +263,7 @@ def test_evidence_doctor_recompute_content_hash_failure_marker_format(cli_runner
     monkeypatch.setattr(cmd_evidence_doctor, "_recompute_content_hash", _raise)
 
     result = _invoke_doctor(cli_runner, valid_packet)
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
     data = _json.loads(result.output)
     top_wo = data.get("warnings_out") or []
     rh_markers = [m for m in top_wo if m.startswith("evidence_doctor_recompute_content_hash_failed:")]

@@ -607,33 +607,15 @@ def test_top_level_warnings_out_mirror(delete_check_project, monkeypatch):
 
 
 def test_w805_z_xfail_still_strict():
-    """W805-Z strict-xfail Pattern-2 disclosure must remain xfailed.
-
-    W805-Z pins 5 strict-xfail tests on the empty-corpus / zero-survivors
-    path (silent SAFE verdict + missing ``state`` + ``partial_success=false``
-    + silent SAFE on unscannable corpus + exit 0 under --ci). W607-J adds
-    a COMPLEMENTARY disclosure axis (subprocess-degrade via
-    ``warnings_out``), but does NOT address the empty-corpus Pattern-2
-    contract (state-on-empty-corpus is a separate fix). The W805-Z tests
-    must stay xfailed after W607-J lands — a drive-by graduation of ANY
-    of those five to PASS would mean W607-J accidentally fixed something
-    it wasn't scoped to fix.
-
-    Verify the xfail-strict markers are still present in the W805-Z
-    test source. Source-text scan beats invoking pytest-on-pytest;
-    if the strict markers were removed, this assertion catches it.
-    """
+    """Fixed W805 defects must not regain strict expected-failure markers."""
     here = Path(__file__).parent
     w805_z = here / "test_w805_z_cmd_delete_check_empty_corpus.py"
     assert w805_z.exists(), f"W805-Z test file missing at {w805_z}"
     src = w805_z.read_text(encoding="utf-8")
-    # Count strict-xfail markers — must remain at 5 (the original pin set).
+    # The October W805 repair graduated all of these defects.
     strict_count = src.count("strict=True")
-    assert strict_count == 5, (
-        f"W805-Z strict-xfail marker count drift: expected 5, got "
-        f"{strict_count}. W607-J must NOT graduate any W805-Z bug; the "
-        f"empty-corpus state disclosure is a separate Pattern-2 contract "
-        f"orthogonal to the W607-J subprocess-degrade axis."
+    assert strict_count == 0, (
+        f"Fixed W805 defects regained {strict_count} strict expected-failure markers; expected zero."
     )
     # Names of the 5 xfail-strict tests — pin so a future rename without
     # graduation doesn't slip past.

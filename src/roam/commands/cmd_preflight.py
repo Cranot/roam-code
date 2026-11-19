@@ -426,6 +426,7 @@ def _check_complexity(conn, sym_ids):
     severity = _complexity_severity(max_cc, max_nest)
 
     _compl_result: dict = {
+        "symbols_measured": len(rows),
         "max_cognitive_complexity": round(max_cc, 1),
         "max_nesting_depth": max_nest,
         "high_complexity_symbols": high[:10],
@@ -1549,6 +1550,7 @@ def preflight(ctx, target, staged):
                 _tests_envelope["state"] = tests["state"]
 
             _compl_envelope: dict = {
+                "symbols_measured": compl.get("symbols_measured", 0),
                 "max_cognitive_complexity": compl["max_cognitive_complexity"],
                 "max_nesting_depth": compl["max_nesting_depth"],
                 "high_complexity_symbols": compl["high_complexity_symbols"],
@@ -1613,11 +1615,13 @@ def preflight(ctx, target, staged):
                 _summary_dict["partial_success"] = disclosure["partial_success"]
                 _envelope_kwargs["resolution"] = disclosure["resolution"]
                 _envelope_kwargs["partial_success"] = disclosure["partial_success"]
-            # W805-L Bug 4: when most signals have no underlying data, set
-            # partial_success=True regardless of resolution tier. This check
-            # must run unconditionally (not only on the no-disclosure path)
-            # because a "symbol" resolution can still have 5/6 no-data signals.
-            _no_data_signals = sum(1 for sig in (blast, tests, compl, coupl, fitns) if sig.get("state") is not None)
+            # Missing prerequisites still make the overall assessment partial.
+            # Zero callers and measured zero complexity are complete answers;
+            # retain their state disclosures without counting them as missing.
+            _missing_signals = [tests, coupl, fitns]
+            if not compl.get("symbols_measured"):
+                _missing_signals.append(compl)
+            _no_data_signals = sum(1 for sig in _missing_signals if sig.get("state") is not None)
             if _no_data_signals >= 3:
                 _summary_dict["partial_success"] = True
                 _envelope_kwargs["partial_success"] = True

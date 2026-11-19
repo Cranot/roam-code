@@ -121,7 +121,7 @@ def test_experimental_replay_discloses_execution_and_claim_limits():
 
 
 def test_algorithm_research_routes_to_existing_discovery():
-    guide = _read("docs/algo-polish-research.md")
-    assert "Historical priority queue" in guide
-    assert "`roam algo --list-tasks` is implemented" in guide
+    guide = _read("docs/README.md")
+    assert "algo-polish-research.md" not in guide
+    assert "[Detector evidence and limitations]" in guide
     assert "concepts/detector-evidence.md" in guide

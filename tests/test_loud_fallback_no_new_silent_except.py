@@ -90,7 +90,9 @@ from tests._helpers.repo_root import repo_root
 #   `except sqlite3.OperationalError: pass` to `log_swallowed` lineage
 #   emission, preserving graceful degradation on non-WAL filesystems while
 #   making WAL setup failures observable under verbose mode.
-SILENT_EXCEPT_BASELINE = 116
+# 2026-11-19: disclose both stale-index root lookup fallbacks and the
+# adversarial/minimap count lookups. Four removed from the measured 119.
+SILENT_EXCEPT_BASELINE = 115
 
 
 def _silent_except_sites() -> list[str]:

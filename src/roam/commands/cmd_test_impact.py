@@ -139,7 +139,7 @@ def test_impact(ctx, commit_range, max_hops, limit) -> None:
                 to_json(
                     json_envelope(
                         "test-impact",
-                        summary={"verdict": verdict, "count": 0, "state": "no_changed_files", "partial_success": True},
+                        summary={"verdict": verdict, "count": 0, "state": "no_changed_files", "partial_success": False},
                         tests=[],
                     )
                 )
