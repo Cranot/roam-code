@@ -212,51 +212,52 @@ def test_attest_collect_blast_radius_failure_marker_format(cli_runner, attest_pr
 
 
 def test_attest_get_changed_files_failure_marker_format(cli_runner, attest_project_with_changes, monkeypatch):
-    """If ``get_changed_files`` raises, surface the W607-AD marker.
+    """If the changed-files lookup raises, the envelope says so.
 
-    cmd_attest sits on the SHARED-HELPER axis (root cause at
-    ``src/roam/commands/changed_files.py:142,145``); W607-AD wraps the
-    upstream call so a raise here surfaces as
-    ``attest_get_changed_files_failed:<exc>:<detail>`` rather than
-    crashing the whole attestation build.
+    cmd_attest sits on the SHARED-HELPER axis and asks
+    ``get_changed_files_status`` for the changeset. A raise there must not
+    crash the attestation build, must not read as a clean tree, and must not
+    be dropped on the way out: the empty-changeset envelope carries the
+    ``attest_get_changed_files_failed:<exc>:<detail>`` marker and discloses
+    ``state="git_error"``, because "the question could not be asked" is not
+    the same fact as "no files changed".
     """
     from roam.commands import cmd_attest
 
     def _raise(*args, **kwargs):
         raise RuntimeError("synthetic-get-changed-files-from-W607-AD")
 
-    monkeypatch.setattr(cmd_attest, "get_changed_files", _raise)
+    monkeypatch.setattr(cmd_attest, "get_changed_files_status", _raise)
 
     result = _invoke_attest(cli_runner, attest_project_with_changes, True)
     assert result.exit_code == 0, result.output
     data = _json.loads(result.output)
 
-    # With get_changed_files raising, the default=[] cascades to the
-    # no-changes degraded-resolution path -- the marker is the disclosure
-    # of WHY the empty changeset surfaced. The marker may land on the
-    # short-circuit envelope (no_changes path) without W607-AD wrapping
-    # contributing further markers. Check the envelope's warnings_out
-    # (top-level OR summary mirror).
-    top_wo = data.get("warnings_out") or []
-    summary_wo = data["summary"].get("warnings_out") or []
-    all_wo = list(top_wo) + list(summary_wo)
-    markers = [m for m in all_wo if m.startswith("attest_get_changed_files_failed:")]
-    # The no-changes branch short-circuits before the W607-AD
-    # warnings_out is wired to the envelope. As a fallback acceptance
-    # criterion, the envelope MUST still emit cleanly (no crash) and the
-    # no_changes state MUST be disclosed -- the SHARED-HELPER raise is
-    # caught and the empty-floor cascades through.
-    if not markers:
-        # The fallback path emitted the no_changes envelope without the
-        # W607-AD marker plumbing. That's still a cleanly-degraded
-        # envelope (the contract) but the marker channel is missing.
-        # Accept either outcome but require non-crash.
-        assert data["summary"].get("state") == "no_changes", (
-            f"expected either W607-AD marker OR no_changes state; got summary = {data['summary']!r}"
-        )
-    else:
-        # Happy path: marker surfaced; check shape.
-        assert any("RuntimeError" in m for m in markers), markers
+    summary = data["summary"]
+    assert summary.get("state") == "git_error", summary
+    assert summary.get("partial_success") is True, summary
+    assert summary.get("safe_to_merge") is None, summary
+    for channel in (data.get("warnings_out") or [], summary.get("warnings_out") or []):
+        markers = [m for m in channel if m.startswith("attest_get_changed_files_failed:")]
+        assert len(markers) == 1, (channel, summary)
+        assert "RuntimeError" in markers[0], markers
+        assert "synthetic-get-changed-files-from-W607-AD" in markers[0], markers
+
+
+def test_attest_clean_tree_envelope_carries_no_failure_marker(cli_runner, attest_project_with_changes, monkeypatch):
+    """The control: a lookup that answers "nothing changed" stays a clean no-changes envelope."""
+    from roam.commands import cmd_attest
+
+    monkeypatch.setattr(cmd_attest, "get_changed_files_status", lambda *a, **k: ([], None))
+
+    result = _invoke_attest(cli_runner, attest_project_with_changes, True)
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.output)
+
+    assert data["summary"].get("state") == "no_changes", data["summary"]
+    assert "git_error" not in data["summary"], data["summary"]
+    assert not data.get("warnings_out"), data
+    assert not data["summary"].get("warnings_out"), data["summary"]
 
 
 # ---------------------------------------------------------------------------

@@ -1143,11 +1143,15 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
     # W805-OOOO: use get_changed_files_status so a bogus commit-range emits
     # state="git_error" + git_error=<kind> instead of being byte-identical to
     # a genuinely clean working tree (both previously got state="no_changes").
-    try:
-        changed, _git_err_kind = get_changed_files_status(root, staged=staged, commit_range=commit_range)
-    except Exception as exc:  # noqa: BLE001 — W607-AD outer-guard
-        _w607ad_warnings_out.append(f"attest_get_changed_files_failed:{type(exc).__name__}:{exc}")
-        changed, _git_err_kind = [], GIT_ERROR
+    # A raise inside the lookup floors to the same "could not ask" answer.
+    changed, _git_err_kind = _run_check_ad(
+        "get_changed_files",
+        get_changed_files_status,
+        root,
+        staged=staged,
+        commit_range=commit_range,
+        default=([], GIT_ERROR),
+    )
     if not changed:
         # Pattern 1D / Pattern 2: no-changes is a degraded-resolution path,
         # NOT a fully-assessed "safe to merge" verdict. An agent reading
@@ -1172,20 +1176,24 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         else:
             _empty_state = "no_changes"
             _empty_summary_extra = {}
-        _attest_empty_envelope = json_envelope(
-            "attest",
-            summary={
-                "verdict": (f"no changes found for {label} (risk_level {_empty_risk_level_canonical})"),
-                "state": _empty_state,
-                "partial_success": True,
-                "safe_to_merge": None,
-                "risk_level_canonical": _empty_risk_level_canonical,
-                "risk_rank": _empty_risk_rank,
-                **_empty_summary_extra,
-            },
-            risk_level_canonical=_empty_risk_level_canonical,
-            risk_rank=_empty_risk_rank,
-        )
+        _empty_summary: dict = {
+            "verdict": (f"no changes found for {label} (risk_level {_empty_risk_level_canonical})"),
+            "state": _empty_state,
+            "partial_success": True,
+            "safe_to_merge": None,
+            "risk_level_canonical": _empty_risk_level_canonical,
+            "risk_rank": _empty_risk_rank,
+            **_empty_summary_extra,
+        }
+        _empty_envelope_kwargs: dict = {
+            "summary": _empty_summary,
+            "risk_level_canonical": _empty_risk_level_canonical,
+            "risk_rank": _empty_risk_rank,
+        }
+        # This branch returns before the full envelope is built, so a marker
+        # raised by the lookup above is carried here or it reaches nobody.
+        _mark_attest_partial_evidence(_empty_summary, _empty_envelope_kwargs, _w607ad_warnings_out)
+        _attest_empty_envelope = json_envelope("attest", **_empty_envelope_kwargs)
         auto_log(_attest_empty_envelope, action="attest", target=label, repo_root=root)
         if json_mode or output_format == "json":
             click.echo(to_json(_attest_empty_envelope))
