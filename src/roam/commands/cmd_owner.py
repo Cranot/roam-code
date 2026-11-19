@@ -96,18 +96,30 @@ def owner(ctx, path):
     path = path.replace("\\", "/")
 
     with open_db(readonly=True) as conn:
-        dir_files = conn.execute(
-            "SELECT id, path FROM files WHERE path LIKE ? ORDER BY path",
-            (f"{path}%",),
-        ).fetchall()
+        path = path.rstrip("/")
+        dir_files = []
+        # Prefer exact case, retaining the historical case-insensitive lookup
+        # when only a differently-cased component path exists.
+        for column in ("path", "lower(path)"):
+            query_path = path if column == "path" else path.lower()
+            dir_files = conn.execute(
+                f"SELECT id, path FROM files WHERE {column} = ? OR instr({column}, ?) = 1 ORDER BY path",
+                (query_path, query_path + "/"),
+            ).fetchall()
+            if dir_files:
+                break
 
         if not dir_files:
-            frow = conn.execute("SELECT id, path FROM files WHERE path = ?", (path,)).fetchone()
-            if frow is None:
+            frow = None
+            for column in ("path", "lower(path)"):
+                query_path = path if column == "path" else path.lower()
                 frow = conn.execute(
-                    "SELECT id, path FROM files WHERE path LIKE ? LIMIT 1",
-                    (f"%{path}",),
+                    f"SELECT id, path FROM files WHERE {column} = ? "
+                    f"OR substr({column}, -length(?) - 1) = '/' || ? ORDER BY path LIMIT 1",
+                    (query_path, query_path, query_path),
                 ).fetchone()
+                if frow is not None:
+                    break
             if frow is None:
                 # W362: "path not in index" is a valid analytical result,
                 # not a failure. Emit a structured envelope and exit 0 —

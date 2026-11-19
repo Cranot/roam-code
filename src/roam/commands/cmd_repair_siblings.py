@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import re
 import sys
+import warnings
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,7 +33,7 @@ _FRAMING = (
     "cross-module slice is weaker; not a defect detector"
 )
 
-_HUNK_RE = re.compile(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+_HUNK_RE = re.compile(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|&&|\|\||[-+*/%]=?|[(){}\[\].,:]")
 _CALLEE_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _PATH_PREFIX_RE = re.compile(r"^[ab]/")
@@ -178,8 +179,29 @@ def parse_unified_diff(text: str) -> PatchSummary:
     old_line: int | None = None
     new_line: int | None = None
 
-    for raw_line in text.splitlines():
-        if raw_line.startswith("--- "):
+    old_remaining = new_remaining = 0
+    lines = text.splitlines()
+    for index, raw_line in enumerate(lines):
+        in_hunk = old_remaining > 0 or new_remaining > 0
+        paired_header = (
+            raw_line.startswith("--- ")
+            and index + 2 < len(lines)
+            and lines[index + 1].startswith("+++ ")
+            and lines[index + 2].startswith("@@ ")
+        )
+        if raw_line.startswith("diff --git ") or paired_header:
+            if in_hunk:
+                warnings.warn("Diff hunk counts incomplete at file boundary; starting a new file", stacklevel=2)
+            old_remaining = new_remaining = 0
+            in_hunk = False
+            if raw_line.startswith("diff --git "):
+                if current is not None and current.has_changes():
+                    summaries.append(current)
+                current = None
+                pending_old = None
+                old_line = new_line = None
+                continue
+        if not in_hunk and raw_line.startswith("--- "):
             if current is not None and current.has_changes():
                 summaries.append(current)
             pending_old = _strip_diff_path(raw_line[4:])
@@ -187,7 +209,7 @@ def parse_unified_diff(text: str) -> PatchSummary:
             old_line = None
             new_line = None
             continue
-        if raw_line.startswith("+++ "):
+        if not in_hunk and raw_line.startswith("+++ "):
             current = PatchSummary(old_path=pending_old, new_path=_strip_diff_path(raw_line[4:]))
             continue
         if raw_line.startswith("@@ "):
@@ -196,11 +218,14 @@ def parse_unified_diff(text: str) -> PatchSummary:
             match = _HUNK_RE.search(raw_line)
             if match:
                 old_line = int(match.group(1))
-                new_line = int(match.group(2))
+                new_line = int(match.group(3))
+                old_remaining = int(match.group(2)) if match.group(2) is not None else 1
+                new_remaining = int(match.group(4)) if match.group(4) is not None else 1
             continue
         if raw_line.startswith("\\"):
             continue
-        if raw_line.startswith("-") and not raw_line.startswith("---"):
+        if raw_line.startswith("-"):
+            old_remaining -= 1
             if current is None:
                 current = PatchSummary()
             current.deleted_lines.append(raw_line[1:])
@@ -210,7 +235,8 @@ def parse_unified_diff(text: str) -> PatchSummary:
             if new_line is not None:
                 current.changed_new_lines.append(new_line)
             continue
-        if raw_line.startswith("+") and not raw_line.startswith("+++"):
+        if raw_line.startswith("+"):
+            new_remaining -= 1
             if current is None:
                 current = PatchSummary()
             current.added_lines.append(raw_line[1:])
@@ -218,7 +244,9 @@ def parse_unified_diff(text: str) -> PatchSummary:
                 current.changed_new_lines.append(new_line)
                 new_line += 1
             continue
-        if raw_line.startswith(" "):
+        if raw_line.startswith(" ") or (not raw_line and in_hunk):
+            old_remaining -= 1
+            new_remaining -= 1
             if old_line is not None:
                 old_line += 1
             if new_line is not None:

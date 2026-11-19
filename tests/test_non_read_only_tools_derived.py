@@ -57,6 +57,9 @@ AUDITED_NON_READ_ONLY = {
     "roam_trends",
     "roam_verify",
     "roam_vuln_reach",
+    # roam envelope-diff: a fresh prompt comparison compiles the artifact and
+    # persists cache and telemetry, so the wrapper is intentionally conservative.
+    "roam_envelope_diff",
 }
 
 

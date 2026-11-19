@@ -407,7 +407,7 @@ def ingest_pip_audit(
                         conn,
                         cve_id,
                         pkg,
-                        vuln.get("fix_versions", [""])[0] if vuln.get("fix_versions") else "unknown",
+                        vuln.get("severity", "unknown"),
                         vuln.get("description"),
                         "pip-audit",
                         project_root=project_root,

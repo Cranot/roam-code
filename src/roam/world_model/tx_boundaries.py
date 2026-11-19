@@ -256,7 +256,7 @@ _MUTATION_LINE_PATTERNS: tuple[re.Pattern, ...] = (
 #   rollback  → "rollback" "execute" (raw-SQL ROLLBACK)
 #   mutation  → "execute" "save" "delete" "insert" "update" "upsert"
 #               "write_text" "write_bytes" "writelines" "open" "os."
-#               "shutil." "Path(" "requests." "httpx."
+#               "shutil." "Path" "requests." "httpx."
 #
 # All method-name literals are lowercase in the patterns, so a
 # case-sensitive ``substr in line`` test is exact. If a line contains NONE
@@ -289,7 +289,7 @@ _LINE_MARKER_TOKENS: tuple[str, ...] = (
     "open",
     "os.",
     "shutil.",
-    "Path(",
+    "Path",
     "requests.",
     "httpx.",
 )

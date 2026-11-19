@@ -171,7 +171,11 @@ def extract_anchors(content: str) -> set[str]:
             return
         # GitHub appends ``-1``, ``-2``, … on collision (case-insensitive).
         count = slug_counts.get(slug, 0)
-        anchors.add(slug if count == 0 else f"{slug}-{count}")
+        candidate = slug if count == 0 else f"{slug}-{count}"
+        while candidate in anchors:
+            count += 1
+            candidate = f"{slug}-{count}"
+        anchors.add(candidate)
         slug_counts[slug] = count + 1
 
     for idx, line in enumerate(lines):

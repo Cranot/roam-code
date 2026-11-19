@@ -793,6 +793,7 @@ def compute_and_store_effects(conn, root, G=None, *, source_cache=None, changed_
     direct_effects.update(_classify_direct_effects(conn, root, source_cache, parse_file, only_paths=changed))
 
     if not direct_effects:
+        store_effects(conn, {}, direct_effects)
         return
 
     # 2. Propagate through call graph, then 3. store.

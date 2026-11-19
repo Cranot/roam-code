@@ -502,7 +502,16 @@ def _classify_intent(text: str) -> set[str]:
     found: set[str] = set()
     for label, verbs in _INTENT_VERBS.items():
         for verb in verbs:
-            if verb in lower:
+            # Regular verb forms retain whole-word boundaries. Explicit forms
+            # and noun labels in the table remain valid controls as well.
+            forms = {verb, verb + "s", verb + "ed", verb + "ing"}
+            if verb.endswith("e"):
+                forms.update({verb + "d", verb[:-1] + "ing"})
+            if verb.endswith(("ch", "sh", "x", "s")):
+                forms.add(verb + "es")
+            if verb in {"ship", "drop", "split"}:
+                forms.update({verb + verb[-1] + "ed", verb + verb[-1] + "ing"})
+            if re.search(r"\b(?:" + "|".join(re.escape(form) for form in sorted(forms)) + r")\b", lower):
                 found.add(label)
                 break
     return found

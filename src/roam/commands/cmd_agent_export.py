@@ -936,12 +936,60 @@ def agent_export_cmd(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
         )
         return
 
+    brief_content = (
+        f"# {project_name}\n{_MARKER_START}\n\n"
+        f"Format: {', '.join(formats)}\n"
+        f"Profile: {profile or 'generic'}\n"
+        f"Bundle: {bundle}\n"
+        f"Files: {stats['files']}\nSymbols: {stats['symbols']}\n"
+        f"{_MARKER_END}\n"
+    )
+
     # Determine where to write
     if write_flag:
         written: list[str] = []
         total_bytes = 0
         for target_fmt in formats:
-            content = _generate_markdown(
+            content = (
+                brief_content
+                if brief_mode
+                else _generate_markdown(
+                    project_name,
+                    target_fmt,
+                    languages,
+                    stats,
+                    layout,
+                    key_files,
+                    entry_points,
+                    hotspots,
+                    test_info,
+                    health,
+                    layers,
+                    clusters,
+                    build_cmd,
+                    test_cmd,
+                    frameworks,
+                    build_tool,
+                )
+            )
+            filename = _OUTPUT_FILENAMES[target_fmt]
+            filepath = str(root / filename)
+            _write_with_preserve(filepath, content)
+            written.append(filename)
+            total_bytes += len(content.encode("utf-8"))
+
+        size_kb = round(total_bytes / 1024, 1)
+        click.echo(f"VERDICT: {verdict}")
+        if len(written) == 1:
+            click.echo(f"Wrote {written[0]} ({size_kb} KB, {section_count} sections)")
+        else:
+            click.echo(f"Wrote bundle: {', '.join(written)} ({size_kb} KB total, {section_count} sections each)")
+    elif output:
+        target_fmt = formats[0]
+        content = (
+            brief_content
+            if brief_mode
+            else _generate_markdown(
                 project_name,
                 target_fmt,
                 languages,
@@ -959,37 +1007,6 @@ def agent_export_cmd(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
                 frameworks,
                 build_tool,
             )
-            filename = _OUTPUT_FILENAMES[target_fmt]
-            filepath = str(root / filename)
-            _write_with_preserve(filepath, content)
-            written.append(filename)
-            total_bytes += len(content.encode("utf-8"))
-
-        size_kb = round(total_bytes / 1024, 1)
-        click.echo(f"VERDICT: {verdict}")
-        if len(written) == 1:
-            click.echo(f"Wrote {written[0]} ({size_kb} KB, {section_count} sections)")
-        else:
-            click.echo(f"Wrote bundle: {', '.join(written)} ({size_kb} KB total, {section_count} sections each)")
-    elif output:
-        target_fmt = formats[0]
-        content = _generate_markdown(
-            project_name,
-            target_fmt,
-            languages,
-            stats,
-            layout,
-            key_files,
-            entry_points,
-            hotspots,
-            test_info,
-            health,
-            layers,
-            clusters,
-            build_cmd,
-            test_cmd,
-            frameworks,
-            build_tool,
         )
         _write_with_preserve(output, content)
         size_kb = round(len(content.encode("utf-8")) / 1024, 1)
@@ -997,23 +1014,27 @@ def agent_export_cmd(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
         click.echo(f"Wrote {output} ({size_kb} KB, {section_count} sections)")
     else:
         target_fmt = formats[0]
-        content = _generate_markdown(
-            project_name,
-            target_fmt,
-            languages,
-            stats,
-            layout,
-            key_files,
-            entry_points,
-            hotspots,
-            test_info,
-            health,
-            layers,
-            clusters,
-            build_cmd,
-            test_cmd,
-            frameworks,
-            build_tool,
+        content = (
+            brief_content
+            if brief_mode
+            else _generate_markdown(
+                project_name,
+                target_fmt,
+                languages,
+                stats,
+                layout,
+                key_files,
+                entry_points,
+                hotspots,
+                test_info,
+                health,
+                layers,
+                clusters,
+                build_cmd,
+                test_cmd,
+                frameworks,
+                build_tool,
+            )
         )
         click.echo(f"VERDICT: {verdict}\n")
         click.echo(content)

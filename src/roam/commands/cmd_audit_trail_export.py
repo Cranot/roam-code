@@ -56,7 +56,10 @@ def _filter_records(
     if since:
         out = [r for r in out if (r.get("timestamp") or "") >= since]
     if until:
-        out = [r for r in out if (r.get("timestamp") or "") <= until]
+        if len(until) == 10:
+            out = [r for r in out if (r.get("timestamp") or "")[:10] <= until]
+        else:
+            out = [r for r in out if (r.get("timestamp") or "") <= until]
     if verdict_filter:
         wanted = {v.strip().upper() for v in verdict_filter.split(",")}
         out = [r for r in out if (r.get("verdict") or "").upper() in wanted]

@@ -869,14 +869,16 @@ def envelope_truncation_disclosures(data: object) -> list[str]:
     if not isinstance(summary, dict) or not summary.get("truncated"):
         return []
 
-    reason = str(summary.get("truncation_reason") or "unknown")
+    reason = str(summary.get("truncation_reason") or summary.get("state") or "unknown")
     emitted = summary.get("emitted_counts")
     if isinstance(emitted, dict) and emitted:
         shown = ", ".join(f"{k}={v}" for k, v in sorted(emitted.items()))
+    elif "displayed" in summary and "total" in summary:
+        shown = f"{summary['displayed']} of {summary['total']} affected symbols"
     else:
         shown = "unrecorded"
     return [
-        f"Envelope payload was truncated before SARIF projection "
+        f"Analysis or envelope payload was truncated before SARIF projection "
         f"(reason={reason}; emitted {shown}). This document reports FEWER "
         f"results than the run measured; it is not a clean-scan result."
     ]
@@ -2714,7 +2716,10 @@ def impact_to_sarif(impact_data: dict) -> dict:
             )
         )
 
-    return to_sarif(_TOOL_NAME, _get_version(), rules, results)
+    return with_sarif_disclosures(
+        to_sarif(_TOOL_NAME, _get_version(), rules, results),
+        envelope_truncation_disclosures(impact_data),
+    )
 
 
 # -- Affected tests ---------------------------------------------------
@@ -2835,7 +2840,7 @@ def affected_tests_to_sarif(data: dict) -> dict:
     (rules catalogue is always emitted).
     """
     target = str(((data.get("summary") or {}).get("target")) or "<unknown>")
-    return _convert_parameterized_findings(
+    document = _convert_parameterized_findings(
         data.get("tests", []) or [],
         help_slug="affected-tests",
         rule_parameters=_AFFECTED_TESTS_RULES,
@@ -2845,6 +2850,8 @@ def affected_tests_to_sarif(data: dict) -> dict:
         level_mapper=_identity_level,
         context=target,
     )
+
+    return document
 
 
 # -- Test impact ------------------------------------------------------

@@ -121,7 +121,9 @@ COMMAND_ARGS = {
 # so real regressions in these commands get caught instead of silently
 # xfailed forever.
 FRAGILE_COMMANDS = {
-    "affected-tests",  # needs staged changes or a target with test coverage
+    # ``affected-tests`` was pruned on 2026-10-14: it now satisfies the JSON
+    # envelope contract on the minimal fixture (flagged by
+    # test_fragile_commands_allowlist_is_not_stale below).
     "coverage-gaps",  # needs test file mapping
     "deps",  # symbol resolution against minimal `models`/`service`/`utils`
     "report",  # may need specific report config or flags

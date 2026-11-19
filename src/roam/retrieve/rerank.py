@@ -22,6 +22,7 @@ wired through.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 from typing import Iterable
@@ -670,7 +671,7 @@ def _recency_boost(conn: sqlite3.Connection, candidates: list[dict], task: str) 
     # Suppress for historical queries — recent edits are anti-signal.
     if task:
         lowered = task.lower()
-        if any(tok in lowered for tok in _HISTORICAL_QUERY_TOKENS):
+        if _HISTORICAL_QUERY_TOKENS.intersection(re.findall(r"\b\w+\b", lowered)):
             return {}
 
     # Resolve candidate file_ids. Many candidates carry a path but

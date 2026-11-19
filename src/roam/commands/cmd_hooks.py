@@ -317,6 +317,7 @@ def _run_hook_operation_preserving_cli_contract(
                         primary_summary_key: primary,
                         secondary_summary_key: secondary,
                         "errors": errors,
+                        "partial_success": bool(errors),
                     },
                     hooks_dir=str(hooks_dir),
                     results=results,
@@ -345,9 +346,11 @@ def _verdict_for_git_reindex_install(installed: list[str], skipped: list[str], e
 
 
 def _verdict_for_git_reindex_uninstall(
-    removed: list[str], _not_installed: list[str], _errors: list[dict[str, str]]
+    removed: list[str], _not_installed: list[str], errors: list[dict[str, str]]
 ) -> str:
     """Summarize uninstall outcomes around disabling git-triggered indexing."""
+    if errors:
+        return f"Removed {len(removed)} hook(s) with {len(errors)} error(s)."
     if removed:
         return f"Removed roam hooks from: {', '.join(removed)}."
     return "No roam hooks found to remove."

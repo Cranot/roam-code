@@ -501,7 +501,15 @@ def complexity(
             return
 
         if bumpy_road:
-            _bumpy_road(conn, json_mode, limit, threshold)
+            _bumpy_road(
+                conn,
+                json_mode,
+                limit,
+                threshold,
+                include_tooling=include_tooling,
+                no_framework=no_framework,
+                no_imports=no_imports,
+            )
             return
 
         # Build query
@@ -1161,7 +1169,7 @@ def _by_file_output(conn, rows, json_mode, *, warnings: list[str] | None = None)
         click.echo()
 
 
-def _bumpy_road(conn, json_mode, limit, threshold):
+def _bumpy_road(conn, json_mode, limit, threshold, *, include_tooling=False, no_framework=False, no_imports=False):
     """Detect bumpy-road pattern: files with many moderate-complexity functions.
 
     A file with 10 functions at complexity 8 is harder to maintain than
@@ -1170,22 +1178,38 @@ def _bumpy_road(conn, json_mode, limit, threshold):
     """
     min_score = threshold or 5  # Minimum per-function complexity to count
 
-    rows = conn.execute(
-        """SELECT f.path, COUNT(*) as func_count,
-                  SUM(sm.cognitive_complexity) as total,
-                  AVG(sm.cognitive_complexity) as avg_cc,
-                  MAX(sm.cognitive_complexity) as max_cc,
-                  MAX(sm.nesting_depth) as max_nest
+    symbol_rows = conn.execute(
+        """SELECT f.path AS file_path, s.name, s.kind,
+                  sm.cognitive_complexity, sm.nesting_depth
            FROM symbol_metrics sm
            JOIN symbols s ON sm.symbol_id = s.id
            JOIN files f ON s.file_id = f.id
-           WHERE sm.cognitive_complexity >= ?
-           GROUP BY f.path
-           HAVING COUNT(*) >= 3
-           ORDER BY SUM(sm.cognitive_complexity) DESC
-           LIMIT ?""",
-        (min_score, limit),
+           WHERE sm.cognitive_complexity >= ?""",
+        (min_score,),
     ).fetchall()
+    symbol_rows = _apply_role_filters(
+        symbol_rows, include_tooling=include_tooling, no_framework=no_framework, no_imports=no_imports
+    )
+    grouped = {}
+    for symbol in symbol_rows:
+        grouped.setdefault(symbol["file_path"], []).append(symbol)
+    rows = []
+    for path, symbols in grouped.items():
+        if len(symbols) < 3:
+            continue
+        scores = [symbol["cognitive_complexity"] for symbol in symbols]
+        nesting = [symbol["nesting_depth"] for symbol in symbols if symbol["nesting_depth"] is not None]
+        rows.append(
+            {
+                "path": path,
+                "func_count": len(symbols),
+                "total": sum(scores),
+                "avg_cc": sum(scores) / len(scores),
+                "max_cc": max(scores),
+                "max_nest": max(nesting) if nesting else None,
+            }
+        )
+    rows = sorted(rows, key=lambda row: (-row["total"], row["path"]))[:limit]
 
     if not rows:
         verdict = "No bumpy-road files found."

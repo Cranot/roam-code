@@ -13073,7 +13073,8 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
     # instead. See the helper for the per-flag A/B evidence. (W186
     # cross-file-survey demote was dropped in W196 — see helper docstring.)
     _gates = _compute_lean_gate_flags(plan)
-    art = _promote_artifact_when_probe_result_is_answer(plan, select_artifact(plan))
+    declared_art = select_artifact(plan)
+    art = _promote_artifact_when_probe_result_is_answer(plan, declared_art)
     art = _apply_restraint_gates_to_artifact(art, _gates)
 
     # W33: if eligible for L1 probe AND named_paths exist, try probe envelope
@@ -13107,7 +13108,8 @@ def compile_for_artifact(plan: "PlanV0", cwd: str | None = None) -> tuple[dict, 
     # Probe was eligible but returned no procedure-specific data — mark
     # the fallback envelope so callers / telemetry can detect "L1 was
     # tried but degraded" vs "L1 wasn't even attempted" (H3 fix).
-    env, label = _fallback_envelope_after_probe_degrades(plan, art, cwd, probe_attempted)
+    fallback_art = declared_art if art == "l1_probe" else art
+    env, label = _fallback_envelope_after_probe_degrades(plan, fallback_art, cwd, probe_attempted)
     return _emit_result_after_required_compile_side_effects(plan, env, label, cwd, started_at)
 
 

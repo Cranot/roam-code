@@ -573,6 +573,8 @@ def _route_ids_that_preserve_method_fidelity(
         return path_candidate_ids
 
     method_route_ids = set(backend_lookup.route_ids_by_method.get(call_method, set()))
+    for method in ("ANY", "RESOURCE"):
+        method_route_ids.update(backend_lookup.route_ids_by_method.get(method, set()))
     method_route_ids.update(backend_lookup.methodless_route_ids)
     return path_candidate_ids & method_route_ids
 

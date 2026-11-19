@@ -436,6 +436,16 @@
       "function": "capsule",
       "module": "roam.commands.cmd_capsule"
     },
+    "case-table": {
+      "flags": [
+        "--call-sites",
+        "--max-rows",
+        "--pairwise",
+        "symbol"
+      ],
+      "function": "case_table",
+      "module": "roam.commands.cmd_case_table"
+    },
     "causal-graph": {
       "flags": [
         "--kind",
@@ -2718,6 +2728,7 @@
         "--files-from",
         "--mode",
         "--policy-profile",
+        "--require-coverage",
         "--risk-level",
         "--risk-path",
         "--risk-reason",
@@ -2945,7 +2956,7 @@
     "compliance": 14,
     "core": 17,
     "debug": 72,
-    "full": 246,
+    "full": 259,
     "refactor": 73,
     "review": 74
   },
@@ -3178,12 +3189,14 @@
       "roam_batch_get",
       "roam_batch_search",
       "roam_bisect_blame",
+      "roam_blame_reviewers",
       "roam_boundary",
       "roam_breaking_changes",
       "roam_brief",
       "roam_budget_check",
       "roam_bus_factor",
       "roam_capsule_export",
+      "roam_case_table",
       "roam_catalog",
       "roam_causal_graph",
       "roam_cga_emit",
@@ -3200,6 +3213,8 @@
       "roam_compare",
       "roam_compatibility",
       "roam_compile",
+      "roam_compiler_corpus",
+      "roam_compiler_health",
       "roam_complete",
       "roam_complexity_report",
       "roam_congestion",
@@ -3210,6 +3225,7 @@
       "roam_critique",
       "roam_cut",
       "roam_cut_analysis",
+      "roam_cycle_break",
       "roam_cycles",
       "roam_dark_matter",
       "roam_dashboard",
@@ -3221,8 +3237,10 @@
       "roam_dev_profile",
       "roam_diagnose",
       "roam_diagnose_issue",
+      "roam_dict_consistency",
       "roam_diff",
       "roam_disambiguate",
+      "roam_dispatch_trace",
       "roam_doc_drift",
       "roam_doc_intent",
       "roam_doc_staleness",
@@ -3235,6 +3253,7 @@
       "roam_effects",
       "roam_endpoints",
       "roam_entry_points",
+      "roam_envelope_diff",
       "roam_eval_retrieve",
       "roam_evidence_diff",
       "roam_evidence_doctor",
@@ -3276,6 +3295,7 @@
       "roam_hotspots",
       "roam_hover",
       "roam_idempotency",
+      "roam_ignore_drift",
       "roam_impact",
       "roam_ingest_trace",
       "roam_init",
@@ -3283,6 +3303,7 @@
       "roam_invariants",
       "roam_layers",
       "roam_llm_smells",
+      "roam_magic_numbers",
       "roam_map",
       "roam_metrics",
       "roam_metrics_push",
@@ -3337,6 +3358,7 @@
       "roam_review_change",
       "roam_risk",
       "roam_rules_check",
+      "roam_rules_suggest",
       "roam_rules_validate",
       "roam_runtime_hotspots",
       "roam_safe_delete",
@@ -3359,6 +3381,7 @@
       "roam_suggest_refactoring",
       "roam_suggest_reviewers",
       "roam_supply_chain",
+      "roam_surface_gaps",
       "roam_symbol",
       "roam_syntax_check",
       "roam_taint",
@@ -3383,6 +3406,7 @@
       "roam_verify_imports",
       "roam_vibe_check",
       "roam_visualize",
+      "roam_vue_emits",
       "roam_vuln_map",
       "roam_vuln_reach",
       "roam_weather",
@@ -3717,6 +3741,12 @@
       "threshold",
       "top_n"
     ],
+    "roam_blame_reviewers": [
+      "commit_range",
+      "root",
+      "staged",
+      "top_n"
+    ],
     "roam_boundary": [
       "base_ref",
       "changed_range",
@@ -3752,6 +3782,13 @@
       "no_signatures",
       "redact_paths",
       "root"
+    ],
+    "roam_case_table": [
+      "call_sites",
+      "max_rows",
+      "pairwise",
+      "root",
+      "symbol"
     ],
     "roam_catalog": [
       "root"
@@ -3849,6 +3886,14 @@
       "route",
       "task"
     ],
+    "roam_compiler_corpus": [
+      "corpus_path",
+      "limit",
+      "root"
+    ],
+    "roam_compiler_health": [
+      "root"
+    ],
     "roam_complete": [
       "kind",
       "limit",
@@ -3914,6 +3959,9 @@
       "root",
       "top_n"
     ],
+    "roam_cycle_break": [
+      "root"
+    ],
     "roam_cycles": [
       "actionable_only",
       "limit",
@@ -3975,6 +4023,11 @@
       "root",
       "symbol"
     ],
+    "roam_dict_consistency": [
+      "contains",
+      "prefix",
+      "root"
+    ],
     "roam_diff": [
       "commit_range",
       "root",
@@ -3984,6 +4037,11 @@
       "limit",
       "root",
       "symbol"
+    ],
+    "roam_dispatch_trace": [
+      "counterfactual",
+      "prompt",
+      "root"
     ],
     "roam_doc_drift": [
       "ci",
@@ -4058,6 +4116,12 @@
     "roam_entry_points": [
       "limit",
       "protocol",
+      "root"
+    ],
+    "roam_envelope_diff": [
+      "a",
+      "b",
+      "from_cache",
       "root"
     ],
     "roam_eval_retrieve": [
@@ -4335,6 +4399,9 @@
       "symbol",
       "top"
     ],
+    "roam_ignore_drift": [
+      "root"
+    ],
     "roam_impact": [
       "root",
       "symbol"
@@ -4370,6 +4437,12 @@
     "roam_llm_smells": [
       "min_severity",
       "root"
+    ],
+    "roam_magic_numbers": [
+      "cluster",
+      "include_trivial",
+      "root",
+      "threshold"
     ],
     "roam_map": [
       "budget",
@@ -4683,6 +4756,11 @@
       "root",
       "rules_dir"
     ],
+    "roam_rules_suggest": [
+      "commit_range",
+      "root",
+      "tier"
+    ],
     "roam_rules_validate": [
       "against",
       "input_path",
@@ -4803,6 +4881,9 @@
     "roam_supply_chain": [
       "root",
       "top"
+    ],
+    "roam_surface_gaps": [
+      "root"
     ],
     "roam_symbol": [
       "full",
@@ -4928,6 +5009,9 @@
       "format",
       "limit",
       "no_clusters",
+      "root"
+    ],
+    "roam_vue_emits": [
       "root"
     ],
     "roam_vuln_map": [

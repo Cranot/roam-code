@@ -55,7 +55,7 @@ def _pin_status_python(spec: str) -> str:
 def _pin_status_npm(spec: str) -> str:
     if not spec or spec in ("*", "latest", "x", ""):
         return "unpinned"
-    if re.match(r"^=?[0-9]", spec):
+    if re.fullmatch(r"=?[0-9]+(?:\.[0-9]+){2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", spec):
         return "exact"
     if spec.startswith(("^", "~")):
         return "range"

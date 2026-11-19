@@ -47,6 +47,9 @@ AUDITED_NON_IDEMPOTENT = {
     "roam_test_scaffold",
     "roam_trends",
     "roam_verify",
+    # roam envelope-diff: a fresh prompt comparison compiles the artifact and
+    # persists cache and telemetry, so the wrapper is intentionally conservative.
+    "roam_envelope_diff",
 }
 
 

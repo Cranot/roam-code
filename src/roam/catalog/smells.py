@@ -2524,10 +2524,10 @@ def _collect_numeric_literals_in_function(
     }
 
     def visit(node: ast.AST) -> None:
+        handler = _handlers.get(type(node))
+        if handler is not None and handler(node):
+            return
         for child in ast.iter_child_nodes(node):
-            handler = _handlers.get(type(child))
-            if handler is not None and handler(child):
-                continue
             visit(child)
 
     # Iterate the function BODY directly so the def's own signature defaults

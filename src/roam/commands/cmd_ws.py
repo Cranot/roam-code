@@ -997,7 +997,7 @@ def _detect_role(repo_path: Path) -> str:
             deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
             if any(k in deps for k in ("vue", "react", "angular", "svelte", "next", "nuxt")):
                 return "frontend"
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
             pass
 
     # Check for common backend indicators

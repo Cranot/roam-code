@@ -373,8 +373,8 @@ def read_permit(
     except OSError as exc:
         _emit(f"permit_read_failed:{path.name}:{type(exc).__name__}:{exc}")
         return None
-    except json.JSONDecodeError:
-        _emit(f"permit_corrupt:{path.name}:JSONDecodeError")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        _emit(f"permit_corrupt:{path.name}:{type(exc).__name__}")
         return None
     if not isinstance(raw, dict):
         _emit(f"permit_corrupt:{path.name}:NotAJsonObject")

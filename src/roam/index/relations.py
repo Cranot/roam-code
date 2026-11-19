@@ -631,11 +631,7 @@ def _build_casefolded_symbols_for_language_fallback(symbols_by_name: dict[str, l
     symbols_by_name_lower: dict[str, list[dict]] = {}
     for name, sym_list in symbols_by_name.items():
         lower = name.lower()
-        if lower != name:  # Only add if case differs to save memory
-            symbols_by_name_lower.setdefault(lower, []).extend(sym_list)
-        # Always add lowercase key so lookups work
-        if lower not in symbols_by_name_lower:
-            symbols_by_name_lower[lower] = sym_list
+        symbols_by_name_lower.setdefault(lower, []).extend(sym_list)
     return symbols_by_name_lower
 
 

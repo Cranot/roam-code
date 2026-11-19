@@ -585,6 +585,10 @@ def _materialise_from_constitution(
         return None
     if constitution is None:
         return None
+    if constitution.metadata.get("unparseable"):
+        reason = constitution.metadata.get("parse_error", "unparseable constitution")
+        sys.stderr.write(f"[modes.policy] constitution policy unavailable: {reason}\n")
+        return None
 
     # Generated snapshots track new defaults only while their recorded
     # semantic digest still matches the declared block. Legacy, malformed, or

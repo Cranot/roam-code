@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import bisect
 import logging
 import os
 import re
@@ -274,7 +273,6 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
     Preserves line numbers by replacing non-script regions with blank lines.
     """
     text = source.decode("utf-8", errors="replace")
-    lines = text.split("\n")
     effective_lang = "javascript"
 
     # Find all <script...>...</script> regions
@@ -283,37 +281,18 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
         re.DOTALL,
     )
 
-    # Track which lines belong to script blocks
-    script_line_flags = [False] * len(lines)
-
-    # Precompute newline offsets once so each offset -> line-number lookup is a
-    # bisect rather than an O(offset) rescan of the prefix string. The count of
-    # newlines before character offset `pos` equals the number of newline
-    # offsets strictly less than `pos`, i.e. bisect_left(newline_offsets, pos).
-    newline_offsets = [i for i, ch in enumerate(text) if ch == "\n"]
+    # Blank non-script text while preserving source positions and line numbers.
+    output = ["\n" if ch == "\n" else " " for ch in text]
 
     for match in script_pattern.finditer(text):
         attrs = match.group("attrs") or ""
         if 'lang="ts"' in attrs or "lang='ts'" in attrs or 'lang="tsx"' in attrs:
             effective_lang = "typescript"
 
-        # Find the line range for the script content (excluding the tags)
-        # +1 to skip the opening tag line, no +1 on end to exclude </script>
-        content_start = bisect.bisect_left(newline_offsets, match.start("body")) + 1
-        content_end = bisect.bisect_left(newline_offsets, match.end("body"))
+        start, end = match.span("body")
+        output[start:end] = text[start:end]
 
-        for i in range(content_start, min(content_end, len(lines))):
-            script_line_flags[i] = True
-
-    # Build output: keep script lines, blank out everything else
-    output_lines = []
-    for i, line in enumerate(lines):
-        if script_line_flags[i]:
-            output_lines.append(line)
-        else:
-            output_lines.append("")
-
-    processed = "\n".join(output_lines)
+    processed = "".join(output)
     return processed.encode("utf-8"), effective_lang
 
 

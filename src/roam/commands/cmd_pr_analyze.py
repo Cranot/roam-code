@@ -412,6 +412,8 @@ def _acquire_diff(
         try:
             text = Path(input_file).read_text(encoding="utf-8")
         except OSError:
+            if error_out is not None:
+                error_out.append("diff_failed")
             return ""
         _mark("input_file")
         return text
@@ -429,6 +431,9 @@ def _acquire_diff(
             from roam.observability import log_swallowed
 
             log_swallowed("cmd_pr_analyze:acquire_diff:stdin", _exc)
+            if error_out is not None:
+                error_out.append("diff_failed")
+            return ""
 
     git_args = ["git", "diff"]
     if staged:
@@ -455,6 +460,8 @@ def _acquire_diff(
         from roam.observability import log_swallowed
 
         log_swallowed("cmd_pr_analyze:acquire_diff:git_diff", _exc)
+    if error_out is not None:
+        error_out.append("diff_failed")
     return ""
 
 
@@ -1538,7 +1545,11 @@ def _serve_from_cache(
         )
     else:
         click.echo(f"VERDICT: {s.get('verdict', '?')} [cache hit]")
-    if gate and (s.get("verdict") == "BLOCK" or s.get("state") == "diff_failed"):
+    if gate and (
+        s.get("verdict") == "BLOCK"
+        or s.get("state") in ("diff_failed", "fetch_failed", "url_invalid")
+        or s.get("diff_source_error")
+    ):
         # W1468: the cached path must refuse on the same states the live one
         # does, or a replay turns a refusal back into an authorization.
         sys.exit(EXIT_GATE_BLOCK)
@@ -2317,34 +2328,38 @@ def pr_analyze_command(
 
     _diff_source: list[str] = []
     _diff_fetch_errors: list[str] = []
-    diff_text = (
-        _run_check(
-            "acquire_diff",
-            _acquire_diff,
-            input_file,
-            commit_range,
-            staged,
-            diff_from_pr=diff_from_pr,
-            source_out=_diff_source,
-            error_out=_diff_fetch_errors,
-            default="",
-        )
-        or ""
+    diff_text = _run_check(
+        "acquire_diff",
+        _acquire_diff,
+        input_file,
+        commit_range,
+        staged,
+        diff_from_pr=diff_from_pr,
+        source_out=_diff_source,
+        error_out=_diff_fetch_errors,
+        default=None,
     )
+    if diff_text is None:
+        _diff_fetch_errors.append("diff_failed")
+        diff_text = ""
 
     # Cache lookup — bypasses pr-prep (the slow part) on hit.
     cache_dir_path = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
     rules_path = Path(rules_file) if rules_file else (Path(".roam") / "rules.yml")
-    if cache and _serve_from_cache(
-        diff_text,
-        rules_path,
-        block_threshold,
-        language_override,
-        cache_dir_path,
-        json_mode=json_mode,
-        quiet=quiet,
-        gate=gate,
-        token_budget=token_budget,
+    if (
+        cache
+        and not _diff_fetch_errors
+        and _serve_from_cache(
+            diff_text,
+            rules_path,
+            block_threshold,
+            language_override,
+            cache_dir_path,
+            json_mode=json_mode,
+            quiet=quiet,
+            gate=gate,
+            token_budget=token_budget,
+        )
     ):
         return
 
@@ -2425,9 +2440,9 @@ def pr_analyze_command(
     # to bundle_summary so machine consumers can distinguish a failed fetch from
     # a legitimately-empty diff.
     _diff_fetch_error: str | None = _diff_fetch_errors[0] if _diff_fetch_errors else None
-    if _diff_fetch_error and not has_diff_text and prep_state == "no_changes":
+    if _diff_fetch_error:
         prep_state = _diff_fetch_error  # "url_invalid" or "fetch_failed"
-        prep_state_reason = f"--diff-from-pr fetch failed: {_diff_fetch_error}"
+        prep_state_reason = f"diff acquisition failed: {_diff_fetch_error}"
 
     _verdict_result = _run_check(
         "determine_verdict",
@@ -2451,7 +2466,7 @@ def pr_analyze_command(
     if prep_state == "no_changes":
         verdict = "NOCHANGES"
         reasons = [prep_state_reason or "no changes to analyze"]
-    elif prep_state == "diff_failed":
+    elif prep_state in ("diff_failed", "url_invalid", "fetch_failed"):
         # Promote to at least REVIEW so the failure surfaces to humans.
         if verdict in ("SAFE", "INTENTIONAL"):
             verdict = "REVIEW"
@@ -2519,7 +2534,7 @@ def pr_analyze_command(
     # distinguish a failed fetch from a legitimately-empty diff.
     if _diff_fetch_error:
         bundle_summary["diff_source_error"] = _diff_fetch_error
-        bundle_summary["diff_source"] = "diff_from_pr"
+        bundle_summary["diff_source"] = _diff_source[0] if _diff_source else "unknown"
 
     bundle = {
         "summary": bundle_summary,
@@ -2557,7 +2572,7 @@ def pr_analyze_command(
         except OSError as exc:
             bundle["baseline_save_error"] = str(exc)
 
-    if cache:
+    if cache and not _diff_fetch_errors:
         # Persist the analysis envelope so future runs with the same diff +
         # rules + threshold replay instantly. Save AFTER all post-processing
         # (drift + baseline) so the cached envelope is the final canonical one.
@@ -2849,7 +2864,7 @@ def pr_analyze_command(
     # W1468: a gate may not authorize on a diff it could not read. BLOCK is
     # the risk answer; ``diff_failed`` is the absence of one, and exiting 0
     # there published "there is nothing to gate" about a substrate failure.
-    if gate and (verdict == "BLOCK" or prep_state == "diff_failed"):
+    if gate and (verdict == "BLOCK" or prep_state in ("diff_failed", "fetch_failed", "url_invalid")):
         sys.exit(EXIT_GATE_BLOCK)
 
 

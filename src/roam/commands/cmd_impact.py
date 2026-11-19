@@ -623,7 +623,7 @@ def impact_cmd(ctx, name, hops, depth, max_callers, timeout):
         resolution_tier = sym.get("_resolution_tier", "symbol")
         resolution_block = resolution_disclosure(resolution_tier, target=sym["qualified_name"] or sym["name"])
 
-        if not json_mode:
+        if not json_mode and not sarif_mode:
             click.echo(
                 f"{abbrev_kind(sym['kind'])}  {sym['qualified_name'] or sym['name']}  {loc(sym['file_path'], sym['line_start'])}"
             )

@@ -314,6 +314,8 @@ def _open_sqlite_connection(
         uri = db_path.as_uri() + "?mode=ro"
         return sqlite3.connect(uri, uri=True, timeout=_SQLITE_LOCK_TIMEOUT_S)
     except (sqlite3.OperationalError, ValueError) as exc:
+        if not db_path.exists():
+            raise sqlite3.OperationalError(f"unable to open database file: {db_path}") from exc
         if warnings_out is not None:
             warnings_out.append(f"roam_readonly_uri_fallback:{db_path}:{type(exc).__name__}:{exc}")
         return sqlite3.connect(str(db_path), timeout=_SQLITE_LOCK_TIMEOUT_S)

@@ -30,7 +30,15 @@ def _extract_string_dicts(tree: ast.AST) -> dict[str, list[str]]:
     assignment (incl. annotated assigns) in `tree` whose keys are string
     literals. Handles both `X = {...}` and `X: dict = {...}`."""
     dicts: dict[str, list[str]] = {}
-    for node in ast.walk(tree):
+
+    def module_nodes(node):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return
+        yield node
+        for child in ast.iter_child_nodes(node):
+            yield from module_nodes(child)
+
+    for node in module_nodes(tree) if isinstance(tree, ast.Module) else ():
         target_name = None
         value = None
         if isinstance(node, ast.Assign) and len(node.targets) == 1:

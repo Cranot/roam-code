@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from roam.commands.resolve import find_symbol
 from roam.index.parser import detect_language
@@ -330,14 +331,15 @@ def move_symbol(conn, symbol_name: str, target_file: str, dry_run: bool = True) 
                 )
             )
         except OSError as e:
-            # Rollback already performed inside _apply_move; surface a
-            # structured error envelope so callers (and the agent) can
-            # detect partial-failure recovery without parsing tracebacks.
-            result["error"] = f"apply failed, changes rolled back: {e}"
+            unrestored = getattr(e, "unrestored_files", [])
+            recovery = "restore failed for " + ", ".join(unrestored) if unrestored else "changes rolled back"
+            result["error"] = f"apply failed, {recovery}: {e}"
+            if unrestored:
+                result["unrestored_files"] = unrestored
             result["isError"] = True
             result["error_code"] = "APPLY_FAILED"
             result["files_modified"] = []
-            result.setdefault("warnings", []).append(f"apply failed and was rolled back: {e}")
+            result.setdefault("warnings", []).append(result["error"])
 
     return result
 
@@ -358,26 +360,30 @@ def _apply_move(plan: _MoveApplyPlan):
 
     written: list[str] = []
     try:
-        written.append(_write_symbol_to_target(plan))
-        written.append(_remove_symbol_from_source(plan))
-        written.extend(_rewrite_caller_imports(plan))
-    except OSError:
-        _rollback_move(written, snapshots, plan.target_file, target_existed)
+        written.append(plan.target_file)
+        _write_symbol_to_target(plan)
+        written.append(plan.source_file)
+        _remove_symbol_from_source(plan)
+        _rewrite_caller_imports(plan, written)
+    except OSError as exc:
+        unrestored = _rollback_move(written, snapshots, plan.target_file, target_existed)
+        if unrestored:
+            exc.unrestored_files = unrestored
         raise
 
 
-def _build_move_snapshots(plan: _MoveApplyPlan, target_existed: bool) -> dict[str, list[str]]:
+def _build_move_snapshots(plan: _MoveApplyPlan, target_existed: bool) -> dict[str, bytes]:
     """Snapshot the pre-apply state of every file the move may touch."""
-    snapshots: dict[str, list[str]] = {}
+    snapshots: dict[str, bytes] = {}
     if target_existed:
-        snapshots[plan.target_file] = list(plan.target_lines)
-    snapshots[plan.source_file] = list(plan.source_lines)
+        snapshots[plan.target_file] = Path(plan.target_file).read_bytes()
+    snapshots[plan.source_file] = Path(plan.source_file).read_bytes()
     for ref_file in plan.referencing_files:
         if ref_file == plan.source_file:
             continue
         if ref_file in snapshots:
             continue
-        snapshots[ref_file] = _read_file(ref_file)
+        snapshots[ref_file] = Path(ref_file).read_bytes()
     return snapshots
 
 
@@ -398,10 +404,11 @@ def _remove_symbol_from_source(plan: _MoveApplyPlan) -> str:
     return plan.source_file
 
 
-def _rewrite_caller_imports(plan: _MoveApplyPlan) -> list[str]:
+def _rewrite_caller_imports(plan: _MoveApplyPlan, written: list[str] | None = None) -> list[str]:
     """Update imports in referencing files so they resolve to the new module."""
     sym_name = plan.sym["name"]
-    written: list[str] = []
+    if written is None:
+        written = []
     for ref_file in plan.referencing_files:
         if ref_file == plan.source_file:
             continue
@@ -413,14 +420,14 @@ def _rewrite_caller_imports(plan: _MoveApplyPlan) -> list[str]:
         new_line = _rewrite_import(old_line, plan.old_module, plan.new_module)
         if old_line != new_line:
             ref_lines[import_idx] = new_line
-            _write_file(ref_file, ref_lines)
             written.append(ref_file)
+            _write_file(ref_file, ref_lines)
     return written
 
 
 def _restore_move_path_preserving_primary_failure(
     path: str,
-    snapshots: dict[str, list[str]],
+    snapshots: dict[str, bytes],
     target_file: str,
     target_existed: bool,
 ) -> None:
@@ -431,20 +438,22 @@ def _restore_move_path_preserving_primary_failure(
         return
 
     original = snapshots.get(path)
-    if original is not None:
-        _write_file(path, original)
+    if original is not None and (not os.path.isfile(path) or Path(path).read_bytes() != original):
+        with open(path, "wb") as stream:
+            stream.write(original)
 
 
 def _rollback_move(
     written: list[str],
-    snapshots: dict[str, list[str]],
+    snapshots: dict[str, bytes],
     target_file: str,
     target_existed: bool,
-) -> None:
+) -> list[str]:
     """Restore every file that was successfully written during a failed
     apply, in reverse order. If the target file did not exist before the
     apply, remove it entirely so the repo has no leftover duplicate
     definition."""
+    unrestored = []
     for path in reversed(written):
         try:
             _restore_move_path_preserving_primary_failure(
@@ -460,7 +469,10 @@ def _rollback_move(
             # failed rollback leaves the repo in a PARTIALLY-MODIFIED state;
             # surface the lineage so the user knows which file was not
             # restored, even though the primary OSError still propagates.
+            unrestored.append(path)
             log_swallowed(f"refactor.transforms:apply_move:rollback:{path}", exc)
+
+    return unrestored
 
 
 def _rename_resolve_target(conn, symbol_name: str, new_name: str) -> tuple[dict | None, dict | None]:

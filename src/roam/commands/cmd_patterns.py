@@ -31,7 +31,7 @@ def _is_test_or_detector_path(file_path):
     base = os.path.basename(p)
     if base.startswith("test_") or base.endswith("_test.py"):
         return True
-    if "tests/" in p or "test/" in p or "__tests__/" in p or "spec/" in p:
+    if any(part in {"tests", "test", "__tests__", "spec"} for part in p.split("/")[:-1]):
         return True
     # Exclude the patterns detector itself to avoid self-referential matches
     if base == "cmd_patterns.py":

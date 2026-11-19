@@ -40,7 +40,9 @@ _DEF_PARAM_RE = re.compile(r"(?:async\s+)?def\s+\w+\s*\(([^)]*)\)")
 # closing paren of the def line.
 _DEF_RETURN_RE = re.compile(r"(?:async\s+)?def\s+\w+\s*\([^)]*\)\s*->")
 _TOTAL_PUBLIC_DEFINITION = "public Python functions/methods; test files excluded unless --include-tests is set"
-_COVERAGE_PCT_DEFINITION = "(total_public - max(no_return_annotation, untyped_params)) * 100 // total_public"
+_COVERAGE_PCT_DEFINITION = (
+    "(total_public - (no_return_annotation + untyped_params - missing_both)) * 100 // total_public"
+)
 
 
 def _py_types_agent_facts(
@@ -172,6 +174,7 @@ def _type_stats(rows) -> dict:
         "total": len(rows),
         "no_return": 0,
         "untyped_params": 0,
+        "missing_both": 0,
         "uses_any": 0,
         "old_typing": 0,
         "by_file": {},
@@ -181,6 +184,7 @@ def _type_stats(rows) -> dict:
         health = _signature_health(row["signature"])
         stats["no_return"] += int(not health["has_return"])
         stats["untyped_params"] += int(health["params_untyped"] > 0)
+        stats["missing_both"] += int(not health["has_return"] and health["params_untyped"] > 0)
         stats["uses_any"] += int(health["uses_any"])
         stats["old_typing"] += int(health["old_typing"])
         _update_by_file(stats["by_file"], row["path"], health)
@@ -190,8 +194,9 @@ def _type_stats(rows) -> dict:
     return stats
 
 
-def _coverage_pct(total: int, no_return: int, untyped_params: int) -> int:
-    return ((total - max(no_return, untyped_params)) * 100) // total
+def _coverage_pct(total: int, no_return: int, untyped_params: int, missing_both: int = 0) -> int:
+    missing = no_return + untyped_params - missing_both
+    return (max(0, total - missing) * 100) // total if total else 0
 
 
 def _type_verdict(coverage: int, total: int) -> str:
@@ -226,6 +231,7 @@ def _py_types_json_envelope(verdict: str, stats: dict, coverage: int, detail: bo
             "total_public": total,
             "total_public_definition": _TOTAL_PUBLIC_DEFINITION,
             "no_return_annotation": no_return,
+            "missing_both": stats["missing_both"],
             "untyped_params": untyped_params,
             "uses_any": uses_any,
             "old_typing": old_typing,
@@ -484,7 +490,7 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
         return
 
     stats = _type_stats(rows)
-    coverage = _coverage_pct(total, stats["no_return"], stats["untyped_params"])
+    coverage = _coverage_pct(total, stats["no_return"], stats["untyped_params"], stats["missing_both"])
     verdict = _type_verdict(coverage, total)
 
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False

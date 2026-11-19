@@ -71,7 +71,10 @@ def _validated_task_for_line(doc: dict[str, Any], path: Path, line_no: int) -> E
     task_text = (doc.get("task") or "").strip()
     if not task_text:
         raise ValueError(f"{path}:{line_no} missing 'task' field")
-    expected = tuple(doc.get("expected_files") or ())
+    expected_raw = doc.get("expected_files")
+    if not isinstance(expected_raw, list) or any(not isinstance(p, str) or not p.strip() for p in expected_raw):
+        raise ValueError(f"{path}:{line_no} 'expected_files' must be a non-empty list of file paths")
+    expected = tuple(expected_raw)
     if not expected:
         raise ValueError(f"{path}:{line_no} 'expected_files' must be non-empty")
     task_id = doc.get("task_id") or _slugify(task_text)

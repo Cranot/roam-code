@@ -9,6 +9,7 @@ JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import click
@@ -16,6 +17,10 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
     git_changed_files_against_ref as _git_changed_files,
+)
+from roam.commands.changed_files import (
+    git_mode_only_files,
+    unexamined_files_note,
 )
 from roam.commands.changed_files import (
     git_show_at_ref as _git_show,
@@ -295,13 +300,32 @@ def _read_current_file(root: Path, file_path: str) -> bytes | None:
     full_path = root / file_path
     try:
         return full_path.read_bytes()
-    except OSError:
+    except FileNotFoundError:
         return None
 
 
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
+
+
+def _classify_unexamined(root, base_ref: str, files: list[str]) -> list[dict]:
+    """Return ``{file, reason}`` for each changed file that yielded no symbols."""
+    if not files:
+        return []
+    from roam.languages.registry import get_language_for_file
+
+    mode_only = git_mode_only_files(root, base_ref)
+    out = []
+    for f in files:
+        if f in mode_only:
+            reason = "mode_only"
+        elif get_language_for_file(f) is None:
+            reason = "no_parser"
+        else:
+            reason = "no_symbols"
+        out.append({"file": f, "reason": reason})
+    return out
 
 
 @roam_capability(
@@ -370,13 +394,28 @@ def semantic_diff(ctx, base_ref):
     all_imports_added: list[dict] = []
     all_imports_removed: list[dict] = []
     files_analyzed = 0
+    unexamined: list[str] = []
+    read_failures: list[dict] = []
 
     for fpath in changed:
         # Get old version from the ref
-        old_source = _git_show(root, base_ref, fpath)
-
-        # Get current version from disk
-        new_source = _read_current_file(root, fpath)
+        try:
+            old_source = _git_show(root, base_ref, fpath)
+            if old_source is None:
+                # A missing blob can mean an added file or a failed read.
+                # Confirm absence before treating the old side as empty.
+                listing = subprocess.run(
+                    ["git", "ls-tree", "-z", "--name-only", base_ref, "--", fpath],
+                    cwd=str(root),
+                    capture_output=True,
+                    timeout=10,
+                )
+                if listing.returncode != 0 or listing.stdout:
+                    raise OSError("cannot read base file")
+            new_source = _read_current_file(root, fpath)
+        except (OSError, subprocess.SubprocessError):
+            read_failures.append({"file": fpath, "reason": "read_failed"})
+            continue
 
         # Extract symbols from both versions
         old_symbols = _extract_symbols_from_source(old_source, fpath) if old_source else []
@@ -387,6 +426,7 @@ def semantic_diff(ctx, base_ref):
         new_refs = _extract_references_from_source(new_source, fpath) if new_source else []
 
         if not old_symbols and not new_symbols:
+            unexamined.append(fpath)
             continue
 
         files_analyzed += 1
@@ -411,10 +451,14 @@ def semantic_diff(ctx, base_ref):
         len(all_added) + len(all_removed) + len(all_modified) + len(all_imports_added) + len(all_imports_removed)
     )
 
+    # Files with no extractable symbols were skipped above. Say so, with a
+    # reason, instead of presenting "0 changes in 0 files" as a clean result.
+    files_not_analyzed = _classify_unexamined(root, base_ref, unexamined) + read_failures
+
     verdict = (
         f"{total_changes} structural change{'s' if total_changes != 1 else ''} "
         f"in {files_analyzed} file{'s' if files_analyzed != 1 else ''}"
-    )
+    ) + unexamined_files_note(len(files_not_analyzed), len(changed))
 
     # 3. Output
     if json_mode:
@@ -425,6 +469,9 @@ def semantic_diff(ctx, base_ref):
                     summary={
                         "verdict": verdict,
                         "files_changed": files_analyzed,
+                        "files_changed_total": len(changed),
+                        # Changed files that were skipped make the analysis incomplete.
+                        "partial_success": bool(files_not_analyzed),
                         "symbols_added": len(all_added),
                         "symbols_removed": len(all_removed),
                         "symbols_modified": len(all_modified),
@@ -432,6 +479,7 @@ def semantic_diff(ctx, base_ref):
                         "imports_removed": len(all_imports_removed),
                     },
                     base_ref=base_ref,
+                    files_not_analyzed=files_not_analyzed,
                     symbols_added=all_added,
                     symbols_removed=all_removed,
                     symbols_modified=all_modified,
@@ -445,6 +493,11 @@ def semantic_diff(ctx, base_ref):
     # --- Text output ---
     click.echo(f"VERDICT: {verdict}")
     click.echo()
+    if files_not_analyzed:
+        click.echo("FILES NOT ANALYZED:")
+        for entry in files_not_analyzed:
+            click.echo(f"  {entry['file']} ({entry['reason']})")
+        click.echo()
 
     if all_added:
         click.echo(f"SYMBOLS ADDED ({len(all_added)}):")

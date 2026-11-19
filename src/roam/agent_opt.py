@@ -1020,14 +1020,22 @@ def _invoke_json(args: list[str]) -> tuple[dict | None, str | None]:
     if result.exit_code != 0:
         return None, f"command failed with exit code {result.exit_code}"
     text = result.output or ""
-    for start in range(len(text)):
-        if text[start] != "{":
-            continue
+    decode_error = None
+    decoder = json.JSONDecoder()
+    start = -1
+    for _ in range(64):
+        start = text.find("{", start + 1)
+        if start < 0:
+            break
         try:
-            return json.loads(text[start:]), None
+            value, end = decoder.raw_decode(text, start)
+            if isinstance(value, dict) and not text[end:].strip():
+                return value, None
+            decode_error = f"JSON decode failed at offset {start}: trailing output"
         except json.JSONDecodeError as e:
-            return None, f"JSON decode failed at offset {start}: {e}"
-    return None, "no JSON found in output"
+            decode_error = f"JSON decode failed at offset {start}: {e}"
+
+    return None, decode_error or "no JSON found in output"
 
 
 def harvest_command_envelopes(

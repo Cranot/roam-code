@@ -115,7 +115,11 @@ class JavaExtractor(LanguageExtractor):
 
         def handle_superclass(superclass_node, qualified):
             for superclass_child in superclass_node.children:
-                if superclass_child.type == "type_identifier":
+                if superclass_child.type in {"type_identifier", "generic_type", "scoped_type_identifier"}:
+                    # Unwrap the base type, excluding generic arguments and package qualifiers.
+                    while superclass_child.type in {"generic_type", "scoped_type_identifier"}:
+                        index = 0 if superclass_child.type == "generic_type" else -1
+                        superclass_child = superclass_child.named_children[index]
                     self._pending_inherits.append(
                         self._make_reference(
                             target_name=self.node_text(superclass_child, source),

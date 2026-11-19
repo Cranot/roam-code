@@ -453,7 +453,7 @@ def save_suppression(
     """Append a new suppression to ``.roam-suppressions.yml``.
 
     Creates the file if it does not exist.  Validates the status value.
-    Avoids adding duplicate suppressions (same rule + file + line).
+    Avoids adding duplicate suppressions (same rule + file + line + symbol).
 
     Parameters
     ----------
@@ -485,12 +485,13 @@ def save_suppression(
     # couldn't parse (hand-edited entries, foreign keys, unquoted reasons),
     # and a fully-unparseable file loaded as [] and was REPLACED by the one
     # new entry. Save must append, not normalise.
-    existing_typed = load_suppressions_typed(root)
+    existing = load_suppressions(root)
 
-    # Check for duplicates against the typed view (match keys: rule, file, line).
+    # Check for duplicates against the typed view (match keys: rule, file, line, symbol).
     norm_file = file.replace("\\", "/")
-    for sup in existing_typed:
-        if sup.rule == rule and sup.file == norm_file and sup.line == line:
+    for entry in existing:
+        sup = RuleFileSuppression.from_dict(entry)
+        if sup.rule == rule and sup.file == norm_file and sup.line == line and entry.get("symbol") == (symbol or None):
             # Already suppressed -- nothing to do
             return
 

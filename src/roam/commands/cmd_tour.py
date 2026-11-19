@@ -301,7 +301,7 @@ def _patterns(conn):
     total_edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
 
     # Test file ratio
-    test_files = conn.execute("SELECT COUNT(*) FROM files WHERE path LIKE '%test%' OR path LIKE '%spec%'").fetchone()[0]
+    test_files = conn.execute("SELECT COUNT(*) FROM files WHERE file_role = 'test'").fetchone()[0]
 
     # Health score — suppress when no source symbols (vacuous-max W805-JJJ-2)
     health_row = conn.execute(

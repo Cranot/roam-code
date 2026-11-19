@@ -1189,8 +1189,17 @@ def _constitution_from_loaded_data(data: dict, *, path: Path, source_text: str) 
         if isinstance(mode, str):
             modes[mode] = _as_list_of_str(items)
 
+    try:
+        version = int(data.get("version") or CONSTITUTION_SCHEMA_VERSION)
+    except (TypeError, ValueError, OverflowError):
+        return Constitution(
+            version=0,
+            metadata={"unparseable": True, "parse_error": f"Invalid version: {data.get('version')!r}"},
+            _path=path,
+        )
+
     return Constitution(
-        version=int(data.get("version") or CONSTITUTION_SCHEMA_VERSION),
+        version=version,
         metadata=_as_dict(data.get("metadata")),
         sources={str(k): str(v) for k, v in _as_dict(data.get("sources")).items() if isinstance(v, (str, int))},
         required_checks=required_checks,

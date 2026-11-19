@@ -661,3 +661,221 @@ def parse_source_with_grammar(source: bytes, language: str):
         return None, None, None
 
     return tree, source, language
+
+
+# ---------------------------------------------------------------------------
+# Per-file headers of a unified diff (mode-only, rename-only, binary)
+#
+# ``critique.checks.parse_diff`` opens a region only at a ``+++`` line, so a
+# diff entry with no hunks (mode flip, pure rename, binary change) never
+# appears in its output. These helpers read the ``diff --git`` headers so a
+# caller can count every changed file and say how many had no content hunks.
+# ---------------------------------------------------------------------------
+
+_DIFF_GIT_HEADER_RE = re.compile(r"^diff --git (.*)$")
+_C_ESCAPES = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11, "\\": 92, '"': 34}
+
+
+def _read_c_quoted(text: str) -> tuple[str, str]:
+    """Decode one git C-quoted token at the start of *text*; return (value, rest).
+
+    git quotes a path (core.quotePath default) when it holds a byte >= 0x80, a
+    control character, a double quote or a backslash: ``"caf\303\251.sh"``.
+    """
+    out = bytearray()
+    i = 1  # skip the opening quote
+    n = len(text)
+    while i < n and text[i] != '"':
+        ch = text[i]
+        if ch == "\\" and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt in "01234567":
+                j = i + 1
+                while j < n and j < i + 4 and text[j] in "01234567":
+                    j += 1
+                out.append(int(text[i + 1 : j], 8) & 0xFF)
+                i = j
+                continue
+            out.append(_C_ESCAPES.get(nxt, ord(nxt) & 0xFF))
+            i += 2
+            continue
+        out.extend(ch.encode("utf-8"))
+        i += 1
+    return out.decode("utf-8", errors="replace"), text[i + 1 :]
+
+
+def _unquote_path(text: str) -> str:
+    """Return *text* with git C-quoting removed (unquoted text is returned as is)."""
+    # Only the whitespace around a quoted token is dropped; a decoded name (or an
+    # unquoted rename/copy tail) keeps every byte git preserved, trailing spaces included.
+    if text.lstrip().startswith('"'):
+        return _read_c_quoted(text.lstrip())[0]
+    return text
+
+
+def _strip_side(path: str, prefix: str) -> str:
+    return path[len(prefix) :] if path.startswith(prefix) else path
+
+
+def _split_git_header(rest: str) -> tuple[str, str] | None:
+    """Split the tail of a ``diff --git`` line into (old path, new path)."""
+    rest = rest.lstrip()
+    prefixes = (("a/", "b/"), ("i/", "w/"), ("c/", "w/"), ("c/", "i/"), ("", ""))
+    if rest.startswith('"'):
+        old, remaining = _read_c_quoted(rest)
+        new = _unquote_path(remaining.lstrip())
+    else:
+        # Git leaves spaces in ordinary path names unquoted. An identical
+        # old/new name is unambiguous even when it contains " b/" itself.
+        for left, right in prefixes:
+            if not rest.startswith(left):
+                continue
+            size = (len(rest) - len(left) - len(right) - 1) // 2
+            if size > 0:
+                name = rest[len(left) : len(left) + size]
+                if rest == left + name + " " + right + name:
+                    return name, name
+        candidates = []
+        for left, right in prefixes[:-1]:
+            if rest.startswith(left):
+                for match in re.finditer(r" " + re.escape(right), rest):
+                    candidates.append((rest[: match.start()], rest[match.start() + 1 :]))
+                quoted = ' "' + right
+                if quoted in rest:
+                    old, new = rest.split(quoted, 1)
+                    return _strip_side(old, left), _strip_side(_unquote_path('"' + right + new), right)
+        if len(candidates) == 1:
+            old, new = candidates[0]
+        elif not candidates and len(rest.split(" ")) == 2:
+            old, new = rest.split(" ")
+        else:
+            return None
+    for left, right in prefixes[:-1]:
+        if old.startswith(left) and new.startswith(right):
+            return old[len(left) :], new[len(right) :]
+    return old, new
+
+
+def parse_diff_file_headers(text: str) -> list[dict]:
+    """Return one entry per ``diff --git`` header in *text*.
+
+    Each entry: ``path`` (new side), ``old_path``, ``kind`` and ``has_hunks``.
+    ``kind`` is one of ``content`` (a ``+++``/``@@`` section exists), ``binary``,
+    ``rename`` (rename or copy), ``mode`` (only a mode change) or ``other``.
+    ``old_mode``/``new_mode`` are present when the header carries them.
+    Git C-quoted paths (non-ASCII, quotes, control characters) are decoded.
+    Plain ``diff -u`` input has no ``diff --git`` lines and yields ``[]``.
+    """
+    entries: list[dict] = []
+    cur: dict | None = None
+    for line in (text or "").splitlines():
+        m = _DIFF_GIT_HEADER_RE.match(line)
+        if m:
+            sides = _split_git_header(m.group(1))
+            if sides is None:
+                entries.append(
+                    {"path": None, "old_path": None, "kind": "other", "has_hunks": False, "raw_header": line}
+                )
+                cur = None
+                continue
+            cur = {"path": sides[1], "old_path": sides[0], "kind": "other", "has_hunks": False}
+            entries.append(cur)
+            continue
+        if cur is None:
+            continue
+        if line.startswith("old mode "):
+            cur["old_mode"] = line[9:].strip()
+        elif line.startswith("new mode "):
+            cur["new_mode"] = line[9:].strip()
+        elif line.startswith("rename to ") or line.startswith("copy to "):
+            cur["path"] = _unquote_path(line.split(" to ", 1)[1])
+            cur["kind"] = "rename"
+        elif line.startswith("rename from ") or line.startswith("copy from "):
+            cur["old_path"] = _unquote_path(line.split(" from ", 1)[1])
+            cur["kind"] = "rename"
+        elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+            cur["kind"] = "binary"
+        elif line.startswith("+++ ") or line.startswith("@@ "):
+            cur["has_hunks"] = True
+    for e in entries:
+        if e["has_hunks"]:
+            e["kind"] = "content"
+        elif e["kind"] == "other" and "new_mode" in e:
+            e["kind"] = "mode"
+    return entries
+
+
+def changed_files_total(text: str, content_paths) -> int:
+    """Count every Git header plus content regions from plain unified diffs."""
+    headers = parse_diff_file_headers(text)
+    represented = {entry["path"] for entry in headers}
+    return len(headers) + sum(path not in represented for path in content_paths)
+
+
+def non_content_changes(text: str, content_paths) -> list[dict]:
+    """Header entries not represented by the new-side content parser.
+
+    Deleted content has no new-side regions, so retain its header as well.
+    """
+    seen = set(content_paths)
+    return [
+        {k: v for k, v in e.items() if k != "has_hunks"} for e in parse_diff_file_headers(text) if e["path"] not in seen
+    ]
+
+
+def git_mode_only_files(root: Path, ref: str) -> set[str]:
+    """Files whose only change against *ref* is the file mode (same blob)."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--raw", "-z", "--no-abbrev", "--no-renames", ref],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
+        from roam.observability import log_swallowed
+
+        log_swallowed("changed_files:git_mode_only_files:git_diff", _exc)
+        return set()
+    if result.returncode != 0:
+        return set()
+    try:
+        content = subprocess.run(
+            ["git", "diff", "--numstat", "-z", "--no-renames", ref],
+            cwd=str(root),
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if content.returncode != 0:
+        return set()
+    unchanged_content = set()
+    for record in content.stdout.split(b"\0"):
+        added, sep, rest = record.partition(b"\t")
+        removed, sep2, path = rest.partition(b"\t")
+        if sep and sep2 and added == removed == b"0":
+            unchanged_content.add(path.decode("utf-8", errors="replace"))
+    out: set[str] = set()
+    records = result.stdout.split("\0")
+    for meta, path in zip(records[::2], records[1::2]):
+        fields = meta.lstrip(":").split()
+        # <old mode> <new mode> <old sha> <new sha> <status>
+        if (
+            len(fields) == 5
+            and fields[4] == "M"
+            and fields[0] != fields[1]
+            and (fields[2] == fields[3] or path in unchanged_content)
+        ):
+            out.add(path)
+    return out
+
+
+def unexamined_files_note(not_examined: int, total: int) -> str:
+    """Verdict suffix for changed files a command could not examine ('' when none)."""
+    if not not_examined:
+        return ""
+    return f"; {not_examined} of {total} changed file{'s' if total != 1 else ''} not analyzable"

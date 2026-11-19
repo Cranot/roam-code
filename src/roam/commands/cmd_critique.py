@@ -27,6 +27,8 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
+from roam.commands.changed_files import changed_files_total as _changed_files_total
+from roam.commands.changed_files import non_content_changes as _non_content_changes
 from roam.commands.resolve import ensure_index
 from roam.critique.aggregator import aggregate
 from roam.critique.checks import (
@@ -743,6 +745,8 @@ def _critique_one(diff_text: str, high_callers: int, intent_text: str | None) ->
     result = aggregate(findings, check_status=check_status)
     result["clone_scan"] = clone_scan
     result["regions"] = regions
+    result["changed_files_total"] = _changed_files_total(diff_text, [r.file_path for r in regions])
+    result["non_content_changes"] = _non_content_changes(diff_text, [r.file_path for r in regions])
     result["changed_symbols"] = changed_symbols
     result["intent"] = effective_intent
     return result, findings
@@ -785,6 +789,9 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
                 "partial_success": result.get("partial_success", False),
                 "clone_scan": result.get("clone_scan", {}),
                 "changed_files": len(result["regions"]),
+                "changed_files_total": result["changed_files_total"],
+                "changed_files_total_definition": "diff_git_headers_plus_content_regions_without_a_header",
+                "changed_files_without_hunks": len(result["non_content_changes"]),
                 "changed_symbols": len(result["changed_symbols"]),
                 "findings": len(result["findings"]),
                 "severity_breakdown": result["severity_breakdown"],
@@ -1091,6 +1098,11 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist, wor
             return default
 
     regions = _run_check("parse_diff", parse_diff, diff_text, default=[]) or []
+    # Mode-only, rename-only and binary entries carry no hunks, so parse_diff
+    # never opens a region for them; count them separately, never as zero.
+    _nc_changes = (
+        _run_check("diff_headers", _non_content_changes, diff_text, [r.file_path for r in regions], default=[]) or []
+    )
 
     # Auto-pick up latest commit subject if --intent wasn't passed.
     effective_intent = intent_text
@@ -1294,6 +1306,15 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist, wor
     summary = {
         "verdict": augmented_verdict,
         "changed_files": len(regions),
+        "changed_files_total": _run_check(
+            "diff_headers",
+            _changed_files_total,
+            diff_text,
+            [r.file_path for r in regions],
+            default=len(regions) + len(_nc_changes),
+        ),
+        "changed_files_total_definition": "diff_git_headers_plus_content_regions_without_a_header",
+        "changed_files_without_hunks": len(_nc_changes),
         "changed_symbols": len(changed_symbols),
         "findings": len(result["findings"]),
         "high_severity": result["severity_breakdown"].get("high", 0),
@@ -1365,6 +1386,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist, wor
 
     _envelope_kwargs: dict = dict(
         summary=summary,
+        non_content_changes=_nc_changes,
         budget=token_budget,
         severity_breakdown=result["severity_breakdown"],
         findings=result["findings"],
@@ -1508,7 +1530,12 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text, persist, wor
         # the bucket (LAW 6 — the line works standalone).
         click.echo(f"VERDICT: {augmented_verdict}")
         click.echo()
-        click.echo(f"  changed files:   {len(regions)}")
+        if _nc_changes:
+            click.echo(
+                f"  changed files:   {len(regions) + len(_nc_changes)} ({len(_nc_changes)} without content hunks)"
+            )
+        else:
+            click.echo(f"  changed files:   {len(regions)}")
         click.echo(f"  changed symbols: {len(changed_symbols)}")
         for check_name, status in result.get("check_status", {}).items():
             if status != "ran":

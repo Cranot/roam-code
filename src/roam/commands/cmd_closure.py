@@ -16,7 +16,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file as _is_test_file
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
     abbrev_kind,
     echo_text_warnings,
@@ -148,6 +148,7 @@ def _collect_closure(conn, sym, rename=None, delete=False):
 
     # 5. String references in doc/config files (for rename)
     if rename:
+        project_root = find_project_root()
         doc_rows = conn.execute(
             "SELECT f.path FROM files f "
             "WHERE (f.language IS NULL OR f.language IN "
@@ -160,7 +161,7 @@ def _collect_closure(conn, sym, rename=None, delete=False):
                 continue
             # Check file content for the symbol name
             try:
-                full_path = fp
+                full_path = project_root / fp
                 if os.path.isfile(full_path):
                     with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
                         content = fh.read()

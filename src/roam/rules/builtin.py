@@ -275,7 +275,8 @@ def _check_no_deep_inheritance(conn, G, threshold):
 
     inherit_graph = __import__("networkx").DiGraph()
     for row in edge_rows:
-        inherit_graph.add_edge(row[0], row[1])
+        # Stored edges point child -> parent; depth propagation needs parent -> child.
+        inherit_graph.add_edge(row[1], row[0])
 
     import networkx as nx
 

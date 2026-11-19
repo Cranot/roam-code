@@ -46,7 +46,7 @@ def _path_suffixes(path: str) -> list[str]:
     candidate x index nested iteration in file-path resolution.
     """
     parts = path.split("/")
-    return ["/".join(parts[i:]) for i in range(len(parts))]
+    return ["/".join(parts[i:]) for i in range(len(parts) - 1, -1, -1)]
 
 
 def _to_int(value) -> int | None:

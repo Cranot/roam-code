@@ -98,8 +98,8 @@ def _resolve_file_id(conn, file_path: str) -> tuple[int | None, str | None]:
         return row["id"], row["path"]
     # Fall back to suffix match for convenience (e.g. ``db.py``).
     row = conn.execute(
-        "SELECT id, path FROM files WHERE path LIKE ? LIMIT 1",
-        (f"%{norm}",),
+        "SELECT id, path FROM files WHERE substr(path, -length(?) - 1) = '/' || ? ORDER BY path LIMIT 1",
+        (norm, norm),
     ).fetchone()
     if row is not None:
         return row["id"], row["path"]

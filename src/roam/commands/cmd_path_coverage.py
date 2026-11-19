@@ -103,7 +103,8 @@ def _find_sinks_from_effects(conn, to_pattern):
             "line": r["line_start"] or 0,
         }
         # Keep strongest effect type per symbol
-        sink_effects[sid] = r["effect_type"]
+        if sink_effects.get(sid) != "writes_db":
+            sink_effects[sid] = r["effect_type"]
 
     return sink_ids, sink_effects
 
