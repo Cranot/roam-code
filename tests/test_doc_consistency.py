@@ -587,7 +587,11 @@ def test_contributing_release_flow_uses_exact_version_and_release_gate():
     assert "python scripts/prepush_check.py --release" in text
     assert 'git tag -a "v${version}" "$release_sha"' in text
     assert 'git push origin "v${version}"' in text
-    assert '"tomllib" if sys.version_info >= (3, 11) else "tomli"' in text
+    # Release TOML parser contract change:
+    # Old: "tomllib" if sys.version_info >= (3, 11) else "tomli".
+    # New: import stdlib tomllib directly and read the project version.
+    # Reason: release tooling runs on the supported Python 3.11+ floor.
+    assert 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])' in text
     assert 'test "$(git rev-parse origin/main)" = "$release_sha"' in text
     assert "git tag vX.Y" not in text
 

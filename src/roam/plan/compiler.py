@@ -8209,7 +8209,7 @@ def _get_toml_parser():
 
         return tomllib
     except ModuleNotFoundError as exc:
-        # tomllib is 3.11+; falling back to the tomli backport is expected.
+        # Supported Python versions ship tomllib. Try tomli if it is unavailable.
         log_swallowed("compile.toml_parser.tomllib_fallback", exc)
     try:
         import tomli  # type: ignore[import-not-found]  # defensive optional parser fallback

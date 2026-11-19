@@ -22,6 +22,29 @@ def ci_project(tmp_path):
     return proj
 
 
+def test_ci_setup_rejects_old_python_before_writing(cli_runner, tmp_path, monkeypatch):
+    from roam.db import connection
+
+    monkeypatch.setattr(connection, "find_project_root", lambda: tmp_path)
+
+    result = invoke_cli(
+        cli_runner, ["ci-setup", "--platform", "github", "--python-version", "3.10", "--write"], cwd=tmp_path
+    )
+
+    assert "--python-version" in result.output
+    assert "Python 3.11" in result.output
+    assert result.exit_code == 2
+    workflow = tmp_path / ".github" / "workflows" / "roam.yml"
+    assert not workflow.exists()
+
+    result = invoke_cli(
+        cli_runner, ["ci-setup", "--platform", "github", "--python-version", "3.11.9", "--write"], cwd=tmp_path
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "python-version: '3.11.9'" in workflow.read_text(encoding="utf-8")
+
+
 class TestCiSetupSmoke:
     def test_explicit_platform_exits_zero(self, cli_runner, ci_project, monkeypatch):
         monkeypatch.chdir(ci_project)

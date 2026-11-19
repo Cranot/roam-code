@@ -72,9 +72,8 @@ jobs:
   # Use -m "not slow" to skip timing-sensitive performance tests that are
   # prone to flaking under CI resource constraints.
   #
-  # 3.9 dropped 2026-05-16: pyproject.toml requires-python = ">=3.10". The
-  # 3.9 matrix entry was failing every PR with "Package 'roam-code' requires
-  # a different Python: 3.9.25 not in '>=3.10'".
+  # The Python floor is 3.11. Keep this matrix and the dependency audit
+  # aligned with the supported Python classifiers in pyproject.toml.
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-24.04

@@ -12,6 +12,7 @@ W1148 audit memo.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -485,7 +486,7 @@ def _get_default_branch(project_root: Path) -> str:
 @click.option(
     "--python-version",
     default=None,
-    help="Python version to use in the template (default: 3.12).",
+    help="Python version to use in the template (3.11 through 3.13, default: 3.12).",
 )
 @click.option(
     "--gate",
@@ -557,6 +558,14 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
     ``hooks`` (git hook installer), and ``pr-risk`` (gate command CI
     pipelines call on every PR).
     """
+    py_version = _get_python_version() if python_version is None else python_version
+    # Match the version input accepted by the composite action.
+    if re.fullmatch(r"3\.(?:11|12|13)(?:\.[0-9]{1,11})?", py_version) is None:
+        raise click.BadParameter(
+            "expected Python 3.11 through 3.13, optionally with an exact patch (up to 16 characters)",
+            param_hint="--python-version",
+        )
+
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
     # Find project root
@@ -568,7 +577,6 @@ def ci_setup(ctx, platform, write_file, python_version, gate, with_slsa_l3, with
         project_root = Path.cwd()
 
     project_name = _get_project_name(project_root)
-    py_version = python_version or _get_python_version()
     default_branch = _get_default_branch(project_root)
 
     # Template variables for substitution

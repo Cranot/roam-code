@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **Python 3.11+ required.** Drop Python 3.10 support so every supported CI environment can use the fixed filelock and dnspython releases without vulnerability exceptions. Packaging, CI, the composite action, setup checks and install documentation now require Python 3.11 or newer.
+- **Python 3.11+ required.** Roam-code 14.1.0 is the last release that supports Python 3.10. Drop Python 3.10 support so every supported CI environment can use the fixed filelock and dnspython releases without vulnerability exceptions. Packaging, CI, the composite action, setup checks and install documentation now require Python 3.11 or newer.
 
 - **`roam --json deps` and `roam --json file` exit 1 for a missing file.** The exit code now matches text mode, so a CI caller no longer reads a missing target as success. The `file_not_found` envelope is unchanged, and the MCP tools still return it with `isError` set.
 

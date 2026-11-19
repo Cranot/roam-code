@@ -37,20 +37,8 @@ those reachability assertions silently depend on.
 
 from __future__ import annotations
 
-try:
-    import tomllib  # Python 3.11+ stdlib
-except ModuleNotFoundError:  # Python 3.10
-    # tomli is a stdlib-shaped backport but is NOT a dev-dep of roam-code.
-    # Rather than pull in a transitive dep just for one test that runs on
-    # 3.11+, skip cleanly on 3.10. The drift-guard still runs on the three
-    # newer Python versions in the matrix, so coverage is preserved.
-    import pytest
-
-    pytest.skip(
-        "tomllib not available on Python <3.11 and tomli is not a dev-dep; drift-guard still runs on 3.11/3.12/3.13",
-        allow_module_level=True,
-    )
 import subprocess
+import tomllib
 from pathlib import Path
 
 from tests._helpers.repo_root import repo_root

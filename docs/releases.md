@@ -128,7 +128,7 @@ release_status="$(git status --porcelain=v1 --untracked-files=all)"
 test -z "$release_status"
 test "$(git rev-parse HEAD)" = "$release_sha"
 test "$(git rev-parse origin/main)" = "$release_sha"
-version="$(python -c 'import sys; toml = __import__("tomllib" if sys.version_info >= (3, 11) else "tomli"); print(toml.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
 git tag -a "v${version}" "$release_sha" -m "roam-code ${version}"
 git push origin "v${version}"
 ```

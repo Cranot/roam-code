@@ -79,8 +79,8 @@ cat >"$UPDATES_FILE"
 # 2026-08-06 on a dev box where PATH-`python` was a global 3.14: the gate
 # reported 7 test errors that do not exist under the project's 3.12, i.e. it
 # failed the push over an environment nothing ships. requires-python is
-# currently unbounded (">=3.10") while CI runs 3.10-3.13, so "some Python on
-# PATH" is not a defensible stand-in for "the Python this project uses".
+# unbounded above (">=3.11") while CI tests 3.11-3.13. The repo's virtualenv
+# selects the interpreter used by the project.
 # An explicit PYTHON= still wins, and a repo with no venv falls through to
 # the previous PATH search unchanged.
 if [ -z "${PYTHON:-}" ]; then

@@ -2,8 +2,8 @@
 
 Why this exists: the CI matrix invokes ``pytest tests/ -x -q -m "not slow"``
 without explicit worker arguments. Historically that ran sequentially. The
-3.10 lane (slowest interpreter: no stdlib tomllib, legacy
-pathlib) has outgrown its job timeout three times — 20 -> 30 -> 45 minutes,
+former 3.10 lane (then the slowest interpreter, with older pathlib and no
+stdlib tomllib) outgrew its job timeout three times — 20 -> 30 -> 45 minutes,
 killed at ~95% progress on 84343dc4, fdd2d3be, and twice on 70993e9 — while
 runners have 4 idle cores and the dev extras already install pytest-xdist.
 Parallelism is the durable fix; another timeout bump is the treadmill.
