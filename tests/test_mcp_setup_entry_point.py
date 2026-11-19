@@ -1,0 +1,87 @@
+"""First-use MCP setup selects the running installation."""
+
+import json
+import os
+import shutil
+import sysconfig
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from roam.cli import cli
+
+
+@pytest.mark.parametrize("platform", ["claude-code", "codex-cli"])
+@pytest.mark.parametrize("on_path", ["missing", "different", "matching"])
+def test_setup_entry_point(tmp_path, monkeypatch, platform, on_path):
+    scripts = tmp_path / "my scripts"
+    scripts.mkdir()
+    launcher = scripts / ("roam.exe" if os.name == "nt" else "roam")
+    launcher.touch()
+    access = os.access
+    monkeypatch.setattr(os, "access", lambda path, mode: path == launcher or access(path, mode))
+    matching = str(launcher)
+    other_launcher = tmp_path / "other" / launcher.name
+    other_launcher.parent.mkdir()
+    other_launcher.touch()
+    other = str(other_launcher)
+    monkeypatch.setattr(
+        shutil, "which", lambda name: {"missing": None, "different": other, "matching": matching}[on_path]
+    )
+    monkeypatch.setattr(sysconfig, "get_path", lambda name: str(scripts))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    args = ["mcp-setup", platform, "--write"]
+    result = CliRunner().invoke(cli, ["--json", *args])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    config = data["config"]
+    server = next(iter(config.values()))["roam-code"]
+    expected = "roam" if on_path == "matching" else matching
+    assert server["command"] == expected
+    if on_path != "matching":
+        assert expected in data["next_step"]
+        assert "agents-md" in data["next_step"]
+    path = Path(data["write_result"]["path"])
+    if platform == "codex-cli":
+        from roam.commands.cmd_mcp_setup import _load_toml
+
+        assert _load_toml(path.read_text(encoding="utf-8")) == config
+    else:
+        assert json.loads(path.read_text(encoding="utf-8")) == config
+
+    text = CliRunner().invoke(cli, [*args[:-1]])
+    assert text.exit_code == 0, text.output
+    assert ("Using the absolute path" in text.stdout) is (on_path != "matching")
+
+
+def test_setup_write_prints_next_step(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    script = tmp_path / ("roam.exe" if os.name == "nt" else "roam")
+    script.touch()
+    monkeypatch.setattr(shutil, "which", lambda name: str(script))
+    monkeypatch.setattr(sysconfig, "get_path", lambda name: str(tmp_path))
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["mcp-setup", "claude-code", "--write"])
+    assert result.exit_code == 0, result.output
+    assert "roam agents-md" in result.stdout
+    result = runner.invoke(cli, ["--json", "mcp-setup", "claude-code", "--write"])
+    assert result.exit_code == 0, result.output
+    assert "roam agents-md" in json.loads(result.stdout)["next_step"]
+
+
+def test_setup_reports_unavailable_launcher_without_writing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(sysconfig, "get_path", lambda name: str(tmp_path))
+
+    result = CliRunner().invoke(cli, ["--json", "mcp-setup", "claude-code", "--write"])
+    assert result.exit_code == 1, result.output
+    data = json.loads(result.stdout)
+    assert data["summary"]["resolution"] == "unresolved"
+    assert "missing or cannot be executed" in data["write_result"]["error"]
+    assert not (tmp_path / ".mcp.json").exists()

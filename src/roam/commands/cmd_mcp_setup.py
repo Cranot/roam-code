@@ -11,14 +11,22 @@ W1148 audit memo.
 
 from __future__ import annotations
 
+import copy
 import json
+import os
 import re
+import shlex
+import shutil
+import site
 import stat
+import sys
+import sysconfig
 from pathlib import Path
 from typing import Any
 
 import click
 
+import roam
 from roam.atomic_io import atomic_write_bytes
 from roam.capability import roam_capability
 from roam.output.formatter import json_envelope, to_json
@@ -87,6 +95,26 @@ _CONFIGS = {
         "json_config": {"mcp_servers": {"roam-code": {"command": "roam", "args": ["mcp"]}}},
     },
 }
+
+
+_LAUNCHER_NAME = "roam.exe" if os.name == "nt" else "roam"
+
+
+def _running_launcher() -> Path:
+    """Locate the console script for the Python installation running Roam."""
+    invoked = Path(sys.argv[0])
+    if invoked.name.lower() == _LAUNCHER_NAME:
+        try:
+            if invoked.is_file():
+                return invoked.absolute()
+        except OSError:
+            pass  # Fall back to the running Python installation's scripts directory.
+    user_site = site.getusersitepackages()
+    if user_site and roam.__file__ and Path(roam.__file__).is_relative_to(user_site):
+        scripts = sysconfig.get_path("scripts", scheme=sysconfig.get_preferred_scheme("user"))
+    else:
+        scripts = sysconfig.get_path("scripts")
+    return (Path(scripts) / _LAUNCHER_NAME).absolute()
 
 
 def _resolve_config_path(rel_path: str, project_root: Path | None = None) -> Path:
@@ -271,12 +299,17 @@ def _render_codex_toml(config: dict[str, Any]) -> str:
         server = config["mcp_servers"]["roam-code"]
     except (KeyError, TypeError) as error:
         raise ValueError("Codex config lacks mcp_servers.roam-code") from error
-    if server.get("command") != "roam" or server.get("args") != ["mcp"]:
+    command = server.get("command")
+    if (
+        not isinstance(command, str)
+        or (command != "roam" and (not Path(command).is_absolute() or Path(command).name.lower() != _LAUNCHER_NAME))
+        or server.get("args") != ["mcp"]
+    ):
         raise ValueError("Codex config differs from the reviewed roam mcp STDIO contract")
 
     lines = [
         "[mcp_servers.roam-code]",
-        'command = "roam"',
+        "command = " + json.dumps(command, ensure_ascii=False).replace("\x7f", r"\u007f"),
         'args = ["mcp"]',
     ]
     env = server.get("env") or {}
@@ -504,32 +537,54 @@ def mcp_setup(ctx, platform, preset, write):
         click.echo("\nUsage: roam mcp-setup <platform>")
         return
 
-    cfg = _CONFIGS[platform]
+    cfg = copy.deepcopy(_CONFIGS[platform])
+    launcher = _running_launcher()
+    on_path = shutil.which("roam")
+    try:
+        matches_path = bool(on_path and launcher.samefile(on_path))
+    except OSError:
+        matches_path = False
+    command = "roam" if matches_path else str(launcher)
+    run_launcher = command
+    run_prefix = "Run"
+    launcher_warning = None
+    launcher_unavailable = False
+    if not matches_path:
+        try:
+            launcher_unavailable = not (launcher.is_file() and os.access(launcher, os.X_OK))
+        except OSError:
+            launcher_unavailable = True
+        if not launcher_unavailable:
+            launcher_warning = (
+                f"Using the absolute path {launcher} because PATH does not resolve to this Roam installation."
+            )
+        else:
+            launcher_warning = f"Roam console script is missing or cannot be executed at {launcher}."
+        if os.name == "nt":
+            shell_command = "'" + command.replace("'", "''") + "'"
+            run_launcher = f"& {shell_command}"
+            run_prefix = "In PowerShell, run"
+        else:
+            shell_command = run_launcher = shlex.quote(command)
+        cfg["instructions"] = [
+            line.replace("-- roam mcp", f"-- {shell_command} mcp").replace("Run:", f"{run_prefix}:")
+            for line in cfg["instructions"]
+        ]
+        if cfg.get("setup_command"):
+            cfg["setup_command"] = cfg["setup_command"].replace("-- roam mcp", f"-- {shell_command} mcp")
 
-    # v12.2: when --preset is supplied, deep-copy the config and inject the
-    # ROAM_MCP_PRESET env var into the server block. Each platform stores
-    # its server entry under a slightly different key shape (mcpServers vs
-    # servers) — handle both. Mutates a copy, not the module-level dict.
+    server = next(iter(cfg["json_config"].values()))["roam-code"]
+    server["command"] = command
     if preset:
-        import copy
-
-        cfg = copy.deepcopy(cfg)
-        jc = cfg.get("json_config") or {}
-        # Walk to the first server entry and add an "env" block.
-        for outer_key in ("mcpServers", "servers", "mcp_servers"):
-            if outer_key not in jc:
-                continue
-            for server_name, server_block in jc[outer_key].items():
-                env = server_block.setdefault("env", {})
-                env["ROAM_MCP_PRESET"] = preset
-        cfg["json_config"] = jc
-        cfg["preset"] = preset
+        server["env"] = {"ROAM_MCP_PRESET": preset}
 
     write_result: dict[str, Any] | None = None
     if write:
         config_path = cfg.get("config_path")
         json_config = cfg.get("json_config") or {}
-        if not config_path:
+        if launcher_unavailable:
+            write_result = {"ok": False, "path": None, "error": launcher_warning}
+        elif not config_path:
             write_result = {
                 "ok": False,
                 "path": None,
@@ -557,6 +612,7 @@ def mcp_setup(ctx, platform, preset, write):
                 else _write_config(target, json_config)
             )
 
+    next_step = f"{run_prefix} `{run_launcher} agents-md` and add its output to your agent's project instructions."
     if json_mode:
         envelope_kwargs: dict[str, Any] = {
             "platform": platform,
@@ -566,18 +622,30 @@ def mcp_setup(ctx, platform, preset, write):
             "config_format": cfg.get("config_format", "json"),
             "setup_command": cfg.get("setup_command"),
         }
+        if launcher_warning:
+            envelope_kwargs["launcher_warning"] = launcher_warning
+        if write_result and write_result.get("ok"):
+            envelope_kwargs["next_step"] = next_step
         if write_result is not None:
             envelope_kwargs["write_result"] = write_result
         verdict = (
             f"Config written to {write_result['path']}"
             if write_result and write_result.get("ok")
+            else f"Config write failed: {write_result['error']}"
+            if write_result
+            else launcher_warning
+            if launcher_unavailable
             else f"Config for {cfg['description']}"
         )
         click.echo(
             to_json(
                 json_envelope(
                     "mcp-setup",
-                    summary={"verdict": verdict, "platform": platform},
+                    summary={
+                        "verdict": verdict,
+                        "platform": platform,
+                        **({"partial_success": True, "resolution": "unresolved"} if launcher_unavailable else {}),
+                    },
                     **envelope_kwargs,
                 )
             )
@@ -588,6 +656,8 @@ def mcp_setup(ctx, platform, preset, write):
 
     # Text output
     click.echo(f"=== {cfg['description']} ===\n")
+    if launcher_warning:
+        click.echo(f"  {launcher_warning}\n")
     for instruction in cfg.get("instructions", []):
         click.echo(f"  {instruction}")
 
@@ -610,6 +680,7 @@ def mcp_setup(ctx, platform, preset, write):
             click.echo(f"  {action} {write_result['path']}")
             if write_result.get("backup"):
                 click.echo(f"  Backup at {write_result['backup']}")
+            click.echo(f"  Next step: {next_step}")
         else:
             click.echo(f"  WRITE FAILED: {write_result.get('error', 'unknown error')}", err=True)
             ctx.exit(1)
