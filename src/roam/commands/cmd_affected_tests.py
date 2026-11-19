@@ -48,6 +48,7 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
+from roam.output.test_commands import affected_test_commands, unknown_runner_message
 
 _MAX_HOPS = 10
 
@@ -2469,6 +2470,21 @@ def count_kinds(results):
     return counts
 
 
+def _test_case_name(path, name, kind, qualified_name="", decorators=""):
+    """Return a case label only for a recognized test definition."""
+    if kind == "test":
+        return name
+    if not path.endswith(".py") or Path(path).name == "conftest.py":
+        return None
+    if kind not in {"function", "method"} or not name.startswith("test"):
+        return None
+    if re.search(r"(?:^|,)@(?:pytest\.)?fixture(?=[(,]|$)", decorators):
+        return None
+    if kind == "function" and "." in qualified_name:
+        return None
+    return name
+
+
 def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
     """Return a sorted list of affected test entries.
 
@@ -2491,7 +2507,7 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
         if caller_ids:
             rows = batched_in(
                 conn,
-                "SELECT s.id, s.name, s.kind, f.path as file_path "
+                "SELECT s.id, s.name, s.kind, s.qualified_name, s.decorators, f.path as file_path "
                 "FROM symbols s "
                 "JOIN files f ON s.file_id = f.id "
                 "WHERE s.id IN ({ph})",
@@ -2502,7 +2518,10 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
                 if not is_test_file(r["file_path"]):
                     continue
                 hops, via = reachable[r["id"]]
-                key = (r["file_path"], r["name"])
+                name = _test_case_name(
+                    r["file_path"], r["name"], r["kind"], r["qualified_name"] or "", r["decorators"] or ""
+                )
+                key = (r["file_path"], name)
                 kind = "DIRECT" if hops == 1 else "TRANSITIVE"
 
                 # Keep the shortest path if we see a duplicate
@@ -2511,8 +2530,8 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
 
                 test_entries[key] = {
                     "file": r["file_path"],
-                    "symbol": r["name"],
-                    "symbol_kind": r["kind"],
+                    "symbol": name,
+                    "symbol_kind": r["kind"] if name else None,
                     "kind": kind,
                     "hops": hops,
                     "via": via if hops > 1 else None,
@@ -2551,19 +2570,26 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
         kinds = {}
         for r in batched_in(
             conn,
-            "SELECT s.name, s.kind, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path IN ({ph})",
+            "SELECT s.name, s.kind, s.qualified_name, s.decorators, f.path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path IN ({ph})",
             sorted({path for path, _name in every_hits}),
         ):
-            kinds[(r["path"], r["name"])] = r["kind"]
+            kinds[(r["path"], r["name"])] = r
         for (path, name), hops in sorted(every_hits.items()):
             hops += registry_hops
+            symbol = kinds.get((path, name))
+            name = (
+                _test_case_name(path, name, symbol["kind"], symbol["qualified_name"] or "", symbol["decorators"] or "")
+                if symbol
+                else None
+            )
             key = (path, name)
             if key in test_entries and test_entries[key]["hops"] <= hops:
                 continue
             test_entries[key] = {
                 "file": path,
                 "symbol": name,
-                "symbol_kind": kinds.get(key, "function"),
+                "symbol_kind": symbol["kind"] if name else None,
                 "kind": "TRANSITIVE",
                 "hops": hops,
                 "via": registries[registry_id][1],
@@ -2660,7 +2686,7 @@ def _looks_like_file(target):
     "--command",
     "show_command",
     is_flag=True,
-    help="Output a runnable pytest command",
+    help="Output runnable commands for the detected test runners",
 )
 @click.pass_context
 def affected_tests_cmd(ctx, target, staged, show_command):
@@ -2858,21 +2884,17 @@ def affected_tests_cmd(ctx, target, staged, show_command):
         # Gather affected tests
         results = _gather_affected_tests(conn, all_sym_ids, all_file_paths)
 
-        # Unique test files for the pytest command
-        seen_order = []
-        seen_set = set()
-        for r in results:
-            if r["file"] not in seen_set:
-                seen_set.add(r["file"])
-                seen_order.append(r["file"])
+        seen_order = list(dict.fromkeys(r["file"] for r in results))
+        commands, unknown_runners = affected_test_commands(find_project_root(), seen_order)
+        pytest_cmd = "\n".join(entry["command"] for entry in commands if entry["runner"] == "pytest")
+        unknown_message = unknown_runner_message(unknown_runners) if unknown_runners else ""
 
-        pytest_cmd = "pytest " + " ".join(seen_order) if seen_order else ""
-
-        # --command mode: just print the command
         if show_command:
-            if pytest_cmd:
-                click.echo(pytest_cmd)
-            else:
+            for entry in commands:
+                click.echo(entry["command"])
+            if unknown_message:
+                click.echo(f"# {unknown_message}")
+            if not seen_order:
                 click.echo("# No affected tests found.")
             return
 
@@ -2959,6 +2981,8 @@ def affected_tests_cmd(ctx, target, staged, show_command):
                             for r in results
                         ],
                         pytest_command=pytest_cmd,
+                        test_commands=commands,
+                        unknown_runner_files=unknown_runners,
                         test_files=seen_order,
                         **disclosure,
                     )
@@ -3000,5 +3024,7 @@ def affected_tests_cmd(ctx, target, staged, show_command):
             click.echo(f"  {kind_tag} {label:<55s} {detail}")
 
         click.echo()
-        if pytest_cmd:
-            click.echo(f"Run: {pytest_cmd}")
+        for entry in commands:
+            click.echo(f"Run: {entry['command']}")
+        if unknown_message:
+            click.echo(unknown_message)

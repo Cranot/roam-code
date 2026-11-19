@@ -67,6 +67,7 @@ from roam.output.metric_definitions import (
     COGNITIVE_COMPLEXITY_DEFINITION,
     PREFLIGHT_RISK_LEVEL_DEFINITION,
 )
+from roam.output.test_commands import affected_test_commands, unknown_runner_message
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -315,38 +316,13 @@ def _check_affected_tests(conn, sym_ids, file_paths):
             seen.add(r["file"])
             test_files.append(r["file"])
 
-    # Pick the actual test runner from package.json / pyproject when
-    # possible — noted preflight suggesting `pytest tests/`
-    # for Vitest projects.
-    try:
-        from roam.output.project_shape import _detect_test_runner
-
-        runner_name, _runner_cmd = _detect_test_runner(find_project_root())
-    except (OSError, UnicodeDecodeError):
-        runner_name = None
-    runner_token = "pytest"
-    if runner_name == "vitest":
-        runner_token = "npx vitest run"
-    elif runner_name == "jest":
-        runner_token = "npx jest"
-    elif runner_name == "mocha":
-        runner_token = "npx mocha"
-    elif runner_name == "playwright":
-        runner_token = "npx playwright test"
-    elif runner_name == "go test":
-        runner_token = "go test"
-    elif runner_name == "cargo test":
-        runner_token = "cargo test"
-    elif runner_name == "rspec":
-        runner_token = "bundle exec rspec"
-
     truncated_files = len(test_files) > _MAX_SUGGESTED_TEST_FILES
-    if truncated_files:
-        suggested = test_files[:_MAX_SUGGESTED_TEST_FILES]
-        suffix = f"  # (+{len(test_files) - _MAX_SUGGESTED_TEST_FILES} more)"
-        pytest_cmd = f"{runner_token} " + " ".join(suggested) + suffix
-    else:
-        pytest_cmd = f"{runner_token} " + " ".join(test_files) if test_files else ""
+    suggested = test_files[:_MAX_SUGGESTED_TEST_FILES]
+    commands, unknown_runners = affected_test_commands(find_project_root(), suggested)
+    suffix = f"  # (+{len(test_files) - len(suggested)} more)" if truncated_files else ""
+    pytest_cmd = "\n".join(entry["command"] for entry in commands if entry["runner"] == "pytest")
+    if pytest_cmd:
+        pytest_cmd += suffix
     severity = _test_severity(direct, transitive, colocated, cli_invoke, module_import)
 
     _tests_result: dict = {
@@ -359,6 +335,8 @@ def _check_affected_tests(conn, sym_ids, file_paths):
         "total": len(results),
         "test_files": test_files,
         "pytest_command": pytest_cmd,
+        "test_commands": commands,
+        "unknown_runner_files": unknown_runners,
         "pytest_command_truncated": truncated_files,
         "severity": severity,
     }
@@ -1544,6 +1522,9 @@ def preflight(ctx, target, staged):
                 "total": tests["total"],
                 "test_files": tests["test_files"],
                 "pytest_command": tests["pytest_command"],
+                "test_commands": tests.get("test_commands", []),
+                "unknown_runner_files": tests.get("unknown_runner_files", []),
+                "test_command_files_omitted": max(0, len(tests["test_files"]) - _MAX_SUGGESTED_TEST_FILES),
                 "severity": tests["severity"],
             }
             if tests.get("state") is not None:
@@ -1874,8 +1855,12 @@ def preflight(ctx, target, staged):
                 click.echo(f"  Risk driver:  {driver}")
 
             # Suggested tests
-            if tests["pytest_command"]:
-                click.echo(f"  Suggested tests: {tests['pytest_command']}")
+            for entry in tests.get("test_commands", []):
+                click.echo(f"  Suggested tests: {entry['command']}")
+            if unknown := tests.get("unknown_runner_files"):
+                click.echo(f"  {unknown_runner_message(unknown)}")
+            if tests.get("pytest_command_truncated"):
+                click.echo(f"  {len(tests['test_files']) - _MAX_SUGGESTED_TEST_FILES} more affected test files")
 
             # — synergy with the rest of the surface. After a
             # preflight verdict the natural follow-ups depend on the risk
