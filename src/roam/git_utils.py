@@ -13,6 +13,7 @@ Ported from upstream fork work.
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 _GIT_SUBPROCESS_ENV_ALLOWLIST = frozenset(
@@ -94,3 +95,95 @@ def worktree_git_env(cwd: Path | str) -> dict[str, str] | None:
     env = _sanitized_git_subprocess_env()
     env["GIT_INDEX_FILE"] = str(wt_index)
     return env
+
+
+# These reports expose churn, co-change, or author/ownership evidence directly
+# or use it to score and recommend changes.
+HISTORY_REPORT_COMMANDS = frozenset(
+    {
+        "agent-export",
+        "ai-ratio",
+        "attest",
+        "blame-reviewers",
+        "bus-factor",
+        "clean",
+        "codeowners",
+        "congestion",
+        "context",
+        "coupling",
+        "dashboard",
+        "dark-matter",
+        "dead",
+        "debt",
+        "dev-profile",
+        "diagnose",
+        "diff",
+        "drift",
+        "fn-coupling",
+        "forecast",
+        "history-grep",
+        "hotspots",
+        "index-stats",
+        "metrics",
+        "minimap",
+        "owner",
+        "partition",
+        "postmortem",
+        "preflight",
+        "pr-prep",
+        "pr-risk",
+        "recommend",
+        "simulate-departure",
+        "smells",
+        "stats",
+        "suggest-refactoring",
+        "suggest-reviewers",
+        "timeline",
+        "trends",
+        "understand",
+        "vibe-check",
+        "weather",
+        "why-fail",
+    }
+)
+
+HISTORY_WARNING_CONTEXT_KEY = "roam.git_history_warning"
+
+
+def git_history_shallow(root: Path) -> bool | None:
+    """Check the checkout once; None means Git could not establish its depth."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository", "--git-path", "shallow"],
+            cwd=root,
+            env=worktree_git_env(root),
+            capture_output=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    depth, _, metadata = result.stdout.partition(b"\n")
+    depth = depth.removesuffix(b"\r")
+    metadata = metadata.removesuffix(b"\n").removesuffix(b"\r")
+    if not metadata or b"\0" in metadata or depth not in (b"true", b"false"):
+        return None
+    marker = root / os.fsdecode(metadata)
+    if marker.name != "shallow":
+        return None
+    if depth == b"true":
+        return True
+
+    # Git reports false when it cannot open the shallow file, even for a
+    # broken symlink. Only an absent marker is consistent with a full clone.
+    try:
+        marker.lstat()
+    except FileNotFoundError:
+        try:
+            return False if marker.parent.is_dir() else None
+        except OSError:
+            return None
+    except OSError:
+        return None
+    return None

@@ -1686,6 +1686,22 @@ def _apply_envelope_budget(out: dict, budget: int, uncapped: bool = False) -> di
 # arbitrary user-supplied dicts merged via ``.update()``; do NOT TypedDict
 # this return without an at-boundary validator. See W933 _resolved_thresholds
 # for the canonical case study.
+def _disclose_history_depth(command: str, summary: dict, payload: dict) -> None:
+    import click
+
+    from roam.git_utils import HISTORY_WARNING_CONTEXT_KEY
+
+    ctx = click.get_current_context(silent=True)
+    warning = ctx.meta.get(HISTORY_WARNING_CONTEXT_KEY) if ctx is not None else None
+    if warning is None or warning[0] != command:
+        return
+    _, shallow, message = warning
+    payload["history_shallow"] = shallow
+    summary["partial_success"] = True
+    verdict = summary.get("verdict")
+    summary["verdict"] = f"{verdict.rstrip('.')}. {message}" if isinstance(verdict, str) and verdict else message
+
+
 def json_envelope(
     command: str,
     summary: dict | None = None,
@@ -1732,6 +1748,7 @@ def json_envelope(
         }
     """
     summary = _prepare_envelope_summary(summary)
+    _disclose_history_depth(command, summary, payload)
 
     compact = _compact_json_envelope_or_none(command, summary, payload)
     if compact is not None:
