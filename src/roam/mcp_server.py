@@ -20539,6 +20539,24 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         except Exception as exc:
             sys.stderr.write(f"watcher not available: {exc}\n")
 
+    # FastMCP reads FASTMCP_CHECK_FOR_UPDATES when it creates its settings,
+    # before this command runs. Apply its documented "off" value to this
+    # server run only, preserving settings explicitly loaded by FastMCP.
+    try:
+        from fastmcp import settings as fastmcp_settings
+    except ImportError:
+        fastmcp_settings = None
+
+    update_check = getattr(fastmcp_settings, "check_for_updates", None)
+    requested_update_check = os.environ.get("FASTMCP_CHECK_FOR_UPDATES", "off")
+    change_update_check = (
+        update_check is not None
+        and "check_for_updates" not in fastmcp_settings.model_fields_set
+        and requested_update_check in ("off", "stable", "prerelease")
+        and requested_update_check != update_check
+    )
+    if change_update_check:
+        fastmcp_settings.check_for_updates = requested_update_check
     try:
         if transport == "stdio":
             mcp.run()
@@ -20551,6 +20569,9 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
                 # Older FastMCP versions may use "http" alias.
                 mcp.run(transport="http", host=host, port=port)
     finally:
+        if change_update_check:
+            fastmcp_settings.check_for_updates = update_check
+            fastmcp_settings.model_fields_set.discard("check_for_updates")
         if watch_handle is not None:
             try:
                 watch_handle.stop()
