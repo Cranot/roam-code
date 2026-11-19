@@ -161,7 +161,7 @@ def test_m3(project_factory):
 
 
 @pytest.mark.parametrize("style", ["star", "named", "default"])
-def test_m2_imported_namespace(project_factory, style):
+def test_imported_namespace(project_factory, style):
     export = "export class Foo { m() {} }" if style == "star" else "export namespace NS { export class Foo { m() {} } }"
     if style == "default":
         export = "namespace NS { export class Foo { m() {} } }; export default NS;"
@@ -198,7 +198,7 @@ def test_language_pairs():
             assert _same_language_family(source_path, target_path) == expected, (source, target)
 
 
-def test_M4_class_type_parameter(project_factory):
+def test_class_type_parameter(project_factory):
     p = project_factory(
         {"app.ts": "class Foo { m() {} }\nclass C<Foo> { bad(x: Foo) { x.m() } }\nfunction good(x: Foo) { x.m() }"}
     )
@@ -207,7 +207,7 @@ def test_M4_class_type_parameter(project_factory):
     assert ("app.ts", "C.bad", "app.ts", "Foo.m") not in c, c
 
 
-def test_M5_named_function_expression(project_factory):
+def test_named_function_expression(project_factory):
     p = project_factory(
         {
             "app.ts": "export function bad() { const x = function helper() { helper() }; x() }\nfunction good() { helper() }",
@@ -219,7 +219,7 @@ def test_M5_named_function_expression(project_factory):
     assert not [e for e in c if e[0] == "app.ts" and e[1] != "good" and e[3] == "helper"], c
 
 
-def test_M6_type_value_namespaces(project_factory):
+def test_type_value_namespaces(project_factory):
     p = project_factory(
         {
             "api.ts": "export const Config = { load() {} }; export interface Config { read(): void }",
