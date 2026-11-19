@@ -20,9 +20,10 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
-    GIT_ERROR,
     GitComparisonError,
     get_changed_files_status,
+    git_changed_files_against_ref,
+    git_comparison_base,
     is_test_file,
     resolve_changed_to_db,
 )
@@ -322,24 +323,14 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
     return {"score": risk, "level": level}
 
 
-def _collect_breaking(conn, root, base_ref):
-    """Detect breaking changes vs base_ref.
-
-    Returns {removed, signature_changed, renamed} lists.
-    """
-    try:
-        from roam.commands.cmd_breaking import (
-            _compare_file,
-            _extract_old_symbols,
-            _get_current_symbols,
-            _git_changed_files,
-            _git_show,
-        )
-    except ImportError:
-        return {"removed": [], "signature_changed": [], "renamed": []}
+def _collect_breaking(conn, root, base_ref, head_ref=None, changed=None):
+    """Detect breaking changes against the current index or a committed endpoint."""
+    from roam.commands.cmd_breaking import collect_breaking_changes
 
     try:
-        changed = _git_changed_files(root, base_ref)
+        if changed is None:
+            changed = git_changed_files_against_ref(root, base_ref)
+        return collect_breaking_changes(conn, root, changed, base_ref, head_ref)
     except GitComparisonError as exc:
         return {
             "removed": [],
@@ -350,42 +341,6 @@ def _collect_breaking(conn, root, base_ref):
             "git_error_detail": exc.detail,
             "partial_success": True,
         }
-    if not changed:
-        return {"removed": [], "signature_changed": [], "renamed": []}
-
-    all_removed = []
-    all_sig_changed = []
-    all_renamed = []
-
-    for fpath in changed:
-        try:
-            old_source = _git_show(root, base_ref, fpath, strict=True)
-        except GitComparisonError as exc:
-            return {
-                "removed": [],
-                "signature_changed": [],
-                "renamed": [],
-                "state": "git_error",
-                "git_error": exc.kind,
-                "git_error_detail": exc.detail,
-                "partial_success": True,
-            }
-        if old_source is None:
-            continue
-        old_symbols = _extract_old_symbols(old_source, fpath)
-        if not old_symbols:
-            continue
-        new_symbols = _get_current_symbols(conn, fpath)
-        removed, sig_changed, renamed = _compare_file(fpath, old_symbols, new_symbols)
-        all_removed.extend(removed)
-        all_sig_changed.extend(sig_changed)
-        all_renamed.extend(renamed)
-
-    return {
-        "removed": all_removed,
-        "signature_changed": all_sig_changed,
-        "renamed": all_renamed,
-    }
 
 
 def _collect_affected_tests_evidence(conn, sym_by_file):
@@ -565,13 +520,10 @@ def _content_hash(evidence: dict) -> str:
 
 
 def _resolve_git_range(root, commit_range):
-    """Parse a commit range like 'main..HEAD' into (base_ref, head_ref).
-
-    Returns (base_ref, head_ref) tuple. For single refs, returns (ref, 'HEAD').
-    """
+    """Resolve the commit endpoints, using a merge base for three-dot ranges."""
     if commit_range and ".." in commit_range:
-        parts = commit_range.split("..", 1)
-        return parts[0], parts[1]
+        delimiter = "..." if "..." in commit_range else ".."
+        return git_comparison_base(root, commit_range), commit_range.split(delimiter, 1)[1] or "HEAD"
     return commit_range or "HEAD", "HEAD"
 
 
@@ -779,7 +731,8 @@ def _attestation_render_model_for_format_parity(evidence):
     return {
         "risk": evidence.get("risk"),
         "blast": evidence.get("blast_radius", {}),
-        "breaking_error": {key: breaking[key] for key in ("git_error", "git_error_detail") if key in breaking},
+        "breaking_error": {key: breaking[key] for key in ("state", "git_error", "git_error_detail") if key in breaking},
+        "breaking_skipped": breaking.get("files_not_analyzed", []),
         "removed": removed,
         "signature_changed": signature_changed,
         "renamed": renamed,
@@ -819,6 +772,7 @@ def _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
             **model["breaking_error"],
         },
         "has_breaking_changes": total_breaking > 0,
+        "breaking_skipped": model["breaking_skipped"],
         "removed_preview": model["removed"][:5],
         "budget": budget,
         "budget_rules": budget.get("rules", []),
@@ -892,8 +846,8 @@ def _build_attest_envelope_that_preserves_late_markers(
     attestation: dict,
     evidence: dict,
     verdict: dict,
-    risk_level_canonical: str,
-    risk_rank_int: int,
+    risk_level_canonical: str | None,
+    risk_rank_int: int | None,
     attest_verdict_str: str,
     attest_warnings_out: list[str],
     substrate_warnings_out: list[str],
@@ -918,6 +872,11 @@ def _build_attest_envelope_that_preserves_late_markers(
         # see the canonical bucket without descending into ``summary``.
         risk_level_canonical=risk_level_canonical,
         risk_rank=risk_rank_int,
+        **(
+            {"files_not_analyzed": evidence["breaking_changes"]["files_not_analyzed"]}
+            if evidence.get("breaking_changes", {}).get("files_not_analyzed")
+            else {}
+        ),
     )
     _mark_attest_partial_evidence(summary_block, envelope_kwargs, combined_warnings_out)
 
@@ -1172,10 +1131,6 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             **kwargs,
         )
 
-    # Resolve git range
-    base_ref, head_ref = _resolve_git_range(root, commit_range)
-    hashes = _get_git_hashes(root, base_ref, head_ref)
-
     # W805-OOOO: use get_changed_files_status so a bogus commit-range emits
     # state="git_error" + git_error=<kind> instead of being byte-identical to
     # a genuinely clean working tree (both previously got state="no_changes").
@@ -1188,8 +1143,14 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         staged=staged,
         commit_range=commit_range,
         error_details=git_details,
-        default=([], GIT_ERROR),
+        default=([], None),
     )
+    if changed:
+        try:
+            base_ref, head_ref = _resolve_git_range(root, commit_range)
+        except GitComparisonError as exc:
+            changed, _git_err_kind = [], exc.kind
+            git_details.append(exc.detail)
     if not changed:
         # Pattern 1D / Pattern 2: no-changes is a degraded-resolution path,
         # NOT a fully-assessed "safe to merge" verdict. An agent reading
@@ -1204,21 +1165,21 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         # W805-OOOO: distinguish git-error (bogus ref) from genuinely clean
         # tree by emitting state="git_error" + git_error=<kind> on the error
         # path. Clean tree still gets state="no_changes".
-        if _git_err_kind is not None:
-            _empty_state = "git_error"
+        comparison_failed = _git_err_kind is not None or bool(_w607ad_warnings_out)
+        if comparison_failed:
+            _empty_state = "git_error" if _git_err_kind else "changed_files_unavailable"
             _empty_risk_level_canonical = None
             _empty_risk_rank = None
-            _empty_summary_extra: dict = {
-                "git_error": _git_err_kind,
-                "git_error_detail": "\n".join(git_details),
-            }
+            _empty_summary_extra: dict = (
+                {"git_error": _git_err_kind, "git_error_detail": "\n".join(git_details)} if _git_err_kind else {}
+            )
         else:
             _empty_state = "no_changes"
             _empty_summary_extra = {}
         _empty_summary: dict = {
             "verdict": (
-                f"could not read changed files for {label}: {_git_err_kind}"
-                if _git_err_kind
+                f"could not read changed files for {label}: {_git_err_kind or _empty_state}"
+                if comparison_failed
                 else f"no changes found for {label} (risk_level {_empty_risk_level_canonical})"
             ),
             "state": _empty_state,
@@ -1240,14 +1201,36 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         auto_log(_attest_empty_envelope, action="attest", target=label, repo_root=root)
         if json_mode or output_format == "json":
             output = to_json(_attest_empty_envelope)
-        elif _git_err_kind is not None:
-            output = f"VERDICT: {_empty_summary['verdict']}"
+        elif comparison_failed:
+            output = "\n".join([f"VERDICT: {_empty_summary['verdict']}", *git_details, *_w607ad_warnings_out])
         else:
             output = f"No changes found for {label}."
         _emit_attestation_output(output, output_file)
         return
 
+    hashes = _get_git_hashes(root, base_ref, head_ref)
     with open_db(readonly=True) as conn:
+        is_range = bool(commit_range and ".." in commit_range)
+        breaking = _run_check_ad(
+            "collect_breaking",
+            _collect_breaking,
+            conn,
+            root,
+            base_ref,
+            head_ref if is_range else None,
+            changed if is_range else None,
+            default=None,
+        )
+        if breaking is None:
+            breaking = {
+                "removed": [],
+                "signature_changed": [],
+                "renamed": [],
+                "state": "breaking_unavailable",
+                "partial_success": True,
+            }
+        breaking_failure = {key: breaking[key] for key in ("state", "git_error", "git_error_detail") if key in breaking}
+        skipped = breaking.get("files_not_analyzed", [])
         file_map = _run_check_ad("resolve_changed_to_db", resolve_changed_to_db, conn, changed, default={}) or {}
 
         if not file_map:
@@ -1266,6 +1249,14 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             # carry the actionable disclosure.
             _unresolved_risk_level_canonical = "low"
             _unresolved_risk_rank = risk_rank(_unresolved_risk_level_canonical)
+            comparison_details = {}
+            if skipped:
+                comparison_details["files_not_analyzed"] = skipped
+            if is_range or breaking_failure:
+                comparison_details["evidence"] = {"breaking_changes": breaking}
+            if breaking_failure:
+                _unresolved_risk_level_canonical = None
+                _unresolved_risk_rank = None
             _attest_unresolved_envelope = json_envelope(
                 "attest",
                 summary={
@@ -1280,16 +1271,29 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
                     "unresolved_file_count": len(changed),
                     "risk_level_canonical": _unresolved_risk_level_canonical,
                     "risk_rank": _unresolved_risk_rank,
+                    **breaking_failure,
                 },
                 risk_level_canonical=_unresolved_risk_level_canonical,
                 risk_rank=_unresolved_risk_rank,
                 unresolved_files=sorted(changed),
+                **comparison_details,
+            )
+            _mark_attest_partial_evidence(
+                _attest_unresolved_envelope["summary"], _attest_unresolved_envelope, _w607ad_warnings_out
             )
             auto_log(_attest_unresolved_envelope, action="attest", target=label, repo_root=root)
             if json_mode or output_format == "json":
-                click.echo(to_json(_attest_unresolved_envelope))
+                output = to_json(_attest_unresolved_envelope)
             else:
-                click.echo(f"{len(changed)} changed files not found in index ({label}). Run `roam index` first.")
+                lines = [f"{len(changed)} changed files not found in index ({label}). Run `roam index` first."]
+                lines.extend(f"Skipped {entry['file']} (submodule pointer)." for entry in skipped)
+                if breaking_failure:
+                    lines.append(f"Breaking comparison could not run: {breaking_failure['state']}")
+                    if detail := breaking_failure.get("git_error_detail"):
+                        lines.append(detail)
+                lines.extend(_w607ad_warnings_out)
+                output = "\n".join(lines)
+            _emit_attestation_output(output, output_file)
             return
 
         # -- Collect all evidence --------------------------------------
@@ -1323,17 +1327,6 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             staged,
             commit_range,
             default=None,
-        )
-
-        # 3. Breaking changes
-        breaking_ref = base_ref if commit_range else "HEAD"
-        breaking = _run_check_ad(
-            "collect_breaking",
-            _collect_breaking,
-            conn,
-            root,
-            breaking_ref,
-            default={"removed": [], "signature_changed": [], "renamed": []},
         )
 
         # 4. Fitness violations
@@ -1548,10 +1541,12 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             "affected_tests": tests.get("selected", 0),
             "effects_count": len(effects),
         }
-        if breaking.get("git_error"):
-            _attest_verdict_str = f"breaking comparison could not run: {breaking['git_error']}"
-            risk_level_canonical = None
-            risk_rank_int = None
+        if breaking_failure:
+            if not risk:
+                risk_level_canonical = None
+                risk_rank_int = None
+            kind = breaking_failure.get("git_error") or breaking_failure["state"]
+            _attest_verdict_str = f"breaking comparison could not run: {kind}"
             verdict["safe_to_merge"] = None
             verdict["warnings"].append(_attest_verdict_str)
             summary_block.update(
@@ -1559,14 +1554,14 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
                 safe_to_merge=None,
                 breaking_changes=None,
                 partial_success=True,
-                state="git_error",
-                git_error=breaking["git_error"],
-                git_error_detail=breaking["git_error_detail"],
-                risk_score=None,
-                risk_level=None,
-                risk_level_canonical=None,
-                risk_rank=None,
+                risk_level_canonical=risk_level_canonical,
+                risk_rank=risk_rank_int,
+                **breaking_failure,
             )
+        elif skipped:
+            verdict["safe_to_merge"] = None
+            _attest_verdict_str = f"breaking comparison skipped {len(skipped)} submodule path(s)"
+            summary_block.update(verdict=_attest_verdict_str, safe_to_merge=None, partial_success=True)
         _attest_target = commit_range or ("staged" if staged else "uncommitted")
         attest_envelope = _build_attest_envelope_that_preserves_late_markers(
             summary_block=summary_block,
@@ -1684,10 +1679,14 @@ def _append_attestation_blast_section(lines, plan, is_md):
 
 def _append_attestation_breaking_section(lines, plan, is_md):
     breaking = plan["breaking"]
-    if breaking.get("git_error"):
-        lines.append(f"Breaking comparison could not run: {breaking['git_error']}")
-        lines.append(breaking.get("git_error_detail", ""))
+    if breaking.get("state") or breaking.get("git_error"):
+        kind = breaking.get("git_error") or breaking["state"]
+        lines.append(f"Breaking comparison could not run: {kind}")
+        if detail := breaking.get("git_error_detail"):
+            lines.append(detail)
         return
+    for entry in plan["breaking_skipped"]:
+        lines.append(f"Skipped {entry['file']} (submodule pointer).")
     if plan["has_breaking_changes"]:
         total_bc = breaking["total"]
         if is_md:

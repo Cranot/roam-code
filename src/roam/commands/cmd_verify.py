@@ -238,7 +238,7 @@ def _git_diff_zero_context(files: list[str], root: Path) -> str:
 
     try:
         return subprocess.run(
-            ["git", "-C", str(root), "diff", "HEAD", "-U0", "--", *files],
+            ["git", "--literal-pathspecs", "-C", str(root), "diff", "HEAD", "-U0", "--", *files],
             capture_output=True,
             text=True,
             timeout=8,
@@ -3919,7 +3919,7 @@ def _changed_public_signatures_for_caller_gate(
     compare_file,
 ) -> list[dict]:
     """Signature changes that can matter to callers outside this edit."""
-    old_source = git_show(root, "HEAD", path)
+    old_source = git_show(root, "HEAD", path, strict=True)
     if old_source is None:
         return []  # new file at HEAD — nothing to break
     old_symbols = extract_old_symbols(old_source, path)
@@ -4005,6 +4005,8 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
             _VERIFY_BREAKING_CATEGORY,
             f"breaking-change scan capped at {_MAX_BREAKING_FILES} of {len(source_paths)} source files",
         )
+    from roam.commands.changed_files import GitComparisonError, GitlinkPath
+
     try:
         from roam.commands.cmd_breaking import (
             _compare_file,
@@ -4021,15 +4023,20 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
     min_callers = max(1, _verify_env_int("ROAM_VERIFY_BREAKING_MIN_CALLERS", 1))
     violations: list[dict] = []
     for path in source_paths:
-        sig_changed = _changed_public_signatures_for_caller_gate(
-            conn,
-            path,
-            root,
-            git_show=_git_show,
-            extract_old_symbols=_extract_old_symbols,
-            get_current_symbols=_get_current_symbols,
-            compare_file=_compare_file,
-        )
+        try:
+            sig_changed = _changed_public_signatures_for_caller_gate(
+                conn,
+                path,
+                root,
+                git_show=_git_show,
+                extract_old_symbols=_extract_old_symbols,
+                get_current_symbols=_get_current_symbols,
+                compare_file=_compare_file,
+            )
+        except (GitComparisonError, GitlinkPath) as exc:
+            return _verify_check_incomplete(
+                _VERIFY_BREAKING_CATEGORY, f"Cannot read breaking baseline for {path}: {exc}"
+            )
         violations.extend(_breaking_contract_violations_for_file(conn, path, changed_paths, min_callers, sig_changed))
     return {"score": 0 if violations else 100, "violations": violations}
 

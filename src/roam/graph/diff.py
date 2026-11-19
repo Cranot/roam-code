@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from roam.commands.changed_files import GitComparisonError, GitlinkPath
 from roam.graph.simulate import metric_delta as metric_delta
 
 # ---------------------------------------------------------------------------
@@ -47,7 +48,7 @@ def _git_show(root: Path, ref: str, filepath: str) -> bytes | None:
     """
     from roam.commands.changed_files import git_show_at_ref
 
-    return git_show_at_ref(root, ref, filepath)
+    return git_show_at_ref(root, ref, filepath, strict=True)
 
 
 def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:
@@ -371,15 +372,23 @@ def _load_current_symbols_without_loop_queries(conn, changed_files: list[str]) -
 def symbol_changes(conn, root: Path, base_ref: str, changed_files: list[str]) -> dict:
     """Diff symbols between *base_ref* and current index for *changed_files*.
 
-    Returns {added: [...], removed: [...], modified: [...]}.
+    Returns symbol deltas and identifies any paths skipped by the comparison.
     """
     added = []
     removed = []
     modified = []
+    skipped = []
     current_symbols_by_path = _load_current_symbols_without_loop_queries(conn, changed_files)
 
     for fpath in changed_files:
-        old_source = _git_show(root, base_ref, fpath)
+        try:
+            old_source = _git_show(root, base_ref, fpath)
+        except GitComparisonError as exc:
+            skipped.append({"file": fpath, "reason": "read_failed", "git_error": exc.kind, "detail": exc.detail})
+            continue
+        except GitlinkPath:
+            skipped.append({"file": fpath, "reason": "gitlink"})
+            continue
         current_syms = current_symbols_by_path.get(fpath, [])
 
         if old_source is None:
@@ -444,7 +453,10 @@ def symbol_changes(conn, root: Path, base_ref: str, changed_files: list[str]) ->
                     }
                 )
 
-    return {"added": added, "removed": removed, "modified": modified}
+    changes = {"added": added, "removed": removed, "modified": modified}
+    if skipped:
+        changes["files_not_analyzed"] = skipped
+    return changes
 
 
 # ---------------------------------------------------------------------------

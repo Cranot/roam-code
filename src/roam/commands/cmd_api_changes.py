@@ -34,6 +34,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
     GitComparisonError,
+    GitlinkPath,
 )
 from roam.commands.changed_files import (
     git_changed_files_against_ref as _git_changed_files,
@@ -734,6 +735,8 @@ def api_changes_cmd(ctx, base, severity):
     Scope is always ``git diff --name-only <base>`` — there is no wider or
     narrower mode.
     """
+    if base == "":
+        raise click.BadParameter("Git ref cannot be empty", param_hint="--base")
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
@@ -804,12 +807,17 @@ def api_changes_cmd(ctx, base, severity):
 
     # 2. Collect all changes across files
     all_changes: list[dict] = []
+    skipped = []
 
     try:
         with open_db(readonly=True) as conn:
             for fpath in changed:
                 # Get old file content from the ref
-                old_source = _git_show(root, base, fpath, strict=True)
+                try:
+                    old_source = _git_show(root, base, fpath, strict=True)
+                except GitlinkPath:
+                    skipped.append({"file": fpath, "reason": "gitlink"})
+                    continue
                 if old_source is None:
                     # File is new — extract new symbols as ADDED
                     new_symbols = _get_current_symbols(conn, fpath)
@@ -878,6 +886,9 @@ def api_changes_cmd(ctx, base, severity):
     else:
         verdict = f"No API changes vs {base}."
 
+    if skipped:
+        verdict += f" ({len(skipped)} submodule path(s) skipped)"
+
     if json_mode:
         click.echo(
             to_json(
@@ -885,6 +896,7 @@ def api_changes_cmd(ctx, base, severity):
                     "api-changes",
                     summary={
                         "verdict": verdict,
+                        **({"partial_success": True} if skipped else {}),
                         "breaking_count": breaking_count,
                         "warning_count": warning_count,
                         "info_count": info_count,
@@ -893,6 +905,7 @@ def api_changes_cmd(ctx, base, severity):
                     budget=token_budget,
                     base_ref=base,
                     changes=filtered,
+                    **({"files_not_analyzed": skipped} if skipped else {}),
                 )
             )
         )
@@ -901,6 +914,8 @@ def api_changes_cmd(ctx, base, severity):
     # --- Text output ---
     click.echo(f"VERDICT: {verdict}")
 
+    for entry in skipped:
+        click.echo(f"Skipped {entry['file']} (submodule pointer).")
     if not filtered:
         return
 

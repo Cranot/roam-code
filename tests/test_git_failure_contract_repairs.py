@@ -132,6 +132,9 @@ def test_small_m3_file_one_verdict_and_resolved_dedupe(project_factory, monkeypa
 @pytest.mark.parametrize("fmt", ["json", "markdown", "text"])
 @pytest.mark.parametrize("output", [False, True])
 def test_small_m4_attest_failure_risk_and_output(project, tmp_path, fmt, output):
+    # Named contract change: old canonical risk "low" and integer rank 1 on a
+    # failed changed-file lookup. New: both fields are null, including their
+    # top-level mirrors. Reason: the lookup failed before risk could be assessed.
     path = tmp_path / "attestation.txt"
     args = ["attest", "missing-ref", "--format", fmt] + (["--output", str(path)] if output else [])
     result = invoke(*args)
@@ -161,9 +164,10 @@ def test_small_m5_sibling_failure_disclosure(project, command, mode):
     else:
         assert "could not" in result.stdout.lower()
     if command == "api-changes":
-        # Named contract change: old nonzero (2), new 0.
-        # A disclosed degraded Git read is informational; 2 means invalid usage.
-        # --severity filters output and is not a gate flag. Other assertions stay.
+        # Named contract change: old false clean (breaking_count=0, no partial_success).
+        # New: unknown counts with partial_success and the Git failure kind.
+        # Reason: a failed comparison cannot establish clean results. Both
+        # versions exit 0. --severity is an output filter.
         assert result.exit_code == 0
 
 
@@ -175,7 +179,9 @@ def test_small_m5_attest_breaking_failure_reaches_envelope(project, monkeypatch,
     (project / "core.py").write_text("def other():\n    return 2\n")
 
     def fail_breaking(cmd, *a, **kw):
-        if cmd[:3] == ["git", "diff", "--name-only"] and cmd[-1] == "HEAD":
+        # Named command-line contract change: HEAD is now followed by --.
+        # The separator prevents Git from treating an unknown ref as a path.
+        if cmd[:3] == ["git", "diff", "--name-only"] and "HEAD" in cmd:
             return subprocess.CompletedProcess(cmd, 128, "", "breaking comparison failed")
         return original(cmd, *a, **kw)
 
@@ -256,7 +262,9 @@ def test_m3_failed_old_content_is_not_a_new_file(project_factory, monkeypatch, k
     original = subprocess.run
 
     def fail_show(cmd, *a, **kw):
-        if cmd[:2] == ["git", "show"]:
+        # Named command-line contract change: Git blob reads moved from
+        # show to cat-file blob so nonblob objects cannot become source.
+        if cmd[0] == "git" and cmd[1] in ("show", "cat-file"):
             if kind == "git_timeout":
                 raise subprocess.TimeoutExpired(cmd, 10)
             if kind == "git_not_available":

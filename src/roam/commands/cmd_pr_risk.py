@@ -24,7 +24,6 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
-    GIT_ERROR,
     get_changed_files,  # noqa: F401 -- retain the imported 387aca65 name
     get_changed_files_status,
     is_low_risk_file,
@@ -1133,10 +1132,11 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
         staged=staged,
         commit_range=commit_range,
         error_details=git_details,
-        default=([], GIT_ERROR),
+        default=([], None),
     )
-    if git_error:
-        verdict = f"comparison could not run: {git_error}"
+    if git_error or _w607q_warnings_out:
+        state = git_error or "changed_files_unavailable"
+        verdict = f"comparison could not run: {state}"
         detail = "\n".join(git_details) or None
         if json_mode:
             click.echo(
@@ -1145,9 +1145,9 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
                         "pr-risk",
                         summary={
                             "verdict": verdict,
-                            "state": git_error,
+                            "state": state,
                             "partial_success": True,
-                            "git_error": git_error,
+                            **({"git_error": git_error} if git_error else {}),
                             "git_error_detail": detail,
                             "risk_score": None,
                             "risk_level": None,

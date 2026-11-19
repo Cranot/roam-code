@@ -219,8 +219,7 @@ def test_attest_get_changed_files_failure_marker_format(cli_runner, attest_proje
     crash the attestation build, must not read as a clean tree, and must not
     be dropped on the way out: the empty-changeset envelope carries the
     ``attest_get_changed_files_failed:<exc>:<detail>`` marker and discloses
-    ``state="git_error"``, because "the question could not be asked" is not
-    the same fact as "no files changed".
+    ``state="changed_files_unavailable"``.
     """
     from roam.commands import cmd_attest
 
@@ -234,7 +233,11 @@ def test_attest_get_changed_files_failure_marker_format(cli_runner, attest_proje
     data = _json.loads(result.output)
 
     summary = data["summary"]
-    assert summary.get("state") == "git_error", summary
+    # Named contract change: old state "git_error" for a Python exception.
+    # New: "changed_files_unavailable". Reason: the helper raised before
+    # reporting a Git failure, so the warning identifies the actual cause.
+    assert summary.get("state") == "changed_files_unavailable", summary
+    assert "git_error" not in summary
     assert summary.get("partial_success") is True, summary
     assert summary.get("safe_to_merge") is None, summary
     for channel in (data.get("warnings_out") or [], summary.get("warnings_out") or []):

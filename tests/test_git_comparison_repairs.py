@@ -3,6 +3,7 @@
 import ast
 import inspect
 import json
+import os
 import subprocess
 
 import pytest
@@ -33,26 +34,39 @@ def test_breaking_range_compares_committed_right_side(project_factory, monkeypat
         extra_commits=[({"core.py": SOURCE.replace("calculate", "other")}, "rename public function")],
     )
     monkeypatch.chdir(root)
-    (root / "core.py").write_text(SOURCE)
-    CliRunner().invoke(cli, ["index", "--force"])
+    # The range cases still compare the committed rename against a worktree
+    # without it. The single-ref case adds a symbol to get past the empty diff.
+    current = SOURCE + "\ndef worktree_only():\n    return 3\n" if target == "HEAD~1" else SOURCE
+    (root / "core.py").write_text(current, encoding="utf-8")
+    index = CliRunner().invoke(cli, ["index", "--force"])
+    assert index.exit_code == 0, index.output
     summary = invoke("--json", "breaking", target)["summary"]
     assert summary["renamed"] == (0 if target == "HEAD~1" else 1)
+    assert summary["total"] == (0 if target == "HEAD~1" else 1)
 
 
 @pytest.mark.parametrize("absent", [True, False])
-def test_locale_neutral_blob_absence(project, monkeypatch, absent):
+def test_locale_neutral_blob_absence(project_factory, monkeypatch, absent):
     from roam.commands.changed_files import GitComparisonError, git_show_at_ref
 
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "0")
+    project = project_factory({"core.py": SOURCE}, index=False)
     monkeypatch.setenv("LANG", "de_DE.UTF-8")
     monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
-    original = subprocess.run
+    monkeypatch.setenv("LANGUAGE", "de")
 
-    def run(cmd, *args, **kwargs):
-        if cmd[:2] == ["git", "show"]:
-            return subprocess.CompletedProcess(cmd, 128, b"", b"fatal: Pfad existiert nicht")
-        return original(cmd, *args, **kwargs)
+    def git(*args, check=True):
+        return subprocess.run(["git", *args], cwd=project, capture_output=True, check=check)
 
-    monkeypatch.setattr(subprocess, "run", run)
+    path = "new.py" if absent else "core.py"
+    if not absent:
+        # The tree still names the file, but its loose blob is unreadable.
+        oid = git("rev-parse", "HEAD:core.py").stdout.decode().strip()
+        blob = project / ".git" / "objects" / oid[:2] / oid[2:]
+        blob.rename(project / "held-blob")
+    assert git("show", f"HEAD:{path}", "--", check=False).returncode != 0
     if absent:
         assert git_show_at_ref(project, "HEAD", "new.py", strict=True) is None
     else:
@@ -67,7 +81,9 @@ def test_ref_comparison_required_blob(project, monkeypatch, command, args, faile
     original = subprocess.run
 
     def run(cmd, *a, **kw):
-        if failed and cmd == ["git", "show", "HEAD:core.py"]:
+        # Named command-line contract change: blob reads used git show.
+        # They now use git cat-file blob to reject nonblobs and path fallback.
+        if failed and cmd[0] == "git" and cmd[1] in ("show", "cat-file") and "HEAD:core.py" in cmd:
             raise subprocess.TimeoutExpired(cmd, 10)
         return original(cmd, *a, **kw)
 
@@ -142,7 +158,10 @@ def test_attest_preserves_risk_after_breaking_failure(project, monkeypatch, fail
     if failed:
         assert data["summary"]["git_error"] == "git_timeout"
         assert data["summary"]["safe_to_merge"] is None
-        assert data["summary"]["risk_rank"] is None
+        # Named contract change: old rank null on a breaking-only failure.
+        # New: rank 1 for the computed LOW risk. The separate merge verdict
+        # stays unknown because risk alone cannot certify the breaking check.
+        assert data["summary"]["risk_rank"] == 1
 
 
 @pytest.mark.parametrize("kind", ["git_timeout", "git_not_available", "git_error", None])
@@ -190,7 +209,8 @@ def test_verify_breaking_import_and_execution(project, monkeypatch):
     from roam.db.connection import open_db
 
     (project / "core.py").write_text("def calculate(value):\n    return value\n")
-    CliRunner().invoke(cli, ["index", "--force"])
+    index = CliRunner().invoke(cli, ["index", "--force"])
+    assert index.exit_code == 0, index.output
     called = []
     original = breaking._compare_file
 

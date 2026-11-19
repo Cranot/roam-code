@@ -175,7 +175,8 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # Determine base ref for snapshot matching
     base_ref = "HEAD"
     if commit_range and ".." in commit_range:
-        base_ref = commit_range.split("..")[0]
+        base_ref = commit_range.split("..", 1)[0] or "HEAD"
+    symbol_base_ref = commit_range if commit_range and ".." not in commit_range else base_ref
 
     from roam.commands.metrics_history import collect_metrics
     from roam.graph.diff import (
@@ -218,7 +219,9 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
         edges = edge_analysis(conn, changed_file_ids)
 
         # Symbol changes
-        sym_changes = symbol_changes(conn, root, base_ref, changed)
+        sym_changes = symbol_changes(conn, root, symbol_base_ref, changed)
+        skipped = sym_changes.pop("files_not_analyzed", [])
+        git_failures = [entry for entry in skipped if "git_error" in entry]
 
         # Footprint
         footprint = compute_footprint(conn, changed_file_ids)
@@ -276,11 +279,22 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # the user fixes it immediately. An outage you cannot clear and a setup step
     # you clear with one command are not the same thing, and treating them alike
     # was the error.
+    if skipped:
+        verdict += f" ({len(skipped)} path(s) skipped in symbol comparison)"
+    if git_failures and fail_on_degradation:
+        verdict += " - cannot gate"
     gate_failed = gate_should_fail(
         fail_on_degradation,
         findings=health_degraded,
-        scan_incomplete=not deltas_available,
+        scan_incomplete=not deltas_available or bool(git_failures),
     )
+
+    git_failure_summary = {}
+    if git_failures:
+        git_failure_summary = {
+            "git_error": git_failures[0]["git_error"],
+            "git_error_detail": "\n".join(entry["detail"] for entry in git_failures),
+        }
 
     # --- JSON output ---
     if json_mode:
@@ -295,12 +309,14 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
                         "health_delta": health_delta,
                         "new_issues": new_issues,
                         "baseline_commit": baseline_commit,
-                        "partial_success": no_baseline_for_gate,
+                        "partial_success": no_baseline_for_gate or bool(skipped),
+                        **git_failure_summary,
                     },
                     changed_files=changed,
                     metric_deltas=deltas,
                     edge_analysis=edges,
                     symbol_changes=sym_changes,
+                    **({"files_not_analyzed": skipped} if skipped else {}),
                     footprint=footprint,
                 )
             )
@@ -312,6 +328,10 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # --- Markdown output ---
     if fmt == "markdown":
         _emit_markdown(verdict, deltas, deltas_available, edges, sym_changes, footprint, changed)
+        for item in skipped:
+            click.echo(f"- Skipped {item['file']} ({item['reason']})")
+        if git_failures:
+            click.echo(git_failure_summary["git_error_detail"])
         if gate_failed:
             ctx.exit(EXIT_GATE_FAILURE)
         return
@@ -361,6 +381,10 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
         click.echo()
 
     # Symbol changes
+    for item in skipped:
+        click.echo(f"Skipped {item['file']} ({item['reason']})")
+    if git_failures:
+        click.echo(git_failure_summary["git_error_detail"])
     n_added = len(sym_changes["added"])
     n_removed = len(sym_changes["removed"])
     n_modified = len(sym_changes["modified"])

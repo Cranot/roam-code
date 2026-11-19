@@ -16,11 +16,12 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
     GitComparisonError,
+    GitlinkPath,
     get_changed_files_status,
     git_comparison_base,
 )
 from roam.commands.changed_files import (
-    git_changed_files_against_ref as _git_changed_files,  # noqa: F401 -- legacy export used by attest
+    git_changed_files_against_ref as _git_changed_files,  # noqa: F401 -- legacy export
 )
 from roam.commands.changed_files import (
     git_show_at_ref as _git_show,
@@ -282,6 +283,37 @@ def _get_current_symbols(conn, file_path: str) -> list[dict]:
     ]
 
 
+def collect_breaking_changes(conn, root, changed, base_ref, head_ref=None):
+    """Compare the base against a committed endpoint or the current index."""
+    evidence = {"removed": [], "signature_changed": [], "renamed": []}
+    skipped = []
+    for fpath in changed:
+        try:
+            old_source = _git_show(root, base_ref, fpath, strict=True)
+            if old_source is None:
+                # New files cannot break an existing API.
+                continue
+            old_symbols = _extract_old_symbols(old_source, fpath)
+            if not old_symbols:
+                continue
+            if head_ref is None:
+                new_symbols = _get_current_symbols(conn, fpath)
+            else:
+                new_source = _git_show(root, head_ref, fpath, strict=True)
+                new_symbols = _extract_old_symbols(new_source, fpath) if new_source is not None else []
+        except GitlinkPath:
+            skipped.append({"file": fpath, "reason": "gitlink"})
+            continue
+
+        removed, sig_changed, renamed = _compare_file(fpath, old_symbols, new_symbols)
+        evidence["removed"].extend(removed)
+        evidence["signature_changed"].extend(sig_changed)
+        evidence["renamed"].extend(renamed)
+    if skipped:
+        evidence["files_not_analyzed"] = skipped
+    return evidence
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -384,43 +416,21 @@ def breaking(ctx, target):
             click.echo(f"No changed files vs {target}.")
         return
 
-    all_removed: list[dict] = []
-    all_sig_changed: list[dict] = []
-    all_renamed: list[dict] = []
-
     try:
         base_ref = git_comparison_base(root, target)
+        head_ref = None
+        if ".." in target:
+            head_ref = target.split("..." if "..." in target else "..", 1)[1] or "HEAD"
         with open_db(readonly=True) as conn:
-            for fpath in changed:
-                # Get old file content from the ref
-                old_source = _git_show(root, base_ref, fpath, strict=True)
-                if old_source is None:
-                    # File didn't exist at ref — it's new, no breaking changes
-                    continue
-
-                old_symbols = _extract_old_symbols(old_source, fpath)
-                if not old_symbols:
-                    continue
-
-                if ".." in target:
-                    head_ref = target.split("..." if "..." in target else "..", 1)[1] or "HEAD"
-                    new_source = _git_show(root, head_ref, fpath, strict=True)
-                    new_symbols = _extract_old_symbols(new_source, fpath) if new_source is not None else []
-                else:
-                    new_symbols = _get_current_symbols(conn, fpath)
-
-                removed, sig_changed, renamed = _compare_file(
-                    fpath,
-                    old_symbols,
-                    new_symbols,
-                )
-                all_removed.extend(removed)
-                all_sig_changed.extend(sig_changed)
-                all_renamed.extend(renamed)
-
+            evidence = collect_breaking_changes(conn, root, changed, base_ref, head_ref)
     except GitComparisonError as exc:
         emit_git_failure(exc.kind, exc.detail)
         return
+
+    all_removed = evidence["removed"]
+    all_sig_changed = evidence["signature_changed"]
+    all_renamed = evidence["renamed"]
+    skipped = evidence.get("files_not_analyzed", [])
 
     # Sort for stable output
     all_removed.sort(key=lambda r: (r["file"], r.get("line") or 0))
@@ -441,6 +451,9 @@ def breaking(ctx, target):
             _parts.append(f"{len(all_renamed)} renames")
         _breaking_verdict = f"{total} breaking changes vs {target}: {', '.join(_parts)}"
 
+    if skipped:
+        _breaking_verdict += f" ({len(skipped)} submodule path(s) skipped)"
+
     if json_mode:
         click.echo(
             to_json(
@@ -448,6 +461,7 @@ def breaking(ctx, target):
                     "breaking",
                     summary={
                         "verdict": _breaking_verdict,
+                        **({"partial_success": True} if skipped else {}),
                         "removed": len(all_removed),
                         "signature_changed": len(all_sig_changed),
                         "renamed": len(all_renamed),
@@ -457,6 +471,7 @@ def breaking(ctx, target):
                     removed=all_removed,
                     signature_changed=all_sig_changed,
                     renamed=all_renamed,
+                    **({"files_not_analyzed": skipped} if skipped else {}),
                 )
             )
         )
@@ -465,6 +480,8 @@ def breaking(ctx, target):
     # --- Text output ---
     click.echo(f"VERDICT: {_breaking_verdict}")
     click.echo()
+    for entry in skipped:
+        click.echo(f"Skipped {entry['file']} (submodule pointer).")
     if total == 0:
         click.echo(f"No breaking changes vs {target}.")
         return
