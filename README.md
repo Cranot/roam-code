@@ -9,7 +9,7 @@ code and evaluate changes without building each analysis from scratch.
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 <sub>Runs on your machine · free and open source · no account or API key for local analysis · no automatic source-code or telemetry upload</sub>
@@ -41,7 +41,7 @@ tests, security tools, and code review.
 
 ## Connect your agent
 
-You need **Python 3.10+** and a Git repository. On Linux, macOS, or Windows:
+You need **Python 3.11+** and a Git repository. On Linux, macOS, or Windows:
 
 ```bash
 pip install "roam-code[mcp]"

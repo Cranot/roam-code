@@ -90,6 +90,9 @@
 <h2>[Unreleased]</h2>
 <h3>Changed</h3>
 <ul>
+<li><strong>Python 3.11+ required.</strong> Drop Python 3.10 support so every supported CI environment can use the fixed filelock and dnspython releases without vulnerability exceptions. Packaging, CI, the composite action, setup checks and install documentation now require Python 3.11 or newer.</li>
+</ul>
+<ul>
 <li><strong><code>roam --json deps</code> and <code>roam --json file</code> exit 1 for a missing file.</strong> The exit code now matches text mode, so a CI caller no longer reads a missing target as success. The <code>file_not_found</code> envelope is unchanged, and the MCP tools still return it with <code>isError</code> set.</li>
 </ul>
 <h3>Added</h3>

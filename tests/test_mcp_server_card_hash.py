@@ -46,7 +46,7 @@ from tests._helpers.repo_root import repo_root
 # og.png pointing at deployed assets on roam-code.com). All 3
 # .well-known card path variants stay byte-identical per the W792
 # invariant.
-_EXPECTED_CARD_SHA256 = "6bb6b700f654b47f26ea4abbf5c50b7e875e4a126594633b4630f04a61ee8bad"
+_EXPECTED_CARD_SHA256 = "354072ae4aad6b58292ae937b5bd31f162de705fbf8da6bcbf116e1acdcb4aea"
 
 
 def _card_path() -> Path:

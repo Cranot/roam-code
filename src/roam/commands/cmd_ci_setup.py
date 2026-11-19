@@ -871,7 +871,7 @@ def _print_post_setup_instructions(platform: str, output_path: str) -> None:
             f"  1. Rename {output_path} to Jenkinsfile (or load it from your main Jenkinsfile)",
             "  2. Install 'Warnings Next Generation' plugin for SARIF ingestion:",
             "     https://plugins.jenkins.io/warnings-ng/",
-            "  3. Ensure Python 3.10+ is available on the Jenkins agent",
+            "  3. Ensure Python 3.11+ is available on the Jenkins agent",
             "  4. Trigger a build to test the pipeline",
         ],
         "bitbucket": [

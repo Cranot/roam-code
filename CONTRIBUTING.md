@@ -15,7 +15,7 @@ everything you need to get started.
 
 ### Prerequisites
 
-- Python 3.10+; Python 3.12 is the standard local development interpreter
+- Python 3.11+; Python 3.12 is the standard local development interpreter
 - Git
 - uv (use the version pinned in `.github/workflows/roam-ci.yml` for CI parity)
 
@@ -168,7 +168,7 @@ uv run --no-sync ruff format --check src/ tests/
 uv run --no-sync ruff check src/ tests/
 ```
 
-The project uses ruff with `target-version = "py310"` and `line-length = 120`.
+The project uses ruff with `target-version = "py311"` and `line-length = 120`.
 Selected rule sets: E, F, W, I, T20 (pyflakes, pycodestyle, isort, print statements).
 
 ### Code Style
@@ -176,7 +176,7 @@ Selected rule sets: E, F, W, I, T20 (pyflakes, pycodestyle, isort, print stateme
 - **Functions and methods:** `snake_case`
 - **Classes:** `PascalCase`
 - **Imports:** Absolute imports for cross-directory references
-- **Future annotations:** Every source file must start with `from __future__ import annotations` so type hints stay strings at runtime (cheaper import, safer forward references, avoids PEP 604 union evaluation costs). The project requires Python 3.10+ (`pyproject.toml`); this is a code-quality convention, not a back-compat shim.
+- **Future annotations:** Every source file must start with `from __future__ import annotations` so type hints stay strings at runtime (cheaper import, safer forward references, avoids PEP 604 union evaluation costs). The project requires Python 3.11+ (`pyproject.toml`); this is a code-quality convention, not a back-compat shim.
 - **Output format:** Plain ASCII only -- no emojis, no colors, no box-drawing characters. This keeps output token-efficient for LLM consumption.
 - **Output abbreviations:** `fn` (function), `cls` (class), `meth` (method) -- via `abbrev_kind()`
 

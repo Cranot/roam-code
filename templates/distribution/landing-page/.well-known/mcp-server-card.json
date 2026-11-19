@@ -57,7 +57,7 @@
   "install": {
     "pypi": "roam-code",
     "command": "pip install \"roam-code[mcp]\"",
-    "min_python": "3.10",
+    "min_python": "3.11",
     "post_install": "roam init"
   },
   "capabilities": {

@@ -10,14 +10,10 @@ gates" and "Test conventions" — modes are gate-related context.
 from __future__ import annotations
 
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib
-except ImportError:  # Python 3.10 — tomli backport (a dependency)
-    import tomli as tomllib
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process  # noqa: E402

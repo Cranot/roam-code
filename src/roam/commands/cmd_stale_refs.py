@@ -2272,8 +2272,8 @@ def _load_repo_config(project_root: Path) -> dict:
     defaults. Loaded by the Click command at the start of each run;
     individual flags can be made config-aware by checking ``ctx.obj``.
 
-    Uses Python 3.11+ stdlib ``tomllib`` when available; falls back to
-    a minimal parser on 3.10 (the project's current floor).
+    Uses stdlib ``tomllib``; retains optional and minimal parser fallbacks
+    for defensive config recovery when the stdlib parser is unavailable.
     """
     config_path = project_root / ".roam" / _CONFIG_FILENAME
     if not config_path.exists():
@@ -2285,7 +2285,7 @@ def _load_repo_config(project_root: Path) -> dict:
             with open(config_path, "rb") as fh:
                 return tomllib.load(fh)
         except ImportError:
-            # Python < 3.11 — fall back to ``tomli`` if available; if
+            # Stdlib parser unavailable — fall back to ``tomli`` if available; if
             # neither is installed, parse a minimal subset by hand. We
             # don't add a hard dep just for this config file.
             try:

@@ -189,7 +189,7 @@ def _toml_data(path: Path) -> tuple[dict, bool]:
     """Return ``(data, readable)``. ``readable`` is False on a parse failure."""
     try:
         import tomllib
-    except ImportError:  # pragma: no cover - Python 3.10
+    except ImportError:  # pragma: no cover - Defensive optional parser fallback
         import tomli as tomllib  # type: ignore[no-redef]
     try:
         with path.open("rb") as stream:

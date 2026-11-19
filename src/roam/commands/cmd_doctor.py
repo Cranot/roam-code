@@ -156,14 +156,14 @@ def _emit_doctor_findings(conn, results: list[dict], source_version: str) -> Non
 
 
 def _check_python_version() -> dict:
-    """Python >= 3.10 required."""
+    """Python >= 3.11 required."""
     vi = sys.version_info
     version_str = f"{vi.major}.{vi.minor}.{vi.micro}"
-    passed = (vi.major, vi.minor) >= (3, 10)
+    passed = (vi.major, vi.minor) >= (3, 11)
     return {
         "name": "Python version",
         "passed": passed,
-        "detail": f"Python {version_str} (>= 3.10 required)",
+        "detail": f"Python {version_str} (>= 3.11 required)",
     }
 
 
@@ -518,8 +518,8 @@ def _check_ci_environment_parity() -> dict:
 
 
 def _load_pyproject_toml(path: Path) -> dict | None:
-    """Parse ``pyproject.toml`` via stdlib ``tomllib`` (3.11+) or the ``tomli``
-    backport (3.10 floor).
+    """Parse ``pyproject.toml`` via stdlib ``tomllib`` or the defensive optional
+    ``tomli`` fallback.
 
     Returns ``None`` on any failure -- missing parser, unreadable file,
     malformed TOML -- so callers treat an unparseable pyproject as

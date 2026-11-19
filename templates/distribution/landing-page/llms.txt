@@ -2,7 +2,7 @@
 
 > Roam gives coding agents reusable local code analysis and checks through the CLI or MCP. Its index returns files, functions, and their connections; pattern checks can pair code with candidate alternatives from an algorithm catalog. Agents use the returned source locations, findings, and check results to decide what to inspect, try, or test instead of implementing each analysis themselves. Refresh the index as code changes. Static checks make no model calls. Alternatives require source inspection, behavior tests, and performance measurement before claiming an improvement. People set direction and decide what ships. Configured evidence workflows can save a record of checks and supplied decisions. Missing checks remain unknown, not proof of safety. A connected agent's own model usage and data handling are separate from Roam's local analysis.
 
-roam-code (`pip install roam-code`, Python 3.10+) is a local code-analysis
+roam-code (`pip install roam-code`, Python 3.11+) is a local code-analysis
 toolkit for coding agents. Run `roam index` to refresh the index as code changes.
 The local SQLite index holds symbols, dependencies, call graphs, architecture
 layers, and git history. Imported runtime traces are separate observations,

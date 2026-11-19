@@ -42,7 +42,7 @@ from tests._findings_helpers import assert_detector_visible_in_findings_count
 # ---------------------------------------------------------------------------
 
 
-def _blocking_failure(name: str = "Python version", detail: str = "Python 3.8.0 (>= 3.10 required)") -> dict:
+def _blocking_failure(name: str = "Python version", detail: str = "Python 3.8.0 (>= 3.11 required)") -> dict:
     """A synthetic check-result dict shaped like the doctor runtime emits.
 
     Defaults to the canonical Python-version blocking case so the test
@@ -99,7 +99,7 @@ def test_emit_doctor_findings_blocking_failure_writes_row(tmp_path):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(proj))
-        results = [_blocking_failure("Python version", "Python 3.8.0 (>= 3.10 required)")]
+        results = [_blocking_failure("Python version", "Python 3.8.0 (>= 3.11 required)")]
         with open_db(readonly=False) as conn:
             _emit_doctor_findings(conn, results, DOCTOR_DETECTOR_VERSION)
             conn.commit()
@@ -189,7 +189,7 @@ def test_emit_doctor_findings_mixed_input_emits_only_blocking(tmp_path):
         results = [
             _passed_check("tree-sitter"),
             _advisory_failure("Cloud sync", "OneDrive detected"),
-            _blocking_failure("Python version", "Python 3.8.0 (>= 3.10 required)"),
+            _blocking_failure("Python version", "Python 3.8.0 (>= 3.11 required)"),
             _advisory_failure("MCP tool registry", "no tools registered"),
             _blocking_failure("git executable", "git not found on PATH"),
             _passed_check("networkx"),
@@ -219,7 +219,7 @@ def test_emit_doctor_findings_is_idempotent(tmp_path):
     try:
         os.chdir(str(proj))
         results = [
-            _blocking_failure("Python version", "Python 3.8.0 (>= 3.10 required)"),
+            _blocking_failure("Python version", "Python 3.8.0 (>= 3.11 required)"),
             _blocking_failure("git executable", "git not found on PATH"),
         ]
         with open_db(readonly=False) as conn:
@@ -349,7 +349,7 @@ def test_doctor_findings_visible_via_cmd_findings_list(tmp_path):
         with open_db(readonly=False) as conn:
             _emit_doctor_findings(
                 conn,
-                [_blocking_failure("Python version", "Python 3.8.0 (>= 3.10 required)")],
+                [_blocking_failure("Python version", "Python 3.8.0 (>= 3.11 required)")],
                 DOCTOR_DETECTOR_VERSION,
             )
             conn.commit()
@@ -379,7 +379,7 @@ def test_doctor_findings_visible_via_cmd_findings_count(tmp_path):
             _emit_doctor_findings(
                 conn,
                 [
-                    _blocking_failure("Python version", "Python 3.8.0 (>= 3.10 required)"),
+                    _blocking_failure("Python version", "Python 3.8.0 (>= 3.11 required)"),
                     _blocking_failure("git executable", "git not found on PATH"),
                 ],
                 DOCTOR_DETECTOR_VERSION,

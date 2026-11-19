@@ -299,7 +299,7 @@ tests/                 # 1100+ test_*.py files
 
 - **Command template:** Every command follows this pattern:
   ```python
-  from __future__ import annotations  # project convention (lazy annotations on 3.10+)
+  from __future__ import annotations  # project convention (lazy annotations on 3.11+)
   import click
   from roam.db.connection import open_db
   from roam.output.formatter import to_json, json_envelope
@@ -322,7 +322,7 @@ tests/                 # 1100+ test_*.py files
           click.echo("VERDICT: ...")
   ```
 
-- **`from __future__ import annotations`** — Required at top of every source file. The project requires Python 3.10+ (`pyproject.toml`); the import keeps annotations lazy (cheaper import, safer forward references, avoids PEP 604 runtime evaluation) rather than acting as a 3.9 back-compat shim.
+- **`from __future__ import annotations`** — Required at top of every source file. The project requires Python 3.11+ (`pyproject.toml`); the import keeps annotations lazy (cheaper import, safer forward references, avoids PEP 604 runtime evaluation) rather than acting as a 3.9 back-compat shim.
 
 - **Batched IN-clauses:** Never write raw `WHERE id IN (...)` with a list > 400 items. Use `batched_in()` from `connection.py` instead.
 

@@ -108,7 +108,7 @@
         See the <a href="https://github.com/Cranot/roam-code/blob/main/docs/mcp-protocol-compatibility.md">protocol compatibility guide</a>.
         Install dependencies before launching stdio; keep installation output out of the protocol stream.</p>
       <p>
-        Install the MCP extra (Python 3.10+ required) and run
+        Install the MCP extra (Python 3.11+ required) and run
         <code>roam init</code> in your project root <strong>before</strong>
         the first MCP call. <code>roam init</code> builds
         <code>.roam/index.db</code> by default — the local SQLite graph
@@ -116,7 +116,7 @@
         its history, and your machine. Refresh it with <code>roam index</code>
         as code changes; later runs can reuse unchanged files.
       </p>
-<pre><code>pip install "roam-code[mcp]"   # Python 3.10+; pulls fastmcp + tree-sitter
+<pre><code>pip install "roam-code[mcp]"   # Python 3.11+; pulls fastmcp + tree-sitter
 cd /path/to/repo
 roam init                       # creates .roam/index.db + fitness rules; CI is opt-in
 roam --json doctor              # inspect environment and index readiness

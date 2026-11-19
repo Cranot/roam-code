@@ -180,7 +180,7 @@ def test_validator_is_the_single_raw_input_boundary() -> None:
         "command names must match",
         "forbidden Git ref component",
         "unsupported expression grammar",
-        "expected Python 3.10 through 3.13",
+        "expected Python 3.11 through 3.13",
     ):
         assert required_guard in body
 
@@ -431,8 +431,9 @@ def test_validator_accepts_closed_pep440_style_release_forms(tmp_path: Path, ver
         # flag rather than being interpolated raw into the gate step.
         ({"INPUT_GATE_STRICT": "yes"}, "Invalid gate-strict"),
         ({"INPUT_GATE_STRICT": "true; id"}, "Invalid gate-strict"),
-        ({"INPUT_PYTHON_VERSION": "3.x"}, "expected Python 3.10 through 3.13"),
-        ({"INPUT_PYTHON_VERSION": "3.14"}, "expected Python 3.10 through 3.13"),
+        ({"INPUT_PYTHON_VERSION": "3.10"}, "expected Python 3.11 through 3.13"),
+        ({"INPUT_PYTHON_VERSION": "3.x"}, "expected Python 3.11 through 3.13"),
+        ({"INPUT_PYTHON_VERSION": "3.14"}, "expected Python 3.11 through 3.13"),
         ({"PR_BASE_SHA_INPUT": "main"}, "expected an empty, SHA-1, or SHA-256"),
     ],
 )

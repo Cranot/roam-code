@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import re
+import tomllib
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 CI lane
-    import tomli as tomllib
+import pytest
 
 from scripts.verify_uv_runtime import EXPECTED_UV_VERSION
 from tests._helpers.repo_root import repo_root
@@ -19,7 +17,7 @@ UV_ACTION_SHA = "11f9893b081a58869d3b5fccaea48c9e9e46f990"
 UV_VERSION = EXPECTED_UV_VERSION
 UV_RUNTIME_GUARD = "python -I -S -B scripts/verify_uv_runtime.py"
 PIP_AUDIT_VERSION = "2.10.1"
-SUPPORTED_PYTHONS = {"3.10", "3.11", "3.12", "3.13"}
+SUPPORTED_PYTHONS = {"3.11", "3.12", "3.13"}
 
 
 def _workflow() -> str:
@@ -159,3 +157,57 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
     assert versions["pypdf"] == "6.21.4"
     assert versions["setuptools"] == "84.1.0"
     assert versions["wheel"] == "0.48.0"
+
+
+def test_python_support_metadata_and_all_suite_matrices():
+    """Contract change: 3.10 -> 3.11 floor; retain an audit on every suite Python."""
+    import yaml
+    from packaging.specifiers import SpecifierSet
+    from packaging.version import Version
+
+    metadata = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
+    assert metadata["requires-python"] == ">=3.11"
+    supported = SpecifierSet(metadata["requires-python"])
+    workflows = sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
+    assert workflows, "No workflows inspected"
+    suite_matrices = []
+    for path in workflows:
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for name, job in workflow["jobs"].items():
+            steps = job.get("steps", [])
+            if not any("pytest" in step.get("run", "") for step in steps):
+                continue
+            matrix = job.get("strategy", {}).get("matrix")
+            if matrix is None:
+                continue
+            versions = matrix["python-version"]
+            assert isinstance(versions, list) and versions, (path.name, name, versions)
+            included_versions = [entry["python-version"] for entry in matrix.get("include", [])]
+            for version in versions + included_versions:
+                assert Version(str(version)) in supported, (path.name, name, version)
+            suite_matrices.append((path.name, name))
+    assert suite_matrices, "No suite Python matrices inspected"
+
+
+@pytest.mark.parametrize("versions", [["3.10", "3.11"], [], ["3.x"], None])
+def test_python_support_contract_refuses_invalid_matrices(tmp_path, monkeypatch, versions):
+    """Controls: matrix input cannot disappear, be empty, or name unsupported Python."""
+    import yaml
+
+    metadata = tmp_path / "pyproject.toml"
+    metadata.write_text('[project]\nrequires-python = ">=3.11"\n', encoding="utf-8")
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    workflow = {
+        "jobs": {
+            "test": {
+                "strategy": {"matrix": {"python-version": versions}},
+                "steps": [{"run": "python -m pytest tests/"}],
+            }
+        }
+    }
+    (workflows / "ci.yml").write_text(yaml.safe_dump(workflow), encoding="utf-8")
+    monkeypatch.setattr(__import__(__name__, fromlist=["ROOT"]), "ROOT", tmp_path)
+    monkeypatch.setattr(__import__(__name__, fromlist=["PYPROJECT"]), "PYPROJECT", metadata)
+    with pytest.raises((AssertionError, ValueError)):
+        test_python_support_metadata_and_all_suite_matrices()

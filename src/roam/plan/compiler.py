@@ -4460,7 +4460,7 @@ def _probe_repo_structure(named_paths: list[str], cwd: str | None, task: str | N
 
 
 def _toml_loader():
-    """Return the stdlib tomllib (py3.11+) or the tomli backport."""
+    """Return the stdlib tomllib (py3.11+) or the optional tomli fallback."""
     try:
         import tomllib as _toml  # py3.11+
     except ImportError:  # pragma: no cover
@@ -8202,7 +8202,7 @@ _W201_PROBE_OK_RE = re.compile(r"OK\s+\S")
 
 def _get_toml_parser():
     """Return the TOML parser module — stdlib tomllib (3.11+) or the tomli
-    backport (3.10, a declared roam dependency) — or None if neither is
+    optional defensive fallback — or None if neither is
     importable."""
     try:
         import tomllib  # type: ignore[import-not-found]  # 3.11+ stdlib
@@ -8212,7 +8212,7 @@ def _get_toml_parser():
         # tomllib is 3.11+; falling back to the tomli backport is expected.
         log_swallowed("compile.toml_parser.tomllib_fallback", exc)
     try:
-        import tomli  # type: ignore[import-not-found]  # 3.10 backport
+        import tomli  # type: ignore[import-not-found]  # defensive optional parser fallback
 
         return tomli
     except ModuleNotFoundError as exc:

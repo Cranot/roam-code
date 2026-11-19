@@ -234,10 +234,10 @@ _TOML_MARKER = "__roam_mcp_setup_marker__"
 
 
 def _load_toml(text: str) -> dict[str, Any]:
-    """Parse TOML with the stdlib on 3.11+ and the package fallback on 3.10."""
+    """Parse TOML with stdlib tomllib, retaining the defensive optional fallback."""
     try:
         import tomllib
-    except ImportError:  # pragma: no cover - Python 3.10 only
+    except ImportError:  # pragma: no cover - Defensive optional parser fallback
         import tomli as tomllib
 
     return tomllib.loads(text)

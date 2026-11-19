@@ -34,7 +34,7 @@ from roam.output.formatter import format_table, json_envelope, to_json
 # ---------------------------------------------------------------------------
 
 # sys.stdlib_module_names ships in Python 3.10+; pyproject.toml pins
-# requires-python = ">=3.10", so this attribute is always present.
+# requires-python = ">=3.11", so this attribute is always present.
 _PYTHON_STDLIB: frozenset[str] = frozenset(sys.stdlib_module_names) | frozenset(
     {"_msi", "_overlapped", "_winapi", "msvcrt", "winreg", "winsound"}
 )
@@ -153,10 +153,10 @@ def _import_name_for_requirement(req: str) -> str | None:
 
 
 def _load_toml(path: str) -> dict:
-    """Load a TOML file via tomllib (3.11+) or the tomli backport (3.10)."""
+    """Load TOML with stdlib tomllib, retaining the defensive optional fallback."""
     try:
         import tomllib
-    except ImportError:  # Python 3.10 — tomli backport (a dependency)
+    except ImportError:  # Defensive optional parser fallback
         import tomli as tomllib  # type: ignore[no-redef]
     with open(path, "rb") as fh:
         return tomllib.load(fh)

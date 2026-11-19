@@ -8,11 +8,7 @@ and generated command/changelog bodies are outside this copy-editing gate.
 from __future__ import annotations
 
 import json
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10 uses the declared tomli dependency.
-    import tomli as tomllib
+import tomllib
 
 from tests.test_homepage_contract import SITE, HomepageParser, normalized
 

@@ -10,7 +10,7 @@
     "issueTracker": "https://github.com/Cranot/roam-code/issues",
     "downloadUrl": "https://pypi.org/project/roam-code/",
     "programmingLanguage": "Python",
-    "runtimePlatform": "Python 3.10+",
+    "runtimePlatform": "Python 3.11+",
     "operatingSystem": [
         "Linux",
         "macOS",

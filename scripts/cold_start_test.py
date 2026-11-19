@@ -10,7 +10,7 @@ a traceback — this harness catches that class of regression before any
 release tag.
 
 Required gate before any release tag. Stdlib-only by design; runs in
-any Python 3.10+ environment with ``git`` and ``roam`` on PATH.
+any Python 3.11+ environment with ``git`` and ``roam`` on PATH.
 
 Usage
 -----

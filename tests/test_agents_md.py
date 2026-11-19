@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import ast
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib
-except ImportError:  # Python 3.10 — tomli backport (a dependency)
-    import tomli as tomllib
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (

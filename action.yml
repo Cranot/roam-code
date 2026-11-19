@@ -221,8 +221,8 @@ runs:
         fi
 
         validate_scalar "python-version" "${INPUT_PYTHON_VERSION}" 16
-        if [[ ! "${INPUT_PYTHON_VERSION}" =~ ^3\.(10|11|12|13)(\.[0-9]+)?$ ]]; then
-          fail_input "python-version" "expected Python 3.10 through 3.13, optionally with an exact patch"
+        if [[ ! "${INPUT_PYTHON_VERSION}" =~ ^3\.(11|12|13)(\.[0-9]+)?$ ]]; then
+          fail_input "python-version" "expected Python 3.11 through 3.13, optionally with an exact patch"
         fi
 
         validate_scalar "commands" "${INPUT_COMMANDS}" 1024

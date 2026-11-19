@@ -1,7 +1,7 @@
 # CI pipeline for roam-code itself.
 #
 # Jobs:
-#   test         — pytest across all supported Python versions (3.10–3.13;
+#   test         — pytest across all supported Python versions (3.11–3.13;
 #                   3.9 dropped 2026-05-16 per pyproject requires-python).
 #   lint         — ruff format/lint check (Python 3.12 only, fast gate)
 #   site-atlas   — dependency-free JavaScript data, interaction and syntax checks
@@ -137,7 +137,7 @@ jobs:
     strategy:
       fail-fast: false   # let all Python versions report; don't abort early
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -212,7 +212,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

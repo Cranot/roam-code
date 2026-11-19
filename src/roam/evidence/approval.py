@@ -144,9 +144,7 @@ def _parse_iso(value: str) -> _dt.datetime:
     matches the documented convention "ISO-8601 UTC" on
     :class:`ApprovalRecord`.
     """
-    # Python 3.10 compat (no native 'Z' parsing until 3.11; manual
-    # normalization). ``datetime.fromisoformat`` accepts ``Z`` directly
-    # on 3.11+, but we support 3.10 so we normalise explicitly.
+    # Preserve explicit UTC normalization for serialized approval timestamps.
     normalised = value
     if normalised.endswith("Z"):
         normalised = normalised[:-1] + "+00:00"

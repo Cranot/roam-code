@@ -205,7 +205,7 @@ class TestDoctorCheckCoverage:
 
 class TestDoctorPythonCheck:
     def test_python_check_passes_current_version(self):
-        """Current Python must be >= 3.10 to run roam-code at all."""
+        """Current Python must be >= 3.11 to run roam-code at all."""
         result, data = invoke_doctor_json()
         py_check = next(c for c in data["checks"] if c["name"] == "Python version")
         assert py_check["passed"] is True
@@ -232,13 +232,14 @@ class TestDoctorPythonCheck:
             check = _check_python_version()
         assert check["passed"] is False
 
-    def test_python_check_passes_310(self):
+    def test_python_check_rejects_310(self):
         from roam.commands.cmd_doctor import _check_python_version
 
         fake_vi = type("VI", (), {"major": 3, "minor": 10, "micro": 5})()
         with patch.object(sys, "version_info", fake_vi):
             check = _check_python_version()
-        assert check["passed"] is True
+        assert check["passed"] is False
+        assert ">= 3.11 required" in check["detail"]
 
 
 # ---------------------------------------------------------------------------

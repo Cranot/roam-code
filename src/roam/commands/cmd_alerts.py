@@ -699,8 +699,7 @@ _TREND_LABELS = {
 class _AlertBase(TypedDict):
     """W959 (required-field core for :class:`Alert`).
 
-    Split out so the optional ``trend_direction`` field can be modelled
-    on Python 3.10 (which ships ``TypedDict`` but NOT ``NotRequired``).
+    Split out to model the optional ``trend_direction`` field.
     See :class:`Alert` for the full record shape; downstream consumers
     type-annotate against :class:`Alert`, not this base.
     """
@@ -734,9 +733,7 @@ class Alert(_AlertBase, total=False):
     - ``trend_direction`` is optional — ``_check_thresholds`` omits it
       entirely; ``_check_trends`` / ``_check_rate_of_change`` /
       ``_delta_baseline_alerts`` set it. Modelled via the
-      Required-base + ``total=False`` subclass idiom so the file stays
-      Python 3.10 compatible (``typing.NotRequired`` is 3.11+, and
-      ``pyproject.toml`` declares ``requires-python = ">=3.10"``). The
+      Required-base + ``total=False`` subclass idiom. The
       field is dropped, not set to ``None``, when absent — matching the
       existing ``_make_alert`` behaviour and keeping the serialization
       output byte-identical to pre-W959.

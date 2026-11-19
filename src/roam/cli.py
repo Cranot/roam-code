@@ -1900,8 +1900,8 @@ def _short_help_via_ast(cmd_name: str) -> str | None:
 
 
 def _check_python_version(issues: list[str]) -> None:
-    if sys.version_info < (3, 10):
-        issues.append(f"Python {sys.version_info.major}.{sys.version_info.minor} < 3.10")
+    if sys.version_info < (3, 11):
+        issues.append(f"Python {sys.version_info.major}.{sys.version_info.minor} < 3.11")
 
 
 def _check_importable(module_name: str, label: str, issues: list[str]) -> None:
@@ -1952,7 +1952,7 @@ def _run_check(ctx: click.Context, param: click.Parameter, value: bool) -> None:
     """Eager callback for --check: run critical install checks and exit.
 
     Validates the five minimum requirements for roam-code to function:
-      1. Python >= 3.10
+      1. Python >= 3.11
       2. tree-sitter importable
       3. tree-sitter-language-pack importable
       4. git on PATH

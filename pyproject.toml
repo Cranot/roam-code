@@ -11,7 +11,7 @@ name = "roam-code"
 version = "14.1.0"
 description = "Local codebase intelligence for AI coding agents: structural repo map, change-safety gates, MCP security receipts, and tamper-evident ChangeEvidence packets. Local analysis, zero API keys, no automatic source-code upload."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
     {name = "Cranot"},
@@ -23,7 +23,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -42,10 +41,6 @@ dependencies = [
     # versions must re-pass Roam's 28-language grammar-drift matrix.
     "tree-sitter-language-pack>=1.13.3,<1.14",
     "networkx>=3.0",
-    # tomllib is stdlib on 3.11+. On 3.10 (our floor) we need the tomli
-    # backport so commands that parse pyproject.toml (orphan-imports
-    # dependency-allowlist filter, stale-refs config) keep working.
-    "tomli; python_version < '3.11'",
 ]
 
 [project.urls]
@@ -151,15 +146,14 @@ dev = [
     # PIL directly. Keep it in the dev extra rather than the runtime package.
     # 13.0.0 contains the upstream fixes for the 2026 image-parser advisory
     # waves (12.3.0 for the first); this is dev-only but still installed in CI
-    # and must audit clean. 13.0.0 needs Python 3.11+ and no release for 3.10
-    # carries the fixes, so the demo script is not supported on 3.10.
-    "pillow>=13.0.0; python_version >= '3.11'",
+    # and must audit clean.
+    "pillow>=13.0.0",
 ]
 
 [dependency-groups]
 # Tools used only by the repository's CI workflow. Exact pins make the
 # security scanner and isolated wheel-build backend reviewable; uv.lock binds
-# their complete transitive graphs and artifact hashes across Python 3.10-3.13.
+# their complete transitive graphs and artifact hashes across Python 3.11-3.13.
 ci = [
     "pip-audit==2.10.1",
     # 6.16.1 carried the fixes for CVE-2026-84309 (fixed in 6.16.0) plus
@@ -265,7 +259,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 120
 # Fixture trees are DATA/targets for the detectors (intentionally imperfect
 # code: real SQLi, unused imports, un-formatted style). pytest already excludes

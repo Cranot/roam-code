@@ -29,7 +29,7 @@ pipx install "roam-code[mcp]"  # isolated env
 uv tool install "roam-code[mcp]"
 ```
 
-Requirements: Python 3.10+ on Linux, macOS, or Windows. Supported platforms
+Requirements: Python 3.11+ on Linux, macOS, or Windows. Supported platforms
 use packaged native tree-sitter binaries; first use can retrieve the verified
 grammar bundle described in the network-boundary inventory.
 

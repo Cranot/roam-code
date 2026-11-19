@@ -129,7 +129,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 | `gate` | _(empty)_ | Quality gate expression. Supports scalar checks (`key>=value`) and trend-aware functions (`velocity(metric)<=0`, `direction(metric)!=worsening`). The action exits with code 5 when the gate fails. |
 | `gate-strict` | `false` | Make an unevaluated gate fail the job with exit 5. An unevaluated gate is always disclosed; without strict mode it is advisory. |
 | `cache` | `true` | Cache pip packages and the `.roam/` SQLite index between runs for faster incremental analysis. |
-| `python-version` | `3.11` | Python version to use. Supports 3.10 through 3.13 (roam-code requires Python 3.10+). |
+| `python-version` | `3.11` | Python version to use. Supports 3.11 through 3.13 (roam-code requires Python 3.11+). |
 
 The default shown here describes `action.yml` on the current main branch.
 An older or immutable Action revision keeps the default committed in that

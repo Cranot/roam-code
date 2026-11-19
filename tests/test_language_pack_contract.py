@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
+import tomllib
+
 from tests._helpers.repo_root import repo_root
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
-
 
 ROOT = repo_root()
 LANGUAGE_PACK_SPEC = "tree-sitter-language-pack>=1.13.3,<1.14"

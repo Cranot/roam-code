@@ -5,7 +5,7 @@
 // as a build artifact, and fail the build when the verdict is `blocked`.
 //
 // Required environment / credentials:
-//   * Jenkins agent must have Python 3.10+ + pip
+//   * Jenkins agent must have Python 3.11+ + pip
 //   * A Secret Text credential holding the webhook trigger token, with ID
 //     `roam-guard-webhook-token`. Generate a random value, store it in Jenkins,
 //     and use the SAME value in the webhook URL your forge posts to. The
