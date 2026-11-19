@@ -131,21 +131,21 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
     lock = tomllib.loads(UV_LOCK.read_text(encoding="utf-8"))
 
     assert pyproject["build-system"] == {
-        "requires": ["setuptools==83.0.0", "wheel==0.48.0"],
+        "requires": ["setuptools==84.1.0", "wheel==0.48.0"],
         "build-backend": "setuptools.build_meta",
     }
     assert pyproject["dependency-groups"]["ci"] == [
         f"pip-audit=={PIP_AUDIT_VERSION}",
-        # 6.20.1 since advisories fixed through 6.19.0 (earlier: 6.16.1 for
-        # CVE-2026-84309..84311).
+        # 6.21.4 since CVE-2026-119203..119205 (earlier: 6.20.1 for advisories
+        # fixed through 6.19.0; 6.16.1 for CVE-2026-84309..84311).
         # This literal is the point of the test: bumping a pinned CI tool must
         # be a deliberate edit here too, so a version that drifts in pyproject
         # alone fails rather than passing silently. That is also why Dependabot
         # cannot land these on its own -- its pip-ecosystem PRs edit pyproject
         # and nothing else, so they are red by construction and must be
         # reproduced as a pyproject + uv.lock + test change in one commit.
-        "pypdf==6.20.1",
-        "setuptools==83.0.0",
+        "pypdf==6.21.4",
+        "setuptools==84.1.0",
         "wheel==0.48.0",
     ]
     assert pyproject["dependency-groups"]["ci-fallback"] == [
@@ -156,6 +156,6 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
 
     versions = {package["name"]: package["version"] for package in lock["package"]}
     assert versions["pip-audit"] == PIP_AUDIT_VERSION
-    assert versions["pypdf"] == "6.20.1"
-    assert versions["setuptools"] == "83.0.0"
+    assert versions["pypdf"] == "6.21.4"
+    assert versions["setuptools"] == "84.1.0"
     assert versions["wheel"] == "0.48.0"

@@ -84,5 +84,7 @@ def test_runtime_and_test_extras_keep_unmigrated_mcp_majors_out():
         }
         assert "3.4.7" in requirements["fastmcp"].specifier
         assert "4.0.2" not in requirements["fastmcp"].specifier
-        assert "1.29.1" in requirements["mcp"].specifier
+        # The floor is the first release without CVE-2026-59951; 1.29.1 carries it.
+        assert "1.30.0" in requirements["mcp"].specifier
+        assert "1.29.1" not in requirements["mcp"].specifier
         assert "2.1.1" not in requirements["mcp"].specifier
