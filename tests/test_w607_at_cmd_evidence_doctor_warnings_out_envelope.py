@@ -254,7 +254,11 @@ def test_evidence_doctor_validate_closed_enums_failure_marker_format(cli_runner,
 
 
 def test_evidence_doctor_recompute_content_hash_failure_marker_format(cli_runner, valid_packet, monkeypatch):
-    """Contract change: hash verification failure exits with the FAIL verdict.
+    """Historical contract change: hash verification failure exits with FAIL.
+
+    bfc88920 changed the exit expectation from 0 to 2. Commit 387aca65
+    documented that earlier change and added level/hash_ok assertions;
+    it did not make the exit-code contract change.
 
     Old expectation: exit 0 after a recomputation exception.
     New expectation: exit 2, the doctor's existing failed-check exit code.

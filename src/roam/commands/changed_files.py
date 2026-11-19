@@ -403,6 +403,38 @@ GIT_TIMEOUT = "git_timeout"
 GIT_ERROR = "git_error"
 
 
+def run_git_comparison(
+    root: Path, cmd: list[str], error_details: list[str] | None, *, text=False, fallback_detail: str | None = None
+):
+    """Run a Git comparison step and preserve its failure kind and diagnostics."""
+    from roam.git_utils import worktree_git_env
+    from roam.observability import log_swallowed
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            timeout=10,
+            env=worktree_git_env(root),
+            **({"text": True, "encoding": "utf-8", "errors": "replace"} if text else {}),
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        log_swallowed("changed_files:git_comparison", exc)
+        if error_details is not None:
+            error_details.append(str(exc))
+        return None, GIT_TIMEOUT if isinstance(exc, subprocess.TimeoutExpired) else GIT_NOT_AVAILABLE
+
+    if result.returncode != 0:
+        stderr = result.stderr if text else result.stderr.decode("utf-8", errors="replace")
+        detail = stderr.strip() or fallback_detail or f"git {cmd[1]} exited {result.returncode}"
+        log_swallowed("changed_files:git_comparison_returncode", RuntimeError(detail[:200]))
+        if error_details is not None:
+            error_details.append(detail)
+        return None, GIT_ERROR
+    return result, None
+
+
 def get_changed_files_status(
     root: Path,
     staged: bool = False,
@@ -435,44 +467,15 @@ def get_changed_files_status(
     elif staged:
         cmd.append("--cached")
 
-    from roam.git_utils import worktree_git_env
-
-    git_env = worktree_git_env(root)
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding="utf-8",
-            errors="replace",
-            env=git_env,
-        )
-        if result.returncode != 0:
-            # Previously a bare ``return []`` with no log_swallowed call —
-            # the one failure mode that was discarded without any record.
-            from roam.observability import log_swallowed
-
-            log_swallowed(
-                "changed_files:get_changed_files:git_diff_returncode",
-                RuntimeError(f"git diff exited {result.returncode}: {result.stderr.strip()[:200]}"),
-            )
-            if error_details is not None:
-                error_details.append(result.stderr.strip() or f"git diff exited {result.returncode}")
-            return [], GIT_ERROR
-        paths = [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
-        # Git missing / diff timed out -> empty changeset. A TimeoutExpired
-        # here is a real failure masquerading as "no changes" — surface it.
-        from roam.observability import log_swallowed
-
-        log_swallowed("changed_files:get_changed_files:git_diff", _exc)
-        if error_details is not None:
-            error_details.append(str(_exc))
-        return [], (GIT_TIMEOUT if isinstance(_exc, subprocess.TimeoutExpired) else GIT_NOT_AVAILABLE)
+    result, git_error = run_git_comparison(root, cmd, error_details, text=True)
+    if git_error is not None:
+        return [], git_error
+    paths = [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
 
     if untracked:
+        from roam.git_utils import worktree_git_env
+
+        git_env = worktree_git_env(root)
         try:
             ut = subprocess.run(
                 ["git", "ls-files", "--others", "--exclude-standard"],
@@ -584,58 +587,74 @@ def resolve_changed_to_db(conn, changed_paths: list[str]) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
+class GitComparisonError(RuntimeError):
+    """A ref comparison failed, with the shared closed-enum Git failure kind."""
+
+    def __init__(self, kind: str, detail: str):
+        self.kind = kind
+        self.detail = detail
+        super().__init__(detail)
+
+
 def git_changed_files_against_ref(root: Path, ref: str) -> list[str]:
-    """Return files changed between *ref* and the working tree (indexed state).
+    """Return changed paths; raise GitComparisonError when comparison is unavailable.
 
-    Distinct from :func:`get_changed_files` which handles staged / commit-range
-    / pr / working-tree sources via a single entry point. This helper is the
-    narrow "diff against an explicit ref" form used by the api-changes,
-    breaking, and semantic-diff commands.
+    Share status classification and worktree environment with all diff commands.
+    An empty list now means a successful empty comparison, never a Git failure.
     """
-    cmd = ["git", "diff", "--name-only", ref]
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding="utf-8",
-            errors="replace",
+    details: list[str] = []
+    paths, error = get_changed_files_status(root, commit_range=ref, error_details=details)
+    if error:
+        raise GitComparisonError(error, "\n".join(details))
+    return paths
+
+
+def git_comparison_base(root: Path, ref: str) -> str:
+    """Resolve the old side of git diff, including a three-dot merge base."""
+    if "..." not in ref:
+        return ref.split("..", 1)[0] or "HEAD"
+    left, right = ref.split("...", 1)
+    details: list[str] = []
+    result, error = run_git_comparison(
+        root,
+        ["git", "merge-base", left or "HEAD", right or "HEAD"],
+        details,
+        text=True,
+        fallback_detail="git merge-base failed",
+    )
+    if error:
+        raise GitComparisonError(error, "\n".join(details))
+    return result.stdout.strip()
+
+
+def git_show_at_ref_status(
+    root: Path, ref: str, path: str, error_details: list[str]
+) -> tuple[bytes | None, str | None]:
+    """Read a blob, distinguishing tree absence from a failed read."""
+    result, git_error = run_git_comparison(root, ["git", "show", f"{ref}:{path}"], error_details)
+    if git_error == GIT_ERROR:
+        # Git diagnostics are localized; only a successful tree query proves absence.
+        listing, listing_error = run_git_comparison(
+            root, ["git", "--literal-pathspecs", "ls-tree", "-z", "--name-only", ref, "--", path], error_details
         )
-        if result.returncode != 0:
-            return []
-        return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
-        # Git missing / diff-against-ref timed out -> empty changeset.
-        # A TimeoutExpired masquerades as "no changes" — surface it.
-        from roam.observability import log_swallowed
-
-        log_swallowed("changed_files:git_changed_files_against_ref:git_diff", _exc)
-        return []
+        if listing_error:
+            return None, listing_error
+        if not listing.stdout:
+            error_details.pop()
+            return None, None
+    return (result.stdout if result is not None else None), git_error
 
 
-def git_show_at_ref(root: Path, ref: str, filepath: str) -> bytes | None:
-    """Return the content of *filepath* at *ref*, or None if it didn't exist."""
-    cmd = ["git", "show", f"{ref}:{filepath}"]
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(root),
-            capture_output=True,
-            timeout=10,
-        )
-        # returncode != 0 is the expected "file absent at ref" path.
-        if result.returncode != 0:
-            return None
-        return result.stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
-        # Git missing / git-show timed out -> None. Distinct from the
-        # expected "absent at ref" miss above — surface the real failure.
-        from roam.observability import log_swallowed
-
-        log_swallowed("changed_files:git_show_at_ref:git_show", _exc)
-        return None
+def git_show_at_ref(root: Path, ref: str, filepath: str, *, strict: bool = False) -> bytes | None:
+    """Read content; strict callers distinguish absent paths from Git failures."""
+    details: list[str] = []
+    if strict:
+        source, error = git_show_at_ref_status(root, ref, filepath, details)
+        if error:
+            raise GitComparisonError(error, "\n".join(details))
+        return source
+    result, _error = run_git_comparison(root, ["git", "show", f"{ref}:{filepath}"], details)
+    return result.stdout if result is not None else None
 
 
 def parse_source_with_grammar(source: bytes, language: str):

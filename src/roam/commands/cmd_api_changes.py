@@ -33,6 +33,9 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
+    GitComparisonError,
+)
+from roam.commands.changed_files import (
     git_changed_files_against_ref as _git_changed_files,
 )
 from roam.commands.changed_files import (
@@ -744,8 +747,38 @@ def api_changes_cmd(ctx, base, severity):
     # project onto the SemVer 3-tier order before the floor lookup.
     min_severity = _SEVERITY_ORDER[_project_severity_input(severity)]
 
+    def emit_git_failure(exc):
+        verdict = f"comparison could not run vs {base}: {exc.kind}"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "api-changes",
+                        summary={
+                            "breaking_count": None,
+                            "warning_count": None,
+                            "info_count": None,
+                            "verdict": verdict,
+                            "state": exc.kind,
+                            "git_error": exc.kind,
+                            "git_error_detail": exc.detail,
+                            "partial_success": True,
+                        },
+                        base_ref=base,
+                        changes=[],
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(exc.detail)
+
     # 1. Find changed files
-    changed = _git_changed_files(root, base)
+    try:
+        changed = _git_changed_files(root, base)
+    except GitComparisonError as exc:
+        emit_git_failure(exc)
+        return
     if not changed:
         verdict = f"No changed files vs {base}."
         if json_mode:
@@ -772,41 +805,45 @@ def api_changes_cmd(ctx, base, severity):
     # 2. Collect all changes across files
     all_changes: list[dict] = []
 
-    with open_db(readonly=True) as conn:
-        for fpath in changed:
-            # Get old file content from the ref
-            old_source = _git_show(root, base, fpath)
-            if old_source is None:
-                # File is new — extract new symbols as ADDED
-                new_symbols = _get_current_symbols(conn, fpath)
-                for sym in _exported_only(new_symbols):
-                    all_changes.append(
-                        _make_change(
-                            category="ADDED",
-                            sym=sym,
-                            file_path=fpath,
-                            old_sig=None,
-                            new_sig=sym.get("signature"),
-                            description=f"New public {sym['kind']} (new file)",
+    try:
+        with open_db(readonly=True) as conn:
+            for fpath in changed:
+                # Get old file content from the ref
+                old_source = _git_show(root, base, fpath, strict=True)
+                if old_source is None:
+                    # File is new — extract new symbols as ADDED
+                    new_symbols = _get_current_symbols(conn, fpath)
+                    for sym in _exported_only(new_symbols):
+                        all_changes.append(
+                            _make_change(
+                                category="ADDED",
+                                sym=sym,
+                                file_path=fpath,
+                                old_sig=None,
+                                new_sig=sym.get("signature"),
+                                description=f"New public {sym['kind']} (new file)",
+                            )
                         )
-                    )
-                continue
+                    continue
 
-            old_symbols = _extract_symbols_from_source(old_source, fpath)
-            if not old_symbols:
-                continue
+                old_symbols = _extract_symbols_from_source(old_source, fpath)
+                if not old_symbols:
+                    continue
 
-            # Get current symbols: prefer DB, fall back to file parse
-            new_symbols = _get_current_symbols(conn, fpath)
-            if not new_symbols:
-                # File might have been deleted
-                current_path = root / fpath
-                if current_path.exists():
-                    current_source = current_path.read_bytes()
-                    new_symbols = _extract_symbols_from_source(current_source, fpath)
+                # Get current symbols: prefer DB, fall back to file parse
+                new_symbols = _get_current_symbols(conn, fpath)
+                if not new_symbols:
+                    # File might have been deleted
+                    current_path = root / fpath
+                    if current_path.exists():
+                        current_source = current_path.read_bytes()
+                        new_symbols = _extract_symbols_from_source(current_source, fpath)
 
-            file_changes = _compare_file_api(fpath, old_symbols, new_symbols)
-            all_changes.extend(file_changes)
+                file_changes = _compare_file_api(fpath, old_symbols, new_symbols)
+                all_changes.extend(file_changes)
+    except GitComparisonError as exc:
+        emit_git_failure(exc)
+        return
 
     # 3. Filter by severity
     filtered = [c for c in all_changes if _SEVERITY_ORDER[c["severity"]] <= min_severity]

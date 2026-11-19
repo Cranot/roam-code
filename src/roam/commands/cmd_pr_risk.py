@@ -24,7 +24,9 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
-    get_changed_files,
+    GIT_ERROR,
+    get_changed_files,  # noqa: F401 -- retain the imported 387aca65 name
+    get_changed_files_status,
     is_low_risk_file,
     is_test_file,
     resolve_changed_to_db,
@@ -960,8 +962,8 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
     #
     # W978 first-hypothesis finding: helper-CALL boundary is the dominant
     # raise axis. Each substrate has its own internal try/except returning
-    # safe defaults (``get_changed_files`` returns ``[]`` on
-    # FileNotFoundError/TimeoutExpired; ``_get_all_file_stats`` returns
+    # defaults (``get_changed_files_status`` preserves the Git failure kind;
+    # ``_get_all_file_stats`` returns
     # ``{}`` on OSError/SubprocessError, so the per-file dict.get floors
     # to ``(0, 0)``;
     # ``_detect_author`` returns ``None`` on git missing). But a helper
@@ -971,14 +973,8 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
     # raise). The outer call sites in ``pr_risk_cmd()`` previously had no
     # guards, so the envelope crashed whole.
     #
-    # W805-EEEE intersection: ``get_changed_files`` is the shared helper
-    # that the W805-EEEE pin documented as silently returning ``[]`` on
-    # subprocess failure. W607-Q is ADDITIVE — for the FileNotFoundError /
-    # TimeoutExpired axes the helper still floors to ``[]`` (pin preserved);
-    # for any OTHER raise that escapes the helper's own try/except,
-    # W607-Q surfaces ``pr_risk_get_changed_files_failed:<exc_class>:<detail>``
-    # via warnings_out and the envelope still emits cleanly. The shared
-    # helper's silent-floor contract is preserved verbatim.
+    # Changed-file failures retain their shared Git kind; escaped exceptions
+    # also carry the W607-Q warning marker in the failure envelope.
     #
     # Marker family ``pr_risk_*`` — distinct from W607-P's ``audit_*``,
     # W607-O's ``dashboard_*``, W607-N's ``doctor_*``, W607-M's ``health_*``,
@@ -1130,18 +1126,18 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
             return default
 
     git_details: list[str] = []
-    changed = _run_check(
+    changed, git_error = _run_check(
         "get_changed_files",
-        get_changed_files,
+        get_changed_files_status,
         root,
         staged=staged,
         commit_range=commit_range,
         error_details=git_details,
-        default=[],
+        default=([], GIT_ERROR),
     )
-    if git_details:
-        verdict = "comparison could not run: git_error"
-        detail = "\n".join(git_details)
+    if git_error:
+        verdict = f"comparison could not run: {git_error}"
+        detail = "\n".join(git_details) or None
         if json_mode:
             click.echo(
                 to_json(
@@ -1149,16 +1145,24 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
                         "pr-risk",
                         summary={
                             "verdict": verdict,
-                            "state": "git_error",
+                            "state": git_error,
                             "partial_success": True,
-                            "git_error": detail,
+                            "git_error": git_error,
+                            "git_error_detail": detail,
+                            "risk_score": None,
+                            "risk_level": None,
+                            "risk_level_canonical": None,
+                            "risk_rank": None,
+                            **({"warnings_out": _w607q_warnings_out} if _w607q_warnings_out else {}),
                         },
+                        **({"warnings_out": _w607q_warnings_out} if _w607q_warnings_out else {}),
                     )
                 )
             )
         else:
             click.echo(f"VERDICT: {verdict}")
-            click.echo(detail)
+            click.echo(detail or "")
+            echo_text_warnings(_w607q_warnings_out)
         return
     if not changed:
         label = commit_range or ("staged" if staged else "unstaged")
@@ -1181,16 +1185,6 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
                 "summary": _nochange_summary,
                 "message": f"No changes found for {label}.",
             }
-            # W607-Q: surface warnings_out only on the disclosure path so
-            # the clean no-changes envelope stays byte-identical. If
-            # ``get_changed_files`` raised an unexpected exception and
-            # floored to ``[]`` (vs. the W805-EEEE-pinned silent floor for
-            # FileNotFoundError/TimeoutExpired), the agent reading the
-            # envelope sees the marker and partial_success=True.
-            if _w607q_warnings_out:
-                _nochange_summary["partial_success"] = True
-                _nochange_summary["warnings_out"] = list(_w607q_warnings_out)
-                _nochange_envelope_kwargs["warnings_out"] = list(_w607q_warnings_out)
             click.echo(
                 to_json(
                     json_envelope(

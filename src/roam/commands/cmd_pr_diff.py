@@ -79,7 +79,8 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # W1462: read the ``(paths, error_kind)`` form — an empty list from a
     # FAILED ``git diff`` must not be published as "no changes detected"
     # and must not authorise under --fail-on-degradation.
-    changed, git_error = get_changed_files_status(root, staged=staged, commit_range=commit_range)
+    git_details: list[str] = []
+    changed, git_error = get_changed_files_status(root, staged=staged, commit_range=commit_range, error_details=git_details)  # fmt: skip
     if git_error is not None:
         verdict = f"diff unavailable: {git_error} — cannot gate"
         # W1331: the SAME bucket reaches both channels. Building it once and
@@ -99,6 +100,7 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
                             "new_issues": 0,
                             "partial_success": True,
                             "git_error": git_error,
+                            "git_error_detail": "\n".join(git_details),
                             # W805-JJJJ: closed-enum state so agents can
                             # distinguish git failure from a clean tree.
                             "state": git_error,

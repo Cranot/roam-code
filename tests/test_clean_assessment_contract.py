@@ -63,6 +63,13 @@ def test_real_clean_diff_is_complete(project_factory, monkeypatch, command):
 
 @pytest.mark.parametrize("command,args", [("breaking", ["missing-ref"]), ("pr-risk", ["missing-ref"])])
 def test_git_comparison_failure(project_factory, monkeypatch, command, args):
+    """Named contract change: Git kind and diagnostics are separate.
+
+    Old: summary.git_error contained Git stderr, including missing-ref/fatal.
+    New: git_error is the shared closed-enum kind; git_error_detail carries stderr.
+    Reason: consumers must branch on the same failure vocabulary across commands.
+    All prior diagnostic assertions are retained on the detail field.
+    """
     root = project_factory({"core.py": "def calculate():\n    return 1\n"})
     monkeypatch.chdir(root)
     result = CliRunner().invoke(cli, ["--json", command, *args])
@@ -70,8 +77,9 @@ def test_git_comparison_failure(project_factory, monkeypatch, command, args):
     assert summary["partial_success"] is True
     assert summary["state"] == "git_error"
     assert "could not" in summary["verdict"].lower()
-    assert "missing-ref" in summary["git_error"]
-    assert "fatal:" in summary["git_error"]
+    assert summary["git_error"] == "git_error"
+    assert "missing-ref" in summary["git_error_detail"]
+    assert "fatal:" in summary["git_error_detail"]
 
 
 @pytest.mark.parametrize("fmt", ["text", "markdown", "json"])

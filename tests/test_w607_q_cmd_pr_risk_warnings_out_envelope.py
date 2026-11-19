@@ -232,7 +232,11 @@ def test_pr_risk_get_changed_files_failure_marker_format(cli_runner, pr_risk_pro
     """
     _patch_helper(
         monkeypatch,
-        "get_changed_files",
+        # Named contract change: old injection seam was the
+        # lossy get_changed_files list API; new seam is get_changed_files_status.
+        # The command now consumes real Git status directly. All prior output
+        # assertions below remain unchanged, including the stable marker name.
+        "get_changed_files_status",
         RuntimeError("synthetic-get-changed-files-from-W607-Q"),
     )
 
@@ -564,7 +568,11 @@ def test_get_changed_files_failure_surfaces_via_warnings_out(cli_runner, pr_risk
     """
     _patch_helper(
         monkeypatch,
-        "get_changed_files",
+        # Named contract change: old injection seam was the
+        # lossy get_changed_files list API; new seam is get_changed_files_status.
+        # The command now consumes real Git status directly. All prior output
+        # assertions below remain unchanged, including the stable marker name.
+        "get_changed_files_status",
         OSError("synthetic-W805EEEE-intersection-from-W607-Q"),
     )
 

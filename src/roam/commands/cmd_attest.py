@@ -21,6 +21,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
     GIT_ERROR,
+    GitComparisonError,
     get_changed_files_status,
     is_test_file,
     resolve_changed_to_db,
@@ -337,7 +338,18 @@ def _collect_breaking(conn, root, base_ref):
     except ImportError:
         return {"removed": [], "signature_changed": [], "renamed": []}
 
-    changed = _git_changed_files(root, base_ref)
+    try:
+        changed = _git_changed_files(root, base_ref)
+    except GitComparisonError as exc:
+        return {
+            "removed": [],
+            "signature_changed": [],
+            "renamed": [],
+            "state": "git_error",
+            "git_error": exc.kind,
+            "git_error_detail": exc.detail,
+            "partial_success": True,
+        }
     if not changed:
         return {"removed": [], "signature_changed": [], "renamed": []}
 
@@ -346,7 +358,18 @@ def _collect_breaking(conn, root, base_ref):
     all_renamed = []
 
     for fpath in changed:
-        old_source = _git_show(root, base_ref, fpath)
+        try:
+            old_source = _git_show(root, base_ref, fpath, strict=True)
+        except GitComparisonError as exc:
+            return {
+                "removed": [],
+                "signature_changed": [],
+                "renamed": [],
+                "state": "git_error",
+                "git_error": exc.kind,
+                "git_error_detail": exc.detail,
+                "partial_success": True,
+            }
         if old_source is None:
             continue
         old_symbols = _extract_old_symbols(old_source, fpath)
@@ -756,6 +779,7 @@ def _attestation_render_model_for_format_parity(evidence):
     return {
         "risk": evidence.get("risk"),
         "blast": evidence.get("blast_radius", {}),
+        "breaking_error": {key: breaking[key] for key in ("git_error", "git_error_detail") if key in breaking},
         "removed": removed,
         "signature_changed": signature_changed,
         "renamed": renamed,
@@ -792,6 +816,7 @@ def _attestation_report_plan_for_evidence_parity(attestation, evidence, verdict)
             "signature_changed": model["signature_changed_count"],
             "renamed": model["renamed_count"],
             "total": total_breaking,
+            **model["breaking_error"],
         },
         "has_breaking_changes": total_breaking > 0,
         "removed_preview": model["removed"][:5],
@@ -955,6 +980,17 @@ def _build_attest_envelope_that_preserves_late_markers(
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
+
+
+def _emit_attestation_output(output, output_file):
+    """Emit an attestation, writing file artifacts atomically."""
+    if output_file:
+        from roam.atomic_io import atomic_write_text
+
+        atomic_write_text(Path(output_file), output)
+        click.echo(f"Attestation written to {output_file}")
+    else:
+        click.echo(output)
 
 
 @roam_capability(
@@ -1144,12 +1180,14 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
     # state="git_error" + git_error=<kind> instead of being byte-identical to
     # a genuinely clean working tree (both previously got state="no_changes").
     # A raise inside the lookup floors to the same "could not ask" answer.
+    git_details: list[str] = []
     changed, _git_err_kind = _run_check_ad(
         "get_changed_files",
         get_changed_files_status,
         root,
         staged=staged,
         commit_range=commit_range,
+        error_details=git_details,
         default=([], GIT_ERROR),
     )
     if not changed:
@@ -1159,12 +1197,8 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         # check never ran (there was nothing to assess). Disclose state +
         # partial_success explicitly so the verdict and the field agree.
         label = commit_range or ("staged" if staged else "uncommitted")
-        # W641-followup-D — degraded-resolution path still emits the
-        # canonical risk-LEVEL fields unconditionally. Empty changeset →
-        # canonical ``low`` floor (W531 CI-safety: a no-changes path
-        # must NOT promote into a CI-failing rank). Agents downstream
-        # can call ``risk_rank(summary["risk_level_canonical"])`` without
-        # None-handling.
+        # Keep canonical risk keys on every exit. A valid empty diff retains
+        # its historical low floor; an unavailable comparison has unknown risk.
         _empty_risk_level_canonical = "low"
         _empty_risk_rank = risk_rank(_empty_risk_level_canonical)
         # W805-OOOO: distinguish git-error (bogus ref) from genuinely clean
@@ -1172,7 +1206,12 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         # path. Clean tree still gets state="no_changes".
         if _git_err_kind is not None:
             _empty_state = "git_error"
-            _empty_summary_extra: dict = {"git_error": _git_err_kind}
+            _empty_risk_level_canonical = None
+            _empty_risk_rank = None
+            _empty_summary_extra: dict = {
+                "git_error": _git_err_kind,
+                "git_error_detail": "\n".join(git_details),
+            }
         else:
             _empty_state = "no_changes"
             _empty_summary_extra = {}
@@ -1200,12 +1239,12 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         _attest_empty_envelope = json_envelope("attest", **_empty_envelope_kwargs)
         auto_log(_attest_empty_envelope, action="attest", target=label, repo_root=root)
         if json_mode or output_format == "json":
-            click.echo(to_json(_attest_empty_envelope))
+            output = to_json(_attest_empty_envelope)
+        elif _git_err_kind is not None:
+            output = f"VERDICT: {_empty_summary['verdict']}"
         else:
-            if _git_err_kind is not None:
-                click.echo(f"VERDICT: {_empty_summary['verdict']}")
-            else:
-                click.echo(f"No changes found for {label}.")
+            output = f"No changes found for {label}."
+        _emit_attestation_output(output, output_file)
         return
 
     with open_db(readonly=True) as conn:
@@ -1509,6 +1548,25 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             "affected_tests": tests.get("selected", 0),
             "effects_count": len(effects),
         }
+        if breaking.get("git_error"):
+            _attest_verdict_str = f"breaking comparison could not run: {breaking['git_error']}"
+            risk_level_canonical = None
+            risk_rank_int = None
+            verdict["safe_to_merge"] = None
+            verdict["warnings"].append(_attest_verdict_str)
+            summary_block.update(
+                verdict=_attest_verdict_str,
+                safe_to_merge=None,
+                breaking_changes=None,
+                partial_success=True,
+                state="git_error",
+                git_error=breaking["git_error"],
+                git_error_detail=breaking["git_error_detail"],
+                risk_score=None,
+                risk_level=None,
+                risk_level_canonical=None,
+                risk_rank=None,
+            )
         _attest_target = commit_range or ("staged" if staged else "uncommitted")
         attest_envelope = _build_attest_envelope_that_preserves_late_markers(
             summary_block=summary_block,
@@ -1530,29 +1588,12 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
 
         if output_format == "markdown":
             output = _format_markdown(attestation, evidence, verdict)
-            if output_file:
-                # Atomic write: attestations are auditable artifacts —
-                # a torn file mid-write defeats downstream verification.
-                # Mirrors the `atomic_write_text` discipline in cmd_cga.py
-                # (the R28 substrate's `unsafe_mutation` guard).
-                from roam.atomic_io import atomic_write_text
-
-                atomic_write_text(Path(output_file), output)
-                click.echo(f"Attestation written to {output_file}")
-            else:
-                click.echo(output)
+            _emit_attestation_output(output, output_file)
             return
 
         if json_mode or output_format == "json":
             output = to_json(attest_envelope)
-            if output_file:
-                # Atomic write — see markdown branch above.
-                from roam.atomic_io import atomic_write_text
-
-                atomic_write_text(Path(output_file), output)
-                click.echo(f"Attestation written to {output_file}")
-            else:
-                click.echo(output)
+            _emit_attestation_output(output, output_file)
             return
 
         # -- Text output -----------------------------------------------
@@ -1643,6 +1684,10 @@ def _append_attestation_blast_section(lines, plan, is_md):
 
 def _append_attestation_breaking_section(lines, plan, is_md):
     breaking = plan["breaking"]
+    if breaking.get("git_error"):
+        lines.append(f"Breaking comparison could not run: {breaking['git_error']}")
+        lines.append(breaking.get("git_error_detail", ""))
+        return
     if plan["has_breaking_changes"]:
         total_bc = breaking["total"]
         if is_md:
@@ -1818,12 +1863,4 @@ def _emit_text(
     """Emit plain text attestation."""
     text = "\n".join(_attestation_report_lines(attestation, evidence, verdict, "text"))
 
-    if output_file:
-        # Atomic write — see other attest output branches. Attestation
-        # files are auditable artifacts; never leave a torn file behind.
-        from roam.atomic_io import atomic_write_text
-
-        atomic_write_text(Path(output_file), text)
-        click.echo(f"Attestation written to {output_file}")
-    else:
-        click.echo(text)
+    _emit_attestation_output(text, output_file)

@@ -14,7 +14,11 @@ from difflib import SequenceMatcher
 import click
 
 from roam.capability import roam_capability
-from roam.commands.changed_files import get_changed_files_status
+from roam.commands.changed_files import (
+    GitComparisonError,
+    get_changed_files_status,
+    git_comparison_base,
+)
 from roam.commands.changed_files import (
     git_changed_files_against_ref as _git_changed_files,  # noqa: F401 -- legacy export used by attest
 )
@@ -317,15 +321,25 @@ def breaking(ctx, target):
     # 1. Find changed files
     git_details: list[str] = []
     changed, git_error = get_changed_files_status(root, commit_range=target, error_details=git_details)
-    if git_error:
-        verdict = f"comparison could not run vs {target}: {git_error}"
-        detail = "\n".join(git_details) or git_error
+
+    def emit_git_failure(git_error, detail):
+        verdict = f"breaking comparison could not run vs {target}: {git_error}"
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "breaking",
-                        summary={"verdict": verdict, "state": git_error, "partial_success": True, "git_error": detail},
+                        summary={
+                            "verdict": verdict,
+                            "state": git_error,
+                            "partial_success": True,
+                            "git_error": git_error,
+                            "git_error_detail": detail,
+                            "removed": None,
+                            "signature_changed": None,
+                            "renamed": None,
+                            "total": None,
+                        },
                         target=target,
                         removed=[],
                         signature_changed=[],
@@ -336,6 +350,10 @@ def breaking(ctx, target):
         else:
             click.echo(f"VERDICT: {verdict}")
             click.echo(detail)
+        return
+
+    if git_error:
+        emit_git_failure(git_error, "\n".join(git_details) or git_error)
         return
     if not changed:
         if json_mode:
@@ -370,29 +388,39 @@ def breaking(ctx, target):
     all_sig_changed: list[dict] = []
     all_renamed: list[dict] = []
 
-    with open_db(readonly=True) as conn:
-        for fpath in changed:
-            # Get old file content from the ref
-            old_source = _git_show(root, target, fpath)
-            if old_source is None:
-                # File didn't exist at ref — it's new, no breaking changes
-                continue
+    try:
+        base_ref = git_comparison_base(root, target)
+        with open_db(readonly=True) as conn:
+            for fpath in changed:
+                # Get old file content from the ref
+                old_source = _git_show(root, base_ref, fpath, strict=True)
+                if old_source is None:
+                    # File didn't exist at ref — it's new, no breaking changes
+                    continue
 
-            old_symbols = _extract_old_symbols(old_source, fpath)
-            if not old_symbols:
-                continue
+                old_symbols = _extract_old_symbols(old_source, fpath)
+                if not old_symbols:
+                    continue
 
-            # Get current symbols from the indexed DB
-            new_symbols = _get_current_symbols(conn, fpath)
+                if ".." in target:
+                    head_ref = target.split("..." if "..." in target else "..", 1)[1] or "HEAD"
+                    new_source = _git_show(root, head_ref, fpath, strict=True)
+                    new_symbols = _extract_old_symbols(new_source, fpath) if new_source is not None else []
+                else:
+                    new_symbols = _get_current_symbols(conn, fpath)
 
-            removed, sig_changed, renamed = _compare_file(
-                fpath,
-                old_symbols,
-                new_symbols,
-            )
-            all_removed.extend(removed)
-            all_sig_changed.extend(sig_changed)
-            all_renamed.extend(renamed)
+                removed, sig_changed, renamed = _compare_file(
+                    fpath,
+                    old_symbols,
+                    new_symbols,
+                )
+                all_removed.extend(removed)
+                all_sig_changed.extend(sig_changed)
+                all_renamed.extend(renamed)
+
+    except GitComparisonError as exc:
+        emit_git_failure(exc.kind, exc.detail)
+        return
 
     # Sort for stable output
     all_removed.sort(key=lambda r: (r["file"], r.get("line") or 0))

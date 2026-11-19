@@ -16,11 +16,12 @@ import click
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
-    git_changed_files_against_ref as _git_changed_files,
-)
-from roam.commands.changed_files import (
+    GitComparisonError,
     git_mode_only_files,
     unexamined_files_note,
+)
+from roam.commands.changed_files import (
+    git_changed_files_against_ref as _git_changed_files,
 )
 from roam.commands.changed_files import (
     git_show_at_ref as _git_show,
@@ -358,7 +359,41 @@ def semantic_diff(ctx, base_ref):
     root = find_project_root()
 
     # 1. Get changed files
-    changed = _git_changed_files(root, base_ref)
+    try:
+        changed = _git_changed_files(root, base_ref)
+    except GitComparisonError as exc:
+        verdict = f"comparison could not run vs {base_ref}: {exc.kind}"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "semantic-diff",
+                        summary={
+                            "files_changed": None,
+                            "symbols_added": None,
+                            "symbols_removed": None,
+                            "symbols_modified": None,
+                            "imports_added": None,
+                            "imports_removed": None,
+                            "verdict": verdict,
+                            "state": exc.kind,
+                            "git_error": exc.kind,
+                            "git_error_detail": exc.detail,
+                            "partial_success": True,
+                        },
+                        base_ref=base_ref,
+                        symbols_added=[],
+                        symbols_removed=[],
+                        symbols_modified=[],
+                        imports_added=[],
+                        imports_removed=[],
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(exc.detail)
+        return
     if not changed:
         if json_mode:
             click.echo(

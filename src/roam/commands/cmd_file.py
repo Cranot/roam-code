@@ -334,8 +334,6 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             dep_frow, deps_fuzzy = _resolve_file(conn, dep_path)
             if deps_fuzzy:
                 deps_resolution = dep_frow["path"]
-                if not json_mode:
-                    click.echo(f"VERDICT: fuzzy --deps-of resolution: {deps_of} -> {deps_resolution}")
             if dep_frow is not None:
                 dep_paths = _get_deps_of_file(conn, dep_frow)
                 target_paths.extend(dep_paths)
@@ -345,6 +343,9 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         unique_paths = []
         for p in target_paths:
             norm = p.replace("\\", "/")
+            resolved, _ = _resolve_file(conn, norm)
+            if resolved is not None:
+                norm = resolved["path"]
             if norm not in seen:
                 seen.add(norm)
                 unique_paths.append(p)
@@ -425,6 +426,8 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             _fname_txt = frow["path"].split("/")[-1] if "/" in frow["path"] else frow["path"]
             _kind_str_txt = ", ".join(f"{c} {k}" for k, c in kind_counts.most_common(3))
             _file_verdict_txt = f"{_fname_txt}: {len(symbols)} symbols ({_kind_str_txt}), {frow['line_count']} LOC"
+            if deps_resolution:
+                _file_verdict_txt += f"; fuzzy --deps-of {deps_of} resolved to {deps_resolution}"
             click.echo(f"VERDICT: {_file_verdict_txt}")
             click.echo()
             text_lines = _render_skeleton_text(frow, symbols, kind_counts, parent_ids, full=full)
@@ -481,6 +484,8 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         _multi_verdict_txt = f"{len(file_results)} files, {_total_syms_txt} total symbols" + (
             f", {len(missing)} not indexed" if missing else ""
         )
+        if deps_resolution:
+            _multi_verdict_txt += f"; fuzzy --deps-of {deps_of} resolved to {deps_resolution}"
         click.echo(f"VERDICT: {_multi_verdict_txt}")
         click.echo()
         if missing:
