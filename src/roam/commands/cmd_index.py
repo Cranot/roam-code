@@ -48,7 +48,7 @@ from roam.output.formatter import json_envelope, to_json
     hidden=True,
     help="Alias for --force (full reindex). Accepted for forgiveness; --force is canonical.",
 )
-@click.option("--verbose", is_flag=True, help="Show detailed warnings during indexing")
+@click.option("--verbose", is_flag=True, help="Show detailed warnings and all files with parse issues")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress progress output")
 @click.pass_context
 def run_index_command(ctx, force, verbose, quiet, rebuild):
@@ -239,6 +239,7 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
             elapsed = time.monotonic() - t0
 
             if json_mode:
+                parse_issues = indexer.parse_issue_details(verbose=verbose)
                 _summary = {
                     "verdict": _index_verdict,
                     "files": file_count,
@@ -246,6 +247,9 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                     "edges": edge_count,
                     "state": corpus.state,
                 }
+                if parse_issues:
+                    _summary["partial_success"] = True
+                    _summary["verdict"] += " (parse issues in some files)"
                 if corpus.state != STATE_INDEXED:
                     _summary["reason"] = corpus.reason
                     _summary["partial_success"] = True
@@ -266,6 +270,7 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                             avg_symbols_per_file=round(avg_sym, 1),
                             parse_coverage_pct=round(coverage, 0),
                             corpus=corpus.as_dict(),
+                            **({"parse_issues": parse_issues} if parse_issues else {}),
                         )
                     )
                 )

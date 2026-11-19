@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import subprocess
+from typing import TYPE_CHECKING
 
 import click
 
@@ -17,6 +18,9 @@ from roam.db.connection import (
     open_db,
 )
 from roam.db.queries import SEARCH_SYMBOLS, SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED
+
+if TYPE_CHECKING:
+    from roam.index.indexer import Indexer
 
 
 def _git_head_short() -> str | None:
@@ -343,8 +347,8 @@ def _refuse_implicit_index(recovery_state: str | None) -> None:
 
 def ensure_index(
     quiet: bool = False, suppress_cold_start_advisory: bool = False, *, explicit_build: bool = False
-) -> None:
-    """Build the index if it doesn't exist yet.
+) -> Indexer | None:
+    """Build the index if needed and return the indexer that ran.
 
     Args:
         quiet: If True, suppress progress output during indexing.
@@ -389,6 +393,8 @@ def ensure_index(
             raise click.ClickException(
                 "The roam index could not be claimed for a complete build. Retry after the active indexer exits."
             )
+        return indexer
+    return None
 
 
 def require_index() -> None:

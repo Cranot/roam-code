@@ -12,6 +12,7 @@ import sqlite3
 import stat
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,10 +37,13 @@ from roam.index.django_post import resolve_all_django  # noqa: F401
 from roam.index.file_roles import classify_file
 from roam.index.incremental import file_hash, get_index_changed_files
 from roam.index.parser import (
+    active_parse_issues,
     detect_language,
     extract_vue_template,
+    get_parse_error_summary,
     parse_file,
     read_source,
+    record_parse_issue,
     scan_template_references,
 )
 from roam.index.relations import build_file_edges, resolve_references
@@ -718,8 +722,8 @@ def _semantic_activation_advice(conn, project_root: Path) -> str | None:
     if zeta <= 0 or coverage["ready"] or int(coverage["symbols"]) <= 0:
         return None
     return (
-        f"Semantic retrieve: {coverage['embeddings']}/{coverage['symbols']} dense vectors; "
-        f"zeta={zeta:g} is inert until semantic backend vectors are populated."
+        f"Search by meaning is unavailable ({coverage['embeddings']} of "
+        f"{coverage['symbols']} symbols have search data). Text search is available."
     )
 
 
@@ -1747,6 +1751,7 @@ class Indexer:
         self._quiet = False
         self._progress_bar = True
         self.summary: dict | None = None
+        self._parse_issue_paths: dict[Path, str] = {}
         self._phase5_cache = _Phase5SourceCache()
 
     def _log(self, msg: str):
@@ -1788,6 +1793,7 @@ class Indexer:
         from roam.index.parser import reset_parse_errors
 
         reset_parse_errors()
+        self._parse_issue_paths.clear()
 
         global _quiet_mode
         self._quiet = quiet
@@ -1810,6 +1816,7 @@ class Indexer:
                 "Interrupted index ownership was recovered; running a full forced rebuild "
                 f"before completion ({claim.recovery_reason})."
             )
+        parse_issue_token = active_parse_issues.set(self._parse_issue_paths)
         try:
             # Publish the lifecycle marker before the first database mutation.
             # A killed process leaves ``in_progress`` behind, allowing every
@@ -1850,6 +1857,7 @@ class Indexer:
             self._log("Indexing interrupted. Lock released; rerun `roam index` to resume.")
             raise
         finally:
+            active_parse_issues.reset(parse_issue_token)
             _quiet_mode = False
             _release_index_lock(claim)
 
@@ -2008,6 +2016,8 @@ class Indexer:
         language = detect_language(rel_path)
         source = self._read_index_source(full_path, rel_path, verbose)
         if source is None:
+            if language is not None:
+                record_parse_issue(full_path, "unreadable")
             return None
 
         file_id = self._insert_file_record(conn, full_path, rel_path, language, source)
@@ -2732,12 +2742,28 @@ class Indexer:
         except Exception as e:
             self._log(f"  Search index build failed (non-fatal): {e}")
 
-    def _log_parse_issues(self) -> None:
-        from roam.index.parser import get_parse_error_summary
+    def parse_issue_details(self, *, verbose: bool = False) -> dict:
+        """Return this run's affected paths and the command for a full recheck."""
+        if not self._parse_issue_paths:
+            return {}
+        files = sorted(
+            path.relative_to(self.root).as_posix() if path.is_relative_to(self.root) else path.as_posix()
+            for path in self._parse_issue_paths
+        )
+        shown = files if verbose else files[:5]
+        return {"files": shown, "more": len(files) - len(shown), "detail_command": "roam index --force --verbose"}
 
-        error_summary = get_parse_error_summary()
-        if error_summary:
+    def _log_parse_issues(self, *, verbose: bool = False) -> None:
+        details = self.parse_issue_details(verbose=verbose)
+        if details:
+            error_summary = get_parse_error_summary(Counter(self._parse_issue_paths.values()))
             self._log(f"  Parse issues: {error_summary}")
+            for path in details["files"]:
+                self._log(f"    {path!r}")
+            if details["more"]:
+                self._log(f"    +{details['more']} more")
+            if not verbose:
+                self._log(f"    To check all files, run `{details['detail_command']}`.")
 
     def _record_manifest(self, conn, *, force: bool, include_excluded: bool) -> None:
         """Persist an index_manifest row capturing this run's environment.
@@ -3026,7 +3052,7 @@ class Indexer:
             self._restore_or_relink_annotations(conn, force, saved_annotations)
             # W408: close the last open phase before any post-phase bookkeeping.
             self._phase_timer.close_open_phase()
-            self._log_parse_issues()
+            self._log_parse_issues(verbose=verbose)
             self._set_completion_summary(conn, time.monotonic() - t0)
             self._record_manifest(conn, force=force, include_excluded=include_excluded)
 

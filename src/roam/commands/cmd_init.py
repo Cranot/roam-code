@@ -325,7 +325,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # since the user just ran exactly that. cmd_init IS the init path; the
     # advisory belongs on commands that consume an index, not the one
     # building it.
-    ensure_index(quiet=json_mode, suppress_cold_start_advisory=True, explicit_build=True)
+    indexer = ensure_index(quiet=json_mode, suppress_cold_start_advisory=True, explicit_build=True)
+    parse_issues = indexer.parse_issue_details() if indexer is not None else {}
 
     # 2b. Self-ignore .roam/ so `roam init` does not dirty `git status`
     # (and so `roam health` does not then report that dirt as index
@@ -469,6 +470,9 @@ def init(ctx, root, yes, with_ci, since, full_history):
         "warnings": warning_codes,
         "state": corpus.state,
     }
+    if parse_issues:
+        summary["partial_success"] = True
+        summary["verdict"] += " (parse issues in some files)"
     if corpus.state != STATE_INDEXED:
         summary["reason"] = corpus.reason
         summary["partial_success"] = True
@@ -487,6 +491,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
                     health=health_summary,
                     corpus=corpus.as_dict(),
                     warnings=warnings,
+                    **({"parse_issues": parse_issues} if parse_issues else {}),
                 )
             )
         )
