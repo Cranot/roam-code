@@ -626,7 +626,7 @@ class TypeScriptExtractor(JavaScriptExtractor):
                                     target_name=name,
                                     kind="call",
                                     line=dec_child.start_point[0] + 1,
-                                    source_name=scope_name,
+                                    source_name=self._call_scope(child, source),
                                 )
                             )
                     elif dec_child.type == "call_expression":
@@ -639,7 +639,7 @@ class TypeScriptExtractor(JavaScriptExtractor):
                                     target_name=self.node_text(obj, source),
                                     kind="call",
                                     line=obj.start_point[0] + 1,
-                                    source_name=scope_name,
+                                    source_name=self._call_scope(child, source),
                                 )
                             )
             elif ctype == "ambient_declaration":

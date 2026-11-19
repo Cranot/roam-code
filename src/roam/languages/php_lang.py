@@ -680,9 +680,8 @@ class PhpExtractor(LanguageExtractor):
         Laravel ``$casts = ['col' => MyCast::class]``, ``$dispatchesEvents``,
         provider ``$bindings``, config arrays — otherwise produced no inbound
         edge, so ``roam dead`` falsely labelled it unreferenced / safe to
-        delete. We emit a reference to the class ``X`` (its simple name),
-        mirroring how ``_extract_new`` emits the class reference for
-        ``new X()`` (``kind="call"``, ``line``, ``source_name``).
+        delete. The expression names the class without invoking a constructor,
+        so emit a reference to ``X`` in its declaring scope.
 
         Conservative firing rules (highest-blast-radius core parser change):
           * Fire ONLY for the magic ``::class`` form (constant name == ``class``).
@@ -716,7 +715,7 @@ class PhpExtractor(LanguageExtractor):
         refs.append(
             self._make_reference(
                 target_name=short,
-                kind="call",
+                kind="reference",
                 line=node.start_point[0] + 1,
                 source_name=scope_name,
             )

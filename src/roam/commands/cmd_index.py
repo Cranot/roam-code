@@ -136,7 +136,7 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
 
             avg_sym = sym_count / file_count if file_count else 0
 
-            # Parse coverage: only count files with a parseable language
+            # Parse coverage counts extracted symbols, excluding synthetic call anchors.
             from roam.languages.registry import _SUPPORTED_LANGUAGES
 
             parseable_langs = ",".join(f"'{l}'" for l in _SUPPORTED_LANGUAGES)
@@ -146,7 +146,7 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
             parsed_ok = conn.execute(
                 f"SELECT COUNT(DISTINCT f.id) FROM files f "
                 f"JOIN symbols s ON s.file_id = f.id "
-                f"WHERE f.language IN ({parseable_langs})"
+                f"WHERE f.language IN ({parseable_langs}) AND NOT (s.kind = 'module' AND s.name = '<module>')"
             ).fetchone()[0]
             coverage = (parsed_ok * 100 / parseable_count) if parseable_count else 0
 

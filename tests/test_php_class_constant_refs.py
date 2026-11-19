@@ -59,11 +59,11 @@ def _targets(refs: list[dict]) -> list[str]:
 
 class TestClassConstantReferenceEmission:
     def test_bare_class_constant_produces_reference(self):
-        """``Foo::class`` emits a ``call`` reference to ``Foo``."""
+        """``Foo::class`` emits a declaration reference to ``Foo``."""
         refs = _refs("<?php $x = Foo::class;")
         matches = [r for r in refs if r["target_name"] == "Foo"]
         assert len(matches) == 1
-        assert matches[0]["kind"] == "call"
+        assert matches[0]["kind"] == "reference"
 
     def test_casts_array_value_produces_reference(self):
         """The canonical Laravel FP: ``['col' => MyCast::class]`` references MyCast."""

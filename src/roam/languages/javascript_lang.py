@@ -762,24 +762,27 @@ class JavaScriptExtractor(LanguageExtractor):
                 if value_node is not None and value_node.type == "object":
                     self._extract_class_members(value_node, source, symbols, qualified)
 
-    def _extract_member_assignment(self, child, left, right, source, symbols, node):
-        """Extract symbol from a member_expression assignment (exports.X = ..., obj.method = ...)."""
+    def _member_assignment_parts(self, left, source):
         obj_node = left.child_by_field_name("object")
         prop_node = left.child_by_field_name("property")
         if obj_node is None or prop_node is None:
-            return
-        obj_text = self.node_text(obj_node, source)
-        assignment_base = obj_node
-        assignment_owner = obj_text
-        prop_name = self.node_text(prop_node, source)
-
+            return None
+        prototype = False
         if obj_node.type == "member_expression":
             inner_obj = obj_node.child_by_field_name("object")
             inner_prop = obj_node.child_by_field_name("property")
             if inner_prop and self.node_text(inner_prop, source) == "prototype" and inner_obj:
-                assignment_base = inner_obj
-                obj_text = self.node_text(inner_obj, source)
-                assignment_owner = f"{obj_text}.prototype"
+                obj_node = inner_obj
+                prototype = True
+        return self.node_text(obj_node, source), self.node_text(prop_node, source), obj_node.type, prototype
+
+    def _extract_member_assignment(self, child, left, right, source, symbols, node):
+        """Extract symbol from a member_expression assignment (exports.X = ..., obj.method = ...)."""
+        parts = self._member_assignment_parts(left, source)
+        if parts is None:
+            return
+        obj_text, prop_name, base_type, prototype = parts
+        assignment_owner = f"{obj_text}.prototype" if prototype else obj_text
 
         is_exports = obj_text in ("exports", "module.exports")
 
@@ -794,7 +797,7 @@ class JavaScriptExtractor(LanguageExtractor):
             params = right.child_by_field_name("parameters")
             p_text = self._params_text(params, source)
             signature = f"{assignment_owner}.{prop_name} = function({p_text})"
-            if not is_exports and assignment_base.type == "identifier":
+            if not is_exports and base_type == "identifier":
                 signature += ";"
             symbols.append(
                 self._make_symbol(
@@ -1094,6 +1097,71 @@ class JavaScriptExtractor(LanguageExtractor):
                 return f"{scope_name}.{self.node_text(name, source)}"
         return scope_name
 
+    def _call_scope(self, node, source):
+        """Read the lexical owner of this call, independent of declaration references."""
+        ancestors = []
+        ancestor = node.parent
+        while ancestor is not None:
+            ancestors.append(ancestor)
+            ancestor = ancestor.parent
+        scope = None
+        for ancestor in reversed(ancestors):
+            scope = self._call_scope_name_for_child(ancestor, source, scope)
+        return scope
+
+    def _call_scope_name_for_child(self, child, source, scope_name) -> str | None:
+        """Extend the scope at a named declaration or member."""
+        if child.type in (
+            "function_declaration",
+            "class_declaration",
+            "abstract_class_declaration",
+            "generator_function_declaration",
+            "method_definition",
+            "internal_module",
+        ):
+            name = child.child_by_field_name("name")
+            if name and name.type not in ("object_pattern", "array_pattern"):
+                text = self.node_text(name, source)
+                return f"{scope_name}.{text}" if scope_name else text
+        elif child.type in ("field_definition", "public_field_definition"):
+            value = child.child_by_field_name("value")
+            name = child.child_by_field_name("name") or child.child_by_field_name("property")
+            if scope_name and name and value and value.type in self._FUNCTION_NODES:
+                return f"{scope_name}.{self.node_text(name, source)}"
+        elif child.type == "variable_declarator":
+            name = child.child_by_field_name("name")
+            value = child.child_by_field_name("value")
+            if (
+                name
+                and name.type == "identifier"
+                and value
+                and (value.type in self._FUNCTION_NODES or value.type in ("class", "object"))
+            ):
+                text = self.node_text(name, source)
+                return f"{scope_name}.{text}" if scope_name else text
+        elif child.type == "assignment_expression":
+            left = child.child_by_field_name("left")
+            value = child.child_by_field_name("right")
+            if left and value:
+                text = self.node_text(left, source)
+                if text in ("module.exports", "exports") and value.type == "object":
+                    return "exports"
+                if left.type == "member_expression" and value.type in (
+                    "arrow_function",
+                    "function_expression",
+                    "generator_function",
+                ):
+                    parts = self._member_assignment_parts(left, source)
+                    if parts:
+                        owner, member, _, _ = parts
+                        qualified = f"{owner}.{member}"
+                        return f"{scope_name}.{qualified}" if scope_name else qualified
+        elif child.type == "pair" and scope_name == "exports":
+            key = child.child_by_field_name("key")
+            if key is not None:
+                return f"exports.{self.node_text(key, source)}"
+        return scope_name
+
     def _walk_refs(self, node, source, refs, scope_name):
         for child in node.children:
             ctype = child.type
@@ -1133,7 +1201,7 @@ class JavaScriptExtractor(LanguageExtractor):
                             target_name=name,
                             kind="call",
                             line=ch.start_point[0] + 1,
-                            source_name=scope_name,
+                            source_name=self._call_scope(node, source),
                         )
                     )
                 break
@@ -1426,7 +1494,7 @@ class JavaScriptExtractor(LanguageExtractor):
             target_name=name,
             kind="call",
             line=node.start_point[0] + 1,
-            source_name=scope_name,
+            source_name=self._call_scope(node, source),
         )
         if not evidence and name in self._member_imports and self._lexical_binding(node, name, source) is None:
             path, exported = self._member_imports[name]
@@ -1496,7 +1564,7 @@ class JavaScriptExtractor(LanguageExtractor):
             target_name=name,
             kind="call",
             line=ctor.start_point[0] + 1,
-            source_name=scope_name,
+            source_name=self._call_scope(node, source),
         )
         if not evidence and name in self._member_imports and self._lexical_binding(node, name, source) is None:
             path, exported = self._member_imports[name]
