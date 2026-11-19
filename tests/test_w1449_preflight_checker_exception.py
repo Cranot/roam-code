@@ -302,7 +302,13 @@ def test_broken_rule_text_never_claims_all_rules_pass(cli_runner, preflight_proj
 
 
 def test_negative_control_healthy_rule_json_still_passes(cli_runner, preflight_project):
-    """NEGATIVE CONTROL — the same project with a valid regex is untouched."""
+    """Contract change: a healthy fitness rule does not complete sparse signals.
+
+    Old expectation: summary.partial_success=False for this one-function corpus.
+    New expectation: True under the restored 07394672 rule, because blast has
+    no callers, tests has no indexed tests, and coupling has no data. Fitness
+    still passes; keep every fitness and warning assertion as the control.
+    """
     _write_rules(preflight_project, _HEALTHY_PATTERN)
 
     env = _preflight_json(cli_runner, preflight_project)
@@ -315,7 +321,7 @@ def test_negative_control_healthy_rule_json_still_passes(cli_runner, preflight_p
     assert [d["status"] for d in fitness["rule_details"]] == ["PASS"]
     assert fitness["rule_details"][0]["violations"] == 0
     assert fitness["severity"] == "OK"
-    assert env["summary"].get("partial_success") is False
+    assert env["summary"].get("partial_success") is True
     assert "warnings_out" not in env
 
 

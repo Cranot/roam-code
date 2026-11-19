@@ -148,8 +148,8 @@ def _emit_simulation_error(
 ) -> None:
     """Emit the transform-resolution error path."""
     if json_mode:
-        # An identity transform is a complete answer; failed transforms and
-        # degraded baseline measurements still report partial success.
+        # No-op and failed transforms did not measure a proposed change;
+        # preserve the partial-assessment disclosure for both.
         health_score = before.get("health_score")
         health_val = health_score if health_score is not None else 0
         envelope_summary: dict = {
@@ -160,7 +160,7 @@ def _emit_simulation_error(
             "health_after": health_val,
             "improved_metrics": 0,
             "degraded_metrics": 0,
-            "partial_success": state != "no_op_transform" or bool(warnings_out),
+            "partial_success": True,
             "state": state,
         }
         envelope_kwargs: dict = dict(

@@ -663,9 +663,14 @@ def test_simulate_identity_transform_preserves_baseline(cli_runner, sim_project,
     all_wo = list(data.get("warnings_out") or []) + list(summary.get("warnings_out") or [])
     ef_markers = [m for m in all_wo if any(f"simulate_{p}_failed:" in m for p in _EF_PHASES)]
     assert not ef_markers, f"identity transform must NOT surface W607-EF substrate markers; got {all_wo!r}"
-    # partial_success NOT flipped on clean identity path.
-    assert not summary.get("partial_success", False), (
-        f"clean identity transform must NOT flip partial_success; got summary={summary!r}"
+    # Named contract change (2026-11-19, review 4 finding m1):
+    # old expectation: partial_success false on the identity transform.
+    # new expectation: state no_op_transform with partial_success true.
+    # reason: W805-EE (b166bb92) decided a no-op transform is disclosed, not reported as a
+    # clean counterfactual (Pattern 2); tests/test_w805_ee_cmd_simulate_empty_corpus.py pins it.
+    assert summary.get("state") == "no_op_transform", summary
+    assert summary.get("partial_success") is True, (
+        f"identity transform must disclose the no-op as partial; got summary={summary!r}"
     )
 
 

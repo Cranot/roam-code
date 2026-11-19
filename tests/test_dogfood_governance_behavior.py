@@ -284,10 +284,19 @@ def test_attest_verify_is_NOT_a_subcommand_arg_trap():
     suggests ``roam evidence-doctor <packet>``, which genuinely checks
     content-hash integrity. This test keeps pinning the arg-trap behaviour so
     a future reader does not re-add the bad suggestion believing it works.
+
+    Named contract change (2026-11-19, review 4 finding M1):
+    old expectation: text output "No changes found for verify".
+    new expectation: text output says the changed files could not be read for verify,
+    and never "No changes found".
+    reason: 'verify' is not a valid git ref, so git fails; the old text reported that failure
+    as a clean empty range, which is the silent fallback of Pattern 2. Exit 0 is kept.
     """
     r = run_roam("attest", "verify")
     assert r.returncode == 0
-    assert "No changes found for verify" in (r.stdout + r.stderr)
+    out = r.stdout + r.stderr
+    assert "could not read changed files for verify" in out
+    assert "No changes found" not in out
 
 
 # ===========================================================================

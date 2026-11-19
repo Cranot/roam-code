@@ -1129,14 +1129,37 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
             _w607bu_warnings_out.append(f"pr_risk_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
 
+    git_details: list[str] = []
     changed = _run_check(
         "get_changed_files",
         get_changed_files,
         root,
         staged=staged,
         commit_range=commit_range,
+        error_details=git_details,
         default=[],
     )
+    if git_details:
+        verdict = "comparison could not run: git_error"
+        detail = "\n".join(git_details)
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "pr-risk",
+                        summary={
+                            "verdict": verdict,
+                            "state": "git_error",
+                            "partial_success": True,
+                            "git_error": detail,
+                        },
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(detail)
+        return
     if not changed:
         label = commit_range or ("staged" if staged else "unstaged")
         if json_mode:

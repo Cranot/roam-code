@@ -410,6 +410,7 @@ def get_changed_files_status(
     pr: bool = False,
     base_ref: str = "main",
     untracked: bool = False,
+    error_details: list[str] | None = None,
 ) -> tuple[list[str], str | None]:
     """``(paths, error_kind)`` form of :func:`get_changed_files`.
 
@@ -418,6 +419,9 @@ def get_changed_files_status(
     When it is not ``None`` the returned path list is empty *because the
     question could not be asked*, which is not the same fact as "no files
     changed" and must not be gated on as though it were.
+
+    When supplied, *error_details* receives Git stderr (or the exception text)
+    on failure, preserving diagnostics alongside the stable error-kind enum.
 
     Callers behind a CI gate flag MUST branch on *error_kind* and refuse;
     callers that only report may keep using :func:`get_changed_files`.
@@ -454,6 +458,8 @@ def get_changed_files_status(
                 "changed_files:get_changed_files:git_diff_returncode",
                 RuntimeError(f"git diff exited {result.returncode}: {result.stderr.strip()[:200]}"),
             )
+            if error_details is not None:
+                error_details.append(result.stderr.strip() or f"git diff exited {result.returncode}")
             return [], GIT_ERROR
         paths = [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
@@ -462,6 +468,8 @@ def get_changed_files_status(
         from roam.observability import log_swallowed
 
         log_swallowed("changed_files:get_changed_files:git_diff", _exc)
+        if error_details is not None:
+            error_details.append(str(_exc))
         return [], (GIT_TIMEOUT if isinstance(_exc, subprocess.TimeoutExpired) else GIT_NOT_AVAILABLE)
 
     if untracked:
@@ -499,6 +507,7 @@ def get_changed_files(
     pr: bool = False,
     base_ref: str = "main",
     untracked: bool = False,
+    error_details: list[str] | None = None,
 ) -> list[str]:
     """Get list of changed files from git diff.
 
@@ -512,6 +521,8 @@ def get_changed_files(
     tracked by git (``git ls-files --others --exclude-standard``).
 
     Returns normalised forward-slash paths relative to the repo root.
+    Supply *error_details* to collect failed-read diagnostics via the shared
+    status helper while retaining this list-returning interface.
 
     This is the lossy projection of :func:`get_changed_files_status`: an
     empty list here means EITHER "no files changed" OR "git could not be
@@ -526,6 +537,7 @@ def get_changed_files(
         pr=pr,
         base_ref=base_ref,
         untracked=untracked,
+        **({"error_details": error_details} if error_details is not None else {}),
     )
     return paths
 

@@ -14,8 +14,9 @@ from difflib import SequenceMatcher
 import click
 
 from roam.capability import roam_capability
+from roam.commands.changed_files import get_changed_files_status
 from roam.commands.changed_files import (
-    git_changed_files_against_ref as _git_changed_files,
+    git_changed_files_against_ref as _git_changed_files,  # noqa: F401 -- legacy export used by attest
 )
 from roam.commands.changed_files import (
     git_show_at_ref as _git_show,
@@ -314,7 +315,28 @@ def breaking(ctx, target):
     root = find_project_root()
 
     # 1. Find changed files
-    changed = _git_changed_files(root, target)
+    git_details: list[str] = []
+    changed, git_error = get_changed_files_status(root, commit_range=target, error_details=git_details)
+    if git_error:
+        verdict = f"comparison could not run vs {target}: {git_error}"
+        detail = "\n".join(git_details) or git_error
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "breaking",
+                        summary={"verdict": verdict, "state": git_error, "partial_success": True, "git_error": detail},
+                        target=target,
+                        removed=[],
+                        signature_changed=[],
+                        renamed=[],
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(detail)
+        return
     if not changed:
         if json_mode:
             click.echo(

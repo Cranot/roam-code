@@ -327,10 +327,15 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         raise SystemExit(2)
 
     with open_db(readonly=True) as conn:
+        deps_resolution = None
         # Resolve --deps-of imports
         if deps_of:
             dep_path = deps_of.replace("\\", "/")
-            dep_frow, _ = _resolve_file(conn, dep_path)
+            dep_frow, deps_fuzzy = _resolve_file(conn, dep_path)
+            if deps_fuzzy:
+                deps_resolution = dep_frow["path"]
+                if not json_mode:
+                    click.echo(f"VERDICT: fuzzy --deps-of resolution: {deps_of} -> {deps_resolution}")
             if dep_frow is not None:
                 dep_paths = _get_deps_of_file(conn, dep_frow)
                 target_paths.extend(dep_paths)
@@ -395,6 +400,9 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                 if _fuzzy:
                     _summary.setdefault("partial_success", True)
                     _summary["resolution"] = "fuzzy_substring"
+                if deps_resolution:
+                    _summary.update(resolution="fuzzy_substring", partial_success=True)
+                    _summary["verdict"] += f"; fuzzy --deps-of {deps_of} resolved to {deps_resolution}"
                 click.echo(
                     to_json(
                         json_envelope(
@@ -451,6 +459,16 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                             "files": len(files_json),
                             "total_symbols": total_symbols,
                             "missing": missing,
+                            **(
+                                {
+                                    "resolution": "fuzzy_substring",
+                                    "partial_success": True,
+                                    "verdict": _multi_verdict
+                                    + f"; fuzzy --deps-of {deps_of} resolved to {deps_resolution}",
+                                }
+                                if deps_resolution
+                                else {}
+                            ),
                         },
                         files=files_json,
                     )

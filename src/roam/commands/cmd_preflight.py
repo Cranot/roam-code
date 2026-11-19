@@ -1615,13 +1615,9 @@ def preflight(ctx, target, staged):
                 _summary_dict["partial_success"] = disclosure["partial_success"]
                 _envelope_kwargs["resolution"] = disclosure["resolution"]
                 _envelope_kwargs["partial_success"] = disclosure["partial_success"]
-            # Missing prerequisites still make the overall assessment partial.
-            # Zero callers and measured zero complexity are complete answers;
-            # retain their state disclosures without counting them as missing.
-            _missing_signals = [tests, coupl, fitns]
-            if not compl.get("symbols_measured"):
-                _missing_signals.append(compl)
-            _no_data_signals = sum(1 for sig in _missing_signals if sig.get("state") is not None)
+            # Restore the missing-signal rule: state-bearing blast, tests,
+            # complexity, coupling and fitness signals all count.
+            _no_data_signals = sum(1 for sig in (blast, tests, compl, coupl, fitns) if sig.get("state") is not None)
             if _no_data_signals >= 3:
                 _summary_dict["partial_success"] = True
                 _envelope_kwargs["partial_success"] = True

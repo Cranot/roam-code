@@ -368,30 +368,28 @@ def test_no_op_transform_explicit_disclosure(cli_runner, clean_corpus):
         f"fixed upstream."
     )
 
-    discloses_noop = (
-        any(
-            m in verdict
-            for m in (
-                "no-op",
-                "noop",
-                "no op",
-                "already",
-                "same file",
-                "no change",
-                "tautolog",
-            )
+    discloses_noop = any(
+        m in verdict
+        for m in (
+            "no-op",
+            "noop",
+            "no op",
+            "already",
+            "same file",
+            "no change",
+            "tautolog",
         )
-        or any(
-            m in state
-            for m in (
-                "no_op",
-                "noop",
-                "unchanged_target",
-                "tautology",
-            )
+    ) or any(
+        m in state
+        for m in (
+            "no_op",
+            "noop",
+            "unchanged_target",
+            "tautology",
         )
-        or summary.get("partial_success") is True
     )
+    assert summary.get("partial_success") is True
+    assert state == "no_op_transform"
     assert discloses_noop, (
         f"no-op move (helper -> a.py where helper already lives) emits a "
         f"SAFE-looking 'health unchanged' verdict indistinguishable from "

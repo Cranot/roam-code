@@ -254,7 +254,14 @@ def test_evidence_doctor_validate_closed_enums_failure_marker_format(cli_runner,
 
 
 def test_evidence_doctor_recompute_content_hash_failure_marker_format(cli_runner, valid_packet, monkeypatch):
-    """If _recompute_content_hash raises, surface ``evidence_doctor_recompute_content_hash_failed:``."""
+    """Contract change: hash verification failure exits with the FAIL verdict.
+
+    Old expectation: exit 0 after a recomputation exception.
+    New expectation: exit 2, the doctor's existing failed-check exit code.
+    The stamped packet hash cannot be verified when recomputation raises;
+    hash_ok=False produces level=FAIL, whose JSON exit must agree with it.
+    The evidence_doctor_recompute_content_hash_failed marker still ships.
+    """
     from roam.commands import cmd_evidence_doctor
 
     def _raise(*args, **kwargs):
@@ -265,6 +272,8 @@ def test_evidence_doctor_recompute_content_hash_failure_marker_format(cli_runner
     result = _invoke_doctor(cli_runner, valid_packet)
     assert result.exit_code == 2, result.output
     data = _json.loads(result.output)
+    assert data["summary"]["level"] == "FAIL"
+    assert data["summary"]["hash_ok"] is False
     top_wo = data.get("warnings_out") or []
     rh_markers = [m for m in top_wo if m.startswith("evidence_doctor_recompute_content_hash_failed:")]
     assert rh_markers, f"expected evidence_doctor_recompute_content_hash_failed: marker; got {top_wo!r}"

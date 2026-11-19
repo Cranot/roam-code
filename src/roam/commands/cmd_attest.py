@@ -1177,7 +1177,11 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             _empty_state = "no_changes"
             _empty_summary_extra = {}
         _empty_summary: dict = {
-            "verdict": (f"no changes found for {label} (risk_level {_empty_risk_level_canonical})"),
+            "verdict": (
+                f"could not read changed files for {label}: {_git_err_kind}"
+                if _git_err_kind
+                else f"no changes found for {label} (risk_level {_empty_risk_level_canonical})"
+            ),
             "state": _empty_state,
             "partial_success": True,
             "safe_to_merge": None,
@@ -1198,7 +1202,10 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         if json_mode or output_format == "json":
             click.echo(to_json(_attest_empty_envelope))
         else:
-            click.echo(f"No changes found for {label}.")
+            if _git_err_kind is not None:
+                click.echo(f"VERDICT: {_empty_summary['verdict']}")
+            else:
+                click.echo(f"No changes found for {label}.")
         return
 
     with open_db(readonly=True) as conn:
