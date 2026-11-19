@@ -375,7 +375,8 @@ _CLASS_CASES = {
             ),
         ],
         "references": [
-            _reference("helper", "call", 2, "Widget"),
+            # The call is inside run(), so its source is the method.
+            _reference("helper", "call", 2, "Widget.run"),
             _reference("BaseWidget", "inherits", 1, "Widget"),
         ],
     },

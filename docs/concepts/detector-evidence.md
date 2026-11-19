@@ -161,10 +161,88 @@ must report the version mismatch, not interpret it as an improvement or regressi
 
 ## TypeScript and browser projects
 
+JavaScript/TypeScript member calls require receiver ownership evidence: a
+class instance or static context for `this`, a direct TypeScript annotation,
+a `const` construction/object, or an imported object/namespace in an indexed
+relative module. An object-literal method is eligible only through its owner;
+a bare call cannot select it by method name. An object method nested in a
+class stops the class's `this` evidence. Static `this` selects static members,
+and instance `this` selects instance members. Class-name receivers select
+static members; construction and declared-type receivers select instance members. Arrow functions in class fields
+retain the field's static/instance context and source symbol; crossing a nested
+class without such context leaves `this` unknown.
+
+Calls such as `this.users.findAll()` can use the declared class/interface type
+of a field or constructor parameter property, including access modifiers and
+`readonly`, or a field initialized directly with `new X()` in its declaration.
+A qualified type such as `NS.Foo` is supported when its lexical namespace or
+relative namespace import identifies exactly one class/interface. Qualified
+type aliases, unions with multiple concrete owners, external namespaces,
+and inferred factories remain unresolved. A same-named object value does not establish a declared type alias
+as a class/interface owner. A union of one named type with only `null`/`undefined` retains that
+owner; multiple concrete types remain unresolved. Named default exports and
+TypeScript `export =` assignments preserve the exported identity even under a
+different local import name. Namespace imports follow explicit relative
+`export *` barrels, excluding default exports. Conflicting exports and
+distinct same-named classes stay ambiguous. A type/value pair shares a binding
+name while keeping its type and value members separate. A same-file class and
+interface of the same qualified name share an instance owner, including when
+the class is imported. An overloaded method resolves to the implementation
+when unique, or to the first declaration in source order when there is no
+implementation. Resolution never picks an owner merely because only one of
+several possible owners declares the member.
+
+Direct `Foo.bar = function () {}` and `Foo.prototype.m = function () {}`
+assignments can supply static and instance edges through an evidenced function
+owner. A member assigned before a unique hoisted function keeps that parent.
+Receiver types and constructions use the scope of their declaration to resolve
+the owner name.
+
+Dynamic imports with a string literal specifier use the same module exports as
+a static namespace import. This covers member calls on an awaited import, a
+direct `const` binding to it, and the first parameter of an inline `.then`
+fulfillment callback when that parameter has no writes.
+
+Unknown receivers produce no edge. Coverage still omits factory returns,
+arbitrary aliases, inherited-member lookup, destructured option callbacks,
+Vue `SlotsType` inference, computed/dynamic exports, anonymous default owners,
+and general CommonJS `require`/`module.exports` binding inference. Imported
+bindings subsequently forwarded by a local export clause are not inferred.
+External package export maps and compiler path aliases beyond the existing
+`@/` convention are not resolved. The supported `export =` case is a direct
+named local declaration imported with TypeScript `import X = require(...)`.
+An object's own dynamic `this` remains unknown rather than being treated as an
+enclosing class instance. Fields assigned only in a constructor body (without
+an annotation or direct declaration initializer) remain unresolved. Local
+function/object/class declarations without indexed symbols produce no local
+edge; real local calls can therefore be absent. Top-level function overload
+signatures without an implementation are still outside extraction.
+
+Function parameters and local declarations, including local functions, arrows,
+classes and named expressions, do not create name-based reference edges.
+Unindexed local object/class owners and shadowing type parameters cannot
+borrow outer symbols. Switch cases share the switch body's lexical scope.
+Imported callbacks remain eligible when unshadowed. Standard name resolution
+filters language families before choosing candidates. JS/TS/TSX/Vue/Svelte
+share a family; C/C++ and their headers share another because both source
+languages can call declarations from those headers. Other distinct registered
+languages require explicit bridge resolution, even if they share a grammar.
+An external bare import can still match an unrelated same-language interface
+property. The owner rules do not establish complete module/type inference.
+
+- JSX and decorators can bypass lexical and receiver evidence, so a local `Card` used in `<Card />`, a local `@decor`, and an unimported `<Layout.Header />` can bind to unrelated indexed declarations.
+- Bare-call fallback can choose one of two equally plausible `helper()` targets, bind imported `format()` to a same-directory decoy, or bind `go()` to an unrelated `go` when the import is `run as go`.
+- Unqualified `run()` and `make()` can falsely target the instance method `Svc.run` and the static method `Svc.make`, respectively.
+- For a class `Foo`, the index treats `Foo.bar = function () {}` as an instance member and links `foo.bar()` to it after `const foo = new Foo()`.
+
+Rebuild with `roam index --force` to remove old saved edges. Missing graph edges
+remain a coverage limitation, not proof of no callers or safe deletion.
+
 Relative runtime imports such as `./worker.js` can name TypeScript source.
 The import checks share extension substitution: `.js` can resolve to `.ts`,
 `.tsx`, or `.d.ts`; `.mjs` to `.mts` or `.d.mts`; `.cjs` to `.cts` or `.d.cts`.
-The extension is replaced, not appended. These rules follow the
+Module lookup takes the first existing candidate in this order, with a file
+such as `dup.ts` preceding `dup/index.ts` for `./dup`. These rules follow the
 [TypeScript module reference](https://www.typescriptlang.org/docs/handbook/modules/reference.html#file-extension-substitution).
 They do not implement all compiler options, package `exports`, project references,
 or custom loader behavior. Keep `tsc --noEmit` and the project's actual build in
