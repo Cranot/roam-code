@@ -41,7 +41,7 @@ tests, security tools, and code review.
 
 ## Connect your agent
 
-You need **Python 3.11+** and a Git repository. On Linux, macOS, or Windows:
+You need **Python 3.11+**, **Git 2.24+**, and a Git repository. On Linux, macOS, or Windows:
 
 ```bash
 pip install "roam-code[mcp]"

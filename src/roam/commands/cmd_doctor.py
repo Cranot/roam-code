@@ -36,6 +36,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
+from roam.commands.changed_files import MIN_GIT_VERSION, MIN_GIT_VERSION_LABEL
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 # How old ``.git/index.lock`` must be before it is called stale.
@@ -237,15 +238,17 @@ def _check_git() -> dict:
             timeout=5,
         )
         version_line = result.stdout.strip() if result.returncode == 0 else ""
-        # "git version 2.43.0" -> "2.43.0"
-        version = version_line.replace("git version", "").strip() or "unknown"
     except (subprocess.SubprocessError, OSError):
-        version = "unknown"
-    return {
-        "name": "git executable",
-        "passed": True,
-        "detail": f"git {version}",
-    }
+        version_line = ""
+    version = version_line.removeprefix("git version ").strip() or "unknown"
+    check = {"name": "git executable", "passed": True, "detail": f"git {version}"}
+    match = re.fullmatch(r"git version ([0-9]{1,4})\.([0-9]{1,4})(?:[.\-+ ].*)?", version_line)
+    requirement = f"Git {MIN_GIT_VERSION_LABEL} or later is required for --end-of-options in comparisons."
+    if match is None:
+        check["version_advisory"] = f"Could not determine Git version. {requirement}"
+    elif tuple(map(int, match.groups())) < MIN_GIT_VERSION:
+        check["version_advisory"] = f"Installed Git {version} is too old. {requirement}"
+    return check
 
 
 def _check_git_repo_health() -> dict:
@@ -2517,6 +2520,7 @@ def _check_claude_hook_bodies() -> dict:
 
 _ADVISORY_CHECK_NAMES = frozenset(
     {
+        "Git version",
         "Claude hook bodies",  # T2c heal reporting — actionable locally only
         "Optional extras",  # graceful degradation when extras missing
         "Cloud sync",  # OneDrive/Dropbox warning, not a hard break
@@ -2687,7 +2691,9 @@ def doctor(ctx, strict, persist):
     _run_check("python_version", _check_python_version)
     _run_check("tree_sitter", _check_tree_sitter)
     _run_check("tree_sitter_language_pack", _check_tree_sitter_language_pack)
-    _run_check("git", _check_git)
+    git_check = _run_check("git", _check_git)
+    if git_check and (version_advisory := git_check.pop("version_advisory", None)):
+        checks.append({"name": "Git version", "passed": False, "detail": version_advisory})
     _run_check("git_repo_health", _check_git_repo_health)
     _run_check("ci_environment_parity", _check_ci_environment_parity)
     _run_check("dependency_versions", _check_dependency_versions)

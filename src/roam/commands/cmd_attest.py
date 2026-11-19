@@ -1010,6 +1010,8 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
     composite risk score), and ``audit-trail-verify`` (verify a
     previously-signed artifact).
     """
+    if commit_range == "":
+        raise click.BadParameter("Git ref or range cannot be empty", param_hint="COMMIT_RANGE")
     json_mode = ctx.obj.get("json") if ctx.obj else False
     # --format json is equivalent to --json
     if output_format == "json":
@@ -1254,16 +1256,19 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
                 comparison_details["files_not_analyzed"] = skipped
             if is_range or breaking_failure:
                 comparison_details["evidence"] = {"breaking_changes": breaking}
-            if breaking_failure:
+            breaking_failure_kind = breaking_failure.get("git_error") or breaking_failure.get("state")
+            if breaking_failure_kind:
                 _unresolved_risk_level_canonical = None
                 _unresolved_risk_rank = None
+                verdict_suffix = f" (breaking comparison unavailable: {breaking_failure_kind})"
+            else:
+                verdict_suffix = f" (risk_level {_unresolved_risk_level_canonical})"
             _attest_unresolved_envelope = json_envelope(
                 "attest",
                 summary={
                     "verdict": (
                         f"{len(changed)} changed files unresolved against the index "
-                        f"({label}); run `roam index` then re-attest "
-                        f"(risk_level {_unresolved_risk_level_canonical})"
+                        f"({label}); run `roam index` then re-attest{verdict_suffix}"
                     ),
                     "safe_to_merge": False,
                     "partial_success": True,
@@ -1287,8 +1292,8 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             else:
                 lines = [f"{len(changed)} changed files not found in index ({label}). Run `roam index` first."]
                 lines.extend(f"Skipped {entry['file']} (submodule pointer)." for entry in skipped)
-                if breaking_failure:
-                    lines.append(f"Breaking comparison could not run: {breaking_failure['state']}")
+                if breaking_failure_kind:
+                    lines.append(f"Breaking comparison could not run: {breaking_failure_kind}")
                     if detail := breaking_failure.get("git_error_detail"):
                         lines.append(detail)
                 lines.extend(_w607ad_warnings_out)

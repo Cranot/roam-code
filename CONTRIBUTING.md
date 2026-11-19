@@ -16,7 +16,7 @@ everything you need to get started.
 ### Prerequisites
 
 - Python 3.11+; Python 3.12 is the standard local development interpreter
-- Git
+- Git 2.24 or later
 - uv (use the version pinned in `.github/workflows/roam-ci.yml` for CI parity)
 
 ### Installation

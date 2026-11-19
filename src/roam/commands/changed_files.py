@@ -401,6 +401,8 @@ def is_low_risk_file(path: str | None) -> bool:
 GIT_NOT_AVAILABLE = "git_not_available"
 GIT_TIMEOUT = "git_timeout"
 GIT_ERROR = "git_error"
+MIN_GIT_VERSION = (2, 24)
+MIN_GIT_VERSION_LABEL = ".".join(map(str, MIN_GIT_VERSION))
 
 
 def run_git_comparison(
@@ -443,12 +445,31 @@ def run_git_comparison(
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace") if isinstance(result.stderr, bytes) else result.stderr
         detail = stderr.strip() or fallback_detail or f"git {cmd[1]} exited {result.returncode}"
+        first_line = stderr.partition("\n")[0]
+        options_end = cmd.index("--") if "--" in cmd else len(cmd)
+        # git diff can print only usage and exit 129 for an unknown option.
+        option_rejected = "--end-of-options" in cmd[:options_end] and (
+            re.search(r"(?<![\w:./-])--end-of-options(?![\w./-])", first_line)
+            or "`end-of-options'" in first_line
+            or (result.returncode == 129 and "git diff " in first_line)
+        )
+        if option_rejected:
+            detail += f"\nGit {MIN_GIT_VERSION_LABEL} or later is required for --end-of-options."
+        defer_nonzero = defer_nonzero and not option_rejected
         if not defer_nonzero:
             log_swallowed("changed_files:git_comparison_returncode", RuntimeError(detail[:200]))
         if error_details is not None:
             error_details.append(detail)
         return (result if defer_nonzero else None), GIT_ERROR
     return result, None
+
+
+def decode_git_path(path: bytes) -> str:
+    """Decode Git path bytes without losing bytes rejected by the filesystem codec."""
+    try:
+        return os.fsdecode(path)
+    except UnicodeDecodeError:
+        return path.decode("utf-8", errors="surrogateescape")
 
 
 def get_changed_files_status(
@@ -474,7 +495,7 @@ def get_changed_files_status(
     Callers behind a CI gate flag MUST branch on *error_kind* and refuse;
     callers that only report may keep using :func:`get_changed_files`.
     """
-    cmd = ["git", "diff", "--name-only", "-z"]
+    cmd = ["git", "diff", "--name-only", "-z", "--no-renames"]
 
     if commit_range is not None:
         cmd.extend(["--end-of-options", commit_range, "--"])
@@ -491,7 +512,7 @@ def get_changed_files_status(
         if error_details is not None:
             error_details.append("git diff returned an invalid NUL-delimited path list")
         return [], GIT_ERROR
-    paths = [os.fsdecode(path) for path in records[:-1]]
+    paths = [decode_git_path(path) for path in records[:-1]]
 
     if untracked:
         # Enrichment is best-effort, with failures disclosed by the shared runner.
@@ -499,8 +520,19 @@ def get_changed_files_status(
             root, ["git", "ls-files", "-z", "--others", "--exclude-standard"], error_details
         )
         if ut is not None:
-            paths.extend(os.fsdecode(path) for path in ut.stdout.split(b"\0") if path)
+            paths.extend(decode_git_path(path) for path in ut.stdout.split(b"\0") if path)
 
+    # The index stores Unicode paths in SQLite, which cannot bind surrogates.
+    # Refuse a partial comparison and identify the path without printing raw surrogates.
+    for path in paths:
+        if re.search(r"[\ud800-\udfff]", path):
+            detail = f"Git path cannot be matched in the index: {path!r}"
+            if error_details is not None:
+                error_details.append(detail)
+            from roam.observability import log_swallowed
+
+            log_swallowed("changed_files:git_path_encoding", UnicodeError(detail))
+            return [], GIT_ERROR
     return paths, None
 
 
@@ -654,10 +686,14 @@ def git_show_at_ref_status(
         )
         if listing_error:
             return None, listing_error
-        if not listing.stdout:
+        metadata, _, entry_path = listing.stdout.partition(b"\t")
+        entry_matches = entry_path == os.fsencode(path) + b"\0"
+        if not listing.stdout or (
+            entry_matches and re.fullmatch(rb"040000 tree [0-9a-f]{40}(?:[0-9a-f]{24})?", metadata)
+        ):
             error_details.pop()
             return None, None
-        if listing.stdout.partition(b" ")[0] == b"160000":
+        if entry_matches and re.fullmatch(rb"160000 commit [0-9a-f]{40}(?:[0-9a-f]{24})?", metadata):
             error_details.pop()
             raise GitlinkPath(path)
         log_swallowed("changed_files:git_comparison_returncode", RuntimeError(show_detail[:200]))

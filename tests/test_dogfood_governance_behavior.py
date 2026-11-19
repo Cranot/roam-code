@@ -285,7 +285,7 @@ def test_attest_verify_is_NOT_a_subcommand_arg_trap():
     content-hash integrity. This test keeps pinning the arg-trap behaviour so
     a future reader does not re-add the bad suggestion believing it works.
 
-    Named contract change (2026-11-19, review 4 finding M1):
+    Named contract change (2026-11-19):
     old expectation: text output "No changes found for verify".
     new expectation: text output says the changed files could not be read for verify,
     and never "No changes found".

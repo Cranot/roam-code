@@ -346,6 +346,8 @@ def breaking(ctx, target):
     use ``api-changes``. This command provides a simpler binary signal:
     removed, signature-changed, or renamed exports.
     """
+    if target == "":
+        raise click.BadParameter("Git ref or range cannot be empty", param_hint="TARGET")
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()

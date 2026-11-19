@@ -663,7 +663,7 @@ def test_simulate_identity_transform_preserves_baseline(cli_runner, sim_project,
     all_wo = list(data.get("warnings_out") or []) + list(summary.get("warnings_out") or [])
     ef_markers = [m for m in all_wo if any(f"simulate_{p}_failed:" in m for p in _EF_PHASES)]
     assert not ef_markers, f"identity transform must NOT surface W607-EF substrate markers; got {all_wo!r}"
-    # Named contract change (2026-11-19, review 4 finding m1):
+    # Named contract change (2026-11-19):
     # old expectation: partial_success false on the identity transform.
     # new expectation: state no_op_transform with partial_success true.
     # reason: W805-EE (b166bb92) decided a no-op transform is disclosed, not reported as a
