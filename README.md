@@ -47,16 +47,17 @@ You need **Python 3.11+** and a Git repository. On Linux, macOS, or Windows:
 pip install "roam-code[mcp]"
 cd path/to/your/repo
 roam init
+roam mcp-setup claude-code --write
 ```
 
 Replace the path with your project. `init` builds the local index and creates
 project configuration; use `roam index` if you want only the index. The first
 run can download a parser and takes longer than a refresh.
 
-Then **[choose your agent's setup guide](https://roam-code.com/setup#install-mcp)**.
-Connect through MCP (a standard way for agents to use tools), or let your agent
-call the CLI. Add the usage instructions to its project configuration; connecting
-tools alone does not make the agent use them.
+Use `roam mcp-setup <agent> --write` with `claude-code`, `cursor`, `windsurf`,
+`vscode`, `gemini-cli`, or `codex-cli`. Add the usage instructions to your
+agent's project configuration. See the [agent setup guide](https://roam-code.com/setup#install-mcp)
+for details, including setup for agents that call the CLI directly.
 
 Prefer an isolated installation? Use `pipx install "roam-code[mcp]"` or
 `uv tool install "roam-code[mcp]"`. If your agent only needs shell commands,
