@@ -87,3 +87,30 @@ def test_script_and_dependency_evidence(mixed_tests, cli_runner, package, expect
     result = invoke_cli(cli_runner, ["affected-tests", "useStorage", "--command"])
     assert result.exit_code == 0, result.output
     assert result.output.strip() == expected
+
+
+def test_diff_suggests_the_repository_runner(mixed_tests, cli_runner):
+    with (mixed_tests / "storage.ts").open("a", encoding="utf-8") as source:
+        source.write("export const changed = 1\n")
+    text = invoke_cli(cli_runner, ["diff", "--tests"])
+    assert text.exit_code == 0, text.output
+    assert "npx vitest run storage.test.ts" in text.output
+    assert "pytest storage.test.ts" not in text.output
+    data = json.loads(invoke_cli(cli_runner, ["--json", "diff", "--tests"]).output)
+    tests = data["affected_tests"]
+    assert [entry["runner"] for entry in tests["test_commands"]] == ["vitest"]
+    assert tests["pytest_command"] == ""
+    assert tests["unknown_runner_files"] == []
+
+
+def test_plan_suggests_the_repository_runner(mixed_tests, cli_runner):
+    text = invoke_cli(cli_runner, ["plan", "--symbol", "useStorage"])
+    assert text.exit_code == 0, text.output
+    assert "npx vitest run storage.test.ts" in text.output
+    assert "pytest storage.test.ts" not in text.output
+    data = json.loads(invoke_cli(cli_runner, ["--json", "plan", "--symbol", "useStorage"]).output)
+    tests = data["tests"]
+    assert [entry["runner"] for entry in tests["test_commands"]] == ["vitest"]
+    assert tests["pytest_command"] == ""
+    python = json.loads(invoke_cli(cli_runner, ["--json", "plan", "--symbol", "transform"]).output)
+    assert python["tests"]["pytest_command"] == "pytest test_main.py"

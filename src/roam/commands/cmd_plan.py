@@ -392,20 +392,14 @@ def _build_modification_points(conn, file_paths):
 
 def _build_test_shortlist(conn, sym_ids, file_paths):
     """Gather affected tests ranked by relevance."""
+    from roam.output.test_commands import test_run_fields
+
     results = _gather_affected_tests(conn, sym_ids, file_paths)
-
-    seen_files = []
-    seen_set = set()
-    for r in results:
-        if r["file"] not in seen_set:
-            seen_set.add(r["file"])
-            seen_files.append(r["file"])
-
-    pytest_cmd = "pytest " + " ".join(seen_files) if seen_files else ""
+    seen_files = list(dict.fromkeys(r["file"] for r in results))
 
     return {
         "test_files": seen_files,
-        "pytest_command": pytest_cmd,
+        **test_run_fields(find_project_root(), seen_files),
         "count": len(results),
         "tests": [
             {
@@ -815,8 +809,11 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
         # Section 5: Test shortlist
         test_count = tests["count"]
         click.echo(f"5. TEST SHORTLIST ({test_count} tests):")
-        if tests["pytest_command"]:
-            click.echo(f"   {tests['pytest_command']}")
+        if tests["test_files"]:
+            from roam.output.test_commands import test_run_lines
+
+            for line in test_run_lines(tests):
+                click.echo(f"   {line}")
             for t in tests["tests"][:10]:
                 sym_str = f"::{t['symbol']}" if t.get("symbol") else ""
                 click.echo(f"   - {t['file']}{sym_str:<50s} {t['kind']}")

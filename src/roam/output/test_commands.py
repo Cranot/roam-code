@@ -205,6 +205,28 @@ def affected_test_commands(root: Path, test_files: list[str]) -> tuple[list[dict
     return commands, unknown
 
 
+def test_run_fields(root: Path, test_files: list[str]) -> dict:
+    """Return the JSON fields every command that suggests test runs shares.
+
+    ``pytest_command`` holds only commands for files detected as pytest, as in
+    ``roam affected-tests``; other runners are in ``test_commands``.
+    """
+    commands, unknown = affected_test_commands(root, test_files)
+    return {
+        "test_commands": commands,
+        "pytest_command": "\n".join(entry["command"] for entry in commands if entry["runner"] == "pytest"),
+        "unknown_runner_files": unknown,
+    }
+
+
+def test_run_lines(fields: dict) -> list[str]:
+    """Return the text lines that tell a reader how to run the tests."""
+    lines = [entry["command"] for entry in fields.get("test_commands", [])]
+    if fields.get("unknown_runner_files"):
+        lines.append(unknown_runner_message(fields["unknown_runner_files"]))
+    return lines
+
+
 def unknown_runner_message(paths: list[str]) -> str:
     """Render paths safely for command-mode comments and text output."""
     escaped = (path.replace("\n", "\\n").replace("\r", "\\r") for path in paths)
