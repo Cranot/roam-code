@@ -1397,11 +1397,13 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 if not full and len(test_results) > 20:
                     click.echo(f"  (+{len(test_results) - 20} more)")
 
-                from roam.output.test_commands import test_run_lines
+                from roam.output.test_commands import test_run_lines, unknown_runner_message
 
                 run_lines = test_run_lines(run_fields)
                 if run_lines:
                     click.echo("\nRun: " + "\n     ".join(run_lines))
+                if unknown := run_fields["unknown_runner_files"]:
+                    click.echo(f"\n{unknown_runner_message(unknown)}")
 
         # -- Coupling warnings section --------------------------------
 

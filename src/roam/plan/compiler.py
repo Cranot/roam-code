@@ -2900,6 +2900,9 @@ def _run_roam(args: list[str], cwd: str | None, timeout: float = 8.0, detail: bo
     `_run_roam_cache_get` / `_run_roam_cache_put` (in-memory cache),
     `_run_roam_invoke` (dispatch), and `_run_roam_parse_json` (decoding).
     """
+    if args[:1] == ["affected-tests"]:
+        # Runner evidence can change in uncommitted manifests or config files.
+        return _run_roam_invoke(_run_roam_build_cli_args(args, detail), cwd, timeout)
     # W54 — JSON-tuple key avoids collisions when args contain spaces.
     # Previous `" ".join(args)` would conflate `["uses", "foo bar"]` and
     # `["uses foo", "bar"]`. Tuple-of-tuples is hashable + unambiguous.
@@ -6507,26 +6510,34 @@ def _probe_test_impact_for_task(task: str, named_paths: list[str], cwd: str | No
     if not _TEST_IMPACT_RE.search(task):
         return None
     # Prefer a named SYMBOL ("which tests cover detect_layers") — resolve via
-    # `roam affected-tests <sym>`, which returns the ready-to-run pytest
-    # command. Tried FIRST because path-resolution often surfaces a TEST file
+    # `roam affected-tests <sym>` for runner-specific commands. Path resolution often surfaces a test file
     # as named_paths[0], which would mis-target the file branch below.
     sym = _first_target_symbol(task, _TEST_IMPACT_STOPWORDS)
     if sym:
         d = _run_roam(["affected-tests", sym], cwd, detail=True, timeout=4.0)
         test_files = (d.get("test_files") or [])[:15] if d else []
         if test_files:
+            commands = d.get("test_commands", [])
+            pytest_command = d.get("pytest_command")
+            guidance = (
+                "Use each entry in `test_commands` with its declared shell."
+                if commands
+                else "Run `pytest_command` in a POSIX shell."
+                if pytest_command and "test_commands" not in d
+                else "Choose a runner manually for the affected tests."
+            )
+            if d.get("unknown_runner_files") and commands:
+                guidance += " Check `unknown_runner_files` for tests that need a runner selected manually."
             return {
                 "test_impact": {
                     "target_symbol": sym,
                     "affected_test_files": test_files,
-                    "pytest_command": d.get("pytest_command"),
+                    "pytest_command": pytest_command,
+                    "test_commands": commands,
+                    "unknown_runner_files": d.get("unknown_runner_files", []),
                     "tests_total": (d.get("summary") or {}).get("tests") or len(d.get("tests") or []),
                 },
-                "test_impact_definition": (
-                    f"Test files that exercise `{sym}` (graph reverse-map). Run "
-                    f"`pytest_command` for the targeted subset instead of the "
-                    f"full suite."
-                ),
+                "test_impact_definition": f"Test files that exercise `{sym}` (graph reverse-map). {guidance}",
             }
     if not named_paths:
         return None

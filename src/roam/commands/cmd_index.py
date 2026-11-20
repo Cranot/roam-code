@@ -203,6 +203,9 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                     remediation="Run `roam doctor` to diagnose the install.",
                 )
 
+            parse_issues_scope = (
+                "index_reused" if (indexer.summary or {}).get("up_to_date") else "files_parsed_this_run"
+            )
             index_failed = corpus.state == STATE_FAILED
             if corpus.state == STATE_INDEXED:
                 _index_verdict = f"indexed {file_count} files, {sym_count} symbols, {edge_count} edges"
@@ -249,7 +252,7 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                 }
                 if parse_issues:
                     _summary["partial_success"] = True
-                    _summary["verdict"] += " (parse issues in some files)"
+                    _summary["verdict"] += " (parse issues in files processed in this run)"
                 if corpus.state != STATE_INDEXED:
                     _summary["reason"] = corpus.reason
                     _summary["partial_success"] = True
@@ -270,6 +273,7 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                             avg_symbols_per_file=round(avg_sym, 1),
                             parse_coverage_pct=round(coverage, 0),
                             corpus=corpus.as_dict(),
+                            parse_issues_scope=parse_issues_scope,
                             **({"parse_issues": parse_issues} if parse_issues else {}),
                         )
                     )
@@ -282,6 +286,7 @@ def run_index_command(ctx, force, verbose, quiet, rebuild):
                 click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
                 click.echo(f"  Languages: {lang_str}")
                 click.echo(f"  Avg symbols/file: {avg_sym:.1f}  Parse coverage: {coverage:.0f}%")
+                click.echo("  Parse issues cover only files parsed in this run.")
                 if snapshot_message:
                     click.echo(snapshot_message)
                 for line in corpus.text_lines()[1:]:

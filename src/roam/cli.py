@@ -998,15 +998,16 @@ def _with_history_disclosure(command: click.Command) -> click.Command:
             shallow = git_history_shallow(find_project_root())
         except OSError:
             shallow = None
+        warning = None
         if shallow is not False:
             warning = (
                 "Git history is shallow. History-based results are limited to the commits available."
                 if shallow
                 else "Git history depth could not be checked. History-based results may be incomplete."
             )
-            subctx.meta[HISTORY_WARNING_CONTEXT_KEY] = (command.name, shallow, warning)
             if not (subctx.obj or {}).get("json"):
                 click.echo(f"Warning: {warning}", err=True)
+        subctx.meta[HISTORY_WARNING_CONTEXT_KEY] = (command.name, shallow, warning)
         return invoke(subctx)
 
     command.invoke = invoke_with_history

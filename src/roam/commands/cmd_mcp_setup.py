@@ -21,7 +21,7 @@ import site
 import stat
 import sys
 import sysconfig
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import click
@@ -103,6 +103,9 @@ _LAUNCHER_NAME = "roam.exe" if os.name == "nt" else "roam"
 def _running_launcher() -> Path:
     """Locate the console script for the Python installation running Roam."""
     invoked = Path(sys.argv[0])
+    if _LAUNCHER_NAME == "roam.exe" and invoked.name.lower() == "roam" and invoked.parent != Path("."):
+        # distlib removes .exe from argv[0] before calling the entry point.
+        invoked = invoked.with_suffix(".exe")
     if invoked.name.lower() == _LAUNCHER_NAME:
         try:
             if invoked.is_file():
@@ -115,6 +118,35 @@ def _running_launcher() -> Path:
     else:
         scripts = sysconfig.get_path("scripts")
     return (Path(scripts) / _LAUNCHER_NAME).absolute()
+
+
+def _same_launcher(launcher: Path, on_path: str | None) -> bool:
+    if not on_path:
+        return False
+    try:
+        if launcher.samefile(on_path):
+            return True
+        if _LAUNCHER_NAME == "roam.exe" and launcher.is_file() and Path(on_path).is_file():
+            # Tool managers may copy an executable. An absolute embedded
+            # interpreter binds a distlib wrapper to the same installation
+            # from either location.
+            with launcher.open("rb") as running, Path(on_path).open("rb") as candidate:
+                limit = 1024 * 1024
+                original = running.read(limit)
+                if len(original) == limit or not original.startswith(b"MZ"):
+                    return False
+                shebang = re.search(rb'#!(?:"([^"\r\n]+)"|([^\r\n]+))\r?\nPK\x03\x04', original)
+                if shebang is None:
+                    return False
+                interpreter = PureWindowsPath(os.fsdecode(shebang[1] or shebang[2]))
+                return (
+                    interpreter.is_absolute()
+                    and interpreter.suffix.lower() == ".exe"
+                    and original == candidate.read(limit)
+                )
+    except OSError:
+        pass
+    return False
 
 
 def _resolve_config_path(rel_path: str, project_root: Path | None = None) -> Path:
@@ -540,13 +572,11 @@ def mcp_setup(ctx, platform, preset, write):
     cfg = copy.deepcopy(_CONFIGS[platform])
     launcher = _running_launcher()
     on_path = shutil.which("roam")
-    try:
-        matches_path = bool(on_path and launcher.samefile(on_path))
-    except OSError:
-        matches_path = False
+    matches_path = _same_launcher(launcher, on_path)
+    shell = "powershell" if os.name == "nt" else "posix"
     command = "roam" if matches_path else str(launcher)
     run_launcher = command
-    run_prefix = "Run"
+    run_prefix = "In PowerShell, run" if shell == "powershell" else "Run"
     launcher_warning = None
     launcher_unavailable = False
     if not matches_path:
@@ -558,12 +588,16 @@ def mcp_setup(ctx, platform, preset, write):
             launcher_warning = (
                 f"Using the absolute path {launcher} because PATH does not resolve to this Roam installation."
             )
+            if cfg.get("config_path", "").startswith("./"):
+                launcher_warning += (
+                    " The project configuration will contain a machine-specific path. "
+                    "Review the project configuration before committing or sharing it."
+                )
         else:
             launcher_warning = f"Roam console script is missing or cannot be executed at {launcher}."
-        if os.name == "nt":
+        if shell == "powershell":
             shell_command = "'" + command.replace("'", "''") + "'"
             run_launcher = f"& {shell_command}"
-            run_prefix = "In PowerShell, run"
         else:
             shell_command = run_launcher = shlex.quote(command)
         cfg["instructions"] = [
@@ -572,6 +606,9 @@ def mcp_setup(ctx, platform, preset, write):
         ]
         if cfg.get("setup_command"):
             cfg["setup_command"] = cfg["setup_command"].replace("-- roam mcp", f"-- {shell_command} mcp")
+
+    elif shell == "powershell":
+        cfg["instructions"] = [line.replace("Run:", f"{run_prefix}:") for line in cfg["instructions"]]
 
     server = next(iter(cfg["json_config"].values()))["roam-code"]
     server["command"] = command
@@ -621,6 +658,7 @@ def mcp_setup(ctx, platform, preset, write):
             "config": cfg.get("json_config", {}),
             "config_format": cfg.get("config_format", "json"),
             "setup_command": cfg.get("setup_command"),
+            "shell": shell if cfg.get("setup_command") or (write_result and write_result.get("ok")) else None,
         }
         if launcher_warning:
             envelope_kwargs["launcher_warning"] = launcher_warning
@@ -662,7 +700,8 @@ def mcp_setup(ctx, platform, preset, write):
         click.echo(f"  {instruction}")
 
     if cfg.get("setup_command"):
-        click.echo(f"\n  Quick setup:\n    {cfg['setup_command']}\n")
+        label = "Quick setup (PowerShell)" if shell == "powershell" else "Quick setup"
+        click.echo(f"\n  {label}:\n    {cfg['setup_command']}\n")
 
     json_config = cfg.get("json_config")
     if json_config:

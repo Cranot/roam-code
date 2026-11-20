@@ -810,10 +810,12 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
         test_count = tests["count"]
         click.echo(f"5. TEST SHORTLIST ({test_count} tests):")
         if tests["test_files"]:
-            from roam.output.test_commands import test_run_lines
+            from roam.output.test_commands import test_run_lines, unknown_runner_message
 
             for line in test_run_lines(tests):
                 click.echo(f"   {line}")
+            if unknown := tests["unknown_runner_files"]:
+                click.echo(f"   Runner detection: {unknown_runner_message(unknown)}")
             for t in tests["tests"][:10]:
                 sym_str = f"::{t['symbol']}" if t.get("symbol") else ""
                 click.echo(f"   - {t['file']}{sym_str:<50s} {t['kind']}")

@@ -472,7 +472,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
     }
     if parse_issues:
         summary["partial_success"] = True
-        summary["verdict"] += " (parse issues in some files)"
+        summary["verdict"] += " (parse issues in files processed in this run)"
     if corpus.state != STATE_INDEXED:
         summary["reason"] = corpus.reason
         summary["partial_success"] = True
@@ -491,6 +491,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
                     health=health_summary,
                     corpus=corpus.as_dict(),
                     warnings=warnings,
+                    parse_issues_scope="files_parsed_this_run" if indexer is not None else "index_reused",
                     **({"parse_issues": parse_issues} if parse_issues else {}),
                 )
             )
@@ -511,7 +512,11 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # so the welcome banner contradicted `roam health` run seconds later in the
     # same shell. Point the user at `roam health` for the canonical number;
     # keep the snapshots/baseline pipeline's metric alone so history is stable.
-    click.echo(f"VERDICT: {_verdict}\n")
+    click.echo(f"VERDICT: {summary['verdict']}\n")
+    if indexer is None:
+        click.echo("  Reused the existing index. Parse issues cover only files parsed in this run.")
+    else:
+        click.echo("  Parse issues cover only files parsed in this run.")
 
     # Warnings go BEFORE the welcome banner so the user sees them
     # before the "Try one: ..." next-steps copy. Write to stderr so

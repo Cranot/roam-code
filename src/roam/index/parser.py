@@ -181,7 +181,7 @@ active_parse_issues: ContextVar[dict[Path, str] | None] = ContextVar("active_par
 def record_parse_issue(path: Path, kind: str) -> None:
     parse_errors[kind] += 1
     issues = active_parse_issues.get()
-    if issues is not None:
+    if issues is not None and kind not in {"stand_in_grammar", "no_grammar"}:
         issues[path] = kind
 
 

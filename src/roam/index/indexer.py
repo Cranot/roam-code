@@ -2757,7 +2757,7 @@ class Indexer:
         details = self.parse_issue_details(verbose=verbose)
         if details:
             error_summary = get_parse_error_summary(Counter(self._parse_issue_paths.values()))
-            self._log(f"  Parse issues: {error_summary}")
+            self._log(f"  Parse issues in files processed in this run: {error_summary}")
             for path in details["files"]:
                 self._log(f"    {path!r}")
             if details["more"]:

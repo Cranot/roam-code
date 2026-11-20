@@ -67,7 +67,7 @@ from roam.output.metric_definitions import (
     COGNITIVE_COMPLEXITY_DEFINITION,
     PREFLIGHT_RISK_LEVEL_DEFINITION,
 )
-from roam.output.test_commands import affected_test_commands, unknown_runner_message
+from roam.output.test_commands import affected_test_commands, test_run_lines, unknown_runner_message
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -1855,8 +1855,8 @@ def preflight(ctx, target, staged):
                 click.echo(f"  Risk driver:  {driver}")
 
             # Suggested tests
-            for entry in tests.get("test_commands", []):
-                click.echo(f"  Suggested tests: {entry['command']}")
+            for command in test_run_lines(tests):
+                click.echo(f"  Suggested tests: {command}")
             if unknown := tests.get("unknown_runner_files"):
                 click.echo(f"  {unknown_runner_message(unknown)}")
             if tests.get("pytest_command_truncated"):

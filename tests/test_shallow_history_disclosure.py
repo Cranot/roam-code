@@ -23,10 +23,16 @@ def history_checkout(tmp_path, monkeypatch):
     def git(*args, cwd=source):
         return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
-    git("init", "-q")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "0")
+    git("init", "-q", f"--template={hooks}")
+    (source / "test_example.py").write_text(
+        "from example import example\ndef test_example():\n    assert example() >= 0\n", encoding="utf-8"
+    )
     for number in range(2):
-        (source / "example.py").write_text(f"def example():\n    return {number}\n", encoding="utf-8")
-        git("add", "example.py")
+        (source / "example.py").write_text(
+            f"def example(value=True):\n    if value:\n        return {number}\n    return 0\n", encoding="utf-8"
+        )
+        git("add", "example.py", "test_example.py")
         git(
             "-c",
             "user.name=Author",
@@ -71,7 +77,11 @@ def test_history_commands_disclose_shallow_checkout(history_checkout, shallow):
         result = runner.invoke(cli, ["--json", *args])
         assert result.exit_code == 0, result.output
         data = json.loads(result.stdout)
-        assert data.get("history_shallow") is (True if shallow else None), args
+        # Contract change: a full clone previously omitted history_shallow.
+        # False now distinguishes a verified full clone from an unknown depth (null).
+        assert data["history_shallow"] is shallow, args
+        if not shallow:
+            assert data["summary"]["partial_success"] is False, args
         assert data["summary"]["verdict"]
         if shallow:
             assert data["summary"]["partial_success"] is True
@@ -79,6 +89,7 @@ def test_history_commands_disclose_shallow_checkout(history_checkout, shallow):
         text = runner.invoke(cli, args)
         assert text.exit_code == 0, text.output
         assert text.output.count("Git history is shallow") == int(shallow), args
+        assert "Git history depth could not be checked" not in text.output, args
 
 
 @pytest.mark.parametrize(

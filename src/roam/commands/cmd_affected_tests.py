@@ -48,7 +48,7 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
-from roam.output.test_commands import affected_test_commands, unknown_runner_message
+from roam.output.test_commands import affected_test_commands, test_run_lines, unknown_runner_message
 
 _MAX_HOPS = 10
 
@@ -2890,8 +2890,8 @@ def affected_tests_cmd(ctx, target, staged, show_command):
         unknown_message = unknown_runner_message(unknown_runners) if unknown_runners else ""
 
         if show_command:
-            for entry in commands:
-                click.echo(entry["command"])
+            for command in test_run_lines({"test_commands": commands}, command_only=True):
+                click.echo(command)
             if unknown_message:
                 click.echo(f"# {unknown_message}")
             if not seen_order:
@@ -3024,7 +3024,7 @@ def affected_tests_cmd(ctx, target, staged, show_command):
             click.echo(f"  {kind_tag} {label:<55s} {detail}")
 
         click.echo()
-        for entry in commands:
-            click.echo(f"Run: {entry['command']}")
+        for command in test_run_lines({"test_commands": commands}):
+            click.echo(f"Run: {command}")
         if unknown_message:
             click.echo(unknown_message)
