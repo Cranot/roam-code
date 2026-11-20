@@ -270,3 +270,25 @@ def test_attest_unresolved_breaking(project, monkeypatch, timeout):
     else:
         assert not summary.get("git_error")
         assert "(risk_level low)" in summary["verdict"]
+
+
+def test_first_commit_default_target_compares_with_head(project):
+    assert git(project, "rev-list", "--count", "HEAD") == "1"
+    clean = invoke("--json", "breaking")
+    assert clean["target"] == "HEAD"
+    assert clean["summary"]["state"] == "no_changes"
+    assert clean["summary"]["partial_success"] is False
+    assert clean["summary"]["baseline_state"] == "root_commit"
+    (project / "core.py").write_text(KEEP, encoding="utf-8")
+    index()
+    changed = invoke("--json", "breaking")
+    assert [entry["name"] for entry in changed["removed"]] == ["calculate"]
+    assert changed["summary"]["baseline_state"] == "root_commit"
+    assert "first commit" in changed["summary"]["verdict"]
+
+
+def test_named_missing_parent_is_still_a_git_error(project):
+    data = invoke("--json", "breaking", "HEAD~1")
+    assert data["summary"]["git_error"] == "git_error"
+    assert data["summary"]["partial_success"] is True
+    assert "baseline_state" not in data["summary"]

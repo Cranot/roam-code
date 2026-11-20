@@ -12,6 +12,7 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 
 import click
+from click.core import ParameterSource
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
@@ -19,6 +20,7 @@ from roam.commands.changed_files import (
     GitlinkPath,
     get_changed_files_status,
     git_comparison_base,
+    run_git_comparison,
 )
 from roam.commands.changed_files import (
     git_changed_files_against_ref as _git_changed_files,  # noqa: F401 -- legacy export
@@ -333,6 +335,16 @@ def collect_breaking_changes(conn, root, changed, base_ref, head_ref=None):
     ai_safe=True,
     requires_index=True,
 )
+def _head_is_root_commit(root) -> bool:
+    """True only when HEAD exists and has no parent; any Git failure answers False."""
+    result, kind = run_git_comparison(
+        root, ["git", "rev-list", "--max-count=2", "HEAD", "--"], None, text=True, defer_nonzero=True
+    )
+    if kind or result is None or result.returncode != 0:
+        return False
+    return len(result.stdout.split()) == 1
+
+
 @click.command("breaking")
 @click.argument("target", required=False, default="HEAD~1")
 @click.pass_context
@@ -351,6 +363,15 @@ def breaking(ctx, target):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()
+
+    # The default target HEAD~1 does not exist when HEAD is the first commit. The
+    # last commit is then the only earlier API, so compare against it and say so;
+    # a target the caller named is never replaced.
+    baseline_extra: dict = {}
+    if ctx.get_parameter_source("target") == ParameterSource.DEFAULT and _head_is_root_commit(root):
+        target = "HEAD"
+        baseline_extra = {"baseline_state": "root_commit"}
+    first_commit_note = " (HEAD is the first commit)" if baseline_extra else ""
 
     # 1. Find changed files
     git_details: list[str] = []
@@ -396,7 +417,7 @@ def breaking(ctx, target):
                     json_envelope(
                         "breaking",
                         summary={
-                            "verdict": f"no breaking changes vs {target}",
+                            "verdict": f"no breaking changes vs {target}{first_commit_note}",
                             "removed": 0,
                             "signature_changed": 0,
                             "renamed": 0,
@@ -404,6 +425,7 @@ def breaking(ctx, target):
                             # aggregators can detect no-diff degradation.
                             "state": "no_changes",
                             "partial_success": False,
+                            **baseline_extra,
                         },
                         target=target,
                         removed=[],
@@ -413,7 +435,7 @@ def breaking(ctx, target):
                 )
             )
         else:
-            click.echo(f"VERDICT: no breaking changes vs {target}")
+            click.echo(f"VERDICT: no breaking changes vs {target}{first_commit_note}")
             click.echo()
             click.echo(f"No changed files vs {target}.")
         return
@@ -442,7 +464,7 @@ def breaking(ctx, target):
     total = len(all_removed) + len(all_sig_changed) + len(all_renamed)
 
     if total == 0:
-        _breaking_verdict = f"no breaking changes vs {target}"
+        _breaking_verdict = f"no breaking changes vs {target}{first_commit_note}"
     else:
         _parts = []
         if all_removed:
@@ -451,7 +473,7 @@ def breaking(ctx, target):
             _parts.append(f"{len(all_sig_changed)} sig changes")
         if all_renamed:
             _parts.append(f"{len(all_renamed)} renames")
-        _breaking_verdict = f"{total} breaking changes vs {target}: {', '.join(_parts)}"
+        _breaking_verdict = f"{total} breaking changes vs {target}{first_commit_note}: {', '.join(_parts)}"
 
     if skipped:
         _breaking_verdict += f" ({len(skipped)} submodule path(s) skipped)"
@@ -468,6 +490,7 @@ def breaking(ctx, target):
                         "signature_changed": len(all_sig_changed),
                         "renamed": len(all_renamed),
                         "total": total,
+                        **baseline_extra,
                     },
                     target=target,
                     removed=all_removed,
