@@ -88,9 +88,19 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[14.2.0] — 2026-11-20</h2>
 <h3>Changed</h3>
 <ul>
 <li><strong>Python 3.11+ required.</strong> Roam-code 14.1.0 is the last release that supports Python 3.10. Drop Python 3.10 support so every supported CI environment can use the fixed filelock and dnspython releases without vulnerability exceptions. Packaging, CI, the composite action, setup checks and install documentation now require Python 3.11 or newer.</li>
+</ul>
+<ul>
+<li><strong>Git 2.24 or newer required.</strong> The comparison commands pass <code>--end-of-options</code>. <code>roam doctor</code> reports an older or unreadable Git version, and <code>git_error_detail</code> names the floor when Git rejects the option.</li>
+</ul>
+<ul>
+<li><strong>One Git failure vocabulary across the comparison commands.</strong> <code>breaking</code>, <code>pr-risk</code>, <code>pr-diff</code>, <code>attest</code>, <code>api-changes</code> and <code>semantic-diff</code> report a failed Git read as <code>git_error</code> (closed enum: <code>git_timeout</code>, <code>git_not_available</code>, <code>git_error</code>) with stderr in <code>git_error_detail</code>, <code>partial_success: true</code> and null counts, instead of a clean result. A real empty diff stays complete. <code>api-changes</code> keeps exit 0 on a degraded read, like its siblings.</li>
+</ul>
+<ul>
+<li><strong>An explicitly empty ref or range is a usage error (exit 2)</strong> for <code>attest ""</code>, <code>pr-risk ""</code>, <code>breaking ""</code> and <code>pr-diff --range ""</code>, as an empty <code>--base</code> already was.</li>
 </ul>
 <ul>
 <li><strong><code>roam --json deps</code> and <code>roam --json file</code> exit 1 for a missing file.</strong> The exit code now matches text mode, so a CI caller no longer reads a missing target as success. The <code>file_not_found</code> envelope is unchanged, and the MCP tools still return it with <code>isError</code> set.</li>
@@ -122,6 +132,16 @@
 <li><strong>Complete issue-list options.</strong> Request full indexed health classification and complete debt output explicitly, while preserving the historical health score and existing compact defaults. Keep collection limits distinct from output-budget limits.</li>
 </ul>
 <h3>Fixed</h3>
+<ul>
+<li><strong>Renamed files are compared.</strong> Changed-file reads pass <code>--no-renames</code>, so a renamed file's old path is compared as removed, and its removed public symbols are reported by <code>breaking</code>, <code>api-changes</code>, <code>attest</code> and <code>pr-risk</code>.</li>
+<li><strong>Git comparison evidence stays exact across paths and ranges.</strong> Changed paths are read NUL-delimited with literal pathspecs, so non-ASCII names and names such as <code>src/[id].ts</code> match as files. Paths that are not valid UTF-8 are decoded losslessly. A file counts as new only when <code>ls-tree</code> shows it absent at the ref, not by matching Git's localised stderr; a submodule pointer change is a disclosed gitlink skip. <code>breaking A..B</code> reads the new side from <code>B</code>, not the working-tree index, and <code>attest</code> compares both committed endpoints of a range (<code>A...B</code> uses the merge base).</li>
+<li><strong><code>breaking</code> and <code>review-change</code> on a repository with one commit</strong> compare against <code>HEAD</code> and say so (<code>baseline_state: "root_commit"</code>) instead of reporting a Git failure. <code>verify</code>'s breaking check on a repository with no commits reports <code>baseline_state: "no_commits"</code>.</li>
+<li><strong><code>attest</code> no longer writes a clean attestation when Git could not list the changed files.</strong> The failed read is disclosed in text, markdown and JSON. When only the breaking comparison fails, the computed risk stays in the summary and merge safety is reported unknown.</li>
+<li><strong>Install pins name a tag that exists.</strong> Releases 13.10.0 to 14.1.0 were published under <code>vX.Y.Z-r1</code> tags. The README, the CI guide and the workflows written by <code>roam init</code> and <code>roam ci-setup</code> named <code>Cranot/roam-code@v14.1.0-r1</code>, which does not exist. Package pins now take the version PyPI serves and action pins the tag GitHub resolves.</li>
+<li><strong>38 detector, resolver and result-envelope corrections</strong>, each with a regression test that fails on the previous release: Vue inline scripts, Java superclass types, case-only relation aliases, effect and path-coverage records, transaction boundaries, smells on signature defaults, complexity filters, rules inheritance depth, stale references, and envelopes that now disclose partial evidence instead of reporting a clean result.</li>
+<li><strong>Silent fallbacks now disclosed</strong> in <code>stale-index</code>, <code>adversarial</code>, <code>minimap</code>, <code>evidence-doctor</code>, <code>history-grep</code>, <code>delete-check</code>, <code>describe</code>, <code>test-impact</code>, <code>review-change</code>, <code>pr-diff</code>, <code>workspace</code> and <code>test-gaps</code>: an empty corpus or a failed shared helper is reported instead of a silent SAFE.</li>
+<li><strong>Dependencies cleared of known vulnerabilities</strong> on Python 3.11 to 3.13: <code>mcp</code> 1.30.0 or newer, <code>pypdf</code> 6.21.4, <code>setuptools</code> 84.1.0, and lockfile upgrades of <code>authlib</code>, <code>certifi</code>, <code>dnspython</code>, <code>fastmcp</code>, <code>filelock</code>, <code>joserfc</code>, <code>msgpack</code>, <code>opentelemetry-api</code> and <code>pillow</code>.</li>
+</ul>
 <ul>
 <li><strong><code>roam auth-gaps</code> no longer reports <code>0 auth gap(s) found</code> when it had nothing to analyze.</strong> A repository with no route, service-provider or controller file produced the same verdict, <code>run_state: NO_AUTH_GAPS</code> and <code>partial_success: false</code> as a scan that read real route files and found them all guarded. Zero indexed files now yields the verdict <code>no input: 0 route/controller files indexed (detector ran but had no input to analyze)</code>, <code>run_state: NO_INPUT</code>, <code>summary.no_input: true</code> and <code>partial_success: true</code>; the text report says "Nothing was analysed" instead of "No auth gaps detected.", and SARIF carries an <code>auth_gaps_no_input</code> disclosure marker. A scan that read files keeps its wording (<code>0 auth gap(s) found</code> for a guarded route, the finding count otherwise). The exit code is unchanged (auth-gaps has no gate flag). Contract change: three existing assertions in <code>tests/test_w607_ed_cmd_auth_gaps_warnings_out_envelope.py</code> that pinned the empty-corpus verdict and <code>run_state</code> as <code>0 auth gap(s) found</code> / <code>NO_AUTH_GAPS</code> now expect the no-input values; every other assertion is unchanged.</li>
 </ul>
