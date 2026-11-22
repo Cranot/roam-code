@@ -77,6 +77,8 @@ _GITHUB_PR_RANGE_STEP = """\
             printf 'base=%s\\n' "$base" >> "$GITHUB_OUTPUT"
           else
             echo '{"command":"pr-risk","summary":{"verdict":"PR comparison could not run","state":"comparison_unavailable","partial_success":true,"risk_score":null}}'
+            echo "::warning::PR comparison could not run"
+            echo "- PR comparison could not run. Pull request risk was skipped." >> "$GITHUB_STEP_SUMMARY"
           fi
 """
 

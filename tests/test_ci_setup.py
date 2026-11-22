@@ -29,8 +29,8 @@ def ci_project(tmp_path):
 
 
 @pytest.mark.parametrize("generator", ["init", "ci-setup"])
-@pytest.mark.parametrize("available", [True, False], ids=["valid-range", "missing-base"])
-def test_generated_github_workflow_passes_pr_range(cli_runner, ci_project, monkeypatch, generator, available):
+@pytest.mark.parametrize("comparison", ["valid", "missing-base", "wrong-head", "empty-event"])
+def test_generated_github_workflow_passes_pr_range(cli_runner, ci_project, monkeypatch, generator, comparison):
     monkeypatch.setenv("ROAM_DB_DIR", str(ci_project.parent / "db"))
     base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ci_project, text=True).strip()
     (ci_project / "main.py").write_text("def main():\n    return 1\n", encoding="utf-8")
@@ -55,22 +55,42 @@ def test_generated_github_workflow_passes_pr_range(cli_runner, ci_project, monke
 
     outputs = ci_project.parent / "step-outputs"
     outputs.touch()
+    job_summary = ci_project.parent / "job-summary"
+    job_summary.touch()
+    event_shas = {
+        "valid": (base, head),
+        "missing-base": ("f" * 40, head),
+        "wrong-head": (base, base),
+        "empty-event": ("", ""),
+    }
+    event_base, event_head = event_shas[comparison]
     resolved = subprocess.run(
         ["bash", "-e", "-c", resolve["run"]],
         cwd=ci_project,
         env=os.environ
-        | {"PR_BASE_SHA": base if available else "f" * 40, "PR_HEAD_SHA": head, "GITHUB_OUTPUT": str(outputs)},
+        | {
+            "PR_BASE_SHA": event_base,
+            "PR_HEAD_SHA": event_head,
+            "GITHUB_OUTPUT": str(outputs),
+            "GITHUB_STEP_SUMMARY": str(job_summary),
+        },
         text=True,
         capture_output=True,
         check=True,
     )
-    if available:
+    log_lines = resolved.stdout.splitlines()
+    warnings = [line for line in log_lines if line.startswith("::warning::")]
+    if comparison == "valid":
         assert outputs.read_text(encoding="utf-8").splitlines() == [f"base={base}"]
+        assert not warnings
+        assert not job_summary.read_text(encoding="utf-8")
     else:
         assert not outputs.read_text(encoding="utf-8")
-        summary = json.loads(resolved.stdout)["summary"]
+        summary = json.loads(next(line for line in log_lines if line.startswith("{")))["summary"]
         assert summary["state"] == "comparison_unavailable"
         assert summary["risk_score"] is None
+        assert warnings == ["::warning::PR comparison could not run"]
+        assert "PR comparison could not run" in job_summary.read_text(encoding="utf-8")
 
 
 def test_ci_setup_rejects_old_python_before_writing(cli_runner, tmp_path, monkeypatch):
