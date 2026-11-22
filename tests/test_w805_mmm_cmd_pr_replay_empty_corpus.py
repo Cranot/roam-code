@@ -75,6 +75,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from roam.exit_codes import EXIT_PARTIAL
+
 # Local conftest helpers
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli  # noqa: E402
@@ -182,9 +184,7 @@ def test_empty_corpus_no_crash(cli_runner, tmp_path, monkeypatch):
         json_mode=True,
     )
     assert "Traceback" not in result.output, result.output
-    # Exit may be 0 (current bug) or non-zero (post-fix). Either is fine
-    # as long as the process didn't crash.
-    assert result.exit_code in (0, 1, 5), f"unexpected exit code {result.exit_code}: {result.output[:400]}"
+    assert result.exit_code == EXIT_PARTIAL, result.output
 
 
 # ---------------------------------------------------------------------------

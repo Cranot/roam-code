@@ -57,7 +57,7 @@ from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.exit_codes import EXIT_SUCCESS
+from roam.exit_codes import EXIT_PARTIAL, EXIT_SUCCESS
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -4569,7 +4569,7 @@ def pr_replay_cmd(
     )
     summary = postmortem.get("summary") or {}
     commits = postmortem.get("commits") or []
-    if not commits and not summary.get("commits_scanned"):
+    if not commits or not summary.get("commits_scanned", len(commits)):
         # Stop before report/evidence/payment-engagement writes. No observed
         # commits cannot support either a clean report or a numeric risk score.
         state = summary.get("state", "replay_unavailable")
@@ -4613,7 +4613,7 @@ def pr_replay_cmd(
             )
         else:
             click.echo(report_md)
-        return
+        ctx.exit(EXIT_PARTIAL)
     by_detector = (
         _run_check_ah(
             "aggregate_by_detector",

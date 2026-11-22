@@ -27,6 +27,9 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+from roam.exit_codes import EXIT_PARTIAL
+from tests.conftest import git_init, index_in_process
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -456,17 +459,28 @@ def test_engagement_ledger_appends_not_overwrites(tmp_path, monkeypatch):
 
 def test_no_track_engagement_flag_skips_ledger(tmp_path, monkeypatch):
     """``--no-track-engagement`` opts out — useful for dry-run / CI use."""
-    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "repo"
+    project.mkdir()
+    (project / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    git_init(project)
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
+    out, rc = index_in_process(project, "--force")
+    assert rc == 0, out
+
     output = tmp_path / "report.md"
     code, out = _invoke(
         "--tier",
         "team",
+        "--range",
+        "HEAD",
         "--output",
         str(output),
         "--no-track-engagement",
     )
-    assert code == 0
-    ledger = tmp_path / ".roam" / "engagements.jsonl"
+    assert code == 0, out
+    assert output.is_file()
+    ledger = project / ".roam" / "engagements.jsonl"
     # Either the ledger doesn't exist or it doesn't contain this run.
     if ledger.exists():
         assert ledger.read_text(encoding="utf-8").strip() == ""
@@ -650,7 +664,7 @@ def test_pr_replay_envelope_omits_review_suggestions_when_no_findings():
         code, out = _invoke("--tier", "sample", json_mode=True)
     finally:
         mod._run_postmortem = real_postmortem
-    assert code == 0
+    assert code == EXIT_PARTIAL
 
     envelope = _json.loads(out[out.find("{") :])
     # The key MUST be absent — not an empty object, not null.
