@@ -25,6 +25,7 @@ import json as _json
 import os
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.exit_codes import EXIT_PARTIAL
@@ -507,17 +508,43 @@ def test_render_pdf_returns_failure_when_neither_backend_present(tmp_path, monke
     assert "pandoc" in msg.lower() or "reportlab" in msg.lower()
 
 
-def test_pdf_flag_implies_output_when_unset(tmp_path):
-    """``--pdf`` without ``--output`` writes the markdown source as ``<pdf>.md``."""
-    pdf_target = tmp_path / "report.pdf"
-    code, out = _invoke("--tier", "team", "--pdf", str(pdf_target))
-    # Note: we can't guarantee the PDF render succeeded (pandoc / reportlab
-    # may not be on the test machine), but the markdown sibling MUST be
-    # written regardless.
-    assert code == 0
-    md_sibling = tmp_path / "report.md"
-    assert md_sibling.exists(), f"markdown sibling not written next to {pdf_target}"
-    assert md_sibling.read_text(encoding="utf-8").startswith("# PR Replay Report")
+@pytest.mark.parametrize("render", ["writes-pdf", "renderer-unavailable", "no-artifact"])
+def test_pdf_flag_reports_whether_pdf_was_written(tmp_path, monkeypatch, render):
+    from roam.cli import cli
+    from roam.commands import cmd_pr_replay
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
+    (tmp_path / "app.py").write_text("def main(): pass\n", encoding="utf-8")
+    git_init(tmp_path)
+    target = tmp_path / "report.pdf"
+
+    def render_pdf(markdown, destination):
+        if render == "writes-pdf":
+            destination.write_bytes(b"%PDF-1.4\n")
+        return (False, "renderer unavailable") if render == "renderer-unavailable" else (True, "test")
+
+    monkeypatch.setattr(cmd_pr_replay, "_render_pdf", render_pdf)
+    runner = CliRunner()
+    args = ["pr-replay", "--tier", "team", "--range", "HEAD", "--pdf", str(target)]
+    result = runner.invoke(cli, ["--json", *args], catch_exceptions=False)
+    summary = _json.loads(result.stdout)["summary"]
+    markdown = target.with_suffix(".md")
+    assert markdown.read_text(encoding="utf-8").startswith("# PR Replay Report")
+    if render == "writes-pdf":
+        assert result.exit_code == 0, result.output
+        assert target.is_file()
+        assert summary["pdf_path"] == str(target)
+        assert summary["pdf_backend"] == "test"
+    else:
+        assert result.exit_code == EXIT_PARTIAL, result.output
+        assert not target.exists()
+        assert "pdf_path" not in summary
+        assert summary["partial_success"] is True
+        assert "PDF render failed" in result.stderr
+        text = runner.invoke(cli, args, catch_exceptions=False)
+        assert text.exit_code == EXIT_PARTIAL
+        assert "PDF render failed" in text.stderr
 
 
 def test_json_envelope_exposes_pdf_fields(tmp_path):

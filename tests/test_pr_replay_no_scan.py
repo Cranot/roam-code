@@ -66,6 +66,17 @@ def test_sample_without_history_reports_partial_in_text(history):
     assert result.exit_code == EXIT_PARTIAL
 
 
+def test_empty_range_names_no_replay_once(history):
+    args = ["pr-replay", "--range", "HEAD..HEAD"]
+    runner = CliRunner()
+    text = runner.invoke(cli, args)
+    structured = runner.invoke(cli, ["--json", *args])
+    assert text.exit_code == structured.exit_code == EXIT_PARTIAL
+    assert text.stdout.count("No replay performed:") == 1
+    verdict = json.loads(structured.stdout)["summary"]["verdict"]
+    assert verdict == "No replay performed: requested range contains no commits"
+
+
 def test_sample_with_nonempty_clean_range_succeeds(tmp_path, monkeypatch):
     project = tmp_path / "repo"
     project.mkdir()
