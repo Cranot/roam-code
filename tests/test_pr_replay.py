@@ -509,7 +509,8 @@ def test_render_pdf_returns_failure_when_neither_backend_present(tmp_path, monke
 
 
 @pytest.mark.parametrize("render", ["writes-pdf", "renderer-unavailable", "no-artifact"])
-def test_pdf_flag_reports_whether_pdf_was_written(tmp_path, monkeypatch, render):
+@pytest.mark.parametrize("json_mode", [True, False], ids=["json", "text"])
+def test_pdf_flag_reports_whether_pdf_was_written(tmp_path, monkeypatch, render, json_mode):
     from roam.cli import cli
     from roam.commands import cmd_pr_replay
 
@@ -527,24 +528,35 @@ def test_pdf_flag_reports_whether_pdf_was_written(tmp_path, monkeypatch, render)
     monkeypatch.setattr(cmd_pr_replay, "_render_pdf", render_pdf)
     runner = CliRunner()
     args = ["pr-replay", "--tier", "team", "--range", "HEAD", "--pdf", str(target)]
-    result = runner.invoke(cli, ["--json", *args], catch_exceptions=False)
-    summary = _json.loads(result.stdout)["summary"]
+    result = runner.invoke(cli, ["--json", *args] if json_mode else args, catch_exceptions=False)
+    envelope = _json.loads(result.stdout) if json_mode else {}
     markdown = target.with_suffix(".md")
     assert markdown.read_text(encoding="utf-8").startswith("# PR Replay Report")
     if render == "writes-pdf":
         assert result.exit_code == 0, result.output
         assert target.is_file()
-        assert summary["pdf_path"] == str(target)
-        assert summary["pdf_backend"] == "test"
+        if json_mode:
+            assert envelope["summary"]["pdf_path"] == str(target)
+            assert envelope["summary"]["pdf_backend"] == "test"
+            assert "state" not in envelope["summary"]
+        else:
+            assert "Wrote PDF" in result.stdout
+        assert "pdf_unavailable" not in result.stderr
     else:
         assert result.exit_code == EXIT_PARTIAL, result.output
         assert not target.exists()
-        assert "pdf_path" not in summary
-        assert summary["partial_success"] is True
-        assert "PDF render failed" in result.stderr
-        text = runner.invoke(cli, args, catch_exceptions=False)
-        assert text.exit_code == EXIT_PARTIAL
-        assert "PDF render failed" in text.stderr
+        reason = "renderer unavailable" if render == "renderer-unavailable" else "without writing a PDF"
+        if json_mode:
+            summary = envelope["summary"]
+            assert "pdf_path" not in summary
+            assert summary["pdf_backend"] is None
+            assert summary["partial_success"] is True
+            assert summary.get("state") == "pdf_unavailable"
+            assert any(reason in warning for warning in summary["warnings_out"])
+            assert any(reason in warning for warning in envelope["warnings_out"])
+        else:
+            assert "pdf_unavailable" in result.stderr
+        assert reason in result.stderr
 
 
 def test_json_envelope_exposes_pdf_fields(tmp_path):

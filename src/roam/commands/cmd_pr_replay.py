@@ -4033,7 +4033,7 @@ def _emit_pr_replay_json_output(
             "rehearsal_dir": rehearsal_dir,
             "generated_at": generated_at,
             "engagement_logged_to": str(engagement_record) if engagement_record else None,
-            **({"partial_success": True} if pdf_failed else {"pdf_path": pdf_path}),
+            **({"state": "pdf_unavailable", "partial_success": True} if pdf_failed else {"pdf_path": pdf_path}),
             "pdf_backend": pdf_backend,
             "review_suggestions_present": review_suggestions is not None,
             "evidence_path": evidence_written_to,
@@ -4729,7 +4729,10 @@ def pr_replay_cmd(
         )
         pdf_failed = not ok
         if pdf_failed:
-            click.echo(f"WARNING: PDF render failed — {info}", err=True)
+            warning = f"pdf_unavailable: PDF render failed — {info}"
+            _w607ah_warnings_out.append(warning)
+            if json_mode:
+                echo_text_warnings([warning])
         else:
             pdf_backend = info
             if not json_mode:
