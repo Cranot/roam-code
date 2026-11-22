@@ -376,50 +376,49 @@ def _collect_affected_tests_evidence(conn, sym_by_file):
     }
 
 
-def _collect_budget_evidence(conn, root):
+def _collect_budget_evidence(conn, root, base_ref):
     """Evaluate budget rules.
 
     Returns {rules_checked, passed, failed, skipped, rules}.
     """
-    try:
-        from roam.commands.cmd_budget import _DEFAULT_BUDGETS, _evaluate_rule, _load_budgets
-        from roam.commands.metrics_history import collect_metrics
-        from roam.graph.diff import find_before_snapshot
-    except ImportError:
-        return {"rules_checked": 0, "passed": 0, "failed": 0, "skipped": 0, "rules": []}
+    from roam.commands.cmd_budget import _DEFAULT_BUDGETS, _evaluate_rule, _load_budgets
+    from roam.commands.metrics_history import collect_metrics
+    from roam.graph.diff import find_before_snapshot
 
     cfg = root / ".roam" / "budget.yaml"
     if not cfg.exists():
         cfg = root / ".roam" / "budget.yml"
 
-    budgets = _load_budgets(cfg) if cfg.exists() else []
-    if not budgets:
+    config_warnings: list[str] = []
+    budgets = _load_budgets(cfg, warnings_out=config_warnings) if cfg.exists() else []
+    if not budgets and not config_warnings:
         budgets = list(_DEFAULT_BUDGETS)
 
-    before = find_before_snapshot(conn, root)
-    after = collect_metrics(conn)
+    before = find_before_snapshot(conn, root, base_ref, exact=True)
+    if before is None:
+        results = [
+            {"name": rule.get("name", "unnamed"), "status": "SKIP", "reason": "base snapshot unavailable"}
+            for rule in budgets
+        ]
+    else:
+        after = collect_metrics(conn)
+        results = [_evaluate_rule(rule, before, after) for rule in budgets]
+        for result in results:
+            # The standalone budget gate fails a rule with an unmeasured metric.
+            # Attest distinguishes missing evidence from a measured exceedance.
+            if result["status"] == "FAIL" and result["delta"] is None:
+                result["status"] = "SKIP"
 
-    if not before:
-        return {
-            "rules_checked": len(budgets),
-            "passed": 0,
-            "failed": 0,
-            "skipped": len(budgets),
-            "rules": [{"name": b.get("name", "unnamed"), "status": "SKIP"} for b in budgets],
-        }
-
-    results = [_evaluate_rule(b, before, after) for b in budgets]
-    passed = sum(1 for r in results if r["status"] == "PASS")
-    failed = sum(1 for r in results if r["status"] == "FAIL")
-    skipped = sum(1 for r in results if r["status"] == "SKIP")
-
-    return {
+    evidence = {
         "rules_checked": len(results),
-        "passed": passed,
-        "failed": failed,
-        "skipped": skipped,
+        "passed": sum(result["status"] == "PASS" for result in results),
+        "failed": sum(result["status"] == "FAIL" for result in results),
+        "skipped": sum(result["status"] == "SKIP" for result in results),
         "rules": results,
     }
+    if config_warnings:
+        evidence.update(partial_success=True, warnings=config_warnings)
+    return evidence
 
 
 #: How many individual fitness violations the attestation carries. The cap is
@@ -668,6 +667,14 @@ def _build_staleness_contract(root, hashes, tool_version, conn, evidence, budget
 # ---------------------------------------------------------------------------
 
 
+def _breaking_change_count(breaking):
+    return sum(len(breaking.get(kind, [])) for kind in ("removed", "signature_changed", "renamed"))
+
+
+def _budget_incomplete(budget):
+    return bool(budget.get("partial_success") or budget.get("skipped"))
+
+
 def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
     """Determine safe_to_merge, conditions, and warnings.
 
@@ -678,11 +685,7 @@ def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
     safe = True
 
     # Breaking changes
-    total_breaking = (
-        len(breaking_data.get("removed", []))
-        + len(breaking_data.get("signature_changed", []))
-        + len(breaking_data.get("renamed", []))
-    )
+    total_breaking = _breaking_change_count(breaking_data)
     if total_breaking > 0:
         safe = False
         warnings.append(f"{total_breaking} breaking changes detected")
@@ -698,6 +701,13 @@ def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
     if budget_failed > 0:
         safe = False
         conditions.append(f"{budget_failed} budget(s) exceeded")
+    if budget_data.get("partial_success"):
+        warnings.append("budget evidence incomplete")
+    warnings.extend(budget_data.get("warnings", ()))
+    if skipped_budgets := budget_data.get("skipped", 0):
+        warnings.append(f"{skipped_budgets} budget(s) skipped")
+    if risk is None:
+        warnings.append("risk evidence unavailable")
 
     # Fitness violations. W1467: count the MEASUREMENT, not the truncated
     # evidence list. ``violations_total`` falls back to the list length only
@@ -714,7 +724,13 @@ def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
     kind = breaking_data.get("git_error") or breaking_data.get("state")
     if kind:
         warnings.append(f"breaking comparison could not run: {kind}")
-    if safe and (kind or breaking_data.get("files_not_analyzed") or breaking_data.get("partial_success")):
+    if safe and (
+        risk is None
+        or _budget_incomplete(budget_data)
+        or kind
+        or breaking_data.get("files_not_analyzed")
+        or breaking_data.get("partial_success")
+    ):
         safe = None
 
     return {
@@ -1263,28 +1279,33 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             _unresolved_risk_level_canonical = "low"
             _unresolved_risk_rank = risk_rank(_unresolved_risk_level_canonical)
             comparison_details = {}
+            breaking_count = _breaking_change_count(breaking)
+            partial_verdict = _compute_verdict(None, breaking, {}, {})
             if skipped:
                 comparison_details["files_not_analyzed"] = skipped
-            if is_range or breaking_failure:
+            if is_range or breaking_failure or breaking_count:
                 comparison_details["evidence"] = {"breaking_changes": breaking}
             breaking_failure_kind = breaking_failure.get("git_error") or breaking_failure.get("state")
+            verdict_suffix = ""
             if breaking_failure_kind:
                 _unresolved_risk_level_canonical = None
                 _unresolved_risk_rank = None
-                verdict_suffix = f" (breaking comparison unavailable: {breaking_failure_kind})"
-            else:
-                verdict_suffix = f" (risk_level {_unresolved_risk_level_canonical})"
+                verdict_suffix = f" (breaking comparison could not run: {breaking_failure_kind})"
+            if skipped:
+                verdict_suffix += f" (breaking comparison skipped {len(skipped)} submodule path(s))"
             _attest_unresolved_envelope = json_envelope(
                 "attest",
                 summary={
                     "verdict": (
+                        f"{_make_verdict_str(partial_verdict, None)}. "
                         f"{len(changed)} changed files unresolved against the index "
                         f"({label}); run `roam index` then re-attest{verdict_suffix}"
                     ),
-                    "safe_to_merge": False,
+                    "safe_to_merge": partial_verdict["safe_to_merge"],
                     "partial_success": True,
                     "resolution": "unresolved",
                     "unresolved_file_count": len(changed),
+                    "breaking_changes": breaking_count or (None if breaking_failure else 0),
                     "risk_level_canonical": _unresolved_risk_level_canonical,
                     "risk_rank": _unresolved_risk_rank,
                     **breaking_failure,
@@ -1292,6 +1313,7 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
                 risk_level_canonical=_unresolved_risk_level_canonical,
                 risk_rank=_unresolved_risk_rank,
                 unresolved_files=sorted(changed),
+                verdict=partial_verdict,
                 **comparison_details,
             )
             _mark_attest_partial_evidence(
@@ -1301,10 +1323,11 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             if json_mode or output_format == "json":
                 output = to_json(_attest_unresolved_envelope)
             else:
-                lines = [f"{len(changed)} changed files not found in index ({label}). Run `roam index` first."]
+                lines: list[str] = []
+                _append_attestation_verdict_section(lines, partial_verdict, output_format == "markdown")
+                lines.append(f"{len(changed)} changed files not found in index ({label}). Run `roam index` first.")
                 lines.extend(f"Skipped {entry['file']} (submodule pointer)." for entry in skipped)
                 if breaking_failure_kind:
-                    lines.append(f"Breaking comparison could not run: {breaking_failure_kind}")
                     if detail := breaking_failure.get("git_error_detail"):
                         lines.append(detail)
                 lines.extend(_w607ad_warnings_out)
@@ -1361,7 +1384,8 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             _collect_budget_evidence,
             conn,
             root,
-            default={"rules_checked": 0, "passed": 0, "failed": 0, "skipped": 0, "rules": []},
+            base_ref,
+            default={"rules_checked": 0, "passed": 0, "failed": 0, "skipped": 0, "rules": [], "partial_success": True},
         )
 
         # 6. Affected tests
@@ -1473,7 +1497,7 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
         # When the BT probe raised (None floor), mark classification unknown.
         # Clean path -> classification is "classified". This sentinel rides
         # the summary block below.
-        _score_classification_state = "unknown" if _bt_score_probe is None else "classified"
+        _score_classification_state = "unknown" if risk is None or _bt_score_probe is None else "classified"
         # When the W607-BT probe returned a clean tier we reuse it. When it
         # raised (None floor), do NOT re-call ``_attest_risk_level`` -- the
         # same call would re-raise (W978 first-hypothesis check: don't
@@ -1548,15 +1572,13 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
             # ``severity_classification`` / cmd_impact's
             # ``risk_classification`` sentinel.
             "score_classification": _score_classification_state,
-            "breaking_changes": (
-                len(breaking.get("removed", []))
-                + len(breaking.get("signature_changed", []))
-                + len(breaking.get("renamed", []))
-            ),
+            "breaking_changes": _breaking_change_count(breaking),
             "budget_failed": budget.get("failed", 0),
             "affected_tests": tests.get("selected", 0),
             "effects_count": len(effects),
         }
+        if risk is None or _budget_incomplete(budget):
+            summary_block["partial_success"] = True
         if breaking_failure:
             if not risk:
                 risk_level_canonical = None

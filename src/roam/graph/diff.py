@@ -103,12 +103,12 @@ _METRIC_KEYS = [
 ]
 
 
-def find_before_snapshot(conn, root: Path, base_ref: str | None = None) -> dict | None:
+def find_before_snapshot(conn, root: Path, base_ref: str | None = None, *, exact: bool = False) -> dict | None:
     """Find the best matching snapshot to use as the 'before' state.
 
     Strategy:
     1. If *base_ref* given, resolve to commit hash and match snapshots.git_commit
-    2. Fallback: latest snapshot by timestamp
+    2. Fallback: latest snapshot by timestamp, unless *exact* is set
     3. Return None if no snapshots exist
     """
     if base_ref:
@@ -127,6 +127,9 @@ def find_before_snapshot(conn, root: Path, base_ref: str | None = None) -> dict 
             ).fetchone()
             if row:
                 return {k: row[k] for k in row.keys()}
+
+    if exact:
+        return None
 
     # Fallback: latest snapshot
     row = conn.execute(

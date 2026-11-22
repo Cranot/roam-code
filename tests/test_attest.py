@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -366,6 +368,203 @@ class TestAttestSurvivesTokenBudget:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def attest_range(project_factory, tmp_path, monkeypatch):
+    """Build and index both endpoints of a committed change."""
+    from roam.commands import metrics_history
+
+    def git(project, *args):
+        return subprocess.check_output(["git", *args], cwd=project, text=True).strip()
+
+    def commit(project, message):
+        git(project, "add", ".")
+        git(project, "commit", "-m", message)
+
+    def index(project, timestamp):
+        with monkeypatch.context() as clock:
+            clock.setattr(metrics_history, "time", SimpleNamespace(time=lambda: timestamp))
+            output, status = index_in_process(project)
+        assert status == 0, output
+
+    def build(change, *, base_snapshot=True, limit=100, submodule=False):
+        api = "def total(price):\n    return price\n"
+        supporting_code = "\n".join(f"def helper_{i}():\n    return {i}\n" for i in range(28))
+        if change == "high-risk":
+            supporting_code = "from api import total\n\n" + "\n".join(
+                f"def caller_{i}():\n    return total({i})\n" for i in range(28)
+            )
+        files = {"api.py": api, "helpers.py": supporting_code}
+        if change != "high-risk":
+            files["test_api.py"] = "from api import total\n\ndef test_total():\n    assert total(10) == 10\n"
+        project = project_factory(files, index=False)
+        monkeypatch.chdir(project)
+        monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
+
+        if submodule:
+            module = project_factory({"lib.py": "def value():\n    return 1\n"}, index=False)
+            git(project, "-c", "protocol.file.allow=always", "submodule", "add", str(module), "vendor")
+            commit(project, "add the submodule")
+        if base_snapshot:
+            index(project, 1)
+
+        replacement = {
+            "body-only": api.replace("return price", "return price + 1"),
+            "high-risk": api.replace("return price", "return price + 1"),
+            "signature_changed": api.replace("total(price)", "total(price, tax)"),
+            "renamed": api.replace("total", "subtotal"),
+            "budget": api + "\ndef fee():\n    return 1\n\ndef tax():\n    return 2\n",
+        }
+        if change == "removed":
+            (project / "api.py").unlink()
+        elif change in replacement:
+            (project / "api.py").write_text(replacement[change], encoding="utf-8")
+        if submodule:
+            (module / "lib.py").write_text("def value():\n    return 2\n", encoding="utf-8")
+            commit(module, "advance lib")
+            git(project, "-c", "protocol.file.allow=always", "submodule", "update", "--remote", "vendor")
+        commit(project, "apply the change")
+        index(project, 2)
+
+        config = project / ".roam" / "budget.yaml"
+        config.parent.mkdir(exist_ok=True)
+        config.write_text(
+            f"budgets:\n  - name: Symbol growth\n    metric: symbols\n    max_increase: {limit}\n",
+            encoding="utf-8",
+        )
+        return project
+
+    return build
+
+
+def _range_attestation(cli_runner, project):
+    args = ["attest", "HEAD~1..HEAD"]
+    data = parse_json_output(invoke_cli(cli_runner, args, cwd=project, json_mode=True), "attest")
+    plain = invoke_cli(cli_runner, args, cwd=project)
+    markdown = invoke_cli(cli_runner, [*args, "--format", "markdown"], cwd=project)
+    assert plain.exit_code == markdown.exit_code == 0
+    return data, plain.output, markdown.output
+
+
+def _assert_clearance(data, plain, markdown, expected):
+    label, badge = {
+        True: ("SAFE TO MERGE", "[PASS]"),
+        False: ("NOT SAFE TO MERGE", "[FAIL]"),
+        None: ("MERGE CLEARANCE UNAVAILABLE", "[UNKNOWN]"),
+    }[expected]
+    assert data["summary"]["safe_to_merge"] is expected
+    assert data["verdict"]["safe_to_merge"] is expected
+    assert data["summary"]["verdict"].lower().startswith(label.lower())
+    assert plain.splitlines()[0] == f"VERDICT: {label}"
+    assert f"**Verdict: {badge}**" in markdown
+
+
+class TestAttestRangeClearance:
+    @pytest.mark.parametrize(
+        "base_snapshot,limit,status,safe",
+        [(True, 0, "FAIL", False), (True, 2, "PASS", True), (False, 0, "SKIP", None)],
+        ids=["exceeded", "within-limit", "missing-base"],
+    )
+    def test_budget_uses_range_base(self, cli_runner, attest_range, base_snapshot, limit, status, safe):
+        project = attest_range("budget", base_snapshot=base_snapshot, limit=limit)
+        data, plain, markdown = _range_attestation(cli_runner, project)
+        budget = data["evidence"]["budget"]
+        assert budget["rules_checked"] == 1
+        assert budget["rules"][0]["status"] == status
+        assert (budget["passed"], budget["failed"], budget["skipped"]) == (
+            int(status == "PASS"),
+            int(status == "FAIL"),
+            int(status == "SKIP"),
+        )
+        if base_snapshot:
+            assert budget["rules"][0]["delta"] == 2
+        else:
+            assert data["summary"]["partial_success"] is True
+        assert ("1 budget(s) exceeded" in data["verdict"]["conditions"]) is (safe is False)
+        assert data["summary"]["risk_level"] in {"LOW", "MODERATE"}
+        assert f"[{status}] Symbol growth" in plain
+        assert f"[{status}] Symbol growth" in markdown
+        _assert_clearance(data, plain, markdown, safe)
+
+    @pytest.mark.parametrize("change", ["body-only", "removed", "signature_changed", "renamed", "high-risk"])
+    def test_real_evidence_controls_verdict(self, cli_runner, attest_range, change):
+        project = attest_range(change)
+        data, plain, markdown = _range_attestation(cli_runner, project)
+        if change == "high-risk":
+            assert data["summary"]["risk_level"] == "HIGH"
+            assert "review high-risk changes" in data["verdict"]["conditions"]
+            assert data["summary"]["breaking_changes"] == 0
+        elif change == "body-only":
+            assert data["summary"]["breaking_changes"] == 0
+            assert data["evidence"]["budget"]["passed"] == 1
+        else:
+            item = data["evidence"]["breaking_changes"][change][0]
+            assert item["old_name" if change == "renamed" else "name"] == "total"
+            assert data["summary"]["breaking_changes"] == 1
+        _assert_clearance(data, plain, markdown, change == "body-only")
+
+    @pytest.mark.parametrize(
+        "change,safe", [("submodule-only", None), ("body-only", None), ("signature_changed", False)]
+    )
+    def test_real_submodule_skip(self, cli_runner, attest_range, change, safe):
+        project = attest_range(change, submodule=True)
+        data, plain, markdown = _range_attestation(cli_runner, project)
+        assert data["summary"]["partial_success"] is True
+        assert data["files_not_analyzed"] == [{"file": "vendor", "reason": "gitlink"}]
+        if change == "signature_changed":
+            assert data["summary"]["breaking_changes"] == 1
+        assert "vendor" in plain and "vendor" in markdown
+        _assert_clearance(data, plain, markdown, safe)
+
+    @pytest.mark.parametrize("phase,collector", [("risk", "_collect_risk"), ("budget", "_collect_budget_evidence")])
+    @pytest.mark.parametrize("change,safe", [("body-only", None), ("signature_changed", False)])
+    def test_clearance_requires_collected_evidence(
+        self, cli_runner, attest_range, monkeypatch, phase, collector, change, safe
+    ):
+        from roam.commands import cmd_attest
+
+        project = attest_range(change)
+
+        def unavailable(*args, **kwargs):
+            raise RuntimeError("collector unavailable")
+
+        monkeypatch.setattr(cmd_attest, collector, unavailable)
+        data, plain, markdown = _range_attestation(cli_runner, project)
+        assert data["summary"]["partial_success"] is True
+        assert any(warning.startswith(f"attest_collect_{phase}_failed:") for warning in data["warnings_out"])
+        if change == "signature_changed":
+            assert data["summary"]["breaking_changes"] == 1
+        _assert_clearance(data, plain, markdown, safe)
+
+    def test_invalid_budget_config_withholds_clearance(self, cli_runner, attest_range):
+        project = attest_range("body-only")
+        (project / ".roam" / "budget.yaml").write_text("budgets: malformed\n", encoding="utf-8")
+        data, plain, markdown = _range_attestation(cli_runner, project)
+        _assert_clearance(data, plain, markdown, None)
+        assert data["summary"]["partial_success"] is True
+
+    @pytest.mark.parametrize("limit,safe", [(0, False), (2, None)])
+    def test_unmeasured_budget_does_not_count_as_exceeded(self, cli_runner, attest_range, monkeypatch, limit, safe):
+        import sqlite3
+
+        from roam.graph import cycles
+
+        project = attest_range("budget", limit=limit)
+        with (project / ".roam" / "budget.yaml").open("a", encoding="utf-8") as config:
+            config.write("  - name: Cycle count\n    metric: cycles\n    max_increase: 0\n")
+
+        def unavailable(*args, **kwargs):
+            raise sqlite3.OperationalError("cycles unavailable")
+
+        monkeypatch.setattr(cycles, "find_cycles", unavailable)
+        data, plain, markdown = _range_attestation(cli_runner, project)
+        budget = data["evidence"]["budget"]
+        assert budget["rules"][1]["status"] == "SKIP"
+        assert budget["failed"] == int(safe is False)
+        assert budget["skipped"] == 1
+        assert data["summary"]["partial_success"] is True
+        _assert_clearance(data, plain, markdown, safe)
+
+
 class TestAttestVerdict:
     """Test verdict computation."""
 
@@ -431,7 +630,7 @@ class TestAttestVerdict:
         config = attest_project / ".roam" / "budget.yaml"
         config.parent.mkdir(exist_ok=True)
         config.write_text(f"budgets:\n  - name: Symbol growth\n    metric: symbols\n    max_increase: {limit}\n")
-        monkeypatch.setattr(diff, "find_before_snapshot", lambda *args: {"symbols": 0})
+        monkeypatch.setattr(diff, "find_before_snapshot", lambda *args, **kwargs: {"symbols": 0})
         monkeypatch.setattr(cmd_attest, "_collect_breaking", lambda *args: {})
         monkeypatch.setattr(cmd_attest, "_collect_risk", lambda *args: {"score": 10, "level": "LOW"})
 

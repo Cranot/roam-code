@@ -260,14 +260,15 @@ def test_attest_unresolved_breaking(project, monkeypatch, timeout):
     args = ["attest", "HEAD~1..HEAD"]
     summary = invoke("--json", *args)["summary"]
     assert summary["resolution"] == "unresolved"
-    assert summary["safe_to_merge"] is False
     if timeout:
+        assert summary["safe_to_merge"] is None
         assert summary["git_error"] == "git_timeout"
         assert "git_timeout" in summary["verdict"]
         assert "None" not in summary["verdict"]
         result = CliRunner().invoke(cli, args)
-        assert "Breaking comparison could not run: git_timeout" in result.stdout
+        assert "breaking comparison could not run: git_timeout" in result.stdout.lower()
     else:
+        assert summary["safe_to_merge"] is False
         assert not summary.get("git_error")
         assert "(risk_level low)" in summary["verdict"]
 
