@@ -38,6 +38,16 @@ def _script_path() -> Path:
     return Path(__file__).resolve().parents[1] / ".github" / "scripts" / "pr-comment.js"
 
 
+def test_pr_risk_comment_contract():
+    result = subprocess.run(
+        ["node", str(Path(__file__).with_name("pr_comment.test.mjs"))],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_build_comment_includes_marker_and_sections(tmp_path):
     results_dir = tmp_path / "results"
     results_dir.mkdir()
