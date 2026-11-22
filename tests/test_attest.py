@@ -423,6 +423,33 @@ class TestAttestVerdict:
         assert plain.output.splitlines()[0] == "VERDICT: MERGE CLEARANCE UNAVAILABLE"
         assert "**Verdict: [UNKNOWN]**" in markdown.output
 
+    @pytest.mark.parametrize("limit, safe", [(0, False), (100, True)])
+    def test_single_budget_controls_verdict_in_all_formats(self, cli_runner, attest_project, monkeypatch, limit, safe):
+        from roam.commands import cmd_attest
+        from roam.graph import diff
+
+        config = attest_project / ".roam" / "budget.yaml"
+        config.parent.mkdir(exist_ok=True)
+        config.write_text(f"budgets:\n  - name: Symbol growth\n    metric: symbols\n    max_increase: {limit}\n")
+        monkeypatch.setattr(diff, "find_before_snapshot", lambda *args: {"symbols": 0})
+        monkeypatch.setattr(cmd_attest, "_collect_breaking", lambda *args: {})
+        monkeypatch.setattr(cmd_attest, "_collect_risk", lambda *args: {"score": 10, "level": "LOW"})
+
+        result = invoke_cli(cli_runner, ["attest"], cwd=attest_project, json_mode=True)
+        data = parse_json_output(result, "attest")
+        budget = data["evidence"]["budget"]
+        assert budget["rules_checked"] == 1
+        assert budget["failed"] == int(not safe)
+        assert budget["rules"][0]["delta"] > 0
+        assert data["summary"]["safe_to_merge"] is safe
+        assert data["verdict"]["safe_to_merge"] is safe
+        assert ("1 budget(s) exceeded" in data["verdict"]["conditions"]) is (not safe)
+
+        plain = invoke_cli(cli_runner, ["attest"], cwd=attest_project)
+        markdown = invoke_cli(cli_runner, ["attest", "--format", "markdown"], cwd=attest_project)
+        assert plain.output.splitlines()[0] == ("VERDICT: SAFE TO MERGE" if safe else "VERDICT: NOT SAFE TO MERGE")
+        assert ("**Verdict: [PASS]**" if safe else "**Verdict: [FAIL]**") in markdown.output
+
     @pytest.mark.parametrize("blocker", ["breaking", "risk", "budget"])
     @pytest.mark.parametrize("partial", [False, True])
     def test_refusal_survives_partial_comparison(self, cli_runner, attest_project, monkeypatch, blocker, partial):
