@@ -412,11 +412,46 @@ class TestAttestVerdict:
         from roam.commands import cmd_attest
 
         monkeypatch.setattr(cmd_attest, "_collect_breaking", lambda *args: {"partial_success": True})
+        monkeypatch.setattr(cmd_attest, "_collect_risk", lambda *args: {"score": 10, "level": "LOW"})
         result = invoke_cli(cli_runner, ["attest"], cwd=attest_project, json_mode=True)
         data = parse_json_output(result, "attest")
         assert data["summary"]["safe_to_merge"] is None
         assert data["verdict"]["safe_to_merge"] is None
         assert data["summary"]["partial_success"] is True
+        plain = invoke_cli(cli_runner, ["attest"], cwd=attest_project)
+        markdown = invoke_cli(cli_runner, ["attest", "--format", "markdown"], cwd=attest_project)
+        assert plain.output.splitlines()[0] == "VERDICT: MERGE CLEARANCE UNAVAILABLE"
+        assert "**Verdict: [UNKNOWN]**" in markdown.output
+
+    @pytest.mark.parametrize("blocker", ["breaking", "risk", "budget"])
+    @pytest.mark.parametrize("partial", [False, True])
+    def test_refusal_survives_partial_comparison(self, cli_runner, attest_project, monkeypatch, blocker, partial):
+        from roam.commands import cmd_attest
+
+        comparison = {"removed": [{"name": "old_api"}]} if blocker == "breaking" else {}
+        if partial:
+            comparison["files_not_analyzed"] = [{"file": "vendor/submodule"}]
+        risk = {"score": 75, "level": "HIGH"} if blocker == "risk" else {"score": 10, "level": "LOW"}
+        budget = {"rules_checked": 1, "passed": 0, "failed": 1, "skipped": 0, "rules": []}
+        monkeypatch.setattr(cmd_attest, "_collect_breaking", lambda *args: comparison)
+        monkeypatch.setattr(cmd_attest, "_collect_risk", lambda *args: risk)
+        if blocker == "budget":
+            monkeypatch.setattr(cmd_attest, "_collect_budget_evidence", lambda *args: budget)
+
+        result = invoke_cli(cli_runner, ["attest"], cwd=attest_project, json_mode=True)
+        data = parse_json_output(result, "attest")
+        assert data["summary"].get("partial_success", False) is partial
+        assert data["summary"]["safe_to_merge"] is False
+        assert data["verdict"]["safe_to_merge"] is False
+        assert data["summary"]["verdict"].startswith("NOT safe to merge")
+        plain = invoke_cli(cli_runner, ["attest"], cwd=attest_project)
+        markdown = invoke_cli(cli_runner, ["attest", "--format", "markdown"], cwd=attest_project)
+        assert plain.output.splitlines()[0] == "VERDICT: NOT SAFE TO MERGE"
+        assert "**Verdict: [FAIL]**" in markdown.output
+        if partial:
+            assert "submodule path" in data["summary"]["verdict"]
+            assert "vendor/submodule" in plain.output
+            assert "vendor/submodule" in markdown.output
 
     def test_verdict_safe_by_default(self, cli_runner, attest_project, monkeypatch):
         """Small changes should be safe to merge by default."""

@@ -711,10 +711,10 @@ def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
     # Tests needed
     conditions.append("run selected tests")
 
-    if kind := breaking_data.get("git_error") or breaking_data.get("state"):
-        safe = None
+    kind = breaking_data.get("git_error") or breaking_data.get("state")
+    if kind:
         warnings.append(f"breaking comparison could not run: {kind}")
-    elif breaking_data.get("files_not_analyzed") or breaking_data.get("partial_success"):
+    if safe and (kind or breaking_data.get("files_not_analyzed") or breaking_data.get("partial_success")):
         safe = None
 
     return {
@@ -1562,17 +1562,17 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
                 risk_level_canonical = None
                 risk_rank_int = None
             kind = breaking_failure.get("git_error") or breaking_failure["state"]
-            _attest_verdict_str = f"breaking comparison could not run: {kind}"
+            _attest_verdict_str += f" (breaking comparison could not run: {kind})"
             summary_block.update(
                 verdict=_attest_verdict_str,
-                breaking_changes=None,
+                breaking_changes=summary_block["breaking_changes"] or None,
                 partial_success=True,
                 risk_level_canonical=risk_level_canonical,
                 risk_rank=risk_rank_int,
                 **breaking_failure,
             )
         elif skipped:
-            _attest_verdict_str = f"breaking comparison skipped {len(skipped)} submodule path(s)"
+            _attest_verdict_str += f" (breaking comparison skipped {len(skipped)} submodule path(s))"
             summary_block.update(verdict=_attest_verdict_str, partial_success=True)
         _attest_target = commit_range or ("staged" if staged else "uncommitted")
         attest_envelope = _build_attest_envelope_that_preserves_late_markers(
@@ -1627,16 +1627,21 @@ def _make_verdict_str(verdict, risk, risk_level_canonical: str = "low"):
     W631 risk_level directly. *risk_level_canonical* must already be a
     member of :data:`roam.output.risk.RISK_LEVELS`.
     """
-    safe = "safe to merge" if verdict["safe_to_merge"] else "NOT safe to merge"
+    decision = verdict["safe_to_merge"]
+    if decision is None:
+        safe = "merge clearance unavailable"
+    else:
+        safe = "safe to merge" if decision else "NOT safe to merge"
     risk_str = f" (risk: {risk['level']} {risk['score']}/100)" if risk else ""
     return f"{safe}{risk_str} (risk_level {risk_level_canonical})"
 
 
 def _append_attestation_verdict_section(lines, plan, is_md):
+    decision = plan["safe_to_merge"]
     if is_md:
         lines.append("## Roam Attestation")
         lines.append("")
-        safe_icon = "[PASS]" if plan["safe_to_merge"] else "[FAIL]"
+        safe_icon = "[UNKNOWN]" if decision is None else ("[PASS]" if decision else "[FAIL]")
         lines.append(f"**Verdict: {safe_icon}**")
         if plan["conditions"]:
             lines.append("")
@@ -1650,7 +1655,10 @@ def _append_attestation_verdict_section(lines, plan, is_md):
                 lines.append(f"- {w}")
         lines.append("")
     else:
-        safe = "SAFE TO MERGE" if plan["safe_to_merge"] else "NOT SAFE TO MERGE"
+        if decision is None:
+            safe = "MERGE CLEARANCE UNAVAILABLE"
+        else:
+            safe = "SAFE TO MERGE" if decision else "NOT SAFE TO MERGE"
         lines.append(f"VERDICT: {safe}")
         if plan["conditions"]:
             lines.append(f"  Conditions: {'; '.join(plan['conditions'])}")
