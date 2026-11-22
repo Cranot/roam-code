@@ -369,6 +369,55 @@ class TestAttestSurvivesTokenBudget:
 class TestAttestVerdict:
     """Test verdict computation."""
 
+    @pytest.mark.parametrize("breaking", [True, False], ids=["required-parameter", "body-only"])
+    def test_signature_change_clearance(self, cli_runner, tmp_path, monkeypatch, breaking):
+        monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.chdir(project)
+        api = project / "api.py"
+        api.write_text("def total(price):\n    return price\n", encoding="utf-8")
+        (project / "caller.py").write_text(
+            "from api import total\n\n\n"
+            "def receipt():\n    return total(10)\n\n\n"
+            "def format_price(price):\n    return f'${price}'\n\n\n"
+            "def format_quantity(quantity):\n    return str(quantity)\n\n\n"
+            "def format_sku(sku):\n    return f'SKU {sku}'\n\n\n"
+            "def format_date(date):\n    return date.isoformat()\n",
+            encoding="utf-8",
+        )
+        (project / "test_api.py").write_text(
+            "from api import total\n\n\ndef test_total():\n    assert total(10) > 0\n",
+            encoding="utf-8",
+        )
+        git_init(project)
+        params = "price, tax" if breaking else "price"
+        api.write_text(f"def total({params}):\n    return price + 1\n", encoding="utf-8")
+        out, rc = index_in_process(project, "--force")
+        assert rc == 0, out
+
+        result = invoke_cli(cli_runner, ["attest"], cwd=project, json_mode=True)
+        data = parse_json_output(result, "attest")
+        assert len(data["evidence"]["breaking_changes"]["signature_changed"]) == int(breaking)
+        assert data["summary"]["risk_level"] in {"LOW", "MODERATE"}, data["summary"]
+
+        plain = invoke_cli(cli_runner, ["attest"], cwd=project)
+        markdown = invoke_cli(cli_runner, ["attest", "--format", "markdown"], cwd=project)
+        assert data["summary"]["safe_to_merge"] is (not breaking)
+        assert data["verdict"]["safe_to_merge"] is (not breaking)
+        assert plain.output.splitlines()[0] == ("VERDICT: NOT SAFE TO MERGE" if breaking else "VERDICT: SAFE TO MERGE")
+        assert ("**Verdict: [FAIL]**" if breaking else "**Verdict: [PASS]**") in markdown.output
+
+    def test_partial_breaking_comparison_withholds_clearance(self, cli_runner, attest_project, monkeypatch):
+        from roam.commands import cmd_attest
+
+        monkeypatch.setattr(cmd_attest, "_collect_breaking", lambda *args: {"partial_success": True})
+        result = invoke_cli(cli_runner, ["attest"], cwd=attest_project, json_mode=True)
+        data = parse_json_output(result, "attest")
+        assert data["summary"]["safe_to_merge"] is None
+        assert data["verdict"]["safe_to_merge"] is None
+        assert data["summary"]["partial_success"] is True
+
     def test_verdict_safe_by_default(self, cli_runner, attest_project, monkeypatch):
         """Small changes should be safe to merge by default."""
         monkeypatch.chdir(attest_project)
@@ -462,6 +511,7 @@ class TestComputeVerdict:
         fitness = {"rules": [], "violations": []}
         budget = {"passed": 3, "failed": 0, "skipped": 0, "rules": []}
         v = _compute_verdict(risk, breaking, fitness, budget)
+        assert v["safe_to_merge"] is False
         assert any("CRITICAL" in w for w in v["warnings"])
 
 

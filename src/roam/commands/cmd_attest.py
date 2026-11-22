@@ -684,10 +684,13 @@ def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
         + len(breaking_data.get("renamed", []))
     )
     if total_breaking > 0:
+        safe = False
         warnings.append(f"{total_breaking} breaking changes detected")
 
-    # Risk level
+    # High-risk changes require review before attest can clear them.
     if risk and risk.get("level") in ("HIGH", "CRITICAL"):
+        safe = False
+        conditions.append("review high-risk changes")
         warnings.append(f"risk level is {risk['level']} ({risk['score']}/100)")
 
     # Budget violations
@@ -707,6 +710,12 @@ def _compute_verdict(risk, breaking_data, fitness_data, budget_data):
 
     # Tests needed
     conditions.append("run selected tests")
+
+    if kind := breaking_data.get("git_error") or breaking_data.get("state"):
+        safe = None
+        warnings.append(f"breaking comparison could not run: {kind}")
+    elif breaking_data.get("files_not_analyzed") or breaking_data.get("partial_success"):
+        safe = None
 
     return {
         "safe_to_merge": safe,
@@ -1231,8 +1240,10 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
                 "state": "breaking_unavailable",
                 "partial_success": True,
             }
-        breaking_failure = {key: breaking[key] for key in ("state", "git_error", "git_error_detail") if key in breaking}
         skipped = breaking.get("files_not_analyzed", [])
+        if breaking.get("partial_success") and not (skipped or breaking.get("state") or breaking.get("git_error")):
+            breaking = {**breaking, "state": "breaking_unavailable"}
+        breaking_failure = {key: breaking[key] for key in ("state", "git_error", "git_error_detail") if key in breaking}
         file_map = _run_check_ad("resolve_changed_to_db", resolve_changed_to_db, conn, changed, default={}) or {}
 
         if not file_map:
@@ -1552,11 +1563,8 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
                 risk_rank_int = None
             kind = breaking_failure.get("git_error") or breaking_failure["state"]
             _attest_verdict_str = f"breaking comparison could not run: {kind}"
-            verdict["safe_to_merge"] = None
-            verdict["warnings"].append(_attest_verdict_str)
             summary_block.update(
                 verdict=_attest_verdict_str,
-                safe_to_merge=None,
                 breaking_changes=None,
                 partial_success=True,
                 risk_level_canonical=risk_level_canonical,
@@ -1564,9 +1572,8 @@ def attest_cmd(ctx, commit_range, staged, output_format, sign, output_file):
                 **breaking_failure,
             )
         elif skipped:
-            verdict["safe_to_merge"] = None
             _attest_verdict_str = f"breaking comparison skipped {len(skipped)} submodule path(s)"
-            summary_block.update(verdict=_attest_verdict_str, safe_to_merge=None, partial_success=True)
+            summary_block.update(verdict=_attest_verdict_str, partial_success=True)
         _attest_target = commit_range or ("staged" if staged else "uncommitted")
         attest_envelope = _build_attest_envelope_that_preserves_late_markers(
             summary_block=summary_block,
