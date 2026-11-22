@@ -489,6 +489,8 @@ def test_pr_risk_uses_event_comparison(tmp_path, monkeypatch, case):
     out, rc = index_in_process(project, "--force")
     assert rc == 0, out
 
+    job_summary = tmp_path / "github-step-summary.md"
+    job_summary.write_text("Existing summary\n", encoding="utf-8")
     run = _step(step_id="run-analysis")["run"]
     result = subprocess.run(
         [_bash_executable(), "-c", 'roam() { "$TEST_PYTHON" -c "from roam.cli import cli; cli()" "$@"; }\n' + run],
@@ -507,6 +509,7 @@ def test_pr_risk_uses_event_comparison(tmp_path, monkeypatch, case):
             "PR_HEAD_SHA_INPUT": {"missing-head": "e" * 40, "no-head-sha": ""}.get(case, head),
             "RUNNER_TEMP": str(tmp_path),
             "GITHUB_OUTPUT": str(tmp_path / "github-output.txt"),
+            "GITHUB_STEP_SUMMARY": str(job_summary),
         },
         text=True,
         capture_output=True,
@@ -514,6 +517,10 @@ def test_pr_risk_uses_event_comparison(tmp_path, monkeypatch, case):
     )
     data = json.loads((tmp_path / "roam-results/pr-risk.json").read_text(encoding="utf-8"))
     summary = data["summary"]
+    warning = "::warning::PR comparison could not run"
+    if case in {"pr-diff", "empty-range", "base-override"}:
+        assert warning not in result.stdout
+        assert job_summary.read_text(encoding="utf-8") == "Existing summary\n"
     if case == "pr-diff":
         assert data.get("label") == f"{base}...{head}", result.stdout
         assert summary["changed_files"] == 1
@@ -526,6 +533,11 @@ def test_pr_risk_uses_event_comparison(tmp_path, monkeypatch, case):
         assert summary["state"] == "comparison_unavailable", result.stdout
         assert summary["risk_score"] is None
         assert summary["partial_success"] is True
+        assert warning in result.stdout.splitlines()
+        assert job_summary.read_text(encoding="utf-8").splitlines() == [
+            "Existing summary",
+            "- PR comparison could not run. Pull request risk was skipped.",
+        ]
 
 
 def test_generated_step_outputs_are_closed_before_github_output_emission() -> None:
