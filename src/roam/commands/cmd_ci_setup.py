@@ -58,7 +58,30 @@ _PLATFORMS = {
 
 # -- GitHub Actions template (inline — uses the composite action) -----
 
-_GITHUB_TEMPLATE = """\
+# The published composite action passes base-ref..HEAD to pr-risk in
+# changed-only mode. Resolve the PR merge base against the checked-out head
+# so that workflow also works with the published action and CLI pins.
+_GITHUB_PR_RANGE_STEP = """\
+      - name: Resolve PR comparison
+        id: pr-range
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          sha_pattern='^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$'
+          if [[ "$PR_BASE_SHA" =~ $sha_pattern && "$PR_HEAD_SHA" =~ $sha_pattern ]] &&
+             [[ "$(git rev-parse HEAD)" = "$PR_HEAD_SHA" ]] &&
+             base=$(git merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA") &&
+             git diff --name-only -z --end-of-options "$base..$PR_HEAD_SHA" -- >/dev/null; then
+            printf 'base=%s\\n' "$base" >> "$GITHUB_OUTPUT"
+          else
+            echo '{"command":"pr-risk","summary":{"verdict":"PR comparison could not run","state":"comparison_unavailable","partial_success":true,"risk_score":null}}'
+          fi
+"""
+
+_GITHUB_TEMPLATE = (
+    """\
 # roam-code Analysis for GitHub Actions
 #
 # Runs roam-code health checks and rules validation on pull requests.
@@ -84,9 +107,12 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0  # Full history needed for pr-risk and git analysis
           persist-credentials: false
-
+"""
+    + _GITHUB_PR_RANGE_STEP
+    + """\
       # The tag below is the last PUBLISHED release, kept there by
       # scripts/sync_surface_counts.py (install-pin class). Do not hand-edit
       # it to the declared version: a ref that is not yet tagged fails this
@@ -95,7 +121,9 @@ jobs:
       - uses: Cranot/roam-code@v14.1.0-r1
         with:
           version: '14.1.0'
-          commands: 'health check-rules pr-risk'
+          commands: ${{ steps.pr-range.outputs.base != '' && 'health check-rules pr-risk' || 'health check-rules' }}
+          changed-only: ${{ steps.pr-range.outputs.base != '' }}
+          base-ref: ${{ steps.pr-range.outputs.base }}
           sarif: 'true'
           sarif-commands: 'health'
           sarif-category: 'roam-code'
@@ -103,6 +131,7 @@ jobs:
           gate: 'health_score>=60'
           python-version: '{python_version}'
 """
+)
 
 
 # -- Template loading -------------------------------------------------

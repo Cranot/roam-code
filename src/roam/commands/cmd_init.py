@@ -16,6 +16,7 @@ import os
 import click
 
 from roam.capability import roam_capability
+from roam.commands.cmd_ci_setup import _GITHUB_PR_RANGE_STEP
 from roam.commands.resolve import ensure_index
 from roam.db.connection import _is_genuine_git_marker, db_exists, find_project_root
 from roam.db.fs_detect import cloud_sync_warning, detect_cloud_sync
@@ -61,7 +62,8 @@ rules:
     reason: "Functions above 30 cognitive complexity need refactoring"
 """
 
-_GITHUB_WORKFLOW = """\
+_GITHUB_WORKFLOW = (
+    """\
 name: Roam Code Analysis
 on:
   pull_request:
@@ -75,8 +77,12 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+"""
+    + _GITHUB_PR_RANGE_STEP
+    + """\
       # The tag below is the last PUBLISHED release, kept there by
       # scripts/sync_surface_counts.py (install-pin class). Do not hand-edit
       # it to the declared version: a ref that is not yet tagged fails this
@@ -85,9 +91,12 @@ jobs:
       - uses: Cranot/roam-code@v14.1.0-r1
         with:
           version: "14.1.0"
-          commands: "fitness pr-risk"
+          commands: ${{ steps.pr-range.outputs.base != '' && 'fitness pr-risk' || 'fitness' }}
+          changed-only: ${{ steps.pr-range.outputs.base != '' }}
+          base-ref: ${{ steps.pr-range.outputs.base }}
           python-version: "3.12"
 """
+)
 
 # Conservative .roamignore template — every line commented out so the
 # user opts in to whatever applies. Faster to remove a `#` than to

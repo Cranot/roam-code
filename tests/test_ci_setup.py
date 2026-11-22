@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+
 import pytest
+import yaml
 
 from tests.conftest import (
     assert_json_envelope,
+    git_commit,
     git_init,
     invoke_cli,
     parse_json_output,
@@ -20,6 +26,51 @@ def ci_project(tmp_path):
     (proj / "main.py").write_text("print('hello')\n")
     git_init(proj)
     return proj
+
+
+@pytest.mark.parametrize("generator", ["init", "ci-setup"])
+@pytest.mark.parametrize("available", [True, False], ids=["valid-range", "missing-base"])
+def test_generated_github_workflow_passes_pr_range(cli_runner, ci_project, monkeypatch, generator, available):
+    monkeypatch.setenv("ROAM_DB_DIR", str(ci_project.parent / "db"))
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ci_project, text=True).strip()
+    (ci_project / "main.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    git_commit(ci_project)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ci_project, text=True).strip()
+    args = ["init", "--with-ci=github"] if generator == "init" else ["ci-setup", "--platform", "github", "--write"]
+    result = invoke_cli(cli_runner, args, cwd=ci_project)
+    assert result.exit_code == 0, result.output
+    workflow = yaml.safe_load((ci_project / ".github/workflows/roam.yml").read_text(encoding="utf-8"))
+    steps = next(iter(workflow["jobs"].values()))["steps"]
+    checkout, resolve, analysis = steps
+    assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha }}"
+    assert resolve["id"] == "pr-range"
+    assert resolve["env"] == {
+        "PR_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+        "PR_HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+    }
+    assert analysis["with"]["base-ref"] == "${{ steps.pr-range.outputs.base }}"
+    assert analysis["with"]["changed-only"] == "${{ steps.pr-range.outputs.base != '' }}"
+    assert "steps.pr-range.outputs.base != ''" in analysis["with"]["commands"]
+    assert "pr-risk" in analysis["with"]["commands"]
+
+    outputs = ci_project.parent / "step-outputs"
+    outputs.touch()
+    resolved = subprocess.run(
+        ["bash", "-e", "-c", resolve["run"]],
+        cwd=ci_project,
+        env=os.environ
+        | {"PR_BASE_SHA": base if available else "f" * 40, "PR_HEAD_SHA": head, "GITHUB_OUTPUT": str(outputs)},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    if available:
+        assert outputs.read_text(encoding="utf-8").splitlines() == [f"base={base}"]
+    else:
+        assert not outputs.read_text(encoding="utf-8")
+        summary = json.loads(resolved.stdout)["summary"]
+        assert summary["state"] == "comparison_unavailable"
+        assert summary["risk_score"] is None
 
 
 def test_ci_setup_rejects_old_python_before_writing(cli_runner, tmp_path, monkeypatch):

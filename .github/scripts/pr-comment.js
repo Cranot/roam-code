@@ -144,10 +144,14 @@ function _formatComment(env = process.env, results = {}) {
   if (results['pr-risk'] && results['pr-risk'].summary) {
     const s = results['pr-risk'].summary;
     lines.push('### PR Risk', '');
-    lines.push('| Metric | Value |', '|--------|-------|');
-    if (s.risk_score !== undefined) lines.push(`| Risk Score | ${s.risk_score}/100 |`);
-    if (s.files_changed !== undefined) lines.push(`| Files Changed | ${s.files_changed} |`);
-    if (s.symbols_affected !== undefined) lines.push(`| Symbols Affected | ${s.symbols_affected} |`);
+    if (s.risk_score == null) {
+      lines.push('PR comparison could not run.');
+    } else {
+      lines.push('| Metric | Value |', '|--------|-------|');
+      lines.push(`| Risk Score | ${s.risk_score}/100 |`);
+      if (s.files_changed !== undefined) lines.push(`| Files Changed | ${s.files_changed} |`);
+      if (s.symbols_affected !== undefined) lines.push(`| Symbols Affected | ${s.symbols_affected} |`);
+    }
     lines.push('');
   }
 
