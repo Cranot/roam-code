@@ -23,9 +23,12 @@ imports away from the test module.
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import os
 import re
 import shlex
+import sys
 from collections import deque
 from dataclasses import dataclass
 from functools import cache
@@ -34,6 +37,7 @@ from pathlib import Path
 
 import click
 
+from roam.atomic_io import atomic_write_json
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
     GIT_ERROR,
@@ -44,6 +48,7 @@ from roam.commands.changed_files import (
 from roam.commands.resolve import ensure_index, find_symbol, resolve_file_symbols
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.index.test_conventions import find_test_candidates
+from roam.observability import log_swallowed
 from roam.output.formatter import (
     abbrev_kind,
     json_envelope,
@@ -209,7 +214,11 @@ def _python_module_name(path):
 
 def _parse_python(root, path):
     try:
-        return ast.parse((root / path).read_text(encoding="utf-8", errors="replace"))
+        source = (root / path).read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source)
+        # Python normalizes non-ASCII identifiers, so use the AST in that case.
+        tree.roam_may_mark_fixtures = "usefixtures" in source or not source.isascii()
+        return tree
     except (OSError, SyntaxError, ValueError):
         return None
 
@@ -660,7 +669,7 @@ def _environ_aliases(nodes):
                     environ.add(alias.asname or alias.name)
                 elif alias.name in _ENV_SETTERS:
                     setters.add(alias.asname or alias.name)
-        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) for t in node.targets):
+        elif isinstance(node, ast.Assign):
             value = node.value
             name = value.attr if isinstance(value, ast.Attribute) else value.id if isinstance(value, ast.Name) else None
             if name in _ENV_SETTERS:  # ``setenv = monkeypatch.setenv``
@@ -1243,8 +1252,12 @@ class _DispatchScope:
         self._returning = set()
         self._registry_readers = {}
         self._stops = {}
+        self._conftest_fixtures = {}
         self._is_test = cache(is_test_file)
+        self._module_sources = cache(self._module_sources)
+        self._has_process_bindings = cache(self._has_process_bindings)
         self.definition = cache(self._definition)
+        self.readable = cache(self._readable)
         self.click_kind = cache(self._click_kind)
         packages = {_python_module_name(p).split(".")[0] for p, _n in registries}
         self.programs = packages
@@ -1481,6 +1494,10 @@ class _DispatchScope:
             return f"{base}.{expr.attr}" if base else None
         return None
 
+    def _has_process_bindings(self, path):
+        info = self.file(path)
+        return info is not None and not _PROCESS_PREFIXES.isdisjoint(info["qualnames"].values())
+
     def is_registry(self, expr, path):
         """The registry itself or a view of it (``sorted(R)``, ``R.items()``)."""
         if isinstance(expr, ast.Call):
@@ -1516,7 +1533,7 @@ class _DispatchScope:
         d = self.definition(t)
         return t[1] in self.flood or bool(d and d[1] in self.flood)
 
-    def readable(self, t):
+    def _readable(self, t):
         """The ``def`` behind *t* when its body may decide keys (reaches a registry or is test-side)."""
         d = self.definition(t)
         if d and (self.dispatcher(t) or self._is_test(d[1][0])):
@@ -1620,24 +1637,37 @@ class _DispatchScope:
         if info is None:
             reach.any = True
             return reach
-        conftest_scopes = []  # (path, {name: [fn]}), nearest first
+
+        def fixture_scope(node):
+            found = _scope_fixtures(node.body)
+            autouse = tuple(name for name, fns in found.items() if any(map(_autouse, fns)))
+            return found, autouse
+
+        conftest_scopes = []  # (path, (fixtures, autouse names)), nearest first
         for p in sorted(conftests, key=lambda c: -c.replace("\\", "/").count("/")):
-            conftest_info = self.file(p)
-            if conftest_info is None:
+            if p not in self._conftest_fixtures:
+                conftest_info = self.file(p)
+                self._conftest_fixtures[p] = fixture_scope(conftest_info["module"]) if conftest_info else None
+            scope = self._conftest_fixtures[p]
+            if scope is None:
                 reach.any = True
                 continue
-            conftest_scopes.append((p, _scope_fixtures(conftest_info["module"].body)))
+            conftest_scopes.append((p, scope))
         marked = set()
-        for node in ast.walk(info["module"]):
-            if not isinstance(node, ast.Call) or not _function_name(node.func).endswith("usefixtures"):
-                continue
-            marked |= {a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
-            if not all(isinstance(a, ast.Constant) for a in node.args):
-                reach.any = True  # a fixture named by a computed value may be any of them
+        if info["tree"].roam_may_mark_fixtures:
+            for node in ast.walk(info["module"]):
+                if not isinstance(node, ast.Call) or not _function_name(node.func).endswith("usefixtures"):
+                    continue
+                marked |= {a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
+                if not all(isinstance(a, ast.Constant) for a in node.args):
+                    reach.any = True  # a fixture named by a computed value may be any of them
         classes = {n.name: n for n in info["module"].body if isinstance(n, ast.ClassDef)}
+        local_scopes = {}
 
         def class_scopes(cls, seen=()):
-            yield (None, _scope_fixtures(cls.body))
+            if cls not in local_scopes:
+                local_scopes[cls] = fixture_scope(cls)
+            yield (None, local_scopes[cls])
             for base in cls.bases:
                 if isinstance(base, ast.Name) and base.id in classes and base.id not in seen:
                     yield from class_scopes(classes[base.id], (*seen, cls.name))
@@ -1649,19 +1679,19 @@ class _DispatchScope:
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
                     yield node, outer
 
-        module_scope = [(None, _scope_fixtures(info["module"].body))]
+        module_scope = [(None, fixture_scope(info["module"]))]
         run = {}  # (path, lineno, col) -> (fn, path): conftest fixtures some test runs
         for test, outer in tests(info["module"].body, module_scope):
             scopes = [*outer, *conftest_scopes]
             decorators = [*test.decorator_list, *getattr(test, "roam_class_decorators", [])]
             blocked = _direct_parameters(decorators)
             todo = (_requested(test) | marked) - blocked
-            todo |= {name for _p, found in scopes for name, fns in found.items() if any(map(_autouse, fns))}
+            todo |= {name for _p, (_found, autouse) in scopes for name in autouse}
             done = set(blocked)
             while todo:
                 name = todo.pop()
                 done.add(name)
-                for p, found in scopes:
+                for p, (found, _autouse_names) in scopes:
                     fns = found.get(name, ())
                     if not fns:
                         continue
@@ -1693,7 +1723,11 @@ class _DispatchScope:
             summaries[key] = self._summarize(fn, path, root)
         return summaries[key]
 
-    def _context(self, fn, path, root):
+    def _events(self, ctx):
+        fn = ctx.get("fn")
+        if fn is None:
+            return {}
+        path = ctx["path"]
         by_location = self._facts.setdefault(path, {})
         key = (fn.lineno, fn.col_offset)
         if key not in by_location:
@@ -1704,15 +1738,25 @@ class _DispatchScope:
             fn.roam_global_names = {
                 name for node in _own_body(fn) if isinstance(node, ast.Global) for name in node.names
             }
+        return by_location[key]
+
+    def _enclosing(self, name, ctx):
+        outer = ctx.get("enclosing")
+        if outer is not None:
+            self._events(ctx)
+            if name in getattr(ctx["fn"], "roam_global_names", ()):
+                return None
+        return outer
+
+    def _context(self, fn, path, root):
         decorators = [*fn.decorator_list, *getattr(fn, "roam_class_decorators", [])]
         args = fn.args
         params = {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
         params |= {a.arg for a in (args.vararg, args.kwarg) if a}
         return {
             "path": path,
+            "fn": fn,
             "enclosing": getattr(fn, "roam_enclosing", None),
-            "globals": getattr(fn, "roam_global_names", set()),
-            "events": by_location[key],
             "params": params,
             "parametrized": _parametrize_bindings(decorators) if root else {},
             "root": root,
@@ -1720,11 +1764,12 @@ class _DispatchScope:
 
     @staticmethod
     def _module_context(path):
-        return {"path": path, "events": {}, "params": set(), "parametrized": {}, "root": False}
+        return {"path": path, "params": set(), "parametrized": {}, "root": False}
 
     def _summarize(self, fn, path, root):
         ctx = self._context(fn, path, root)
         test_side = self._is_test(path)
+        process_bindings = test_side and self._has_process_bindings(path)
         summary = _Summary()
         invoked, called = self._invoked_calls(fn, ctx)
         registry_loops = []
@@ -1748,7 +1793,7 @@ class _DispatchScope:
                 if node.args:
                     add("read", [(_slot(self.words(node.args[0], ctx)),)])
                 continue
-            qualname = self.qualname(func, path)
+            qualname = self.qualname(func, path) if process_bindings else None
             if test_side and qualname in _PROCESS_OPAQUE:
                 summary.reach.any = True
                 continue
@@ -1794,7 +1839,7 @@ class _DispatchScope:
                     break
 
         if test_side:
-            self._escapes(fn, path, called, summary.reach)
+            self._escapes(fn, path, called, summary.reach, process_bindings)
 
         # ``for name, (mod, fn) in R.items(): getattr(import_module(mod), fn)()``
         # calls the entry itself; ``mod.replace(".", "/")`` only reads it.
@@ -1811,7 +1856,7 @@ class _DispatchScope:
                     summary.reach.every = True
         return summary
 
-    def _escapes(self, fn, path, called, reach):
+    def _escapes(self, fn, path, called, reach, process_bindings):
         """Launchers and test code that run later, or elsewhere, than where they are named.
 
         A launcher passed on or aliased (``run = subprocess.run``,
@@ -1829,10 +1874,10 @@ class _DispatchScope:
                 continue
             if not isinstance(node.ctx, ast.Load):
                 continue
-            if self.qualname(node, path) in _PROCESS_CALLS:
+            if process_bindings and self.qualname(node, path) in _PROCESS_CALLS:
                 reach.any = True
                 continue
-            d = self.readable(self.target(node, path))
+            d = self.definition(self.target(node, path))
             if d and self._is_test(d[1][0]):
                 for callee in self._defs(d):
                     if callee is not fn:
@@ -1851,11 +1896,13 @@ class _DispatchScope:
 
     def _launcher_alias(self, name, ctx):
         """Whether *name* is bound to an expression naming a process launcher."""
-        sources = [(v, ctx) for k, v, _f in ctx["events"].get(name, ()) if k == "assign"]
-        sources += self._global_sources(name, ctx) or []
+        sources = list(self._global_sources(name, ctx) or ())
+        if self._has_process_bindings(ctx["path"]):
+            sources.extend((v, ctx) for k, v, _f in self._events(ctx).get(name, ()) if k == "assign")
         return any(
             isinstance(n, (ast.Name, ast.Attribute)) and self.qualname(n, c["path"]) in _PROCESS_CALLS
             for v, c in sources
+            if self._has_process_bindings(c["path"])
             for n in ast.walk(v)
         )
 
@@ -1902,7 +1949,7 @@ class _DispatchScope:
                 if isinstance(first, ast.Call):
                     out.add(id(first))
                 elif isinstance(first, ast.Name):
-                    for kind, value, _flag in ctx["events"].get(first.id, ()):
+                    for kind, value, _flag in self._events(ctx).get(first.id, ()):
                         if kind == "assign" and isinstance(value, ast.Call):
                             out.add(id(value))
         return out, called
@@ -2169,7 +2216,7 @@ class _DispatchScope:
             if not seq and items is not None and self._distinct_items(items, ctx, seen):
                 out.add(_EACH)  # every case runs
             return out
-        events = ctx["events"].get(name)
+        events = self._events(ctx).get(name)
         if events:
             if not seq and len(events) == 1 and events[0][0] == "iter":
                 container = self._literal_container(events[0][1], ctx)
@@ -2205,10 +2252,10 @@ class _DispatchScope:
             return self._param(name, ctx, seq)
         if self.is_registry(ast.Name(id=name), ctx["path"]):
             return {_EVERY} if seq else {_UNKNOWN}
-        outer = None if name in ctx.get("globals", ()) else ctx.get("enclosing")
+        outer = self._enclosing(name, ctx)
         while outer is not None:
             enclosing = self._context(outer, ctx["path"], _is_root(outer))
-            if name in enclosing["events"] or name in enclosing["params"]:
+            if name in self._events(enclosing) or name in enclosing["params"]:
                 # A captured parameter is not the inner function's parameter.
                 values = self._name_values(name, enclosing, seen - {name}, value_of, seq)
                 return {_UNKNOWN if isinstance(v, _Ref) else v for v in values}
@@ -2224,7 +2271,7 @@ class _DispatchScope:
             return e
         if not isinstance(e, ast.Name) or e.id in ctx["params"]:
             return None
-        events = ctx["events"].get(e.id)
+        events = self._events(ctx).get(e.id)
         if events is not None:
             sources = [value for kind, value, _flag in events if kind == "assign"] if len(events) == 1 else []
         else:
@@ -2245,26 +2292,31 @@ class _DispatchScope:
 
     def _global_sources(self, name, ctx):
         """Resolve enclosing assignments before module globals and imported names."""
-        outer = None if name in ctx.get("globals", ()) else ctx.get("enclosing")
+        outer = self._enclosing(name, ctx)
         while outer is not None:
             enclosing = self._context(outer, ctx["path"], _is_root(outer))
-            if name in enclosing["events"] or name in enclosing["params"]:
-                events = enclosing["events"].get(name, ())
+            events = self._events(enclosing).get(name)
+            if events or name in enclosing["params"]:
                 if name not in enclosing["params"] and all(k == "assign" for k, _v, _f in events):
                     return [(v, enclosing) for _k, v, _f in events]
                 return None  # a binding with unresolved contents shadows the global
             outer = enclosing.get("enclosing")
-        info = self.file(ctx["path"])
+        return self._module_sources(ctx["path"], name)
+
+    def _module_sources(self, path, name):
+        info = self.file(path)
         if info and name in info["rebound_globals"]:
             return None  # a function rebinds it through ``global``
         if info and name in info["globals"]:
-            return [(v, self._module_context(ctx["path"])) for v in info["globals"][name]]
+            ctx = self._module_context(path)
+            return [(v, ctx) for v in info["globals"][name]]
         t = info["imports"].get(name) if info else None
         other = self.file(t[1][0]) if t and t[0] == "function" else None
         if other and t[1][1] in other["rebound_globals"]:
             return None
         if other and t[1][1] in other["globals"]:
-            return [(v, self._module_context(t[1][0])) for v in other["globals"][t[1][1]]]
+            ctx = self._module_context(t[1][0])
+            return [(v, ctx) for v in other["globals"][t[1][1]]]
         return None
 
     # -- argv sequences -------------------------------------------------------
@@ -2277,7 +2329,7 @@ class _DispatchScope:
         if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Add):
             return self._is_text(e.left, ctx, depth) or self._is_text(e.right, ctx, depth)
         if isinstance(e, ast.Name) and depth < 4:
-            events = ctx["events"].get(e.id)
+            events = self._events(ctx).get(e.id)
             if events:
                 return all(k == "assign" and self._is_text(v, ctx, depth + 1) for k, v, _f in events)
             sources = None if e.id in ctx["params"] else self._global_sources(e.id, ctx)
@@ -2296,7 +2348,7 @@ class _DispatchScope:
             left, right = self._string_parts(e.left, ctx, depth), self._string_parts(e.right, ctx, depth)
             return [a + b for a in left for b in right][:_MAX_ALTERNATIVES]
         if isinstance(e, ast.Name) and depth < 4:
-            events = ctx["events"].get(e.id)
+            events = self._events(ctx).get(e.id)
             if events and all(k == "assign" for k, _v, _f in events):
                 return [p for _k, v, _f in events for p in self._string_parts(v, ctx, depth + 1)]
             sources = None if events or e.id in ctx["params"] else self._global_sources(e.id, ctx)
@@ -2370,7 +2422,7 @@ class _DispatchScope:
             out = [s for elt in e.elts for s in self.seqs(elt, ctx, seen)]
             return out if len(out) <= _MAX_ALTERNATIVES else _concat(out, [()])
         if isinstance(e, ast.Name):
-            events = ctx["events"].get(e.id)
+            events = self._events(ctx).get(e.id)
             if events and all(k == "assign" for k, _v, _f in events):
                 return [s for _k, v, _f in events for s in self._element_seqs(v, ctx, seen | {e.id})]
         return [(_slot({_UNKNOWN if v is _EVERY else v for v in self.elements(e, ctx, seen)}, splice=True),)]
@@ -2387,7 +2439,7 @@ class _DispatchScope:
                     self._element_seqs(case[1], ctx, seen) if isinstance(case, tuple) else self.seqs(case, ctx, seen)
                 )
             return out[:_MAX_ALTERNATIVES] if len(out) <= _MAX_ALTERNATIVES else _concat(out, [()])
-        events = ctx["events"].get(name)
+        events = self._events(ctx).get(name)
         if events:
             bases, mutations = [], []
             for kind, value, flag in events:
@@ -2452,38 +2504,8 @@ def _applying_conftests(path, conftests):
     return applying
 
 
-def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
-    """Test functions that may run a handler behind the *reached* registries.
-
-    Returns ``(cli_hits, every_hits, possible_hits)``: ``{test_file: key}``
-    for tests proven to run one of *handler_keys*; ``{(test_file,
-    function): hops_from_registry}`` for tests that run every registry
-    entry; ``{test_file: via}`` for tests the analysis cannot rule out,
-    *via* being the key or ``"<registry>[*]"`` when any key may run.  A
-    test that starts the package only in a subprocess imports none of it,
-    so any process-starting test file is read too.
-    """
-    cli_hits, every_hits, possible_hits = {}, {}, {}
-    if not reached:
-        return cli_hits, every_hits, possible_hits
-    flood_hops = _bfs_reverse_callers(conn, set(reached))
-    flood = {}
-    for row in batched_in(
-        conn,
-        "SELECT s.id, s.name, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
-        list(flood_hops),
-    ):
-        flood[(row["path"], row["name"])] = flood_hops[row["id"]][0]
-    module_paths, test_paths = {}, []
-    for row in conn.execute("SELECT path FROM files WHERE language = 'python'").fetchall():
-        module = _python_module_name(row["path"])
-        if module:
-            module_paths.setdefault(module, row["path"])
-        if is_test_file(row["path"]) and row["path"] not in exclude:
-            test_paths.append(row["path"])
-    by_registry = {registries[rid][:2]: registries[rid][2] for rid in reached}
-    registry_name = registries[reached[0]][1]
-    scope = _DispatchScope(root, module_paths, flood, by_registry)
+def _dispatch_reach(scope, test_paths):
+    """Yield the nonempty reach of each root, in dispatch scan order."""
     conftests = [p for p in test_paths if p.replace("\\", "/").rsplit("/", 1)[-1] == "conftest.py"]
     # A direct production registry subscript may have no symbol edge to
     # the registry. Inspect all test roots so that graph incompleteness
@@ -2508,16 +2530,118 @@ def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
                 if writes is None:
                     writes = any(scope.writes_environment(p) for p in loaded)
                 reach.any = writes
-            if reach.every:
-                name = fn_name or "<module>"
-                every_hits[(path, name)] = flood.get((path, name), 1)
-            hit = sorted(reach.run & handler_keys)
-            if hit and path not in cli_hits:
-                cli_hits[path] = hit[0]
-            maybe = sorted(reach.may & handler_keys)
-            if (maybe or reach.any) and path not in possible_hits:
-                possible_hits[path] = maybe[0] if maybe else f"{registry_name}[*]"
+            if reach.every or reach.run or reach.may or reach.any:
+                yield path, fn_name or "<module>", reach.every, sorted(reach.run), sorted(reach.may), reach.any
         scope.release(path)
+
+
+def _dispatch_source_stamp(root, paths):
+    """Fingerprint live source bytes, including edits the index has not seen."""
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(hashlib.sha256((root / path).read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def _dispatch_cache_rows(conn, scope, test_paths, python_paths):
+    """Reuse one registry scope per index, across commands and handler keys."""
+    from roam import __version__
+
+    db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    if not db_path:
+        return _dispatch_reach(scope, test_paths)
+    cache_path = Path(db_path).with_name(Path(db_path).name + ".dispatch.json")
+    source_paths = sorted(set(python_paths) | {p for p, _ in chain(scope.registries, scope.flood)})
+    try:
+        source_stamp = _dispatch_source_stamp(scope.root, source_paths)
+        analyzer = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    except OSError as exc:
+        log_swallowed("affected-tests:dispatch-cache-input", exc)
+        return _dispatch_reach(scope, test_paths)
+    key = hashlib.sha256(
+        json.dumps(
+            [
+                __version__,
+                analyzer,
+                sys.version,
+                sys.platform,
+                sys.flags.optimize,
+                os.environ.get("PYTHONHASHSEED"),
+                str(scope.root.absolute()),
+                sorted(scope.module_paths.items()),
+                sorted(scope.flood.items()),
+                [(path, name, sorted(keys)) for (path, name), keys in scope.registries.items()],
+                source_paths,
+                test_paths,
+                source_stamp,
+            ]
+        ).encode()
+    ).hexdigest()
+    try:
+        cached_key, rows = json.loads(cache_path.read_bytes())
+        if (
+            cached_key == key
+            and isinstance(rows, list)
+            and all(
+                isinstance(path, str)
+                and isinstance(name, str)
+                and isinstance(every, bool)
+                and isinstance(run, list)
+                and isinstance(may, list)
+                and all(isinstance(k, str) for k in chain(run, may))
+                and isinstance(any_key, bool)
+                for path, name, every, run, may, any_key in rows
+            )
+        ):
+            return rows
+    except (OSError, TypeError, ValueError) as exc:
+        if not isinstance(exc, FileNotFoundError):  # a cold index has no sidecar yet
+            log_swallowed("affected-tests:dispatch-cache-read", exc)
+
+    rows = list(_dispatch_reach(scope, test_paths))
+    try:
+        if source_stamp == _dispatch_source_stamp(scope.root, source_paths):
+            atomic_write_json(cache_path, [key, rows], indent=None)
+    except OSError as exc:
+        log_swallowed("affected-tests:dispatch-cache-write", exc)
+    return rows
+
+
+def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
+    """Tests proven to run a handler key, every key, or a possible handler key."""
+    cli_hits, every_hits, possible_hits = {}, {}, {}
+    if not reached:
+        return cli_hits, every_hits, possible_hits
+    flood_hops = _bfs_reverse_callers(conn, set(reached))
+    flood = {}
+    for row in batched_in(
+        conn,
+        "SELECT s.id, s.name, f.path FROM symbols s JOIN files f ON f.id = s.file_id WHERE s.id IN ({ph})",
+        list(flood_hops),
+    ):
+        flood[(row["path"], row["name"])] = flood_hops[row["id"]][0]
+    module_paths, test_paths = {}, []
+    python_paths = [row["path"] for row in conn.execute("SELECT path FROM files WHERE language = 'python'")]
+    for path in python_paths:
+        module = _python_module_name(path)
+        if module:
+            module_paths.setdefault(module, path)
+        if path not in exclude and is_test_file(path):
+            test_paths.append(path)
+    by_registry = {registries[rid][:2]: registries[rid][2] for rid in reached}
+    registry_name = registries[reached[0]][1]
+    scope = _DispatchScope(root, module_paths, flood, by_registry)
+    for path, name, every, run, may, any_key in _dispatch_cache_rows(conn, scope, test_paths, python_paths):
+        if every:
+            every_hits[(path, name)] = flood.get((path, name), 1)
+        if path not in cli_hits:
+            hit = min(handler_keys.intersection(run), default=None)
+            if hit is not None:
+                cli_hits[path] = hit
+        if path not in possible_hits:
+            maybe = min(handler_keys.intersection(may), default=None)
+            if maybe is not None or any_key:
+                possible_hits[path] = maybe if maybe is not None else f"{registry_name}[*]"
     return cli_hits, every_hits, possible_hits
 
 

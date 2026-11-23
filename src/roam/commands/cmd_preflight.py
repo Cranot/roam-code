@@ -251,7 +251,7 @@ def _check_blast_radius(conn, sym_ids, file_paths):
         }
 
     G = build_symbol_graph(conn)
-    RG = G.reverse()
+    RG = G.reverse(copy=False)
 
     all_affected_syms = set()
     all_affected_files = set()
