@@ -524,7 +524,7 @@ def test_allow_path_still_redacts_egress_secrets(isolated_repo, monkeypatch) -> 
     monkeypatch.setenv("ROAM_AGENT_MODE", "migration")
     monkeypatch.setenv("ROAM_MODE_ENFORCEMENT", "1")
 
-    secret = "sk-test-1234567890abcdef1234567890"
+    secret = "sk-test-1234567890abcdef1234567890"  # secretsallow
     raw = {"command": "stub_leaky_p02", "summary": {"verdict": f"token {secret}"}}
     wrapped, call_count = _register_destructive_tool(
         monkeypatch, "roam_leaky_p02", return_value=raw, backing_cli="mutate"

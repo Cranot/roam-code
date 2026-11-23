@@ -165,6 +165,20 @@ missing or incomplete index with exit 3, while `roam index` and `roam init`
 remain intentional build commands. JSON refusals distinguish those states
 without opening the index. `init` still creates project configuration.
 
+Index-backed queries report the database age in seconds as `_meta.index_age_s`
+and the changed-file count as `_meta.index_changed_files` in JSON and MCP.
+The count compares tracked paths with the commit recorded by a clean Git
+index build. For a dirty build or a project without a usable Git baseline,
+Roam compares the saved indexed files by mtime and hash and includes Git
+additions when available. A count of `null` means the snapshot was unavailable.
+
+An index older than 24 hours is stale, using the same database modification
+time as `roam doctor`. Stale results carry `_meta.stale_index: true` and
+`summary.partial_success: true`. Text queries print one freshness warning to
+stderr and still return results. Run `roam index` to refresh. Set
+`ROAM_REFUSE_STALE_INDEX=1` to make queries fail with exit 1 on an age-stale
+index. JSON refusals use `error_code: INDEX_STALE`.
+
 An ownership error means another writer is active, or Roam cannot prove that
 the recorded owner is stale. Wait for the writer, inspect the process that
 owns this checkout, and stop it through its normal shutdown path if needed.

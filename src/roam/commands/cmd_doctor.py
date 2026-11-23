@@ -784,35 +784,18 @@ def _check_index_exists() -> dict:
 
 def _check_index_freshness(db_path_str: str | None) -> dict:
     """Index mtime <= 24 hours old."""
-    if db_path_str is None:
-        return {
-            "name": "Index freshness",
-            "passed": False,
-            "detail": "index does not exist (run `roam init`)",
-        }
-    db_path = Path(db_path_str)
-    if not db_path.exists():
+    from roam.db.freshness import format_index_age, index_age_seconds, index_is_stale
+
+    age_s = index_age_seconds(Path(db_path_str)) if db_path_str is not None else None
+    if age_s is None:
         return {
             "name": "Index freshness",
             "passed": False,
             "detail": "index does not exist (run `roam init`)",
         }
 
-    age_s = time.time() - db_path.stat().st_mtime
-    age_h = age_s / 3600.0
-    stale = age_h > 24.0
-
-    if age_s < 60:
-        age_str = f"{int(age_s)} second{'s' if int(age_s) != 1 else ''} ago"
-    elif age_s < 3600:
-        age_m = int(age_s / 60)
-        age_str = f"{age_m} minute{'s' if age_m != 1 else ''} ago"
-    elif age_s < 86400:
-        age_h_int = int(age_h)
-        age_str = f"{age_h_int} hour{'s' if age_h_int != 1 else ''} ago"
-    else:
-        age_d = int(age_h / 24)
-        age_str = f"{age_d} day{'s' if age_d != 1 else ''} ago"
+    stale = index_is_stale(age_s)
+    age_str = format_index_age(age_s)
 
     return {
         "name": "Index freshness",

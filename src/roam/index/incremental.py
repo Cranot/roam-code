@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 
-def file_hash(path: Path) -> str:
+def file_hash(path: str | Path) -> str:
     """Compute SHA-256 hash of a file."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -16,6 +17,14 @@ def file_hash(path: Path) -> str:
                 break
             h.update(chunk)
     return h.hexdigest()
+
+
+def file_matches_index(path: str | Path, mtime: float | None, digest: str | None) -> bool:
+    """Use the stored mtime as a fast path before comparing content."""
+    current_mtime = os.stat(path).st_mtime
+    if mtime is not None and abs(current_mtime - mtime) < 0.001:
+        return True
+    return file_hash(path) == digest
 
 
 def get_index_changed_files(
@@ -49,27 +58,12 @@ def get_index_changed_files(
     modified = []
     for path in sorted(current_set & stored_set):
         full_path = root / path
+        stored_mtime, stored_hash = stored[path]
         try:
-            current_mtime = full_path.stat().st_mtime
+            if not file_matches_index(full_path, stored_mtime, stored_hash):
+                modified.append(path)
         except OSError:
             # File disappeared between discovery and check
             removed.append(path)
-            continue
-
-        stored_mtime, stored_hash = stored[path]
-
-        # Fast path: if mtime is unchanged, assume file is unchanged
-        if stored_mtime is not None and abs(current_mtime - stored_mtime) < 0.001:
-            continue
-
-        # Mtime changed -- check hash to confirm actual content change
-        try:
-            current_hash = file_hash(full_path)
-        except OSError:
-            removed.append(path)
-            continue
-
-        if current_hash != stored_hash:
-            modified.append(path)
 
     return added, modified, removed

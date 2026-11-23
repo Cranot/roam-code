@@ -1159,10 +1159,32 @@ class LazyGroup(click.Group):
         """
         try:
             return super().invoke(ctx)
+        except click.ClickException as exc:
+            from roam.db.freshness import StaleQueryIndexError
+
+            if not isinstance(exc, StaleQueryIndexError) or not ctx.obj.get("json"):
+                raise
+            from roam.exit_codes import EXIT_ERROR
+            from roam.output.formatter import json_envelope, to_json
+
+            click.echo(
+                to_json(
+                    json_envelope(
+                        ctx.invoked_subcommand or "roam",
+                        summary={"verdict": "Run `roam index` to refresh the stale index", "state": "stale_index"},
+                        persist_response=False,
+                        error_code="INDEX_STALE",
+                        error=exc.format_message(),
+                        status="stale_index",
+                        next_command="roam index",
+                    )
+                )
+            )
+            ctx.exit(EXIT_ERROR)
         except click.exceptions.Exit:
             # click.Context.exit() raises this — propagate as-is
             raise
-        except (click.Abort, click.ClickException, SystemExit):
+        except (click.Abort, SystemExit):
             # Click-managed exceptions — propagate as-is
             raise
         except Exception as exc:

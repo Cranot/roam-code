@@ -6281,6 +6281,9 @@ def _annotate_stale(result: dict, command: str, *, root: str = ".") -> dict:
         return result
     if not isinstance(result, dict):
         return result
+    meta = result.get("_meta")
+    if isinstance(meta, dict) and "index_changed_files" in meta:
+        return result  # The CLI has already evaluated doctor's freshness rule.
     if result.get("isError") is True and result.get("error_code") in {"INDEX_NOT_FOUND", "INDEX_STALE"}:
         # The index refusal is already actionable. A freshness probe here can
         # create an absent store or open an incomplete SQLite generation.
@@ -6401,8 +6404,10 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
         result = _run_roam_subprocess(args, root)
         return _annotate_stale(result, args[0] if args else "", root=root)
 
+    from roam.db.freshness import refuse_stale_index
+
     # Cache lookup — only for read-only commands.
-    if args and args[0] in _CACHEABLE_COMMANDS:
+    if args and args[0] in _CACHEABLE_COMMANDS and not refuse_stale_index():
         cache_key = tuple(args)
         cached = _ROAM_RESULT_CACHE.get(cache_key)
         if cached is not None:
@@ -6413,17 +6418,39 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
                 # can observe the optimisation. Don't mutate the cached
                 # dict in case a future caller compares object identity.
                 if isinstance(payload, dict):
-                    out = dict(payload)
-                    meta = dict(out.get("_meta") or {})
-                    meta["cache_hit"] = True
-                    out["_meta"] = meta
-                    return _annotate_stale(out, args[0])
+                    out = _refresh_cached_envelope(payload)
+                    if out is not None:
+                        return _annotate_stale(out, args[0])
         result = _run_roam_inprocess(args)
         if isinstance(result, dict) and "error" not in result:
             _ROAM_RESULT_CACHE[cache_key] = (_time.time(), _index_mtime(), result)
         return _annotate_stale(result, args[0] if args else "")
     result = _run_roam_inprocess(args)
     return _annotate_stale(result, args[0] if args else "")
+
+
+def _refresh_cached_envelope(payload: dict) -> dict | None:
+    """Refresh query metadata that can change without an index rebuild."""
+    from roam.db.connection import StaleDbDirError, find_project_root, get_db_path, open_db
+    from roam.db.freshness import read_query_index_freshness
+    from roam.output.formatter import stamp_query_index_freshness
+
+    meta = dict(payload.get("_meta") or {}, cache_hit=True)
+    out = {**payload, "_meta": meta}
+    if "index_changed_files" in meta:
+        root = find_project_root()
+        try:
+            db_path = get_db_path(root, create=False)
+            with open_db(readonly=True, project_root=root, disclose_freshness=False) as conn:
+                freshness = read_query_index_freshness(conn, db_path, root)
+        except (OSError, click.ClickException, StaleDbDirError) as exc:
+            log_swallowed("mcp_server:refresh_cached_freshness", exc)
+            return None
+        if freshness is None or (meta.get("stale_index") and not freshness.stale):
+            return None
+        out["summary"] = dict(out.get("summary") or {})
+        stamp_query_index_freshness(out, freshness)
+    return out
 
 
 def _build_no_data_envelope(args: list[str]) -> dict:

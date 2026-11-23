@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json as _json
 import os
-import time
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Literal, Mapping, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Mapping, TypeAlias
+
+if TYPE_CHECKING:
+    from roam.db.freshness import QueryIndexFreshness
 
 # Envelope schema versioning (semver: major.minor.patch)
 # bumped to 1.1.0 to signal additive enhancements:
@@ -1473,8 +1475,8 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
         # the same inputs dedupes naturally (the bundle's auto-collect should not
         # see N copies of the same `roam health` run). Exclude the whole `_meta`
         # block from the dedup KEY: it carries non-deterministic fields
-        # (timestamp, latency_ms, index_age_s, response_tokens, and the staleness
-        # index_status/dirty_files) that vary call-to-call — e.g. a cold lazy-import
+        # (timestamp, latency_ms, index_age_s, response_tokens, and changed-file
+        # count) that vary call-to-call — e.g. a cold lazy-import
         # or git probe on the FIRST call inflates latency_ms relative to the second,
         # which would defeat dedup. The written file keeps full `_meta`; only the
         # dedup key drops it. This makes dedup robust to timing instead of relying
@@ -1581,7 +1583,9 @@ def _add_agent_contract(out: dict, summary: dict, explicit_contract: Any) -> Non
     out["agent_contract"] = auto_contract
 
 
-def _stamp_core_meta(out: dict, command: str, version: str, *, include_index_metadata: bool = True) -> None:
+def _stamp_core_meta(
+    out: dict, version: str, *, include_index_metadata: bool, freshness: QueryIndexFreshness | None
+) -> None:
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     # Non-deterministic metadata in _meta — kept separate so content
     # keys produce identical JSON across invocations (LLM cache-friendly).
@@ -1601,32 +1605,21 @@ def _stamp_core_meta(out: dict, command: str, version: str, *, include_index_met
     # this addition does not affect those golden hashes.
     out["_meta"] = {
         "timestamp": ts,
-        "index_age_s": _index_age_seconds() if include_index_metadata else None,
+        "index_age_s": _index_age_seconds() if include_index_metadata and freshness is None else None,
         "roam_version": version,
     }
-    if include_index_metadata:
-        _add_staleness_meta(out["_meta"], command)
-    else:
+    if not include_index_metadata:
         out["_meta"]["index_metadata"] = "not_read"
 
 
-def _add_staleness_meta(meta: dict, command: str) -> None:
-    # Wave-1 staleness disclosure (Root-1a): for stale-sensitive commands, surface
-    # index_status WHEN the index is actually stale, so an agent reading the envelope
-    # cannot act on data computed against code that no longer matches. Placed in _meta
-    # (alongside index_age_s), NOT top-level: top-level placement broke content-hash
-    # dedup + envelope-consistency/diff contracts (a dirty real-repo tree fires it
-    # globally during tests). _meta is the non-deterministic bucket dedup/consistency
-    # already exclude. We do NOT flip summary.partial_success here — that field reflects
-    # the CHECK outcome, not index freshness (conflating them broke clean-path tests).
-    # Gated on `fresh is False`; lazy imports avoid an output<-commands cycle; failures
-    # never break envelope generation.
-    if "index_status" in meta or not _command_is_stale_sensitive(command):
-        return
-
-    _stale = _envelope_index_status()
-    if isinstance(_stale, dict) and _stale.get("fresh") is False:
-        meta["index_status"] = _stale
+def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness) -> None:
+    """Apply the same freshness fields to CLI envelopes and MCP cache hits."""
+    meta = out.setdefault("_meta", {})
+    meta["index_age_s"] = int(freshness.age_s)
+    meta["index_changed_files"] = freshness.changed_files
+    if freshness.stale:
+        meta["stale_index"] = True
+        out.setdefault("summary", {})["partial_success"] = True
 
 
 def _cache_policy(command: str) -> tuple[bool, int]:
@@ -1702,7 +1695,7 @@ def json_envelope(
     top-level keys that downstream tools (CI, dashboards, AI agents) can
     rely on.
 
-    Non-deterministic metadata (``timestamp``, ``index_age_s``) is placed
+    Non-deterministic metadata (``timestamp``, index freshness) is placed
     in a ``_meta`` sub-dict so the main content keys remain stable across
     invocations — enabling LLM prompt-caching (exact prefix matching).
 
@@ -1713,9 +1706,8 @@ def json_envelope(
 
     Set ``persist_response=False`` for refusals that must not write a response
     sidecar even when an agent run or proof bundle is active.
-    Also set ``include_index_metadata=False`` when a refusal must not open
-    an absent/incomplete database for freshness metadata: even readonly SQLite
-    connections can change WAL shared-memory sidecars.
+    Set ``include_index_metadata=False`` to omit freshness metadata for a
+    refusal involving an absent or incomplete index.
 
     Returns a dict with at minimum::
 
@@ -1732,9 +1724,12 @@ def json_envelope(
         }
     """
     summary = _prepare_envelope_summary(summary)
+    freshness = _envelope_index_status() if include_index_metadata else None
 
     compact = _compact_json_envelope_or_none(command, summary, payload)
     if compact is not None:
+        if freshness is not None:
+            stamp_query_index_freshness(compact, freshness)
         projected_compact = _project_if_requested(compact)
         if budget > 0 and not uncapped:
             return budget_truncate_json(projected_compact, budget)
@@ -1748,11 +1743,10 @@ def json_envelope(
     explicit_contract = payload.pop("agent_contract", None)
     out = _base_json_envelope(command, version, summary)
     out.update(payload)
+    _stamp_core_meta(out, version, include_index_metadata=include_index_metadata, freshness=freshness)
+    if freshness is not None:
+        stamp_query_index_freshness(out, freshness)
     _add_agent_contract(out, summary, explicit_contract)
-    if include_index_metadata:
-        _stamp_core_meta(out, command, version)
-    else:
-        _stamp_core_meta(out, command, version, include_index_metadata=False)
     _stamp_response_meta(out, command)
 
     # Best-effort side-car write to `.roam/responses/` so `pr-bundle
@@ -1770,28 +1764,10 @@ def json_envelope(
     return _apply_envelope_budget(_project_if_requested(out), budget, uncapped=uncapped)
 
 
-def _command_is_stale_sensitive(command: str) -> bool:
-    """True if the command's capability declares ``stale_sensitive`` (default True).
-    Lazy import: ``capability`` imports ``formatter``, so a top-level import would cycle."""
-    try:
-        from roam.capability import _CAPABILITIES
+def _envelope_index_status() -> QueryIndexFreshness | None:
+    from roam.db.freshness import query_index_freshness
 
-        cap = _CAPABILITIES.get(command)
-        return bool(cap.stale_sensitive) if cap is not None else True
-    except (ImportError, AttributeError):
-        return False
-
-
-def _envelope_index_status():
-    """Lazily fetch ``index_status()`` for envelope staleness disclosure (dict or None).
-    NOT cached: the MCP server is long-running and the index can be rebuilt mid-process,
-    so a per-process cache would serve a stale freshness verdict."""
-    try:
-        from roam.commands.resolve import index_status
-
-        return index_status()
-    except (ImportError, OSError, ValueError):
-        return None
+    return query_index_freshness()
 
 
 def _default_json_budget() -> int:
@@ -1817,19 +1793,15 @@ def _get_version() -> str:
 
 
 def _index_age_seconds() -> int | None:
-    """Seconds since .roam/index.db was last modified, or None if missing."""
-    try:
-        from roam.db.connection import get_db_path
+    """Supply the existing age metadata for envelopes outside an index query."""
+    from roam.db.connection import StaleDbDirError, get_db_path
+    from roam.db.freshness import index_age_seconds
 
-        db_path = get_db_path(create=False)
-        if db_path.exists():
-            return int(time.time() - db_path.stat().st_mtime)
-    except (OSError, FileNotFoundError):
-        # Expected-signal guard: a stat() race after exists() (TOCTOU) or
-        # a missing index just means "age unknown" — the None return IS
-        # the disclosed signal to the caller. No lineage needed.
-        pass
-    return None
+    try:
+        age_s = index_age_seconds(get_db_path(create=False))
+    except (OSError, StaleDbDirError):
+        return None
+    return int(age_s) if age_s is not None else None
 
 
 def _project_name() -> str:

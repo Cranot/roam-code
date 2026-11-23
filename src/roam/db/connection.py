@@ -1207,6 +1207,7 @@ def open_db(
     project_root: Path | None = None,
     *,
     warnings_out: WarningsOut = None,
+    disclose_freshness: bool = True,
 ) -> "Iterator[sqlite3.Connection]":
     """Context manager for database access. Creates schema if needed.
 
@@ -1237,8 +1238,10 @@ def open_db(
 
     ``warnings_out=None`` (default) preserves the legacy silent-pass
     behaviour for every existing caller (~200+ commands import open_db).
+    Index builders pass ``disclose_freshness=False`` while writing a generation.
     """
-    db_path = get_db_path(project_root)
+    root = project_root if project_root is not None else find_project_root()
+    db_path = get_db_path(root)
     conn = _open_validated_connection(db_path, readonly, warnings_out)
     try:
         if not readonly:
@@ -1248,6 +1251,10 @@ def open_db(
             # Readonly opens skip ensure_schema, so this is the only place
             # the stamped user_version is ever compared on the read side.
             _require_compatible_user_version(conn)
+        if disclose_freshness:
+            from roam.db.freshness import observe_query_index
+
+            observe_query_index(conn, db_path, root)
         yield conn
         if not readonly:
             _commit_and_optimize(conn)

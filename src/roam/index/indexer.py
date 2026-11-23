@@ -2908,7 +2908,7 @@ class Indexer:
 
         saved_annotations = self._reset_index_for_force(force)
 
-        with open_db(project_root=self.root) as conn:
+        with open_db(project_root=self.root, disclose_freshness=False) as conn:
             if force:
                 added = all_files
                 modified = []
