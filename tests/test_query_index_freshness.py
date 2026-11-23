@@ -17,7 +17,9 @@ from roam.db.connection import get_db_path
 
 
 @pytest.fixture(autouse=True)
-def _generous_freshness_budget(monkeypatch):
+def _isolated_freshness_settings(monkeypatch, tmp_path):
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
     monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
 
 
@@ -509,7 +511,7 @@ def test_git_history_caps_timeout_at_budget_and_remaining_time(query_project, mo
 
     monkeypatch.setattr(subprocess, "run", check_relation)
     relation = freshness._git_history_relation(query_project, "a" * 40, "b" * 40)
-    assert relation == "relationship to HEAD is unknown"
+    assert relation == "unknown"
     assert timeouts[0] == 0.3
     assert timeouts[1:] == pytest.approx([0.175])
 
@@ -801,7 +803,13 @@ def test_git_history_note_after_backward_or_divergent_move(project_factory, cli_
     result = cli_runner.invoke(cli, ["weather"])
     assert result.exit_code == 0, result.output
     expected = "has diverged from HEAD" if diverged else "is ahead of HEAD"
-    assert f"Indexed Git history {expected}" in result.stdout
+    assert f"Indexed Git history {expected}" in result.output
+    result = cli_runner.invoke(cli, ["--json", "weather"])
+    meta = json.loads(result.stdout)["_meta"]
+    assert meta["index_state"] == "fresh"
+    assert meta.get("git_history_behind", False) is False
+    assert meta["git_history_relation"] == ("diverged" if diverged else "ahead")
+    assert "ancestor" in meta["git_history_relation_definition"]
 
 
 def test_linked_worktree_uses_its_own_index(project_factory, tmp_path):
@@ -889,7 +897,7 @@ def test_pruned_indexed_commit_after_rebase_is_not_fresh(project_factory, cli_ru
     monkeypatch.chdir(repo)
     result = cli_runner.invoke(cli, ["weather"])
     assert result.exit_code == 0, result.output
-    assert "Indexed Git history is unreachable" in result.stdout
+    assert "Indexed Git history is unreachable" in result.stderr
 
 
 def test_shallow_clone_compares_snapshots_after_fetch(project_factory, tmp_path):
@@ -911,6 +919,8 @@ def test_shallow_clone_compares_snapshots_after_fetch(project_factory, tmp_path)
     freshness = probe_index_freshness(db, clone)
     assert freshness.state == "stale"
     assert freshness.changed_paths == {"app.py"}
+    assert freshness.git_history_relation == "unknown"
+    assert freshness.git_history_behind is False
 
 
 def test_git_paths_preserve_spaces_unicode_and_quoted_names(project_factory):
@@ -943,3 +953,211 @@ def test_git_status_preserves_unmerged_path(project_factory, monkeypatch):
     merge = subprocess.run(["git", "merge", "side"], capture_output=True, check=False)
     assert merge.returncode == 1
     assert probe_index_freshness(get_db_path(repo), repo).changed_paths == {path}
+
+
+@pytest.mark.parametrize("exclude_source", ["info", "configured"])
+def test_external_git_excludes_drop_previously_indexed_untracked_file(
+    query_project, cli_runner, tmp_path, exclude_source
+):
+    if exclude_source == "info":
+        exclude = query_project / ".git" / "info" / "exclude"
+    else:
+        exclude = tmp_path / "custom excludes"
+        exclude.write_bytes(b"")
+        subprocess.run(["git", "config", "--local", "core.excludesFile", str(exclude)], check=True)
+    directory = query_project / "Generated Files"
+    directory.mkdir()
+    (directory / "Hidden.py").write_bytes(b"def ignored_later():\r\n    pass\r\n")
+    (directory / "retained.py").write_text("def still_discovered(): pass\n")
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    exclude.write_bytes(b"/Generated Files/Hidden.py\r\n")
+
+    payload = json.loads(cli_runner.invoke(cli, ["--json", "search", "indexed_helper"]).stdout)
+    assert payload["_meta"]["index_state"] == "stale"
+    assert payload["_meta"]["index_changed_files"] == 1
+    doctor = json.loads(cli_runner.invoke(cli, ["--json", "doctor"]).stdout)
+    check = next(check for check in doctor["checks"] if check["name"] == "Index freshness")
+    assert check["state"] == "stale"
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    payload = json.loads(cli_runner.invoke(cli, ["--json", "search", "indexed_helper"]).stdout)
+    assert payload["_meta"]["index_state"] == "fresh"
+
+
+@pytest.mark.parametrize("args", [["health"], ["diagnose", "indexed_helper"], ["weather"]])
+def test_history_notice_uses_stderr(query_project, cli_runner, args, monkeypatch):
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "History only"], check=True)
+    result = cli_runner.invoke(cli, args)
+    assert "Indexed Git history is behind HEAD" in result.stderr
+    assert "Indexed Git history" not in result.stdout
+    assert result.stdout.startswith("VERDICT:")
+    monkeypatch.setenv("ROAM_NO_STALENESS_HINT", "1")
+    assert "Indexed Git history" not in cli_runner.invoke(cli, args).output
+
+
+@pytest.mark.parametrize("source", ["info/exclude", "core.excludesFile"])
+@pytest.mark.parametrize("untracked_path", ["Scratch File.py", "Generated/Scratch File.py"])
+def test_external_git_excludes_drop_indexed_untracked_file(
+    project_factory, tmp_path, cli_runner, monkeypatch, source, untracked_path
+):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    project = project_factory({"app.py": "def tracked(): pass\n"}, index=False)
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "redirected index"))
+    exclude = project / ".git" / "info" / "exclude" if source == "info/exclude" else tmp_path / "user excludes"
+    if source == "core.excludesFile":
+        subprocess.run(["git", "config", "--local", source, str(exclude)], check=True)
+    exclude.write_bytes(b"# fixture\r\n")
+    scratch = project / untracked_path
+    scratch.parent.mkdir(exist_ok=True)
+    scratch.write_text("def scratch(): pass\n", encoding="utf-8")
+    assert Indexer(project).run(quiet=True)
+    db = get_db_path(project)
+    assert probe_index_freshness(db, project).state == "fresh"
+    exclude.write_bytes(("/" + untracked_path + "\r\n").encode())
+    assert scratch.is_file()
+    state = probe_index_freshness(db, project)
+    assert state.state == "stale"
+    assert state.changed_paths == {untracked_path}
+    doctor = cli_runner.invoke(cli, ["--json", "doctor"])
+    check = next(check for check in json.loads(doctor.stdout)["checks"] if check["name"] == "Index freshness")
+    assert check["state"] == "stale"
+    assert check["index_changed_files"] == 1
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    assert probe_index_freshness(db, project).state == "fresh"
+
+
+@pytest.mark.parametrize("relation", ["ahead", "diverged", "behind"])
+def test_history_relation_is_directional_in_json(query_project, cli_runner, relation):
+    if relation in {"ahead", "diverged"}:
+        subprocess.run(["git", "commit", "--allow-empty", "-qm", "Indexed commit"], check=True)
+        assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+        subprocess.run(["git", "checkout", "-q", "--detach", "HEAD^"], check=True)
+    if relation in {"behind", "diverged"}:
+        subprocess.run(["git", "commit", "--allow-empty", "-qm", "New history"], check=True)
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    meta = json.loads(result.stdout)["_meta"]
+    assert meta["index_state"] == "fresh"
+    assert meta.get("git_history_behind", False) is (relation == "behind")
+    assert meta["git_history_relation"] == relation
+    assert "ancestor" in meta["git_history_relation_definition"]
+
+
+def test_external_excludes_in_linked_worktree_with_nested_project(project_factory, tmp_path, monkeypatch):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    main = project_factory({"nested/app.py": "def main(): pass\n"}, index=False)
+    linked = tmp_path / "linked checkout"
+    subprocess.run(["git", "worktree", "add", "--detach", str(linked)], cwd=main, check=True)
+    config = tmp_path / "Git excludes"
+    config.write_bytes(b"")
+    subprocess.run(["git", "config", "--local", "core.excludesFile", str(config)], cwd=linked, check=True)
+    nested = linked / "nested"
+    (nested / "Cache File.py").write_text("def cache(): pass\n")
+    (linked / "outside.py").write_text("def outside(): pass\n")
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "external index"))
+    assert Indexer(nested).run(quiet=True)
+    db = get_db_path(nested)
+    assert probe_index_freshness(db, nested).state == "fresh"
+
+    config.write_bytes(b"/outside.py\r\n/nested/Cache File.py\r\n")
+    freshness = probe_index_freshness(db, nested)
+    assert freshness.state == "stale"
+    assert freshness.changed_paths == {"Cache File.py"}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["timeout", "stderr", "no-output", "truncated", "foreign-path"],
+)
+def test_external_excludes_disclose_an_incomplete_git_probe(query_project, cli_runner, monkeypatch, failure):
+    scratch = query_project / "Scratch File.py"
+    scratch.write_text("def formerly_visible(): pass\n")
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    (query_project / ".git" / "info" / "exclude").write_bytes(b"/Scratch File.py\r\n")
+    run = subprocess.run
+
+    def interrupted(command, *args, **kwargs):
+        if command[:2] != ["git", "check-ignore"]:
+            return run(command, *args, **kwargs)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        stdout, stderr = {
+            "stderr": (b"./Scratch File.py\0", b"warning: unreadable excludes"),
+            "no-output": (b"", b""),
+            "truncated": (b"./Scratch File.py", b""),
+            "foreign-path": (b"./unrelated\0", b""),
+        }[failure]
+        return subprocess.CompletedProcess(command, 0, stdout, stderr)
+
+    monkeypatch.setattr(subprocess, "run", interrupted)
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["_meta"]["index_state"] == "unknown"
+    assert payload["_meta"]["index_changed_files"] is None
+    assert (
+        "time budget" in payload["_meta"]["index_state_reason"]
+        or "incomplete result" in payload["_meta"]["index_state_reason"]
+    )
+    assert payload["summary"]["partial_success"] is True
+
+
+def test_exclude_edit_during_build_keeps_the_published_index_stale(query_project, cli_runner, monkeypatch, tmp_path):
+    import sys
+
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "redirected index"))
+    scratch = query_project / "draft.py"
+    scratch.write_text("def draft(): pass\n")
+    rules = query_project / ".git" / "info" / "exclude"
+    record = Indexer._record_manifest
+
+    def change_rules(indexer, *args, **kwargs):
+        rival = subprocess.run(
+            [sys.executable, "-m", "roam", "--json", "index"], capture_output=True, check=False, timeout=90
+        )
+        assert rival.returncode != 0
+        assert json.loads(rival.stdout)["summary"]["reason"] == "index_lock_unavailable"
+        rules.write_bytes(b"/draft.py\r\n")
+        return record(indexer, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Indexer, "_record_manifest", change_rules)
+        assert Indexer(query_project).run(quiet=True)
+    db = get_db_path(query_project)
+    assert probe_index_freshness(db, query_project).changed_paths == {"draft.py"}
+    init = cli_runner.invoke(cli, ["--json", "init"])
+    assert init.exit_code == 0, init.output
+    assert json.loads(init.stdout)["_meta"]["index_state"] == "stale"
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    assert probe_index_freshness(db, query_project).state == "fresh"
+
+
+def test_external_git_exclude_drops_indexed_file_with_staged_deletion(query_project, cli_runner):
+    path = query_project / "scratch.py"
+    path.write_text("def scratch(): pass\n", encoding="utf-8")
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+
+    subprocess.run(["git", "add", "--", "scratch.py"], check=True)
+    subprocess.run(["git", "commit", "-qm", "Track scratch source"], check=True)
+    subprocess.run(["git", "rm", "--cached", "--", "scratch.py"], check=True, capture_output=True)
+    assert path.is_file()
+    assert b"scratch.py\0" in subprocess.check_output(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]
+    )
+
+    (query_project / ".git" / "info" / "exclude").write_bytes(b"/scratch.py\r\n")
+    assert b"scratch.py\0" not in subprocess.check_output(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]
+    )
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    meta = json.loads(result.stdout)["_meta"]
+    assert meta["index_state"] == "stale"
+    assert meta["index_changed_files"] == 1

@@ -2662,7 +2662,7 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist, all_issues=F
 
         # --- Text output ---
         if hint := git_history_hint():
-            click.echo(f"NOTE: {hint}\n")
+            click.echo(f"NOTE: {hint}", err=True)
         # W1331: a floored substrate turns a health FACTOR into a
         # measured zero -- a failed graph build renders as
         # "Tangle: 0.0% (0/44309 symbols in cycles)", which reads as the

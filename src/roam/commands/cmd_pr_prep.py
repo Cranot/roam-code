@@ -21,10 +21,10 @@ import subprocess
 from pathlib import Path
 
 import click
-from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
+from roam.db.freshness import IndexCompositeRunner, StaleQueryIndexError
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -41,7 +41,7 @@ def _capture_json_subcommand(args: list[str]) -> dict:
 
     from roam.cli import cli
 
-    runner = CliRunner()
+    runner = IndexCompositeRunner()
     result = runner.invoke(cli, ["--json", *args])
     try:
         return _json.loads(result.output)
@@ -204,6 +204,8 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
         """
         try:
             return fn(*args, **kwargs)
+        except StaleQueryIndexError:
+            raise
         except Exception as exc:  # noqa: BLE001 -- top-level disclosure
             _w607ac_warnings_out.append(f"pr_prep_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
@@ -332,7 +334,7 @@ def pr_prep(ctx, commit_range, staged, input_path, high_callers) -> None:
     else:
 
         def _invoke_critique():
-            runner = CliRunner()
+            runner = IndexCompositeRunner()
             from roam.cli import cli as _cli
 
             return runner.invoke(

@@ -176,19 +176,23 @@ a file without changing its contents leaves it fresh.
 In JSON and MCP, read `_meta.index_state` and `_meta.index_changed_files`.
 `fresh` means zero changed files. `stale` means a positive count and includes
 `_meta.stale_index: true`. An unavailable check returns `unknown` with a
-null count and `_meta.index_state_reason`. The check has a budget of about
-300 ms. MCP result-cache hits can reuse that result for three seconds.
+null count and `_meta.index_state_reason`. MCP result-cache hits can reuse
+that result for three seconds.
 `_meta.index_age_s` measures elapsed seconds since the recorded index build
 and is null when the record is missing. Age is informational.
 `_meta.index_status` remains available, with `fresh` and `dirty_files`
 derived from the same state and count.
 
-When HEAD differs from the index's recorded commit, `_meta.git_history_behind`
-is true and `_meta.git_history_indexed_commit` and
-`_meta.git_history_head_commit` identify the two commits. This flag can appear
-alongside a fresh source snapshot. In text output, `weather`, `health`, and
-`diagnose` use Git ancestry to say whether the indexed commit is behind or
-ahead of HEAD, has diverged, or is unreachable in the local repository. Run
+When HEAD differs from the index's recorded commit, read
+`_meta.git_history_relation`. The values are `behind` (the indexed commit is
+an ancestor of HEAD), `ahead` (HEAD is an ancestor of the indexed commit),
+`diverged` (neither is an ancestor in complete local history), `unreachable`
+(a commit is missing locally), and `unknown` (Git could not establish
+ancestry, for example in a shallow clone). `_meta.git_history_behind` is true
+only for `behind`. The two commit IDs remain available in
+`_meta.git_history_indexed_commit` and `_meta.git_history_head_commit`.
+Different commits can still have a fresh source snapshot. In text mode,
+`weather`, `health`, and `diagnose` send the history note to stderr. Run
 `roam index` to refresh the Git data.
 
 For stale-sensitive commands, confirmed changes or a failed check set
@@ -201,6 +205,10 @@ refuse confirmed stale results for stale-sensitive commands. CLI refusals
 exit 1 and JSON or MCP refusals carry `error_code: INDEX_STALE`. Commands
 declared stale-insensitive, including `roam stats` and `roam diff`, disclose
 freshness and keep their command-specific `summary.partial_success` value.
+Composite commands report the observed index state together with their own
+analysis status. A stale observation takes precedence over an unavailable
+check or a fresh observation from another child. Check outcomes in the
+composite describe the analysis each child completed.
 When `roam init` finds a stale existing index, it reports the change count
 and marks initialization partial. Run `roam index` to refresh it.
 

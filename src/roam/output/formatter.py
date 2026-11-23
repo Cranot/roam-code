@@ -1618,7 +1618,7 @@ def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness, *, co
     A degraded check sets partial success only for stale-sensitive commands.
     Stale-insensitive commands disclose the state and retain their own verdict.
     """
-    from roam.db.freshness import query_is_stale_sensitive
+    from roam.db.freshness import inside_index_composite, query_is_stale_sensitive
 
     command = command or out.get("command", "")
     meta = out.setdefault("_meta", {})
@@ -1634,16 +1634,27 @@ def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness, *, co
         meta["index_state_reason"] = freshness.reason
     if freshness.stale:
         meta["stale_index"] = True
-    if freshness.git_history_behind:
-        meta["git_history_behind"] = True
+    if freshness.git_history_relation:
+        meta["git_history_relation"] = freshness.git_history_relation
+        meta["git_history_relation_definition"] = (
+            "Indexed commit relative to the observed HEAD: behind if the indexed commit is an ancestor of HEAD, "
+            "ahead if HEAD is an ancestor of the indexed commit, diverged if neither is an ancestor in complete "
+            "local history, unreachable if either commit is missing locally, unknown if ancestry could not be established."
+        )
+        meta["git_history_behind"] = freshness.git_history_behind
         meta["git_history_indexed_commit"] = freshness.indexed_commit
         meta["git_history_head_commit"] = freshness.head_commit
     else:
-        meta.pop("git_history_behind", None)
-        meta.pop("git_history_indexed_commit", None)
-        meta.pop("git_history_head_commit", None)
+        for key in (
+            "git_history_relation",
+            "git_history_relation_definition",
+            "git_history_behind",
+            "git_history_indexed_commit",
+            "git_history_head_commit",
+        ):
+            meta.pop(key, None)
     summary = out.setdefault("summary", {})
-    if freshness.degraded and query_is_stale_sensitive(command):
+    if freshness.degraded and not inside_index_composite() and query_is_stale_sensitive(command):
         summary["partial_success"] = True
     else:
         summary.setdefault("partial_success", False)

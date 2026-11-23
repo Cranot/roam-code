@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import click
+from click.testing import CliRunner
 
 from roam.git_utils import GIT_STATUS_WITH_HEAD, git_status_head_and_paths, worktree_git_env
 from roam.observability import log_swallowed
@@ -23,6 +24,7 @@ _BUDGET_ENV = "ROAM_INDEX_FRESHNESS_BUDGET_S"
 # Keep configured timeouts representable by subprocess's signed millisecond poll.
 _MAX_BUDGET_S = 2_147_483
 _BUDGET_EXCEEDED = "freshness check exceeded its time budget"
+_NO_GIT_WORKTREE = "project has no Git worktree"
 _QUERY_FRESHNESS_KEY = "roam_query_index_freshness"
 _MAINTENANCE_COMMANDS = frozenset({"clean", "doctor", "index", "init", "reset", "watch"})
 
@@ -83,7 +85,9 @@ def format_index_age(age_s: float) -> str:
     return f"{count} {unit}{'s' if count != 1 else ''} ago"
 
 
-def _run_git(root: Path, command: list[str], deadline: _CheckDeadline) -> tuple[bytes | None, str | None]:
+def _run_git(
+    root: Path, command: list[str], deadline: _CheckDeadline, *, data: bytes | None = None
+) -> tuple[bytes | None, str | None]:
     env = worktree_git_env(root)
     if command[1] == "status":
         # A timed-out status must not leave Git's optional index write locked.
@@ -92,7 +96,9 @@ def _run_git(root: Path, command: list[str], deadline: _CheckDeadline) -> tuple[
     if remaining <= 0:
         return None, _BUDGET_EXCEEDED
     try:
-        result = subprocess.run(command, cwd=root, capture_output=True, env=env, timeout=remaining, check=False)
+        result = subprocess.run(
+            command, cwd=root, capture_output=True, env=env, timeout=remaining, check=False, input=data
+        )
     except FileNotFoundError as exc:
         log_swallowed("index_freshness:git", exc)
         return None, "Git executable unavailable"
@@ -102,9 +108,10 @@ def _run_git(root: Path, command: list[str], deadline: _CheckDeadline) -> tuple[
     except OSError as exc:
         log_swallowed("index_freshness:git", exc)
         return None, f"git {command[1]} could not run ({type(exc).__name__})"
-    if result.returncode:
+    no_ignored_paths = command[1] == "check-ignore" and result.returncode == 1 and not result.stdout
+    if result.returncode and not no_ignored_paths:
         return None, f"git {command[1]} failed (exit {result.returncode})"
-    if result.stderr.strip():
+    if result.stderr.strip() or (command[1] == "check-ignore" and not no_ignored_paths and not result.stdout):
         return None, f"git {command[1]} reported an incomplete result"
     return result.stdout, None
 
@@ -149,6 +156,7 @@ def _compare_indexed_files(
     paths: set[str],
     *,
     compare_all: bool,
+    ignored_paths: set[str],
     dirty: bool,
     include_excluded: bool,
     config_changed: bool,
@@ -170,7 +178,7 @@ def _compare_indexed_files(
         for path, language, mtime, digest in _indexed_rows(conn, paths, compare_all=compare_all):
             if time.monotonic() >= deadline.end:
                 return None, _BUDGET_EXCEEDED
-            listed = path in paths
+            listed = path in paths and path not in ignored_paths
             paths.discard(path)
             if not language and not detect_language(path):
                 continue
@@ -193,7 +201,7 @@ def _compare_indexed_files(
                 changed = True
             if changed:
                 changed_paths.add(path)
-        for path in paths:
+        for path in paths - ignored_paths:
             if time.monotonic() >= deadline.end:
                 return None, _BUDGET_EXCEEDED
             if detect_language(path) and _filter_files([path], root, exclude, include_excluded):
@@ -204,16 +212,46 @@ def _compare_indexed_files(
     return changed_paths, None
 
 
+def _listed_git_paths(root: Path, command: list[str], deadline: _CheckDeadline) -> tuple[set[str] | None, str | None]:
+    output, reason = _run_git(root, command, deadline)
+    if output is None:
+        return None, reason
+    if output and not output.endswith(b"\0"):
+        return None, "git ls-files reported an incomplete result"
+    return _git_paths(output), None
+
+
+def _recorded_paths_ignored(
+    root: Path, paths: set[str], deadline: _CheckDeadline
+) -> tuple[set[str] | None, str | None]:
+    if not paths:
+        return set(), None
+    # Git check-ignore skips tracked paths. Prefix relative paths to keep
+    # a leading colon literal.
+    names = {os.fsencode("./" + path): path for path in paths}
+    data = b"\0".join(sorted(names)) + b"\0"
+    ignored, reason = _run_git(root, ["git", "check-ignore", "--stdin", "-z"], deadline, data=data)
+    if ignored is None:
+        return None, reason
+    if not ignored:
+        return set(), None
+    records = set(ignored[:-1].split(b"\0"))
+    if not ignored.endswith(b"\0") or not records <= names.keys():
+        return None, "git check-ignore reported an incomplete result"
+    return {names[record] for record in records}, None
+
+
 def _candidate_paths(
     root: Path,
     git_root: Path,
     indexed_head: str,
     head: str,
-    paths: set[str],
+    status_paths: set[str],
     config_changed: bool,
     dirty_paths: list[str] | None,
     deadline: _CheckDeadline,
-) -> tuple[set[str] | None, bool, str | None]:
+) -> tuple[set[str] | None, bool, set[str], str | None]:
+    committed_paths: set[str] = set()
     if indexed_head != head:
         diff, reason = _run_git(
             git_root,
@@ -221,38 +259,46 @@ def _candidate_paths(
             deadline,
         )
         if diff is None:
-            return None, False, reason
-        paths.update(_git_paths(diff, name_status=True))
+            return None, False, set(), reason
+        if diff and not diff.endswith(b"\0"):
+            return None, False, set(), "git diff reported an incomplete result"
+        committed_paths = _git_paths(diff, name_status=True)
 
-    if dirty_paths is not None:
-        paths.update(dirty_paths)
-    # Legacy dirty manifests and builds spanning a HEAD change need a full
-    # comparison. Ignore rules can also affect otherwise unchanged files.
-    if dirty_paths is not None and not config_changed and not _has_gitignore(paths):
-        untracked_ancestor = False
-        if root != git_root:
-            # Porcelain, diffs and recorded dirty paths are relative to
-            # Git's root. Check ancestor ignore changes before rebasing.
-            prefix = root.relative_to(git_root).as_posix() + "/"
-            untracked_ancestor = any(path.endswith("/") and prefix.startswith(path) for path in paths)
-            paths = {path[len(prefix) :] for path in paths if path != prefix and path.startswith(prefix)}
-
-        if not untracked_ancestor and not any(path.endswith("/") for path in paths):
-            return paths, False, None
-        # Normal porcelain collapses untracked directories. Expanding them
-        # can uncover a .gitignore that changes the indexed scope.
-        listing, reason = _run_git(root, ["git", "ls-files", "-z", "--others", "--exclude-standard"], deadline)
-        if listing is None:
-            return None, False, reason
-        untracked = _git_paths(listing)
-        if not _has_gitignore(untracked):
-            paths = {path for path in paths if not path.endswith("/")}
-            return paths | untracked, False, None
+    prior = set(dirty_paths or ())
+    # Ignore rules can affect unchanged paths. A recorded dirty path that
+    # disappears from status can also have fallen out of Git's untracked
+    # discovery scope via info/exclude or a configured excludes file.
+    if dirty_paths is not None and not config_changed and not _has_gitignore(status_paths | committed_paths | prior):
+        prefix = root.relative_to(git_root).as_posix() + "/" if root != git_root else ""
+        collapsed = any(
+            path.endswith("/") and (path.startswith(prefix) or prefix.startswith(path)) for path in status_paths
+        )
+        current = {path[len(prefix) :] for path in status_paths if path.startswith(prefix) and not path.endswith("/")}
+        prior = {path[len(prefix) :] for path in prior if path.startswith(prefix)}
+        if collapsed:
+            untracked, reason = _listed_git_paths(
+                root, ["git", "ls-files", "-z", "--others", "--exclude-standard"], deadline
+            )
+            if untracked is None:
+                return None, False, set(), reason
+            if _has_gitignore(untracked):
+                current = None
+            else:
+                current.update(untracked)
+        if current is not None:
+            # A staged deletion is visible in status even when the file
+            # remains on disk and now falls under an exclude rule.
+            ignored, reason = _recorded_paths_ignored(root, prior, deadline)
+            if ignored is None:
+                return None, False, set(), reason
+            current.update(prior)
+            current.update(path[len(prefix) :] for path in committed_paths if path.startswith(prefix))
+            return current, False, ignored, None
 
     from roam.index.discovery import GIT_LS_FILES
 
-    listing, reason = _run_git(root, list(GIT_LS_FILES), deadline)
-    return (_git_paths(listing) if listing is not None else None), True, reason
+    listing, reason = _listed_git_paths(root, list(GIT_LS_FILES), deadline)
+    return listing, True, set(), reason
 
 
 @dataclass(frozen=True)
@@ -264,6 +310,7 @@ class QueryIndexFreshness:
     indexed_commit: str | None = None
     head_commit: str | None = None
     changed_paths: frozenset[str] = frozenset()
+    git_history_relation: str | None = None
 
     @property
     def state(self) -> str:
@@ -281,9 +328,7 @@ class QueryIndexFreshness:
 
     @property
     def git_history_behind(self) -> bool:
-        return (
-            self.indexed_commit is not None and self.head_commit is not None and self.indexed_commit != self.head_commit
-        )
+        return self.git_history_relation == "behind"
 
     def legacy_status(self) -> dict:
         """Compatibility fields from the same source snapshot comparison."""
@@ -308,6 +353,10 @@ class QueryIndexFreshness:
         return f"Index is stale ({age}, {changes}). Run `roam index` to refresh."
 
 
+def _is_git_oid(value: object) -> bool:
+    return isinstance(value, str) and len(value) in (40, 64) and all(c in "0123456789abcdef" for c in value)
+
+
 def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadline) -> QueryIndexFreshness:
     from roam.db.connection import find_project_root
     from roam.index.manifest import _config_hash
@@ -317,13 +366,13 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
     root = root.resolve()
     git_root = find_project_root(root)
     if not (git_root / ".git").exists():
-        return QueryIndexFreshness(age_s, None, "project has no Git worktree", skipped=True)
+        return QueryIndexFreshness(age_s, None, _NO_GIT_WORKTREE, skipped=True)
     if row is None:
         return QueryIndexFreshness(None, None, "no index manifest recorded")
     _, indexed_head, dirty_hash, notes, config_hash = row
     if not indexed_head:
         return QueryIndexFreshness(age_s, None, "the index manifest has no Git commit")
-    if len(indexed_head) not in (40, 64) or any(char not in "0123456789abcdef" for char in indexed_head):
+    if not _is_git_oid(indexed_head):
         return QueryIndexFreshness(age_s, None, "the index manifest has an invalid Git commit")
     status, reason = _run_git(git_root, [*GIT_STATUS_WITH_HEAD, "--untracked-files=normal"], deadline)
     if status is None:
@@ -332,10 +381,17 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
         if reason and reason.startswith("git status"):
             raw_head, _ = _run_git(git_root, ["git", "rev-parse", "HEAD"], deadline)
         head = os.fsdecode(raw_head).strip() if raw_head else None
-        return QueryIndexFreshness(age_s, None, reason, indexed_commit=indexed_head, head_commit=head)
+        if not _is_git_oid(head):
+            head = None
+        relation = _git_history_relation(git_root, indexed_head, head) if head and head != indexed_head else None
+        return QueryIndexFreshness(
+            age_s, None, reason, indexed_commit=indexed_head, head_commit=head, git_history_relation=relation
+        )
     head, status_paths = git_status_head_and_paths(status)
-    if head is None:
+    if not head or not _is_git_oid(head):
         return QueryIndexFreshness(age_s, None, "git status did not report a HEAD commit", indexed_commit=indexed_head)
+    if not status.endswith(b"\0"):
+        return QueryIndexFreshness(age_s, None, "git status reported an incomplete result", indexed_commit=indexed_head)
     metadata = _manifest_notes(notes)
     options = metadata.get("index_options")
     include_excluded = isinstance(options, dict) and options.get("include_excluded") is True
@@ -343,11 +399,11 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
     if (
         metadata.get("git_build_head_changed")
         or not isinstance(recorded_paths, list)
-        or any(not isinstance(path, str) for path in recorded_paths)
+        or any(not isinstance(path, str) or not path or "\0" in path for path in recorded_paths)
     ):
         recorded_paths = None
     config_changed = not include_excluded and _config_hash(root) != config_hash
-    paths, compare_all, reason = _candidate_paths(
+    paths, compare_all, ignored_paths, reason = _candidate_paths(
         root,
         git_root,
         indexed_head,
@@ -364,6 +420,7 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
             root,
             paths,
             compare_all=compare_all,
+            ignored_paths=ignored_paths,
             dirty=bool(dirty_hash),
             include_excluded=include_excluded,
             config_changed=config_changed,
@@ -378,6 +435,7 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
         indexed_commit=indexed_head,
         head_commit=head,
         changed_paths=frozenset(changed_paths or ()),
+        git_history_relation=_git_history_relation(git_root, indexed_head, head) if indexed_head != head else None,
     )
 
 
@@ -438,13 +496,13 @@ def _invoked_command(ctx: click.Context) -> str:
     return parent.invoked_subcommand or ctx.command.name or ""
 
 
-def project_index_freshness(root: Path) -> QueryIndexFreshness | None:
+def project_index_freshness(root: Path, *, required: bool = False) -> QueryIndexFreshness | None:
     """Observe an existing index and reuse its result within this invocation."""
     from roam.db.connection import StaleDbDirError, get_db_path
 
     ctx = click.get_current_context(silent=True)
     recorded = ctx.meta.get(_QUERY_FRESHNESS_KEY) if ctx is not None else None
-    if recorded is not None and recorded[0] == root:
+    if recorded is not None and recorded[0] == root and (not required or recorded[1] is not None):
         return recorded[1]
 
     try:
@@ -453,8 +511,13 @@ def project_index_freshness(root: Path) -> QueryIndexFreshness | None:
     except (OSError, StaleDbDirError) as exc:
         log_swallowed("index_freshness:db_path", exc)
         freshness = QueryIndexFreshness(None, None, "could not locate the index")
+    if freshness is None and required:
+        freshness = QueryIndexFreshness(None, None, "the index is unavailable")
     if ctx is not None:
-        ctx.meta[_QUERY_FRESHNESS_KEY] = (root, freshness)
+        if freshness is None:
+            ctx.meta[_QUERY_FRESHNESS_KEY] = (root, None)
+        else:
+            _record_query_index(ctx, root, freshness)
     return freshness
 
 
@@ -477,10 +540,10 @@ def query_index_freshness() -> QueryIndexFreshness | None:
 def _git_history_relation(root: Path, indexed: str, head: str) -> str:
     deadline = _CheckDeadline()
     env = worktree_git_env(root)
-    for ancestor, descendant, relation in ((indexed, head, "is behind HEAD"), (head, indexed, "is ahead of HEAD")):
+    for ancestor, descendant, relation in ((indexed, head, "behind"), (head, indexed, "ahead")):
         remaining = deadline.remaining()
         if remaining <= 0:
-            return "relationship to HEAD is unknown"
+            return "unknown"
         try:
             result = subprocess.run(
                 ["git", "merge-base", "--is-ancestor", ancestor, descendant],
@@ -492,25 +555,38 @@ def _git_history_relation(root: Path, indexed: str, head: str) -> str:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             log_swallowed("index_freshness:history", exc)
-            return "relationship to HEAD is unknown"
-        if result.returncode == 0:
+            return "unknown"
+        if result.returncode == 0 and not result.stderr:
             return relation
         if result.returncode == 128:
-            return "is unreachable in the local Git repository"
-        if result.returncode != 1:
-            return "relationship to HEAD is unknown"
-    return "has diverged from HEAD in the available history"
+            # Distinguish a missing object from other merge-base failures.
+            for commit in (indexed, head):
+                output, reason = _run_git(
+                    root, ["git", "cat-file", "--batch-check"], deadline, data=f"{commit}\n".encode()
+                )
+                if reason is None and output.splitlines() == [f"{commit} missing".encode()]:
+                    return "unreachable"
+            return "unknown"
+        if result.returncode != 1 or result.stderr:
+            return "unknown"
+    shallow, _ = _run_git(root, ["git", "rev-parse", "--is-shallow-repository"], deadline)
+    return "diverged" if shallow and shallow.strip() == b"false" else "unknown"
 
 
 def git_history_hint() -> str | None:
     """Describe how the indexed commit relates to the observed HEAD."""
     freshness = query_index_freshness()
-    if freshness and not os.environ.get("ROAM_NO_STALENESS_HINT"):
-        indexed, head = freshness.indexed_commit, freshness.head_commit
-        if indexed and head and freshness.git_history_behind:
-            root, _ = click.get_current_context().meta[_QUERY_FRESHNESS_KEY]
-            relation = _git_history_relation(root, indexed, head)
-            return f"Indexed Git history {relation} ({indexed[:12]} → {head[:12]}). Run `roam index` to refresh."
+    if freshness and freshness.git_history_relation and not os.environ.get("ROAM_NO_STALENESS_HINT"):
+        relation = {
+            "behind": "is behind HEAD",
+            "ahead": "is ahead of HEAD",
+            "diverged": "has diverged from HEAD in the available history",
+            "unreachable": "is unreachable in the local Git repository",
+            "unknown": "relationship to HEAD is unknown",
+        }[freshness.git_history_relation]
+        indexed = freshness.indexed_commit[:12]
+        head = freshness.head_commit[:12]
+        return f"Indexed Git history {relation} ({indexed} → {head}). Run `roam index` to refresh."
     return None
 
 
@@ -526,6 +602,99 @@ class StaleQueryIndexError(click.ClickException):
         self.json_output = json_output
 
 
+_composite_contexts: ContextVar[tuple[click.Context, ...]] = ContextVar("index_composite_contexts", default=())
+_FRESHNESS_PRIORITY = {"fresh": 0, "unknown": 1, "stale": 2}
+
+
+def freshness_priority(state: str, *, skipped: bool = False) -> int:
+    """Prefer evidence of staleness, then unavailable checks, over a fresh read."""
+    return _FRESHNESS_PRIORITY.get(state, -1) if not skipped else -1
+
+
+def strongest_index_metadata(results: list[dict]) -> tuple[dict, bool]:
+    """Copy the strongest index observation and indicate whether it was degraded."""
+    selected: dict = {}
+    best = -2
+    for result in results:
+        meta = result.get("_meta") if isinstance(result, dict) else None
+        if not isinstance(meta, dict) or not {"index_state", "index_changed_files", "stale_index"} & meta.keys():
+            continue
+        state, count = meta.get("index_state"), meta.get("index_changed_files")
+        if not (
+            (state == "fresh" and type(count) is int and count == 0)
+            or (state == "stale" and type(count) is int and count > 0)
+            or (state == "unknown" and count is None and isinstance(meta.get("index_state_reason"), str))
+        ):
+            meta = {
+                "index_state": "unknown",
+                "index_changed_files": None,
+                "index_state_reason": "a child reported invalid index freshness metadata",
+            }
+        skipped = meta["index_state"] == "unknown" and meta.get("index_state_reason") == _NO_GIT_WORKTREE
+        rank = freshness_priority(meta["index_state"], skipped=skipped)
+        if rank > best:
+            selected = meta
+            best = rank
+    return {
+        key: value
+        for key, value in selected.items()
+        if key.startswith(("index_", "git_history_")) or key == "stale_index"
+    }, best > 0
+
+
+def inside_index_composite() -> bool:
+    """True for a CLI child whose caller reports freshness at the composite level."""
+    return bool(_composite_contexts.get())
+
+
+class IndexCompositeRunner(CliRunner):
+    """Run a CLI child and disclose its index observation to the calling command."""
+
+    def invoke(self, cli, args=None, **kwargs):
+        parent = click.get_current_context(silent=True)
+        if parent is None or not isinstance(parent.obj, dict):
+            return super().invoke(cli, args, **kwargs)
+
+        before = parent.meta.get(_QUERY_FRESHNESS_KEY)
+        ancestors = _composite_contexts.get()
+        token = _composite_contexts.set((*ancestors, parent))
+        try:
+            result = super().invoke(cli, args, **kwargs)
+        finally:
+            _composite_contexts.reset(token)
+
+        after = parent.meta.get(_QUERY_FRESHNESS_KEY)
+        if after is not None and after[1] is not None:
+            check_query_index_policy(parent, after[1], warn=not ancestors and after is not before)
+        return result
+
+
+def _record_query_index(ctx: click.Context, root: Path, freshness: QueryIndexFreshness) -> None:
+    ctx.meta[_QUERY_FRESHNESS_KEY] = (root, freshness)
+    rank = freshness_priority(freshness.state, skipped=freshness.skipped)
+    for parent in _composite_contexts.get():
+        existing = parent.meta.get(_QUERY_FRESHNESS_KEY)
+        if existing is not None and existing[1] is not None:
+            previous = existing[1]
+            if freshness_priority(previous.state, skipped=previous.skipped) >= rank:
+                continue
+        parent.meta[_QUERY_FRESHNESS_KEY] = (root, freshness)
+
+
+def check_query_index_policy(ctx: click.Context, freshness: QueryIndexFreshness, *, warn: bool) -> None:
+    if not freshness.degraded:
+        return
+    output_format = ctx.params.get("output_format") or ctx.params.get("fmt")
+    json_output = bool(
+        ctx.obj.get("json") or ctx.params.get("json_mode") or ctx.params.get("json_output") or output_format == "json"
+    )
+    if freshness.stale and command_is_stale_sensitive(_invoked_command(ctx)) and refuse_stale_index():
+        raise StaleQueryIndexError(freshness.message(), json_output=json_output)
+    if warn and not (json_output or ctx.obj.get("sarif") or output_format == "sarif"):
+        if hint := freshness.text_hint():
+            click.echo(f"Warning: {hint}", err=True)
+
+
 def observe_query_index(conn: sqlite3.Connection, root: Path) -> None:
     """Check the first index read in a command and share it with its envelopes."""
     ctx = click.get_current_context(silent=True)
@@ -534,19 +703,13 @@ def observe_query_index(conn: sqlite3.Connection, root: Path) -> None:
         if observations is not None and root not in observations:
             observations[root] = read_query_index_freshness(conn, root)
         return
-    command = _invoked_command(ctx)
-    if command in _MAINTENANCE_COMMANDS or _QUERY_FRESHNESS_KEY in ctx.meta:
+    if _invoked_command(ctx) in _MAINTENANCE_COMMANDS or _QUERY_FRESHNESS_KEY in ctx.meta:
         return
     freshness = read_query_index_freshness(conn, root)
-    ctx.meta[_QUERY_FRESHNESS_KEY] = (root, freshness)
-    if not freshness.degraded:
-        return
-    output_format = ctx.params.get("output_format") or ctx.params.get("fmt")
-    json_output = bool(
-        ctx.obj.get("json") or ctx.params.get("json_mode") or ctx.params.get("json_output") or output_format == "json"
-    )
-    if freshness.stale and command_is_stale_sensitive(command) and refuse_stale_index():
-        raise StaleQueryIndexError(freshness.message(), json_output=json_output)
-    if not (json_output or ctx.obj.get("sarif") or output_format == "sarif"):
-        if hint := freshness.text_hint():
-            click.echo(f"Warning: {hint}", err=True)
+    _record_query_index(ctx, root, freshness)
+    # Refuse before any child consumes stale data, even if only its
+    # enclosing command is stale-sensitive.
+    if freshness.stale and inside_index_composite() and refuse_stale_index():
+        if any(command_is_stale_sensitive(_invoked_command(parent)) for parent in _composite_contexts.get()):
+            raise StaleQueryIndexError(freshness.message(), json_output=True)
+    check_query_index_policy(ctx, freshness, warn=not inside_index_composite())

@@ -63,7 +63,7 @@ def weather(ctx, count):
             else:
                 click.echo("VERDICT: no churn data available\n")
                 if hint := git_history_hint():
-                    click.echo(f"NOTE: {hint}\n")
+                    click.echo(f"NOTE: {hint}", err=True)
                 click.echo("No churn data available. Is this a git repository?")
             return
 
@@ -166,7 +166,7 @@ def weather(ctx, count):
             _verdict = "no hotspots found"
         click.echo(f"VERDICT: {_verdict}\n")
         if hint := git_history_hint():
-            click.echo(f"NOTE: {hint}\n")
+            click.echo(f"NOTE: {hint}", err=True)
         click.echo("=== Hotspots (churn x complexity) ===")
         click.echo(
             format_table(

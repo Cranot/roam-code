@@ -1166,7 +1166,7 @@ def diagnose_cmd(ctx, name, depth, batch_input):
 
         echo_text_warnings(list(_w607dn_warnings_out) + list(_w607s_warnings_out) + list(_w607bh_warnings_out))
         if hint := git_history_hint():
-            click.echo(f"NOTE: {hint}\n")
+            click.echo(f"NOTE: {hint}", err=True)
         click.echo(f"VERDICT: {verdict}")
         sym_name = sym["qualified_name"] or sym["name"]
         click.echo(f"Diagnose: {sym_name}")

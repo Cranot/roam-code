@@ -79,6 +79,14 @@ from roam.commands.pr_analyze.cache import (
     _save_cache,
 )
 from roam.commands.resolve import ensure_index
+from roam.db.freshness import (
+    IndexCompositeRunner,
+    StaleQueryIndexError,
+    check_query_index_policy,
+    project_index_freshness,
+    strongest_index_metadata,
+)
+from roam.exit_codes import EXIT_ERROR
 from roam.observability import log_swallowed
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
@@ -227,7 +235,7 @@ def _capture_suggest_reviewers(file_paths: list[str], top: int) -> dict:
         return {"summary": {"verdict": "no files in diff"}}
     from roam.cli import cli
 
-    runner = CliRunner()
+    runner = IndexCompositeRunner()
     args = ["--json", "suggest-reviewers", "--top", str(top), *file_paths]
     result = runner.invoke(cli, args)
     try:
@@ -294,7 +302,7 @@ def _capture_pr_prep(
     """
     from roam.cli import cli
 
-    runner = CliRunner()
+    runner = IndexCompositeRunner()
     args = ["--json", "pr-prep"]
     tmp_path: str | None = None
     try:
@@ -1531,6 +1539,11 @@ def _serve_from_cache(
     cached = _load_cache(cache_dir_path, key)
     if cached is None:
         return False
+    from roam.db.connection import find_project_root
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and (freshness := project_index_freshness(find_project_root(), required=True)):
+        check_query_index_policy(ctx, freshness, warn=True)
     cached["cache_hit"] = True
     cached["cache_key"] = key
     s = cached.get("summary") or {}
@@ -1636,7 +1649,8 @@ def _run_watch_loop(
                 if diff_from_pr:
                     args.extend(["--diff-from-pr", diff_from_pr])
                 result = runner.invoke(cli, args, catch_exceptions=False)
-                click.echo(result.output)
+                click.echo(result.stdout, nl=False)
+                click.echo(result.stderr, err=True, nl=False)
                 last_hash = cur_hash
             time.sleep(watch_seconds)
     except KeyboardInterrupt:
@@ -1768,12 +1782,17 @@ def _process_single_diff(
     result = runner.invoke(cli, args)
     row: dict = {"file": Path(diff_path).name}
     try:
-        env = _json.loads(result.output)
+        env = _json.loads(result.stdout)
         s = env.get("summary") or {}
         row["verdict"] = s.get("verdict")
         row["blast_radius"] = s.get("blast_radius")
         row["ai_likelihood"] = s.get("ai_likelihood")
         row["rule_violations"] = s.get("rule_violations")
+        if "_meta" in env and "index_state" in env["_meta"]:
+            row["_meta"], _ = strongest_index_metadata([env])
+        if env.get("error_code") == "INDEX_STALE":
+            row["error_code"] = env["error_code"]
+            row["error"] = env["error"]
         # Surface cache hit in the row so batch summary can compute hit-rate.
         row["cache_hit"] = bool(env.get("cache_hit"))
     except Exception as exc:  # noqa: BLE001 — defensive
@@ -1934,18 +1953,43 @@ def _emit_batch(
             "cache_hits": cache_hits,
             "cache_hit_rate": round(cache_hits / len(per_file), 3) if per_file else 0,
         }
+    freshness_meta, degraded = strongest_index_metadata(per_file)
+    stale_refusal = next((row for row in per_file if row.get("error_code") == "INDEX_STALE"), None)
+    if degraded:
+        summary["partial_success"] = True
+    if stale_refusal:
+        summary.update(
+            verdict="Run `roam index` to refresh the stale index",
+            state="stale_index",
+            worst_verdict=None,
+            partial_success=True,
+        )
     bundle = {"summary": summary, "files": per_file}
+    if stale_refusal:
+        bundle.update(
+            error_code="INDEX_STALE", status="stale_index", error=stale_refusal["error"], next_command="roam index"
+        )
 
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     pr_analyze_batch_envelope = json_envelope("pr-analyze", budget=token_budget, **bundle)
+    pr_analyze_batch_envelope.setdefault("_meta", {}).update(freshness_meta)
     auto_log(pr_analyze_batch_envelope, action="pr-analyze", target=str(base))
     if stream_jsonl:
         # Per-file rows already emitted line-by-line above; finish with the
         # summary as the last JSONL line so consumers can detect end-of-stream.
-        click.echo(_json.dumps({"_summary": summary}, separators=(",", ":")))
+        terminal = {"_summary": summary}
+        if freshness_meta:
+            terminal["_meta"] = freshness_meta
+        if stale_refusal:
+            terminal["error_code"] = "INDEX_STALE"
+        click.echo(_json.dumps(terminal, separators=(",", ":")))
     elif json_mode:
         click.echo(to_json(pr_analyze_batch_envelope))
     else:
+        if degraded and not os.environ.get("ROAM_NO_STALENESS_HINT"):
+            hint = (freshness_meta.get("index_status") or {}).get("hint")
+            if hint:
+                click.echo(f"Warning: {hint}", err=True)
         click.echo(f"VERDICT: {summary['verdict']}")
         click.echo(f"  files processed: {len(per_file)}")
         click.echo(f"  counts: {verdict_counts}")
@@ -1965,6 +2009,8 @@ def _emit_batch(
             else:
                 click.echo(f"{row['file']:<40}  {str(v):<12}  {str(b):>5}  {str(a):>5}  {str(r):>5}")
 
+    if stale_refusal:
+        sys.exit(EXIT_ERROR)
     if gate and worst_verdict == "BLOCK":
         sys.exit(EXIT_GATE_BLOCK)
 
@@ -2213,6 +2259,8 @@ def pr_analyze_command(
         """
         try:
             return fn(*args, **kwargs)
+        except StaleQueryIndexError:
+            raise
         except Exception as exc:  # noqa: BLE001 -- top-level disclosure
             _w607aa_warnings_out.append(f"pr_analyze_{phase}_failed:{type(exc).__name__}:{exc}")
             return default

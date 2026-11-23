@@ -3785,6 +3785,19 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
 
     preview = _build_handle_preview(payload)
     result = _build_handle_envelope(sha=sha, size=size, target=target, tool_name=tool_name, preview=preview)
+    meta = payload.get("_meta")
+    if isinstance(meta, dict) and meta.get("index_state") in ("fresh", "stale", "unknown"):
+        result["_meta"] = {
+            key: meta[key]
+            for key in (
+                "index_state",
+                "index_changed_files",
+                "index_state_reason",
+                "stale_index",
+                "git_history_relation",
+            )
+            if key in meta
+        }
     if gc_warning:
         result["summary"]["partial_success"] = True
         result["summary"]["verdict"] += "; handle cleanup status unknown"
@@ -6977,6 +6990,33 @@ def _score_prepare_change_recipe(sub_results: list[tuple[str, dict]]) -> str:
     return best if scores[best] > 0 else "safe-delete-check"
 
 
+def _disclose_compound_freshness(result: dict, sub_results: list[tuple[str, dict]]) -> None:
+    """Keep the strongest index observation accessible at the compound level."""
+    from roam.db.freshness import strongest_index_metadata
+
+    children = [child for _, child in sub_results if isinstance(child, dict)]
+    meta, degraded = strongest_index_metadata(children)
+    if meta:
+        result.setdefault("_meta", {}).update(meta)
+    if degraded:
+        result["summary"]["partial_success"] = True
+    refusal = next((child for child in children if child.get("error_code") == "INDEX_STALE"), None)
+    if refusal is not None:
+        result.update(
+            isError=True,
+            error_code="INDEX_STALE",
+            status="stale_index",
+            error=refusal.get("error") or refusal.get("first_error_message") or "The index is stale.",
+            hint="Run `roam index` to refresh.",
+            next_command="roam index",
+        )
+        result["summary"].update(
+            partial_success=True,
+            state="stale_index",
+            verdict="Run `roam index` to refresh the stale index",
+        )
+
+
 def _compound_envelope(
     command: str,
     sub_results: list[tuple[str, dict]],
@@ -7157,6 +7197,7 @@ def _compound_envelope(
     # through ``_run_roam``. Tick the session-wide
     # counter here too so the session_metrics envelope reflects partial
     # compound outcomes.
+    _disclose_compound_freshness(result, sub_results)
     _note_partial_success(result)
     return result
 
@@ -9255,6 +9296,7 @@ def _finalize_compound_recipe(
                 "target": target,
             },
         }
+        _disclose_compound_freshness(envelope, sections)
     if warnings_out:
         summary = envelope.setdefault("summary", {})
         existing_summary_wo = list(summary.get("warnings_out") or [])
