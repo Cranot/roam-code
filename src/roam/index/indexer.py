@@ -35,6 +35,7 @@ from roam.index.discovery import discover_files
 from roam.index.django_post import resolve_all_django  # noqa: F401
 from roam.index.file_roles import classify_file
 from roam.index.incremental import file_hash, get_index_changed_files
+from roam.index.manifest import GitSnapshot, capture_git_snapshot, record_indexer_run
 from roam.index.parser import (
     detect_language,
     extract_vue_template,
@@ -2739,7 +2740,7 @@ class Indexer:
         if error_summary:
             self._log(f"  Parse issues: {error_summary}")
 
-    def _record_manifest(self, conn, *, force: bool, include_excluded: bool) -> None:
+    def _record_manifest(self, conn, *, force: bool, include_excluded: bool, git_before: GitSnapshot) -> None:
         """Persist an index_manifest row capturing this run's environment.
 
         Best-effort: any failure logs (in verbose mode via ROAM_DEBUG) but
@@ -2755,10 +2756,6 @@ class Indexer:
         key still rides along in ``notes`` (it's an indexer-internal
         gate, not a consumer signal).
         """
-        try:
-            from roam.index.manifest import record_indexer_run
-        except ImportError:
-            return
         step_status = getattr(self, "_step_status", None) or None
         cluster_sig = getattr(self, "_cluster_signature", None)
         phase_timings = self._phase_timer.timings if self._phase_timer else None
@@ -2785,6 +2782,7 @@ class Indexer:
             profile="all",
             notes=notes_payload,
             steps_status=step_status,
+            git_before=git_before,
         )
 
     def _set_completion_summary(self, conn, elapsed: float) -> None:
@@ -2897,6 +2895,7 @@ class Indexer:
         # JSON under "phase_timings". Stable keys live in ``_PhaseTimer``.
         self._phase_timer = _PhaseTimer(self._quiet, self._log)
         t_discover = time.perf_counter()
+        git_before = capture_git_snapshot(self.root)
         self._log("Discovering files...")
         all_files = discover_files(self.root, include_excluded=include_excluded)
         self._log(f"  {_format_count(len(all_files))} files found")
@@ -2943,7 +2942,7 @@ class Indexer:
                     self._phase_timer.begin_phase(4, "Checking git history...")
                     self._run_git_analysis(conn)
                     self._phase_timer.close_open_phase()
-                    self._record_manifest(conn, force=force, include_excluded=include_excluded)
+                    self._record_manifest(conn, force=force, include_excluded=include_excluded, git_before=git_before)
                 self.summary = {
                     "files": 0,
                     "symbols": 0,
@@ -3023,7 +3022,7 @@ class Indexer:
             self._phase_timer.close_open_phase()
             self._log_parse_issues()
             self._set_completion_summary(conn, time.monotonic() - t0)
-            self._record_manifest(conn, force=force, include_excluded=include_excluded)
+            self._record_manifest(conn, force=force, include_excluded=include_excluded, git_before=git_before)
 
         try:
             from roam.graph.builder import clear_graph_cache

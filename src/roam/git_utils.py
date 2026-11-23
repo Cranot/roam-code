@@ -16,11 +16,31 @@ import os
 from pathlib import Path
 
 GIT_STATUS_PORCELAIN = ("git", "status", "--porcelain=v1", "-z", "--no-renames")
+GIT_STATUS_WITH_HEAD = ("git", "status", "--porcelain=v2", "--branch", "--no-ahead-behind", "-z", "--no-renames")
 
 
 def git_status_paths(status: bytes) -> set[str]:
     """Extract both sides of renames from status run with --no-renames."""
     return {record[3:].replace("\\", "/") for record in status.decode("utf-8", errors="replace").split("\0") if record}
+
+
+def git_status_head_and_paths(status: bytes) -> tuple[str | None, set[str]]:
+    """Read HEAD and paths from porcelain v2 with rename detection disabled."""
+    # Ordinary, unmerged and untracked records have different field counts.
+    path_offsets = {"1 ": 8, "u ": 10, "? ": 1}
+    head = None
+    paths: set[str] = set()
+    for record in status.decode("utf-8", errors="replace").split("\0"):
+        if record.startswith("# branch.oid "):
+            oid = record.removeprefix("# branch.oid ")
+            if oid != "(initial)":
+                head = oid
+            continue
+        # A fixed number of fields precedes the path, which may contain spaces.
+        fields = path_offsets.get(record[:2])
+        if fields is not None:
+            paths.add(record.split(" ", fields)[-1].replace("\\", "/"))
+    return head, paths
 
 
 _GIT_SUBPROCESS_ENV_ALLOWLIST = frozenset(

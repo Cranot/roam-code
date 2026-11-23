@@ -64,6 +64,8 @@ def test_snapshot_write_preserves_index_age(query_project, cli_runner):
 
 
 def test_git_failure_leaves_index_state_unknown(query_project, cli_runner, monkeypatch):
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "Move HEAD"], check=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     run = subprocess.run
 
     def fail_git_status(command, *args, **kwargs):
@@ -83,6 +85,7 @@ def test_git_failure_leaves_index_state_unknown(query_project, cli_runner, monke
     assert envelope["_meta"]["index_state"] == "unknown"
     assert envelope["_meta"]["index_changed_files"] is None
     assert "git status" in envelope["_meta"]["index_state_reason"]
+    assert envelope["_meta"]["git_history_head_commit"] == head
     assert "stale_index" not in envelope["_meta"]
     assert envelope["summary"]["partial_success"] is True
 
@@ -382,9 +385,7 @@ def test_clean_build_checks_git_status_without_listing_all_files(query_project, 
     freshness = probe_index_freshness(get_db_path(), query_project)
 
     assert freshness.changed_paths == {"app.py"}
-    assert commands.count("status") == 1
-    assert "ls-files" not in commands
-    assert len(commands) == len(set(commands))
+    assert commands == ["status"]
 
 
 def test_non_git_query_and_doctor(tmp_path, cli_runner, monkeypatch):
@@ -551,6 +552,62 @@ def test_init_indexes_the_configuration_it_writes(project_factory, cli_runner, m
     assert json.loads(result.stdout)["_meta"]["index_state"] == "fresh"
 
 
+def test_init_discloses_existing_stale_index(query_project, cli_runner):
+    (query_project / "app.py").write_text("def changed_since_init(): pass\n")
+
+    result = cli_runner.invoke(cli, ["init"])
+    assert result.exit_code == 0, result.output
+    assert "Index is stale" in result.stderr
+    assert "Roam is ready" not in result.stdout
+
+
+def test_init_discloses_existing_stale_index_in_json(query_project, cli_runner):
+    (query_project / "app.py").write_text("def changed_since_init(): pass\n")
+
+    result = cli_runner.invoke(cli, ["--json", "init"])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["_meta"]["index_state"] == "stale"
+    assert envelope["_meta"]["index_changed_files"] == 1
+    assert envelope["summary"]["partial_success"] is True
+    assert "Index is stale" in envelope["warnings"][-1]["message"]
+
+
+@pytest.mark.parametrize("move_head", [False, True], ids=["revert-and-edit", "checkout"])
+def test_index_discloses_changes_between_manifest_snapshots(project_factory, monkeypatch, move_head):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    project = project_factory({"app.py": "def original(): pass\n", "other.py": "def other(): pass\n"}, index=False)
+    monkeypatch.chdir(project)
+    app = project / "app.py"
+    app.write_text("def indexed_during_race(): pass\n")
+    if move_head:
+        subprocess.run(["git", "commit", "-qam", "New source"], check=True)
+
+    record_manifest = Indexer._record_manifest
+
+    def change_tree(indexer, *args, **kwargs):
+        if move_head:
+            subprocess.run(["git", "checkout", "-q", "--detach", "HEAD^"], check=True)
+        else:
+            subprocess.run(["git", "restore", "app.py"], check=True)
+            (project / "other.py").write_text("def changed_after_read(): pass\n")
+        return record_manifest(indexer, *args, **kwargs)
+
+    monkeypatch.setattr(Indexer, "_record_manifest", change_tree)
+    assert Indexer(project).run(quiet=True)
+    db = get_db_path(project)
+    with closing(sqlite3.connect(db)) as conn:
+        assert conn.execute("SELECT 1 FROM symbols WHERE name='indexed_during_race'").fetchone() == (1,)
+        dirty_hash, notes = conn.execute("SELECT git_dirty_hash, notes FROM index_manifest").fetchone()
+    freshness = probe_index_freshness(db, project)
+    expected = {"app.py"} if move_head else {"app.py", "other.py"}
+    assert freshness.changed_paths == expected
+    assert dirty_hash
+    assert json.loads(notes)["git_dirty_paths"] == ([] if move_head else sorted(expected))
+
+
 def test_gitignore_edit_compares_scope_with_one_pattern_compilation(project_factory, monkeypatch):
     from roam.db.freshness import probe_index_freshness
     from roam.index import gitignore
@@ -646,6 +703,7 @@ def test_head_only_change_discloses_git_history_lag(query_project, cli_runner, m
     assert result.exit_code == 0, result.output
     assert ("NOTE: Indexed Git history" in result.output) is reads_history
     if reads_history:
+        assert "Indexed Git history is behind HEAD" in result.output
         assert indexed[:12] in result.output and head[:12] in result.output
     assert "Index is stale" not in result.stderr
 
@@ -654,6 +712,23 @@ def test_head_only_change_discloses_git_history_lag(query_project, cli_runner, m
     result = cli_runner.invoke(cli, ["--json", *args])
     assert result.exit_code == 0, result.output
     assert "git_history_behind" not in json.loads(result.stdout)["_meta"]
+
+
+@pytest.mark.parametrize("diverged", [False, True], ids=["ahead", "diverged"])
+def test_git_history_note_after_backward_or_divergent_move(project_factory, cli_runner, monkeypatch, diverged):
+    project = project_factory({"app.py": "def indexed_helper(): pass\n"}, index=False)
+    monkeypatch.chdir(project)
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "Indexed history"], check=True)
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+
+    subprocess.run(["git", "checkout", "-q", "--detach", "HEAD^"], check=True)
+    if diverged:
+        subprocess.run(["git", "commit", "--allow-empty", "-qm", "Divergent history"], check=True)
+
+    result = cli_runner.invoke(cli, ["weather"])
+    assert result.exit_code == 0, result.output
+    expected = "has diverged from HEAD" if diverged else "is ahead of HEAD"
+    assert f"Indexed Git history {expected}" in result.stdout
 
 
 def test_linked_worktree_uses_its_own_index(project_factory, tmp_path):
@@ -708,7 +783,7 @@ def test_explicit_project_root_inside_repository(project_factory):
     assert probe_index_freshness(db, project).changed_paths == {"new.py"}
 
 
-def test_pruned_indexed_commit_after_rebase_is_not_fresh(project_factory):
+def test_pruned_indexed_commit_after_rebase_is_not_fresh(project_factory, cli_runner, monkeypatch):
     from roam.db.freshness import probe_index_freshness
     from roam.index.indexer import Indexer
 
@@ -738,6 +813,10 @@ def test_pruned_indexed_commit_after_rebase_is_not_fresh(project_factory):
     assert freshness.reason and "git diff" in freshness.reason
     assert freshness.indexed_commit == indexed
     assert freshness.head_commit == git("rev-parse", "HEAD")
+    monkeypatch.chdir(repo)
+    result = cli_runner.invoke(cli, ["weather"])
+    assert result.exit_code == 0, result.output
+    assert "Indexed Git history is unreachable" in result.stdout
 
 
 def test_shallow_clone_compares_snapshots_after_fetch(project_factory, tmp_path):
@@ -772,3 +851,22 @@ def test_git_paths_preserve_spaces_unicode_and_quoted_names(project_factory):
     assert probe_index_freshness(db, repo).changed_paths == {path}
     subprocess.run(["git", "commit", "-qam", "Edit quoted path"], cwd=repo, check=True)
     assert probe_index_freshness(db, repo).changed_paths == {path}
+
+
+def test_git_status_preserves_unmerged_path(project_factory, monkeypatch):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    path = "module with spaces.py"
+    repo = project_factory({path: "def original(): pass\n"}, index=False)
+    monkeypatch.chdir(repo)
+    subprocess.run(["git", "checkout", "-qb", "side"], check=True)
+    (repo / path).write_text("def side(): pass\n")
+    subprocess.run(["git", "commit", "-qam", "Side edit"], check=True)
+    subprocess.run(["git", "checkout", "-q", "-"], check=True)
+    (repo / path).write_text("def main(): pass\n")
+    subprocess.run(["git", "commit", "-qam", "Main edit"], check=True)
+    assert Indexer(repo).run(quiet=True)
+    merge = subprocess.run(["git", "merge", "side"], capture_output=True, check=False)
+    assert merge.returncode == 1
+    assert probe_index_freshness(get_db_path(repo), repo).changed_paths == {path}

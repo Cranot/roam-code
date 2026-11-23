@@ -19,6 +19,7 @@ from roam.capability import roam_capability
 from roam.commands.cmd_ci_setup import _GITHUB_PR_RANGE_STEP
 from roam.commands.resolve import ensure_index
 from roam.db.connection import _is_genuine_git_marker, db_exists, find_project_root
+from roam.db.freshness import project_index_freshness
 from roam.db.fs_detect import cloud_sync_warning, detect_cloud_sync
 from roam.output.formatter import json_envelope, to_json
 
@@ -235,7 +236,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
     Indexes the project, creates ``.roam/`` config directory with
     ``fitness.yaml``, and (if absent) writes a starter ``.roamignore``
     template at the project root. Refuses to run outside a git
-    repository. Default ``--with-ci=none`` writes no CI file; pass
+    repository. Reports any stale existing index and how to refresh it.
+    Default ``--with-ci=none`` writes no CI file; pass
     ``--with-ci=github`` to opt into a starter GitHub Actions
     workflow. For full multi-platform CI generation (including
     GitLab), see ``roam ci-setup``.
@@ -446,7 +448,13 @@ def init(ctx, root, yes, with_ci, since, full_history):
     _files = corpus.files
     _symbols = corpus.symbols
     _edges = corpus.edges
-    if corpus.state == STATE_INDEXED:
+    freshness = project_index_freshness(project_root) if had_index else None
+    stale = freshness is not None and freshness.stale
+    if stale:
+        warnings.append({"code": "INDEX_STALE", "message": freshness.message()})
+    if corpus.state == STATE_INDEXED and stale:
+        _verdict = "initialized with a stale index"
+    elif corpus.state == STATE_INDEXED:
         _verdict = f"initialized: {_files} files, {_symbols} symbols, {_edges} edges"
     else:
         # ``detail`` already opens with "no indexable content:",
@@ -469,6 +477,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
     }
     if corpus.state != STATE_INDEXED:
         summary["reason"] = corpus.reason
+    if stale or corpus.state != STATE_INDEXED:
         summary["partial_success"] = True
     if corpus.state == STATE_FAILED:
         summary["resolution"] = "unresolved"
@@ -515,7 +524,10 @@ def init(ctx, root, yes, with_ci, since, full_history):
     if warnings:
         click.echo("", err=True)
 
-    if corpus.state == STATE_INDEXED:
+    if corpus.state != STATE_INDEXED:
+        for line in corpus.text_lines()[1:]:
+            click.echo(line)
+    elif not stale:
         click.echo(
             _WELCOME.format(
                 files=_files,
@@ -523,11 +535,6 @@ def init(ctx, root, yes, with_ci, since, full_history):
                 edges=_edges,
             )
         )
-    else:
-        # No "Roam is ready" banner over an index that can answer nothing.
-        # The disclosure block names which zero this is and what caused it.
-        for line in corpus.text_lines()[1:]:
-            click.echo(line)
 
     if created:
         click.echo("\nCreated:")

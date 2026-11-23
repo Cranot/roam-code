@@ -15,7 +15,7 @@ from pathlib import Path
 
 import click
 
-from roam.git_utils import GIT_STATUS_PORCELAIN, git_status_paths, worktree_git_env
+from roam.git_utils import GIT_STATUS_WITH_HEAD, git_status_head_and_paths, worktree_git_env
 from roam.observability import log_swallowed
 
 _CHECK_BUDGET_S = 0.3
@@ -187,14 +187,11 @@ def _candidate_paths(
     git_root: Path,
     indexed_head: str,
     head: str,
+    paths: set[str],
     config_changed: bool,
     dirty_paths: list[str] | None,
     deadline: float,
 ) -> tuple[set[str] | None, bool, str | None]:
-    status, reason = _run_git(git_root, [*GIT_STATUS_PORCELAIN, "--untracked-files=normal"], deadline)
-    if status is None:
-        return None, False, reason
-    paths = git_status_paths(status)
     if indexed_head != head:
         diff, reason = _run_git(
             git_root,
@@ -207,8 +204,8 @@ def _candidate_paths(
 
     if dirty_paths is not None:
         paths.update(dirty_paths)
-    # Legacy dirty manifests have no path list. Ignore rule changes can
-    # also affect files that Git otherwise reports as unchanged.
+    # Legacy dirty manifests and builds spanning a HEAD change need a full
+    # comparison. Ignore rules can also affect otherwise unchanged files.
     if dirty_paths is not None and not config_changed and not _has_gitignore(paths):
         untracked_ancestor = False
         if root != git_root:
@@ -306,15 +303,26 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: float) -> Qu
         return QueryIndexFreshness(age_s, None, "the index manifest has no Git commit")
     if len(indexed_head) not in (40, 64) or any(char not in "0123456789abcdef" for char in indexed_head):
         return QueryIndexFreshness(age_s, None, "the index manifest has an invalid Git commit")
-    raw_head, reason = _run_git(git_root, ["git", "rev-parse", "HEAD"], deadline)
-    if raw_head is None:
-        return QueryIndexFreshness(age_s, None, reason, indexed_commit=indexed_head)
-    head = os.fsdecode(raw_head).strip()
+    status, reason = _run_git(git_root, [*GIT_STATUS_WITH_HEAD, "--untracked-files=normal"], deadline)
+    if status is None:
+        # A failed worktree scan can still leave HEAD readable.
+        raw_head = None
+        if reason and reason.startswith("git status"):
+            raw_head, _ = _run_git(git_root, ["git", "rev-parse", "HEAD"], deadline)
+        head = os.fsdecode(raw_head).strip() if raw_head else None
+        return QueryIndexFreshness(age_s, None, reason, indexed_commit=indexed_head, head_commit=head)
+    head, status_paths = git_status_head_and_paths(status)
+    if head is None:
+        return QueryIndexFreshness(age_s, None, "git status did not report a HEAD commit", indexed_commit=indexed_head)
     metadata = _manifest_notes(notes)
     options = metadata.get("index_options")
     include_excluded = isinstance(options, dict) and options.get("include_excluded") is True
     recorded_paths = metadata.get("git_dirty_paths", None if dirty_hash else [])
-    if not isinstance(recorded_paths, list) or any(not isinstance(path, str) for path in recorded_paths):
+    if (
+        metadata.get("git_build_head_changed")
+        or not isinstance(recorded_paths, list)
+        or any(not isinstance(path, str) for path in recorded_paths)
+    ):
         recorded_paths = None
     config_changed = not include_excluded and _config_hash(root) != config_hash
     paths, compare_all, reason = _candidate_paths(
@@ -322,6 +330,7 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: float) -> Qu
         git_root,
         indexed_head,
         head,
+        status_paths,
         config_changed,
         recorded_paths,
         deadline,
@@ -443,13 +452,43 @@ def query_index_freshness() -> QueryIndexFreshness | None:
     return project_index_freshness(find_project_root())
 
 
+def _git_history_relation(root: Path, indexed: str, head: str) -> str:
+    deadline = time.monotonic() + _CHECK_BUDGET_S
+    env = worktree_git_env(root)
+    for ancestor, descendant, relation in ((indexed, head, "is behind HEAD"), (head, indexed, "is ahead of HEAD")):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return "relationship to HEAD is unknown"
+        try:
+            result = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+                cwd=root,
+                capture_output=True,
+                env=env,
+                timeout=remaining,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log_swallowed("index_freshness:history", exc)
+            return "relationship to HEAD is unknown"
+        if result.returncode == 0:
+            return relation
+        if result.returncode == 128:
+            return "is unreachable in the local Git repository"
+        if result.returncode != 1:
+            return "relationship to HEAD is unknown"
+    return "has diverged from HEAD in the available history"
+
+
 def git_history_hint() -> str | None:
-    """Describe a history lag using the index observation for this command."""
+    """Describe how the indexed commit relates to the observed HEAD."""
     freshness = query_index_freshness()
     if freshness and not os.environ.get("ROAM_NO_STALENESS_HINT"):
         indexed, head = freshness.indexed_commit, freshness.head_commit
         if indexed and head and freshness.git_history_behind:
-            return f"Indexed Git history is behind HEAD ({indexed[:12]} → {head[:12]}). Run `roam index` to refresh."
+            root, _ = click.get_current_context().meta[_QUERY_FRESHNESS_KEY]
+            relation = _git_history_relation(root, indexed, head)
+            return f"Indexed Git history {relation} ({indexed[:12]} → {head[:12]}). Run `roam index` to refresh."
     return None
 
 

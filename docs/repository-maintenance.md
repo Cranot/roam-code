@@ -187,7 +187,9 @@ When HEAD differs from the index's recorded commit, `_meta.git_history_behind`
 is true and `_meta.git_history_indexed_commit` and
 `_meta.git_history_head_commit` identify the two commits. This flag can appear
 alongside a fresh source snapshot. In text output, `weather`, `health`, and
-`diagnose` report the history lag. Run `roam index` to refresh the Git data.
+`diagnose` use Git ancestry to say whether the indexed commit is behind or
+ahead of HEAD, has diverged, or is unreachable in the local repository. Run
+`roam index` to refresh the Git data.
 
 For stale-sensitive commands, confirmed changes or a failed check set
 `summary.partial_success: true`. In a project without Git, the state is
@@ -197,8 +199,14 @@ in text mode. To hide that hint, set `ROAM_NO_STALENESS_HINT=1`. Run
 `roam index` to refresh the index. Set `ROAM_REFUSE_STALE_INDEX=1` to
 refuse confirmed stale results for stale-sensitive commands. CLI refusals
 exit 1 and JSON or MCP refusals carry `error_code: INDEX_STALE`. Commands
-declared stale-insensitive, including `roam stats` and `roam diff`,
-disclose freshness and remain available.
+declared stale-insensitive, including `roam stats` and `roam diff`, disclose
+freshness and keep their command-specific `summary.partial_success` value.
+When `roam init` finds a stale existing index, it reports the change count
+and marks initialization partial. Run `roam index` to refresh it.
+
+The freshness check relies on paths visible to `git status`. Edits to files
+marked `assume-unchanged` or `skip-worktree` can go undetected. Clear the
+file's flag before checking freshness if the file is present and editable.
 
 An ownership error means another writer is active, or Roam cannot prove that
 the recorded owner is stale. Wait for the writer, inspect the process that

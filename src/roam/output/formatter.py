@@ -1613,7 +1613,11 @@ def _stamp_core_meta(
 
 
 def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness, *, command: str | None = None) -> None:
-    """Apply the same freshness fields to CLI and MCP envelopes."""
+    """Stamp freshness on CLI and MCP envelopes.
+
+    A degraded check sets partial success only for stale-sensitive commands.
+    Stale-insensitive commands disclose the state and retain their own verdict.
+    """
     from roam.db.freshness import query_is_stale_sensitive
 
     command = command or out.get("command", "")

@@ -26,6 +26,7 @@ import os
 import sqlite3
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from roam.git_utils import GIT_STATUS_PORCELAIN, git_status_paths, worktree_git_env
@@ -251,6 +252,7 @@ def _git_head(project_root: Path) -> str | None:
             timeout=5,
             encoding="utf-8",
             errors="replace",
+            env=worktree_git_env(project_root),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
@@ -273,6 +275,17 @@ def _git_status(project_root: Path) -> bytes | None:
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
     return result.stdout if result.returncode == 0 and not result.stderr.strip() else None
+
+
+@dataclass(frozen=True)
+class GitSnapshot:
+    head: str | None
+    status: bytes | None
+
+
+def capture_git_snapshot(project_root: Path) -> GitSnapshot:
+    """Capture Git state before source reads or as the manifest is written."""
+    return GitSnapshot(_git_head(project_root), _git_status(project_root))
 
 
 def _schema_version(conn: sqlite3.Connection | None) -> int:
@@ -308,6 +321,7 @@ def collect_manifest(
     notes: str | dict | None = None,
     extra_config_inputs: list[str] | None = None,
     steps_status: dict | None = None,
+    git_before: GitSnapshot | None = None,
 ) -> dict:
     """Build a fresh manifest dict from environment + project state.
 
@@ -325,6 +339,7 @@ def collect_manifest(
             duration_ms}}`` map produced by the indexer's step-tracking
             (W82/A8). Persisted into the ``steps_status`` JSON column so
             ``roam doctor`` can surface per-sub-step degraded-mode signals.
+        git_before: Optional Git snapshot taken before the index read files.
 
     Returns a dict with stringly-typed JSON-friendly values, ready to be
     handed to :func:`write_manifest`.
@@ -340,10 +355,26 @@ def collect_manifest(
             h.update(str(item).encode("utf-8", "replace"))
         config_h = h.hexdigest()
 
-    git_head = _git_head(project_root)
-    status = _git_status(project_root)
+    git_after = capture_git_snapshot(project_root)
+    git_before = git_before or git_after
+    git_head = git_before.head or git_after.head
+    head_changed = git_before.head != git_after.head
+    before, after = git_before.status, git_after.status
+    dirty_paths = None
+    if before is not None and after is not None:
+        dirty_paths = sorted(git_status_paths(before) | git_status_paths(after))
+    dirty_hash = None
+    if dirty_paths or (git_head and (head_changed or dirty_paths is None)):
+        status = before or b""
+        if before != after:
+            status += b"\0" + (after or b"")
+        dirty_hash = hashlib.sha256(status).hexdigest()
     if isinstance(notes, dict):
-        notes = {**notes, "git_dirty_paths": sorted(git_status_paths(status)) if status is not None else None}
+        notes = {**notes, "git_dirty_paths": dirty_paths}
+        if head_changed:
+            # Two clean checkouts can contain different files. The path
+            # union is still useful evidence, but it cannot bound the scan.
+            notes["git_build_head_changed"] = True
         notes = json.dumps(notes, sort_keys=True)
 
     return {
@@ -354,7 +385,7 @@ def collect_manifest(
         "grammar_versions": _grammar_versions(),
         "config_hash": config_h,
         "git_head": git_head,
-        "git_dirty_hash": hashlib.sha256(status).hexdigest() if status else None,
+        "git_dirty_hash": dirty_hash,
         "enabled_extras": _enabled_extras(),
         "index_profile": profile,
         "notes": notes,
@@ -588,6 +619,7 @@ def record_indexer_run(
     notes: str | dict | None = None,
     extra_config_inputs: list[str] | None = None,
     steps_status: dict | None = None,
+    git_before: GitSnapshot | None = None,
 ) -> int | None:
     """Convenience: collect + write a manifest in one call.
 
@@ -606,6 +638,7 @@ def record_indexer_run(
             notes=notes,
             extra_config_inputs=extra_config_inputs,
             steps_status=steps_status,
+            git_before=git_before,
         )
         return write_manifest(conn, manifest)
     except sqlite3.DatabaseError:
