@@ -592,7 +592,7 @@ roam findings count                      # per-detector totals</code></pre>
         <li><strong>Zero-dep</strong>: ships with Python; no client/server, no infrastructure.</li>
         <li><strong>FTS5</strong>: full-text search built-in, used for symbol search and retrieval.</li>
         <li><strong>Inspectable state</strong>: structured tables make indexed facts queryable. Git history, annotations, snapshots, and insertion history mean identical source need not produce byte-identical database files.</li>
-        <li><strong>Portable</strong>: <code>roam index-export</code> emits a tarball with manifest SHA-256 + optional cosign signature; <code>index-import</code> verifies before extracting.</li>
+        <li><strong>Portable</strong>: <code>roam index-export</code> emits a tarball with manifest SHA-256 + optional cosign signature; <code>index-import</code> verifies before extracting. In 14.2.2 export reads and import writes only the default <code>.roam/index.db</code>, so with <code>ROAM_DB_DIR</code> or <code>db_dir</code> set the export reports <code>INDEX_MISSING</code>; that fix is on <code>main</code> and not yet released.</li>
         <li><strong>Local</strong>: index lives at <code>.roam/index.db</code> in your repo. Ordinary analysis does not automatically upload source; selected online features and connected agents have separate <a href="https://github.com/Cranot/roam-code/blob/main/docs/network-boundary.md">network paths</a>.</li>
       </ul>
     </section>
