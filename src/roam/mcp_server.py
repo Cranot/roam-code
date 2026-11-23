@@ -6156,7 +6156,7 @@ def _ensure_fresh_index(root: str = ".") -> dict | None:
 
 # 12.15 — in-process result cache for read-only MCP tool calls. The MCP
 # server is long-running; an agent doing five consecutive
-# ``roam_preflight`` / ``roam_context`` / ``roam_impact`` calls on the
+# ``roam_context`` / ``roam_impact`` calls on the
 # same symbol within a session pays the full DB+graph cost every time.
 # A small TTL cache keyed on (cmd, args-tuple, index-mtime) returns the
 # same envelope when the index hasn't changed — typical hit window for
@@ -6167,6 +6167,8 @@ _ROAM_CACHE_TTL_S = 300.0
 # Read-only commands eligible for caching. Adding a write-y command
 # here would violate the "fresh after mutation" invariant; never list
 # ``init``, ``index``, ``mutate``, ``annotate``, ``ingest-trace``, etc.
+# Preflight and affected-tests also read live source and report the outcome
+# of each dispatch-sidecar lookup, which a cached envelope would hide.
 _CACHEABLE_COMMANDS = frozenset(
     {
         "search",
@@ -6174,7 +6176,6 @@ _CACHEABLE_COMMANDS = frozenset(
         "impact",
         "uses",
         "refs",
-        "preflight",
         "tour",
         "understand",
         "onboard",

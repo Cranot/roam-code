@@ -28,7 +28,9 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
+import tempfile
 from collections import deque
 from dataclasses import dataclass
 from functools import cache
@@ -37,8 +39,8 @@ from pathlib import Path
 
 import click
 
-from roam.atomic_io import atomic_write_json
 from roam.capability import roam_capability
+from roam.commands import changed_files
 from roam.commands.changed_files import (
     GIT_ERROR,
     get_changed_files_status,
@@ -47,6 +49,7 @@ from roam.commands.changed_files import (
 )
 from roam.commands.resolve import ensure_index, find_symbol, resolve_file_symbols
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.index import file_roles, test_conventions
 from roam.index.test_conventions import find_test_candidates
 from roam.observability import log_swallowed
 from roam.output.formatter import (
@@ -1230,8 +1233,8 @@ class _DispatchScope:
     """Follow test code to the dispatch sites of keyed registries.
 
     *flood* holds ``(path, name)`` of every symbol that reaches a keyed
-    registry through reverse edges; *registries* maps ``(path, name)``
-    to that registry's keys.  Names bind through each file's own
+    registry through reverse edges; *registries* holds the registry
+    bindings.  Names bind through each file's own
     imports, so ``from roam import cli`` and ``from roam.cli import cli``
     resolve alike, with or without an edge from the test.  Helpers are
     summarised once, their parameters bound per call.
@@ -2543,21 +2546,90 @@ def _dispatch_source_stamp(root, paths):
     return digest.hexdigest()
 
 
-def _dispatch_cache_rows(conn, scope, test_paths, python_paths):
+DISPATCH_CACHE_DEFINITION = (
+    "hit: reused dispatch rows; miss: scanned because the sidecar was absent or its key differed; "
+    "unusable: a cache lookup was unavailable or its data was rejected; "
+    "write_failed: scanned but could not publish the sidecar."
+)
+
+_DISPATCH_CACHE_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _dispatch_analyzer_stamp():
+    """Hash the dispatch analyser and the test classification it calls during reach."""
+    digest = hashlib.sha256()
+    for source in (__file__, changed_files.__file__, file_roles.__file__, test_conventions.__file__):
+        if not source:
+            raise OSError("analyser source path unavailable")
+        digest.update(hashlib.sha256(Path(source).read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def _read_dispatch_cache(path, key, test_paths):
+    """Read only bounded, regular sidecars and validate rows for the active scope."""
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError("dispatch sidecar is not a regular file")
+    with path.open("rb") as handle:
+        payload = handle.read(_DISPATCH_CACHE_MAX_BYTES + 1)
+    if len(payload) > _DISPATCH_CACHE_MAX_BYTES:
+        raise ValueError("dispatch sidecar exceeds its size limit")
+    envelope = json.loads(payload)
+    if not isinstance(envelope, list) or len(envelope) != 2:
+        raise ValueError("invalid dispatch sidecar envelope")
+    cached_key, rows = envelope
+    if not isinstance(cached_key, str) or not re.fullmatch(r"[0-9a-f]{64}", cached_key) or not isinstance(rows, list):
+        raise ValueError("invalid dispatch sidecar key or rows")
+    if cached_key != key:
+        return None
+
+    roots = set(test_paths)
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 6:
+            raise ValueError("invalid dispatch sidecar row")
+        path, name, every, run, may, any_key = row
+        if not (
+            isinstance(path, str)
+            and path in roots
+            and isinstance(name, str)
+            and isinstance(every, bool)
+            and isinstance(run, list)
+            and isinstance(may, list)
+            and all(isinstance(k, str) for k in chain(run, may))
+            and isinstance(any_key, bool)
+        ):
+            raise ValueError("invalid dispatch sidecar row fields")
+    return rows
+
+
+def _write_dispatch_cache(path, key, rows):
+    """Publish a rebuildable sidecar atomically from a private sibling directory."""
+    payload = json.dumps([key, rows], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    if len(payload) > _DISPATCH_CACHE_MAX_BYTES:
+        raise ValueError("dispatch sidecar exceeds its size limit")
+    # Every writer owns its staging directory. Concurrent replacements are
+    # safe because each reader validates the key before using the full rows.
+    with tempfile.TemporaryDirectory(prefix=f".{path.name}.", dir=path.parent) as staging:
+        with tempfile.NamedTemporaryFile(dir=staging, delete=False) as handle:
+            handle.write(payload)
+        os.replace(handle.name, path)
+
+
+def _dispatch_cache_rows(conn, scope, test_paths, python_paths, *, log_errors=False):
     """Reuse one registry scope per index, across commands and handler keys."""
     from roam import __version__
 
     db_path = conn.execute("PRAGMA database_list").fetchone()[2]
     if not db_path:
-        return _dispatch_reach(scope, test_paths)
+        return _dispatch_reach(scope, test_paths), {"state": "unusable", "reason": "no_database_path"}
     cache_path = Path(db_path).with_name(Path(db_path).name + ".dispatch.json")
     source_paths = sorted(set(python_paths) | {p for p, _ in chain(scope.registries, scope.flood)})
     try:
         source_stamp = _dispatch_source_stamp(scope.root, source_paths)
-        analyzer = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        analyzer = _dispatch_analyzer_stamp()
     except OSError as exc:
-        log_swallowed("affected-tests:dispatch-cache-input", exc)
-        return _dispatch_reach(scope, test_paths)
+        if log_errors:
+            log_swallowed("affected-tests:dispatch-cache-input", exc)
+        return _dispatch_reach(scope, test_paths), {"state": "unusable", "input_error": f"{type(exc).__name__}: {exc}"}
     key = hashlib.sha256(
         json.dumps(
             [
@@ -2567,50 +2639,55 @@ def _dispatch_cache_rows(conn, scope, test_paths, python_paths):
                 sys.platform,
                 sys.flags.optimize,
                 os.environ.get("PYTHONHASHSEED"),
-                str(scope.root.absolute()),
                 sorted(scope.module_paths.items()),
                 sorted(scope.flood.items()),
-                [(path, name, sorted(keys)) for (path, name), keys in scope.registries.items()],
+                # Scope analysis uses registry membership. Handler keys are
+                # intersected with the resulting rows after the cache lookup.
+                sorted(scope.registries),
                 source_paths,
                 test_paths,
                 source_stamp,
             ]
         ).encode()
     ).hexdigest()
+    status = {"state": "miss"}
     try:
-        cached_key, rows = json.loads(cache_path.read_bytes())
-        if (
-            cached_key == key
-            and isinstance(rows, list)
-            and all(
-                isinstance(path, str)
-                and isinstance(name, str)
-                and isinstance(every, bool)
-                and isinstance(run, list)
-                and isinstance(may, list)
-                and all(isinstance(k, str) for k in chain(run, may))
-                and isinstance(any_key, bool)
-                for path, name, every, run, may, any_key in rows
-            )
-        ):
-            return rows
-    except (OSError, TypeError, ValueError) as exc:
-        if not isinstance(exc, FileNotFoundError):  # a cold index has no sidecar yet
+        rows = _read_dispatch_cache(cache_path, key, test_paths)
+        if rows is not None:
+            return rows, {"state": "hit"}
+    except FileNotFoundError:
+        status["reason"] = "sidecar_missing"
+    except (OSError, ValueError, RecursionError) as exc:
+        if log_errors:
             log_swallowed("affected-tests:dispatch-cache-read", exc)
+        status.update(state="unusable", read_error=f"{type(exc).__name__}: {exc}")
+    else:
+        status["reason"] = "key_mismatch"
 
     rows = list(_dispatch_reach(scope, test_paths))
     try:
-        if source_stamp == _dispatch_source_stamp(scope.root, source_paths):
-            atomic_write_json(cache_path, [key, rows], indent=None)
-    except OSError as exc:
-        log_swallowed("affected-tests:dispatch-cache-write", exc)
-    return rows
+        if source_stamp != _dispatch_source_stamp(scope.root, source_paths):
+            raise OSError("project source changed during dispatch scan")
+        _write_dispatch_cache(cache_path, key, rows)
+    except (OSError, ValueError) as exc:
+        if log_errors:
+            log_swallowed("affected-tests:dispatch-cache-write", exc)
+        status.update(state="write_failed", write_error=f"{type(exc).__name__}: {exc}")
+    return rows, status
 
 
-def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
+def _report_dispatch_cache_errors(status):
+    for phase in ("input", "read", "write"):
+        if error := status.get(f"{phase}_error"):
+            click.echo(f"Dispatch cache {phase}: {error}", err=True)
+
+
+def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude, *, dispatch_cache=None):
     """Tests proven to run a handler key, every key, or a possible handler key."""
     cli_hits, every_hits, possible_hits = {}, {}, {}
     if not reached:
+        if dispatch_cache is not None:
+            dispatch_cache.update(state="unusable", reason="no_reached_registry")
         return cli_hits, every_hits, possible_hits
     flood_hops = _bfs_reverse_callers(conn, set(reached))
     flood = {}
@@ -2628,10 +2705,13 @@ def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
             module_paths.setdefault(module, path)
         if path not in exclude and is_test_file(path):
             test_paths.append(path)
-    by_registry = {registries[rid][:2]: registries[rid][2] for rid in reached}
+    by_registry = {registries[rid][:2] for rid in reached}
     registry_name = registries[reached[0]][1]
     scope = _DispatchScope(root, module_paths, flood, by_registry)
-    for path, name, every, run, may, any_key in _dispatch_cache_rows(conn, scope, test_paths, python_paths):
+    rows, status = _dispatch_cache_rows(conn, scope, test_paths, python_paths, log_errors=dispatch_cache is None)
+    if dispatch_cache is not None:
+        dispatch_cache.update(status)
+    for path, name, every, run, may, any_key in rows:
         if every:
             every_hits[(path, name)] = flood.get((path, name), 1)
         if path not in cli_hits:
@@ -2664,7 +2744,7 @@ def count_kinds(results):
     return counts
 
 
-def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
+def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None, *, dispatch_cache=None):
     """Return a sorted list of affected test entries.
 
     Each entry is a dict with keys:
@@ -2739,7 +2819,7 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
         target_keys.update(handler_keys.get(sid, ()))
     exclude = set(target_file_paths)
     cli_hits, every_hits, possible_hits = _dispatch_relations(
-        conn, root, registries, [rid for _h, rid in reached], target_keys, exclude
+        conn, root, registries, [rid for _h, rid in reached], target_keys, exclude, dispatch_cache=dispatch_cache
     )
     if every_hits:
         registry_hops, registry_id = reached[0]
@@ -3051,7 +3131,10 @@ def affected_tests_cmd(ctx, target, staged, show_command):
                 target_label = f"{sym['name']} ({abbrev_kind(sym['kind'])}, {loc(sym['file_path'], sym['line_start'])})"
 
         # Gather affected tests
-        results = _gather_affected_tests(conn, all_sym_ids, all_file_paths)
+        dispatch_cache = {}
+        results = _gather_affected_tests(conn, all_sym_ids, all_file_paths, dispatch_cache=dispatch_cache)
+        if not json_mode or show_command or sarif_mode:
+            _report_dispatch_cache_errors(dispatch_cache)
 
         # Unique test files for the pytest command
         seen_order = []
@@ -3155,6 +3238,8 @@ def affected_tests_cmd(ctx, target, staged, show_command):
                         ],
                         pytest_command=pytest_cmd,
                         test_files=seen_order,
+                        dispatch_cache=dispatch_cache,
+                        dispatch_cache_definition=DISPATCH_CACHE_DEFINITION,
                         **disclosure,
                     )
                 )
