@@ -21,15 +21,17 @@ def test_named_path_staleness_fires_on_missing_file(tmp_path, monkeypatch):
     assert "Verify with Read/Grep" in out["warning"]
 
 
-def test_named_path_staleness_silent_when_file_exists(project_factory):
+def test_named_path_staleness_silent_when_file_exists(project_factory, monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     project = project_factory({"src/real.py": "def present(): pass\n"})
     assert _named_path_staleness(["src/real.py"], str(project)) is None
 
 
-def test_named_path_staleness_reports_manifest_age_for_changed_file(project_factory):
+def test_named_path_staleness_reports_manifest_age_for_changed_file(project_factory, monkeypatch):
     import sqlite3
     from contextlib import closing
 
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     project = project_factory({"app.py": "def main(): pass\n"})
     with closing(sqlite3.connect(project / ".roam" / "index.db")) as conn, conn:
         conn.execute("UPDATE index_manifest SET indexed_at = indexed_at - 172800")

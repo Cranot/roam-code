@@ -510,6 +510,7 @@ def test_generation_sweep_wipes_derived_tables_on_reindex(tmp_path):
 def test_stale_index_discloses_files_newer_than_index(tmp_path, monkeypatch):
     from roam.index.indexer import Indexer
 
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     repo = _setup_repo(tmp_path)
     Indexer(project_root=repo).run(quiet=True)
     plan = compile_plan("what does src/a.py do", cwd=str(repo))

@@ -15,6 +15,7 @@ from tests.conftest import git_init, index_in_process
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     body = "    total = 0\n" + "    total += value\n" * 8 + "    return total\n"
     for name in ("first", "second"):
         (tmp_path / f"{name}.py").write_text(f"def {name}(value):\n" + body, encoding="utf-8")

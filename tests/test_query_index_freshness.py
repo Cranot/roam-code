@@ -8,11 +8,17 @@ import sqlite3
 import subprocess
 import time
 from contextlib import closing
+from types import SimpleNamespace
 
 import pytest
 
 from roam.cli import cli
 from roam.db.connection import get_db_path
+
+
+@pytest.fixture(autouse=True)
+def _generous_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
 
 
 @pytest.fixture
@@ -415,6 +421,11 @@ def test_non_git_query_and_doctor(tmp_path, cli_runner, monkeypatch):
 
 
 def test_freshness_check_has_subsecond_budget(query_project, cli_runner, monkeypatch):
+    from roam.db import freshness
+
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "0.3")
+    # At this clock value, adding and subtracting 0.3 rounds up.
+    monkeypatch.setattr(freshness, "time", SimpleNamespace(monotonic=lambda: 1_000_000.0, time=time.time))
     run = subprocess.run
     timeouts = []
 
@@ -431,6 +442,9 @@ def test_freshness_check_has_subsecond_budget(query_project, cli_runner, monkeyp
     assert result.exit_code == 0, result.output
     assert len(timeouts) == 1
     assert 0 < timeouts[0] <= 0.3
+    warning = "Warning: Could not check index freshness"
+    assert warning not in result.stdout
+    assert warning not in result.stderr
     meta = json.loads(result.stdout)["_meta"]
     assert meta["index_state"] == "unknown"
     assert meta["index_state_reason"] == "freshness check exceeded its time budget"
@@ -438,7 +452,66 @@ def test_freshness_check_has_subsecond_budget(query_project, cli_runner, monkeyp
     result = cli_runner.invoke(cli, ["search", "indexed_helper"])
     assert result.exit_code == 0, result.output
     assert len(result.stderr.splitlines()) == 1
-    assert "Could not check index freshness" in result.stderr
+    assert warning in result.stderr
+    assert warning not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "platform, override, expected",
+    [
+        ("linux", None, 1.5),
+        ("win32", None, 3.0),
+        ("win32", "0.75", 0.75),
+        ("linux", "", 1.5),
+        ("linux", "invalid", 1.5),
+        ("linux", "0", 1.5),
+        ("win32", "-1", 3.0),
+        ("win32", "inf", 3.0),
+        ("win32", "nan", 3.0),
+    ],
+)
+def test_freshness_budget_reaches_git(query_project, monkeypatch, platform, override, expected):
+    from roam.db import freshness
+
+    if override is None:
+        monkeypatch.delenv("ROAM_INDEX_FRESHNESS_BUDGET_S")
+    else:
+        monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", override)
+    monkeypatch.setattr(freshness, "sys", SimpleNamespace(platform=platform), raising=False)
+    monkeypatch.setattr(freshness, "time", SimpleNamespace(monotonic=lambda: 1_000_000.0, time=time.time))
+    timeouts = []
+
+    def time_out(command, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", time_out)
+    observation = freshness.probe_index_freshness(get_db_path(query_project), query_project)
+    assert observation.reason == "freshness check exceeded its time budget"
+    assert timeouts == [expected]
+
+
+def test_git_history_caps_timeout_at_budget_and_remaining_time(query_project, monkeypatch):
+    from roam.db import freshness
+
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "0.3")
+    now = 1_000_000.0
+    monkeypatch.setattr(freshness, "time", SimpleNamespace(monotonic=lambda: now))
+    timeouts = []
+
+    def check_relation(command, **kwargs):
+        nonlocal now
+        timeouts.append(kwargs["timeout"])
+        if len(timeouts) == 1:
+            now += 0.125
+            return subprocess.CompletedProcess(command, 1)
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", check_relation)
+    relation = freshness._git_history_relation(query_project, "a" * 40, "b" * 40)
+    assert relation == "relationship to HEAD is unknown"
+    assert timeouts[0] == 0.3
+    assert timeouts[1:] == pytest.approx([0.175])
 
 
 def test_mcp_cache_hit_reuses_recent_freshness(query_project, monkeypatch):

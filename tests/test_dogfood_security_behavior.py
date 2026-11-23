@@ -432,7 +432,7 @@ def test_vuln_reach_reports_import_reachable(vuln_repo):
     assert env["summary"]["import_reachable_count"] == 2, env["summary"]
 
 
-def test_vulns_reachable_only_does_not_claim_empty(vuln_repo):
+def test_vulns_reachable_only_does_not_claim_empty(vuln_repo, monkeypatch):
     """FIXED (M2, DOGFOOD-DEFECTS-2026-07-15): after importing 4 vulns,
     `vulns --reachable-only` used to print 'no vulnerability scan available
     (vulnerabilities table is empty; ...)' even though the table held 4
@@ -444,6 +444,7 @@ def test_vulns_reachable_only_does_not_claim_empty(vuln_repo):
     (cmd_vulns._count_all_vulns) through the verdict/summary so 'no data'
     and 'N rows, 0 reachable' are distinguishable in both text and JSON.
     """
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     proc = _run_roam(vuln_repo, "vulns", "--reachable-only")
     assert proc.returncode == 0, proc.stderr[-500:]
     low = proc.stdout.lower()

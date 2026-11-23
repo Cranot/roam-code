@@ -204,6 +204,13 @@ freshness and keep their command-specific `summary.partial_success` value.
 When `roam init` finds a stale existing index, it reports the change count
 and marks initialization partial. Run `roam index` to refresh it.
 
+The freshness check has a 1.5-second budget on Linux and other non-Windows
+systems and a 3-second budget on Windows. A check that exhausts its budget
+reports `unknown`. Set `ROAM_INDEX_FRESHNESS_BUDGET_S` to override the budget
+in seconds. Fractional seconds are accepted. Unset or invalid values use
+the platform default. The supported range is greater than zero and at
+most 2,147,483 seconds.
+
 The freshness check relies on paths visible to `git status`. Edits to files
 marked `assume-unchanged` or `skip-worktree` can go undetected. Clear the
 file's flag before checking freshness if the file is present and editable.

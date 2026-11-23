@@ -9,8 +9,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output
 
 
-def test_agent_mode_outputs_compact_json(cli_runner, indexed_project):
+def test_agent_mode_outputs_compact_json(cli_runner, indexed_project, monkeypatch):
     """--agent should force JSON and use compact envelope fields."""
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     result = invoke_cli(cli_runner, ["--agent", "health"], cwd=indexed_project)
     data = parse_json_output(result, command="health")
 

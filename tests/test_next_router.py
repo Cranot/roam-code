@@ -18,12 +18,20 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402
     git_init,
     index_in_process,
     invoke_cli,
 )
+
+
+@pytest.fixture(autouse=True)
+def _generous_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
+
 
 # ---------------------------------------------------------------------------
 # Helpers

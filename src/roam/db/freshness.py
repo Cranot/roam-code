@@ -7,6 +7,7 @@ import os
 import sqlite3
 import stat
 import subprocess
+import sys
 import time
 from contextlib import closing, contextmanager
 from contextvars import ContextVar
@@ -18,10 +19,31 @@ import click
 from roam.git_utils import GIT_STATUS_WITH_HEAD, git_status_head_and_paths, worktree_git_env
 from roam.observability import log_swallowed
 
-_CHECK_BUDGET_S = 0.3
+_BUDGET_ENV = "ROAM_INDEX_FRESHNESS_BUDGET_S"
+# Keep configured timeouts representable by subprocess's signed millisecond poll.
+_MAX_BUDGET_S = 2_147_483
 _BUDGET_EXCEEDED = "freshness check exceeded its time budget"
 _QUERY_FRESHNESS_KEY = "roam_query_index_freshness"
 _MAINTENANCE_COMMANDS = frozenset({"clean", "doctor", "index", "init", "reset", "watch"})
+
+
+def _check_budget_seconds() -> float:
+    default = 3.0 if sys.platform == "win32" else 1.5
+    try:
+        seconds = float(os.environ.get(_BUDGET_ENV, default))
+    except ValueError:
+        return default
+    return seconds if 0 < seconds <= _MAX_BUDGET_S else default
+
+
+class _CheckDeadline:
+    def __init__(self) -> None:
+        self.budget = _check_budget_seconds()
+        self.end = time.monotonic() + self.budget
+
+    def remaining(self) -> float:
+        # Floating-point subtraction can round up, even on the first call.
+        return min(self.budget, self.end - time.monotonic())
 
 
 def _latest_index_manifest(conn: sqlite3.Connection) -> sqlite3.Row | tuple | None:
@@ -35,15 +57,15 @@ def _manifest_age(indexed_at: int | None) -> float | None:
     return max(0.0, time.time() - indexed_at) if isinstance(indexed_at, int) and indexed_at > 0 else None
 
 
-def _open_readonly(db_path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(db_path.absolute().as_uri() + "?mode=ro", uri=True, timeout=_CHECK_BUDGET_S)
+def _open_readonly(db_path: Path, *, timeout: float) -> sqlite3.Connection:
+    return sqlite3.connect(db_path.absolute().as_uri() + "?mode=ro", uri=True, timeout=timeout)
 
 
 def index_age_seconds(db_path: Path) -> float | None:
     """Age of the latest recorded index run, if available."""
     try:
         if db_path.is_file():
-            with closing(_open_readonly(db_path)) as conn:
+            with closing(_open_readonly(db_path, timeout=0.3)) as conn:
                 row = conn.execute(
                     "SELECT indexed_at FROM index_manifest ORDER BY indexed_at DESC, id DESC LIMIT 1"
                 ).fetchone()
@@ -61,12 +83,12 @@ def format_index_age(age_s: float) -> str:
     return f"{count} {unit}{'s' if count != 1 else ''} ago"
 
 
-def _run_git(root: Path, command: list[str], deadline: float) -> tuple[bytes | None, str | None]:
+def _run_git(root: Path, command: list[str], deadline: _CheckDeadline) -> tuple[bytes | None, str | None]:
     env = worktree_git_env(root)
     if command[1] == "status":
         # A timed-out status must not leave Git's optional index write locked.
         env = {**(env if env is not None else os.environ), "GIT_OPTIONAL_LOCKS": "0"}
-    remaining = deadline - time.monotonic()
+    remaining = deadline.remaining()
     if remaining <= 0:
         return None, _BUDGET_EXCEEDED
     try:
@@ -130,7 +152,7 @@ def _compare_indexed_files(
     dirty: bool,
     include_excluded: bool,
     config_changed: bool,
-    deadline: float,
+    deadline: _CheckDeadline,
 ) -> tuple[set[str] | None, str | None]:
     """Filter Git candidates against discovery and the indexed snapshot."""
     if not paths and not compare_all:
@@ -146,7 +168,7 @@ def _compare_indexed_files(
     try:
         exclude = None if include_excluded else compile_exclude_patterns(load_exclude_patterns(root))
         for path, language, mtime, digest in _indexed_rows(conn, paths, compare_all=compare_all):
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= deadline.end:
                 return None, _BUDGET_EXCEEDED
             listed = path in paths
             paths.discard(path)
@@ -172,7 +194,7 @@ def _compare_indexed_files(
             if changed:
                 changed_paths.add(path)
         for path in paths:
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= deadline.end:
                 return None, _BUDGET_EXCEEDED
             if detect_language(path) and _filter_files([path], root, exclude, include_excluded):
                 changed_paths.add(path)
@@ -190,7 +212,7 @@ def _candidate_paths(
     paths: set[str],
     config_changed: bool,
     dirty_paths: list[str] | None,
-    deadline: float,
+    deadline: _CheckDeadline,
 ) -> tuple[set[str] | None, bool, str | None]:
     if indexed_head != head:
         diff, reason = _run_git(
@@ -286,7 +308,7 @@ class QueryIndexFreshness:
         return f"Index is stale ({age}, {changes}). Run `roam index` to refresh."
 
 
-def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: float) -> QueryIndexFreshness:
+def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadline) -> QueryIndexFreshness:
     from roam.db.connection import find_project_root
     from roam.index.manifest import _config_hash
 
@@ -347,7 +369,7 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: float) -> Qu
             config_changed=config_changed,
             deadline=deadline,
         )
-    if time.monotonic() >= deadline:
+    if time.monotonic() >= deadline.end:
         changed_paths, reason = None, _BUDGET_EXCEEDED
     return QueryIndexFreshness(
         age_s,
@@ -360,14 +382,14 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: float) -> Qu
 
 
 def read_query_index_freshness(conn: sqlite3.Connection, root: Path) -> QueryIndexFreshness:
-    deadline = time.monotonic() + _CHECK_BUDGET_S
+    deadline = _CheckDeadline()
     busy_timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
     conn.execute("PRAGMA busy_timeout=0")
     try:
         return _read_freshness(conn, root, deadline)
     except (OSError, sqlite3.Error) as exc:
         log_swallowed("index_freshness:manifest", exc)
-        reason = _BUDGET_EXCEEDED if time.monotonic() >= deadline else "could not read the index manifest"
+        reason = _BUDGET_EXCEEDED if time.monotonic() >= deadline.end else "could not read the index manifest"
         return QueryIndexFreshness(None, None, reason)
     finally:
         conn.execute(f"PRAGMA busy_timeout={busy_timeout}")
@@ -376,7 +398,7 @@ def read_query_index_freshness(conn: sqlite3.Connection, root: Path) -> QueryInd
 def probe_index_freshness(db_path: Path, root: Path) -> QueryIndexFreshness:
     """Use the query check with a read-only connection for diagnostics."""
     try:
-        with closing(_open_readonly(db_path)) as conn:
+        with closing(_open_readonly(db_path, timeout=0)) as conn:
             return read_query_index_freshness(conn, root)
     except (OSError, sqlite3.Error) as exc:
         log_swallowed("index_freshness:open", exc)
@@ -453,10 +475,10 @@ def query_index_freshness() -> QueryIndexFreshness | None:
 
 
 def _git_history_relation(root: Path, indexed: str, head: str) -> str:
-    deadline = time.monotonic() + _CHECK_BUDGET_S
+    deadline = _CheckDeadline()
     env = worktree_git_env(root)
     for ancestor, descendant, relation in ((indexed, head, "is behind HEAD"), (head, indexed, "is ahead of HEAD")):
-        remaining = deadline - time.monotonic()
+        remaining = deadline.remaining()
         if remaining <= 0:
             return "relationship to HEAD is unknown"
         try:

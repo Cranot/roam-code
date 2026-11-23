@@ -431,6 +431,7 @@ class TestDoctorIndexExistsCheck:
 def doctor_index(project_factory, monkeypatch):
     from roam.db.connection import get_db_path
 
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     project = project_factory({"app.py": "def helper():\n    return 1\n"})
     monkeypatch.chdir(project)
     return get_db_path()

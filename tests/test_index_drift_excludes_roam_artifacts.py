@@ -8,6 +8,7 @@ from roam.cli import cli
 
 
 def test_roam_artifacts_do_not_count_as_source_drift(project_factory, cli_runner, monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     project = project_factory({"app.py": "def helper(): pass\n"})
     monkeypatch.chdir(project)
     (project / ".roamignore").write_text("# project ignore rules\n")

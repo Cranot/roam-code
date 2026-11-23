@@ -32,6 +32,11 @@ def _enforcement_safe(monkeypatch):
     monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
 
 
+@pytest.fixture(autouse=True)
+def _generous_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
+
+
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner
@@ -450,7 +455,7 @@ def _range_attestation(cli_runner, project):
     plain = invoke_cli(cli_runner, args, cwd=project)
     markdown = invoke_cli(cli_runner, [*args, "--format", "markdown"], cwd=project)
     assert plain.exit_code == markdown.exit_code == 0
-    return data, plain.output, markdown.output
+    return data, plain.stdout, markdown.stdout
 
 
 def _assert_clearance(data, plain, markdown, expected):
@@ -576,6 +581,24 @@ class TestAttestRangeClearance:
 class TestAttestVerdict:
     """Test verdict computation."""
 
+    def test_freshness_warning_preserves_verdict(self, cli_runner, attest_project, monkeypatch):
+        from roam.db import freshness
+
+        unknown = freshness.QueryIndexFreshness(None, None, "freshness check exceeded its time budget")
+        monkeypatch.setattr(freshness, "read_query_index_freshness", lambda *args: unknown)
+        warning = f"Warning: {unknown.message()}"
+        plain = invoke_cli(cli_runner, ["attest"], cwd=attest_project)
+        assert plain.exit_code == 0, plain.output
+        assert plain.stdout.splitlines()[0].startswith("VERDICT: ")
+        assert warning in plain.stderr
+        assert warning not in plain.stdout
+
+        result = invoke_cli(cli_runner, ["attest"], cwd=attest_project, json_mode=True)
+        data = parse_json_output(result, "attest")
+        assert data["_meta"]["index_state"] == "unknown"
+        assert warning not in result.stdout
+        assert warning not in result.stderr
+
     @pytest.mark.parametrize("breaking", [True, False], ids=["required-parameter", "body-only"])
     def test_signature_change_clearance(self, cli_runner, tmp_path, monkeypatch, breaking):
         monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
@@ -612,7 +635,7 @@ class TestAttestVerdict:
         markdown = invoke_cli(cli_runner, ["attest", "--format", "markdown"], cwd=project)
         assert data["summary"]["safe_to_merge"] is (not breaking)
         assert data["verdict"]["safe_to_merge"] is (not breaking)
-        assert plain.output.splitlines()[0] == ("VERDICT: NOT SAFE TO MERGE" if breaking else "VERDICT: SAFE TO MERGE")
+        assert plain.stdout.splitlines()[0] == ("VERDICT: NOT SAFE TO MERGE" if breaking else "VERDICT: SAFE TO MERGE")
         assert ("**Verdict: [FAIL]**" if breaking else "**Verdict: [PASS]**") in markdown.output
 
     def test_partial_breaking_comparison_withholds_clearance(self, cli_runner, attest_project, monkeypatch):
@@ -682,11 +705,11 @@ class TestAttestVerdict:
         assert data["summary"]["verdict"].startswith("NOT safe to merge")
         plain = invoke_cli(cli_runner, ["attest"], cwd=attest_project)
         markdown = invoke_cli(cli_runner, ["attest", "--format", "markdown"], cwd=attest_project)
-        assert plain.output.splitlines()[0] == "VERDICT: NOT SAFE TO MERGE"
+        assert plain.stdout.splitlines()[0] == "VERDICT: NOT SAFE TO MERGE"
         assert "**Verdict: [FAIL]**" in markdown.output
         if partial:
             assert "submodule path" in data["summary"]["verdict"]
-            assert "vendor/submodule" in plain.output
+            assert "vendor/submodule" in plain.stdout
             assert "vendor/submodule" in markdown.output
 
     def test_verdict_safe_by_default(self, cli_runner, attest_project, monkeypatch):

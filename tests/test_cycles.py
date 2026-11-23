@@ -121,6 +121,7 @@ class TestCyclesSurvivesTokenBudget:
         """Sanity anchor: a normal-sized envelope must NOT be flipped to
         partial_success=True just because the fix exists -- only a genuine
         truncation event should raise it."""
+        monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
         proj = _build_cycle_project(tmp_path)
         monkeypatch.chdir(proj)
         out, rc = index_in_process(proj, "--force")
