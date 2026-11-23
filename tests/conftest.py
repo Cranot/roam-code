@@ -53,6 +53,13 @@ def git_commit(path, msg="update"):
     subprocess.run(["git", "commit", "-m", msg], cwd=path, capture_output=True)
 
 
+def record_test_index_manifest(conn, path):
+    """Record the clean Git baseline for a synthetic index fixture."""
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=path, text=True).strip()
+    conn.execute("CREATE TABLE index_manifest (id INTEGER PRIMARY KEY, indexed_at INTEGER, git_head, git_dirty_hash)")
+    conn.execute("INSERT INTO index_manifest VALUES (1, strftime('%s', 'now'), ?, NULL)", (head,))
+
+
 # ===========================================================================
 # Symlink-capability probe (Windows portability)
 # ===========================================================================

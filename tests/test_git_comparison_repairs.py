@@ -78,6 +78,8 @@ def test_locale_neutral_blob_absence(project_factory, monkeypatch, absent):
 @pytest.mark.parametrize("command,args", [("api-changes", ["--base", "HEAD"]), ("attest", [])])
 def test_ref_comparison_required_blob(project, monkeypatch, command, args, failed):
     (project / "core.py").write_text(SOURCE.replace("return 1", "return 2"))
+    index = CliRunner().invoke(cli, ["index"])
+    assert index.exit_code == 0, index.output
     original = subprocess.run
 
     def run(cmd, *a, **kw):

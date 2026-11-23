@@ -352,6 +352,8 @@ def test_negative_control_scoped_checkers_still_narrow_to_the_diff(cli_runner, t
 
 def test_negative_control_all_known_rules_leaves_envelope_unchanged(cli_runner, diff_project):
     """No unevaluable rule -> no new keys, no partial_success flip."""
+    out, rc = index_in_process(diff_project)
+    assert rc == 0, out
     (diff_project / ".roam" / "fitness.yaml").write_text(
         "rules:\n  - name: funcs-are-snake-case\n    type: naming\n    kind: function\n"
         '    pattern: "^[a-z_][a-z0-9_]*$"\n',

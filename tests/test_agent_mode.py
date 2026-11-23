@@ -18,8 +18,9 @@ def test_agent_mode_outputs_compact_json(cli_runner, indexed_project):
     assert isinstance(data.get("summary"), dict)
     assert "version" not in data
     assert "schema" not in data
-    assert set(data["_meta"]) == {"index_age_s", "index_changed_files"}
+    assert set(data["_meta"]) == {"index_age_s", "index_changed_files", "index_state"}
     assert data["_meta"]["index_changed_files"] == 0
+    assert data["_meta"]["index_state"] == "fresh"
 
 
 def test_agent_mode_respects_explicit_budget(cli_runner, indexed_project):

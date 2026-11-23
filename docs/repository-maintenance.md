@@ -165,18 +165,21 @@ missing or incomplete index with exit 3, while `roam index` and `roam init`
 remain intentional build commands. JSON refusals distinguish those states
 without opening the index. `init` still creates project configuration.
 
-Index-backed queries report the database age in seconds as `_meta.index_age_s`
-and the changed-file count as `_meta.index_changed_files` in JSON and MCP.
-The count compares tracked paths with the commit recorded by a clean Git
-index build. For a dirty build or a project without a usable Git baseline,
-Roam compares the saved indexed files by mtime and hash and includes Git
-additions when available. A count of `null` means the snapshot was unavailable.
+Index-backed queries report `_meta.index_state` as `fresh`, `stale`, or
+`unknown` in JSON and MCP. Queries and `roam doctor` use the same
+changed-file count. For a clean build, Roam compares tracked paths with
+the recorded Git commit. For a dirty build, Roam compares saved indexed
+files by mtime and hash and checks for new tracked paths. Any changes make
+the index stale. `_meta.index_age_s` reports elapsed seconds since the
+indexer recorded the build, with `null` for an older index without that
+record. Age is informational.
 
-An index older than 24 hours is stale, using the same database modification
-time as `roam doctor`. Stale results carry `_meta.stale_index: true` and
-`summary.partial_success: true`. Text queries print one freshness warning to
-stderr and still return results. Run `roam index` to refresh. Set
-`ROAM_REFUSE_STALE_INDEX=1` to make queries fail with exit 1 on an age-stale
+Stale results carry `_meta.stale_index: true`. An unavailable comparison
+sets `_meta.index_changed_files` to `null` and includes an
+`_meta.index_state_reason` for the `unknown` state. Both states set
+`summary.partial_success: true` and print one warning to stderr in text
+mode. Run `roam index` to refresh a stale index. Set
+`ROAM_REFUSE_STALE_INDEX=1` to make queries fail with exit 1 on a stale
 index. JSON refusals use `error_code: INDEX_STALE`.
 
 An ownership error means another writer is active, or Roam cannot prove that

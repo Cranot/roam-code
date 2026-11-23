@@ -283,7 +283,7 @@ def test_high_blast_radius_warning_fires_on_widely_used_symbol(monkeypatch):
     assert r["summary"]["verdict"] == "needs-review"
 
 
-def test_fitness_violations_warning_fires_when_preflight_summary_lists_them(monkeypatch):
+def test_fitness_violations_warning_fires_when_preflight_summary_lists_them(project_factory, monkeypatch):
     """The FITNESS_VIOLATIONS branch reads ``summary['fitness_violations']`` /
     ``summary['violations']`` from ``roam preflight`` and only fires when the
     value is a non-empty *list*.
@@ -298,6 +298,8 @@ def test_fitness_violations_warning_fires_when_preflight_summary_lists_them(monk
     """
     import roam.mcp_server as mcp
 
+    project = project_factory({"math.py": "def analyze_n1():\n    return 1\n"})
+    monkeypatch.chdir(project)
     real_run_roam = mcp._run_roam
 
     def fake_run_roam(args, root="."):

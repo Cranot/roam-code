@@ -355,7 +355,7 @@ class TestAdversarialTextOutput:
         """Text output starts with VERDICT: line."""
         result = run_adversarial(adversarial_project)
         assert result.exit_code == 0
-        output = result.output.strip()
+        output = result.stdout.strip()
         assert output.startswith("VERDICT:"), f"Expected output to start with 'VERDICT:', got:\n{output[:200]}"
 
     def test_adversarial_verdict_line_no_changes(self, indexed_project_no_changes):
@@ -490,7 +490,7 @@ class TestAdversarialCleanChanges:
     def test_adversarial_clean_changes_verdict(self, clean_project):
         """Clean changes produce a VERDICT line."""
         result = run_adversarial(clean_project)
-        output = result.output.strip()
+        output = result.stdout.strip()
         assert output.startswith("VERDICT:"), f"Expected VERDICT: at start:\n{output[:200]}"
 
     def test_adversarial_clean_changes_json_valid(self, clean_project):

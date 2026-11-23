@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import git_init
 
 FIXTURE_SRC = Path(__file__).parent / "fixtures" / "dogfood_security"
 _INDEX_TIMEOUT = 240
@@ -85,6 +86,7 @@ def _build_repo(tmp_path_factory, name: str) -> Path:
             _secretsmod.read_text(encoding="utf-8") + f'STRIPE_SECRET_KEY = "{_stripe}"\n',
             encoding="utf-8",
         )
+    git_init(repo)
     proc = _run_roam(repo, "index", "-q")
     assert proc.returncode == 0, f"index failed: {proc.stdout[-800:]}\n{proc.stderr[-800:]}"
     assert (repo / ".roam" / "index.db").exists(), "index.db not created"

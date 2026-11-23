@@ -6222,87 +6222,8 @@ def _index_mtime() -> float:
     return 0.0
 
 
-# Tool names whose response should NOT be decorated with the stale-index
-# banner — running these is the recovery path, so saying "INDEX STALE"
-# in the response would be both noisy and confusing.
-_STALE_BANNER_SKIP = frozenset({"index", "init", "reindex", "doctor", "watch"})
-
-_STALE_CHECK_CACHE: dict[str, tuple[float, bool, str | None]] = {}
-_STALE_CHECK_TTL_S = 30.0
-
-
-def _check_stale_with_cache() -> tuple[bool, str | None]:
-    """Cached wrapper around ``stale_index.check_stale`` for the MCP path.
-
-    Per audit E5: every read-only MCP tool should surface a stale-index
-    affordance — the agent shouldn't search a renamed symbol, get
-    nothing, and conclude the symbol doesn't exist. The full check
-    stats the DB and reads the manifest, so we cache for 30 seconds
-    to keep batch tool calls fast.
-    """
-    now = _time.time()
-    cached = _STALE_CHECK_CACHE.get("default")
-    if cached is not None:
-        ts, is_stale, reason = cached
-        if (now - ts) < _STALE_CHECK_TTL_S:
-            return is_stale, reason
-    try:
-        from roam.commands.stale_index import check_stale
-
-        is_stale, reason = check_stale(sensitivity="medium")
-    except Exception as exc:  # noqa: BLE001 — stale-index probe must never break a tool call
-        # check_stale raised — assume not-stale rather than break the call.
-        # Surface under ROAM_VERBOSE: a silent failure here suppresses the
-        # stale-index banner agents rely on to avoid acting on a stale graph.
-        log_swallowed("mcp_server:check_stale_with_cache", exc)
-        is_stale, reason = False, None
-    _STALE_CHECK_CACHE["default"] = (now, is_stale, reason)
-    return is_stale, reason
-
-
-def _annotate_stale(result: dict, command: str, *, root: str = ".") -> dict:
-    """If the index is stale and *command* isn't a recovery tool,
-    prepend a banner to the verdict and stamp ``_meta.stale_index``.
-
-    Fix E (Sub-task 4): _annotate_stale runs on every envelope returned
-    by ``_run_roam`` — both inprocess and subprocess paths. Tick the
-    session-wide ``partial_success`` counter here so the
-    ``session_metrics`` envelope reflects ANY partial-success envelope,
-    not just errors.
-    """
+def _track_query_result(result: dict) -> dict:
     _note_partial_success(result)
-    if root != ".":
-        # The subprocess already emits index_status for the requested root.
-        # The cached probe below examines this server's cwd, not that root:
-        # applying it here would mix project evidence and can create .roam
-        # in an unrelated directory. Preserve the scoped producer metadata.
-        return result
-    if command in _STALE_BANNER_SKIP:
-        return result
-    if not isinstance(result, dict):
-        return result
-    meta = result.get("_meta")
-    if isinstance(meta, dict) and "index_changed_files" in meta:
-        return result  # The CLI has already evaluated doctor's freshness rule.
-    if result.get("isError") is True and result.get("error_code") in {"INDEX_NOT_FOUND", "INDEX_STALE"}:
-        # The index refusal is already actionable. A freshness probe here can
-        # create an absent store or open an incomplete SQLite generation.
-        return result
-    is_stale, reason = _check_stale_with_cache()
-    if not is_stale:
-        return result
-
-    summary = result.get("summary")
-    if isinstance(summary, dict):
-        verdict = summary.get("verdict") or ""
-        banner = "INDEX STALE — call roam_reindex first."
-        if banner not in verdict:
-            summary["verdict"] = f"{banner} {verdict}".strip()
-    meta = dict(result.get("_meta") or {})
-    meta["stale_index"] = True
-    if reason:
-        meta["stale_reason"] = reason
-    result["_meta"] = meta
     return result
 
 
@@ -6396,13 +6317,11 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
     cache automatically). Same call within the window returns the
     same envelope without re-running the command.
 
-    v12.51: post-process responses with a stale-index banner so agents
-    don't search a renamed symbol, get nothing, and conclude the
-    symbol doesn't exist (audit E5).
+    CLI envelopes carry their own index freshness. Cache hits refresh
+    that metadata because the working tree can change independently.
     """
     if root != ".":
-        result = _run_roam_subprocess(args, root)
-        return _annotate_stale(result, args[0] if args else "", root=root)
+        return _track_query_result(_run_roam_subprocess(args, root))
 
     from roam.db.freshness import refuse_stale_index
 
@@ -6420,18 +6339,17 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
                 if isinstance(payload, dict):
                     out = _refresh_cached_envelope(payload)
                     if out is not None:
-                        return _annotate_stale(out, args[0])
+                        return _track_query_result(out)
         result = _run_roam_inprocess(args)
         if isinstance(result, dict) and "error" not in result:
             _ROAM_RESULT_CACHE[cache_key] = (_time.time(), _index_mtime(), result)
-        return _annotate_stale(result, args[0] if args else "")
-    result = _run_roam_inprocess(args)
-    return _annotate_stale(result, args[0] if args else "")
+        return _track_query_result(result)
+    return _track_query_result(_run_roam_inprocess(args))
 
 
 def _refresh_cached_envelope(payload: dict) -> dict | None:
     """Refresh query metadata that can change without an index rebuild."""
-    from roam.db.connection import StaleDbDirError, find_project_root, get_db_path, open_db
+    from roam.db.connection import StaleDbDirError, find_project_root, open_db
     from roam.db.freshness import read_query_index_freshness
     from roam.output.formatter import stamp_query_index_freshness
 
@@ -6440,13 +6358,12 @@ def _refresh_cached_envelope(payload: dict) -> dict | None:
     if "index_changed_files" in meta:
         root = find_project_root()
         try:
-            db_path = get_db_path(root, create=False)
             with open_db(readonly=True, project_root=root, disclose_freshness=False) as conn:
-                freshness = read_query_index_freshness(conn, db_path, root)
+                freshness = read_query_index_freshness(conn, root)
         except (OSError, click.ClickException, StaleDbDirError) as exc:
             log_swallowed("mcp_server:refresh_cached_freshness", exc)
             return None
-        if freshness is None or (meta.get("stale_index") and not freshness.stale):
+        if freshness.state == "fresh" and meta.get("index_state") != "fresh":
             return None
         out["summary"] = dict(out.get("summary") or {})
         stamp_query_index_freshness(out, freshness)
@@ -7201,7 +7118,7 @@ def _compound_envelope(
         result["_errors"] = errors
 
     # Fix E (Sub-task 4) — compound envelopes don't all flow back
-    # through ``_run_roam`` / ``_annotate_stale``. Tick the session-wide
+    # through ``_run_roam``. Tick the session-wide
     # counter here too so the session_metrics envelope reflects partial
     # compound outcomes.
     _note_partial_success(result)

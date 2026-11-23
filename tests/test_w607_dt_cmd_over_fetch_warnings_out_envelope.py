@@ -88,6 +88,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from tests.conftest import record_test_index_manifest
+
 # ---------------------------------------------------------------------------
 # Canonical W607-DT phase enumeration
 # ---------------------------------------------------------------------------
@@ -273,6 +275,7 @@ def _build_empty_over_fetch_project(tmp_path: Path) -> Path:
 
     conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     # No files / no symbols -> empty corpus.
+    record_test_index_manifest(conn, tmp_path)
     conn.commit()
     conn.close()
     return tmp_path

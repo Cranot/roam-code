@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import time
+from contextlib import closing
 
 import pytest
 
@@ -22,9 +24,72 @@ def query_project(project_factory, monkeypatch):
     return project
 
 
-def _age_index():
-    old = time.time() - 66 * 86400
-    os.utime(get_db_path(), (old, old))
+def _age_index(seconds=66 * 86400):
+    old = int(time.time()) - seconds
+    db_path = get_db_path()
+    with closing(sqlite3.connect(db_path)) as conn, conn:
+        conn.execute("UPDATE index_manifest SET indexed_at = ?", (old,))
+    os.utime(db_path, (old, old))
+
+
+def test_25_hour_index_with_unchanged_tree(query_project, cli_runner, monkeypatch):
+    _age_index(25 * 3600)
+    result = cli_runner.invoke(cli, ["search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+
+    monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["_meta"]["index_state"] == "fresh"
+    assert envelope["_meta"]["index_changed_files"] == 0
+    assert abs(envelope["_meta"]["index_age_s"] - 25 * 3600) < 10
+    assert "stale_index" not in envelope["_meta"]
+    assert envelope["summary"]["partial_success"] is False
+
+
+def test_snapshot_write_preserves_index_age(query_project, cli_runner):
+    _age_index(25 * 3600)
+    db_path = get_db_path()
+    before = db_path.stat().st_mtime
+    saved = cli_runner.invoke(cli, ["trends", "--save", "--tag", "after-index"])
+    assert saved.exit_code == 0, saved.output
+    assert "Snapshot saved" in saved.stdout
+    assert db_path.stat().st_mtime > before
+
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    assert abs(json.loads(result.stdout)["_meta"]["index_age_s"] - 25 * 3600) < 10
+
+
+def test_git_failure_leaves_index_state_unknown(query_project, cli_runner, monkeypatch):
+    run = subprocess.run
+
+    def fail_git_diff(command, *args, **kwargs):
+        if command[:2] == ["git", "diff"] and "--name-only" in command:
+            return subprocess.CompletedProcess(command, 128, b"", b"fatal: bad revision")
+        return run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_git_diff)
+    monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
+    result = cli_runner.invoke(cli, ["search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    assert "Could not check index freshness" in result.stderr
+
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["_meta"]["index_state"] == "unknown"
+    assert envelope["_meta"]["index_changed_files"] is None
+    assert "git diff" in envelope["_meta"]["index_state_reason"]
+    assert "stale_index" not in envelope["_meta"]
+    assert envelope["summary"]["partial_success"] is True
+
+    doctor = cli_runner.invoke(cli, ["--json", "doctor"])
+    check = next(check for check in json.loads(doctor.stdout)["checks"] if check["name"] == "Index freshness")
+    assert check["state"] == "unknown"
+    assert check["reason"] == envelope["_meta"]["index_state_reason"]
 
 
 @pytest.mark.parametrize("flags", [[], ["--compact"]], ids=["full", "compact"])
@@ -81,7 +146,8 @@ def test_old_index_mcp(query_project, monkeypatch):
     (query_project / "app.py").write_text("def renamed_helper():\n    return 1\n")
     changed_worktree = mcp_server.search_symbol("indexed_helper")
 
-    assert fresh_worktree["_meta"]["stale_index"] is True
+    assert fresh_worktree["_meta"]["index_state"] == "fresh"
+    assert "stale_index" not in fresh_worktree["_meta"]
     assert fresh_worktree["_meta"]["index_changed_files"] == 0
     assert changed_worktree["_meta"]["stale_index"] is True
     assert changed_worktree["_meta"]["index_changed_files"] == 1
@@ -100,8 +166,15 @@ def test_tracked_changes_on_a_recent_index(query_project, cli_runner):
     assert result.exit_code == 0, result.output
     envelope = json.loads(result.stdout)
     assert envelope["_meta"]["index_changed_files"] == 1
-    assert "stale_index" not in envelope["_meta"]
-    assert envelope["summary"]["partial_success"] is False
+    assert envelope["_meta"]["stale_index"] is True
+    assert envelope["_meta"]["index_state"] == "stale"
+    assert envelope["_meta"]["index_age_s"] < 3600
+    assert envelope["summary"]["partial_success"] is True
+
+    text = cli_runner.invoke(cli, ["search", "indexed_helper"])
+    assert text.exit_code == 0, text.output
+    assert "Index is stale" in text.stderr
+    assert "1 changed file" in text.stderr
 
 
 def test_dirty_build_counts_reverting_an_indexed_edit(project_factory, cli_runner, monkeypatch):
@@ -120,11 +193,11 @@ def test_dirty_build_counts_reverting_an_indexed_edit(project_factory, cli_runne
     envelope = json.loads(result.stdout)
     assert envelope["results"][0]["name"] == "indexed_helper"
     assert envelope["_meta"]["index_changed_files"] == 1
-    assert "stale_index" not in envelope["_meta"]
+    assert envelope["_meta"]["stale_index"] is True
 
 
 def test_stale_refusal_is_opt_in(query_project, cli_runner, monkeypatch):
-    _age_index()
+    (query_project / "app.py").write_text("def renamed_helper():\n    return 1\n")
     monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
 
     result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])

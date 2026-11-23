@@ -1615,10 +1615,16 @@ def _stamp_core_meta(
 def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness) -> None:
     """Apply the same freshness fields to CLI envelopes and MCP cache hits."""
     meta = out.setdefault("_meta", {})
-    meta["index_age_s"] = int(freshness.age_s)
+    meta["index_age_s"] = int(freshness.age_s) if freshness.age_s is not None else None
     meta["index_changed_files"] = freshness.changed_files
+    meta["index_state"] = freshness.state
+    meta.pop("stale_index", None)
+    meta.pop("index_state_reason", None)
+    if freshness.reason is not None:
+        meta["index_state_reason"] = freshness.reason
     if freshness.stale:
         meta["stale_index"] = True
+    if freshness.state != "fresh":
         out.setdefault("summary", {})["partial_success"] = True
 
 

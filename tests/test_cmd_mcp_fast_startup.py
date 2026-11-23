@@ -3,10 +3,9 @@
 Regression guard for the private MCP startup-timeout eval finding:
 ``roam mcp`` booted in ~38 s on a 22 MB index because it ran a
 synchronous full reindex before ``mcp.run()``. The wrapper in
-``cmd_mcp`` swaps that for a fast mtime-only ``check_stale`` so the
-server boots in under a second on the common case (index fresh) and
-emits a stderr warning on the rare case (index stale) rather than
-blocking past Claude Code's 30 s connect timeout.
+``cmd_mcp`` uses the tracked-tree freshness check before starting the
+server and writes a stderr warning when the index is stale or the check
+is unavailable. Startup skips the full reindex.
 
 We deliberately avoid the full subprocess to keep the suite robust on
 machines without ``fastmcp`` installed; instead we monkey-patch the
@@ -159,13 +158,15 @@ def stub_mcp_server(monkeypatch):
 def test_default_invocation_forces_no_auto_index(stub_mcp_server, monkeypatch):
     """The whole point of the wrapper: the default server-start path
     must not trigger the 36 s ``_ensure_fresh_index`` reindex. The
-    wrapper replaces it with a fast ``check_stale`` and forwards with
+    wrapper replaces it with a fast ``probe_index_freshness`` and forwards with
     ``no_auto_index=True``.
     """
+    from roam.db.freshness import QueryIndexFreshness
+
     # Pretend the index is fresh so no stderr warning is emitted.
     monkeypatch.setattr(
-        "roam.commands.stale_index.check_stale",
-        lambda sensitivity="medium": (False, None),
+        "roam.db.freshness.probe_index_freshness",
+        lambda *_: QueryIndexFreshness(60, 0),
     )
 
     from roam.commands.cmd_mcp import mcp
@@ -180,14 +181,16 @@ def test_default_invocation_forces_no_auto_index(stub_mcp_server, monkeypatch):
 
 
 def test_stale_index_emits_warning_but_still_boots(stub_mcp_server, monkeypatch):
-    """When ``check_stale`` returns True, the wrapper writes a stderr
+    """When the probe finds changed files, the wrapper writes a stderr
     warning and still forwards with ``no_auto_index=True`` — the server
     boots fast and the agent gets a visible affordance instead of a
     30 s connect-timeout failure.
     """
+    from roam.db.freshness import QueryIndexFreshness
+
     monkeypatch.setattr(
-        "roam.commands.stale_index.check_stale",
-        lambda sensitivity="medium": (True, "index mtime 99h old"),
+        "roam.db.freshness.probe_index_freshness",
+        lambda *_: QueryIndexFreshness(60, 1),
     )
 
     from roam.commands.cmd_mcp import mcp
@@ -215,15 +218,17 @@ def test_stale_index_emits_warning_but_still_boots(stub_mcp_server, monkeypatch)
 
 def test_explicit_no_auto_index_skips_check(stub_mcp_server, monkeypatch):
     """If the user passes ``--no-auto-index`` we trust them and skip the
-    fast check entirely. ``check_stale`` should not be called.
+    fast check entirely. ``probe_index_freshness`` should not be called.
     """
+    from roam.db.freshness import QueryIndexFreshness
+
     called = {"count": 0}
 
-    def fake_check(sensitivity="medium"):
+    def fake_check(*_):
         called["count"] += 1
-        return False, None
+        return QueryIndexFreshness(60, 0)
 
-    monkeypatch.setattr("roam.commands.stale_index.check_stale", fake_check)
+    monkeypatch.setattr("roam.db.freshness.probe_index_freshness", fake_check)
 
     from roam.commands.cmd_mcp import mcp
 
@@ -232,7 +237,7 @@ def test_explicit_no_auto_index_skips_check(stub_mcp_server, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert stub_mcp_server["no_auto_index"] is True
-    assert called["count"] == 0, "check_stale should not run when --no-auto-index is set"
+    assert called["count"] == 0, "the probe should not run when --no-auto-index is set"
 
 
 @pytest.mark.parametrize(
@@ -247,15 +252,17 @@ def test_explicit_no_auto_index_skips_check(stub_mcp_server, monkeypatch):
 def test_info_modes_bypass_freshness_check(info_flag, attr, stub_mcp_server, monkeypatch):
     """Info-only modes don't need a fresh index — and the underlying
     ``mcp_cmd`` returns before the freshness check anyway. The wrapper
-    must not call ``check_stale`` and must forward verbatim.
+    must not call ``probe_index_freshness`` and must forward verbatim.
     """
+    from roam.db.freshness import QueryIndexFreshness
+
     called = {"count": 0}
 
-    def fake_check(sensitivity="medium"):
+    def fake_check(*_):
         called["count"] += 1
-        return True, "fake stale"
+        return QueryIndexFreshness(60, 1)
 
-    monkeypatch.setattr("roam.commands.stale_index.check_stale", fake_check)
+    monkeypatch.setattr("roam.db.freshness.probe_index_freshness", fake_check)
 
     from roam.commands.cmd_mcp import mcp
 
@@ -263,7 +270,7 @@ def test_info_modes_bypass_freshness_check(info_flag, attr, stub_mcp_server, mon
     result = runner.invoke(mcp, info_flag, standalone_mode=False)
 
     assert result.exit_code == 0, result.output
-    assert called["count"] == 0, "info modes should not run check_stale"
+    assert called["count"] == 0, "info modes should not run the probe"
     # The info flag itself must be forwarded as True (or the right value).
     forwarded = stub_mcp_server[attr]
     if attr == "compat_profile":
@@ -273,16 +280,16 @@ def test_info_modes_bypass_freshness_check(info_flag, attr, stub_mcp_server, mon
 
 
 def test_check_stale_filesystem_error_is_safe(stub_mcp_server, monkeypatch):
-    """A defensive guard: if ``check_stale`` itself hits an expected
+    """A defensive guard: if ``probe_index_freshness`` itself hits an expected
     filesystem error reading the DB, the wrapper still boots the server.
     It MUST NOT propagate the exception — that would be worse than the
     original 36 s reindex.
     """
 
-    def boom(sensitivity="medium"):
+    def boom(*_):
         raise PermissionError("disk gone")
 
-    monkeypatch.setattr("roam.commands.stale_index.check_stale", boom)
+    monkeypatch.setattr("roam.db.freshness.probe_index_freshness", boom)
 
     from roam.commands.cmd_mcp import mcp
 
@@ -295,16 +302,16 @@ def test_check_stale_filesystem_error_is_safe(stub_mcp_server, monkeypatch):
 
 
 def test_check_stale_unexpected_error_propagates(stub_mcp_server, monkeypatch):
-    """Programmer-class ``check_stale`` failures must not be swallowed.
+    """Programmer-class ``probe_index_freshness`` failures must not be swallowed.
 
     The wrapper catches expected import/filesystem failures only. A broad
     ``except Exception`` here would hide real bugs and still boot the server.
     """
 
-    def boom(sensitivity="medium"):
+    def boom(*_):
         raise RuntimeError("programmer bug")
 
-    monkeypatch.setattr("roam.commands.stale_index.check_stale", boom)
+    monkeypatch.setattr("roam.db.freshness.probe_index_freshness", boom)
 
     from roam.commands.cmd_mcp import mcp
 

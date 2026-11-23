@@ -304,6 +304,7 @@ class TestCleanOrphanDetection:
     def test_clean_verdict_reflects_removals(self, indexed_project, cli_runner, monkeypatch):
         """Verdict should mention the count of removed items."""
         monkeypatch.chdir(indexed_project)
+        monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
 
         (indexed_project / "main.py").unlink()
 

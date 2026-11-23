@@ -154,7 +154,7 @@ class TestBlameReviewersText:
 
         result = invoke_cli(cli_runner, ["blame-reviewers"])
         assert result.exit_code == 0
-        first_line = result.output.strip().split("\n")[0]
+        first_line = result.stdout.strip().split("\n")[0]
         assert first_line.startswith("VERDICT:")
         # bob has the most lines added on auth.py, so a table appears.
         assert "REVIEWER" in result.output

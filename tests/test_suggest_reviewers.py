@@ -603,7 +603,7 @@ class TestSuggestReviewersTextOutput:
 
         result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"])
         assert result.exit_code == 0
-        first_line = result.output.strip().split("\n")[0]
+        first_line = result.stdout.strip().split("\n")[0]
         assert first_line.startswith("VERDICT:")
 
     def test_table_headers(self, tmp_path, cli_runner, monkeypatch):

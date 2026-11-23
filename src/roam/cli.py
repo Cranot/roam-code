@@ -1162,7 +1162,7 @@ class LazyGroup(click.Group):
         except click.ClickException as exc:
             from roam.db.freshness import StaleQueryIndexError
 
-            if not isinstance(exc, StaleQueryIndexError) or not ctx.obj.get("json"):
+            if not isinstance(exc, StaleQueryIndexError) or not exc.json_output:
                 raise
             from roam.exit_codes import EXIT_ERROR
             from roam.output.formatter import json_envelope, to_json

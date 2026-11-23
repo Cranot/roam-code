@@ -67,6 +67,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from tests.conftest import record_test_index_manifest
+
 # ---------------------------------------------------------------------------
 # Canonical W607-DL phase enumeration
 # ---------------------------------------------------------------------------
@@ -347,6 +349,7 @@ def _build_empty_dead_project(tmp_path: Path) -> Path:
     )
     # Both symbols have inbound edges (alive -> helper, helper -> alive).
     conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, 2, 'call'), (2, 1, 'call')")
+    record_test_index_manifest(conn, tmp_path)
     conn.commit()
     conn.close()
     return tmp_path

@@ -783,26 +783,29 @@ def _check_index_exists() -> dict:
 
 
 def _check_index_freshness(db_path_str: str | None) -> dict:
-    """Index mtime <= 24 hours old."""
-    from roam.db.freshness import format_index_age, index_age_seconds, index_is_stale
+    """Compare the index with the tracked tree using the query freshness rule."""
+    from roam.db.connection import find_project_root
+    from roam.db.freshness import probe_index_freshness
 
-    age_s = index_age_seconds(Path(db_path_str)) if db_path_str is not None else None
-    if age_s is None:
+    if db_path_str is None or not Path(db_path_str).exists():
         return {
             "name": "Index freshness",
             "passed": False,
             "detail": "index does not exist (run `roam init`)",
         }
 
-    stale = index_is_stale(age_s)
-    age_str = format_index_age(age_s)
-
-    return {
+    freshness = probe_index_freshness(Path(db_path_str), find_project_root())
+    check = {
         "name": "Index freshness",
-        "passed": not stale,
-        "detail": (f"fresh ({age_str})" if not stale else f"stale ({age_str}, run `roam index` to refresh)"),
-        "_age_s": round(age_s, 1),
+        "passed": freshness.state == "fresh",
+        "detail": freshness.message(),
+        "state": freshness.state,
+        "index_changed_files": freshness.changed_files,
+        "_age_s": round(freshness.age_s, 1) if freshness.age_s is not None else None,
     }
+    if freshness.reason is not None:
+        check["reason"] = freshness.reason
+    return check
 
 
 def _check_search_index_sync(db_path_str: str | None) -> dict:

@@ -612,8 +612,9 @@ class TestCriticueCLI:
         result = runner.invoke(cli, ["critique", "--working-tree"], input="")
 
         assert result.exit_code in (0, 5), result.output
-        assert result.output.startswith("REVIEWED: working tree (base: HEAD)\n")
-        assert "changed files:   2" in result.output
+        assert result.stdout.startswith("REVIEWED: working tree (base: HEAD)\n")
+        assert "changed files:   2" in result.stdout
+        assert "2 changed files" in result.stderr
 
     def test_interactive_clean_tree_reviews_last_commit(self, critique_project, monkeypatch):
         from click.testing import _NamedTextIOWrapper

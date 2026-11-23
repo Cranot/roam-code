@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sqlite3
 import sys
 import time
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -427,6 +427,20 @@ class TestDoctorIndexExistsCheck:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def doctor_index(project_factory, monkeypatch):
+    from roam.db.connection import get_db_path
+
+    project = project_factory({"app.py": "def helper():\n    return 1\n"})
+    monkeypatch.chdir(project)
+    return get_db_path()
+
+
+def _set_doctor_index_age(db_path, hours):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE index_manifest SET indexed_at = ?", (int(time.time()) - hours * 3600,))
+
+
 class TestDoctorIndexFreshnessCheck:
     def test_freshness_check_none_db_path(self):
         from roam.commands.cmd_doctor import _check_index_freshness
@@ -435,46 +449,36 @@ class TestDoctorIndexFreshnessCheck:
         assert check["passed"] is False
         assert "roam init" in check["detail"]
 
-    def test_freshness_check_fresh_db(self, tmp_path):
+    def test_freshness_check_fresh_db(self, doctor_index):
         from roam.commands.cmd_doctor import _check_index_freshness
 
-        db_path = tmp_path / "index.db"
-        db_path.touch()
-        # mtime is now — should be fresh
-        check = _check_index_freshness(str(db_path))
+        check = _check_index_freshness(str(doctor_index))
         assert check["passed"] is True
         assert "fresh" in check["detail"]
 
-    def test_freshness_check_stale_db(self, tmp_path):
+    def test_freshness_check_stale_db(self, doctor_index):
         from roam.commands.cmd_doctor import _check_index_freshness
+        from roam.db.connection import find_project_root
 
-        db_path = tmp_path / "index.db"
-        db_path.touch()
-        # Set mtime to 25 hours ago
-        old_time = time.time() - (25 * 3600)
-        os.utime(str(db_path), (old_time, old_time))
-        check = _check_index_freshness(str(db_path))
+        (find_project_root() / "app.py").write_text("def edited_helper():\n    return 2\n")
+        check = _check_index_freshness(str(doctor_index))
         assert check["passed"] is False
         assert "stale" in check["detail"]
         assert "roam index" in check["detail"]
+        assert check["index_changed_files"] == 1
 
-    def test_freshness_check_24h_boundary_fresh(self, tmp_path):
+    def test_freshness_check_old_unchanged_index(self, doctor_index):
         from roam.commands.cmd_doctor import _check_index_freshness
 
-        db_path = tmp_path / "index.db"
-        db_path.touch()
-        # 23 hours old — still fresh
-        recent_time = time.time() - (23 * 3600)
-        os.utime(str(db_path), (recent_time, recent_time))
-        check = _check_index_freshness(str(db_path))
+        _set_doctor_index_age(doctor_index, 25)
+        check = _check_index_freshness(str(doctor_index))
         assert check["passed"] is True
+        assert check["state"] == "fresh"
 
-    def test_freshness_check_includes_age(self, tmp_path):
+    def test_freshness_check_includes_age(self, doctor_index):
         from roam.commands.cmd_doctor import _check_index_freshness
 
-        db_path = tmp_path / "index.db"
-        db_path.touch()
-        check = _check_index_freshness(str(db_path))
+        check = _check_index_freshness(str(doctor_index))
         assert "_age_s" in check
         assert isinstance(check["_age_s"], float)
 
@@ -485,23 +489,17 @@ class TestDoctorIndexFreshnessCheck:
         check = _check_index_freshness(missing)
         assert check["passed"] is False
 
-    def test_freshness_age_display_seconds(self, tmp_path):
+    def test_freshness_age_display_seconds(self, doctor_index):
         from roam.commands.cmd_doctor import _check_index_freshness
 
-        db_path = tmp_path / "index.db"
-        db_path.touch()
-        # Very fresh — seconds ago
-        check = _check_index_freshness(str(db_path))
+        check = _check_index_freshness(str(doctor_index))
         assert "second" in check["detail"] or "minute" in check["detail"]
 
-    def test_freshness_age_display_days(self, tmp_path):
+    def test_freshness_age_display_days(self, doctor_index):
         from roam.commands.cmd_doctor import _check_index_freshness
 
-        db_path = tmp_path / "index.db"
-        db_path.touch()
-        two_days_ago = time.time() - (49 * 3600)
-        os.utime(str(db_path), (two_days_ago, two_days_ago))
-        check = _check_index_freshness(str(db_path))
+        _set_doctor_index_age(doctor_index, 49)
+        check = _check_index_freshness(str(doctor_index))
         assert "day" in check["detail"]
 
 

@@ -140,7 +140,7 @@ class TestAttestCommand:
         """Text output starts with VERDICT:."""
         monkeypatch.chdir(attest_project)
         result = invoke_cli(cli_runner, ["attest"], cwd=attest_project)
-        assert result.output.strip().startswith("VERDICT:")
+        assert result.stdout.strip().startswith("VERDICT:")
 
     def test_attest_no_changes(self, cli_runner, attest_no_changes, monkeypatch):
         """No changes -> graceful message."""
@@ -258,8 +258,16 @@ class TestAttestFormats:
         """--format json produces JSON output."""
         monkeypatch.chdir(attest_project)
         result = invoke_cli(cli_runner, ["attest", "--format", "json"], cwd=attest_project)
-        data = json.loads(result.output)
+        assert result.stderr == ""
+        data = json.loads(result.stdout)
         assert data["command"] == "attest"
+        assert data["_meta"]["index_state"] == "stale"
+
+        monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
+        refused = invoke_cli(cli_runner, ["attest", "--format", "json"], cwd=attest_project)
+        assert refused.exit_code == 1, refused.output
+        assert refused.stderr == ""
+        assert json.loads(refused.stdout)["error_code"] == "INDEX_STALE"
 
     def test_attest_output_file(self, cli_runner, attest_project, monkeypatch):
         """--output writes to file."""
@@ -619,7 +627,7 @@ class TestAttestVerdict:
         assert data["summary"]["partial_success"] is True
         plain = invoke_cli(cli_runner, ["attest"], cwd=attest_project)
         markdown = invoke_cli(cli_runner, ["attest", "--format", "markdown"], cwd=attest_project)
-        assert plain.output.splitlines()[0] == "VERDICT: MERGE CLEARANCE UNAVAILABLE"
+        assert plain.stdout.splitlines()[0] == "VERDICT: MERGE CLEARANCE UNAVAILABLE"
         assert "**Verdict: [UNKNOWN]**" in markdown.output
 
     @pytest.mark.parametrize("limit, safe", [(0, False), (100, True)])
@@ -646,7 +654,7 @@ class TestAttestVerdict:
 
         plain = invoke_cli(cli_runner, ["attest"], cwd=attest_project)
         markdown = invoke_cli(cli_runner, ["attest", "--format", "markdown"], cwd=attest_project)
-        assert plain.output.splitlines()[0] == ("VERDICT: SAFE TO MERGE" if safe else "VERDICT: NOT SAFE TO MERGE")
+        assert plain.stdout.splitlines()[0] == ("VERDICT: SAFE TO MERGE" if safe else "VERDICT: NOT SAFE TO MERGE")
         assert ("**Verdict: [PASS]**" if safe else "**Verdict: [FAIL]**") in markdown.output
 
     @pytest.mark.parametrize("blocker", ["breaking", "risk", "budget"])
@@ -654,6 +662,8 @@ class TestAttestVerdict:
     def test_refusal_survives_partial_comparison(self, cli_runner, attest_project, monkeypatch, blocker, partial):
         from roam.commands import cmd_attest
 
+        out, rc = index_in_process(attest_project)
+        assert rc == 0, out
         comparison = {"removed": [{"name": "old_api"}]} if blocker == "breaking" else {}
         if partial:
             comparison["files_not_analyzed"] = [{"file": "vendor/submodule"}]

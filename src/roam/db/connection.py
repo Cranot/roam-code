@@ -1254,7 +1254,7 @@ def open_db(
         if disclose_freshness:
             from roam.db.freshness import observe_query_index
 
-            observe_query_index(conn, db_path, root)
+            observe_query_index(conn, root)
         yield conn
         if not readonly:
             _commit_and_optimize(conn)
