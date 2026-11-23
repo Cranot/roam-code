@@ -195,16 +195,18 @@ Different commits can still have a fresh source snapshot. In text mode,
 `weather`, `health`, and `diagnose` send the history note to stderr. Run
 `roam index` to refresh the Git data.
 
-For stale-sensitive commands, confirmed changes or a failed check set
-`summary.partial_success: true`. In a project without Git, the state is
+Confirmed changes set `summary.partial_success: true` for answers that use
+the index, including `roam stats`, `roam diff` when it analyzes changes,
+and `roam index-stats`. Stale-sensitive commands also mark a failed check
+partial. In a project without Git, the state is
 `unknown` with a reason, doctor marks the check skipped, and text output
 is quiet. Other stale or unavailable checks produce a single stderr hint
 in text mode. To hide that hint, set `ROAM_NO_STALENESS_HINT=1`. Run
 `roam index` to refresh the index. Set `ROAM_REFUSE_STALE_INDEX=1` to
 refuse confirmed stale results for stale-sensitive commands. CLI refusals
-exit 1 and JSON or MCP refusals carry `error_code: INDEX_STALE`. Commands
-declared stale-insensitive, including `roam stats` and `roam diff`, disclose
-freshness and keep their command-specific `summary.partial_success` value.
+exit 1 and JSON or MCP refusals carry `error_code: INDEX_STALE`.
+Stale-insensitive commands remain available for inspecting an outdated index.
+Commands that only report the index status can still give a complete answer.
 Composite commands report the observed index state together with their own
 analysis status. A stale observation takes precedence over an unavailable
 check or a fresh observation from another child. Check outcomes in the
@@ -212,9 +214,13 @@ composite describe the analysis each child completed.
 When `roam init` finds a stale existing index, it reports the change count
 and marks initialization partial. Run `roam index` to refresh it.
 
-The freshness check has a 1.5-second budget on Linux and other non-Windows
-systems and a 3-second budget on Windows. A check that exhausts its budget
-reports `unknown`. Set `ROAM_INDEX_FRESHNESS_BUDGET_S` to override the budget
+The query shares one deadline for source freshness and Git ancestry.
+The budget is 1.5 seconds on Linux and other non-Windows systems and 3 seconds
+on Windows. An unfinished check reports `unknown`. A completed source check
+keeps its result when ancestry runs out of time. The deadline bounds the
+time Roam allocates to the check. OS process creation and cleanup, blocking
+filesystem operations, and scheduling can add wall time.
+Set `ROAM_INDEX_FRESHNESS_BUDGET_S` to override the budget
 in seconds. Fractional seconds are accepted. Unset or invalid values use
 the platform default. The supported range is greater than zero and at
 most 2,147,483 seconds.

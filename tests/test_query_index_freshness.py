@@ -294,17 +294,18 @@ def test_legacy_status_and_text_hint_opt_out(query_project, cli_runner, monkeypa
 
 
 @pytest.mark.parametrize(
-    "args",
+    "args, reads_index",
     [
-        ["stats"],
-        ["diff"],
-        ["constitution", "init"],
-        ["compatibility", "--write-baseline", "surface.json"],
-        ["exit-codes"],
+        (["stats"], True),
+        (["diff"], True),
+        (["index-stats"], True),
+        (["constitution", "init"], False),
+        (["compatibility", "--write-baseline", "surface.json"], False),
+        (["exit-codes"], False),
     ],
-    ids=["stats", "diff", "constitution", "compatibility", "exit-codes"],
+    ids=["stats", "diff", "index-stats", "constitution", "compatibility", "exit-codes"],
 )
-def test_stale_insensitive_commands_remain_available(query_project, cli_runner, monkeypatch, args):
+def test_stale_insensitive_commands_remain_available(query_project, cli_runner, monkeypatch, args, reads_index):
     (query_project / "app.py").write_text("def updated_helper():\n    return 1\n")
     monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
     result = cli_runner.invoke(cli, ["--json", *args])
@@ -312,6 +313,16 @@ def test_stale_insensitive_commands_remain_available(query_project, cli_runner, 
     envelope = json.loads(result.stdout)
     assert envelope["_meta"]["index_state"] == "stale"
     assert envelope["_meta"]["stale_index"] is True
+    assert envelope["summary"]["partial_success"] is reads_index
+
+
+def test_diff_without_changes_only_reports_index_status(query_project, cli_runner):
+    (query_project / "app.py").write_text("def updated_helper(): pass\n")
+    subprocess.run(["git", "commit", "-qam", "Edit indexed source"], check=True)
+    result = cli_runner.invoke(cli, ["--json", "diff"])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["_meta"]["index_state"] == "stale"
     assert envelope["summary"]["partial_success"] is False
 
 
@@ -506,14 +517,153 @@ def test_git_history_caps_timeout_at_budget_and_remaining_time(query_project, mo
         timeouts.append(kwargs["timeout"])
         if len(timeouts) == 1:
             now += 0.125
-            return subprocess.CompletedProcess(command, 1)
+            return subprocess.CompletedProcess(command, 1, b"", b"")
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
     monkeypatch.setattr(subprocess, "run", check_relation)
-    relation = freshness._git_history_relation(query_project, "a" * 40, "b" * 40)
+    relation = freshness._git_history_relation(query_project, "a" * 40, "b" * 40, freshness._CheckDeadline())
     assert relation == "unknown"
     assert timeouts[0] == 0.3
     assert timeouts[1:] == pytest.approx([0.175])
+
+
+@pytest.mark.parametrize("platform, budget", [("linux", 1.5), ("win32", 3.0)])
+@pytest.mark.parametrize("source_probe", ["diff", "rev-parse"])
+@pytest.mark.parametrize("remaining", [0.0, 0.25])
+def test_query_shares_source_and_history_deadline(
+    query_project, cli_runner, monkeypatch, platform, budget, source_probe, remaining
+):
+    from roam.db import freshness
+
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "Move HEAD"], check=True)
+    monkeypatch.delenv("ROAM_INDEX_FRESHNESS_BUDGET_S")
+    monkeypatch.setattr(freshness, "sys", SimpleNamespace(platform=platform))
+    now = 1_000_000.0
+    monkeypatch.setattr(freshness, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
+    run = subprocess.run
+    history_timeouts = []
+
+    def spend_budget(command, *args, **kwargs):
+        nonlocal now
+        if command[:2] == ["git", "status"] and source_probe == "rev-parse":
+            return subprocess.CompletedProcess(command, 128, b"", b"fatal: could not read status")
+        if command[:2] == ["git", source_probe] and "timeout" in kwargs:
+            now += budget - remaining
+        if command[:3] == ["git", "merge-base", "--is-ancestor"]:
+            timeout = kwargs["timeout"]
+            history_timeouts.append(timeout)
+            raise subprocess.TimeoutExpired(command, timeout)
+        return run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", spend_budget)
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    meta = envelope["_meta"]
+    expected_history = None if source_probe == "rev-parse" and not remaining else "unknown"
+    assert meta.get("git_history_relation") == expected_history
+    source_checked = source_probe == "diff" and remaining > 0
+    assert meta["index_state"] == ("fresh" if source_checked else "unknown")
+    assert envelope["summary"]["partial_success"] is not source_checked
+    assert history_timeouts == ([remaining] if remaining else [])
+
+
+@pytest.mark.parametrize("response", ["late", "unexpected-output"])
+def test_query_does_not_certify_an_incomplete_history_relation(query_project, cli_runner, monkeypatch, response):
+    from roam.db import freshness
+
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "Move HEAD"], check=True)
+    now = 1_000_000.0
+    monkeypatch.setattr(freshness, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
+    run = subprocess.run
+
+    def incomplete_history(command, *args, **kwargs):
+        nonlocal now
+        if command[:3] == ["git", "merge-base", "--is-ancestor"]:
+            if response == "late":
+                now += kwargs["timeout"]
+            stdout = b"unexpected" if response == "unexpected-output" else b""
+            return subprocess.CompletedProcess(command, 0, stdout, b"")
+        return run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", incomplete_history)
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["_meta"]["index_state"] == "fresh"
+    assert envelope["_meta"]["git_history_relation"] == "unknown"
+    assert envelope["_meta"]["git_history_behind"] is False
+
+
+@pytest.mark.parametrize("output", [b"M\0", b"Z\0app.py\0", b"M\0\0"])
+def test_query_discloses_malformed_tracked_changes(query_project, cli_runner, monkeypatch, output):
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "Move HEAD"], check=True)
+    run = subprocess.run
+
+    def malformed_diff(command, *args, **kwargs):
+        if command[:3] == ["git", "diff", "--name-status"]:
+            return subprocess.CompletedProcess(command, 0, output, b"")
+        return run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", malformed_diff)
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["_meta"]["index_state"] == "unknown"
+    assert envelope["_meta"]["index_changed_files"] is None
+    assert envelope["_meta"]["index_state_reason"] == "git diff reported an incomplete result"
+    assert envelope["summary"]["partial_success"] is True
+
+
+@pytest.mark.parametrize("staged_at", ["head", "moved-head"])
+def test_clean_index_matches_restored_worktree_even_with_staged_changes(
+    project_factory, cli_runner, monkeypatch, tmp_path, staged_at
+):
+    project = project_factory(
+        {
+            "Pkg/Source (one).py": "def indexed_helper():\n    return 1\n",
+            ".gitattributes": "*.py text eol=crlf\n",
+        },
+        index=False,
+    )
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "external database"))
+    monkeypatch.chdir(project)
+    path = "Pkg/Source (one).py"
+    original = b"def indexed_helper():\r\n    return 1\r\n"
+    (project / path).write_bytes(original)
+    subprocess.run(["git", "add", "--renormalize", "--", path], check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "Normalize source before indexing"], check=True)
+    subprocess.run(["git", "update-index", "--refresh"], check=True)
+    assert not subprocess.check_output(["git", "status", "--porcelain"])
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    with closing(sqlite3.connect(get_db_path())) as conn:
+        assert conn.execute("SELECT git_dirty_hash FROM index_manifest").fetchone() == (None,)
+    indexed = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+
+    (project / path).write_bytes(original.replace(b"return 1", b"return 20"))
+    subprocess.run(["git", "add", "--", path], check=True, capture_output=True)
+    if staged_at == "moved-head":
+        subprocess.run(["git", "commit", "-qm", "Edit indexed source"], check=True)
+        subprocess.run(["git", "restore", "--source", indexed, "--staged", "--worktree", "--", path], check=True)
+    else:
+        (project / path).write_bytes(original)
+    assert not subprocess.check_output(["git", "diff", indexed, "--", path])
+
+    monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    envelope = json.loads(result.stdout)
+    assert envelope["_meta"]["index_state"] == "fresh", envelope
+    assert result.exit_code == 0, result.output
+    assert envelope["_meta"]["index_changed_files"] == 0
+    assert envelope["summary"]["partial_success"] is False
+    assert envelope["_meta"].get("git_history_relation") == ("behind" if staged_at == "moved-head" else None)
+
+    (project / "new untracked.py").write_bytes(b"def untracked_helper(): pass\r\n")
+    monkeypatch.delenv("ROAM_REFUSE_STALE_INDEX")
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    envelope = json.loads(result.stdout)
+    assert envelope["_meta"]["index_changed_files"] == 1
+    assert envelope["summary"]["partial_success"] is True
 
 
 def test_mcp_cache_hit_reuses_recent_freshness(query_project, monkeypatch):

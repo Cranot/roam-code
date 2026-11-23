@@ -140,6 +140,14 @@ def test_mcp_composites_disclose_stale_index_over_stdio(edited_project, explicit
                         assert not reply.isError, reply
                         payload = json.loads(next(item.text for item in reply.content if item.type == "text"))
                         _assert_stale(payload, command)
+                    for command in ("stats", "diff"):
+                        args = None
+                        if explicit:
+                            args = {"commit_range": ""} if command == "diff" else {}
+                        reply = await session.call_tool(f"roam_{command}", args)
+                        assert not reply.isError, reply
+                        payload = json.loads(next(item.text for item in reply.content if item.type == "text"))
+                        _assert_stale(payload, command)
 
     asyncio.run(asyncio.wait_for(check(), timeout=120))
 

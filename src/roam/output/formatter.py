@@ -1615,10 +1615,10 @@ def _stamp_core_meta(
 def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness, *, command: str | None = None) -> None:
     """Stamp freshness on CLI and MCP envelopes.
 
-    A degraded check sets partial success only for stale-sensitive commands.
-    Stale-insensitive commands disclose the state and retain their own verdict.
+    Confirmed staleness makes index-derived answers partial. Stale-sensitive
+    commands also mark an unavailable check partial.
     """
-    from roam.db.freshness import inside_index_composite, query_is_stale_sensitive
+    from roam.db.freshness import inside_index_composite, query_is_stale_sensitive, query_read_index
 
     command = command or out.get("command", "")
     meta = out.setdefault("_meta", {})
@@ -1654,7 +1654,11 @@ def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness, *, co
         ):
             meta.pop(key, None)
     summary = out.setdefault("summary", {})
-    if freshness.degraded and not inside_index_composite() and query_is_stale_sensitive(command):
+    if (
+        freshness.degraded
+        and not inside_index_composite()
+        and ((freshness.stale and query_read_index()) or query_is_stale_sensitive(command))
+    ):
         summary["partial_success"] = True
     else:
         summary.setdefault("partial_success", False)

@@ -26,6 +26,7 @@ _MAX_BUDGET_S = 2_147_483
 _BUDGET_EXCEEDED = "freshness check exceeded its time budget"
 _NO_GIT_WORKTREE = "project has no Git worktree"
 _QUERY_FRESHNESS_KEY = "roam_query_index_freshness"
+_QUERY_INDEX_READ_KEY = "roam_query_index_read"
 _MAINTENANCE_COMMANDS = frozenset({"clean", "doctor", "index", "init", "reset", "watch"})
 
 
@@ -108,6 +109,8 @@ def _run_git(
     except OSError as exc:
         log_swallowed("index_freshness:git", exc)
         return None, f"git {command[1]} could not run ({type(exc).__name__})"
+    if deadline.remaining() <= 0:
+        return None, _BUDGET_EXCEEDED
     no_ignored_paths = command[1] == "check-ignore" and result.returncode == 1 and not result.stdout
     if result.returncode and not no_ignored_paths:
         return None, f"git {command[1]} failed (exit {result.returncode})"
@@ -246,30 +249,54 @@ def _candidate_paths(
     git_root: Path,
     indexed_head: str,
     head: str,
+    status: bytes,
     status_paths: set[str],
+    clean_build: bool,
     config_changed: bool,
     dirty_paths: list[str] | None,
     deadline: _CheckDeadline,
 ) -> tuple[set[str] | None, bool, set[str], str | None]:
-    committed_paths: set[str] = set()
-    if indexed_head != head:
+    diff_paths: set[str] = set()
+    # Status describes changes on either side of the staging area. For a
+    # clean build those changes can cancel each other or changes in HEAD.
+    records = status.split(b"\0") if clean_build else ()
+    moved_head = indexed_head != head
+    reconcile_worktree = any(
+        (record.startswith(b"1 ") and (moved_head or b"." not in record[2:4]))
+        or (moved_head and record.startswith(b"u "))
+        for record in records
+    )
+    if moved_head or reconcile_worktree:
+        revisions = [indexed_head] if reconcile_worktree else [indexed_head, head]
         diff, reason = _run_git(
             git_root,
-            ["git", "diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", indexed_head, head, "--"],
+            ["git", "diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", *revisions, "--"],
             deadline,
         )
         if diff is None:
             return None, False, set(), reason
-        if diff and not diff.endswith(b"\0"):
+        fields = diff.split(b"\0")
+        if (
+            fields[-1]
+            or len(fields) % 2 != 1
+            or any(
+                kind not in (b"A", b"B", b"D", b"M", b"T", b"U", b"X") or not path
+                for kind, path in zip(fields[:-1:2], fields[1::2])
+            )
+        ):
             return None, False, set(), "git diff reported an incomplete result"
-        committed_paths = _git_paths(diff, name_status=True)
+        diff_paths = _git_paths(diff, name_status=True)
 
     prior = set(dirty_paths or ())
     # Ignore rules can affect unchanged paths. A recorded dirty path that
     # disappears from status can also have fallen out of Git's untracked
     # discovery scope via info/exclude or a configured excludes file.
-    if dirty_paths is not None and not config_changed and not _has_gitignore(status_paths | committed_paths | prior):
+    if dirty_paths is not None and not config_changed and not _has_gitignore(status_paths | diff_paths | prior):
         prefix = root.relative_to(git_root).as_posix() + "/" if root != git_root else ""
+        if reconcile_worktree:
+            # The diff covers tracked changes. Keep status for untracked
+            # files, including collapsed directories that need discovery.
+            status_paths = _git_paths(b"\0".join(record[2:] for record in records if record.startswith(b"? ")))
         collapsed = any(
             path.endswith("/") and (path.startswith(prefix) or prefix.startswith(path)) for path in status_paths
         )
@@ -292,7 +319,7 @@ def _candidate_paths(
             if ignored is None:
                 return None, False, set(), reason
             current.update(prior)
-            current.update(path[len(prefix) :] for path in committed_paths if path.startswith(prefix))
+            current.update(path[len(prefix) :] for path in diff_paths if path.startswith(prefix))
             return current, False, ignored, None
 
     from roam.index.discovery import GIT_LS_FILES
@@ -383,7 +410,9 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
         head = os.fsdecode(raw_head).strip() if raw_head else None
         if not _is_git_oid(head):
             head = None
-        relation = _git_history_relation(git_root, indexed_head, head) if head and head != indexed_head else None
+        relation = (
+            _git_history_relation(git_root, indexed_head, head, deadline) if head and head != indexed_head else None
+        )
         return QueryIndexFreshness(
             age_s, None, reason, indexed_commit=indexed_head, head_commit=head, git_history_relation=relation
         )
@@ -408,7 +437,9 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
         git_root,
         indexed_head,
         head,
+        status,
         status_paths,
+        not dirty_hash and recorded_paths == [],
         config_changed,
         recorded_paths,
         deadline,
@@ -435,7 +466,9 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
         indexed_commit=indexed_head,
         head_commit=head,
         changed_paths=frozenset(changed_paths or ()),
-        git_history_relation=_git_history_relation(git_root, indexed_head, head) if indexed_head != head else None,
+        git_history_relation=_git_history_relation(git_root, indexed_head, head, deadline)
+        if indexed_head != head
+        else None,
     )
 
 
@@ -491,6 +524,13 @@ def query_is_stale_sensitive(command: str) -> bool:
     return command_is_stale_sensitive(_invoked_command(ctx) if ctx is not None else command)
 
 
+def query_read_index() -> bool:
+    """Distinguish CLI index reads from an optional freshness advisory."""
+    ctx = click.get_current_context(silent=True)
+    # Direct MCP readers and cache refreshes already have a query result.
+    return ctx is None or ctx.meta.get(_QUERY_INDEX_READ_KEY, False)
+
+
 def _invoked_command(ctx: click.Context) -> str:
     parent = ctx.find_root()
     return parent.invoked_subcommand or ctx.command.name or ""
@@ -537,8 +577,7 @@ def query_index_freshness() -> QueryIndexFreshness | None:
     return project_index_freshness(find_project_root())
 
 
-def _git_history_relation(root: Path, indexed: str, head: str) -> str:
-    deadline = _CheckDeadline()
+def _git_history_relation(root: Path, indexed: str, head: str, deadline: _CheckDeadline) -> str:
     env = worktree_git_env(root)
     for ancestor, descendant, relation in ((indexed, head, "behind"), (head, indexed, "ahead")):
         remaining = deadline.remaining()
@@ -555,6 +594,8 @@ def _git_history_relation(root: Path, indexed: str, head: str) -> str:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             log_swallowed("index_freshness:history", exc)
+            return "unknown"
+        if deadline.remaining() <= 0 or result.stdout:
             return "unknown"
         if result.returncode == 0 and not result.stderr:
             return relation
@@ -703,7 +744,11 @@ def observe_query_index(conn: sqlite3.Connection, root: Path) -> None:
         if observations is not None and root not in observations:
             observations[root] = read_query_index_freshness(conn, root)
         return
-    if _invoked_command(ctx) in _MAINTENANCE_COMMANDS or _QUERY_FRESHNESS_KEY in ctx.meta:
+    if _invoked_command(ctx) in _MAINTENANCE_COMMANDS:
+        return
+    for query in (ctx, *_composite_contexts.get()):
+        query.meta[_QUERY_INDEX_READ_KEY] = True
+    if _QUERY_FRESHNESS_KEY in ctx.meta:
         return
     freshness = read_query_index_freshness(conn, root)
     _record_query_index(ctx, root, freshness)
