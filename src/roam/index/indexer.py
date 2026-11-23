@@ -2779,16 +2779,11 @@ class Indexer:
             # W408: persist per-phase wallclock so ``roam doctor`` and
             # the W395-followup perf work can rank optimization candidates.
             notes_payload["phase_timings"] = phase_timings
-        notes: str | None = None
-        if notes_payload:
-            import json as _json
-
-            notes = _json.dumps(notes_payload, sort_keys=True)
         record_indexer_run(
             conn,
             self.root,
             profile="all",
-            notes=notes,
+            notes=notes_payload,
             steps_status=step_status,
         )
 

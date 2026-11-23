@@ -15,6 +15,7 @@ from pathlib import Path
 
 import click
 
+from roam.git_utils import GIT_STATUS_PORCELAIN, git_status_paths, worktree_git_env
 from roam.observability import log_swallowed
 
 _CHECK_BUDGET_S = 0.3
@@ -25,7 +26,8 @@ _MAINTENANCE_COMMANDS = frozenset({"clean", "doctor", "index", "init", "reset", 
 
 def _latest_index_manifest(conn: sqlite3.Connection) -> sqlite3.Row | tuple | None:
     return conn.execute(
-        "SELECT indexed_at, git_head, notes, config_hash FROM index_manifest ORDER BY indexed_at DESC, id DESC LIMIT 1"
+        "SELECT indexed_at, git_head, git_dirty_hash, notes, config_hash "
+        "FROM index_manifest ORDER BY indexed_at DESC, id DESC LIMIT 1"
     ).fetchone()
 
 
@@ -60,9 +62,10 @@ def format_index_age(age_s: float) -> str:
 
 
 def _run_git(root: Path, command: list[str], deadline: float) -> tuple[bytes | None, str | None]:
-    from roam.git_utils import worktree_git_env
-
     env = worktree_git_env(root)
+    if command[1] == "status":
+        # A timed-out status must not leave Git's optional index write locked.
+        env = {**(env if env is not None else os.environ), "GIT_OPTIONAL_LOCKS": "0"}
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return None, _BUDGET_EXCEEDED
@@ -84,25 +87,50 @@ def _run_git(root: Path, command: list[str], deadline: float) -> tuple[bytes | N
     return result.stdout, None
 
 
-def _include_excluded(notes: str | None) -> bool:
+def _manifest_notes(notes: str | None) -> dict:
     try:
         manifest = json.loads(notes) if notes else None
     except (ValueError, TypeError) as exc:
         log_swallowed("index_freshness:notes", exc)
-        return False
-    options = manifest.get("index_options") if isinstance(manifest, dict) else None
-    return isinstance(options, dict) and options.get("include_excluded") is True
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
+def _git_paths(output: bytes, *, name_status: bool = False) -> set[str]:
+    records = output.decode("utf-8", errors="replace").split("\0")
+    if name_status:
+        # With rename detection disabled, each status field has one path.
+        records = records[1::2]
+    return {path.replace("\\", "/") for path in records if path}
+
+
+def _indexed_rows(conn: sqlite3.Connection, paths: set[str], *, compare_all: bool):
+    select = "SELECT path, language, mtime, hash FROM files"
+    if compare_all:
+        yield from conn.execute(select)
+        return
+    candidates = tuple(paths)
+    # Keep each lookup below SQLite's legacy host-parameter limit.
+    for start in range(0, len(candidates), 500):
+        batch = candidates[start : start + 500]
+        placeholders = ",".join("?" for _ in batch)
+        yield from conn.execute(f"{select} WHERE path IN ({placeholders})", batch)
 
 
 def _compare_indexed_files(
     conn: sqlite3.Connection,
     root: Path,
-    listed_paths: bytes,
+    paths: set[str],
+    *,
+    compare_all: bool,
+    dirty: bool,
     include_excluded: bool,
-    indexed_config_hash: str | None,
     deadline: float,
 ) -> tuple[set[str] | None, str | None]:
-    """Compare the same indexed source-file snapshot for clean and dirty builds."""
+    """Filter Git candidates against discovery and the indexed snapshot."""
+    if not paths and not compare_all:
+        return set(), None
+
     from roam.index.discovery import (
         MAX_FILE_SIZE,
         _filter_files,
@@ -111,23 +139,26 @@ def _compare_indexed_files(
         load_exclude_patterns,
     )
     from roam.index.incremental import file_hash
-    from roam.index.manifest import _config_hash
-    from roam.index.parser import detect_language
 
-    paths = {path.replace("\\", "/") for path in listed_paths.decode("utf-8", errors="replace").split("\0") if path}
     root_path = os.fspath(root)
     changed_paths: set[str] = set()
     try:
         exclude_patterns = [] if include_excluded else load_exclude_patterns(root)
-        recheck_excludes = exclude_patterns and _config_hash(root) != indexed_config_hash
-        for path, language, mtime, digest in conn.execute("SELECT path, language, mtime, hash FROM files"):
+        for path, language, mtime, digest in _indexed_rows(conn, paths, compare_all=compare_all):
             if time.monotonic() >= deadline:
                 return None, _BUDGET_EXCEEDED
             listed = path in paths
             paths.discard(path)
-            if not (language or detect_language(path)):
+            if not language:
+                from roam.index.parser import detect_language
+
+                if not detect_language(path):
+                    continue
+            if not dirty and not compare_all:
+                # Git identified a change to a path already accepted by discovery.
+                changed_paths.add(path)
                 continue
-            if not listed or _is_skippable(path) or (recheck_excludes and _matches_exclude(path, exclude_patterns)):
+            if not listed or _is_skippable(path) or _matches_exclude(path, exclude_patterns):
                 changed_paths.add(path)
                 continue
             try:
@@ -140,15 +171,57 @@ def _compare_indexed_files(
                 changed = True
             if changed:
                 changed_paths.add(path)
-        for path in paths:
-            if time.monotonic() >= deadline:
-                return None, _BUDGET_EXCEEDED
-            if detect_language(path) and _filter_files([path], root, exclude_patterns, include_excluded):
-                changed_paths.add(path)
+        if paths:
+            from roam.index.parser import detect_language
+
+            for path in paths:
+                if time.monotonic() >= deadline:
+                    return None, _BUDGET_EXCEEDED
+                if detect_language(path) and _filter_files([path], root, exclude_patterns, include_excluded):
+                    changed_paths.add(path)
     except (OSError, sqlite3.Error) as exc:
         log_swallowed("index_freshness:files", exc)
         return None, f"could not compare indexed files ({type(exc).__name__})"
     return changed_paths, None
+
+
+def _candidate_paths(
+    root: Path, indexed_head: str, head: str, config_changed: bool, dirty_paths: list[str] | None, deadline: float
+) -> tuple[set[str] | None, bool, str | None]:
+    status, reason = _run_git(root, [*GIT_STATUS_PORCELAIN, "--untracked-files=normal"], deadline)
+    if status is None:
+        return None, False, reason
+    paths = git_status_paths(status)
+    if indexed_head != head:
+        diff, reason = _run_git(
+            root,
+            ["git", "diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", indexed_head, head, "--"],
+            deadline,
+        )
+        if diff is None:
+            return None, False, reason
+        paths.update(_git_paths(diff, name_status=True))
+
+    if dirty_paths is not None:
+        paths.update(dirty_paths)
+    gitignore_changed = any(path.rsplit("/", 1)[-1] == ".gitignore" for path in paths)
+    if dirty_paths is None or config_changed or gitignore_changed:
+        # Legacy dirty manifests have no path list. Ignore rule changes can
+        # also affect files that Git otherwise reports as unchanged.
+        from roam.index.discovery import GIT_LS_FILES
+
+        listing, reason = _run_git(root, list(GIT_LS_FILES), deadline)
+        return (_git_paths(listing) if listing is not None else None), True, reason
+
+    if any(path.endswith("/") for path in paths):
+        # Porcelain's normal mode collapses untracked directories. Ask Git
+        # to expand them in one pass so nested Git ignore rules still apply.
+        listing, reason = _run_git(root, ["git", "ls-files", "-z", "--others", "--exclude-standard"], deadline)
+        if listing is None:
+            return None, False, reason
+        paths = {path for path in paths if not path.endswith("/")}
+        paths.update(_git_paths(listing))
+    return paths, False, None
 
 
 @dataclass(frozen=True)
@@ -199,7 +272,7 @@ class QueryIndexFreshness:
 
 
 def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: float) -> QueryIndexFreshness:
-    from roam.index.discovery import GIT_LS_FILES
+    from roam.index.manifest import _config_hash
 
     row = _latest_index_manifest(conn)
     age_s = _manifest_age(row[0]) if row else None
@@ -207,16 +280,35 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: float) -> Qu
         return QueryIndexFreshness(age_s, None, "project has no Git worktree", skipped=True)
     if row is None:
         return QueryIndexFreshness(None, None, "no index manifest recorded")
-    _, indexed_head, notes, config_hash = row
+    _, indexed_head, dirty_hash, notes, config_hash = row
     if not indexed_head:
         return QueryIndexFreshness(age_s, None, "the index manifest has no Git commit")
-    paths, reason = _run_git(root, list(GIT_LS_FILES), deadline)
-    if paths is None:
+    if len(indexed_head) not in (40, 64) or any(char not in "0123456789abcdef" for char in indexed_head):
+        return QueryIndexFreshness(age_s, None, "the index manifest has an invalid Git commit")
+    raw_head, reason = _run_git(root, ["git", "rev-parse", "HEAD"], deadline)
+    if raw_head is None:
         return QueryIndexFreshness(age_s, None, reason, indexed_commit=indexed_head)
-    head, reason = _run_git(root, ["git", "rev-parse", "HEAD"], deadline)
-    if head is None:
-        return QueryIndexFreshness(age_s, None, reason, indexed_commit=indexed_head)
-    changed_paths, reason = _compare_indexed_files(conn, root, paths, _include_excluded(notes), config_hash, deadline)
+    head = os.fsdecode(raw_head).strip()
+    metadata = _manifest_notes(notes)
+    options = metadata.get("index_options")
+    include_excluded = isinstance(options, dict) and options.get("include_excluded") is True
+    recorded_paths = metadata.get("git_dirty_paths", None if dirty_hash else [])
+    if not isinstance(recorded_paths, list) or any(not isinstance(path, str) for path in recorded_paths):
+        recorded_paths = None
+    paths, compare_all, reason = _candidate_paths(
+        root, indexed_head, head, not include_excluded and _config_hash(root) != config_hash, recorded_paths, deadline
+    )
+    changed_paths = None
+    if paths is not None:
+        changed_paths, reason = _compare_indexed_files(
+            conn,
+            root,
+            paths,
+            compare_all=compare_all,
+            dirty=bool(dirty_hash),
+            include_excluded=include_excluded,
+            deadline=deadline,
+        )
     if time.monotonic() >= deadline:
         changed_paths, reason = None, _BUDGET_EXCEEDED
     return QueryIndexFreshness(
@@ -224,7 +316,7 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: float) -> Qu
         len(changed_paths) if changed_paths is not None else None,
         reason,
         indexed_commit=indexed_head,
-        head_commit=os.fsdecode(head).strip(),
+        head_commit=head,
         changed_paths=frozenset(changed_paths or ()),
     )
 

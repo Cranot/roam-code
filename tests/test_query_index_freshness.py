@@ -66,12 +66,12 @@ def test_snapshot_write_preserves_index_age(query_project, cli_runner):
 def test_git_failure_leaves_index_state_unknown(query_project, cli_runner, monkeypatch):
     run = subprocess.run
 
-    def fail_git_list(command, *args, **kwargs):
-        if command[:2] == ["git", "ls-files"]:
+    def fail_git_status(command, *args, **kwargs):
+        if command[:2] == ["git", "status"]:
             return subprocess.CompletedProcess(command, 128, b"", b"fatal: bad revision")
         return run(command, *args, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", fail_git_list)
+    monkeypatch.setattr(subprocess, "run", fail_git_status)
     monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
     result = cli_runner.invoke(cli, ["search", "indexed_helper"])
     assert result.exit_code == 0, result.output
@@ -82,7 +82,7 @@ def test_git_failure_leaves_index_state_unknown(query_project, cli_runner, monke
     envelope = json.loads(result.stdout)
     assert envelope["_meta"]["index_state"] == "unknown"
     assert envelope["_meta"]["index_changed_files"] is None
-    assert "git ls-files" in envelope["_meta"]["index_state_reason"]
+    assert "git status" in envelope["_meta"]["index_state_reason"]
     assert "stale_index" not in envelope["_meta"]
     assert envelope["summary"]["partial_success"] is True
 
@@ -178,7 +178,8 @@ def test_tracked_changes_on_a_recent_index(query_project, cli_runner):
     assert "2 changed files" in text.stderr
 
 
-def test_dirty_build_counts_reverting_an_indexed_edit(project_factory, cli_runner, monkeypatch):
+@pytest.mark.parametrize("legacy_manifest", [False, True], ids=["recorded-paths", "legacy"])
+def test_dirty_build_counts_reverting_an_indexed_edit(project_factory, cli_runner, monkeypatch, legacy_manifest):
     project = project_factory({"app.py": "def committed_helper():\n    pass\n"}, index=False)
     monkeypatch.chdir(project)
     app = project / "app.py"
@@ -188,7 +189,22 @@ def test_dirty_build_counts_reverting_an_indexed_edit(project_factory, cli_runne
     built = cli_runner.invoke(cli, ["index"])
     assert built.exit_code == 0, built.output
 
+    if legacy_manifest:
+        with closing(sqlite3.connect(get_db_path())) as conn, conn:
+            notes = json.loads(conn.execute("SELECT notes FROM index_manifest").fetchone()[0])
+            del notes["git_dirty_paths"]
+            conn.execute("UPDATE index_manifest SET notes = ?", (json.dumps(notes),))
+
     subprocess.run(["git", "checkout", "--", "app.py"], cwd=project, check=True)
+    assert not subprocess.check_output(["git", "status", "--porcelain"], cwd=project)
+    if not legacy_manifest:
+        run = subprocess.run
+
+        def require_candidates(command, *args, **kwargs):
+            assert command[:2] != ["git", "ls-files"]
+            return run(command, *args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", require_candidates)
     result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
     assert result.exit_code == 0, result.output
     envelope = json.loads(result.stdout)
@@ -323,6 +339,54 @@ def test_indexable_paths_are_counted_in_clean_and_dirty_builds(project_factory, 
     assert count() == 0
 
 
+@pytest.mark.parametrize("committed", [False, True], ids=["worktree", "committed"])
+def test_deleted_source_and_excluded_untracked_directory(project_factory, monkeypatch, committed):
+    from roam.db.freshness import probe_index_freshness
+
+    project = project_factory(
+        {
+            ".gitignore": ".roam/\nignored.py\n",
+            ".roamignore": "excluded/\n",
+            "app.py": "def helper(): pass\n",
+            "deleted.py": "def deleted(): pass\n",
+        }
+    )
+    monkeypatch.chdir(project)
+    assert not subprocess.check_output(["git", "status", "--porcelain"], cwd=project)
+    (project / "deleted.py").unlink()
+    if committed:
+        subprocess.run(["git", "commit", "-qam", "Delete indexed file"], cwd=project, check=True)
+    for name in ("excluded/untracked.py", "new/admitted.py", "new/ignored.py"):
+        path = project / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("def untracked(): pass\n")
+
+    freshness = probe_index_freshness(get_db_path(), project)
+    assert freshness.state == "stale"
+    assert freshness.changed_paths == {"deleted.py", "new/admitted.py"}
+
+
+def test_clean_build_checks_git_status_without_listing_all_files(query_project, monkeypatch):
+    from roam.db.freshness import probe_index_freshness
+
+    run = subprocess.run
+    commands = []
+
+    def record(command, *args, **kwargs):
+        if command[0] == "git":
+            commands.append(command[1])
+        return run(command, *args, **kwargs)
+
+    (query_project / "app.py").write_text("def edited(): pass\n")
+    monkeypatch.setattr(subprocess, "run", record)
+    freshness = probe_index_freshness(get_db_path(), query_project)
+
+    assert freshness.changed_paths == {"app.py"}
+    assert commands.count("status") == 1
+    assert "ls-files" not in commands
+    assert len(commands) == len(set(commands))
+
+
 def test_non_git_query_and_doctor(tmp_path, cli_runner, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "app.py").write_text("def indexed_helper():\n    return 1\n")
@@ -354,7 +418,8 @@ def test_freshness_check_has_subsecond_budget(query_project, cli_runner, monkeyp
     timeouts = []
 
     def time_out_freshness_git(command, *args, **kwargs):
-        if command[:2] == ["git", "ls-files"] or (command[:2] == ["git", "diff"] and "-z" in command):
+        if command[:2] == ["git", "status"]:
+            assert kwargs["env"]["GIT_OPTIONAL_LOCKS"] == "0"
             timeout = kwargs["timeout"]
             timeouts.append(timeout)
             raise subprocess.TimeoutExpired(command, timeout)

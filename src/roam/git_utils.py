@@ -15,6 +15,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+GIT_STATUS_PORCELAIN = ("git", "status", "--porcelain=v1", "-z", "--no-renames")
+
+
+def git_status_paths(status: bytes) -> set[str]:
+    """Extract both sides of renames from status run with --no-renames."""
+    return {record[3:].replace("\\", "/") for record in status.decode("utf-8", errors="replace").split("\0") if record}
+
+
 _GIT_SUBPROCESS_ENV_ALLOWLIST = frozenset(
     {
         # Needed for subprocess executable lookup on systems where git is not

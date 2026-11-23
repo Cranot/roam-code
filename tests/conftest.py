@@ -56,6 +56,7 @@ def git_commit(path, msg="update"):
 def record_test_index_manifest(conn, path):
     """Tie a synthetic index's file rows to a matching Git worktree."""
     from roam.index.incremental import file_hash
+    from roam.index.manifest import _config_hash
 
     created = False
     for (relative_path,) in conn.execute("SELECT path FROM files").fetchall():
@@ -72,9 +73,12 @@ def record_test_index_manifest(conn, path):
         git_commit(path, "add synthetic index fixture files")
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=path, text=True).strip()
     conn.execute(
-        "CREATE TABLE index_manifest (id INTEGER PRIMARY KEY, indexed_at INTEGER, git_head, notes, config_hash)"
+        "CREATE TABLE index_manifest "
+        "(id INTEGER PRIMARY KEY, indexed_at INTEGER, git_head, git_dirty_hash, notes, config_hash)"
     )
-    conn.execute("INSERT INTO index_manifest VALUES (1, strftime('%s', 'now'), ?, NULL, NULL)", (head,))
+    conn.execute(
+        "INSERT INTO index_manifest VALUES (1, strftime('%s', 'now'), ?, NULL, NULL, ?)", (head, _config_hash(path))
+    )
 
 
 # ===========================================================================
