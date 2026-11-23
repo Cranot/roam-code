@@ -247,9 +247,9 @@ jobs:
           persist-credentials: false
       # For production, replace the tag with the reviewed 40-character SHA it
       # points at — a release tag is readable but remains movable.
-      - uses: Cranot/roam-code@v14.1.0-r1
+      - uses: Cranot/roam-code@v14.2.2
         with:
-          version: '14.1.0'
+          version: '14.2.2'
           commands: health
           gate: "score>=70"
           sarif: 'true'

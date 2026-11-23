@@ -638,6 +638,16 @@ def test_write_mode_repairs_every_reported_site(fake_tree) -> None:
     assert (tree / "server.json").read_text(encoding="utf-8").count('"14.0.0"') == 2
 
 
+def test_release_notes_keep_the_tags_they_quote(fake_tree) -> None:
+    """The 14.2.2 pin bump rewrote a changelog entry's quote of a missing tag."""
+    entry = "named `Cranot/roam-code@v13.9.0-r1`, which does not exist; pin roam-code==13.9.0\n"
+    notes = ("CHANGELOG.md", "templates/distribution/landing-page/changelog.html")
+    tree = fake_tree({rel: entry for rel in notes})
+    sync.release_pin_drift("14.0.0", "14.0.0", write=True)
+    for rel in notes:
+        assert (tree / rel).read_text(encoding="utf-8") == entry, rel
+
+
 def test_exempt_paths_are_not_rewritten(fake_tree) -> None:
     """Historical and deliberately-lagging files survive a bump untouched."""
     exempt = sorted(sync._VERSION_PIN_EXEMPT)
