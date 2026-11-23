@@ -331,12 +331,19 @@ class TestBundleUsesTheConfiguredDatabaseDirectory:
         lane = _make_project(tmp_path / "lane", _FIXTURE)
         lane_db = tmp_path / "lane-db"
         monkeypatch.setenv("ROAM_DB_DIR", str(lane_db))
-        monkeypatch.chdir(lane)
-        result = runner.invoke(cli, ["index-import", str(bundle)])
-        assert result.exit_code == 0, result.output
-        assert (lane_db / "index.db").is_file()
-        assert not (lane / ".roam" / "index.db").exists()
-        # The imported index answers queries in the lane.
-        found = runner.invoke(cli, ["--json", "search", "UserSession"])
-        assert found.exit_code == 0, found.output
-        assert "UserSession" in found.output
+        # Plain chdir with a restore: indexed_project restores the cwd with
+        # os.chdir itself, and monkeypatch.chdir would undo to the fixture's
+        # project directory after that fixture's teardown.
+        back = os.getcwd()
+        os.chdir(lane)
+        try:
+            result = runner.invoke(cli, ["index-import", str(bundle)])
+            assert result.exit_code == 0, result.output
+            assert (lane_db / "index.db").is_file()
+            assert not (lane / ".roam" / "index.db").exists()
+            # The imported index answers queries in the lane.
+            found = runner.invoke(cli, ["--json", "search", "UserSession"])
+            assert found.exit_code == 0, found.output
+            assert "UserSession" in found.output
+        finally:
+            os.chdir(back)
