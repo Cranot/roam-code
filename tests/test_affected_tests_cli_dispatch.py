@@ -394,6 +394,34 @@ def test_test_importing_target_module_is_selected(registry_project, monkeypatch)
     assert kinds.get("tests/test_alpha_patch.py") == {"MODULE_IMPORT"}
 
 
+def test_loaded_effects_reuse_released_test_module(tmp_path, monkeypatch):
+    from collections import Counter
+
+    from roam.commands import cmd_affected_tests as affected
+
+    shared = "tests/test_shared.py"
+    roots = ["tests/test_first.py", "tests/test_second.py"]
+    (tmp_path / "tests").mkdir()
+    (tmp_path / shared).write_text("import subprocess\nsubprocess.run(['roam', 'alpha'])\n", encoding="utf-8")
+    for path in roots:
+        (tmp_path / path).write_text("from tests import test_shared\n", encoding="utf-8")
+    scope = affected._DispatchScope(tmp_path, {"tests.test_shared": shared}, {}, {("src/roam/cli.py", "R"): {}})
+    parses = Counter()
+    parse = affected._parse_python
+
+    def counted_parse(root, path):
+        parses[path] += 1
+        return parse(root, path)
+
+    monkeypatch.setattr(affected, "_parse_python", counted_parse)
+    assert not scope.loaded_effects(shared, ())[0]
+    scope.release(shared)
+    for path in roots:
+        assert scope.loaded_effects(path, ())[0]
+
+    assert parses == {path: 1 for path in [shared, *roots]}
+
+
 _ALPHA_INVOKE = {
     "tests/test_alpha_invoke.py",
     "tests/test_alpha_alias.py",

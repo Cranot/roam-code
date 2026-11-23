@@ -26,7 +26,10 @@ import ast
 import os
 import re
 import shlex
+from collections import deque
 from dataclasses import dataclass
+from functools import cache
+from itertools import chain
 from pathlib import Path
 
 import click
@@ -421,6 +424,10 @@ _PROCESS_OPAQUE = frozenset(
     | {"os.posix_spawn", "os.posix_spawnp", "os.startfile", "pty.spawn"}
 )
 _PROCESS_CALLS = _PROCESS_ARGV | _PROCESS_SHELL | _PROCESS_VARARGS | _PROCESS_OPAQUE
+_PROCESS_MODULES = {name.rpartition(".")[0] for name in _PROCESS_CALLS}
+_PROCESS_PREFIXES = {
+    ".".join(parts[:i]) for name in _PROCESS_CALLS for parts in (name.split("."),) for i in range(1, len(parts) + 1)
+}
 # Calls that end a test without failing it or running what follows.
 _TERMINATORS = frozenset(
     {"pytest.skip", "pytest.fail", "pytest.xfail", "pytest.exit", "pytest.importorskip"}
@@ -612,7 +619,7 @@ def _env_key(node):
     )
 
 
-def _fresh_names(tree, parents):
+def _fresh_names(nodes, parents):
     """Names every binding of which is a new mapping (a dict display or copy), never the environment."""
     fresh, other = set(), set()
 
@@ -624,7 +631,7 @@ def _fresh_names(tree, parents):
             return func in _FRESH_MAPPINGS or (isinstance(value.func, ast.Attribute) and value.func.attr == "copy")
         return False
 
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
             use = parents.get(node)
             ok = isinstance(use, (ast.Assign, ast.AnnAssign)) and node is not use.value and is_fresh(use.value)
@@ -640,13 +647,13 @@ def _fresh_names(tree, parents):
     return fresh - other
 
 
-def _environ_aliases(tree):
+def _environ_aliases(nodes):
     """Names that may be the environment or one of its setters, resolved through imports.
 
     ``import os as X`` needs no entry: any ``.environ`` attribute counts.
     """
     environ, setters = {"environ", "environb"}, set(_ENV_SETTERS)
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 if alias.name in ("environ", "environb", "*"):
@@ -661,7 +668,7 @@ def _environ_aliases(tree):
     return environ, setters
 
 
-def _writes_environment(tree):
+def _writes_environment(nodes):
     """Whether code may write the process environment, to any key: an unresolved write counts, a read does not.
 
     Any variable changes what a launched program runs (``PATH``,
@@ -671,14 +678,24 @@ def _writes_environment(tree):
     ``getattr(os, "environ")``).  A write with a literal key shaped like a
     variable name counts on any receiver not resolved as a new mapping.
     """
-    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    environ, setters = _environ_aliases(tree)
-    fresh = _fresh_names(tree, parents)
+    environ, setters = _environ_aliases(nodes)
+    parents = fresh = None
+
+    def parent_map():
+        nonlocal parents
+        if parents is None:
+            parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
+        return parents
 
     def unresolved(receiver):
-        return not (isinstance(receiver, ast.Name) and receiver.id in fresh)
+        if not isinstance(receiver, ast.Name):
+            return True
+        nonlocal fresh
+        if fresh is None:
+            fresh = _fresh_names(nodes, parent_map())
+        return receiver.id not in fresh
 
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Constant) and node.value in _ENVIRON_NAMES:
             return True  # the environment named by a string: ``patch.dict("os.environ", ...)``
         if isinstance(node, ast.Call):
@@ -709,7 +726,7 @@ def _writes_environment(tree):
             continue
         if not isinstance(node.ctx, ast.Load):
             return True  # ``os.environ = ...``
-        use = parents.get(node)
+        use = parent_map().get(node)
         if isinstance(use, ast.Subscript) and use.value is node:
             if not isinstance(use.ctx, ast.Load):
                 return True  # ``os.environ[key] = ...``, ``del os.environ[key]``
@@ -727,7 +744,7 @@ def _writes_environment(tree):
     return False
 
 
-def _launches(tree, qualnames):
+def _launches(tree, imports, qualnames):
     """Whether code names a process launcher (``subprocess.run``, ``os.system``, ...), called or not."""
 
     def dotted(e):
@@ -738,13 +755,18 @@ def _launches(tree, qualnames):
             return f"{base}.{e.attr}" if base else None
         return None
 
-    modules = {name.rpartition(".")[0] for name in _PROCESS_CALLS}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in modules and any(a.name == "*" for a in node.names):
-            return True
-        if isinstance(node, (ast.Name, ast.Attribute)) and dotted(node) in _PROCESS_CALLS:
-            return True
-    return False
+    if any(
+        isinstance(node, ast.ImportFrom)
+        and node.module in _PROCESS_MODULES
+        and any(alias.name == "*" for alias in node.names)
+        for node in imports
+    ):
+        return True
+    if _PROCESS_PREFIXES.isdisjoint(qualnames.values()):
+        return False
+    return any(
+        isinstance(node, (ast.Name, ast.Attribute)) and dotted(node) in _PROCESS_CALLS for node in ast.walk(tree)
+    )
 
 
 def _shell_launch(call, qualname):
@@ -1005,15 +1027,33 @@ def _parametrize_bindings(decorators):
     return bound
 
 
-def _walk_own_body(node):
+def _walk_own_body(node, lambdas=None, parents=None):
     """``ast.walk`` that does not enter nested functions, lambdas or classes."""
     stack = [node]
     while stack:
         current = stack.pop()
         yield current
         for child in ast.iter_child_nodes(current):
+            if parents is not None:
+                parents[child] = current
             if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
                 stack.append(child)
+            elif lambdas is not None and isinstance(child, ast.Lambda):
+                lambdas.setdefault(current, []).append(child)
+
+
+def _own_body(fn, parents=None):
+    """Reuse the same body order when extracting a function's different facts."""
+    if not hasattr(fn, "roam_body"):
+        fn.roam_lambdas = {}
+        walk = _walk_own_body(fn, fn.roam_lambdas, parents)
+        next(walk)  # keep the function itself out of the cache it owns
+        fn.roam_body = tuple(walk)
+    elif parents is not None:
+        for node in chain((fn,), fn.roam_body):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+    return fn.roam_body
 
 
 _LOOPS = (ast.For, ast.AsyncFor, ast.While, ast.comprehension)
@@ -1049,12 +1089,12 @@ def _loop_exit_state(iterable, site, may_stop=lambda call: False):
     ]
     if not exits:
         return exits, False
-    prefix = loop.body[
-        : next(
-            (i for i, stmt in enumerate(loop.body) if any(x in set(ast.walk(stmt)) for x in exits)),
-            len(loop.body),
-        )
-    ]
+    exit_nodes = set(exits)
+    first_exit = next(
+        (i for i, stmt in enumerate(loop.body) if not exit_nodes.isdisjoint(ast.walk(stmt))),
+        len(loop.body),
+    )
+    prefix = loop.body[:first_exit]
     return exits, any(_unconditional_site(stmt, site) for stmt in prefix)
 
 
@@ -1088,9 +1128,7 @@ def _function_facts(fn):
     under a loop, ``"cond"`` under a branch, else None.
     """
     parents = {}
-    for node in _walk_own_body(fn):
-        for child in ast.iter_child_nodes(node):
-            parents[child] = node
+    body = _own_body(fn, parents)
 
     def flag(node):
         found = None
@@ -1114,7 +1152,7 @@ def _function_facts(fn):
         elif isinstance(target, ast.Starred):
             add(target.value, kind, value, node)
 
-    for node in _walk_own_body(fn):
+    for node in body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 add(target, "assign", node.value, node)
@@ -1155,6 +1193,15 @@ def _invocation_args(call, start=0):
     return [*call.args[start:], *(k.value for k in call.keywords if k.arg == "args")]
 
 
+def _function_name(expr):
+    """The suffix of a callable expression for matching decorator and mark names."""
+    if isinstance(expr, ast.Name):
+        return expr.id
+    if isinstance(expr, ast.Attribute):
+        return expr.attr
+    return ast.unparse(expr)
+
+
 class _Summary:
     """A function's dispatch: its settled reach and the templates its callers complete.
 
@@ -1187,6 +1234,8 @@ class _DispatchScope:
         self.flood = flood
         self.registries = registries
         self._files = {}
+        self._effects = {}
+        self._environment_writes = {}
         self._summaries = {}
         self._facts = {}
         self._arity = {}
@@ -1194,6 +1243,9 @@ class _DispatchScope:
         self._returning = set()
         self._registry_readers = {}
         self._stops = {}
+        self._is_test = cache(is_test_file)
+        self.definition = cache(self._definition)
+        self.click_kind = cache(self._click_kind)
         packages = {_python_module_name(p).split(".")[0] for p, _n in registries}
         self.programs = packages
         self.modules = {*packages, *(f"{p}.__main__" for p in packages)}
@@ -1207,7 +1259,7 @@ class _DispatchScope:
         tree = _parse_python(self.root, path)
         info = None
         if tree is not None:
-            info = {"imports": {}, "qualnames": {}, "globals": {}, "functions": {}}
+            info = {"tree": tree, "imports": {}, "qualnames": {}, "globals": {}, "functions": {}, "import_nodes": []}
             for node in tree.body:
                 if isinstance(node, ast.Assign):
                     for t in node.targets:
@@ -1220,47 +1272,50 @@ class _DispatchScope:
                         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                             item.roam_class_decorators = node.decorator_list
 
-            def enclosures(node, outer=None):
-                for child in ast.iter_child_nodes(node):
-                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        child.roam_enclosing = outer
-                        enclosures(child, child)
-                    else:
-                        enclosures(child, outer)
-
-            enclosures(tree)
             info["rebound_globals"] = set()
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    node.roam_rebound = getattr(node, "roam_rebound", set())
-            for node in ast.walk(tree):
+            declarations = {}
+            # Keep the breadth-first binding order of ast.walk. Only statements
+            # and their containers can hold imports, definitions or declarations.
+            pending = deque([(tree, None, None)])
+            while pending:
+                node, outer, owner = pending.popleft()
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     info["functions"].setdefault(node.name, []).append(node)
-                    own = list(_walk_own_body(node))
-                    written = {s.id for s in own if isinstance(s, ast.Name) and not isinstance(s.ctx, ast.Load)}
-                    # A write through ``global`` makes the module value unknown;
-                    # one through ``nonlocal``, every enclosing value.
-                    info["rebound_globals"] |= {
-                        n for s in own if isinstance(s, ast.Global) for n in s.names if n in written
-                    }
-                    outer = getattr(node, "roam_enclosing", None)
-                    nonlocal_writes = {n for s in own if isinstance(s, ast.Nonlocal) for n in s.names if n in written}
-                    while outer is not None and nonlocal_writes:
-                        outer.roam_rebound = getattr(outer, "roam_rebound", set()) | nonlocal_writes
-                        outer = getattr(outer, "roam_enclosing", None)
+                    node.roam_enclosing = outer
+                    outer = owner = node
+                elif isinstance(node, ast.ClassDef):
+                    owner = None
+                elif isinstance(node, (ast.Global, ast.Nonlocal)) and owner is not None:
+                    declarations.setdefault(owner, []).append(node)
                 elif isinstance(node, ast.Import):
+                    info["import_nodes"].append(node)
                     for alias in node.names:
                         bound = alias.asname or alias.name.split(".")[0]
                         info["imports"][bound] = ("module", alias.name if alias.asname else bound)
                         info["qualnames"][bound] = alias.name if alias.asname else bound
-                elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-                    for alias in node.names:
-                        info["imports"][alias.asname or alias.name] = self._member(node.module, alias.name)
-                        info["qualnames"][alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                elif isinstance(node, ast.ImportFrom):
+                    info["import_nodes"].append(node)
+                    if node.module and not node.level:
+                        for alias in node.names:
+                            info["imports"][alias.asname or alias.name] = self._member(node.module, alias.name)
+                            info["qualnames"][alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                pending.extend(
+                    (child, outer, owner)
+                    for child in ast.iter_child_nodes(node)
+                    if isinstance(child, (ast.stmt, ast.ExceptHandler, ast.match_case))
+                )
+            for fn, names in declarations.items():
+                written = {n.id for n in _own_body(fn) if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load)}
+                for decl in names:
+                    rebound = written.intersection(decl.names)
+                    if isinstance(decl, ast.Global):
+                        info["rebound_globals"].update(rebound)
+                    else:
+                        outer = fn.roam_enclosing
+                        while outer is not None and rebound:
+                            outer.roam_rebound = getattr(outer, "roam_rebound", set()) | rebound
+                            outer = outer.roam_enclosing
             info["module"] = self._pseudo_function("<module>", tree.body, tree)
-            info["writes_environment"] = _writes_environment(tree)
-            info["loads"], info["plugins"] = self._loads(tree, path)
-            info["launches"] = _launches(tree, info["qualnames"])
         self._files[path] = info
         return info
 
@@ -1275,10 +1330,28 @@ class _DispatchScope:
 
     def writes_environment(self, path):
         """Whether the module at *path* may write the environment; an unreadable one may."""
-        info = self.file(path)
-        return info is None or info["writes_environment"]
+        if path not in self._environment_writes:
+            info = self.file(path)
+            self._environment_writes[path] = info is None or _writes_environment(tuple(ast.walk(info["tree"])))
+        return self._environment_writes[path]
 
-    def _loads(self, tree, path):
+    def _module_effects(self, path):
+        """Cache import and process facts even after the test's tree is released."""
+        if path not in self._effects:
+            info = self.file(path)
+            effects = None
+            if info is not None:
+                tree, imports = info["tree"], info["import_nodes"]
+                loads, plugins = self._loads(tree, imports, path)
+                effects = {
+                    "loads": loads,
+                    "plugins": plugins,
+                    "launches": _launches(tree, imports, info["qualnames"]),
+                }
+            self._effects[path] = effects
+        return self._effects[path]
+
+    def _loads(self, tree, imports, path):
         """Project modules *tree* imports (with their packages) and names in ``pytest_plugins``.
 
         A ``pytest_plugins`` value that is not a literal loads an unknown module: ``None``.
@@ -1286,7 +1359,7 @@ class _DispatchScope:
         module = _python_module_name(path) or ""
         package = module if path.replace("\\", "/").endswith("/__init__.py") else module.rpartition(".")[0]
         names, plugins = set(), set()
-        for node in ast.walk(tree):
+        for node in imports:
             if isinstance(node, ast.Import):
                 names.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
@@ -1320,7 +1393,7 @@ class _DispatchScope:
         return local(names), None if plugins is None else local(plugins)
 
     def loaded_effects(self, path, conftests):
-        """``(launches, writes_environment)`` of project code a test module loads besides itself.
+        """Return whether loaded code launches, and the paths to check for environment writes.
 
         The code is the conftests that apply, the modules named in their or
         the test's ``pytest_plugins`` (read like conftests), and the project
@@ -1332,18 +1405,14 @@ class _DispatchScope:
         run on import, a method of a class defined there).  An unreadable module or plugin list may do
         either.  Neither ever proves coverage.
         """
-        launches = writes = False
+        launches = False
         seen = {path}
         frontier = []
         for start in (path, *conftests):
-            info = self.file(start)
-            if info is None:
-                return True, True
-            if start != path:
-                seen.add(start)
-                writes |= info["writes_environment"]
-            if info["plugins"] is None:
-                return True, True
+            info = self._module_effects(start)
+            if info is None or info["plugins"] is None:
+                return True, ()
+            seen.add(start)
             frontier += [*info["loads"], *info["plugins"]]
         for _depth in range(_LOADED_DEPTH):
             following = []
@@ -1351,14 +1420,13 @@ class _DispatchScope:
                 if module in seen or (_python_module_name(module) or "").split(".")[0] in self.programs:
                     continue
                 seen.add(module)
-                info = self.file(module)
+                info = self._module_effects(module)
                 if info is None or info["plugins"] is None:
-                    return True, True
-                writes |= info["writes_environment"]
+                    return True, ()
                 launches |= info["launches"]
                 following += [*info["loads"], *info["plugins"]]
             frontier = following
-        return launches, writes
+        return launches, seen
 
     def release(self, path):
         """Drop a processed test module's trees; a later reference parses it again.
@@ -1369,9 +1437,8 @@ class _DispatchScope:
         if not (name.startswith("test_") or name.endswith("_test.py")):
             return
         self._files.pop(path, None)
-        for cache in (self._summaries, self._facts):
-            for key in [k for k in cache if k[0] == path]:
-                del cache[key]
+        self._summaries.pop(path, None)
+        self._facts.pop(path, None)
 
     def _member(self, module, name):
         if f"{module}.{name}" in self.module_paths:
@@ -1385,6 +1452,8 @@ class _DispatchScope:
 
     def target(self, expr, path):
         """Binding of a Name / Attribute chain in *path*, else None."""
+        if not isinstance(expr, (ast.Name, ast.Attribute)):
+            return None
         info = self.file(path)
         if info is None:
             return None
@@ -1428,7 +1497,7 @@ class _DispatchScope:
         t = self.target(expr, path)
         return bool(t and t[0] == "registry")
 
-    def definition(self, t):
+    def _definition(self, t):
         """Follow a ``function`` binding through re-exports to its ``def``, else None."""
         for _ in range(5):
             if not (t and t[0] == "function"):
@@ -1450,7 +1519,7 @@ class _DispatchScope:
     def readable(self, t):
         """The ``def`` behind *t* when its body may decide keys (reaches a registry or is test-side)."""
         d = self.definition(t)
-        if d and (self.dispatcher(t) or is_test_file(d[1][0])):
+        if d and (self.dispatcher(t) or self._is_test(d[1][0])):
             return d
         if d:
             if d not in self._registry_readers:
@@ -1463,7 +1532,7 @@ class _DispatchScope:
                         and self.is_lookup(node.func.value, d[1][0])
                     )
                     for fn in self._defs(d)
-                    for node in _walk_own_body(fn)
+                    for node in _own_body(fn)
                 )
             if self._registry_readers[d]:
                 return d
@@ -1473,7 +1542,7 @@ class _DispatchScope:
         info = self.file(d[1][0])
         return info["functions"].get(d[1][1], []) if info else []
 
-    def click_kind(self, t):
+    def _click_kind(self, t):
         """``"group"`` / ``"command"`` for a click object that reaches a registry, else None."""
         if not self.dispatcher(t):
             return None
@@ -1560,10 +1629,11 @@ class _DispatchScope:
             conftest_scopes.append((p, _scope_fixtures(conftest_info["module"].body)))
         marked = set()
         for node in ast.walk(info["module"]):
-            if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("usefixtures"):
-                marked |= {a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
-                if not all(isinstance(a, ast.Constant) for a in node.args):
-                    reach.any = True  # a fixture named by a computed value may be any of them
+            if not isinstance(node, ast.Call) or not _function_name(node.func).endswith("usefixtures"):
+                continue
+            marked |= {a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
+            if not all(isinstance(a, ast.Constant) for a in node.args):
+                reach.any = True  # a fixture named by a computed value may be any of them
         classes = {n.name: n for n in info["module"].body if isinstance(n, ast.ClassDef)}
 
         def class_scopes(cls, seen=()):
@@ -1616,21 +1686,23 @@ class _DispatchScope:
         return reach
 
     def _summary(self, fn, path, root=False):
-        key = (path, fn.lineno, fn.col_offset, root)
-        if key not in self._summaries:
-            self._summaries[key] = _Summary()  # recursion: the outer frame covers it
-            self._summaries[key] = self._summarize(fn, path, root)
-        return self._summaries[key]
+        summaries = self._summaries.setdefault(path, {})
+        key = (fn.lineno, fn.col_offset, root)
+        if key not in summaries:
+            summaries[key] = _Summary()  # recursion: the outer frame covers it
+            summaries[key] = self._summarize(fn, path, root)
+        return summaries[key]
 
     def _context(self, fn, path, root):
-        key = (path, fn.lineno, fn.col_offset)
-        if key not in self._facts:
+        by_location = self._facts.setdefault(path, {})
+        key = (fn.lineno, fn.col_offset)
+        if key not in by_location:
             facts = _function_facts(fn)
             for name in getattr(fn, "roam_rebound", ()):  # a nested scope may rebind it at any call
                 facts.setdefault(name, []).append(("opaque", None, None))
-            self._facts[key] = facts
+            by_location[key] = facts
             fn.roam_global_names = {
-                name for node in _walk_own_body(fn) if isinstance(node, ast.Global) for name in node.names
+                name for node in _own_body(fn) if isinstance(node, ast.Global) for name in node.names
             }
         decorators = [*fn.decorator_list, *getattr(fn, "roam_class_decorators", [])]
         args = fn.args
@@ -1640,7 +1712,7 @@ class _DispatchScope:
             "path": path,
             "enclosing": getattr(fn, "roam_enclosing", None),
             "globals": getattr(fn, "roam_global_names", set()),
-            "events": self._facts[key],
+            "events": by_location[key],
             "params": params,
             "parametrized": _parametrize_bindings(decorators) if root else {},
             "root": root,
@@ -1652,16 +1724,16 @@ class _DispatchScope:
 
     def _summarize(self, fn, path, root):
         ctx = self._context(fn, path, root)
-        test_side = is_test_file(path)
+        test_side = self._is_test(path)
         summary = _Summary()
-        invoked = self._invoked_calls(fn, ctx)
+        invoked, called = self._invoked_calls(fn, ctx)
         registry_loops = []
 
         def add(mode, seqs, arity=None):
             for seq in seqs:
                 self._settle(mode, seq, arity, summary, test_side)
 
-        for node in _walk_own_body(fn):
+        for node in _own_body(fn):
             ctx["site"] = node
             if isinstance(node, (ast.For, ast.AsyncFor)) and self.is_registry(node.iter, path):
                 registry_loops.append(node)
@@ -1722,7 +1794,7 @@ class _DispatchScope:
                     break
 
         if test_side:
-            self._escapes(fn, path, summary.reach)
+            self._escapes(fn, path, called, summary.reach)
 
         # ``for name, (mod, fn) in R.items(): getattr(import_module(mod), fn)()``
         # calls the entry itself; ``mod.replace(".", "/")`` only reads it.
@@ -1739,7 +1811,7 @@ class _DispatchScope:
                     summary.reach.every = True
         return summary
 
-    def _escapes(self, fn, path, reach):
+    def _escapes(self, fn, path, called, reach):
         """Launchers and test code that run later, or elsewhere, than where they are named.
 
         A launcher passed on or aliased (``run = subprocess.run``,
@@ -1747,14 +1819,12 @@ class _DispatchScope:
         value (a callback) and a lambda body may each run: their reach is
         possible, never proven.
         """
-        called = {id(n.func) for n in _walk_own_body(fn) if isinstance(n, ast.Call)}
-        for node in _walk_own_body(fn):
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, ast.Lambda):
-                    if not hasattr(child, "roam_def"):
-                        child.roam_def = self._pseudo_function("<lambda>", [ast.Return(child.body)], child, child.args)
-                        child.roam_def.roam_enclosing = fn
-                    self._fold_possible(self._summary(child.roam_def, path), reach)
+        for node in chain((fn,), _own_body(fn)):
+            for child in fn.roam_lambdas.get(node, ()):
+                if not hasattr(child, "roam_def"):
+                    child.roam_def = self._pseudo_function("<lambda>", [ast.Return(child.body)], child, child.args)
+                    child.roam_def.roam_enclosing = fn
+                self._fold_possible(self._summary(child.roam_def, path), reach)
             if id(node) in called or not isinstance(node, (ast.Name, ast.Attribute)):
                 continue
             if not isinstance(node.ctx, ast.Load):
@@ -1763,7 +1833,7 @@ class _DispatchScope:
                 reach.any = True
                 continue
             d = self.readable(self.target(node, path))
-            if d and is_test_file(d[1][0]):
+            if d and self._is_test(d[1][0]):
                 for callee in self._defs(d):
                     if callee is not fn:
                         self._fold_possible(self._summary(callee, d[1][0]), reach)
@@ -1801,24 +1871,26 @@ class _DispatchScope:
             if func.value.id in _SKIP_PARAMS and func.attr in _SELF_TERMINATORS:
                 return True
         d = self.definition(self.target(func, path))
-        if depth >= 3 or d is None or not is_test_file(d[1][0]):
+        if depth >= 3 or d is None or not self._is_test(d[1][0]):
             return False
         if d not in self._stops:
             self._stops[d] = False  # recursion: the outer frame decides
             self._stops[d] = any(
                 isinstance(n, ast.Call) and self._may_stop(n, d[1][0], depth + 1)
                 for callee in self._defs(d)
-                for n in _walk_own_body(callee)
+                for n in _own_body(callee)
             )
         return self._stops[d]
 
     def _invoked_calls(self, fn, ctx):
         """Calls whose result is itself run: ``f(...)()``, ``f(...).main()``, ``invoke(f(...))``."""
         out = set()
-        for node in _walk_own_body(fn):
+        called = set()
+        for node in _own_body(fn):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
+            called.add(id(func))
             if isinstance(func, ast.Call):
                 out.add(id(func))
             if isinstance(func, ast.Attribute) and func.attr in ("main", "invoke", "__call__"):
@@ -1833,7 +1905,7 @@ class _DispatchScope:
                     for kind, value, _flag in ctx["events"].get(first.id, ()):
                         if kind == "assign" and isinstance(value, ast.Call):
                             out.add(id(value))
-        return out
+        return out, called
 
     def _call(self, call, d, via_attribute, ctx, summary, promoted, test_side):
         """Follow a call into a helper or dispatcher with its parameters bound."""
@@ -1960,12 +2032,12 @@ class _DispatchScope:
     def _returns(self, call, ctx):
         """``[(return_exprs, callee_ctx, binding)]`` of a test-side helper call, else None."""
         d = self.definition(self.target(call.func, ctx["path"]))
-        if d is None or not is_test_file(d[1][0]):
+        if d is None or not self._is_test(d[1][0]):
             return None
         out = []
         for fn in self._defs(d):
             key = (d[1][0], fn.lineno, fn.col_offset)
-            returns = [n.value for n in _walk_own_body(fn) if isinstance(n, ast.Return) and n.value is not None]
+            returns = [n.value for n in _own_body(fn) if isinstance(n, ast.Return) and n.value is not None]
             if key in self._returning or not returns:
                 continue
             binding = self._bind(call, fn, isinstance(call.func, ast.Attribute), ctx, d[1][0])
@@ -2380,12 +2452,6 @@ def _applying_conftests(path, conftests):
     return applying
 
 
-def _loaded_effects(scope, path, applying):
-    """``(launches, writes_environment)`` for a test module, the conftests that apply and the code they load."""
-    launches, writes = scope.loaded_effects(path, applying)
-    return launches, writes or scope.writes_environment(path)
-
-
 def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
     """Test functions that may run a handler behind the *reached* registries.
 
@@ -2427,7 +2493,8 @@ def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
         if info is None:
             continue
         applying = _applying_conftests(path, conftests)
-        launches, writes = _loaded_effects(scope, path, applying)
+        launches, loaded = scope.loaded_effects(path, applying)
+        writes = None
         fixture_reach = scope.fixture_reach(path, applying)
         for fn_name in [*sorted(info["functions"]), None]:  # None: module-level code runs on import
             reach = scope.reach_root(path, fn_name)
@@ -2435,8 +2502,12 @@ def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
                 reach.update(fixture_reach)  # the conftest fixtures its tests run
             if launches:
                 reach.any = True  # a loaded helper starts a process whose argv is not read
-            if reach.unrelated and writes:
-                reach.any = True  # the allowlisted program may be found anywhere or load any code
+            if reach.unrelated and not reach.any:
+                # Environment writes matter when they can change the program a
+                # resolved, otherwise unrelated launch would execute.
+                if writes is None:
+                    writes = any(scope.writes_environment(p) for p in loaded)
+                reach.any = writes
             if reach.every:
                 name = fn_name or "<module>"
                 every_hits[(path, name)] = flood.get((path, name), 1)
