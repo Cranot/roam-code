@@ -19,7 +19,7 @@
   },
   "offerSource": "templates/legal/sow-pr-replay.md",
   "availabilityMeaning": "AVAILABLE means free tools can be installed or a report can be requested. Paid work requires agreed scope, availability and written terms; no online checkout is implied.",
-  "sourceVersion": "14.2.1",
+  "sourceVersion": "14.2.2",
   "cliCommandCount": 288,
   "mcpToolCount": 259,
   "defaultMcpToolCount": 17,

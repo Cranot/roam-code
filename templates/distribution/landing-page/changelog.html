@@ -88,7 +88,8 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
-<h2>[14.2.1] — 2026-11-22</h2>
+<h2>[14.2.2] — 2026-11-23</h2>
+<p>This release carries the changes prepared as 14.2.1. The <code>v14.2.1</code> tag was pushed before the commit's CI run on <code>main</code> had finished, so its publication was stopped; PyPI never served 14.2.1.</p>
 <h3>Fixed</h3>
 <ul>
 <li><strong><code>roam attest</code> merge clearance.</strong> Removed, signature-changed and renamed symbols, <code>HIGH</code> or <code>CRITICAL</code> risk, and any measured budget exceedance set both JSON <code>summary.safe_to_merge</code> and <code>verdict.safe_to_merge</code> to <code>false</code>. High or critical risk adds <code>review high-risk changes</code> to <code>verdict.conditions</code>. A definitive refusal stands when evidence is incomplete. With no definitive refusal, unavailable breaking, risk or budget evidence, including a skipped submodule path, gives <code>null</code>. This prints <code>VERDICT: MERGE CLEARANCE UNAVAILABLE</code> in text and <code>**Verdict: [UNKNOWN]**</code> in Markdown. JSON <code>summary.verdict</code> starts with <code>merge clearance unavailable</code> for that decision.</li>

@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [14.2.1] — 2026-11-22
+## [14.2.2] — 2026-11-23
+
+This release carries the changes prepared as 14.2.1. The `v14.2.1` tag was pushed before the commit's CI run on `main` had finished, so its publication was stopped; PyPI never served 14.2.1.
 
 ### Fixed
 
