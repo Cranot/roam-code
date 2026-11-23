@@ -15,7 +15,10 @@ Supports the full gitignore spec:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from functools import lru_cache
+from itertools import groupby
+from operator import itemgetter
 
 
 @lru_cache(maxsize=512)
@@ -118,27 +121,43 @@ def matches_gitignore(rel_path: str, pattern: str) -> bool:
     return bool(compiled.search(rel_path))
 
 
-def matches_exclude_patterns(rel_path: str, patterns: list[str]) -> bool:
-    """Check if *rel_path* is excluded by a list of gitignore-style patterns.
-
-    Supports ``!pattern`` negation: the last matching pattern wins.
-    Comments (``#``) and blank lines are skipped.
-    """
-    rel_path = rel_path.replace("\\", "/")
-    excluded = False
-    for pat in patterns:
-        if not pat or pat.startswith("#"):
+def compile_exclude_patterns(patterns: list[str]) -> Callable[[str], bool]:
+    """Prepare a matcher for a batch of paths. The last matching rule wins."""
+    compiled_rules = []
+    for pattern in reversed(patterns):
+        if not pattern or pattern.startswith("#") or pattern == "!":
             continue
-        if pat.startswith("!"):
-            # Negation: un-exclude
-            actual = pat[1:]
-            if not actual:
-                continue
-            compiled, _basename = _compile_pattern(actual)
-            if compiled.search(rel_path):
-                excluded = False
+        excluded = not pattern.startswith("!")
+        glob = pattern if excluded else pattern[1:]
+        compiled, basename = _compile_pattern(glob)
+        # Directory rules and globs that can consume a slash need the full path.
+        name_only = basename and not glob.endswith("/") and "[" not in glob and "**" not in glob
+        compiled_rules.append((name_only, excluded, compiled))
+
+    rules = []
+    for (name_only, excluded), group in groupby(compiled_rules, key=itemgetter(0, 1)):
+        patterns_in_group = [compiled for _, _, compiled in group]
+        if name_only and len(patterns_in_group) > 1:
+            # Built-in suffix rules usually share the same decision. Search
+            # their alternatives together without crossing a negation.
+            compiled = re.compile("|".join(f"(?:{regex.pattern})" for regex in patterns_in_group))
+            rules.append((compiled.match, name_only, excluded))
         else:
-            compiled, _basename = _compile_pattern(pat)
-            if compiled.search(rel_path):
-                excluded = True
-    return excluded
+            rules.extend(
+                (regex.match if name_only else regex.search, name_only, excluded) for regex in patterns_in_group
+            )
+
+    def matches(rel_path: str) -> bool:
+        path = rel_path.replace("\\", "/")
+        name = path.rsplit("/", 1)[-1]
+        for search, basename, excluded in rules:
+            if search(name if basename else path):
+                return excluded
+        return False
+
+    return matches
+
+
+def matches_exclude_patterns(rel_path: str, patterns: list[str]) -> bool:
+    """Check a single path against ordered gitignore-style exclusion rules."""
+    return compile_exclude_patterns(patterns)(rel_path)

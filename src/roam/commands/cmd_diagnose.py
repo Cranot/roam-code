@@ -22,6 +22,7 @@ from roam.capability import roam_capability
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, find_symbol_with_alternatives, symbol_not_found
 from roam.db.connection import open_db
+from roam.db.freshness import git_history_hint
 from roam.graph.builder import build_symbol_graph
 from roam.output.formatter import (
     ENVELOPE_SCHEMA_VERSION,
@@ -1164,6 +1165,8 @@ def diagnose_cmd(ctx, name, depth, batch_input):
             return
 
         echo_text_warnings(list(_w607dn_warnings_out) + list(_w607s_warnings_out) + list(_w607bh_warnings_out))
+        if hint := git_history_hint():
+            click.echo(f"NOTE: {hint}\n")
         click.echo(f"VERDICT: {verdict}")
         sym_name = sym["qualified_name"] or sym["name"]
         click.echo(f"Diagnose: {sym_name}")

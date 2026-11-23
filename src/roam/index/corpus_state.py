@@ -163,10 +163,8 @@ class _Census:
     candidates: int = 0
     expected_files: int = 0
     # Subset of ``expected_files`` in a language roam can extract symbols
-    # from. The plain file count is NOT usable as a "discovery found work"
-    # signal: ``roam init`` writes ``.roamignore`` *after* it indexes, so
-    # discovery legitimately sees one more (non-source) file than the index
-    # holds on a repo that had nothing to index.
+    # from. Discovery can find non-source files in a repository with no
+    # indexable source, so the plain file count cannot identify that case.
     expected_source: int = 0
     filtered: dict[str, int] = field(default_factory=dict)
     sample: list[str] = field(default_factory=list)
@@ -200,7 +198,7 @@ def _counts(conn: sqlite3.Connection) -> tuple[int, int, int, int, int] | None:
     return files, symbols, edges, parseable, parsed
 
 
-def _attribute(root: Path, rel: str, patterns, tracked: set[str] | None) -> str:
+def _attribute(root: Path, rel: str, exclude, tracked: set[str] | None) -> str:
     """Name the filter that kept ``rel`` out of the index.
 
     Ordered to mirror the real pipeline: git listing first (``discover_files``
@@ -209,7 +207,6 @@ def _attribute(root: Path, rel: str, patterns, tracked: set[str] | None) -> str:
     from roam.index.discovery import (
         MAX_FILE_SIZE,
         _is_generated_content,
-        _matches_exclude,
     )
 
     if tracked is not None and rel not in tracked:
@@ -220,7 +217,7 @@ def _attribute(root: Path, rel: str, patterns, tracked: set[str] | None) -> str:
             return FILTER_OVER_SIZE_CAP
     except OSError:
         return FILTER_UNREADABLE
-    if patterns and _matches_exclude(rel, patterns):
+    if exclude(rel):
         return FILTER_ROAMIGNORE
     try:
         if _is_generated_content(full):
@@ -246,6 +243,7 @@ def _census_disk(root: Path) -> _Census:
             discover_files,
             load_exclude_patterns,
         )
+        from roam.index.gitignore import compile_exclude_patterns
         from roam.languages.registry import _is_supported_language, get_language_for_file
 
         walked = _walk_files(root)
@@ -270,14 +268,14 @@ def _census_disk(root: Path) -> _Census:
         if not candidates:
             return census
 
-        patterns = load_exclude_patterns(root)
+        exclude = compile_exclude_patterns(load_exclude_patterns(root))
         tracked_list = _git_ls_files(root)
         tracked = set(tracked_list) if tracked_list is not None else None
 
         for rel in candidates:
             if rel in expected:
                 continue
-            why = _attribute(root, rel, patterns, tracked)
+            why = _attribute(root, rel, exclude, tracked)
             census.filtered[why] = census.filtered.get(why, 0) + 1
             if len(census.sample) < _MAX_SAMPLE:
                 census.sample.append(f"{rel}  [{why}]")

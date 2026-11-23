@@ -1630,6 +1630,14 @@ def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness, *, co
         meta["index_state_reason"] = freshness.reason
     if freshness.stale:
         meta["stale_index"] = True
+    if freshness.git_history_behind:
+        meta["git_history_behind"] = True
+        meta["git_history_indexed_commit"] = freshness.indexed_commit
+        meta["git_history_head_commit"] = freshness.head_commit
+    else:
+        meta.pop("git_history_behind", None)
+        meta.pop("git_history_indexed_commit", None)
+        meta.pop("git_history_head_commit", None)
     summary = out.setdefault("summary", {})
     if freshness.degraded and query_is_stale_sensitive(command):
         summary["partial_success"] = True

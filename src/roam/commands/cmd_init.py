@@ -314,29 +314,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
             }
         )
 
-    # 2. Run indexing if no index exists.
-    #
-    # Shallow git-history default (W405): unless the user explicitly opted
-    # out via ``--full-history`` (or set ``ROAM_GIT_SINCE`` themselves), the
-    # indexer caps git log to ~365 days on the FIRST index. Smaller wallclock
-    # cost, same agent-relevant signal. ``--full-history`` wins over
-    # ``--since`` per LAW 11 (user intent > inference).
-    if full_history:
-        os.environ["ROAM_GIT_SINCE"] = "0"
-    elif since:
-        os.environ["ROAM_GIT_SINCE"] = since
-
-    had_index = db_exists(project_root)
-    if not had_index:
-        if not json_mode:
-            click.echo("No index found. Building...")
-    # W1291: suppress the "Run `roam init` to create one" cold-start advisory
-    # since the user just ran exactly that. cmd_init IS the init path; the
-    # advisory belongs on commands that consume an index, not the one
-    # building it.
-    ensure_index(quiet=json_mode, suppress_cold_start_advisory=True, explicit_build=True)
-
-    # 2b. Self-ignore .roam/ so `roam init` does not dirty `git status`
+    # 2. Self-ignore .roam/ so `roam init` does not dirty `git status`
     # (and so `roam health` does not then report that dirt as index
     # staleness). Written only when absent — a user who deliberately
     # deleted it, or who committed .roam/ on purpose, keeps their choice.
@@ -355,9 +333,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
     else:
         skipped.append(".roam/fitness.yaml")
 
-    # 4. .roamignore template — only when absent. Every line commented
-    # out so the user opts in. Don't write inside .roam/ (gitignored
-    # already); it lives at the project root next to .gitignore.
+    # 4. Write the starter .roamignore before indexing so discovery and
+    # the manifest see the same configuration. All rules are commented out.
     roamignore_path = project_root / ".roamignore"
     if not roamignore_path.exists():
         roamignore_path.write_text(_ROAMIGNORE_TEMPLATE, encoding="utf-8")
@@ -365,7 +342,19 @@ def init(ctx, root, yes, with_ci, since, full_history):
     else:
         skipped.append(".roamignore")
 
-    # 5. CI workflow — opt-in only. Audit R1: dropping foreign config
+    # 5. Run indexing if no index exists. On the first build, Git history
+    # defaults to ~365 days. --full-history takes precedence over --since.
+    if full_history:
+        os.environ["ROAM_GIT_SINCE"] = "0"
+    elif since:
+        os.environ["ROAM_GIT_SINCE"] = since
+
+    had_index = db_exists(project_root)
+    if not had_index and not json_mode:
+        click.echo("No index found. Building...")
+    ensure_index(quiet=json_mode, suppress_cold_start_advisory=True, explicit_build=True)
+
+    # 6. CI workflow — opt-in only. Audit R1: dropping foreign config
     # files into the user's repo on first command was the single
     # biggest churn driver. ``roam ci-setup`` is the canonical place
     # for full multi-platform generation; this flag is just the
@@ -390,7 +379,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
                 "Run `roam ci-setup --platform gitlab` for the full GitLab CI generator."
             )
 
-    # 5. Quick health summary
+    # 7. Quick health summary
     health_summary = {}
     try:
         from roam.commands.metrics_history import collect_metrics
@@ -403,7 +392,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
 
         log_swallowed("cmd_init:health_summary", _exc)
 
-    # 5b. W1502 — the three-valued corpus verdict. ``init`` used to print
+    # 7b. W1502 — the three-valued corpus verdict. ``init`` used to print
     # "Roam is ready: N files, 0 symbols, 0 edges" and exit 0 for at least
     # six structurally different situations, four of them broken. That is
     # an ABSENT measurement rendered as a definite success value, in the
@@ -451,7 +440,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
             remediation="Run `roam doctor` to diagnose the install.",
         )
 
-    # 6. Output. Counts come from the corpus verdict so the banner, the
+    # 8. Output. Counts come from the corpus verdict so the banner, the
     # JSON envelope and the exit code can never disagree about what was
     # actually indexed.
     _files = corpus.files

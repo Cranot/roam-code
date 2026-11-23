@@ -183,6 +183,12 @@ and is null when the record is missing. Age is informational.
 `_meta.index_status` remains available, with `fresh` and `dirty_files`
 derived from the same state and count.
 
+When HEAD differs from the index's recorded commit, `_meta.git_history_behind`
+is true and `_meta.git_history_indexed_commit` and
+`_meta.git_history_head_commit` identify the two commits. This flag can appear
+alongside a fresh source snapshot. In text output, `weather`, `health`, and
+`diagnose` report the history lag. Run `roam index` to refresh the Git data.
+
 For stale-sensitive commands, confirmed changes or a failed check set
 `summary.partial_success: true`. In a project without Git, the state is
 `unknown` with a reason, doctor marks the check skipped, and text output

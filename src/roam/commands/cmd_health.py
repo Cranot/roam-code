@@ -48,6 +48,7 @@ from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import imported_coverage_overview
 from roam.db.connection import batched_in, open_db
+from roam.db.freshness import git_history_hint
 from roam.db.queries import TOP_BY_BETWEENNESS, TOP_BY_DEGREE
 from roam.graph.builder import build_symbol_graph
 from roam.graph.cycles import (
@@ -2660,6 +2661,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist, all_issues=F
             return
 
         # --- Text output ---
+        if hint := git_history_hint():
+            click.echo(f"NOTE: {hint}\n")
         # W1331: a floored substrate turns a health FACTOR into a
         # measured zero -- a failed graph build renders as
         # "Tangle: 0.0% (0/44309 symbols in cycles)", which reads as the

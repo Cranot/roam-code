@@ -524,3 +524,251 @@ def test_compile_freshness_uses_indexed_content_and_manifest_age(query_project):
     staleness, newer_files = _index_freshness_signals(["app.py"], str(query_project))
     assert staleness["is_stale"] is True
     assert newer_files["files_newer_than_index"] == ["app.py"]
+
+
+def test_init_indexes_the_configuration_it_writes(project_factory, cli_runner, monkeypatch):
+    from roam.index.manifest import _config_hash
+
+    project = project_factory(
+        {".gitignore": "# project exclusions\n", "app.py": "def indexed_helper(): pass\n"}, index=False
+    )
+    monkeypatch.chdir(project)
+    result = cli_runner.invoke(cli, ["--json", "init"])
+    assert result.exit_code == 0, result.output
+
+    with closing(sqlite3.connect(get_db_path())) as conn:
+        assert conn.execute("SELECT config_hash FROM index_manifest").fetchone()[0] == _config_hash(project)
+
+    run = subprocess.run
+
+    def no_full_comparison(command, *args, **kwargs):
+        assert command[:2] != ["git", "ls-files"]
+        return run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", no_full_comparison)
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["_meta"]["index_state"] == "fresh"
+
+
+def test_gitignore_edit_compares_scope_with_one_pattern_compilation(project_factory, monkeypatch):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index import gitignore
+    from roam.index.discovery import load_exclude_patterns
+
+    project = project_factory(
+        {
+            ".gitignore": ".roam/\nnew.py\n",
+            ".roamignore": "generated/\n",
+            **{f"module_{i}.py": f"def helper_{i}(): pass\n" for i in range(50)},
+        },
+        index=False,
+    )
+    monkeypatch.chdir(project)
+    (project / "new.py").write_text("def admitted(): pass\n")
+    (project / "scratch.py").write_text("def indexed_untracked(): pass\n")
+    from roam.index.indexer import Indexer
+
+    assert Indexer(project).run(quiet=True)
+    (project / ".gitignore").write_text(".roam/\nscratch.py\n")
+    compile_pattern = gitignore._compile_pattern
+    calls = []
+
+    def record(pattern):
+        calls.append(pattern)
+        return compile_pattern(pattern)
+
+    monkeypatch.setattr(gitignore, "_compile_pattern", record)
+    freshness = probe_index_freshness(get_db_path(), project)
+    assert freshness.state == "stale"
+    assert freshness.changed_paths == {"new.py", "scratch.py"}
+    assert len(calls) <= len(load_exclude_patterns(project))
+
+    (project / ".gitignore").write_text(".roam/\nnew.py\n")
+    (project / ".roamignore").write_text("generated/\nmodule_1.py\n")
+    calls.clear()
+    freshness = probe_index_freshness(get_db_path(), project)
+    assert freshness.changed_paths == {"module_1.py"}
+    assert len(calls) == len(load_exclude_patterns(project))
+
+
+def test_gitignore_inside_untracked_directory_removes_indexed_file(project_factory):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    repo = project_factory({"app.py": "def helper(): pass\n"}, index=False)
+    directory = repo / "untracked"
+    directory.mkdir()
+    (directory / "scratch.py").write_text("def scratch(): pass\n")
+    assert Indexer(repo).run(quiet=True)
+    db = get_db_path(repo)
+    assert probe_index_freshness(db, repo).state == "fresh"
+
+    (directory / ".gitignore").write_text("scratch.py\n")
+    assert probe_index_freshness(db, repo).changed_paths == {"untracked/scratch.py"}
+
+
+@pytest.mark.parametrize(
+    ("args", "reads_history"),
+    [
+        (["weather"], True),
+        (["health"], True),
+        (["diagnose", "indexed_helper"], True),
+        (["search", "indexed_helper"], False),
+    ],
+    ids=["weather", "health", "diagnose", "search"],
+)
+def test_head_only_change_discloses_git_history_lag(query_project, cli_runner, monkeypatch, args, reads_history):
+    monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
+    indexed = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    initial = cli_runner.invoke(cli, args)
+    assert initial.exit_code == 0, initial.output
+    assert "NOTE: Indexed Git history" not in initial.output
+
+    subprocess.run(["git", "commit", "--allow-empty", "-qm", "History-only change"], check=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    assert indexed != head
+
+    result = cli_runner.invoke(cli, ["--json", *args])
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    meta = envelope["_meta"]
+    assert meta["index_state"] == "fresh"
+    assert meta["index_changed_files"] == 0
+    assert "stale_index" not in meta
+    assert meta["git_history_behind"] is True
+    assert meta["git_history_indexed_commit"] == indexed
+    assert meta["git_history_head_commit"] == head
+    if not reads_history:
+        assert envelope["summary"]["partial_success"] is False
+
+    result = cli_runner.invoke(cli, args)
+    assert result.exit_code == 0, result.output
+    assert ("NOTE: Indexed Git history" in result.output) is reads_history
+    if reads_history:
+        assert indexed[:12] in result.output and head[:12] in result.output
+    assert "Index is stale" not in result.stderr
+
+    refreshed = cli_runner.invoke(cli, ["index"])
+    assert refreshed.exit_code == 0, refreshed.output
+    result = cli_runner.invoke(cli, ["--json", *args])
+    assert result.exit_code == 0, result.output
+    assert "git_history_behind" not in json.loads(result.stdout)["_meta"]
+
+
+def test_linked_worktree_uses_its_own_index(project_factory, tmp_path):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    main = project_factory({"app.py": "def main(): pass\n"}, index=False)
+    worktree = tmp_path / "linked worktree"
+    subprocess.run(["git", "-C", str(main), "worktree", "add", "--detach", str(worktree)], check=True)
+    assert (worktree / ".git").is_file()
+    assert Indexer(worktree).run(quiet=True)
+
+    (main / "app.py").write_text("def outside_edit(): pass\n")
+    db = get_db_path(worktree)
+    assert probe_index_freshness(db, worktree).state == "fresh"
+    (worktree / "app.py").write_text("def worktree_edit(): pass\n")
+    assert probe_index_freshness(db, worktree).changed_paths == {"app.py"}
+
+
+def test_explicit_project_root_inside_repository(project_factory):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    repo = project_factory(
+        {"nested/app.py": "def helper(): pass\n", "outside.py": "def outer(): pass\n"},
+        index=False,
+    )
+    project = repo / "nested"
+    app = project / "app.py"
+    app.write_text("def dirty_at_build(): pass\n")
+    assert Indexer(project).run(quiet=True)
+    db = get_db_path(project)
+    assert probe_index_freshness(db, project).state == "fresh"
+
+    (repo / "outside.py").write_text("def outside_edit(): pass\n")
+    assert probe_index_freshness(db, project).state == "fresh"
+
+    subprocess.run(["git", "-C", str(repo), "restore", "nested/app.py"], check=True)
+    assert probe_index_freshness(db, project).changed_paths == {"app.py"}
+    subprocess.run(["git", "-C", str(repo), "commit", "-qam", "Outside edit"], check=True)
+    app.write_text("def dirty_at_build(): pass\n")
+    assert probe_index_freshness(db, project).state == "fresh"
+
+    (project / "new.py").write_text("def new_helper(): pass\n")
+    (repo / ".gitignore").write_text(".roam/\nnested/new.py\n")
+    assert probe_index_freshness(db, project).state == "fresh"
+    (repo / ".gitignore").write_text(".roam/\n")
+    assert probe_index_freshness(db, project).changed_paths == {"new.py"}
+
+    subprocess.run(["git", "-C", str(repo), "add", "nested"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "Inside edit"], check=True)
+    assert probe_index_freshness(db, project).changed_paths == {"new.py"}
+
+
+def test_pruned_indexed_commit_after_rebase_is_not_fresh(project_factory):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    repo = project_factory({"app.py": "def before(): pass\n"}, index=False)
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
+
+    base = git("rev-parse", "HEAD")
+    (repo / "app.py").write_text("def after(): pass\n")
+    git("commit", "-qam", "Indexed source")
+    indexed = git("rev-parse", "HEAD")
+    assert Indexer(repo).run(quiet=True)
+    db = get_db_path(repo)
+
+    git("checkout", "-qb", "new-base", base)
+    git("commit", "--allow-empty", "-qm", "Updated base")
+    git("checkout", "-q", "-")
+    git("rebase", "new-base")
+    assert git("rev-parse", "HEAD^{tree}") == git("rev-parse", f"{indexed}^{{tree}}")
+    git("reflog", "expire", "--expire=now", "--expire-unreachable=now", "--all")
+    git("gc", "--prune=now")
+    assert subprocess.run(["git", "cat-file", "-e", indexed], cwd=repo, capture_output=True).returncode != 0
+
+    freshness = probe_index_freshness(db, repo)
+    assert freshness.state in {"stale", "unknown"}
+    assert freshness.reason and "git diff" in freshness.reason
+    assert freshness.indexed_commit == indexed
+    assert freshness.head_commit == git("rev-parse", "HEAD")
+
+
+def test_shallow_clone_compares_snapshots_after_fetch(project_factory, tmp_path):
+    from roam.db.freshness import probe_index_freshness
+    from roam.index.indexer import Indexer
+
+    origin = project_factory({"app.py": "def initial(): pass\n"}, index=False)
+    clone = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "--depth=1", origin.as_uri(), str(clone)], check=True)
+    assert subprocess.check_output(["git", "rev-parse", "--is-shallow-repository"], cwd=clone).strip() == b"true"
+    assert Indexer(clone).run(quiet=True)
+    db = get_db_path(clone)
+    assert probe_index_freshness(db, clone).state == "fresh"
+
+    (origin / "app.py").write_text("def updated(): pass\n")
+    subprocess.run(["git", "commit", "-qam", "Change source"], cwd=origin, check=True)
+    subprocess.run(["git", "fetch", "--depth=1", "origin"], cwd=clone, check=True)
+    subprocess.run(["git", "reset", "--hard", "FETCH_HEAD"], cwd=clone, check=True)
+    freshness = probe_index_freshness(db, clone)
+    assert freshness.state == "stale"
+    assert freshness.changed_paths == {"app.py"}
+
+
+def test_git_paths_preserve_spaces_unicode_and_quoted_names(project_factory):
+    from roam.db.freshness import probe_index_freshness
+
+    path = "a directory/café file.py"
+    repo = project_factory({path: "def initial(): pass\n"})
+    db = get_db_path(repo)
+    assert probe_index_freshness(db, repo).state == "fresh"
+    (repo / path).write_text("def edited(): pass\n")
+    assert probe_index_freshness(db, repo).changed_paths == {path}
+    subprocess.run(["git", "commit", "-qam", "Edit quoted path"], cwd=repo, check=True)
+    assert probe_index_freshness(db, repo).changed_paths == {path}

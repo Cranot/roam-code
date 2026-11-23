@@ -16,6 +16,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
+from roam.db.freshness import git_history_hint
 from roam.db.queries import TOP_CHURN_FILES
 from roam.output.formatter import format_table, json_envelope, to_json
 
@@ -61,6 +62,8 @@ def weather(ctx, count):
                 )
             else:
                 click.echo("VERDICT: no churn data available\n")
+                if hint := git_history_hint():
+                    click.echo(f"NOTE: {hint}\n")
                 click.echo("No churn data available. Is this a git repository?")
             return
 
@@ -162,6 +165,8 @@ def weather(ctx, count):
         else:
             _verdict = "no hotspots found"
         click.echo(f"VERDICT: {_verdict}\n")
+        if hint := git_history_hint():
+            click.echo(f"NOTE: {hint}\n")
         click.echo("=== Hotspots (churn x complexity) ===")
         click.echo(
             format_table(
