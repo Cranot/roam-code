@@ -100,7 +100,16 @@ def _set_wal(conn) -> None:
 
 
 def _index_db_path(cwd: str | None) -> str:
-    return os.path.join(cwd or ".", ".roam", "index.db")
+    """The project's index database, resolved exactly as ``roam index`` resolves it.
+
+    Honors ``ROAM_DB_DIR`` and the ``db_dir`` key of ``.roam/config.json``;
+    creates no directory.
+    """
+    from pathlib import Path
+
+    from roam.db.connection import get_db_path
+
+    return str(get_db_path(Path(cwd or "."), create=False))
 
 
 # W147 — persistent _run_roam result cache (SQLite, cross-session).

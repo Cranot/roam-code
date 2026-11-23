@@ -13391,7 +13391,7 @@ def _resolve_bare_filenames(task: str, cwd: str | None) -> list[str]:
             bares.append(name)
     if not bares:
         return []
-    db_path = os.path.join(cwd, ".roam", "index.db")
+    db_path = _index_db_path(cwd)
     if not os.path.exists(db_path):
         return []
     resolved: list[str] = []
@@ -13484,7 +13484,7 @@ def _resolve_module_names(task: str, cwd: str | None) -> list[str]:
         return []
     import os as _os
 
-    db_path = _os.path.join(cwd, ".roam", "index.db")
+    db_path = _index_db_path(cwd)
     if not _os.path.exists(db_path):
         return []
     try:
@@ -13750,7 +13750,7 @@ def _index_freshness_signals(named_paths: list[str], cwd: str | None) -> tuple[d
             },
             None,
         )
-    index_db = os.path.join(base, ".roam", "index.db")
+    index_db = _index_db_path(base)
     index_mtime = _index_mtime_or_none_for_resilient_diagnostics(index_db)
     missing, newer_files = _scan_named_paths_for_index_drift(base, named_paths, index_mtime)
     age_sec = int(time.time() - index_mtime) if index_mtime is not None else None
@@ -13942,7 +13942,7 @@ def _path_token_recall(task: str, cwd: str | None, known: set[str], cap: int = 6
     try:
         import sqlite3
 
-        index_path = os.path.join(cwd or "", ".roam", "index.db")
+        index_path = _index_db_path(cwd)
         if not os.path.isfile(index_path):
             return []
         conn = sqlite3.connect(index_path, timeout=1.0)
