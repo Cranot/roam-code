@@ -437,20 +437,33 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
         ).fetchall()
 
         if not rows:
+            from roam.index.git_stats import explain_missing_history
+
+            missing = explain_missing_history(conn, find_project_root())
+            summary: dict = {"verdict": "no significant coupling", "pairs": 0}
+            if missing:
+                # No commits were indexed, so "no coupling" is not a finding.
+                summary = {
+                    "verdict": f"no co-change data: {missing['message']}",
+                    "pairs": 0,
+                    "history_state": missing["state"],
+                    "partial_success": True,
+                }
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "coupling",
                             budget=token_budget,
-                            summary={"verdict": "no significant coupling", "pairs": 0},
+                            summary=summary,
                             pairs=[],
                         )
                     )
                 )
             else:
-                click.echo("VERDICT: no significant coupling\n")
-                click.echo("No co-change data available. Run `roam index` on a git repository.")
+                click.echo(f"VERDICT: {summary['verdict']}\n")
+                if not missing:
+                    click.echo("No two files changed together in the indexed commits.")
             return
 
         # Check which pairs have structural connections (file_edges). Any link

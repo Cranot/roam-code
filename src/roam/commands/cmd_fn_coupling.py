@@ -20,7 +20,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
-from roam.db.connection import batched_in, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
@@ -345,23 +345,31 @@ def _json_pair_rows_preserve_symbol_context(
     return pairs
 
 
-def _emit_missing_cochange_history(json_mode: bool) -> None:
-    """Report absent git history without presenting it as zero coupling."""
+def _emit_missing_cochange_history(json_mode: bool, missing: dict | None = None) -> None:
+    """Report absent git history without presenting it as zero coupling.
+
+    *missing* is ``explain_missing_history``'s answer; when given, the
+    verdict names why no commits were indexed.
+    """
+    verdict = "No co-change data — run 'roam index' on a git repository"
+    if missing:
+        verdict = f"No co-change data: {missing['message']}"
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "fn-coupling",
                     summary={
-                        "verdict": "No co-change data — run 'roam index' on a git repository",
+                        "verdict": verdict,
                         "pairs": 0,
                         "error": "No git co-change data",
+                        **({"history_state": missing["state"], "partial_success": True} if missing else {}),
                     },
                 )
             )
         )
     else:
-        click.echo("No git co-change data available. Run `roam index` on a git repository.")
+        click.echo(f"VERDICT: {verdict}")
 
 
 def _emit_threshold_without_pairs(json_mode: bool, min_count: int) -> None:
@@ -587,7 +595,9 @@ def fn_coupling(
         )
 
         if not pair_counts:
-            _emit_missing_cochange_history(json_mode)
+            from roam.index.git_stats import explain_missing_history
+
+            _emit_missing_cochange_history(json_mode, explain_missing_history(conn, find_project_root()))
             return
 
         # Filter by minimum count
