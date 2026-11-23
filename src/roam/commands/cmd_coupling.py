@@ -453,10 +453,12 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 click.echo("No co-change data available. Run `roam index` on a git repository.")
             return
 
-        # Check which pairs have structural connections (file_edges)
+        # Check which pairs have structural connections (file_edges). Any link
+        # counts, as in ``roam dark-matter``: one imported symbol is still code
+        # that ties the two files, so the pair is not hidden coupling.
         file_edge_set = set()
         fe_rows = conn.execute(
-            "SELECT source_file_id, target_file_id FROM file_edges WHERE symbol_count >= 2"
+            "SELECT source_file_id, target_file_id FROM file_edges WHERE symbol_count >= 1"
         ).fetchall()
         for fe in fe_rows:
             file_edge_set.add((fe["source_file_id"], fe["target_file_id"]))
