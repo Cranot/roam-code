@@ -284,6 +284,22 @@ def release_tags() -> list[str]:
     return [t for t in (line.strip() for line in out.splitlines()) if _RELEASE_TAG.fullmatch(t)]
 
 
+WITHHELD_RELEASE_TAGS: dict[str, str] = {
+    "v14.2.0": (
+        "tagged and pushed on 2026-11-20, but its PyPI deployment was rejected on "
+        "2026-11-22 because `roam attest` cleared a detected breaking change; "
+        "PyPI never served 14.2.0, and 14.2.1 replaces it"
+    ),
+}
+"""Release tags whose publication was stopped, each with its reason.
+
+The tag exists on the remote, so the GitHub half of an install instruction
+would resolve, but the package was never uploaded: ``roam-code==X`` cannot be
+installed. ``_published_version()`` skips these, so the install class never
+moves to a version no consumer can fetch. An entry names one exact tag; a
+later re-publication (``-rN``) or release is not affected."""
+
+
 _PUBLISHED_SOURCE = ""
 """How ``_published_version()`` answered. Read by the report so a degraded
 answer is disclosed rather than passed off as a verified one."""
@@ -398,6 +414,17 @@ def _published_version() -> PublishedRelease:
             "treating a local tag as a release — that substitution is what "
             "makes this sweep demand pins for a version no consumer can fetch."
         )
+
+    withheld = sorted(t for t in tags if t in WITHHELD_RELEASE_TAGS)
+    if withheld:
+        tags = [t for t in tags if t not in WITHHELD_RELEASE_TAGS]
+        _PUBLISHED_SOURCE += f" (withheld {', '.join(withheld)}: never uploaded to PyPI)"
+        if not tags:
+            raise SystemExit(
+                f"every release tag found is withheld ({', '.join(withheld)}), so nothing "
+                "is PUBLISHED and install pins cannot be resolved. See "
+                "WITHHELD_RELEASE_TAGS in scripts/sync_surface_counts.py."
+            )
 
     ref = max(tags, key=release_key)
     return PublishedRelease(release_version(ref), ref=ref)

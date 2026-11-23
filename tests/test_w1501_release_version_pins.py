@@ -314,6 +314,50 @@ def test_a_remote_with_no_release_tag_refuses(monkeypatch) -> None:
     assert "published to nobody" in str(exc.value)
 
 
+def test_a_withheld_release_tag_is_not_the_published_release(monkeypatch) -> None:
+    """A tag whose upload was stopped names a version nobody can install.
+
+    14.2.0 was tagged and pushed, then its PyPI deployment was rejected. The
+    remote has ``v14.2.0``, so this module demanded every ``roam-code==`` pin
+    move to 14.2.0, a version PyPI does not serve, and the pre-push gate refused
+    the 14.2.1 push that replaces it. A withheld tag is skipped, and the answer
+    says it was.
+    """
+    monkeypatch.setattr(sync, "WITHHELD_RELEASE_TAGS", {"v14.2.0": "upload rejected"})
+    monkeypatch.setattr(sync, "release_tags", lambda: ["v14.1.0-r1", "v14.2.0"])
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: ["v14.1.0-r1", "v14.2.0"])
+    published = sync._published_version()
+    assert published == "14.1.0"
+    assert sync.published_ref(published) == "v14.1.0-r1"
+    assert "withheld v14.2.0" in sync._PUBLISHED_SOURCE
+
+
+def test_a_release_after_a_withheld_tag_is_published(monkeypatch) -> None:
+    """Withholding one tag never hides the release that follows it."""
+    monkeypatch.setattr(sync, "WITHHELD_RELEASE_TAGS", {"v14.2.0": "upload rejected"})
+    monkeypatch.setattr(sync, "release_tags", lambda: ["v14.1.0-r1", "v14.2.0", "v14.2.1"])
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: ["v14.1.0-r1", "v14.2.0", "v14.2.1"])
+    assert sync._published_version() == "14.2.1"
+
+
+def test_only_withheld_tags_on_the_remote_refuses(monkeypatch) -> None:
+    """Every remote tag withheld is nothing published: UNKNOWN, not a guess."""
+    monkeypatch.setattr(sync, "WITHHELD_RELEASE_TAGS", {"v14.2.0": "upload rejected"})
+    monkeypatch.setattr(sync, "release_tags", lambda: ["v14.2.0"])
+    monkeypatch.setattr(sync, "_remote_release_tags", lambda: ["v14.2.0"])
+    with pytest.raises(SystemExit) as exc:
+        sync._published_version()
+    assert "withheld" in str(exc.value)
+
+
+def test_withheld_release_tags_are_exact_release_tags_with_reasons() -> None:
+    """Each entry names one real release tag shape and says why it was stopped."""
+    assert sync.WITHHELD_RELEASE_TAGS, "the registry exists and holds the 14.2.0 entry"
+    for tag, reason in sync.WITHHELD_RELEASE_TAGS.items():
+        assert sync._RELEASE_TAG.fullmatch(tag), tag
+        assert reason.strip(), tag
+
+
 def test_remote_release_tags_survives_annotated_peel_refs_and_junk(monkeypatch) -> None:
     """``ls-remote`` lists annotated tags twice; the peel suffix is not a tag."""
     import subprocess
@@ -424,6 +468,8 @@ def test_a_plain_release_tag_is_its_own_ref(monkeypatch) -> None:
     ],
 )
 def test_published_ref_orders_by_version_then_republication(monkeypatch, tags, version, ref) -> None:
+    # Ordering is tested on synthetic tags, apart from the real withheld-tag registry.
+    monkeypatch.setattr(sync, "WITHHELD_RELEASE_TAGS", {})
     monkeypatch.setattr(sync, "release_tags", lambda: list(tags))
     monkeypatch.setattr(sync, "_remote_release_tags", lambda: list(tags))
     published = sync._published_version()

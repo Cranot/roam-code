@@ -291,8 +291,13 @@ def check(*, check_pypi: bool, check_remote: bool) -> tuple[int, dict]:
 
     # The newest tag each version is published under. A version with none is
     # not released; an action pin must additionally name a tag that exists.
+    # A withheld tag exists but its package was never uploaded, so it publishes
+    # no version (``sync.WITHHELD_RELEASE_TAGS``); action refs still check the
+    # raw tag set below.
     published_under: dict[str, str] = {}
     for tag in sorted(tags, key=sync.release_key):
+        if tag in sync.WITHHELD_RELEASE_TAGS:
+            continue
         published_under[sync.release_version(tag)] = tag
     missing_tag = [v for v in versions if v not in published_under]
     report["missing_tag"] = missing_tag
