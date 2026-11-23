@@ -76,3 +76,21 @@ def test_a_project_without_git_is_named(tmp_path, cli_runner):
     assert code == 0, out
     summary = _summary(cli_runner, proj, "coupling")
     assert summary["history_state"] == "not_a_git_repository", summary
+
+
+def test_a_changeset_check_without_history_is_not_a_pass(tmp_path, cli_runner, monkeypatch):
+    """`coupling --against` used to answer "complete changeset" with no history."""
+    monkeypatch.delenv("ROAM_GIT_SINCE", raising=False)
+    proj = _old_pair_repo(tmp_path)
+    with (proj / "a.py").open("a", encoding="utf-8") as fh:
+        fh.write("# solo\n")
+    env = {**os.environ, "GIT_AUTHOR_DATE": _OLD, "GIT_COMMITTER_DATE": _OLD}
+    subprocess.run(["git", "commit", "-am", "solo"], cwd=proj, env=env, capture_output=True, check=True)
+    out, code = index_in_process(proj)
+    assert code == 0, out
+    result = invoke_cli(cli_runner, ["coupling", "--against", "HEAD~1..HEAD"], cwd=proj, json_mode=True)
+    assert result.exit_code == 0, result.output
+    summary = json.loads(result.output)["summary"]
+    assert summary["history_state"] == "outside_history_window", summary
+    assert summary["partial_success"] is True
+    assert "complete changeset" not in summary["verdict"]

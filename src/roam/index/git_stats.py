@@ -862,7 +862,7 @@ def explain_missing_history(conn: sqlite3.Connection, project_root: Path) -> dic
                 "state": "outside_history_window",
                 "message": (
                     f"every commit is older than the ROAM_GIT_SINCE window ({window}); "
-                    "run `ROAM_GIT_SINCE=0 roam index --force` to read the full history"
+                    "set ROAM_GIT_SINCE=0, then run `roam index --force` to read the full history"
                 ),
             }
     return {

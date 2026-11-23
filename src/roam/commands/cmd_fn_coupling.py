@@ -351,7 +351,9 @@ def _emit_missing_cochange_history(json_mode: bool, missing: dict | None = None)
     *missing* is ``explain_missing_history``'s answer; when given, the
     verdict names why no commits were indexed.
     """
-    verdict = "No co-change data — run 'roam index' on a git repository"
+    # Commits are indexed, but no pair is left after the commit-size, symbol
+    # and test filters.
+    verdict = "No co-change data: no function pairs remain in the indexed commits after the filters"
     if missing:
         verdict = f"No co-change data: {missing['message']}"
     if json_mode:

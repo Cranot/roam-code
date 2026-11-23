@@ -350,18 +350,30 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 min_cochanges,
             )
             surprise, best_pattern, similarity = _compute_surprise(conn, change_fids)
+            from roam.index.git_stats import explain_missing_history
+
+            # With no indexed commits there are no partners to miss, so a
+            # "complete changeset" would be a check that never ran.
+            no_history = explain_missing_history(conn, root)
 
             if json_mode:
                 _against_verdict = "incomplete changeset" if missing else "complete changeset"
+                against_summary: dict = {
+                    "verdict": _against_verdict,
+                    "change_set": len(file_map),
+                    "missing": len(missing),
+                    "surprise_score": surprise,
+                }
+                if no_history:
+                    against_summary.update(
+                        verdict=f"changeset not checked: {no_history['message']}",
+                        history_state=no_history["state"],
+                        partial_success=True,
+                    )
                 envelope = json_envelope(
                     "coupling",
                     budget=token_budget,
-                    summary={
-                        "verdict": _against_verdict,
-                        "change_set": len(file_map),
-                        "missing": len(missing),
-                        "surprise_score": surprise,
-                    },
+                    summary=against_summary,
                     mode="against",
                     change_set=sorted(file_map.keys()),
                     surprise_score=surprise,
@@ -374,6 +386,9 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 return
 
             label = commit_range or "staged"
+            if no_history:
+                click.echo(f"VERDICT: changeset not checked: {no_history['message']}")
+                return
             click.echo(f"VERDICT: {len(missing)} missing co-change partner(s)\n")
             click.echo(f"=== Coupling Check ({label}, {len(file_map)} files) ===\n")
             click.echo(f"Surprise score: {surprise:.0%}{'  (unfamiliar combination!)' if surprise > 0.7 else ''}")
