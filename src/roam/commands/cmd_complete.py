@@ -30,7 +30,7 @@ _VALID_KINDS = ("symbol", "path", "command", "all")
 _DEFAULT_LIMIT = 30
 
 
-def _prefix_symbols(prefix: str, *, limit: int, warnings_out: list[str] | None = None) -> list[str]:
+def _prefix_symbols(prefix: str, *, limit: int, warnings_out: list[str] | None = None, root: str = ".") -> list[str]:
     """Return symbol names that LITERALLY start with ``prefix``.
 
     Uses ``LIKE prefix%`` directly against ``symbols.name`` so camelCase
@@ -46,11 +46,13 @@ def _prefix_symbols(prefix: str, *, limit: int, warnings_out: list[str] | None =
     """
     if not prefix:
         return []
-    from roam.db.connection import open_db
+    from roam.db.connection import find_project_root, open_db
+    from roam.db.freshness import StaleQueryIndexError
 
     like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
     try:
-        with open_db(readonly=True) as conn:
+        db = open_db(readonly=True) if root == "." else open_db(readonly=True, project_root=find_project_root(root))
+        with db as conn:
             rows = conn.execute(
                 "SELECT DISTINCT name FROM symbols "
                 "WHERE name LIKE ? ESCAPE '\\' "
@@ -58,6 +60,8 @@ def _prefix_symbols(prefix: str, *, limit: int, warnings_out: list[str] | None =
                 "LIMIT ?",
                 (like, limit * 3),
             ).fetchall()
+    except StaleQueryIndexError:
+        raise
     except Exception as exc:  # noqa: BLE001 — W607-F inner-bucket disclosure
         if warnings_out is not None:
             warnings_out.append(f"complete_symbols_query_failed:{type(exc).__name__}:{exc}")
@@ -160,6 +164,7 @@ def complete(ctx, prefix, kind, limit):
     # command was fixing. Use a strict LIKE-based prefix matcher on
     # the raw ``symbols.name`` column instead — left-anchored, no
     # tokenization, byte-equivalent to what the user typed.
+    from roam.db.freshness import StaleQueryIndexError
     from roam.mcp_extras.completions import complete_commands, complete_paths
 
     # W607-F: Pattern-2 consumer-layer wiring — thread a warnings_out
@@ -189,6 +194,8 @@ def complete(ctx, prefix, kind, limit):
     if kind_norm in ("path", "all"):
         try:
             payload["paths"] = complete_paths(prefix, limit=limit)
+        except StaleQueryIndexError:
+            raise
         except Exception as exc:  # noqa: BLE001 — W607-F outer-guard
             warnings_out.append(f"complete_paths_query_failed:{type(exc).__name__}:{exc}")
             payload["paths"] = []

@@ -1612,20 +1612,29 @@ def _stamp_core_meta(
         out["_meta"]["index_metadata"] = "not_read"
 
 
-def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness) -> None:
-    """Apply the same freshness fields to CLI envelopes and MCP cache hits."""
+def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness, *, command: str | None = None) -> None:
+    """Apply the same freshness fields to CLI and MCP envelopes."""
+    from roam.db.freshness import query_is_stale_sensitive
+
+    command = command or out.get("command", "")
     meta = out.setdefault("_meta", {})
     meta["index_age_s"] = int(freshness.age_s) if freshness.age_s is not None else None
     meta["index_changed_files"] = freshness.changed_files
     meta["index_state"] = freshness.state
+    meta["index_status"] = freshness.legacy_status()
+    if command in {"health", "diagnose"}:
+        out["index_status"] = meta["index_status"]
     meta.pop("stale_index", None)
     meta.pop("index_state_reason", None)
     if freshness.reason is not None:
         meta["index_state_reason"] = freshness.reason
     if freshness.stale:
         meta["stale_index"] = True
-    if freshness.state != "fresh":
-        out.setdefault("summary", {})["partial_success"] = True
+    summary = out.setdefault("summary", {})
+    if freshness.degraded and query_is_stale_sensitive(command):
+        summary["partial_success"] = True
+    else:
+        summary.setdefault("partial_success", False)
 
 
 def _cache_policy(command: str) -> tuple[bool, int]:
@@ -1735,7 +1744,7 @@ def json_envelope(
     compact = _compact_json_envelope_or_none(command, summary, payload)
     if compact is not None:
         if freshness is not None:
-            stamp_query_index_freshness(compact, freshness)
+            stamp_query_index_freshness(compact, freshness, command=command)
         projected_compact = _project_if_requested(compact)
         if budget > 0 and not uncapped:
             return budget_truncate_json(projected_compact, budget)

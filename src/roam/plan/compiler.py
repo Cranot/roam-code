@@ -11493,10 +11493,7 @@ class PlanV0:
         # v0.4 — structured parallel-tool list (the -84%/-78% combo wins).
         if self.recommended_parallel_tools:
             plan_obj["recommended_parallel_tools"] = list(self.recommended_parallel_tools)
-        # W21: surface stale-index signals so the agent can verify
-        # named_paths before trusting them (see cvc A/B 2026-05-30). One
-        # stat pass yields both the staleness warning and the
-        # files-newer-than-index (post-index edit) signal.
+        # W21: disclose source snapshot changes and missing named paths.
         staleness, newer_files = _index_freshness_signals(named_only, cwd)
         if staleness:
             plan_obj["index_staleness"] = staleness
@@ -11746,9 +11743,7 @@ class PlanV0:
         }
         if prefetched:
             plan["prefetched_facts"] = prefetched
-        # W21: stale-index warning even in the minimum-information
-        # envelope. One stat pass yields both the staleness warning and
-        # the files-newer-than-index (post-index edit) signal.
+        # W21: disclose source snapshot changes in the minimum-information envelope.
         staleness, newer_files = _index_freshness_signals(named_only, cwd)
         if staleness:
             plan["index_staleness"] = staleness
@@ -12705,43 +12700,28 @@ def _plan_cache_store(task: str, cwd: str | None, plan: "PlanV0") -> None:
 
 
 def _stamp_index_staleness(env_obj: dict, plan: "PlanV0", cwd: str | None) -> None:
-    """Pattern 1D — disclose when the envelope was compiled from an index
-    OLDER than the task's named files.
-
-    The cache side of this failure class is sealed (index stamp + generation
-    sweep), but a compile against a lagging index still embeds drifted line
-    numbers silently. Tell the agent instead: which files are newer than the
-    index, and what to do about it. Best-effort; never raises.
-    """
-    try:
-        files = list(getattr(plan, "likely_files", None) or [])[:12]
-        if not files:
-            return
-        idx_mtime = os.path.getmtime(_index_db_path(cwd))
-        stale = []
-        for rel in files:
-            full = os.path.join(cwd, rel) if cwd and not os.path.isabs(rel) else rel
-            try:
-                if os.path.getmtime(full) > idx_mtime + 1.0:
-                    stale.append(rel)
-            except OSError:
-                continue
-        if not stale:
-            return
-        plan_obj = env_obj.get("plan")
-        if not isinstance(plan_obj, dict):
-            return
+    """Refresh named-path evidence on emitted and cached plan envelopes."""
+    plan_obj = env_obj.get("plan")
+    if not isinstance(plan_obj, dict):
+        return
+    named_paths = plan_obj.get("named_paths") or _extract_file_paths(plan.task, cwd)
+    paths = [*named_paths, *(plan.likely_files or [])]
+    staleness, changed_files = _index_freshness_signals(paths, cwd)
+    plan_obj.pop("index_staleness", None)
+    plan_obj.pop("index_stale", None)
+    facts = plan_obj.get("prefetched_facts")
+    if isinstance(facts, dict):
+        facts.pop("index_stale", None)
+        facts.pop("index_stale_definition", None)
+    if staleness:
+        plan_obj["index_staleness"] = staleness
+    if changed_files:
         plan_obj["index_stale"] = True
-        pf = plan_obj.setdefault("prefetched_facts", {})
-        pf["index_stale"] = {"files_newer_than_index": stale}
-        pf["index_stale_definition"] = (
-            "These files were edited AFTER the index was built, so embedded "
-            "line numbers and structural facts for them may have drifted. "
-            "Trust the file content over embedded coordinates for these "
-            "files, and run `roam index` to refresh."
+        facts = plan_obj.setdefault("prefetched_facts", {})
+        facts["index_stale"] = changed_files
+        facts["index_stale_definition"] = (
+            "These files differ from the indexed snapshot. Verify their contents before using indexed coordinates."
         )
-    except Exception as exc:  # noqa: BLE001 — disclosure must never break a compile
-        log_swallowed("compile.index_staleness_stamp", exc)
 
 
 class _LeanGateFlags(NamedTuple):
@@ -13633,128 +13613,62 @@ def _explain_classifier(task: str) -> dict:
     }
 
 
-_INDEX_STALE_AFTER_SECONDS = 24 * 3600
-
-
-def _index_mtime_or_none_for_resilient_diagnostics(index_db: str) -> float | None:
-    """Return index mtime when available; missing/unreadable index is diagnostic state."""
-    if not os.path.isfile(index_db):
-        return None
-    try:
-        return os.path.getmtime(index_db)
-    except OSError as exc:
-        log_swallowed("compile.index_freshness.index_mtime", exc)
-        return None
-
-
-def _file_changed_after_index_without_false_precision(full_path: str, index_mtime: float) -> bool:
-    """Preserve post-index edit signal while tolerating coarse filesystem mtimes."""
-    try:
-        file_mtime = os.path.getmtime(full_path)
-    except OSError as exc:
-        log_swallowed("compile.index_freshness.file_mtime", exc)
-        return False
-    # 5ms tolerance avoids false positives from FS timestamp granularity.
-    return file_mtime > index_mtime + 0.005
-
-
-def _scan_named_paths_for_index_drift(
-    base: str, named_paths: list[str], index_mtime: float | None
-) -> tuple[list[str], list[str]]:
-    """Preserve one-stat-per-path freshness checks without duplicating path diagnostics."""
-    missing: list[str] = []
-    newer_files: list[str] = []
-    seen: set[str] = set()
-    for path in named_paths:
-        if path in seen:
-            continue
-        seen.add(path)
-        # Non-path-looking entries (regex captures dirs as "src/") are fine.
-        full = os.path.join(base, path)
-        if not os.path.exists(full):
-            missing.append(path)
-            continue
-        if index_mtime is None:
-            continue
-        if _file_changed_after_index_without_false_precision(full, index_mtime):
-            newer_files.append(path)
-    return missing, newer_files
-
-
-def _staleness_signal_when_freshness_is_untrustworthy(
-    missing: list[str], age_sec: int | None, named_paths_present: bool
-) -> dict | None:
-    """Expose stale-index risk only when named-path facts may be untrustworthy."""
-    index_is_old = age_sec is not None and age_sec > _INDEX_STALE_AFTER_SECONDS
-    index_is_missing_for_named_paths = age_sec is None and named_paths_present
-    if not missing and not index_is_old and not index_is_missing_for_named_paths:
-        return None
-
-    parts: list[str] = []
-    if missing:
-        parts.append(f"{len(missing)} named_paths missing on disk")
-    if index_is_old:
-        parts.append(f"index is {age_sec // 3600}h old")
-    if age_sec is None:
-        parts.append("no .roam/index.db present")
-    warning = "named_paths may be unreliable: " + "; ".join(parts) + ". Verify with Read/Grep before trusting."
-    return {
-        "is_stale": True,
-        "missing_paths": missing,
-        "index_age_seconds": age_sec,
-        "warning": warning,
-    }
-
-
-def _freshness_envelopes_that_preserve_agent_trust(
-    missing: list[str], newer_files: list[str], age_sec: int | None, named_paths_present: bool
-) -> tuple[dict | None, dict | None]:
-    """Keep stale-index and post-index edit signals distinct for agent decisions."""
-    staleness = _staleness_signal_when_freshness_is_untrustworthy(missing, age_sec, named_paths_present)
-    newer = {"files_newer_than_index": newer_files} if newer_files else None
-    return staleness, newer
-
-
 def _index_freshness_signals(named_paths: list[str], cwd: str | None) -> tuple[dict | None, dict | None]:
-    """Compute BOTH stale-index signals from ONE filesystem stat pass.
+    """Use source snapshot freshness and report named paths missing on disk."""
+    from roam.db.connection import find_project_root
+    from roam.db.freshness import project_index_freshness
 
-    The facts-contract and facts envelopes used to call
-    `_named_path_staleness` and `_check_files_newer_than_index` back to
-    back, each re-stat'ing the same `.roam/index.db` and the same
-    named_paths. This merges them: stat the index once, stat each unique
-    named path once, then derive both verdicts.
-
-    Returns `(staleness, newer_files)` — each is the dict the standalone
-    helper would have returned, or None:
-      * staleness: {"is_stale", "missing_paths", "index_age_seconds",
-        "warning"} when a named_path is missing on disk OR the index is
-        >24h old / absent (with named_paths present).
-      * newer_files: {"files_newer_than_index": [...]} for paths edited
-        after the index mtime (post-index edits).
-    """
+    if not named_paths:
+        return None, None
     try:
         base = cwd or os.getcwd()
-    except OSError:
-        if not named_paths:
-            return None, None
+        root = find_project_root(base)
+        freshness = project_index_freshness(root)
+    except OSError as exc:
+        log_swallowed("compile.index_freshness.project", exc)
         return (
             {
-                "is_stale": True,
+                "is_stale": None,
                 "missing_paths": [],
                 "index_age_seconds": None,
                 "working_directory_unavailable": True,
-                "warning": (
-                    "named_paths may be unreliable: current working directory is unavailable. "
-                    "Verify with Read/Grep before trusting."
-                ),
+                "warning": "Working directory is unavailable. Verify named paths with Read/Grep before trusting.",
             },
             None,
         )
-    index_db = os.path.join(base, ".roam", "index.db")
-    index_mtime = _index_mtime_or_none_for_resilient_diagnostics(index_db)
-    missing, newer_files = _scan_named_paths_for_index_drift(base, named_paths, index_mtime)
-    age_sec = int(time.time() - index_mtime) if index_mtime is not None else None
-    return _freshness_envelopes_that_preserve_agent_trust(missing, newer_files, age_sec, bool(named_paths))
+    missing: list[str] = []
+    changed: list[str] = []
+    for path in dict.fromkeys(named_paths):
+        full = Path(os.path.abspath(os.path.join(base, path)))
+        if not full.exists():
+            missing.append(path)
+        elif (
+            freshness is not None
+            and full.is_relative_to(root)
+            and full.relative_to(root).as_posix() in freshness.changed_paths
+        ):
+            changed.append(path)
+
+    issues = []
+    if missing:
+        issues.append(f"{len(missing)} named_paths missing on disk")
+    if freshness is None:
+        issues.append("no index found")
+    elif freshness.degraded:
+        issues.append(freshness.message().rstrip("."))
+    staleness = None
+    if issues:
+        staleness = {
+            "is_stale": freshness.stale if freshness is not None and freshness.changed_files is not None else None,
+            "missing_paths": missing,
+            "index_age_seconds": int(freshness.age_s)
+            if freshness is not None and freshness.age_s is not None
+            else None,
+            "warning": "named_paths may be unreliable: "
+            + ". ".join(issues)
+            + ". Verify with Read/Grep before trusting.",
+        }
+    return staleness, {"files_newer_than_index": changed} if changed else None
 
 
 def _named_path_staleness(named_paths: list[str], cwd: str | None) -> dict | None:

@@ -48,7 +48,7 @@ def test_stdio_tool_calls_do_not_inherit_the_protocol_input(tmp_path, monkeypatc
     """An explicit-root CLI child must finish while the MCP input stays open."""
     root = tmp_path / "repo space $literal 'quote' &"
     root.mkdir()
-    (root / ".gitignore").write_text(".roam/\n", encoding="utf-8")
+    (root / ".gitignore").write_text(".roam/\nroam.py\n", encoding="utf-8")
     (root / "app.py").write_text("def answer():\n    return 42\n", encoding="utf-8")
     for key in ("ROAM_PROJECT_ROOT", "ROAM_DB_DIR", "ROAM_RUN_ID"):
         monkeypatch.delenv(key, raising=False)

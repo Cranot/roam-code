@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import subprocess
 
 import click
 
@@ -14,225 +13,16 @@ from roam.db.connection import (
     find_project_root,
     get_index_lock_path,
     get_index_state_path,
-    open_db,
 )
 from roam.db.queries import SEARCH_SYMBOLS, SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED
 
 
-def _git_head_short() -> str | None:
-    """Return current ``HEAD`` short SHA, or ``None`` if git is unavailable."""
-    try:
-        root = find_project_root()
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        # Expected absence (no .git / outside a repo) returns None below;
-        # surface unexpected failures via the observability hook.
-        from roam.observability import log_swallowed
-
-        log_swallowed("resolve:_git_head_short:find_project_root", _exc)
-        return None
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short=12", "HEAD"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as _exc:
-        # Git missing / rev-parse timed out -> None. A TimeoutExpired is a
-        # real failure masquerading as "git unavailable" — surface it.
-        from roam.observability import log_swallowed
-
-        log_swallowed("resolve:_git_head_short:git_rev_parse", _exc)
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
-def index_staleness_hint() -> str | None:
-    """Return a one-line ``hint`` string when the index appears stale.
-
-    Heuristic: compare the latest commit hash in ``git_commits`` against
-    ``git rev-parse HEAD``. When they differ (and HEAD isn't a parent of
-    the indexed commit), the index is missing recent commits — every
-    git-aware metric will be off (commit_count, churn, co-change). The
-    hint is suppressed when ``ROAM_NO_STALENESS_HINT=1`` is set so CI
-    pipelines that index then mutate the tree don't see noise.
-    """
-    status = index_status()
-    if status is None or status.get("fresh") is True:
-        return None
-    return status.get("hint")
-
-
-# Roam's own on-disk artifacts. ``roam init`` creates these seconds before the
-# first ``roam health`` runs, so counting them as working-tree drift made a
-# pristine clone report "2 file(s) modified since last index — run `roam index`
-# to refresh" on command 3 of the documented 4-command golden path, naming the
-# two files the previous command had just written.
-#
-# ``.roam/`` is purely derived (SQLite index, caches, generated fitness config)
-# — nothing under it can change a symbol or an edge, so it never counts.
-#
-# The root dotfiles are different: they are user-authored config, and an EDIT
-# to ``.roamignore`` genuinely changes which files are indexed. They are
-# therefore excused only while UNTRACKED (``??``) — i.e. freshly written by
-# ``roam init`` and not yet adopted into the repo. Once the user commits one,
-# a later modification counts as real drift again.
-_ROAM_ARTIFACT_DIR_PREFIX = ".roam/"
-_ROAM_INIT_CONFIG_FILES: frozenset[str] = frozenset(
-    {
-        ".roamignore",
-        ".roamignore-findings",
-        ".roam-fitness.yml",
-        ".roam-fitness.yaml",
-    }
-)
-
-
-def _porcelain_path(line: str) -> str:
-    """Extract the (destination) path from one ``git status --porcelain`` line.
-
-    Format is ``XY <path>`` where ``XY`` is the two-column status code.
-    Renames and copies render as ``R  old -> new``; the destination is what
-    exists on disk, so that is the side we classify. Paths git considers
-    unusual arrive double-quoted.
-    """
-    body = line[3:] if len(line) > 3 else ""
-    if " -> " in body:
-        body = body.split(" -> ", 1)[1]
-    body = body.strip()
-    if len(body) >= 2 and body.startswith('"') and body.endswith('"'):
-        body = body[1:-1]
-    if body.startswith("./"):
-        body = body[2:]
-    return body
-
-
-def _is_roam_own_artifact(line: str) -> bool:
-    """True when a porcelain entry is Roam's own output, not user source."""
-    path = _porcelain_path(line)
-    if path.startswith(_ROAM_ARTIFACT_DIR_PREFIX):
-        return True
-    return line[:2] == "??" and path in _ROAM_INIT_CONFIG_FILES
-
-
-def _git_dirty_count() -> int | None:
-    """Return the number of files with working-tree modifications.
-
-    Uses ``git status --porcelain`` so it's fast (metadata-only). Counts
-    every entry: modified, added, deleted, untracked. Returns ``None`` if
-    git is unavailable. surfaces working-tree drift that the
-    HEAD-vs-indexed check misses (you can be at the same commit but have
-    edits the index hasn't seen).
-
-    Roam's own artifacts (``.roam/``, ``.roamignore``, …) are excluded —
-    they are outputs of the very command that would "refresh" them, so
-    counting them produced a permanent, self-inflicted staleness NOTE.
-    """
-    try:
-        root = find_project_root()
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        # Expected absence (no .git / outside a repo) returns None below;
-        # surface unexpected failures via the observability hook.
-        from roam.observability import log_swallowed
-
-        log_swallowed("resolve:_git_dirty_count:find_project_root", _exc)
-        return None
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as _exc:
-        # Git missing / status timed out -> None. A TimeoutExpired is a
-        # real failure masquerading as "git unavailable" — surface it.
-        from roam.observability import log_swallowed
-
-        log_swallowed("resolve:_git_dirty_count:git_status", _exc)
-        return None
-    if result.returncode != 0:
-        return None
-    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    return sum(1 for ln in lines if not _is_roam_own_artifact(ln))
-
-
 def index_status() -> dict | None:
-    """Return a structured ``index_status`` dict for envelope use.
+    """Return the legacy projection of the shared freshness observation."""
+    from roam.db.freshness import project_index_freshness, query_index_freshness
 
-    Returns ``None`` when staleness cannot be determined (no git, no
-    commits indexed, env opt-out). Otherwise:
-
-        {
-          "fresh": bool,
-          "indexed_commit": "...",
-          "head_commit": "...",
-          "dirty_files": int | None,   # working-tree drift count
-          "hint": "...",
-        }
-
-    Round 4 #20 / U: callers should attach this at the TOP of their
-    JSON envelope (and print before the VERDICT in text mode) so an
-    agent reading top-down can't miss a stale-index warning.
-    """
-    if os.environ.get("ROAM_NO_STALENESS_HINT"):
-        return None
-    head = _git_head_short()
-    if not head:
-        return None
-    try:
-        with open_db(readonly=True) as conn:
-            row = conn.execute("SELECT hash FROM git_commits ORDER BY timestamp DESC LIMIT 1").fetchone()
-            if row is None:
-                return None
-            indexed_short = (row[0] or "")[:12]
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        # Expected absence (no DB, no git_commits table on an older index)
-        # collapses to "staleness unknown" -> None; surface anything else.
-        from roam.observability import log_swallowed
-
-        log_swallowed("resolve:index_status:git_commits_query", _exc)
-        return None
-    if not indexed_short:
-        return None
-    dirty = _git_dirty_count()
-    # even when HEAD matches, working-tree edits make the
-    # index stale for symbol-resolution purposes. Surface that.
-    if indexed_short == head:
-        if dirty and dirty > 0:
-            return {
-                "fresh": False,
-                "indexed_commit": indexed_short,
-                "head_commit": head,
-                "dirty_files": dirty,
-                "hint": (
-                    f"{dirty} file(s) modified in working tree since last index — "
-                    "run `roam index` to refresh symbol/edge data."
-                ),
-            }
-        return {
-            "fresh": True,
-            "indexed_commit": indexed_short,
-            "head_commit": head,
-            "dirty_files": dirty,
-            "hint": None,
-        }
-    return {
-        "fresh": False,
-        "indexed_commit": indexed_short,
-        "head_commit": head,
-        "dirty_files": dirty,
-        "hint": (
-            f"index latest commit {indexed_short} != HEAD {head} — git-derived metrics "
-            f"(commits, churn, co-change, weather) may be stale. Run `roam index --force`."
-        ),
-    }
+    freshness = query_index_freshness() or project_index_freshness(find_project_root())
+    return freshness.legacy_status() if freshness is not None else None
 
 
 # Maximum suggestions returned by fts_suggestions()

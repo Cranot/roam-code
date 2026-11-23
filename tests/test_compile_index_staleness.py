@@ -16,39 +16,29 @@ def test_named_path_staleness_fires_on_missing_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     out = _named_path_staleness(["src/does/not/exist.py"], str(tmp_path))
     assert out is not None
-    assert out["is_stale"] is True
+    assert out["is_stale"] is None
     assert "src/does/not/exist.py" in out["missing_paths"]
     assert "Verify with Read/Grep" in out["warning"]
 
 
-def test_named_path_staleness_silent_when_file_exists(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    real = tmp_path / "src" / "real.py"
-    real.parent.mkdir(parents=True)
-    real.write_text("# real")
-    # Place a recent .roam/index.db so the age branch doesn't fire either.
-    (tmp_path / ".roam").mkdir()
-    (tmp_path / ".roam" / "index.db").write_text("")
-    out = _named_path_staleness(["src/real.py"], str(tmp_path))
-    assert out is None
+def test_named_path_staleness_silent_when_file_exists(project_factory):
+    project = project_factory({"src/real.py": "def present(): pass\n"})
+    assert _named_path_staleness(["src/real.py"], str(project)) is None
 
 
-def test_named_path_staleness_fires_on_old_index(tmp_path):
-    import os
+def test_named_path_staleness_reports_manifest_age_for_changed_file(project_factory):
+    import sqlite3
+    from contextlib import closing
 
-    real = tmp_path / "src" / "real.py"
-    real.parent.mkdir(parents=True)
-    real.write_text("# real")
-    (tmp_path / ".roam").mkdir()
-    idx = tmp_path / ".roam" / "index.db"
-    idx.write_text("")
-    # Backdate the index by 2 days.
-    old = idx.stat().st_mtime - 2 * 86400
-    os.utime(idx, (old, old))
-    out = _named_path_staleness(["src/real.py"], str(tmp_path))
+    project = project_factory({"app.py": "def main(): pass\n"})
+    with closing(sqlite3.connect(project / ".roam" / "index.db")) as conn, conn:
+        conn.execute("UPDATE index_manifest SET indexed_at = indexed_at - 172800")
+    (project / "app.py").write_text("def main(): return 1\n")
+
+    out = _named_path_staleness(["app.py"], str(project))
     assert out is not None
     assert out["is_stale"] is True
-    assert out["index_age_seconds"] > 86400  # >= 1 day
+    assert out["index_age_seconds"] >= 172800
 
 
 def test_named_path_staleness_fires_when_no_index_at_all(tmp_path):
@@ -57,7 +47,7 @@ def test_named_path_staleness_fires_when_no_index_at_all(tmp_path):
     real.write_text("# real")
     out = _named_path_staleness(["src/real.py"], str(tmp_path))
     assert out is not None
-    assert out["is_stale"] is True
+    assert out["is_stale"] is None
     assert out["index_age_seconds"] is None
 
 

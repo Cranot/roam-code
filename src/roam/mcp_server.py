@@ -6162,8 +6162,9 @@ def _ensure_fresh_index(root: str = ".") -> dict | None:
 # same envelope when the index hasn't changed — typical hit window for
 # an agent reasoning about one symbol is 30–120 seconds, well under
 # the 300s TTL.
-_ROAM_RESULT_CACHE: dict[tuple, tuple[float, float, dict]] = {}
+_ROAM_RESULT_CACHE: dict[tuple, tuple[float, float, dict, float]] = {}
 _ROAM_CACHE_TTL_S = 300.0
+_FRESHNESS_CACHE_TTL_S = 3.0
 # Read-only commands eligible for caching. Adding a write-y command
 # here would violate the "fresh after mutation" invariant; never list
 # ``init``, ``index``, ``mutate``, ``annotate``, ``ingest-trace``, etc.
@@ -6327,22 +6328,27 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
 
     # Cache lookup — only for read-only commands.
     if args and args[0] in _CACHEABLE_COMMANDS and not refuse_stale_index():
-        cache_key = tuple(args)
+        cache_key = (Path.cwd(), *args)
         cached = _ROAM_RESULT_CACHE.get(cache_key)
         if cached is not None:
-            ts, mt, payload = cached
-            now = _time.time()
-            if (now - ts) < _ROAM_CACHE_TTL_S and mt == _index_mtime():
+            ts, mt, payload, checked_at = cached
+            if (_time.time() - ts) < _ROAM_CACHE_TTL_S and mt == _index_mtime():
                 # Stamp the envelope with a cache-hit marker so callers
                 # can observe the optimisation. Don't mutate the cached
                 # dict in case a future caller compares object identity.
                 if isinstance(payload, dict):
+                    now = _time.monotonic()
+                    if (now - checked_at) < _FRESHNESS_CACHE_TTL_S:
+                        meta = dict(payload.get("_meta") or {}, cache_hit=True)
+                        return _track_query_result({**payload, "_meta": meta})
                     out = _refresh_cached_envelope(payload)
                     if out is not None:
+                        _ROAM_RESULT_CACHE[cache_key] = (ts, mt, out, now)
                         return _track_query_result(out)
+        checked_at = _time.monotonic()
         result = _run_roam_inprocess(args)
         if isinstance(result, dict) and "error" not in result:
-            _ROAM_RESULT_CACHE[cache_key] = (_time.time(), _index_mtime(), result)
+            _ROAM_RESULT_CACHE[cache_key] = (_time.time(), _index_mtime(), result, checked_at)
         return _track_query_result(result)
     return _track_query_result(_run_roam_inprocess(args))
 
@@ -6368,6 +6374,36 @@ def _refresh_cached_envelope(payload: dict) -> dict | None:
         out["summary"] = dict(out.get("summary") or {})
         stamp_query_index_freshness(out, freshness)
     return out
+
+
+def _with_direct_index_freshness(fn):
+    """Attach the observation from the index the MCP tool actually read."""
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        from roam.db.freshness import capture_direct_index_reads, refuse_stale_index
+        from roam.output.formatter import stamp_query_index_freshness
+
+        with capture_direct_index_reads() as observations:
+            out = fn(*args, **kwargs)
+        for freshness in observations.values():
+            if freshness.stale and refuse_stale_index():
+                out = _structured_error(
+                    {
+                        "command": out["command"],
+                        "error_code": "INDEX_STALE",
+                        "error": freshness.message(),
+                        "hint": "Run `roam index` to refresh.",
+                        "next_command": "roam index",
+                    }
+                )
+                stamp_query_index_freshness(out, freshness)
+                break
+            stamp_query_index_freshness(out, freshness)
+        return out
+
+    return wrapped
 
 
 def _build_no_data_envelope(args: list[str]) -> dict:
@@ -7538,6 +7574,7 @@ def _batch_get_payload(summary: dict, results: dict | None = None, errors: dict 
     description="Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls.",
     output_schema=_SCHEMA_BATCH_SEARCH,
 )
+@_with_direct_index_freshness
 def batch_search(
     queries: list,
     limit_per_query: int = 5,
@@ -7574,7 +7611,7 @@ def batch_search(
     import sqlite3
 
     from roam.commands.resolve import ensure_index
-    from roam.db.connection import StaleDbDirError, open_db
+    from roam.db.connection import StaleDbDirError, find_project_root, open_db
 
     queries_list: list[str] = [str(q) for q in (queries or [])][:_MAX_BATCH_QUERIES]
     limit = max(1, min(int(limit_per_query), 50))
@@ -7610,8 +7647,11 @@ def batch_search(
     # an offline DB still got an opaque @_tool error envelope from the index
     # probe instead of the documented batch-search fatal shape.
     try:
-        ensure_index()
-        conn_ctx = open_db(readonly=True)
+        if root == ".":
+            ensure_index()
+            conn_ctx = open_db(readonly=True)
+        else:
+            conn_ctx = open_db(readonly=True, project_root=find_project_root(root))
     except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
         # Expected DB/config boundary failures get a structured MCP payload;
         # programmer-class failures propagate instead of looking like no data.
@@ -7676,6 +7716,7 @@ def batch_search(
     description="Get details for up to 50 symbols in one call. Replaces 50 sequential roam_symbol calls.",
     output_schema=_SCHEMA_BATCH_GET,
 )
+@_with_direct_index_freshness
 def batch_get(symbols: list, root: str = ".") -> dict:
     """Batch symbol detail retrieval: fetch multiple symbol definitions in one MCP call.
 
@@ -7700,7 +7741,7 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     import sqlite3
 
     from roam.commands.resolve import ensure_index
-    from roam.db.connection import StaleDbDirError, open_db
+    from roam.db.connection import StaleDbDirError, find_project_root, open_db
 
     # Cap-as-census (finding #38): record the pre-cap request size BEFORE
     # the batch cap so ``symbols_requested`` reports what the caller asked
@@ -7727,8 +7768,11 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     # ensure_index() joins that block for the reason given in batch_search:
     # it fails on the same boundaries and earns the same structured payload.
     try:
-        ensure_index()
-        conn_ctx = open_db(readonly=True)
+        if root == ".":
+            ensure_index()
+            conn_ctx = open_db(readonly=True)
+        else:
+            conn_ctx = open_db(readonly=True, project_root=find_project_root(root))
     except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
         # Expected DB/config boundary failures get a structured MCP payload;
         # programmer-class failures propagate instead of looking like no data.
@@ -9781,6 +9825,7 @@ def search_symbol(query: str, root: str = ".") -> dict:
     name="roam_complete",
     description="Prefix completion for symbols / file paths / commands. Faster than search; returns just names.",
 )
+@_with_direct_index_freshness
 def complete_tool(prefix: str, kind: str = "symbol", limit: int = 30, root: str = ".") -> dict:
     """Autocomplete a partial symbol name, file path, or command.
 
@@ -9831,7 +9876,7 @@ def complete_tool(prefix: str, kind: str = "symbol", limit: int = 30, root: str 
             _prefix_symbols = None  # type: ignore[assignment]
         if _prefix_symbols is not None:
             try:
-                payload["symbols"] = _prefix_symbols(prefix, limit=limit_clamped)
+                payload["symbols"] = _prefix_symbols(prefix, limit=limit_clamped, root=root)
             except Exception as exc:  # noqa: BLE001 — completion degrades to empty list
                 # Prefix query raised (e.g. DB locked) — return [] rather than
                 # break the call. Surface under ROAM_VERBOSE so a recurring
@@ -10206,6 +10251,7 @@ def oracle_test_only_alias(symbol: str, root: str = ".") -> dict:
         "is-test-only, is-reachable-from-entry, is-clone-of."
     ),
 )
+@_with_direct_index_freshness
 def oracle_batch(items: list, root: str = ".") -> dict:
     """Batch multiple oracle queries.
 

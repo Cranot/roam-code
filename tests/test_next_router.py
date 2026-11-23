@@ -103,22 +103,14 @@ def test_next_with_index_and_clean_tree_suggests_tour(cli_runner, tmp_path, monk
 def test_next_with_uncommitted_changes_suggests_diff(cli_runner, tmp_path, monkeypatch):
     """Indexed project + a dirty file => router suggests `roam diff`.
 
-    The dirty-file branch fires only when (a) the index exists AND
-    (b) it is not stale AND (c) there is no recent saved envelope.
-    We touch the DB to defeat the staleness check, and we don't create
-    any `.roam/responses/` content so the envelope branch is inert.
+    The dirty-file branch fires when the index already covers the
+    working-tree edits and there is no recent saved envelope.
     """
     proj = _make_minimal_project(tmp_path, "dirty_proj")
     monkeypatch.chdir(proj)
+    (proj / "app.py").write_text("def main():\n    return 99  # changed\n")
     out, rc = index_in_process(proj)
     assert rc == 0, f"roam index failed:\n{out}"
-
-    db_path = proj / ".roam" / "index.db"
-    future = time.time() + 60
-    os.utime(db_path, (future, future))
-
-    # Modify app.py without committing.
-    (proj / "app.py").write_text("def main():\n    return 99  # changed\n")
 
     result = invoke_cli(cli_runner, ["next"], cwd=proj)
     assert result.exit_code == 0, result.output

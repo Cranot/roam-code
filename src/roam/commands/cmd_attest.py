@@ -609,7 +609,7 @@ def _build_staleness_contract(root, hashes, tool_version, conn, evidence, budget
         {
             "condition": "working_tree_dirty",
             "baseline": {"dirty_files": idx.get("dirty_files")},
-            "check": "git status --porcelain is non-empty",
+            "check": "source files differ from the index snapshot",
         },
         {
             "condition": "rule_config_hash_changed",

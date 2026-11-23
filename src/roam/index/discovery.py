@@ -121,6 +121,7 @@ SKIP_DIRS = frozenset(
 )
 
 MAX_FILE_SIZE = 1_000_000  # 1MB
+GIT_LS_FILES = ("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 
 # Built-in patterns for common auto-generated files
 BUILTIN_GENERATED_PATTERNS = [
@@ -283,7 +284,7 @@ def _git_ls_files(root: Path, skips: dict[str, list[str]] | None = None) -> list
 
     try:
         result = subprocess.run(
-            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            list(GIT_LS_FILES),
             cwd=str(root),
             capture_output=True,
             timeout=30,

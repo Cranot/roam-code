@@ -17,7 +17,7 @@ This wrapper short-circuits that path:
 
 * For the server start path (the common case: ``roam mcp`` on stdio for
   Claude Code, Cursor, etc.) we replace the heavy reindex with a fast
-  tracked-tree check. We report stale or unavailable results on stderr
+  source-file check. We report stale or unavailable results on stderr
   and hand off with ``no_auto_index=True`` so startup skips the reindex.
 
 * If the user passed ``--no-auto-index`` themselves we don't run the
@@ -149,8 +149,8 @@ def mcp(transport, host, port, no_auto_index, list_tools, list_tools_json, compa
             freshness = probe_index_freshness(get_db_path(root, create=False), root)
         except (OSError, StaleDbDirError):
             freshness = QueryIndexFreshness(None, None, "could not read the local index")
-        if freshness.state != "fresh":
-            click.echo(f"Warning: {freshness.message()}", err=True)
+        if hint := freshness.text_hint():
+            click.echo(f"Warning: {hint}", err=True)
         # Individual tool responses also carry the query freshness check.
         skip_heavy_reindex = True
 

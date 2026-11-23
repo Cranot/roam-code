@@ -127,13 +127,9 @@ ingests into the index).
 Default `--json` responses are `roam-envelope-v1` envelopes
 (`src/roam/output/formatter.py:19-20`) with `schema`, `schema_version`,
 `command`, `version`, `project`, `summary`, an auto-derived `agent_contract`,
-and `_meta`. `--agent` switches on compact output, which drops the identity
-and `_meta` keys and keeps `summary` (`src/roam/cli.py:2044-2052`,
-`formatter.py:1853-1896`). Compact output returns before the freshness
-stamp (`formatter.py:1736`), so `--agent` and `--compact` remove the
-`_meta` freshness channel; a consumer gating on evidence should keep the
-full JSON envelope and establish source freshness separately. Timestamps and
-index age live under `_meta` so content keys stay
+and `_meta`. Compact output (`--agent` or `--compact`) drops envelope
+identity fields and keeps `summary` and freshness metadata when available.
+Timestamps and index age live under `_meta` so content keys stay
 byte-stable for prompt caching (`formatter.py:1703-1706`), with two known
 exceptions: MCP sampling adds a model-written `briefing` at top level
 (`src/roam/mcp_extras/sampling.py:202-217`), and attestation payloads carry
@@ -249,14 +245,16 @@ a downstream consumer *[internal, 2026-08-23]*:
   local `--ci` (for example `roam taint --ci`,
   `src/roam/commands/cmd_taint.py:459-464`); read `roam <command> --help`
   before assuming either form.
-- The index can be stale with exit 0. `_meta.index_age_s` is only seconds
-  since the database file changed (`formatter.py:1819-1826`). Source
-  freshness is `_meta.index_status`, stamped on stale-sensitive commands when
-  the index no longer matches the repository (`formatter.py:1613-1629`). Its
-  absence does **not** establish freshness: the producer returns nothing when
-  git or index information is unavailable or `ROAM_NO_STALENESS_HINT` is set
-  (`src/roam/commands/resolve.py:166-201`). Run `roam index` after a pull,
-  branch switch, or commit.
+- The index can be stale with exit 0. Read `_meta.index_state`
+  (`fresh`, `stale`, or `unknown`) and `_meta.index_changed_files`. Roam
+  compares the indexed source snapshot with the current Git worktree,
+  including untracked source files that discovery would index. A skipped
+  check in a project without Git returns `unknown` with a reason. The
+  index build supplies `_meta.index_age_s`. The compatibility field
+  `_meta.index_status` reports the same state as `fresh` and the same count
+  as `dirty_files`. `ROAM_NO_STALENESS_HINT=1` suppresses the text hint.
+  `ROAM_REFUSE_STALE_INDEX=1` makes stale-sensitive commands refuse
+  confirmed stale results. Run `roam index` to refresh a stale index.
 - The default budget truncates. `roam agent-plan` returned `summary.tasks: 3`
   with `emitted_counts.tasks: 1` and `truncated: true`. A caller reading
   `tasks[]` alone would plan one third of the work.

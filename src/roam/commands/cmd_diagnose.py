@@ -1001,17 +1001,6 @@ def diagnose_cmd(ctx, name, depth, batch_input):
             default=[],
         )
 
-        # Round 4 #20 / U: index status is now a top-level envelope
-        # field AND prints before the VERDICT in text mode so an agent
-        # reading top-down can't miss a stale-index warning.
-        from roam.commands.resolve import index_status as _index_status
-
-        index_status_payload = _run_check(
-            "index_status",
-            _index_status,
-            default=None,
-        )
-
         if json_mode:
             _success_summary: dict = {
                 "target": _target_name,
@@ -1136,8 +1125,6 @@ def diagnose_cmd(ctx, name, depth, batch_input):
                 _envelope_floor["summary"]["warnings_out"] = list(_combined_warnings_out)
                 _envelope_floor["warnings_out"] = list(_combined_warnings_out)
                 envelope = _envelope_floor
-            if index_status_payload is not None:
-                envelope["index_status"] = index_status_payload
             # W607-BH -- auto_log emission for the agent-OS pre-edit
             # triangle parity (cmd_preflight + cmd_impact + cmd_diagnose).
             # Silent no-op if no active run; the wrap surfaces HMAC
@@ -1173,17 +1160,10 @@ def diagnose_cmd(ctx, name, depth, batch_input):
                     default=_envelope_floor,
                     **_success_kwargs,
                 )
-                if index_status_payload is not None:
-                    envelope["index_status"] = index_status_payload
             click.echo(to_json(envelope))
             return
 
-        # Text output — index-staleness warning lands FIRST so it can't
-        # be missed when scanning top-down.
         echo_text_warnings(list(_w607dn_warnings_out) + list(_w607s_warnings_out) + list(_w607bh_warnings_out))
-        if index_status_payload and not index_status_payload.get("fresh"):
-            click.echo(f"NOTE: {index_status_payload['hint']}")
-            click.echo()
         click.echo(f"VERDICT: {verdict}")
         sym_name = sym["qualified_name"] or sym["name"]
         click.echo(f"Diagnose: {sym_name}")

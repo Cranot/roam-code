@@ -713,7 +713,11 @@ class TestCosignWiring:
         def fake_available():
             return True, "v2.4.0 (mocked)"
 
-        def fake_run(*_a, **_kw):
+        run = cga_mod.subprocess.run
+
+        def fake_run(command, *args, **kwargs):
+            if command[0] != "cosign":
+                return run(command, *args, **kwargs)
             sig.write_text("sig\n", encoding="utf-8")
             bundle.write_text("{}", encoding="utf-8")
 

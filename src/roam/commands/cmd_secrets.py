@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
-from roam.commands.resolve import ensure_index, index_status
+from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.exit_codes import gate_should_fail
 from roam.output._severity import severity_breakdown, severity_rank
@@ -1362,15 +1362,6 @@ def secrets(ctx, severity, fail_on_found, include_tests):
         return
 
     # --- Text output ---
-    # index_status()'s own docstring specifies that callers print this
-    # "before the VERDICT in text mode" so a reader going top-down cannot
-    # miss it. The JSON envelope has carried it in _meta all along; the text
-    # branch never did, so a CI log — the surface a human actually reads —
-    # showed a bare clean verdict over a possibly-stale file set.
-    _index = index_status()
-    if isinstance(_index, dict) and _index.get("fresh") is False:
-        _hint = _index.get("hint") or "run `roam index` and retry"
-        click.echo(f"WARNING: index is stale — {_hint}")
     click.echo(f"VERDICT: {verdict}")
     click.echo()
 

@@ -67,8 +67,7 @@ def _seed_graph_metrics(project: Path) -> tuple[int, int]:
     db = project / ".roam" / "index.db"
     conn = sqlite3.connect(db)
     try:
-        conn.execute("INSERT OR IGNORE INTO files (path, language) VALUES ('seeded/w1448.py', 'python')")
-        file_id = conn.execute("SELECT id FROM files WHERE path = 'seeded/w1448.py'").fetchone()[0]
+        file_id = conn.execute("SELECT id FROM files WHERE language = 'python' ORDER BY path LIMIT 1").fetchone()[0]
 
         for i in range(_SEEDED_GOD_COMPONENTS):
             cur = conn.execute(

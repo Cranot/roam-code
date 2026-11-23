@@ -55,7 +55,7 @@ def _make_indexed_project(tmp_path: Path, name: str) -> Path:
     """
     proj = tmp_path / name
     proj.mkdir()
-    (proj / ".gitignore").write_text(".roam/\n")
+    (proj / ".gitignore").write_text(".roam/\n.roam-gates.yml\n")
     (proj / "main.py").write_text(
         'def main():\n    """Entry point."""\n    return 0\n',
     )

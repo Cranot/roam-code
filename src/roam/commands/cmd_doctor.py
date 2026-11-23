@@ -783,7 +783,7 @@ def _check_index_exists() -> dict:
 
 
 def _check_index_freshness(db_path_str: str | None) -> dict:
-    """Compare the index with the tracked tree using the query freshness rule."""
+    """Compare the index with the current source files using the query freshness rule."""
     from roam.db.connection import find_project_root
     from roam.db.freshness import probe_index_freshness
 
@@ -805,6 +805,9 @@ def _check_index_freshness(db_path_str: str | None) -> dict:
     }
     if freshness.reason is not None:
         check["reason"] = freshness.reason
+    if freshness.skipped:
+        check["skipped"] = True
+        check["detail"] = f"Index freshness skipped ({freshness.reason})."
     return check
 
 
@@ -2718,8 +2721,9 @@ def doctor(ctx, strict, persist):
 
     # --- Compute summary, with advisory / blocking severity split ---
     total = len(checks)
-    failed = [c for c in checks if not c["passed"]]
-    passed_count = total - len(failed)
+    skipped_count = sum(bool(c.get("skipped")) for c in checks)
+    failed = [c for c in checks if not c["passed"] and not c.get("skipped")]
+    passed_count = total - skipped_count - len(failed)
 
     advisory_failed = [c for c in failed if c["name"] in _ADVISORY_CHECK_NAMES]
     blocking_failed = [c for c in failed if c["name"] not in _ADVISORY_CHECK_NAMES]
@@ -2852,7 +2856,7 @@ def doctor(ctx, strict, persist):
     # non-dict surrogate) surfaces a canonical marker instead of crashing.
     def _compute_scores():
         if not failed:
-            return {"verdict_kind": "all_passed", "verdict_arg": total}
+            return {"verdict_kind": "all_passed", "verdict_arg": passed_count}
         elif blocking_failed and len(failed) == 1:
             return {"verdict_kind": "single_fail", "verdict_arg": failed[0]["name"]}
         elif blocking_failed:
@@ -2920,7 +2924,8 @@ def doctor(ctx, strict, persist):
         f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} · "
         f"{_os_label} · "
         f"{passed_count}/{total} checks pass · "
-        f"{len(advisory_failed)} advisory · {len(blocking_failed)} blocking"
+        + (f"{skipped_count} skipped · " if skipped_count else "")
+        + f"{len(advisory_failed)} advisory · {len(blocking_failed)} blocking"
     )
 
     # Strip private keys (prefixed with _) before output
@@ -3008,12 +3013,20 @@ def doctor(ctx, strict, persist):
                 "state": state,
                 "strict": bool(strict),
             }
+            if skipped_count:
+                _summary_block["skipped"] = skipped_count
             _envelope_kwargs: dict = {
                 "checks": clean_checks,
-                "failed_checks": [c for c in clean_checks if not c["passed"]],
-                "advisory_failed": [c for c in clean_checks if c["name"] in _ADVISORY_CHECK_NAMES and not c["passed"]],
+                "failed_checks": [c for c in clean_checks if not c["passed"] and not c.get("skipped")],
+                "advisory_failed": [
+                    c
+                    for c in clean_checks
+                    if c["name"] in _ADVISORY_CHECK_NAMES and not c["passed"] and not c.get("skipped")
+                ],
                 "blocking_failed": [
-                    c for c in clean_checks if c["name"] not in _ADVISORY_CHECK_NAMES and not c["passed"]
+                    c
+                    for c in clean_checks
+                    if c["name"] not in _ADVISORY_CHECK_NAMES and not c["passed"] and not c.get("skipped")
                 ],
                 "phase_timings": phase_timings_block,
                 "ci_workflow_drift": ci_workflow_drift_block,
@@ -3105,7 +3118,9 @@ def doctor(ctx, strict, persist):
     def _format_text():
         click.echo(f"VERDICT: {verdict}\n")
         for c in clean_checks:
-            if c["passed"]:
+            if c.get("skipped"):
+                label = "SKIP"
+            elif c["passed"]:
                 label = "PASS"
             elif c["name"] in _ADVISORY_CHECK_NAMES:
                 label = "WARN"  # advisory failures get distinct visual weight

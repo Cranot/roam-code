@@ -60,7 +60,7 @@ def gates_project(tmp_path):
     """Project with two money-handling modules and no tests for either."""
     proj = tmp_path / "w1523_proj"
     proj.mkdir()
-    (proj / ".gitignore").write_text(".roam/\n")
+    (proj / ".gitignore").write_text(".roam/\n.roam-gates.yml\n")
     src = proj / "src" / "app"
     src.mkdir(parents=True)
     (src / "models.py").write_text(

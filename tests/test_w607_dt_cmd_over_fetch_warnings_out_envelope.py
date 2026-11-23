@@ -262,7 +262,7 @@ def _build_empty_over_fetch_project(tmp_path: Path) -> Path:
         cwd=tmp_path,
         capture_output=True,
     )
-    (tmp_path / "README.md").write_text("# empty fixture\n")
+    (tmp_path / "NOTES.txt").write_text("empty fixture\n")
     subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
 
