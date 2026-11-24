@@ -213,7 +213,9 @@ def test_import_audit_requires_ok_protocol_not_returncode(monkeypatch):
     monkeypatch.setattr(compiler.subprocess, "run", lambda *a, **k: _FakeCompleted())
     out = compiler._probe_import_audit_for_task("ImportError: No module named anything", None)
     assert out is not None
-    assert out["import_audit"]["importable"] is False
+    # Contract change: without the protocol line the probe did not answer, so the
+    # module is neither importable (True) nor reported missing (False).
+    assert out["import_audit"]["importable"] is None
 
 
 def test_import_audit_requires_ok_protocol_garbage_stdout(monkeypatch):
@@ -229,7 +231,53 @@ def test_import_audit_requires_ok_protocol_garbage_stdout(monkeypatch):
     monkeypatch.setattr(compiler.subprocess, "run", lambda *a, **k: _FakeCompleted())
     out = compiler._probe_import_audit_for_task("ModuleNotFoundError: No module named x", None)
     assert out is not None
-    assert out["import_audit"]["importable"] is False
+    # Contract change: a banner is not the protocol, so the answer is unknown, not False.
+    assert out["import_audit"]["importable"] is None
+
+
+def test_import_audit_store_stub_reply_is_unknown_not_missing(monkeypatch):
+    """The Windows Store `python3` stub exits with an install hint on stderr and
+    no protocol line. The audit must not tell the agent the module is missing
+    and not to retry; it says the probe gave no answer."""
+    from roam.plan import compiler
+
+    class _StubCompleted:
+        returncode = 9009
+        stdout = ""
+        stderr = "Python was not found; run without arguments to install from the Microsoft Store.\n"
+
+    monkeypatch.setattr(compiler.subprocess, "run", lambda *a, **k: _StubCompleted())
+    out = compiler._probe_import_audit_for_task("ModuleNotFoundError: No module named requests", None)
+    assert out is not None
+    assert out["import_audit"]["importable"] is None
+    assert out["import_audit"]["suggestion"] == ""
+    assert "do NOT retry" not in out["import_audit_definition"]
+    assert "Could not audit" in out["import_audit_definition"]
+
+
+def test_import_audit_falls_back_to_python_when_python3_is_absent(monkeypatch):
+    """Where no `python3` command exists (a python.org install on Windows), the
+    probe runs under `python` instead of giving up."""
+    from roam.plan import compiler
+
+    class _OkCompleted:
+        returncode = 0
+        stdout = "OK /lib/json/__init__.py\n"
+        stderr = ""
+
+    calls = []
+
+    def _fake_run(argv, *a, **k):
+        calls.append(argv[0])
+        if argv[0] == "python3":
+            raise FileNotFoundError("python3")
+        return _OkCompleted()
+
+    monkeypatch.setattr(compiler.subprocess, "run", _fake_run)
+    out = compiler._probe_import_audit_for_task("ImportError: No module named json", None)
+    assert calls == ["python3", "python"]
+    assert out is not None
+    assert out["import_audit"]["importable"] is True
 
 
 def test_import_audit_trusts_ok_protocol_line(monkeypatch):

@@ -8403,6 +8403,27 @@ def _import_audit_suggestion(module: str, importable: bool, cwd: str | None) -> 
     return _import_audit_undeclared_hint(module)
 
 
+def _run_import_probe(probe_src: str, module: str, cwd: str) -> subprocess.CompletedProcess[str] | None:
+    """Run the import probe under the project's Python on PATH: `python3`, or
+    `python` where no `python3` command exists (a python.org install on
+    Windows). Returns None when no interpreter starts or the probe times out."""
+    for interpreter in ("python3", "python"):
+        try:
+            return subprocess.run(
+                [interpreter, "-I", "-c", probe_src, module],
+                capture_output=True,
+                text=True,
+                timeout=4.0,
+                cwd=cwd,
+            )
+        except FileNotFoundError as exc:
+            log_swallowed("compile.import_audit", exc)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            log_swallowed("compile.import_audit", exc)
+            return None
+    return None
+
+
 def _probe_import_audit_for_task(task: str, cwd: str | None) -> dict | None:
     if not task:
         return None
@@ -8456,22 +8477,35 @@ def _probe_import_audit_for_task(task: str, cwd: str | None) -> dict | None:
         "        part, next_origin, submodule_search_locations=next_locs)\n"
         "print('OK', cur.origin or '<no-file>')\n"
     )
-    try:
-        proc = subprocess.run(
-            ["python3", "-I", "-c", probe_src, module],
-            capture_output=True,
-            text=True,
-            timeout=4.0,
-            cwd=cwd or os.getcwd(),
-        )
-        # Importable iff stdout follows the `OK <origin>` protocol. We do
-        # NOT trust returncode alone: a fake/wrapped interpreter can exit 0
-        # without emitting the OK line and fabricate a false import success.
-        importable = _W201_PROBE_OK_RE.match((proc.stdout or "").lstrip()) is not None
-        details = proc.stdout.strip() or proc.stderr.strip()
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        log_swallowed("compile.import_audit", exc)
+    proc = _run_import_probe(probe_src, module, cwd or os.getcwd())
+    if proc is None:
         return None
+    # The probe's own stdout protocol is the only source of truth: `OK <origin>`
+    # means importable, `FAILED <reason>` means not importable. Anything else
+    # (a returncode-0 wrapper that swallows stdout, the Windows Store `python3`
+    # stub that prints an install hint) means the probe never ran, so the
+    # answer is unknown rather than a "not importable" verdict.
+    stdout = (proc.stdout or "").lstrip()
+    if _W201_PROBE_OK_RE.match(stdout):
+        importable: bool | None = True
+    elif stdout.startswith("FAILED"):
+        importable = False
+    else:
+        importable = None
+    details = (proc.stdout or "").strip() or (proc.stderr or "").strip()
+    if importable is None:
+        return {
+            "import_audit": {
+                "module": module,
+                "importable": None,
+                "details": details[:300],
+                "suggestion": "",
+            },
+            "import_audit_definition": (
+                f"Could not audit `import {module}`: the interpreter gave no probe answer. "
+                f'Run `python -c "import {module}"` in the project environment to check it.'
+            ),
+        }
     # Heuristic fix suggestion. The module name is captured from the
     # (untrusted) task string, so it is NEVER blessed as a `pip install <name>`
     # target unless that name is a declared project dependency — see
