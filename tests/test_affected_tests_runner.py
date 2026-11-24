@@ -79,7 +79,7 @@ def test_preflight_suggests_vitest_for_typescript(mixed_tests, cli_runner):
             "npx vitest run storage.test.ts",
         ),
         (
-            {"test:unit": "vitest", "test:e2e": "playwright test"},
+            {"test:unit": "vitest storage.test.ts", "test:e2e": "playwright test"},
             None,
             None,
             "vitest",
@@ -314,6 +314,39 @@ def test_javascript_runner_follows_each_file(tmp_path, evidence):
         ("vitest", files[:1]),
         ("mocha" if evidence == "script-glob" else "playwright", files[1:]),
     ]
+
+
+@pytest.mark.parametrize(
+    ("scripts", "files", "expected_runners", "unknown_files"),
+    [
+        ({"test:unit": "vitest"}, ["src/a.test.ts"], [("vitest", ["src/a.test.ts"])], []),
+        (
+            {"test:unit": "vitest", "test:e2e": "playwright test"},
+            ["unit/a.test.ts", "e2e/login.spec.ts"],
+            [("vitest", ["unit/a.test.ts"]), ("playwright", ["e2e/login.spec.ts"])],
+            [],
+        ),
+        (
+            {"test:unit": "vitest", "test:integration": "jest"},
+            ["src/a.test.ts", "tests/api/b.test.ts"],
+            [],
+            ["src/a.test.ts", "tests/api/b.test.ts"],
+        ),
+        (
+            {"test:unit": "vitest --dir src", "test:e2e": "playwright test"},
+            ["src/a.test.ts", "tests/smoke.spec.ts"],
+            [],
+            ["src/a.test.ts", "tests/smoke.spec.ts"],
+        ),
+    ],
+    ids=["sole-unit-script", "labeled-paths", "unscoped-integration", "unscoped-e2e"],
+)
+def test_unit_runner_requires_scope_with_multiple_scripts(tmp_path, scripts, files, expected_runners, unknown_files):
+    from roam.output.test_commands import affected_test_commands
+
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": scripts}), encoding="utf-8")
+    commands, unknown = affected_test_commands(tmp_path, files)
+    assert ([(entry["runner"], entry["files"]) for entry in commands], unknown) == (expected_runners, unknown_files)
 
 
 @pytest.mark.parametrize("script", ["karma start", "react-scripts test", "node --test"])

@@ -1728,6 +1728,10 @@ def _disclose_history_depth(command: str, summary: dict, payload: dict) -> None:
         return
     if command not in HISTORY_COMPOSITE_COMMANDS and not history_depth_advisory.get():
         summary["partial_success"] = True
+    if command == "pr-analyze":
+        # The shipped CI validator fullmatches the canonical verdict sentence.
+        payload["history_depth_notice"] = message
+        return
     verdict = summary.get("verdict")
     summary["verdict"] = f"{verdict.rstrip('.')}. {message}" if isinstance(verdict, str) and verdict else message
 

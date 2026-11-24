@@ -310,15 +310,21 @@ def _js_runner(evidence, file):
         runner = _only_runner({_script_runner(invocations) for invocations in explicit})
     elif configured:
         runner = _only_runner(configured)
-    elif "test" in scripts or "test:unit" in scripts:
-        default = scripts["test"] if "test" in scripts else scripts["test:unit"]
+    elif "test" in scripts or scripts.keys() == {"test:unit"}:
+        default_name = "test" if "test" in scripts else "test:unit"
+        default = scripts[default_name]
         if default and len(default) == 1:
             executable, args = default[0]
             if executable in {"nr", "run"} and len(args) == 1 and args[0] != "test":
                 default = scripts.get(args[0], default)
         runner = (
-            False if _script_patterns(default) and not _script_scope(file, "test", default) else _script_runner(default)
+            False
+            if _script_patterns(default) and not _script_scope(file, default_name, default)
+            else _script_runner(default)
         )
+    elif "test:unit" in scripts:
+        # With multiple test scripts, a label or scope must identify the runner.
+        runner = False
     elif scripts:
         runner = (
             _only_runner(

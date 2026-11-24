@@ -7,6 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+from tests.test_w1513_agent_review_verdict_contract import _run_validator
 
 
 @pytest.fixture
@@ -167,11 +168,15 @@ def limited_checkout(history_checkout, monkeypatch, request):
     return checkout, request.param, message
 
 
-def test_pr_analyze_accepts_history_limited_checkout(limited_checkout):
-    checkout, shallow, message = limited_checkout
+def _stage_example_change(checkout):
     source = checkout / "example.py"
     source.write_text(source.read_text(encoding="utf-8").replace("return 1", "return 2"), encoding="utf-8")
     subprocess.run(["git", "add", "example.py"], cwd=checkout, check=True, capture_output=True)
+
+
+def test_pr_analyze_accepts_history_limited_checkout(limited_checkout):
+    checkout, shallow, message = limited_checkout
+    _stage_example_change(checkout)
 
     runner = CliRunner()
     args = ["pr-analyze", "--staged"]
@@ -182,11 +187,36 @@ def test_pr_analyze_accepts_history_limited_checkout(limited_checkout):
     assert not data["summary"].get("failed_subcommands")
     assert data["summary"]["partial_success"] is False
     assert data["history_shallow"] is shallow
-    assert message in data["summary"]["verdict"]
+
+    status, output, error = _run_validator(checkout, data)
+    assert status == 0, error
+    assert output.strip() == f"verdict={data['summary']['verdict_code']}"
+    notice = data["history_depth_notice"]
+    assert notice.startswith(message)
 
     gated = runner.invoke(cli, [*args, "--gate"], input="")
     assert gated.exit_code == 0, gated.output
-    assert message in gated.stderr
+    assert gated.stderr.count(notice) == 1
+
+
+def test_pr_analyze_reviewers_child_keeps_history_depth_advisory(history_checkout):
+    checkout = history_checkout(True)
+    _stage_example_change(checkout)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--json", "pr-analyze", "--staged", "--with-reviewers"], input="")
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["summary"]["partial_success"] is False
+    reviewers = data["reviewers"]
+    assert reviewers["command"] == "suggest-reviewers"
+    assert reviewers["changed_files"] == ["example.py"]
+    assert reviewers["history_shallow"] is True
+    assert "Git history is shallow" in reviewers["summary"]["verdict"]
+    assert reviewers["summary"]["partial_success"] is False
+
+    standalone = runner.invoke(cli, ["--json", "suggest-reviewers", "example.py"])
+    assert standalone.exit_code == 0, standalone.output
+    assert json.loads(standalone.stdout)["summary"]["partial_success"] is True
 
 
 def test_audit_accepts_history_limited_checkout(limited_checkout):

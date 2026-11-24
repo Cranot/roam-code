@@ -226,10 +226,12 @@ def _capture_suggest_reviewers(file_paths: list[str], top: int) -> dict:
     if not file_paths:
         return {"summary": {"verdict": "no files in diff"}}
     from roam.cli import cli
+    from roam.git_utils import advisory_history_depth
 
     runner = CliRunner()
     args = ["--json", "suggest-reviewers", "--top", str(top), *file_paths]
-    result = runner.invoke(cli, args)
+    with advisory_history_depth():
+        result = runner.invoke(cli, args)
     try:
         return _json.loads(result.output)
     except Exception as exc:  # noqa: BLE001 — defensive
