@@ -1,15 +1,15 @@
 """Keep the README's MCP onboarding runnable from the public CLI."""
 
 import re
-from pathlib import Path
 
 from click.testing import CliRunner
 
 from roam.cli import cli
+from tests._helpers.repo_root import repo_root
 
 
 def _first_use():
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    readme = (repo_root() / "README.md").read_text(encoding="utf-8")
     return readme.split("## MCP Server", 1)[0]
 
 

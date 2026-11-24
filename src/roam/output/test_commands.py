@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath
 
 from roam._glob_match import matches_glob
 from roam.index.parser import detect_language
+from roam.languages.registry import JS_FAMILY_LANGUAGES
 from roam.parser_pack import DownloadError, LanguageNotFoundError, get_parser
 
 _JS_COMMANDS = {
@@ -22,7 +23,6 @@ _JS_COMMANDS = {
     "mocha": "npx mocha",
     "playwright": "npx playwright test",
 }
-_JS_LANGUAGES = frozenset({"javascript", "typescript", "jsx", "tsx", "vue", "svelte"})
 _MANIFESTS = {
     "python": ("pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"),
     "go": ("go.mod",),
@@ -216,7 +216,7 @@ def _script_patterns(invocations):
             if arg in {"-c", "--config", "--reporter", "--project", "--root", "--dir", "--grep", "--testNamePattern"}:
                 next(words, None)
             elif not arg.startswith("-") and (
-                "/" in arg or any(char in arg for char in "*?{") or detect_language(arg) in _JS_LANGUAGES
+                "/" in arg or any(char in arg for char in "*?{") or detect_language(arg) in JS_FAMILY_LANGUAGES
             ):
                 patterns.append(arg)
     return patterns
@@ -378,7 +378,7 @@ def affected_test_commands(root: Path, test_files: list[str]) -> tuple[list[dict
             unknown.append(path)
             continue
         language = detect_language(path)
-        if language in _JS_LANGUAGES:
+        if language in JS_FAMILY_LANGUAGES:
             language = "js"
         for directory in file.parents:
             key = (directory, language)
