@@ -20509,6 +20509,13 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         click.echo(f"\navailable presets: {', '.join(sorted(_PRESETS.keys()))}")
         return
 
+    if transport == "stdio":
+        # Before any child process starts: no child may inherit the protocol
+        # pipe (on Windows it blocks at startup while the transport reads).
+        from roam.mcp_extras.stdio_isolation import isolate_stdio_transport_stdin
+
+        isolate_stdio_transport_stdin()
+
     if not no_auto_index:
         sys.stderr.write("checking index freshness...\n")
         err = _ensure_fresh_index(".")
@@ -21001,4 +21008,7 @@ _TASK_OPTIONAL_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() i
 if __name__ == "__main__":
     if mcp is None:
         raise SystemExit(_fastmcp_unavailable_message())
+    from roam.mcp_extras.stdio_isolation import isolate_stdio_transport_stdin
+
+    isolate_stdio_transport_stdin()
     mcp.run()
