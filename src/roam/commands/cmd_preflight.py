@@ -32,8 +32,10 @@ from roam.commands.changed_files import (
     resolve_changed_to_db,
 )
 from roam.commands.cmd_affected_tests import (
+    DISPATCH_CACHE_DEFINITION,
     _gather_affected_tests,
     _looks_like_file,
+    _report_dispatch_cache_errors,
     _resolve_file_symbols,
     count_kinds,
 )
@@ -252,7 +254,7 @@ def _check_blast_radius(conn, sym_ids, file_paths):
         }
 
     G = build_symbol_graph(conn)
-    RG = G.reverse()
+    RG = G.reverse(copy=False)
 
     all_affected_syms = set()
     all_affected_files = set()
@@ -294,7 +296,8 @@ _MAX_SUGGESTED_TEST_FILES = 15
 
 def _check_affected_tests(conn, sym_ids, file_paths):
     """Find tests that need to run."""
-    results = _gather_affected_tests(conn, sym_ids, file_paths)
+    dispatch_cache = {}
+    results = _gather_affected_tests(conn, sym_ids, file_paths, dispatch_cache=dispatch_cache)
 
     # W847 — DIRECT/TRANSITIVE/COLOCATED are upstream kind tags from
     # ``_gather_affected_tests`` (internal vocabulary), not envelope
@@ -338,6 +341,7 @@ def _check_affected_tests(conn, sym_ids, file_paths):
         "test_commands": commands,
         "unknown_runner_files": unknown_runners,
         "pytest_command_truncated": truncated_files,
+        "dispatch_cache": dispatch_cache,
         "severity": severity,
     }
     # W805-L Bug 2: disclose when no tests are indexed at all.
@@ -961,6 +965,8 @@ def preflight(ctx, target, staged):
                         "preflight",
                         summary={
                             "verdict": "no TARGET symbol/file or --staged provided",
+                            "target": "",
+                            "risk_level": "UNKNOWN",
                             "state": "usage_error",
                             "partial_success": True,
                         },
@@ -1261,6 +1267,9 @@ def preflight(ctx, target, staged):
                 "severity": "warning",
             },
         )
+        dispatch_cache = tests.get("dispatch_cache", {"state": "unusable", "reason": "test_analysis_unavailable"})
+        if not json_mode:
+            _report_dispatch_cache_errors(dispatch_cache)
         compl = _run_check(
             "complexity",
             _check_complexity,
@@ -1586,6 +1595,8 @@ def preflight(ctx, target, staged):
                 "summary": _summary_dict,
                 "blast_radius": _blast_envelope,
                 "tests": _tests_envelope,
+                "dispatch_cache": dispatch_cache,
+                "dispatch_cache_definition": DISPATCH_CACHE_DEFINITION,
                 "complexity": _compl_envelope,
                 "coupling": _coupl_envelope,
                 "conventions": _convs_envelope,

@@ -946,6 +946,8 @@ def pr_risk_cmd(ctx, commit_range, staged, author, persist):
     See also ``preflight`` (pre-change safety), ``critique`` (post-change
     diff review), and ``affected-tests`` (which tests run for the diff).
     """
+    if commit_range == "":
+        raise click.BadParameter("Git ref or range cannot be empty", param_hint="COMMIT_RANGE")
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()

@@ -68,8 +68,11 @@ controls are pinned by `tests/test_w1501_release_version_pins.py`.
       otherwise installed metadata can silently restore the previous identity;
    4. run `python scripts/sync_surface_counts.py --write` and
       `python dev/build_readme_counts.py --apply`, followed by
-      `python scripts/build_commands_doc.py`; re-running their check modes
-      must then be clean;
+      `python scripts/build_commands_doc.py` and
+      `python scripts/build_site_product_facts.py --write` (the website's
+      `sourceVersion` in `status.html`, `press.html`, `llms.txt` and
+      `data/product-facts.json`); re-running their check modes must then be
+      clean;
    5. run `python scripts/build_changelog_html.py --write` to re-render
       `changelog.html` from the new `CHANGELOG.md` section (authoring the
       section is the one genuinely manual step);

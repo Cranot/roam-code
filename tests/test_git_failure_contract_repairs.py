@@ -1,4 +1,4 @@
-"""Review-7 regressions, with CLI controls on valid refs and exact paths."""
+"""Git failure disclosure regressions, with CLI controls on valid refs and exact paths."""
 
 import json
 import subprocess
@@ -22,7 +22,7 @@ def project(project_factory, monkeypatch):
     return root
 
 
-def test_b2_breaking_failure_retains_unknown_counts(project):
+def test_breaking_failure_retains_unknown_counts(project):
     result = invoke("--json", "breaking", "missing-ref")
     summary = json.loads(result.stdout)["summary"]
     for key in ("removed", "signature_changed", "renamed", "total"):
@@ -40,7 +40,7 @@ def test_b2_breaking_failure_retains_unknown_counts(project):
         ("attest", ["missing-ref"]),
     ],
 )
-def test_m1_git_vocabulary(project, command, args):
+def test_git_vocabulary(project, command, args):
     summary = json.loads(invoke("--json", command, *args).stdout)["summary"]
     assert summary["git_error"] == "git_error"
     assert "missing-ref" in summary["git_error_detail"]
@@ -48,7 +48,7 @@ def test_m1_git_vocabulary(project, command, args):
 
 
 @pytest.mark.parametrize("kind", ["git_timeout", "git_not_available", "git_error"])
-def test_m2_pr_risk_real_failure_kind(project, monkeypatch, kind):
+def test_pr_risk_real_failure_kind(project, monkeypatch, kind):
     from roam.commands import changed_files
 
     original = changed_files.subprocess.run
@@ -72,7 +72,7 @@ def test_m2_pr_risk_real_failure_kind(project, monkeypatch, kind):
 
 
 @pytest.mark.parametrize("target", ["HEAD~1", "HEAD~1..HEAD", "HEAD~1...HEAD"])
-def test_m3_breaking_range_retains_findings(project_factory, monkeypatch, target):
+def test_breaking_range_retains_findings(project_factory, monkeypatch, target):
     root = project_factory(
         {"core.py": "def calculate():\n    return 1\n"},
         extra_commits=[
@@ -88,7 +88,7 @@ def test_m3_breaking_range_retains_findings(project_factory, monkeypatch, target
 
 
 @pytest.mark.parametrize("query", ["a.py", "xa.py"])
-def test_small_m1_single_file_discloses_mapping(project_factory, monkeypatch, query):
+def test_single_file_discloses_mapping(project_factory, monkeypatch, query):
     root = project_factory({"xa.py": "def run():\n    return 1\n"})
     monkeypatch.chdir(root)
     data = json.loads(invoke("--json", "file", "--deps-of", query).stdout)
@@ -105,7 +105,7 @@ def test_small_m1_single_file_discloses_mapping(project_factory, monkeypatch, qu
 
 @pytest.mark.parametrize("mode", ["text", "json"])
 @pytest.mark.parametrize("explicit", [False, True])
-def test_small_m3_file_one_verdict_and_resolved_dedupe(project_factory, monkeypatch, mode, explicit):
+def test_file_one_verdict_and_resolved_dedupe(project_factory, monkeypatch, mode, explicit):
     root = project_factory(
         {
             "xa.py": "from dep import helper\ndef run():\n    return helper()\n",
@@ -131,7 +131,7 @@ def test_small_m3_file_one_verdict_and_resolved_dedupe(project_factory, monkeypa
 
 @pytest.mark.parametrize("fmt", ["json", "markdown", "text"])
 @pytest.mark.parametrize("output", [False, True])
-def test_small_m4_attest_failure_risk_and_output(project, tmp_path, fmt, output):
+def test_attest_failure_risk_and_output(project, tmp_path, fmt, output):
     # Named contract change: old canonical risk "low" and integer rank 1 on a
     # failed changed-file lookup. New: both fields are null, including their
     # top-level mirrors. Reason: the lookup failed before risk could be assessed.
@@ -151,7 +151,7 @@ def test_small_m4_attest_failure_risk_and_output(project, tmp_path, fmt, output)
 
 @pytest.mark.parametrize("command", ["api-changes", "semantic-diff"])
 @pytest.mark.parametrize("mode", ["text", "json"])
-def test_small_m5_sibling_failure_disclosure(project, command, mode):
+def test_sibling_failure_disclosure(project, command, mode):
     args = (["--json"] if mode == "json" else []) + [command, "--base", "missing-ref"]
     if command == "api-changes":
         args += ["--severity", "breaking"]
@@ -172,7 +172,7 @@ def test_small_m5_sibling_failure_disclosure(project, command, mode):
 
 
 @pytest.mark.parametrize("fmt", ["json", "markdown", "text"])
-def test_small_m5_attest_breaking_failure_reaches_envelope(project, monkeypatch, fmt):
+def test_attest_breaking_failure_reaches_envelope(project, monkeypatch, fmt):
     from roam.commands import changed_files
 
     original = changed_files.subprocess.run
@@ -226,7 +226,7 @@ def test_valid_empty_cli_control(project, command, args):
         assert summary.get("partial_success", False) is False
 
 
-def test_m3_three_dot_reads_merge_base(project_factory, monkeypatch):
+def test_three_dot_reads_merge_base(project_factory, monkeypatch):
     root = project_factory(
         {"core.py": "def calculate():\n    return 1\n"},
         extra_commits=[
@@ -251,7 +251,7 @@ def test_m3_three_dot_reads_merge_base(project_factory, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["git_timeout", "git_not_available", "git_error"])
-def test_m3_failed_old_content_is_not_a_new_file(project_factory, monkeypatch, kind):
+def test_failed_old_content_is_not_a_new_file(project_factory, monkeypatch, kind):
     root = project_factory(
         {"core.py": "def calculate():\n    return 1\n"},
         extra_commits=[
@@ -279,7 +279,7 @@ def test_m3_failed_old_content_is_not_a_new_file(project_factory, monkeypatch, k
     assert summary["total"] is None
 
 
-def test_m3_added_file_control(project_factory, monkeypatch):
+def test_added_file_control(project_factory, monkeypatch):
     root = project_factory(
         {"core.py": "def calculate():\n    return 1\n"},
         extra_commits=[

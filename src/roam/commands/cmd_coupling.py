@@ -350,18 +350,30 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 min_cochanges,
             )
             surprise, best_pattern, similarity = _compute_surprise(conn, change_fids)
+            from roam.index.git_stats import explain_missing_history
+
+            # With no indexed commits there are no partners to miss, so a
+            # "complete changeset" would be a check that never ran.
+            no_history = explain_missing_history(conn, root)
 
             if json_mode:
                 _against_verdict = "incomplete changeset" if missing else "complete changeset"
+                against_summary: dict = {
+                    "verdict": _against_verdict,
+                    "change_set": len(file_map),
+                    "missing": len(missing),
+                    "surprise_score": surprise,
+                }
+                if no_history:
+                    against_summary.update(
+                        verdict=f"changeset not checked: {no_history['message']}",
+                        history_state=no_history["state"],
+                        partial_success=True,
+                    )
                 envelope = json_envelope(
                     "coupling",
                     budget=token_budget,
-                    summary={
-                        "verdict": _against_verdict,
-                        "change_set": len(file_map),
-                        "missing": len(missing),
-                        "surprise_score": surprise,
-                    },
+                    summary=against_summary,
                     mode="against",
                     change_set=sorted(file_map.keys()),
                     surprise_score=surprise,
@@ -374,6 +386,9 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 return
 
             label = commit_range or "staged"
+            if no_history:
+                click.echo(f"VERDICT: changeset not checked: {no_history['message']}")
+                return
             click.echo(f"VERDICT: {len(missing)} missing co-change partner(s)\n")
             click.echo(f"=== Coupling Check ({label}, {len(file_map)} files) ===\n")
             click.echo(f"Surprise score: {surprise:.0%}{'  (unfamiliar combination!)' if surprise > 0.7 else ''}")
@@ -437,26 +452,41 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
         ).fetchall()
 
         if not rows:
+            from roam.index.git_stats import explain_missing_history
+
+            missing = explain_missing_history(conn, find_project_root())
+            summary: dict = {"verdict": "no significant coupling", "pairs": 0}
+            if missing:
+                # No commits were indexed, so "no coupling" is not a finding.
+                summary = {
+                    "verdict": f"no co-change data: {missing['message']}",
+                    "pairs": 0,
+                    "history_state": missing["state"],
+                    "partial_success": True,
+                }
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "coupling",
                             budget=token_budget,
-                            summary={"verdict": "no significant coupling", "pairs": 0},
+                            summary=summary,
                             pairs=[],
                         )
                     )
                 )
             else:
-                click.echo("VERDICT: no significant coupling\n")
-                click.echo("No co-change data available. Run `roam index` on a git repository.")
+                click.echo(f"VERDICT: {summary['verdict']}\n")
+                if not missing:
+                    click.echo("No two files changed together in the indexed commits.")
             return
 
-        # Check which pairs have structural connections (file_edges)
+        # Check which pairs have structural connections (file_edges). Any link
+        # counts, as in ``roam dark-matter``: one imported symbol is still code
+        # that ties the two files, so the pair is not hidden coupling.
         file_edge_set = set()
         fe_rows = conn.execute(
-            "SELECT source_file_id, target_file_id FROM file_edges WHERE symbol_count >= 2"
+            "SELECT source_file_id, target_file_id FROM file_edges WHERE symbol_count >= 1"
         ).fetchall()
         for fe in fe_rows:
             file_edge_set.add((fe["source_file_id"], fe["target_file_id"]))

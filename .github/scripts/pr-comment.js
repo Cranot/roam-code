@@ -118,6 +118,7 @@ function _formatComment(env = process.env, results = {}) {
 
   const verdicts = [];
   for (const cmd of Object.keys(results).sort()) {
+    if (cmd === 'pr-risk') continue;
     const data = results[cmd];
     const verdict = (data.summary && data.summary.verdict) || '';
     if (verdict) verdicts.push(`**${cmd}:** ${verdict}`);
@@ -144,10 +145,17 @@ function _formatComment(env = process.env, results = {}) {
   if (results['pr-risk'] && results['pr-risk'].summary) {
     const s = results['pr-risk'].summary;
     lines.push('### PR Risk', '');
-    lines.push('| Metric | Value |', '|--------|-------|');
-    if (s.risk_score !== undefined) lines.push(`| Risk Score | ${s.risk_score}/100 |`);
-    if (s.files_changed !== undefined) lines.push(`| Files Changed | ${s.files_changed} |`);
-    if (s.symbols_affected !== undefined) lines.push(`| Symbols Affected | ${s.symbols_affected} |`);
+    if (s.state === 'comparison_unavailable') {
+      lines.push('PR comparison could not run.');
+    } else {
+      if (s.verdict) lines.push(s.verdict, '');
+      if (s.risk_score != null) {
+        lines.push('| Metric | Value |', '|--------|-------|');
+        lines.push(`| Risk Score | ${s.risk_score}/100 |`);
+        if (s.files_changed !== undefined) lines.push(`| Files Changed | ${s.files_changed} |`);
+        if (s.symbols_affected !== undefined) lines.push(`| Symbols Affected | ${s.symbols_affected} |`);
+      }
+    }
     lines.push('');
   }
 

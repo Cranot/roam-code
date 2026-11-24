@@ -33,6 +33,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from roam.db.connection import get_db_path
 from roam.observability import log_swallowed
 
 __all__ = [
@@ -86,7 +87,7 @@ def _project_root_for(value: str | None) -> Path | None:
     except (RuntimeError, OSError):
         home = None
     while cur is not None:
-        has_index = (cur / ".roam" / "index.db").exists()
+        has_index = get_db_path(cur, create=False).exists()
         has_marker = (cur / ".git").exists() or (cur / "pyproject.toml").exists()
         if has_index and has_marker:
             return cur
@@ -107,7 +108,7 @@ def _open_index(root: str | None = None):
     project = _project_root_for(root)
     if project is None:
         return None
-    db_path = project / ".roam" / "index.db"
+    db_path = get_db_path(project, create=False)
     if not db_path.exists():
         return None
     try:

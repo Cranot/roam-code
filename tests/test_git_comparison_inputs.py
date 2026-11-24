@@ -53,7 +53,10 @@ def test_attest_computed_risk_is_visible_when_breaking_fails(project, monkeypatc
     monkeypatch.setattr(subprocess, "run", run)
     data = invoke("--json", "attest", "--sign")
     summary = data["summary"]
-    assert summary["safe_to_merge"] is None
+    assert summary["safe_to_merge"] is False
+    assert data["verdict"]["safe_to_merge"] is False
+    assert summary["partial_success"] is True
+    assert summary["verdict"].startswith("NOT safe to merge")
     assert summary["git_error"] == "git_timeout"
     assert (summary["risk_score"], summary["risk_level"]) == (67, "HIGH")
     assert (summary["risk_level_canonical"], summary["risk_rank"]) == ("high", 3)

@@ -25,7 +25,11 @@ import json as _json
 import os
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
+
+from roam.exit_codes import EXIT_PARTIAL
+from tests.conftest import git_init, index_in_process
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -456,17 +460,28 @@ def test_engagement_ledger_appends_not_overwrites(tmp_path, monkeypatch):
 
 def test_no_track_engagement_flag_skips_ledger(tmp_path, monkeypatch):
     """``--no-track-engagement`` opts out — useful for dry-run / CI use."""
-    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "repo"
+    project.mkdir()
+    (project / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    git_init(project)
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
+    out, rc = index_in_process(project, "--force")
+    assert rc == 0, out
+
     output = tmp_path / "report.md"
     code, out = _invoke(
         "--tier",
         "team",
+        "--range",
+        "HEAD",
         "--output",
         str(output),
         "--no-track-engagement",
     )
-    assert code == 0
-    ledger = tmp_path / ".roam" / "engagements.jsonl"
+    assert code == 0, out
+    assert output.is_file()
+    ledger = project / ".roam" / "engagements.jsonl"
     # Either the ledger doesn't exist or it doesn't contain this run.
     if ledger.exists():
         assert ledger.read_text(encoding="utf-8").strip() == ""
@@ -493,17 +508,55 @@ def test_render_pdf_returns_failure_when_neither_backend_present(tmp_path, monke
     assert "pandoc" in msg.lower() or "reportlab" in msg.lower()
 
 
-def test_pdf_flag_implies_output_when_unset(tmp_path):
-    """``--pdf`` without ``--output`` writes the markdown source as ``<pdf>.md``."""
-    pdf_target = tmp_path / "report.pdf"
-    code, out = _invoke("--tier", "team", "--pdf", str(pdf_target))
-    # Note: we can't guarantee the PDF render succeeded (pandoc / reportlab
-    # may not be on the test machine), but the markdown sibling MUST be
-    # written regardless.
-    assert code == 0
-    md_sibling = tmp_path / "report.md"
-    assert md_sibling.exists(), f"markdown sibling not written next to {pdf_target}"
-    assert md_sibling.read_text(encoding="utf-8").startswith("# PR Replay Report")
+@pytest.mark.parametrize("render", ["writes-pdf", "renderer-unavailable", "no-artifact"])
+@pytest.mark.parametrize("json_mode", [True, False], ids=["json", "text"])
+def test_pdf_flag_reports_whether_pdf_was_written(tmp_path, monkeypatch, render, json_mode):
+    from roam.cli import cli
+    from roam.commands import cmd_pr_replay
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
+    (tmp_path / "app.py").write_text("def main(): pass\n", encoding="utf-8")
+    git_init(tmp_path)
+    target = tmp_path / "report.pdf"
+
+    def render_pdf(markdown, destination):
+        if render == "writes-pdf":
+            destination.write_bytes(b"%PDF-1.4\n")
+        return (False, "renderer unavailable") if render == "renderer-unavailable" else (True, "test")
+
+    monkeypatch.setattr(cmd_pr_replay, "_render_pdf", render_pdf)
+    runner = CliRunner()
+    args = ["pr-replay", "--tier", "team", "--range", "HEAD", "--pdf", str(target)]
+    result = runner.invoke(cli, ["--json", *args] if json_mode else args, catch_exceptions=False)
+    envelope = _json.loads(result.stdout) if json_mode else {}
+    markdown = target.with_suffix(".md")
+    assert markdown.read_text(encoding="utf-8").startswith("# PR Replay Report")
+    if render == "writes-pdf":
+        assert result.exit_code == 0, result.output
+        assert target.is_file()
+        if json_mode:
+            assert envelope["summary"]["pdf_path"] == str(target)
+            assert envelope["summary"]["pdf_backend"] == "test"
+            assert "state" not in envelope["summary"]
+        else:
+            assert "Wrote PDF" in result.stdout
+        assert "pdf_unavailable" not in result.stderr
+    else:
+        assert result.exit_code == EXIT_PARTIAL, result.output
+        assert not target.exists()
+        reason = "renderer unavailable" if render == "renderer-unavailable" else "without writing a PDF"
+        if json_mode:
+            summary = envelope["summary"]
+            assert "pdf_path" not in summary
+            assert summary["pdf_backend"] is None
+            assert summary["partial_success"] is True
+            assert summary.get("state") == "pdf_unavailable"
+            assert any(reason in warning for warning in summary["warnings_out"])
+            assert any(reason in warning for warning in envelope["warnings_out"])
+        else:
+            assert "pdf_unavailable" in result.stderr
+        assert reason in result.stderr
 
 
 def test_json_envelope_exposes_pdf_fields(tmp_path):
@@ -650,7 +703,7 @@ def test_pr_replay_envelope_omits_review_suggestions_when_no_findings():
         code, out = _invoke("--tier", "sample", json_mode=True)
     finally:
         mod._run_postmortem = real_postmortem
-    assert code == 0
+    assert code == EXIT_PARTIAL
 
     envelope = _json.loads(out[out.find("{") :])
     # The key MUST be absent — not an empty object, not null.

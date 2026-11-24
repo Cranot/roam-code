@@ -141,6 +141,29 @@ def test_gate_passes_when_the_pinned_version_is_tagged(fake_tree) -> None:
     assert code == gate.OK, report
 
 
+def test_gate_fails_a_package_pin_of_a_withheld_release(fake_tree, monkeypatch) -> None:
+    """A withheld tag exists, but its package was never uploaded: nothing to install.
+
+    v14.2.0 was tagged and its PyPI upload rejected. Offline, the gate saw the
+    tag and passed a ``roam-code==14.2.0`` pin; only the networked PyPI check
+    would have caught it, and the push path runs the gate offline.
+    """
+    monkeypatch.setattr(sync, "WITHHELD_RELEASE_TAGS", {"v14.0.0": "upload rejected"})
+    fake_tree({"src/roam/templates/ci/gitlab-ci.yml": _PINS}, tags=["v13.10.0", "v14.0.0"])
+    code, report = gate.check(check_pypi=False, check_remote=False)
+    assert code == gate.FAIL, report
+    assert report["missing_tag"] == ["14.0.0"]
+
+
+def test_gate_passes_the_release_before_a_withheld_tag(fake_tree, monkeypatch) -> None:
+    """Withholding 14.0.0 leaves a pin of the published 13.10.0 valid."""
+    monkeypatch.setattr(sync, "WITHHELD_RELEASE_TAGS", {"v14.0.0": "upload rejected"})
+    pins = _PINS.replace("14.0.0", "13.10.0")
+    fake_tree({"src/roam/templates/ci/gitlab-ci.yml": pins}, tags=["v13.10.0", "v14.0.0"])
+    code, report = gate.check(check_pypi=False, check_remote=False)
+    assert code == gate.OK, report
+
+
 # ---------------------------------------------------------------------------
 # Fail-closed — every way of not knowing must REFUSE
 # ---------------------------------------------------------------------------

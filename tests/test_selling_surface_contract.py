@@ -8,11 +8,13 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from tests._helpers.replay_tiers import OPEN, rendered
 from tests.test_homepage_contract import SITE, HomepageParser, normalized
 
 
-def page(name):
-    return HomepageParser((SITE / name).read_text(encoding="utf-8"))
+def page(name, states=None):
+    # Contracts on a paid tier's copy read its open rendering; served pages carry the policy state.
+    return HomepageParser(rendered(name, states) if states else (SITE / name).read_text(encoding="utf-8"))
 
 
 def prose(text):
@@ -73,7 +75,7 @@ def test_pricing_leads_with_available_free_and_paid_paths():
 
 @pytest.mark.parametrize("name", ["pricing.html", "audit.html", "compare.html", "governance.html"])
 def test_wide_tables_have_named_keyboard_scroll_regions(name):
-    document = page(name)
+    document = page(name, OPEN)
     wrappers = [node for node in document.elements if "compare-table-wrap" in node.attrs.get("class", "").split()]
     assert wrappers, "Keep coverage of the actual wide tables"
     for wrapper in wrappers:
@@ -132,7 +134,7 @@ def test_replay_sample_explains_actual_git_window_and_portable_commands():
 
 
 def test_audit_requests_are_drafts_and_do_not_require_private_code_in_email():
-    document = page("audit.html")
+    document = page("audit.html", OPEN)
     for tier in ("Team", "Deep"):
         target = next(
             node.attrs["href"]
@@ -150,7 +152,7 @@ def test_audit_requests_are_drafts_and_do_not_require_private_code_in_email():
 
 
 def test_audit_credit_preserves_amounts_without_hypothetical_subscription_costs():
-    document = page("audit.html")
+    document = page("audit.html", OPEN)
     closing = next(node for node in document.elements if node.attrs.get("class") == "page-cta-strip")
     assert any(node.attrs.get("href") == "#sample" for node in closing.find("a"))
     credit = next(node for node in document.elements if node.attrs.get("id") == "credit")
@@ -180,7 +182,7 @@ def test_audit_faq_json_matches_all_visible_answers():
 
 
 def test_existing_offer_prices_and_future_price_visibility_are_preserved():
-    audit = page("audit.html")
+    audit = page("audit.html", OPEN)
     service = next(json.loads(node.text()) for node in audit.root.find("script") if '"Service"' in node.text())
     offers = service["offers"]
     assert [(offer["price"], offer["priceCurrency"]) for offer in offers] == [
@@ -210,7 +212,7 @@ def test_report_choices_precede_the_detailed_methodology():
 
 @pytest.mark.parametrize("tier", ["team", "deep"])
 def test_paid_cards_explain_deliverable_and_kickoff_without_reading_fine_print(tier):
-    document = page("audit.html")
+    document = page("audit.html", OPEN)
     card = next(node for node in document.root.find("article") if f"replay-tier--{tier}" in node.attrs.get("class", ""))
     assert len(list(card.find("li"))) >= 3
     text = normalized(card.text()).lower()
@@ -220,7 +222,7 @@ def test_paid_cards_explain_deliverable_and_kickoff_without_reading_fine_print(t
 
 @pytest.mark.parametrize("tier", ["Team", "Deep"])
 def test_email_requests_capture_the_question_without_assuming_calendar_scope(tier):
-    document = page("audit.html")
+    document = page("audit.html", OPEN)
     query = next(
         parse_qs(urlparse(node.attrs["href"]).query)
         for node in document.root.find("a")

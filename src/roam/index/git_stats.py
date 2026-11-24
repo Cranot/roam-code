@@ -828,6 +828,49 @@ def get_blame_for_file(project_root: Path, file_path: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def explain_missing_history(conn: sqlite3.Connection, project_root: Path) -> dict | None:
+    """Say why the index holds no commits, or return ``None`` when it holds some.
+
+    Commands that read co-change or ownership data call this on their empty
+    path so "no data" names its cause: no repository, a repository with no
+    commits, or commits that all fall outside the ``ROAM_GIT_SINCE`` window
+    (365 days by default), which the indexer otherwise reports only in its log.
+    Returns ``{"state": ..., "message": ...}``; ``state`` is one of
+    ``not_a_git_repository``, ``no_commits``, ``outside_history_window``,
+    ``not_collected``.
+    """
+    try:
+        if conn.execute("SELECT 1 FROM git_commits LIMIT 1").fetchone():
+            return None
+    except sqlite3.Error:
+        pass
+    if not _is_git_repo(project_root):
+        return {
+            "state": "not_a_git_repository",
+            "message": "the project is not a git repository, so the index holds no commit history",
+        }
+    latest = _run_git(["git", "log", "-1", "--format=%ct"], cwd=project_root, timeout=10)
+    if latest is None or not latest.stdout.strip():
+        return {"state": "no_commits", "message": "the git repository has no commits yet"}
+    raw = os.environ.get("ROAM_GIT_SINCE")
+    window = raw if raw is not None else _DEFAULT_SINCE
+    since = _normalize_since(window)
+    if since:
+        inside = _run_git(["git", "log", "-1", f"--since={since}", "--format=%ct"], cwd=project_root, timeout=10)
+        if inside is not None and not inside.stdout.strip():
+            return {
+                "state": "outside_history_window",
+                "message": (
+                    f"every commit is older than the ROAM_GIT_SINCE window ({window}); "
+                    "set ROAM_GIT_SINCE=0, then run `roam index --force` to read the full history"
+                ),
+            }
+    return {
+        "state": "not_collected",
+        "message": "the repository has commits but the index holds none; run `roam index --force`",
+    }
+
+
 def _is_git_repo(path: Path) -> bool:
     """Check whether *path* is inside a git work tree."""
     result = _run_git(

@@ -291,3 +291,59 @@ class TestJSONEnvelope:
         assert data["summary"]["extracted_to"] == ".roam/index.db" or data["summary"]["extracted_to"].replace(
             "\\", "/"
         ).endswith(".roam/index.db")
+
+
+# ---------------------------------------------------------------------------
+# The bundle reads and writes the index where `roam index` keeps it
+# ---------------------------------------------------------------------------
+
+
+class TestBundleUsesTheConfiguredDatabaseDirectory:
+    """A lane worktree seeds its index from the main checkout's bundle.
+
+    With ``ROAM_DB_DIR`` set, ``roam index`` writes outside ``.roam/``. Export
+    used to look only at ``.roam/index.db`` (``INDEX_MISSING``) and import
+    wrote there, where no command reads it.
+    """
+
+    def test_export_finds_an_index_kept_in_roam_db_dir(self, tmp_path, monkeypatch):
+        (tmp_path / "main").mkdir()
+        proj = _make_project(tmp_path / "main", _FIXTURE)
+        db_dir = tmp_path / "external-db"
+        monkeypatch.setenv("ROAM_DB_DIR", str(db_dir))
+        monkeypatch.chdir(proj)
+        runner = CliRunner()
+        assert runner.invoke(cli, ["index"]).exit_code == 0
+        assert (db_dir / "index.db").is_file()
+        assert not (proj / ".roam" / "index.db").exists()
+
+        bundle = tmp_path / "seed.tar.gz"
+        result = runner.invoke(cli, ["index-export", str(bundle)])
+        assert result.exit_code == 0, result.output
+        assert bundle.is_file()
+
+    def test_import_writes_where_roam_db_dir_points(self, indexed_project, tmp_path, monkeypatch):
+        runner = CliRunner()
+        bundle = tmp_path / "seed.tar.gz"
+        assert runner.invoke(cli, ["index-export", str(bundle)]).exit_code == 0
+
+        (tmp_path / "lane").mkdir()
+        lane = _make_project(tmp_path / "lane", _FIXTURE)
+        lane_db = tmp_path / "lane-db"
+        monkeypatch.setenv("ROAM_DB_DIR", str(lane_db))
+        # Plain chdir with a restore: indexed_project restores the cwd with
+        # os.chdir itself, and monkeypatch.chdir would undo to the fixture's
+        # project directory after that fixture's teardown.
+        back = os.getcwd()
+        os.chdir(lane)
+        try:
+            result = runner.invoke(cli, ["index-import", str(bundle)])
+            assert result.exit_code == 0, result.output
+            assert (lane_db / "index.db").is_file()
+            assert not (lane / ".roam" / "index.db").exists()
+            # The imported index answers queries in the lane.
+            found = runner.invoke(cli, ["--json", "search", "UserSession"])
+            assert found.exit_code == 0, found.output
+            assert "UserSession" in found.output
+        finally:
+            os.chdir(back)

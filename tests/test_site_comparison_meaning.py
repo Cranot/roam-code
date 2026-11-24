@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from tests._helpers.replay_tiers import OPEN, rendered
 from tests._helpers.repo_root import repo_root
 
 SITE = repo_root() / "templates/distribution/landing-page"
@@ -46,7 +47,7 @@ def test_atlas_opening_identifies_custom_website_view():
 
 
 def test_dated_comparison_and_existing_terms_remain_explicit():
-    html = _page("compare.html")
+    html = rendered("compare.html", OPEN)  # the paid tiers' terms, as served while they are open
     assert 'datetime="2026-06-12"' in html
     assert "not a current buying guide" in html
     assert 'id="methodology"' in html

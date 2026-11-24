@@ -45,6 +45,7 @@ from __future__ import annotations
 import hashlib as _hashlib
 import json as _json
 import subprocess as _subprocess
+import tempfile
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -57,7 +58,8 @@ from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.exit_codes import EXIT_SUCCESS
+from roam.db.connection import get_db_path
+from roam.exit_codes import EXIT_PARTIAL, EXIT_SUCCESS
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -873,7 +875,7 @@ def _gather_vuln_reach_envelopes(commit_range: str, warnings: list[str]) -> list
     that envelope so the collector sees a deterministic signal).
     """
     out: list[dict] = []
-    if not (Path(".roam") / "index.db").exists():
+    if not get_db_path(create=False).exists():
         return out
     try:
         from roam.cli import cli
@@ -904,7 +906,7 @@ def _gather_test_impact_envelopes(commit_range: str, warnings: list[str]) -> lis
     whatever's currently changed in the working tree.
     """
     out: list[dict] = []
-    if not (Path(".roam") / "index.db").exists():
+    if not get_db_path(create=False).exists():
         return out
     try:
         from roam.cli import cli
@@ -3622,7 +3624,6 @@ def _record_engagement(
 
 def _run_pandoc_pdf(markdown_text: str, output_path: Path) -> tuple[bool, str]:
     import shutil
-    import tempfile
 
     if not shutil.which("pandoc"):
         return False, "pandoc not on PATH"
@@ -3735,6 +3736,46 @@ def _render_pdf(markdown_text: str, output_path: Path) -> tuple[bool, str]:
     return _render_pdf_with_reportlab(markdown_text, output_path, info)
 
 
+def _deliver_pdf(markdown: str, destination: Path) -> tuple[bool, str]:
+    """Publish the PDF after the renderer has produced a fresh artifact."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".roam-pdf-", dir=destination.parent) as staging:
+        rendered = Path(staging) / "report.pdf"
+        ok, info = _render_pdf(markdown, rendered)
+        if not ok:
+            return False, info
+        if not rendered.is_file() or rendered.stat().st_size == 0:
+            return False, f"{info} finished without writing a PDF"
+
+        # Keep the original if optional metadata cleanup cannot finish.
+        try:
+            from pypdf import PdfReader, PdfWriter
+
+            reader = PdfReader(str(rendered))
+            writer = PdfWriter()
+            for page in reader.pages:
+                writer.add_page(page)
+            writer.add_metadata(
+                {
+                    "/Title": "PR Replay Report",
+                    "/Author": "Roam",
+                    "/Subject": "",
+                    "/Keywords": "",
+                    "/Creator": "pandoc",
+                    "/Producer": "pandoc",
+                }
+            )
+            sanitized = Path(staging) / "sanitized.pdf"
+            with sanitized.open("wb") as output:
+                writer.write(output)
+            rendered = sanitized
+        except Exception:  # noqa: BLE001 — optional cleanup leaves the rendered PDF available
+            pass
+
+        rendered.replace(destination)
+        return True, info
+
+
 # ---------------------------------------------------------------------------
 # JSON emission helper (extracted from pr_replay_cmd to reduce nesting).
 # ---------------------------------------------------------------------------
@@ -3756,6 +3797,7 @@ def _emit_pr_replay_json_output(
     engagement_record: str | None,
     pdf_path: str | None,
     pdf_backend: str | None,
+    pdf_failed: bool,
     review_suggestions: dict | None,
     evidence_packet: Any,
     envelope_producer_warnings: list[str],
@@ -3992,7 +4034,7 @@ def _emit_pr_replay_json_output(
             "rehearsal_dir": rehearsal_dir,
             "generated_at": generated_at,
             "engagement_logged_to": str(engagement_record) if engagement_record else None,
-            "pdf_path": pdf_path,
+            **({"state": "pdf_unavailable", "partial_success": True} if pdf_failed else {"pdf_path": pdf_path}),
             "pdf_backend": pdf_backend,
             "review_suggestions_present": review_suggestions is not None,
             "evidence_path": evidence_written_to,
@@ -4569,7 +4611,7 @@ def pr_replay_cmd(
     )
     summary = postmortem.get("summary") or {}
     commits = postmortem.get("commits") or []
-    if not commits and not summary.get("commits_scanned"):
+    if not commits or not summary.get("commits_scanned", len(commits)):
         # Stop before report/evidence/payment-engagement writes. No observed
         # commits cannot support either a clean report or a numeric risk score.
         state = summary.get("state", "replay_unavailable")
@@ -4587,7 +4629,7 @@ def pr_replay_cmd(
                     json_envelope(
                         "pr-replay",
                         summary={
-                            "verdict": f"No replay performed: {verdict}",
+                            "verdict": verdict,
                             "state": state,
                             "resolution": resolution,
                             "partial_success": True,
@@ -4613,7 +4655,7 @@ def pr_replay_cmd(
             )
         else:
             click.echo(report_md)
-        return
+        ctx.exit(EXIT_PARTIAL)
     by_detector = (
         _run_check_ah(
             "aggregate_by_detector",
@@ -4677,52 +4719,25 @@ def pr_replay_cmd(
             click.echo(f"Wrote {len(report_md):,} bytes to {output_path}")
 
     pdf_backend = None
+    pdf_failed = False
     if pdf_path:
-        _pdf_result = _run_check_ah(
+        ok, info = _run_check_ah(
             "render_pdf",
-            _render_pdf,
+            _deliver_pdf,
             report_md,
             Path(pdf_path),
             default=(False, "render_pdf_raised"),
         )
-        ok, info = _pdf_result if _pdf_result else (False, "render_pdf_raised")
-        if ok:
+        pdf_failed = not ok
+        if pdf_failed:
+            warning = f"pdf_unavailable: PDF render failed — {info}"
+            _w607ah_warnings_out.append(warning)
+            if json_mode:
+                echo_text_warnings([warning])
+        else:
             pdf_backend = info
-            # Strip identifying metadata (timezone leaks in /CreationDate,
-            # MiKTeX/xelatex chain in /Producer). Match the gate that
-            # scripts/strip_metadata.py enforces in CI so the deliverable
-            # we ship to a buyer doesn't carry our timezone.
-            try:
-                from pypdf import PdfReader, PdfWriter
-
-                neutral = {
-                    "/Title": "PR Replay Report",
-                    "/Author": "Roam",
-                    "/Subject": "",
-                    "/Keywords": "",
-                    "/Creator": "pandoc",
-                    "/Producer": "pandoc",
-                }
-                reader = PdfReader(str(pdf_path))
-                writer = PdfWriter()
-                for page in reader.pages:
-                    writer.add_page(page)
-                writer.add_metadata(neutral)
-                with open(pdf_path, "wb") as f:
-                    writer.write(f)
-            except ImportError:
-                # pypdf not available — PDF metadata stays as-is. Operator
-                # can run scripts/strip_metadata.py manually before delivery.
-                pass
-            except Exception:  # noqa: BLE001 — defensive
-                # PDF survives even if the metadata-strip step fails.
-                pass
             if not json_mode:
                 click.echo(f"Wrote PDF to {pdf_path} (backend: {info})")
-        else:
-            # Surface the error but don't fail the command — markdown is the
-            # primary deliverable; PDF is a convenience.
-            click.echo(f"WARNING: PDF render failed — {info}", err=True)
 
     # Engagement ledger — paid tiers only, only when an output artefact
     # exists. The shared serializer retains the bounded JSONL history under
@@ -4959,6 +4974,7 @@ def pr_replay_cmd(
             engagement_record=engagement_record,
             pdf_path=pdf_path,
             pdf_backend=pdf_backend,
+            pdf_failed=pdf_failed,
             review_suggestions=review_suggestions,
             evidence_packet=evidence_packet,
             envelope_producer_warnings=envelope_producer_warnings,
@@ -4975,6 +4991,8 @@ def pr_replay_cmd(
             w607ca_warnings_out=_w607ca_warnings_out,
             w607dv_warnings_out=_w607dv_warnings_out,
         )
+        if pdf_failed:
+            ctx.exit(EXIT_PARTIAL)
         return
 
     if not output_path:
@@ -4983,5 +5001,7 @@ def pr_replay_cmd(
     else:
         echo_text_warnings(list(_w607ah_warnings_out) + list(_w607ca_warnings_out) + list(_w607dv_warnings_out))
 
+    if pdf_failed:
+        ctx.exit(EXIT_PARTIAL)
     _ = EXIT_SUCCESS
     return

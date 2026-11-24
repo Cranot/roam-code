@@ -394,6 +394,112 @@ def test_test_importing_target_module_is_selected(registry_project, monkeypatch)
     assert kinds.get("tests/test_alpha_patch.py") == {"MODULE_IMPORT"}
 
 
+def test_loaded_effects_reuse_released_test_module(tmp_path, monkeypatch):
+    from collections import Counter
+
+    from roam.commands import cmd_affected_tests as affected
+
+    shared = "tests/test_shared.py"
+    roots = ["tests/test_first.py", "tests/test_second.py"]
+    (tmp_path / "tests").mkdir()
+    (tmp_path / shared).write_text("import subprocess\nsubprocess.run(['roam', 'alpha'])\n", encoding="utf-8")
+    for path in roots:
+        (tmp_path / path).write_text("from tests import test_shared\n", encoding="utf-8")
+    scope = affected._DispatchScope(tmp_path, {"tests.test_shared": shared}, {}, {("src/roam/cli.py", "R"): {}})
+    parses = Counter()
+    parse = affected._parse_python
+
+    def counted_parse(root, path):
+        parses[path] += 1
+        return parse(root, path)
+
+    monkeypatch.setattr(affected, "_parse_python", counted_parse)
+    assert not scope.loaded_effects(shared, ())[0]
+    scope.release(shared)
+    for path in roots:
+        assert scope.loaded_effects(path, ())[0]
+
+    assert parses == {path: 1 for path in [shared, *roots]}
+
+
+def test_dispatch_only_builds_binding_facts_when_needed(tmp_path, monkeypatch):
+    from roam.commands import cmd_affected_tests as affected
+
+    cli = "src/roam/cli.py"
+    (tmp_path / cli).parent.mkdir(parents=True)
+    (tmp_path / cli).write_text("R = {}\n", encoding="utf-8")
+    path = "test_dispatch.py"
+    (tmp_path / path).write_text(
+        "from roam.cli import R\n"
+        "def test_reads_registry():\n"
+        "    key = 'alpha'\n"
+        "    return R[key]\n"
+        "def test_unrelated():\n"
+        "    value = len('abc')\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    scope = affected._DispatchScope(tmp_path, {"roam.cli": cli}, {}, {(cli, "R"): {"alpha"}})
+    built = []
+    original = affected._function_facts
+
+    def counted(fn):
+        built.append(fn.name)
+        return original(fn)
+
+    monkeypatch.setattr(affected, "_function_facts", counted)
+    assert scope.reach_root(path, "test_reads_registry").may == {"alpha"}
+    assert not scope.reach_root(path, "test_unrelated").any
+    assert built == ["test_reads_registry"]
+
+
+def test_dispatch_reuses_reach_across_targets_and_refreshes_on_source_edits(tmp_path, monkeypatch):
+    import sqlite3
+
+    from roam.commands import cmd_affected_tests as affected
+
+    cli, path = "src/roam/cli.py", "test_dispatch.py"
+    (tmp_path / cli).parent.mkdir(parents=True)
+    (tmp_path / cli).write_text("R = {}\n", encoding="utf-8")
+    source = tmp_path / path
+    code = "from roam.cli import R\ndef test_reads_registry():\n    return R['alpha']\n"
+    source.write_text(code, encoding="utf-8")
+    calls = []
+    original = affected._DispatchScope.reach_root
+
+    def counted(scope, test_path, name):
+        calls.append((test_path, name))
+        return original(scope, test_path, name)
+
+    monkeypatch.setattr(affected._DispatchScope, "reach_root", counted)
+
+    def query(key):
+        with sqlite3.connect(tmp_path / "test-index.db") as conn:
+            conn.row_factory = sqlite3.Row
+            return affected._dispatch_relations(conn, tmp_path, {1: (cli, "R", {"alpha", "bravo"})}, [1], {key}, set())
+
+    with sqlite3.connect(tmp_path / "test-index.db") as conn:
+        conn.executescript(
+            "CREATE TABLE files (id INTEGER, path TEXT, language TEXT);"
+            "CREATE TABLE symbols (id INTEGER, name TEXT, file_id INTEGER);"
+            "CREATE TABLE edges (source_id INTEGER, target_id INTEGER);"
+        )
+        conn.executemany("INSERT INTO files VALUES (?, ?, 'python')", [(1, cli), (2, path)])
+        conn.execute("INSERT INTO symbols VALUES (1, 'R', 1)")
+
+    assert query("alpha") == ({}, {}, {path: "alpha"})
+    scanned = list(calls)
+    assert scanned
+    assert query("bravo") == ({}, {}, {})
+    assert calls == scanned
+
+    old = source.stat()
+    source.write_text(code.replace("'alpha'", "'bravo'"), encoding="utf-8")
+    os.utime(source, ns=(old.st_atime_ns, old.st_mtime_ns))
+    assert query("bravo") == ({}, {}, {path: "bravo"})
+    assert calls == scanned + scanned
+
+
 _ALPHA_INVOKE = {
     "tests/test_alpha_invoke.py",
     "tests/test_alpha_alias.py",

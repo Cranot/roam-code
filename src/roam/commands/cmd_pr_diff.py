@@ -16,7 +16,12 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
-from roam.commands.changed_files import get_changed_files_status, resolve_changed_to_db
+from roam.commands.changed_files import (
+    GitComparisonError,
+    get_changed_files_status,
+    git_comparison_base,
+    resolve_changed_to_db,
+)
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
@@ -71,6 +76,8 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     (PR risk score), and ``critique`` (clones-not-edited check on a
     diff).
     """
+    if commit_range == "":
+        raise click.BadParameter("Git ref or range cannot be empty", param_hint="--range")
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()
@@ -81,12 +88,21 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # and must not authorise under --fail-on-degradation.
     git_details: list[str] = []
     changed, git_error = get_changed_files_status(root, staged=staged, commit_range=commit_range, error_details=git_details)  # fmt: skip
+    failed_git_step = "read git diff"
+    symbol_base_ref = "HEAD"
+    if git_error is None and changed and commit_range is not None:
+        try:
+            symbol_base_ref = git_comparison_base(root, commit_range)
+        except GitComparisonError as exc:
+            failed_git_step = "resolve the Git symbol baseline"
+            git_error = exc.kind
+            git_details.append(exc.detail)
     if git_error is not None:
         verdict = f"diff unavailable: {git_error} — cannot gate"
         # W1331: the SAME bucket reaches both channels. Building it once and
         # emitting it in both branches is what keeps the text reader from
         # seeing a quieter story than the --json reader.
-        warnings_out = [f"pr_diff_changed_files_failed:{git_error}:cannot read git diff"]
+        warnings_out = [f"pr_diff_changed_files_failed:{git_error}:cannot {failed_git_step}"]
         if json_mode:
             click.echo(
                 to_json(
@@ -127,7 +143,9 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
             )
         else:
             click.echo(f"VERDICT: {verdict}")
-            click.echo(f"Could not read the git diff ({git_error}); no change set was measured.")
+            click.echo(f"Could not {failed_git_step} ({git_error}); no change set was measured.")
+            for detail in git_details:
+                click.echo(detail)
             echo_text_warnings(warnings_out)
         if fail_on_degradation:
             ctx.exit(EXIT_GATE_FAILURE)
@@ -176,7 +194,6 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     base_ref = "HEAD"
     if commit_range and ".." in commit_range:
         base_ref = commit_range.split("..", 1)[0] or "HEAD"
-    symbol_base_ref = commit_range if commit_range and ".." not in commit_range else base_ref
 
     from roam.commands.metrics_history import collect_metrics
     from roam.graph.diff import (
