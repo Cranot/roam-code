@@ -8501,9 +8501,14 @@ def _probe_import_audit_for_task(task: str, cwd: str | None) -> dict | None:
                 "details": details[:300],
                 "suggestion": "",
             },
+            # The name comes from the task text, so the advice must not import it
+            # (that runs a same-named file in the repo); find_spec on the top-level
+            # name resolves it without executing anything.
             "import_audit_definition": (
                 f"Could not audit `import {module}`: the interpreter gave no probe answer. "
-                f'Run `python -c "import {module}"` in the project environment to check it.'
+                "Check it in the project environment without running its code: "
+                '`python -c "import importlib.util, sys; print(importlib.util.find_spec(sys.argv[1]))" '
+                f"{module.split('.')[0]}`."
             ),
         }
     # Heuristic fix suggestion. The module name is captured from the

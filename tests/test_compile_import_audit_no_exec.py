@@ -255,6 +255,25 @@ def test_import_audit_store_stub_reply_is_unknown_not_missing(monkeypatch):
     assert "Could not audit" in out["import_audit_definition"]
 
 
+def test_import_audit_unknown_advice_never_imports_the_untrusted_name(monkeypatch):
+    """The module name comes from the task text. The advice for an unknown answer
+    must not tell the agent to `import` it: that runs a same-named file in the repo,
+    which is what the probe itself avoids. It names a find_spec check instead."""
+    from roam.plan import compiler
+
+    class _Silent:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(compiler.subprocess, "run", lambda *a, **k: _Silent())
+    out = compiler._probe_import_audit_for_task("ModuleNotFoundError: No module named evilmod", None)
+    definition = out["import_audit_definition"]
+    assert "import evilmod" not in definition.replace("`import evilmod`", "")
+    assert "find_spec" in definition
+    assert "evilmod" in definition
+
+
 def test_import_audit_falls_back_to_python_when_python3_is_absent(monkeypatch):
     """Where no `python3` command exists (a python.org install on Windows), the
     probe runs under `python` instead of giving up."""
