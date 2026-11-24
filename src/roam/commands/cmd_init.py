@@ -18,8 +18,8 @@ import click
 from roam.capability import roam_capability
 from roam.commands.cmd_ci_setup import _GITHUB_PR_RANGE_STEP
 from roam.commands.resolve import ensure_index
-from roam.db.connection import _is_genuine_git_marker, db_exists, find_project_root
-from roam.db.freshness import project_index_freshness
+from roam.db.connection import _is_genuine_git_marker, db_exists, find_project_root, get_db_path
+from roam.db.freshness import probe_index_freshness, project_index_freshness
 from roam.db.fs_detect import cloud_sync_warning, detect_cloud_sync
 from roam.output.formatter import json_envelope, to_json
 
@@ -344,19 +344,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
     else:
         skipped.append(".roamignore")
 
-    # 5. Run indexing if no index exists. On the first build, Git history
-    # defaults to ~365 days. --full-history takes precedence over --since.
-    if full_history:
-        os.environ["ROAM_GIT_SINCE"] = "0"
-    elif since:
-        os.environ["ROAM_GIT_SINCE"] = since
-
-    had_index = db_exists(project_root)
-    if not had_index and not json_mode:
-        click.echo("No index found. Building...")
-    ensure_index(quiet=json_mode, suppress_cold_start_advisory=True, explicit_build=True)
-
-    # 6. CI workflow — opt-in only. Audit R1: dropping foreign config
+    # 5. CI workflow — opt-in only. Audit R1: dropping foreign config
     # files into the user's repo on first command was the single
     # biggest churn driver. ``roam ci-setup`` is the canonical place
     # for full multi-platform generation; this flag is just the
@@ -372,7 +360,35 @@ def init(ctx, root, yes, with_ci, since, full_history):
             created.append(".github/workflows/roam.yml")
         else:
             skipped.append(".github/workflows/roam.yml")
-    elif with_ci_norm == "gitlab":
+
+    # 6. Index after all setup writes. Refresh a warm index when its only
+    # changes are files init created. If the check is inconclusive, let the
+    # incremental indexer discover changes. Leave independently stale indexes
+    # for the existing disclosure below.
+    if full_history:
+        os.environ["ROAM_GIT_SINCE"] = "0"
+    elif since:
+        os.environ["ROAM_GIT_SINCE"] = since
+
+    had_index = db_exists(project_root)
+    refresh = False
+    if had_index and created:
+        before_index = probe_index_freshness(get_db_path(project_root, create=False), project_root)
+        # Even a Git-ignored .roamignore contributes to the manifest's config hash.
+        refresh = before_index.changed_files is None or (
+            before_index.changed_paths.issubset(created) and (before_index.stale or ".roamignore" in created)
+        )
+    if not had_index and not json_mode:
+        click.echo("No index found. Building...")
+    ensure_index(
+        quiet=json_mode,
+        suppress_cold_start_advisory=True,
+        explicit_build=True,
+        project_root=project_root,
+        refresh=refresh,
+    )
+
+    if with_ci_norm == "gitlab":
         # Stub — full GitLab CI generation lives in ``roam ci-setup``.
         # Point the user there instead of writing a half-baked template.
         if not json_mode:
@@ -418,10 +434,9 @@ def init(ctx, root, yes, with_ci, since, full_history):
         # import-only tree — legitimately zero) from "no grammar was
         # installed" (a broken index that must refuse).
         #
-        # Only when it actually indexed, though. ``ensure_index`` is a no-op
-        # over an existing index, and the counters are per-process, so a
-        # SECOND ``roam init`` reads 0 having parsed nothing. Measured
-        # 2026-08-12 on a repo whose only .py is unparseable: run 1 refused
+        # On a warm index, the counters cannot describe the whole corpus.
+        # An incremental run only parses changed files, and a no-op parses
+        # nothing. On a repo whose only .py is unparseable, run 1 refused
         # (exit 1), run 2 over the identical index reported "1 file(s) …
         # parsed without error" and exited 0. Pass None when this process did
         # not parse, so the classifier re-measures rather than inheriting a

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from pathlib import Path
 
 import click
 
@@ -29,7 +30,7 @@ def index_status() -> dict | None:
 _MAX_FTS_SUGGESTIONS = 5
 
 
-def _existing_index_recovery_state() -> str | None:
+def _existing_index_recovery_state(root: Path | None = None) -> str | None:
     """Return ``active`` or ``incomplete`` for an unsafe existing index.
 
     Older Roam versions did not publish ``index.state``. Preserve those
@@ -38,13 +39,14 @@ def _existing_index_recovery_state() -> str | None:
     publish a generation-bound owner before mutating SQLite and publish
     completion only after the database crosses its durability barrier.
     """
-    try:
-        root = find_project_root()
-    except Exception as exc:  # noqa: BLE001 — project discovery is best-effort
-        from roam.observability import log_swallowed
+    if root is None:
+        try:
+            root = find_project_root()
+        except Exception as exc:  # noqa: BLE001 — project discovery is best-effort
+            from roam.observability import log_swallowed
 
-        log_swallowed("resolve:index_recovery_state:find_project_root", exc)
-        return None
+            log_swallowed("resolve:index_recovery_state:find_project_root", exc)
+            return None
 
     lock_path = get_index_lock_path(root, create=False)
     state_path = get_index_state_path(root, create=False)
@@ -132,9 +134,14 @@ def _refuse_implicit_index(recovery_state: str | None) -> None:
 
 
 def ensure_index(
-    quiet: bool = False, suppress_cold_start_advisory: bool = False, *, explicit_build: bool = False
+    quiet: bool = False,
+    suppress_cold_start_advisory: bool = False,
+    *,
+    explicit_build: bool = False,
+    project_root: Path | None = None,
+    refresh: bool = False,
 ) -> None:
-    """Build the index if it doesn't exist yet.
+    """Build a missing or incomplete index, or request an incremental refresh.
 
     Args:
         quiet: If True, suppress progress output during indexing.
@@ -144,17 +151,19 @@ def ensure_index(
             user just asked to create the index, so recommending they run the
             command they're already running is confusing first-time UX (W1291).
         explicit_build: Bypass ROAM_NO_AUTO_INDEX for an intentional init build.
+        project_root: Use this project in place of the current working directory.
+        refresh: Run incremental indexing using the completed index's discovery options.
     """
-    index_exists = db_exists()
-    recovery_state = _existing_index_recovery_state() if index_exists else None
+    index_exists = db_exists() if project_root is None else db_exists(project_root)
+    recovery_state = _existing_index_recovery_state(project_root) if index_exists else None
     if recovery_state == "active":
         raise click.ClickException(
             "The roam index is currently being built by another process. Retry after that index run completes."
         )
-    if not index_exists or recovery_state == "incomplete":
+    if not index_exists or recovery_state == "incomplete" or refresh:
         if auto_index_disabled() and not explicit_build:
             _refuse_implicit_index(recovery_state)
-        if not quiet and not suppress_cold_start_advisory:
+        if not quiet and not suppress_cold_start_advisory and (not index_exists or recovery_state == "incomplete"):
             if recovery_state == "incomplete":
                 click.echo(
                     "Incomplete roam index detected after an interrupted build. Rebuilding it before analysis.",
@@ -170,9 +179,16 @@ def ensure_index(
                 )
         from roam.index.indexer import Indexer
 
-        indexer = Indexer()
+        indexer = Indexer() if project_root is None else Indexer(project_root)
         if recovery_state == "incomplete":
             completed = indexer.run(force=True, quiet=quiet)
+        elif index_exists and refresh:
+            from roam.db.connection import open_db
+            from roam.index.manifest import latest_manifest_includes_excluded
+
+            with open_db(readonly=True, project_root=project_root, disclose_freshness=False) as conn:
+                include_excluded = latest_manifest_includes_excluded(conn)
+            completed = indexer.run(quiet=quiet, include_excluded=include_excluded)
         else:
             completed = indexer.run(quiet=quiet)
         if completed is False:

@@ -574,6 +574,14 @@ def latest_manifest(conn: sqlite3.Connection) -> dict | None:
     }
 
 
+def latest_manifest_includes_excluded(conn: sqlite3.Connection) -> bool:
+    """Return the previous build's file discovery override, if recorded."""
+    manifest = latest_manifest(conn)
+    notes = _decode_json_dict(manifest["notes"]) if manifest else None
+    options = notes.get("index_options") if notes else None
+    return isinstance(options, dict) and options.get("include_excluded") is True
+
+
 # Fields whose change implies the index needs (or might need) a rebuild.
 # Used by stale-index detection in `roam doctor`. Order is presentation
 # order in the diff dict.
