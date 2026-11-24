@@ -428,6 +428,7 @@ def run_git_comparison(
             cmd,
             cwd=str(root),
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             timeout=10,
             env=git_env,
             **({"text": True, "encoding": "utf-8", "errors": "replace"} if text else {}),

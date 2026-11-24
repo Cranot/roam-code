@@ -22,6 +22,15 @@ _GAP_STOP_THRESHOLD = 1e-6
 _HIGH_GAP = 0.5
 _MED_GAP = 0.1
 
+# Sparse Laplacian eigensolver for lambda2 and the Fiedler vector. The
+# networkx default, tracemin_pcg, runs its inner CG without an iteration
+# limit and gains about lambda2/lambda3 per outer step: on a 2,351-node file
+# graph where that ratio is 0.998 it took minutes, while tracemin_lu matched
+# dense eigvalsh to 1e-10 in under a second. The fixed seed makes the start
+# vector, and so the run time and the value, reproducible.
+EIGENSOLVER_METHOD = "tracemin_lu"
+EIGENSOLVER_SEED = 0
+
 
 def _fiedler_solver_exceptions() -> tuple[type[BaseException], ...]:
     """Expected failures from optional numeric deps and eigensolvers."""
@@ -58,10 +67,10 @@ def _fiedler_split(G: nx.Graph):
     if not nx.is_connected(G):
         return None
     try:
-        fv = nx.linalg.algebraicconnectivity.fiedler_vector(G, method="tracemin_pcg")
+        fv = nx.linalg.algebraicconnectivity.fiedler_vector(G, method=EIGENSOLVER_METHOD, seed=EIGENSOLVER_SEED)
     except _fiedler_solver_exceptions():
         try:
-            fv = nx.linalg.algebraicconnectivity.fiedler_vector(G, method="lobpcg")
+            fv = nx.linalg.algebraicconnectivity.fiedler_vector(G, method="lobpcg", seed=EIGENSOLVER_SEED)
         except _fiedler_solver_exceptions():
             return None
     node_arr = list(G.nodes())
@@ -177,7 +186,9 @@ def _compute_algebraic_connectivity(G: nx.Graph) -> float:
     if not nx.is_connected(G):
         return 0.0
     try:
-        return float(nx.linalg.algebraicconnectivity.algebraic_connectivity(G))
+        return float(
+            nx.linalg.algebraicconnectivity.algebraic_connectivity(G, method=EIGENSOLVER_METHOD, seed=EIGENSOLVER_SEED)
+        )
     except ImportError as exc:
         # ModuleNotFoundError subclasses ImportError, so this covers both the
         # missing-numpy and missing-scipy forms networkx raises.

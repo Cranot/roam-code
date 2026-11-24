@@ -35,6 +35,7 @@ def _run_git(args: list[str]) -> str:
         proc = subprocess.run(
             args,
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             timeout=GIT_TIMEOUT_SECONDS,
             check=False,
         )
