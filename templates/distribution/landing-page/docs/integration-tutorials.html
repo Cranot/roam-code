@@ -369,9 +369,14 @@ roam --json runs verify --all   # every run in this repo</code></pre>
         crosswalk lives in the wheel at
         <code>src/roam/templates/audit_report/control-mapping.yaml</code>
         and is honoured as an override when present at the project
-        root.
+        root. Loading the crosswalk needs PyYAML, which the base install
+        does not include: install it in the same Python environment as
+        Roam first, or <code>evidence-oscal --kind control-mapping</code>
+        and <code>ci-setup --with-oscal</code> exit 1 with
+        &ldquo;PyYAML is required&rdquo;.
       </p>
-<pre><code>roam evidence-oscal --kind control-mapping &gt; oscal-controls.json
+<pre><code>pip install pyyaml
+roam evidence-oscal --kind control-mapping &gt; oscal-controls.json
 roam evidence-oscal --kind assessment-results --evidence change-evidence.json --import-ap-ref oscal-ap.json &gt; oscal-results.json</code></pre>
       <p>
         Persist the OSCAL artefacts on disk with

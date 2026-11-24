@@ -488,8 +488,10 @@
     <div class="whats-in-inner">
       <h2>What the report can—and cannot—tell you</h2>
       <p class="lede">
-        The report names what was checked, what was found, and what remains unknown.
-        These eight questions make the boundaries visible. Reading history does not
+        The report names the commit range, the detector set, and what was found.
+        It does not yet mark a check that was skipped, such as the clone check when
+        no clone pairs are stored, so a &ldquo;Clean window&rdquo; verdict covers only
+        the checks that ran. These eight questions make the boundaries visible. Reading history does not
         recreate an agent's actions, permissions, or approval process.
       </p>
       <div class="verbs-grid verbs-grid--3">
@@ -503,11 +505,11 @@
         </div>
         <div class="verb-cell">
           <code>What context was read?</code>
-          <span><strong>Partial.</strong> Commit range, changed files, graph context, and detector set are disclosed.</span>
+          <span><strong>Partial.</strong> Commit range, graph context, and detector set are disclosed. The changed-file count is not yet read from Git and can show zero; use <code>git diff --stat</code> for the changed paths.</span>
         </div>
         <div class="verb-cell">
           <code>What changed?</code>
-          <span><strong>In scope.</strong> Per-PR files, changed subjects, and structural findings are reported.</span>
+          <span><strong>Partial.</strong> Each flagged commit in the range is listed by date, SHA, and subject with its structural findings. Rows are commits, not matched PR identities, and changed files are not listed per commit.</span>
         </div>
         <div class="verb-cell">
           <code>What could break?</code>
