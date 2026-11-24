@@ -598,7 +598,6 @@ class TestCriticueCLI:
     def test_piped_diff_conservation_snapshot(self, critique_project, monkeypatch, warn):
         from roam.db import freshness
 
-        monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
         unknown = freshness.QueryIndexFreshness(None, None, "freshness check exceeded its time budget")
         if warn:
             monkeypatch.setattr(freshness, "read_query_index_freshness", lambda *args: unknown)

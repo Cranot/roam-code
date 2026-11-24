@@ -109,6 +109,19 @@ def test_preserved_mtime_edit_uses_indexed_content(
             assert answer["summary"]["partial_success"] is True
 
 
+def test_file_matches_index_compares_bytes_at_equal_mtime(tmp_path):
+    from roam.index.incremental import file_hash, file_matches_index
+
+    path = tmp_path / "source.py"
+    path.write_bytes(b"one\r\n")
+    digest = file_hash(path)
+    path.write_bytes(b"two\r\n")
+    mtime = path.stat().st_mtime
+
+    assert file_matches_index(path, mtime, digest)
+    assert not file_matches_index(path, mtime, digest, compare_content=True)
+
+
 def test_snapshot_write_preserves_index_age(query_project, cli_runner):
     _age_index(25 * 3600)
     db_path = get_db_path()
@@ -123,29 +136,41 @@ def test_snapshot_write_preserves_index_age(query_project, cli_runner):
     assert abs(json.loads(result.stdout)["_meta"]["index_age_s"] - 25 * 3600) < 10
 
 
-def test_edit_between_source_read_and_parsing_leaves_index_stale(query_project, cli_runner, monkeypatch):
+@pytest.mark.parametrize(
+    ("prefetch", "git_reports_edit"),
+    [("0", True), ("1", True), ("1", False)],
+    ids=["serial", "parallel", "git-omits-edit"],
+)
+def test_edit_between_source_read_and_parsing_leaves_index_stale(
+    query_project, cli_runner, monkeypatch, prefetch, git_reports_edit
+):
+    from roam.index.incremental import file_hash
     from roam.index.indexer import Indexer
 
+    monkeypatch.setenv("ROAM_PARALLEL_INDEX", prefetch)
     path = query_project / "app.py"
     path.write_bytes(b"def captured_symbol():\r\n    return 10\r\n")
+    captured_hash = file_hash(path)
+    if not git_reports_edit:
+        subprocess.run(["git", "update-index", "--assume-unchanged", "app.py"], check=True)
     read_source = Indexer._read_index_source
 
     def edit_after_read(indexer, full_path, rel_path, verbose):
         source = read_source(indexer, full_path, rel_path, verbose)
         if full_path == path:
-            before = path.stat()
             path.write_bytes(b"def edited_while_indexing():\r\n    return 200\r\n")
-            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
         return source
 
     with monkeypatch.context() as patch:
         patch.setattr(Indexer, "_read_index_source", edit_after_read)
-        assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+        assert cli_runner.invoke(cli, ["index", "--force"]).exit_code == 0
 
     first = json.loads(cli_runner.invoke(cli, ["--json", "search", "captured_symbol"]).stdout)
     assert first["_meta"]["index_state"] == "stale"
     assert first["_meta"]["index_changed_files"] == 1
     assert [row["name"] for row in first["results"]] == ["captured_symbol"]
+    with closing(sqlite3.connect(get_db_path())) as conn:
+        assert conn.execute("SELECT hash, mtime FROM files WHERE path = 'app.py'").fetchone() == (captured_hash, None)
     assert cli_runner.invoke(cli, ["index"]).exit_code == 0
     second = json.loads(cli_runner.invoke(cli, ["--json", "search", "edited_while_indexing"]).stdout)
     assert second["_meta"]["index_state"] == "fresh"
@@ -326,16 +351,19 @@ def test_dirty_build_counts_reverting_an_indexed_edit(project_factory, cli_runne
     assert envelope["_meta"]["stale_index"] is True
 
 
-def test_stale_refusal_is_opt_in(query_project, cli_runner, monkeypatch):
+@pytest.mark.parametrize("options", [[], ["--compact"]], ids=["json", "compact"])
+def test_stale_refusal_is_opt_in(query_project, cli_runner, monkeypatch, options):
     (query_project / "app.py").write_text("def renamed_helper():\n    return 1\n")
     monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
 
-    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    result = cli_runner.invoke(cli, ["--json", *options, "search", "indexed_helper"])
     assert result.exit_code == 1, result.output
     assert result.stderr == ""
     envelope = json.loads(result.stdout)
     assert envelope["error_code"] == "INDEX_STALE"
     assert envelope["_meta"]["stale_index"] is True
+    assert envelope["_meta"]["cacheable"] is False
+    assert "cache_ttl_s" not in envelope["_meta"]
     assert envelope["next_command"] == "roam index"
 
     refresh = cli_runner.invoke(cli, ["index"])
@@ -943,6 +971,8 @@ def test_mcp_query_cache_cannot_bypass_an_incomplete_index_marker(query_project,
     assert after["error_code"] == "INDEX_STALE"
     assert after["summary"]["state"] == "incomplete"
     assert after["isError"] is True
+    assert after["_meta"]["cacheable"] is False
+    assert "cache_ttl_s" not in after["_meta"]
 
 
 def test_mcp_tech_stack_resource_preserves_cached_index_disclosure(query_project, monkeypatch):

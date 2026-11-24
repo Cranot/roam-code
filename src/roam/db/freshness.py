@@ -175,9 +175,6 @@ def _compare_indexed_files(
     deadline: _CheckDeadline,
 ) -> tuple[set[str] | None, str | None]:
     """Filter Git candidates against discovery and the indexed snapshot."""
-    if not paths and not compare_all:
-        return set(), None
-
     from roam.index.discovery import MAX_FILE_SIZE, _filter_files, _is_skippable, load_exclude_patterns
     from roam.index.gitignore import compile_exclude_patterns
     from roam.index.incremental import file_hash
@@ -185,6 +182,12 @@ def _compare_indexed_files(
     root_path = os.fspath(root)
     changed_paths: set[str] = set()
     try:
+        if not compare_all:
+            # A file changed while its source was being captured. Git may
+            # omit it, but its indexed bytes still need verification.
+            paths.update(row[0] for row in conn.execute("SELECT path FROM files WHERE mtime IS NULL"))
+            if not paths:
+                return set(), None
         exclude = None if include_excluded else compile_exclude_patterns(load_exclude_patterns(root))
         for path, digest in _indexed_rows(conn, paths, compare_all=compare_all):
             if time.monotonic() >= deadline.end:
@@ -666,6 +669,11 @@ def valid_index_freshness_metadata(meta: object) -> bool:
         reason = meta.get("index_state_reason")
         return count is None and isinstance(reason, str) and bool(reason)
     return type(count) is int and ((state == "fresh" and count == 0) or (state == "stale" and count > 0))
+
+
+def can_reuse_index_result(meta: object, current: QueryIndexFreshness) -> bool:
+    """Require a fresh recorded analysis before replaying it as fresh."""
+    return valid_index_freshness_metadata(meta) and (current.state != "fresh" or meta["index_state"] == "fresh")
 
 
 def strongest_index_metadata(results: list[dict]) -> tuple[dict, bool]:

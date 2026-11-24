@@ -782,10 +782,10 @@ def _check_index_exists() -> dict:
     }
 
 
-def _check_index_freshness(db_path_str: str | None) -> dict:
+def _check_index_freshness(db_path_str: str | None, ctx: click.Context | None = None) -> dict:
     """Compare the index with the current source files using the query freshness rule."""
     from roam.db.connection import find_project_root
-    from roam.db.freshness import probe_index_freshness
+    from roam.db.freshness import _record_query_index, probe_index_freshness
 
     if db_path_str is None or not Path(db_path_str).exists():
         return {
@@ -794,7 +794,10 @@ def _check_index_freshness(db_path_str: str | None) -> dict:
             "detail": "index does not exist (run `roam init`)",
         }
 
-    freshness = probe_index_freshness(Path(db_path_str), find_project_root())
+    root = find_project_root()
+    freshness = probe_index_freshness(Path(db_path_str), root)
+    if ctx is not None:
+        _record_query_index(ctx, root, freshness)
     check = {
         "name": "Index freshness",
         "passed": freshness.state == "fresh",
@@ -2704,7 +2707,7 @@ def doctor(ctx, strict, persist):
     index_check = _run_check("index_exists", _check_index_exists)
 
     db_path_str = index_check.get("_db_path") if index_check else None
-    _run_check("index_freshness", _check_index_freshness, db_path_str)
+    _run_check("index_freshness", _check_index_freshness, db_path_str, ctx)
     _run_check("sqlite", _check_sqlite, db_path_str)
     _run_check("search_index_sync", _check_search_index_sync, db_path_str)
     _run_check("index_manifest", _check_index_manifest)

@@ -75,7 +75,6 @@ def snapshotless_project(tmp_path, monkeypatch):
     `trends --save`, so it has a baseline and could never catch this. The
     whole finding is about the state `roam init` leaves behind.
     """
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     proj = tmp_path / "w1526_proj"
     (proj / "src").mkdir(parents=True)
     (proj / ".gitignore").write_text(".roam/\n")

@@ -6224,6 +6224,9 @@ def _cache_index_identity() -> tuple | None:
 
 
 def _track_query_result(result: dict) -> dict:
+    from roam.output.errors import mark_index_stale_refusal
+
+    mark_index_stale_refusal(result)
     _note_partial_success(result)
     return result
 
@@ -6361,7 +6364,7 @@ def _refresh_cached_envelope(payload: dict) -> dict | None:
     import sqlite3
 
     from roam.db.connection import StaleDbDirError, find_project_root, open_db
-    from roam.db.freshness import read_query_index_freshness
+    from roam.db.freshness import can_reuse_index_result, read_query_index_freshness
     from roam.output.formatter import stamp_query_index_freshness
 
     try:
@@ -6371,9 +6374,9 @@ def _refresh_cached_envelope(payload: dict) -> dict | None:
     except (OSError, click.ClickException, StaleDbDirError, sqlite3.Error) as exc:
         log_swallowed("mcp_server:refresh_cached_freshness", exc)
         return None
-    meta = dict(payload["_meta"], cache_hit=True)
-    if freshness.state == "fresh" and meta["index_state"] != "fresh":
+    if not can_reuse_index_result(payload.get("_meta"), freshness):
         return None
+    meta = dict(payload["_meta"], cache_hit=True)
     out = {**payload, "_meta": meta, "summary": dict(payload.get("summary") or {})}
     stamp_query_index_freshness(out, freshness)
     return out
@@ -6386,6 +6389,7 @@ def _with_direct_index_freshness(fn):
     @wraps(fn)
     def wrapped(*args, **kwargs):
         from roam.db.freshness import capture_direct_index_reads, refuse_stale_index
+        from roam.output.errors import mark_index_stale_refusal
         from roam.output.formatter import stamp_query_index_freshness
 
         with capture_direct_index_reads() as observations:
@@ -6402,6 +6406,7 @@ def _with_direct_index_freshness(fn):
                     }
                 )
                 stamp_query_index_freshness(out, freshness)
+                mark_index_stale_refusal(out)
                 break
             stamp_query_index_freshness(out, freshness)
         return out
@@ -6983,6 +6988,7 @@ def _score_prepare_change_recipe(sub_results: list[tuple[str, dict]]) -> str:
 def _disclose_compound_freshness(result: dict, sub_results: list[tuple[str, dict]]) -> None:
     """Keep the strongest index observation accessible at the compound level."""
     from roam.db.freshness import strongest_index_metadata
+    from roam.output.errors import mark_index_stale_refusal
 
     children = [child for _, child in sub_results if isinstance(child, dict)]
     meta, degraded = strongest_index_metadata(children)
@@ -7005,6 +7011,7 @@ def _disclose_compound_freshness(result: dict, sub_results: list[tuple[str, dict
             state="stale_index",
             verdict="Run `roam index` to refresh the stale index",
         )
+        mark_index_stale_refusal(result)
 
 
 def _compound_envelope(

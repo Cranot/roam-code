@@ -83,6 +83,7 @@ from roam.db.connection import find_project_root, index_cache_identity
 from roam.db.freshness import (
     IndexCompositeRunner,
     StaleQueryIndexError,
+    can_reuse_index_result,
     check_query_index_policy,
     project_index_freshness,
     strongest_index_metadata,
@@ -90,7 +91,14 @@ from roam.db.freshness import (
 )
 from roam.exit_codes import EXIT_ERROR
 from roam.observability import log_swallowed
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
+from roam.output.errors import mark_index_stale_refusal
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    echo_text_warnings,
+    json_envelope,
+    stamp_query_index_freshness,
+    to_json,
+)
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -1519,6 +1527,16 @@ def _determine_verdict(
 # coordinator's cognitive complexity below the project's 99-cc gate.
 
 
+def _cached_analysis_children(payload: dict):
+    """Yield nested analysis envelopes that recorded index freshness."""
+    for child in payload.values():
+        if isinstance(child, dict) and "_meta" in child:
+            meta = child["_meta"]
+            if not isinstance(meta, dict) or {"index_state", "index_changed_files", "stale_index"} & meta.keys():
+                yield child
+            yield from _cached_analysis_children(child)
+
+
 def _serve_from_cache(
     diff_text: str,
     rules_path: Path,
@@ -1559,9 +1577,17 @@ def _serve_from_cache(
         freshness = project_index_freshness(root, required=True)
         if freshness is None or index_identity != index_cache_identity(root):
             return False
-        if freshness.state == "fresh" and meta["index_state"] != "fresh":
+        if not can_reuse_index_result(meta, freshness):
+            return False
+        children = list(_cached_analysis_children(cached))
+        if any(
+            not can_reuse_index_result(child["_meta"], freshness) or not isinstance(child.get("summary"), dict)
+            for child in children
+        ):
             return False
         check_query_index_policy(ctx, freshness, warn=True)
+        for child in children:
+            stamp_query_index_freshness(child, freshness)
     cached["cache_hit"] = True
     cached["cache_key"] = key
     s = cached.get("summary") or {}
@@ -1811,6 +1837,7 @@ def _process_single_diff(
         if env.get("error_code") == "INDEX_STALE":
             row["error_code"] = env["error_code"]
             row["error"] = env["error"]
+            mark_index_stale_refusal(row)
         # Surface cache hit in the row so batch summary can compute hit-rate.
         row["cache_hit"] = bool(env.get("cache_hit"))
     except Exception as exc:  # noqa: BLE001 — defensive
@@ -2000,6 +2027,7 @@ def _emit_batch(
             terminal["_meta"] = freshness_meta
         if stale_refusal:
             terminal["error_code"] = "INDEX_STALE"
+            mark_index_stale_refusal(terminal)
         click.echo(_json.dumps(terminal, separators=(",", ":")))
     elif json_mode:
         click.echo(to_json(pr_analyze_batch_envelope))

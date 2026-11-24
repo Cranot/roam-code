@@ -7,10 +7,13 @@ import json
 import os
 import sys
 
+import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from tests.conftest import git_init, index_in_process
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def test_initialize_advertises_roam_package_not_framework_version(tmp_path):
@@ -51,7 +54,6 @@ def test_stdio_tool_calls_do_not_inherit_the_protocol_input(tmp_path, monkeypatc
     (root / "app.py").write_text("def answer():\n    return 42\n", encoding="utf-8")
     for key in ("ROAM_PROJECT_ROOT", "ROAM_DB_DIR", "ROAM_RUN_ID"):
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
     git_init(root)

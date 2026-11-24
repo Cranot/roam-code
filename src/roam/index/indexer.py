@@ -50,6 +50,35 @@ from roam.languages.generic_lang import GenericExtractor
 from roam.observability import log_swallowed
 
 
+@dataclass(frozen=True)
+class _SourceSnapshot:
+    data: bytes
+    stat: os.stat_result
+
+    @classmethod
+    def read(cls, path: Path) -> _SourceSnapshot:
+        before = path.stat()
+        with path.open("rb") as source:
+            return cls(source.read(), before)
+
+    def stable_mtime(self, path: Path) -> float | None:
+        """Return the captured mtime if the path still matches the read."""
+        try:
+            after = path.stat()
+        except OSError:
+            return None
+        before = self.stat
+        if (
+            after.st_mtime_ns == before.st_mtime_ns
+            and after.st_ctime_ns == before.st_ctime_ns
+            and after.st_size == before.st_size == len(self.data)
+            and after.st_ino == before.st_ino
+            and after.st_dev == before.st_dev
+        ):
+            return before.st_mtime
+        return None
+
+
 def _format_count(n: int) -> str:
     """Format an integer with thousands separators."""
     return f"{n:,}"
@@ -1901,43 +1930,41 @@ class Indexer:
                 if verbose:
                     self._log(f"  Warning: generic extractor failed for {rel_path}: {e}")
 
-    def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> bytes | None:
+    def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> _SourceSnapshot | None:
         # Prefetched cache hit (parallel I/O prefetch).
         cache = getattr(self, "_source_cache", None)
         if cache is not None and rel_path in cache:
             return cache.pop(rel_path)
         try:
-            with open(full_path, "rb") as f:
-                return f.read()
+            return _SourceSnapshot.read(full_path)
         except OSError as e:
             if verbose:
                 self._log(f"  Warning: Could not read {rel_path}: {e}")
             return None
 
     def _prefetch_sources(self, files_to_process, verbose: bool) -> None:
-        """Pre-read source bytes into memory in parallel.
+        """Pre-read source bytes and their metadata into memory in parallel.
 
         On-by-default since W404 (W396 in the perf memo); opt-OUT via
         ``ROAM_PARALLEL_INDEX=0`` (or ``false``/``no``). File I/O dominates
         on cold caches (network drives, OneDrive, etc.). A thread pool
         eliminates that wait without touching the (serial) DB write path.
-        Bytes are stored on ``self._source_cache`` and consumed by
+        Snapshots are stored on ``self._source_cache`` and consumed by
         ``_read_index_source`` so the rest of the pipeline is unchanged.
         """
         if os.environ.get("ROAM_PARALLEL_INDEX", "1").strip().lower() in {"0", "false", "no"}:
             return
         from concurrent.futures import ThreadPoolExecutor
 
-        def _read(rel_path: str) -> tuple[str, bytes | None]:
+        def _read(rel_path: str) -> tuple[str, _SourceSnapshot | None]:
             full_path = self.root / rel_path
             try:
-                with open(full_path, "rb") as f:
-                    return rel_path, f.read()
+                return rel_path, _SourceSnapshot.read(full_path)
             except OSError:
                 return rel_path, None
 
         max_workers = min(32, (os.cpu_count() or 4) * 2)
-        cache: dict[str, bytes] = {}
+        cache: dict[str, _SourceSnapshot] = {}
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             for rel_path, data in ex.map(_read, list(files_to_process)):
                 if data is not None:
@@ -1947,14 +1974,10 @@ class Indexer:
             self._log(f"  Prefetched {len(cache)} source files in parallel")
 
     def _insert_file_record(
-        self, conn, full_path: Path, rel_path: str, language: str | None, source: bytes
+        self, conn, rel_path: str, language: str | None, source: bytes, mtime: float | None
     ) -> int | None:
         line_count = _count_lines(source)
         complexity = _compute_complexity(source)
-        try:
-            mtime = full_path.stat().st_mtime
-        except OSError:
-            mtime = None
         fhash = hashlib.sha256(source).hexdigest()
         content_head = source[:2048].decode("utf-8", errors="replace") if source else None
         file_role = classify_file(rel_path, content_head)
@@ -2008,11 +2031,12 @@ class Indexer:
     ) -> int | None:
         full_path = self.root / rel_path
         language = detect_language(rel_path)
-        source = self._read_index_source(full_path, rel_path, verbose)
-        if source is None:
+        snapshot = self._read_index_source(full_path, rel_path, verbose)
+        if snapshot is None:
             return None
 
-        file_id = self._insert_file_record(conn, full_path, rel_path, language, source)
+        source = snapshot.data
+        file_id = self._insert_file_record(conn, rel_path, language, source, snapshot.stable_mtime(full_path))
         if file_id is None:
             return None
 

@@ -41,8 +41,10 @@ def test_pass29_prefetch_thread_pool_populates_cache(tmp_path, monkeypatch):
 
     cache = getattr(idx, "_source_cache", None)
     assert cache is not None
-    assert cache["a.py"] == b"print('a')\n"
-    assert cache["b.py"] == b"print('b')\n"
+    assert cache["a.py"].data == b"print('a')\n"
+    assert cache["b.py"].data == b"print('b')\n"
+    assert cache["a.py"].stat.st_size == len(cache["a.py"].data)
+    assert cache["b.py"].stat.st_size == len(cache["b.py"].data)
 
 
 def test_pass29_prefetch_enabled_by_default(tmp_path, monkeypatch):
@@ -56,7 +58,8 @@ def test_pass29_prefetch_enabled_by_default(tmp_path, monkeypatch):
     idx._prefetch_sources(["a.py"], verbose=False)
     cache = getattr(idx, "_source_cache", None)
     assert cache is not None
-    assert cache["a.py"] == b"print('a')\n"
+    assert cache["a.py"].data == b"print('a')\n"
+    assert cache["a.py"].stat.st_mtime_ns == (tmp_path / "a.py").stat().st_mtime_ns
 
 
 def test_pass29_prefetch_opt_out_via_env_zero(tmp_path, monkeypatch):
@@ -82,12 +85,14 @@ def test_pass29_read_index_source_consumes_prefetched_bytes(tmp_path, monkeypatc
     idx.root = tmp_path
     idx._prefetch_sources(["x.py"], verbose=False)
     out = idx._read_index_source(f, "x.py", verbose=False)
-    assert out == b"data"
+    assert out.data == b"data"
+    assert out.stat.st_size == len(out.data)
     # cache is drained on consume
     assert "x.py" not in idx._source_cache
     # second read falls back to disk transparently
     out2 = idx._read_index_source(f, "x.py", verbose=False)
-    assert out2 == b"data"
+    assert out2.data == b"data"
+    assert out2.stat.st_size == len(out2.data)
 
 
 def test_pass30_plugins_command_text_no_plugins(monkeypatch):

@@ -26,7 +26,7 @@ def file_hash(path: str | Path) -> str:
 def file_matches_index(
     path: str | Path, mtime: float | None, digest: str | None, *, compare_content: bool = False
 ) -> bool:
-    """Use the stored mtime as a fast path before comparing content."""
+    """Use mtime as a fast path only when a content comparison is optional."""
     if not compare_content and mtime is not None and abs(os.stat(path).st_mtime - mtime) < 0.001:
         return True
     return file_hash(path) == digest

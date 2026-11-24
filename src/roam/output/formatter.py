@@ -1766,6 +1766,8 @@ def json_envelope(
             ...payload
         }
     """
+    from roam.output.errors import mark_index_stale_refusal
+
     summary = _prepare_envelope_summary(summary)
     freshness = _envelope_index_status() if include_index_metadata else None
 
@@ -1773,6 +1775,7 @@ def json_envelope(
     if compact is not None:
         if freshness is not None:
             stamp_query_index_freshness(compact, freshness, command=command)
+        mark_index_stale_refusal(compact)
         projected_compact = _project_if_requested(compact)
         if budget > 0 and not uncapped:
             return budget_truncate_json(projected_compact, budget)
@@ -1791,6 +1794,7 @@ def json_envelope(
         stamp_query_index_freshness(out, freshness)
     _add_agent_contract(out, summary, explicit_contract)
     _stamp_response_meta(out, command)
+    mark_index_stale_refusal(out)
 
     # Best-effort side-car write to `.roam/responses/` so `pr-bundle
     # --auto-collect` can fold this envelope into the bundle later. Fires

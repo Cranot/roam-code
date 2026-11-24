@@ -60,7 +60,6 @@ def _write_config(proj, severity: str) -> str:
 @pytest.fixture
 def gates_project(tmp_path, monkeypatch):
     """Project with two money-handling modules and no tests for either."""
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     proj = tmp_path / "w1523_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n.roam-gates.yml\n")

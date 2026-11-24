@@ -58,6 +58,14 @@ ALL_CODES = frozenset(
 )
 
 
+def mark_index_stale_refusal(out: dict) -> None:
+    """Prevent results representing a stale-index refusal from being cached."""
+    if out.get("error_code") == INDEX_STALE:
+        meta = out.setdefault("_meta", {})
+        meta["cacheable"] = False
+        meta.pop("cache_ttl_s", None)
+
+
 def parse_code(message: str) -> str | None:
     """Extract the structured code prefix from an error message, if any.
 

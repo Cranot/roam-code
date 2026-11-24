@@ -447,7 +447,6 @@ def test_vulns_reachable_only_does_not_claim_empty(vuln_repo, monkeypatch):
     (cmd_vulns._count_all_vulns) through the verdict/summary so 'no data'
     and 'N rows, 0 reachable' are distinguishable in both text and JSON.
     """
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     proc = _run_roam(vuln_repo, "vulns", "--reachable-only")
     assert proc.returncode == 0, proc.stderr[-500:]
     low = proc.stdout.lower()

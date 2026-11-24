@@ -27,10 +27,7 @@ from conftest import (  # noqa: E402
     invoke_cli,
 )
 
-
-@pytest.fixture(autouse=True)
-def _generous_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 # ---------------------------------------------------------------------------

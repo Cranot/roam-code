@@ -144,6 +144,13 @@ def test_cached_pr_analysis_checks_index_freshness(edited_project, cli_runner, m
     assert cached["cache_hit"] is True
     assert cached["_meta"]["index_state"] == "stale"
     assert cached["summary"]["partial_success"] is True
+    prep = cached["pr_prep"]
+    assert prep["_meta"]["index_state"] == "stale"
+    for child in (prep, prep["diff"], prep["critique"], prep["pr_risk"]):
+        meta = child.get("_meta", {})
+        if "index_state" in meta:
+            assert meta["index_state"] == cached["_meta"]["index_state"]
+            assert meta["index_changed_files"] == cached["_meta"]["index_changed_files"]
     monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
     refused = cli_runner.invoke(cli, args)
     assert json.loads(refused.stdout)["error_code"] == "INDEX_STALE"
@@ -216,7 +223,10 @@ def test_mcp_doctor_reobserves_index_on_stdio_with_omitted_and_empty_arguments(e
                     async def freshness(args):
                         reply = await session.call_tool("roam_doctor", args)
                         payload = json.loads(next(item.text for item in reply.content if item.type == "text"))
-                        return next(item for item in payload["checks"] if item["name"] == "Index freshness")
+                        check = next(item for item in payload["checks"] if item["name"] == "Index freshness")
+                        assert payload["_meta"]["index_state"] == check["state"]
+                        assert payload["_meta"]["index_changed_files"] == check["index_changed_files"]
+                        return check
 
                     assert (await freshness(None))["state"] == "fresh"
                     (edited_project / "app.py").write_bytes(b"def after_index():\r\n    return 42\r\n")
@@ -295,6 +305,8 @@ def test_mcp_recipe_preserves_strict_stale_refusal(edited_project, monkeypatch):
     assert output["isError"] is True
     assert output["_meta"]["index_state"] == "stale"
     assert output["summary"]["state"] == "stale_index"
+    assert output["_meta"]["cacheable"] is False
+    assert "cache_ttl_s" not in output["_meta"]
 
 
 def test_mcp_audit_handle_keeps_freshness_disclosure(edited_project, monkeypatch):
@@ -322,7 +334,7 @@ def test_watch_keeps_freshness_warning_off_stdout(edited_project, cli_runner, mo
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["json", "jsonl"])
-def test_batch_reports_index_freshness(edited_project, cli_runner, stream):
+def test_batch_reports_index_freshness(edited_project, cli_runner, monkeypatch, stream):
     diff_dir = edited_project / ".roam" / "diffs"
     diff_dir.mkdir()
     (diff_dir / "change.diff").write_bytes(subprocess.check_output(["git", "diff"], cwd=edited_project))
@@ -341,6 +353,18 @@ def test_batch_reports_index_freshness(edited_project, cli_runner, stream):
     assert payload["_meta"]["index_state"] == "stale"
     assert summary["partial_success"] is True
     assert row["_meta"]["index_changed_files"] == 1
+
+    monkeypatch.setenv("ROAM_REFUSE_STALE_INDEX", "1")
+    result = cli_runner.invoke(cli, args)
+    if stream:
+        row, payload = [json.loads(line) for line in result.stdout.splitlines()]
+    else:
+        payload = json.loads(result.stdout)
+        row = payload["files"][0]
+    for refusal in (row, payload):
+        assert refusal["error_code"] == "INDEX_STALE"
+        assert refusal["_meta"]["cacheable"] is False
+        assert "cache_ttl_s" not in refusal["_meta"]
 
 
 def test_composite_without_git_discloses_why_without_a_warning(tmp_path, cli_runner, monkeypatch):
