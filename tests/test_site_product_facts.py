@@ -21,11 +21,22 @@ def product_site(tmp_path, monkeypatch):
     shutil.copytree(ROOT / builder.SITE, tmp_path / builder.SITE)
     (tmp_path / "dev").mkdir()
     shutil.copyfile(ROOT / builder.POLICY, tmp_path / builder.POLICY)
+    shutil.copytree(ROOT / builder.OFFERS, tmp_path / builder.OFFERS)
+    shutil.copyfile(ROOT / builder.README, tmp_path / builder.README)
     (tmp_path / "templates/legal").mkdir(parents=True)
     shutil.copyfile(ROOT / "templates/legal/sow-pr-replay.md", tmp_path / "templates/legal/sow-pr-replay.md")
     counts = builder.collect_counts(ROOT)
     monkeypatch.setattr(builder, "collect_counts", lambda root: counts)
     return tmp_path
+
+
+def open_paid_tiers(root):
+    """Bound paid-tier facts are served only while their tier is open; open both to exercise them."""
+    path = root / builder.POLICY
+    policy = json.loads(path.read_text(encoding="utf-8"))
+    policy["replayTiers"].update(team="OPEN", deep="OPEN")
+    path.write_text(json.dumps(policy), encoding="utf-8")
+    assert builder.run(root, write=True) == 0
 
 
 def test_current_product_facts_are_generated():
@@ -34,6 +45,7 @@ def test_current_product_facts_are_generated():
 
 @pytest.mark.parametrize("key", ["teamReplayPrice", "deepReplayPrice", "teamReplayPrCount", "deepReplayPrCount"])
 def test_adopted_fact_change_requires_rebuild(product_site, key):
+    open_paid_tiers(product_site)
     assert builder.run(product_site) == 0
     path = product_site / builder.POLICY
     policy = json.loads(path.read_text(encoding="utf-8"))
@@ -65,7 +77,11 @@ def test_adopted_fact_change_requires_rebuild(product_site, key):
 
 @pytest.mark.parametrize("damage", ["missing", "unknown", "unclosed"])
 def test_binding_damage_refuses_before_any_write(product_site, damage):
-    path = product_site / builder.SITE / "pricing.html"
+    open_paid_tiers(product_site)
+    # The paid-tier price binding is owned by the stored offer copy, which --write
+    # renders into the page; damage it where it is maintained.
+    owner = builder.OFFERS / "site" if damage != "unknown" else builder.SITE
+    path = product_site / owner / "pricing.html"
     text = path.read_text(encoding="utf-8")
     old = "<!-- product-fact:teamReplayPrice -->"
     if damage == "missing":
@@ -165,6 +181,7 @@ def test_mcp_tutorial_is_required_without_commercial_bindings(product_site):
 
 
 def test_current_report_terms_and_status_are_required_bindings(product_site):
+    open_paid_tiers(product_site)
     facts = builder.product_facts(product_site)
     for name in ("examples/team-replay-report.md", "status.html"):
         path = product_site / builder.SITE / name

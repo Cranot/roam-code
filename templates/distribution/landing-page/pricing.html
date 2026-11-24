@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Pricing — Roam · Free agent tools and paid reports</title>
-  <meta name="description" content="Free local tools for coding agents. Request a scoped PR Replay report, or try the free sample. Hosted Review and Cloud are planned, not available.">
+  <title>Pricing — Roam · Free agent tools and PR Replay</title>
+  <meta name="description" content="Free local tools for coding agents and a free local PR Replay sample. See what is available now; hosted Review and Cloud are planned, not available.">
   <link rel="canonical" href="https://roam-code.com/pricing">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="Pricing — Roam">
-  <meta property="og:description" content="Free tools for coding agents. Paid PR Replay reports by request. See what is available now and what is still planned.">
+  <meta property="og:description" content="Free tools for coding agents and a free local PR Replay sample. See what is available now and what is still planned.">
   <meta property="og:url" content="https://roam-code.com/pricing">
   <meta property="og:image" content="https://roam-code.com/og-code-analysis.png">
   <meta property="og:image:width" content="1731">
@@ -74,17 +74,16 @@
 
   <header class="hero">
     <div class="hero-inner">
-      <p class="eyebrow">Pricing &amp; paid help</p>
-      <h1 class="hero-headline"><strong>The tools are free.<br>Pay for help making sense of the findings.</strong></h1>
+<!-- replay-offer:paid:pricing-hero-head -->      <p class="eyebrow">Pricing &amp; availability</p>
+      <h1 class="hero-headline"><strong>The tools are free.<br>Start with them today.</strong></h1><!-- /replay-offer -->
       <p class="hero-subhead">
-        Give your coding agents local codebase context and static checks at no charge.
-        If you want a closer look at recent changes, request a PR Replay report with
-        a founder walk-through. Roam Review and Cloud are planned products,
+        Give your coding agents local codebase context and static checks at no charge.<!-- replay-offer:paid:pricing-hero-offer -->
+        For a closer look at recent changes, run the free local PR Replay sample.<!-- /replay-offer --> Roam Review and Cloud are planned products,
         <strong>not available to subscribe to</strong>.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="/setup">Set up your agent for free</a>
-        <a class="btn-secondary" href="/audit#tiers">See paid report options</a>
+        <!-- replay-offer:paid:pricing-hero-cta --><a class="btn-secondary" href="/audit#tiers">See PR Replay availability</a><!-- /replay-offer -->
       </div>
       <p class="hero-trust-strip">Free CLI and MCP server · Apache 2.0 · No account for local analysis</p>
     </div>
@@ -105,17 +104,16 @@
             Your agent's own model usage, including reading results, is separate.</p>
           <a class="btn-secondary" href="/setup">Follow the agent setup guide</a>
         </article>
-        <article class="replay-tier">
-          <h3>PR Replay report</h3>
-          <p class="replay-price"><strong><!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact --> Team · <!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact --> Deep</strong> · one engagement</p>
-          <p>A written review of an agreed change history: ranked structural findings,
-            a closer look at the important patterns, and a walk-through with the founder.
-            Team covers <!-- product-fact:teamReplayPrCount -->30<!-- /product-fact --> PRs; Deep covers <!-- product-fact:deepReplayPrCount -->90<!-- /product-fact --> PRs and adds a remediation plan.</p>
-          <p>Request by email. Scope, access, timing, and written terms are agreed before
-            work starts. This is a historical assessment, not a security audit or proof
-            that an incident could have been prevented.</p>
-          <a class="btn-secondary" href="/audit">See the report, sample, and scope</a>
-        </article>
+<!-- replay-offer:paid:pricing-replay-card-1 -->        <article class="replay-tier" id="pr-replay">
+          <h3>PR Replay sample</h3>
+          <p class="replay-price"><strong>Free</strong> · local sample · self-serve</p>
+          <p>Run <code>roam pr-replay --tier sample</code> in a local checkout to see which
+            structural findings in recent commits deserve a closer look.</p>
+          <p>Paid Team and Deep reports are paused for new requests while we fix defects
+            in the reports. Existing orders keep their agreed terms. Questions:
+            <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>.</p>
+          <a class="btn-secondary" href="/audit#sample">See the sample and its limits</a>
+        </article><!-- /replay-offer --><!-- replay-offer:team:pricing-replay-card-2 --><!-- /replay-offer --><!-- replay-offer:deep:pricing-replay-card-3 --><!-- /replay-offer --><!-- replay-offer:paid:pricing-replay-card-4 --><!-- /replay-offer -->
       </div>
       <p class="how-it-works-foot">Start without contacting us:
         <a href="/audit#sample">run the free local sample</a>, or
@@ -249,9 +247,9 @@
         <p>Proposed rates were published in June 2026. Read the
           <a href="/refund">refund policy</a> and confirm written terms before any payment.</p>
       </details>
-      <p>PR Replay is a separate paid deliverable. Its advertised 50% Review credit is
+<!-- replay-offer:paid:pricing-credit-note -->      <p>Existing PR Replay orders keep their 50% Review credit terms. The credit is
         conditional on a future hosted launch; it is not a cash refund or a reduction
-        in the report fee. <a href="/audit#credit">Read the credit details</a>.</p>
+        in the report fee. <a href="/audit#credit">Read the credit details</a>.</p><!-- /replay-offer -->
     </div>
   </section>
 
@@ -261,8 +259,7 @@
       <details>
         <summary>Is anything held back from the free tools?</summary>
         <p>The CLI and MCP server are free under Apache 2.0 for individuals and teams.
-          A paid report buys interpretation and a defined deliverable, not access
-          to otherwise locked local checks. Your agent's model charges are separate.</p>
+<!-- replay-offer:paid:pricing-faq-free -->          No local check is locked behind a paid service.<!-- /replay-offer --> Your agent's model charges are separate.</p>
       </details>
       <details>
         <summary>What if we already have an AI code reviewer?</summary>
@@ -273,8 +270,7 @@
       <details>
         <summary>Can we try the report without paying?</summary>
         <p>Yes. <a href="/audit#sample">Run the local sample</a> or read the linked
-          self-audit example. Paid reports add review of the agreed scope and a
-          founder walk-through. A sample does not establish that the findings
+<!-- replay-offer:paid:pricing-faq-sample -->          self-audit example. A sample<!-- /replay-offer --> does not establish that the findings
           will be useful on every repository.</p>
       </details>
       <details>
@@ -296,7 +292,7 @@
     <div class="page-cta-inner">
       <h2>Start with the free tools. Ask for help when you need it.</h2>
       <p><a class="btn-primary" href="/setup">Set up your agent</a>
-        <a class="btn-secondary" href="/audit#tiers">Explore the paid report</a></p>
+        <!-- replay-offer:paid:pricing-closing-cta --><a class="btn-secondary" href="/audit#sample">Try the PR Replay sample</a><!-- /replay-offer --></p>
       <p class="selling-contact-note">Questions? Email
         <a href="mailto:hello@roam-code.com?subject=Roam%20question">hello@roam-code.com</a>.
         The link opens an email draft; it does not send or place an order.

@@ -1,0 +1,33 @@
+{
+  "serviceDescription": {
+    "open": "Roam runs current structural checks over an agreed change history. The paid service adds a written report, reviewed findings, and a founder walk-through. Historical replay is not proof that an incident would have been prevented; tests are not rerun.",
+    "paused": "Roam runs current structural checks over recent commits in a free local sample. Historical replay is not proof that an incident would have been prevented; tests are not rerun."
+  },
+  "offers": [
+    {
+      "tier": "sample",
+      "@type": "Offer",
+      "name": "PR Replay — Sample (DIY)",
+      "price": "0",
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock",
+      "description": "Free local sample over HEAD~5..HEAD: a commit range, not necessarily five pull requests. Watermarked; no founder review."
+    },
+    {
+      "tier": "team",
+      "@type": "Offer",
+      "name": "PR Replay — Team",
+      "price": "2500",
+      "priceCurrency": "USD",
+      "description": "30-PR report, 30-min founder walk-through. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."
+    },
+    {
+      "tier": "deep",
+      "@type": "Offer",
+      "name": "PR Replay — Deep",
+      "price": "6000",
+      "priceCurrency": "USD",
+      "description": "90-PR report with per-detector deep-dive, 90-min founder walk-through, written 90-day remediation plan. 50% of fee is banked as a founding-customer credit toward Roam Review; the 60-day redemption window starts when Roam Review reaches general availability, not at report delivery."
+    }
+  ]
+}

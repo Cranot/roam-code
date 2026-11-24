@@ -10,11 +10,13 @@ from __future__ import annotations
 import json
 import tomllib
 
+from tests._helpers.replay_tiers import OPEN, rendered
 from tests.test_homepage_contract import SITE, HomepageParser, normalized
 
 
-def main_text(name):
-    page = HomepageParser((SITE / name).read_text(encoding="utf-8"))
+def main_text(name, states=None):
+    # Paid-tier copy is read from its open rendering; served pages carry the policy state.
+    page = HomepageParser(rendered(name, states) if states else (SITE / name).read_text(encoding="utf-8"))
     return normalized(next(page.root.find("main")).text()), page
 
 
@@ -62,7 +64,7 @@ def test_homepage_model_free_heading_names_the_static_scope():
 
 
 def test_compare_current_invitation_keeps_future_subscriptions_unavailable():
-    text, page = main_text("compare.html")
+    text, page = main_text("compare.html", OPEN)
     assert "not available to subscribe to" in text
     cta = next(node for node in page.elements if node.attrs.get("class") == "audit-upsell")
     cta_text = normalized(cta.text())
