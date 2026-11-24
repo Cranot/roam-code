@@ -149,6 +149,33 @@ def test_cached_pr_analysis_checks_index_freshness(edited_project, cli_runner, m
     assert json.loads(refused.stdout)["error_code"] == "INDEX_STALE"
 
 
+def test_mcp_doctor_reobserves_index_on_stdio_with_omitted_and_empty_arguments(edited_project, cli_runner):
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+
+    async def check():
+        env = dict(os.environ, ROAM_MCP_PRESET="full", ROAM_MCP_WATCH="0", ROAM_MCP_HANDLE_KB="0")
+        params = StdioServerParameters(
+            command=sys.executable, args=["-m", "roam", "mcp", "--no-auto-index"], cwd=edited_project, env=env
+        )
+        with (edited_project / ".roam" / "server.log").open("w", encoding="utf-8") as errlog:
+            async with stdio_client(params, errlog=errlog) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+
+                    async def freshness(args):
+                        reply = await session.call_tool("roam_doctor", args)
+                        payload = json.loads(next(item.text for item in reply.content if item.type == "text"))
+                        return next(item for item in payload["checks"] if item["name"] == "Index freshness")
+
+                    assert (await freshness(None))["state"] == "fresh"
+                    (edited_project / "app.py").write_bytes(b"def after_index():\r\n    return 42\r\n")
+                    after = await freshness({})
+                    assert after["state"] == "stale"
+                    assert after["index_changed_files"] == 1
+
+    asyncio.run(check())
+
+
 @pytest.mark.parametrize("explicit", [False, True], ids=["missing-arguments", "empty-options"])
 def test_mcp_composites_disclose_stale_index_over_stdio(edited_project, explicit):
     async def check():

@@ -22,6 +22,7 @@ pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 def _isolated_freshness_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
+    monkeypatch.setenv("ROAM_MCP_HANDLE_KB", "0")
     monkeypatch.delenv("ROAM_DB_DIR", raising=False)
     monkeypatch.delenv("ROAM_REFUSE_STALE_INDEX", raising=False)
 
@@ -170,6 +171,27 @@ def test_old_index_mcp(query_project, monkeypatch):
     assert changed_worktree["summary"]["partial_success"] is True
     assert changed_worktree["summary"]["verdict"] == fresh_worktree["summary"]["verdict"]
     assert not changed_worktree["summary"]["verdict"].startswith("INDEX STALE")
+
+
+def test_mcp_cache_refresh_discloses_a_malformed_git_status_record(query_project, monkeypatch):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_FRESHNESS_CACHE_TTL_S", 0)
+    assert mcp_server.search_symbol("indexed_helper")["_meta"]["index_state"] == "fresh"
+    run = subprocess.run
+
+    def malformed(command, *args, **kwargs):
+        result = run(command, *args, **kwargs)
+        if command[:2] == ["git", "status"] and "--porcelain=v2" in command:
+            result.stdout += b"1 M.\0"
+        return result
+
+    monkeypatch.setattr(subprocess, "run", malformed)
+    after = mcp_server.search_symbol("indexed_helper")
+    assert after["_meta"]["index_state"] == "unknown"
+    assert after["_meta"]["index_state_reason"] == "git status reported a malformed path record"
+    assert after["summary"]["partial_success"] is True
 
 
 def test_tracked_changes_on_a_recent_index(query_project, cli_runner):
@@ -697,6 +719,7 @@ def test_mcp_cache_hit_reuses_recent_freshness(query_project, monkeypatch):
     from roam.db import freshness
 
     monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_time", SimpleNamespace(monotonic=lambda: 10.0, time=lambda: 10.0))
     observations = []
     read = freshness.read_query_index_freshness
 
@@ -714,6 +737,213 @@ def test_mcp_cache_hit_reuses_recent_freshness(query_project, monkeypatch):
         assert cached["_meta"]["cache_hit"] is True
         assert cached["_meta"]["index_state"] == "fresh"
     assert len(observations) == 1
+
+
+def test_mcp_doctor_checks_the_worktree_on_each_call(query_project, monkeypatch):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_FRESHNESS_CACHE_TTL_S", 0)
+
+    def check():
+        result = mcp_server.roam_doctor()
+        return result, next(item for item in result["checks"] if item["name"] == "Index freshness")
+
+    initial, fresh = check()
+    assert fresh["state"] == "fresh"
+    (query_project / "app.py").write_bytes(b"def renamed_helper():\r\n    return 234\r\n")
+    result, stale = check()
+    assert stale["state"] == "stale"
+    assert stale["index_changed_files"] == 1
+    assert stale["passed"] is False
+    assert initial["_meta"]["cacheable"] is result["_meta"]["cacheable"] is False
+
+
+@pytest.mark.parametrize("meta", [{}, {"index_state": "fresh", "index_changed_files": 2}])
+def test_mcp_result_without_a_valid_index_observation_is_recomputed(query_project, monkeypatch, meta):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_FRESHNESS_CACHE_TTL_S", 0)
+    invoke = mcp_server._run_roam_inprocess
+    incomplete = {"summary": {"verdict": "no observation"}, "_meta": meta}
+    monkeypatch.setattr(mcp_server, "_run_roam_inprocess", lambda _: incomplete)
+    assert mcp_server.search_symbol("indexed_helper")["summary"]["verdict"] == "no observation"
+
+    monkeypatch.setattr(mcp_server, "_run_roam_inprocess", invoke)
+    (query_project / "app.py").write_text("def renamed_helper(): pass\n", encoding="utf-8")
+    after = mcp_server.search_symbol("indexed_helper")
+    assert after["_meta"]["index_state"] == "stale"
+    assert not after["_meta"].get("cache_hit")
+
+
+def test_mcp_cache_discards_a_malformed_cached_observation(query_project, monkeypatch):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_time", SimpleNamespace(monotonic=lambda: 10.0, time=lambda: 10.0))
+    assert mcp_server.search_symbol("indexed_helper")["_meta"]["index_state"] == "fresh"
+    [entry] = mcp_server._ROAM_RESULT_CACHE.values()
+    entry[2]["_meta"]["index_changed_files"] = 7
+
+    after = mcp_server.search_symbol("indexed_helper")
+    assert after["_meta"]["index_state"] == "fresh"
+    assert after["_meta"]["index_changed_files"] == 0
+    assert not after["_meta"].get("cache_hit")
+
+
+def test_mcp_cache_hit_is_scoped_to_the_index_store(query_project, tmp_path, monkeypatch, cli_runner):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_FRESHNESS_CACHE_TTL_S", 0)
+    old_db = get_db_path()
+    first = mcp_server.search_symbol("indexed_helper")
+    assert first["_meta"]["index_state"] == "fresh"
+    assert first["results"]
+
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "second index store"))
+    (query_project / "app.py").write_text("def renamed_helper(): pass\n", encoding="utf-8")
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    os.utime(get_db_path(), ns=(old_db.stat().st_atime_ns, old_db.stat().st_mtime_ns))
+    after = mcp_server.search_symbol("indexed_helper")
+    assert after["_meta"]["index_state"] == "fresh"
+    assert not after["results"]
+
+
+def test_mcp_query_cache_does_not_store_answers_across_an_index_publication(query_project, cli_runner, monkeypatch):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_time", SimpleNamespace(monotonic=lambda: 10.0, time=lambda: 10.0))
+    invoke = mcp_server._run_roam_inprocess
+
+    def publish_after_query(args):
+        result = invoke(args)
+        (query_project / "app.py").write_text("def renamed_helper(): pass\n", encoding="utf-8")
+        assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(mcp_server, "_run_roam_inprocess", publish_after_query)
+        assert mcp_server.search_symbol("indexed_helper")["results"]
+    after = mcp_server.search_symbol("indexed_helper")
+    assert after["_meta"]["index_state"] == "fresh"
+    assert not after["results"]
+
+
+def test_mcp_query_cache_rechecks_after_a_wal_commit(query_project, monkeypatch):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_time", SimpleNamespace(monotonic=lambda: 10.0, time=lambda: 10.0))
+    db = get_db_path()
+    with closing(sqlite3.connect(db)) as writer:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        assert mcp_server.search_symbol("indexed_helper")["_meta"]["index_state"] == "fresh"
+        assert mcp_server.search_symbol("indexed_helper")["_meta"]["cache_hit"] is True
+        mtime = db.stat().st_mtime_ns
+        writer.execute("UPDATE index_manifest SET git_head = NULL")
+        writer.commit()
+        assert db.stat().st_mtime_ns == mtime
+        after = mcp_server.search_symbol("indexed_helper")
+    assert after["_meta"]["index_state"] == "unknown"
+    assert "manifest has no Git commit" in after["_meta"]["index_state_reason"]
+
+
+def test_mcp_query_cache_cannot_bypass_an_incomplete_index_marker(query_project, monkeypatch):
+    from roam import mcp_server
+    from roam.db.connection import get_index_state_path
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_time", SimpleNamespace(monotonic=lambda: 10.0, time=lambda: 10.0))
+    monkeypatch.setenv("ROAM_NO_AUTO_INDEX", "1")
+    assert mcp_server.search_symbol("indexed_helper")["_meta"]["index_state"] == "fresh"
+
+    get_index_state_path().write_text("invalid publication marker", encoding="utf-8")
+    after = mcp_server.search_symbol("indexed_helper")
+    assert after["error_code"] == "INDEX_STALE"
+    assert after["summary"]["state"] == "incomplete"
+    assert after["isError"] is True
+
+
+def test_mcp_tech_stack_resource_preserves_cached_index_disclosure(query_project, monkeypatch):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setattr(mcp_server, "_FRESHNESS_CACHE_TTL_S", 0)
+    assert "languages" in json.loads(mcp_server.get_tech_stack_resource())
+    (query_project / "app.py").write_text("def renamed_helper(): pass\n", encoding="utf-8")
+    after = json.loads(mcp_server.get_tech_stack_resource())
+    assert after["_meta"]["index_state"] == "stale"
+    assert after["_meta"]["index_changed_files"] == 1
+    assert after["summary"]["partial_success"] is True
+
+
+@pytest.mark.parametrize("selection", [{}, {"section": "summary"}, {"jq": ".summary.verdict"}])
+def test_mcp_handle_fetch_discloses_current_index_alongside_its_snapshot(query_project, monkeypatch, selection):
+    from roam import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ROAM_RESULT_CACHE", {})
+    monkeypatch.setenv("ROAM_MCP_HANDLE_KB", "1")
+    original = mcp_server.search_symbol("indexed_helper")
+    original["padding"] = "x" * 1024
+    handle = mcp_server._maybe_handle_off(original, tool_name="roam_search")
+    assert handle["_meta"]["index_state"] == "fresh"
+    (query_project / "app.py").write_text("def renamed_helper(): pass\n", encoding="utf-8")
+
+    after = mcp_server.fetch_handle(handle["handle"], **selection)
+    assert after["summary"]["payload_scope"] == "historical"
+    assert after["_meta"]["index_scope"] == "current_project"
+    assert after["_meta"]["index_state"] == "stale"
+    assert after["_meta"]["index_changed_files"] == 1
+    assert after["summary"]["partial_success"] is True
+    if not selection:
+        assert after["parsed"]["_meta"]["index_state"] == "fresh"
+
+
+def test_mcp_doctor_handle_marks_its_checks_historical(query_project, monkeypatch):
+    from roam import mcp_server
+
+    monkeypatch.setenv("ROAM_MCP_HANDLE_KB", "1")
+    handle = mcp_server.roam_doctor()
+    assert handle["is_handle"] is True
+    (query_project / "app.py").write_text("def renamed_helper(): pass\n", encoding="utf-8")
+
+    result = mcp_server.fetch_handle(handle["handle"], section="checks")
+    check = next(item for item in result["data"] if item["name"] == "Index freshness")
+    assert check["state"] == "fresh"
+    assert result["summary"]["payload_scope"] == "historical"
+    assert result["_meta"]["index_scope"] == "current_project"
+    assert result["_meta"]["index_state"] == "stale"
+
+
+@pytest.mark.parametrize("relative_path", ["app.py", "Pkg/Source (one).py"])
+def test_untracking_an_unchanged_indexed_file_keeps_the_index_fresh(
+    project_factory, cli_runner, monkeypatch, relative_path
+):
+    project = project_factory({relative_path: "def indexed_helper():\n    return 1\n"})
+    monkeypatch.chdir(project)
+    path = project / relative_path
+    original = path.read_bytes()
+    old_stat = path.stat()
+    subprocess.run(["git", "rm", "--cached", "--", relative_path], check=True, capture_output=True)
+    assert path.read_bytes() == original
+
+    def check():
+        result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)["_meta"]
+
+    assert check()["index_state"] == "fresh"
+    path.write_bytes(original.replace(b"return 1", b"return 3"))
+    os.utime(path, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns))
+    changed = check()
+    assert changed["index_state"] == "stale"
+    assert changed["index_changed_files"] == 1
+    path.unlink()
+    assert check()["index_changed_files"] == 1
 
 
 def test_mcp_path_completion_discloses_freshness(query_project):

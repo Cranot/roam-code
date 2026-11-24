@@ -6171,11 +6171,9 @@ def _ensure_fresh_index(root: str = ".") -> dict | None:
 # server is long-running; an agent doing five consecutive
 # ``roam_preflight`` / ``roam_context`` / ``roam_impact`` calls on the
 # same symbol within a session pays the full DB+graph cost every time.
-# A small TTL cache keyed on (cmd, args-tuple, index-mtime) returns the
-# same envelope when the index hasn't changed — typical hit window for
-# an agent reasoning about one symbol is 30–120 seconds, well under
-# the 300s TTL.
-_ROAM_RESULT_CACHE: dict[tuple, tuple[float, float, dict, float]] = {}
+# Reuse query results while the same index is available. The working tree
+# observation has a shorter lifetime than the query result.
+_ROAM_RESULT_CACHE: dict[tuple, tuple[float, tuple, dict, float]] = {}
 _ROAM_CACHE_TTL_S = 300.0
 _FRESHNESS_CACHE_TTL_S = 3.0
 # Read-only commands eligible for caching. Adding a write-y command
@@ -6214,26 +6212,43 @@ _CACHEABLE_COMMANDS = frozenset(
         "weather",
         "churn",
         "hotspots",
-        "doctor",
         "map",
     }
 )
 
 
-def _index_mtime() -> float:
-    """Return current index DB mtime (cache invalidation key)."""
-    try:
-        from roam.db.connection import get_db_path
+def _cache_index_identity() -> tuple | None:
+    """Identify the current index and its publication and WAL files."""
+    from roam.db.connection import INDEX_STATE_NAME, get_db_path
 
-        p = get_db_path()
-        if p and p.exists():
-            return p.stat().st_mtime
-    except Exception as exc:  # noqa: BLE001 — cache-key probe must never break a tool call
-        # DB path unresolvable / stat failed — fall back to 0.0 (treats the
-        # cache as cold). Surface under ROAM_VERBOSE so a recurring stat
-        # failure doesn't silently disable mtime-based cache invalidation.
-        log_swallowed("mcp_server:index_mtime", exc)
-    return 0.0
+    try:
+        path = get_db_path(create=False).resolve()
+        primary = path.stat()
+        if not _stat_mod.S_ISREG(primary.st_mode):
+            return None
+        files = [primary]
+        sidecars = (path.with_name(path.name + "-wal"), path.with_name(INDEX_STATE_NAME))
+        for sidecar in sidecars:
+            try:
+                info = sidecar.stat()
+            except FileNotFoundError:
+                info = None
+            # Read-only SQLite connections may create/remove an empty WAL.
+            if info is not None and sidecar.name.endswith("-wal") and info.st_size == 0:
+                info = None
+            files.append(info)
+    except FileNotFoundError:
+        return None
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        log_swallowed("mcp_server:cache_index_identity", exc)
+        return None
+    # A read-only SQLite open can change the WAL ctime without changing its contents.
+    marker = files[-1]
+    stamps = tuple(
+        (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns) if info is not None else None
+        for info in files
+    )
+    return path, primary.st_ctime_ns, marker.st_ctime_ns if marker is not None else None, stamps
 
 
 def _track_query_result(result: dict) -> dict:
@@ -6326,66 +6341,69 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
     Uses in-process Click invocation (fast, no subprocess overhead) when
     *root* is ``"."``.  Falls back to subprocess for non-local roots.
 
-    v12.15: caches read-only command results in-memory for 5 minutes
-    (TTL keyed on the index DB's mtime so any reindex invalidates the
-    cache automatically). Same call within the window returns the
-    same envelope without re-running the command.
-
-    CLI envelopes carry their own index freshness. Cache hits refresh
-    that metadata because the working tree can change independently.
+    Reuses read-only results from the same index for up to five minutes.
+    Rechecks worktree freshness when the observation expires.
     """
     if root != ".":
         return _track_query_result(_run_roam_subprocess(args, root))
 
-    from roam.db.freshness import refuse_stale_index
+    from roam.db.freshness import refuse_stale_index, valid_index_freshness_metadata
 
     # Cache lookup — only for read-only commands.
     if args and args[0] in _CACHEABLE_COMMANDS and not refuse_stale_index():
         cache_key = (Path.cwd(), *args)
-        cached = _ROAM_RESULT_CACHE.get(cache_key)
+        identity = _cache_index_identity()
+        cached = _ROAM_RESULT_CACHE.get(cache_key) if identity is not None else None
         if cached is not None:
-            ts, mt, payload, checked_at = cached
-            if (_time.time() - ts) < _ROAM_CACHE_TTL_S and mt == _index_mtime():
-                # Stamp the envelope with a cache-hit marker so callers
-                # can observe the optimisation. Don't mutate the cached
-                # dict in case a future caller compares object identity.
-                if isinstance(payload, dict):
-                    now = _time.monotonic()
-                    if (now - checked_at) < _FRESHNESS_CACHE_TTL_S:
-                        meta = dict(payload.get("_meta") or {}, cache_hit=True)
-                        return _track_query_result({**payload, "_meta": meta})
-                    out = _refresh_cached_envelope(payload)
-                    if out is not None:
-                        _ROAM_RESULT_CACHE[cache_key] = (ts, mt, out, now)
-                        return _track_query_result(out)
+            ts, cached_identity, payload, checked_at = cached
+            if (
+                cached_identity == identity
+                and (_time.time() - ts) < _ROAM_CACHE_TTL_S
+                and valid_index_freshness_metadata(payload.get("_meta"))
+            ):
+                now = _time.monotonic()
+                if (now - checked_at) < _FRESHNESS_CACHE_TTL_S:
+                    return _track_query_result({**payload, "_meta": dict(payload["_meta"], cache_hit=True)})
+                out = _refresh_cached_envelope(payload)
+                if out is not None and identity == _cache_index_identity():
+                    _ROAM_RESULT_CACHE[cache_key] = (ts, identity, out, now)
+                    return _track_query_result(out)
+        _ROAM_RESULT_CACHE.pop(cache_key, None)
         checked_at = _time.monotonic()
         result = _run_roam_inprocess(args)
-        if isinstance(result, dict) and "error" not in result:
-            _ROAM_RESULT_CACHE[cache_key] = (_time.time(), _index_mtime(), result, checked_at)
+        if (
+            identity is not None
+            and isinstance(result, dict)
+            and not result.get("isError")
+            and "error" not in result
+            and valid_index_freshness_metadata(result.get("_meta"))
+            and identity == _cache_index_identity()
+        ):
+            _ROAM_RESULT_CACHE[cache_key] = (_time.time(), identity, result, checked_at)
         return _track_query_result(result)
     return _track_query_result(_run_roam_inprocess(args))
 
 
 def _refresh_cached_envelope(payload: dict) -> dict | None:
     """Refresh query metadata that can change without an index rebuild."""
+    import sqlite3
+
     from roam.db.connection import StaleDbDirError, find_project_root, open_db
     from roam.db.freshness import read_query_index_freshness
     from roam.output.formatter import stamp_query_index_freshness
 
-    meta = dict(payload.get("_meta") or {}, cache_hit=True)
-    out = {**payload, "_meta": meta}
-    if "index_changed_files" in meta:
+    try:
         root = find_project_root()
-        try:
-            with open_db(readonly=True, project_root=root, disclose_freshness=False) as conn:
-                freshness = read_query_index_freshness(conn, root)
-        except (OSError, click.ClickException, StaleDbDirError) as exc:
-            log_swallowed("mcp_server:refresh_cached_freshness", exc)
-            return None
-        if freshness.state == "fresh" and meta.get("index_state") != "fresh":
-            return None
-        out["summary"] = dict(out.get("summary") or {})
-        stamp_query_index_freshness(out, freshness)
+        with open_db(readonly=True, project_root=root, disclose_freshness=False) as conn:
+            freshness = read_query_index_freshness(conn, root)
+    except (OSError, click.ClickException, StaleDbDirError, sqlite3.Error) as exc:
+        log_swallowed("mcp_server:refresh_cached_freshness", exc)
+        return None
+    meta = dict(payload["_meta"], cache_hit=True)
+    if freshness.state == "fresh" and meta["index_state"] != "fresh":
+        return None
+    out = {**payload, "_meta": meta, "summary": dict(payload.get("summary") or {})}
+    stamp_query_index_freshness(out, freshness)
     return out
 
 
@@ -9028,6 +9046,25 @@ def _read_fetch_handle_payload(handle: str) -> tuple[str, object, dict | None]:
     return raw_text, payload, None
 
 
+def _disclose_handle_freshness(result: dict, payload: object, root: str) -> dict:
+    """Identify archived index evidence and disclose the current project's index separately."""
+    from roam.db.connection import find_project_root
+    from roam.db.freshness import project_index_freshness
+    from roam.output.formatter import stamp_query_index_freshness
+
+    if result.get("isError") or not isinstance(payload, dict):
+        return result
+    meta = payload.get("_meta")
+    has_observation = isinstance(meta, dict) and {"index_state", "index_changed_files", "stale_index"} & meta.keys()
+    if not has_observation and payload.get("command") != "doctor":
+        return result
+    result["summary"]["payload_scope"] = "historical"
+    if freshness := project_index_freshness(find_project_root(root), required=True):
+        stamp_query_index_freshness(result, freshness)
+        result["_meta"]["index_scope"] = "current_project"
+    return result
+
+
 @_tool(
     name="roam_fetch_handle",
     description="Fetch all or part of a large payload by handle — supports byte slice, section pick, jq projection.",
@@ -9046,6 +9083,8 @@ def fetch_handle(
     """Retrieve a large MCP response previously written to disk under a
     content-addressed handle. Supports chunked / projected retrieval so
     the agent never has to re-load the full 1MB+ payload in one shot.
+    Index evidence inside a handle describes the original call. The fetch
+    envelope reports the current project's index separately.
 
     WHEN TO USE: When a tool returned a small envelope with
     ``is_handle=true`` and a ``handle: "<sha16>"`` field, call this to
@@ -9096,9 +9135,8 @@ def fetch_handle(
     total_size = len(raw_bytes)
     top_keys: list[str] = sorted(payload.keys()) if isinstance(payload, dict) else []
 
-    # --- section pick ----------------------------------------------------
     if section:
-        return _fetch_handle_section(
+        result = _fetch_handle_section(
             handle=handle,
             payload=payload,
             section=section,
@@ -9106,9 +9144,8 @@ def fetch_handle(
             total_size=total_size,
         )
 
-    # --- jq projection ---------------------------------------------------
-    if jq:
-        return _fetch_handle_jq(
+    elif jq:
+        result = _fetch_handle_jq(
             handle=handle,
             payload=payload,
             jq=jq,
@@ -9116,15 +9153,16 @@ def fetch_handle(
             total_size=total_size,
         )
 
-    # --- byte slice (default) -------------------------------------------
-    return _fetch_handle_byte_slice(
-        handle=handle,
-        raw_bytes=raw_bytes,
-        offset=offset,
-        limit=limit,
-        top_keys=top_keys,
-        total_size=total_size,
-    )
+    else:
+        result = _fetch_handle_byte_slice(
+            handle=handle,
+            raw_bytes=raw_bytes,
+            offset=offset,
+            limit=limit,
+            top_keys=top_keys,
+            total_size=total_size,
+        )
+    return _disclose_handle_freshness(result, payload, root)
 
 
 # ---------------------------------------------------------------------------
@@ -12648,18 +12686,23 @@ if mcp is not None:
     @mcp.resource("roam://tech-stack")
     def get_tech_stack_resource() -> str:
         """Language and framework breakdown (JSON)."""
+        from roam.db.freshness import strongest_index_metadata
+
         data = _run_roam(["understand"])
-        # Extract just the tech stack portion
-        if isinstance(data, dict):
-            return json.dumps(
-                {
-                    "languages": data.get("languages", {}),
-                    "files": data.get("files", {}),
-                    "frameworks": data.get("frameworks", []),
-                },
-                indent=2,
-            )
-        return json.dumps(data, indent=2)
+        if not isinstance(data, dict) or data.get("isError") or "error" in data:
+            return json.dumps(data, indent=2)
+        result = {
+            "languages": data.get("languages", {}),
+            "files": data.get("files", {}),
+            "frameworks": data.get("frameworks", []),
+        }
+        meta, degraded = strongest_index_metadata([data])
+        if meta:
+            result["_meta"] = meta
+        summary = data.get("summary")
+        if degraded or isinstance(summary, dict) and "partial_success" in summary:
+            result["summary"] = {"partial_success": degraded or summary["partial_success"]}
+        return json.dumps(result, indent=2)
 
     @mcp.resource("roam://dead-code")
     def get_dead_code_resource() -> str:

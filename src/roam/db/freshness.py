@@ -161,6 +161,7 @@ def _compare_indexed_files(
     *,
     compare_all: bool,
     ignored_paths: set[str],
+    untracked_paths: set[str],
     dirty: bool,
     include_excluded: bool,
     config_changed: bool,
@@ -183,7 +184,8 @@ def _compare_indexed_files(
                 return None, _BUDGET_EXCEEDED
             listed = path in paths and path not in ignored_paths
             paths.discard(path)
-            if not dirty and not compare_all:
+            untracked = path in untracked_paths
+            if not dirty and not compare_all and not untracked:
                 # Git identified a change to a path already accepted by discovery.
                 changed_paths.add(path)
                 continue
@@ -196,7 +198,9 @@ def _compare_indexed_files(
                 full_path = os.path.join(root_path, path)
                 current = os.stat(full_path)
                 changed = not stat.S_ISREG(current.st_mode) or current.st_size > MAX_FILE_SIZE
-                if not changed and current.st_mtime != mtime:
+                # A staged removal leaves Git without a tracked copy of the
+                # file. Compare the bytes even if its timestamp was preserved.
+                if not changed and (untracked or current.st_mtime != mtime):
                     changed = file_hash(full_path) != digest
             except (FileNotFoundError, NotADirectoryError):
                 changed = True
@@ -254,7 +258,7 @@ def _candidate_paths(
     config_changed: bool,
     dirty_paths: list[str] | None,
     deadline: _CheckDeadline,
-) -> tuple[set[str] | None, bool, set[str], str | None]:
+) -> tuple[set[str] | None, bool, set[str], set[str], str | None]:
     diff_paths: set[str] = set()
     # Status describes changes on either side of the staging area. For a
     # clean build those changes can cancel each other or changes in HEAD.
@@ -273,7 +277,7 @@ def _candidate_paths(
             deadline,
         )
         if diff is None:
-            return None, False, set(), reason
+            return None, False, set(), set(), reason
         fields = diff.split(b"\0")
         if (
             fields[-1]
@@ -283,7 +287,7 @@ def _candidate_paths(
                 for kind, path in zip(fields[:-1:2], fields[1::2])
             )
         ):
-            return None, False, set(), "git diff reported an incomplete result"
+            return None, False, set(), set(), "git diff reported an incomplete result"
         diff_paths = _git_paths(diff, name_status=True)
 
     prior = set(dirty_paths or ())
@@ -292,10 +296,14 @@ def _candidate_paths(
     # discovery scope via info/exclude or a configured excludes file.
     if dirty_paths is not None and not config_changed and not _has_gitignore(status_paths | diff_paths | prior):
         prefix = root.relative_to(git_root).as_posix() + "/" if root != git_root else ""
+        untracked_status = _git_paths(b"\0".join(record[2:] for record in records if record.startswith(b"? ")))
+        untracked_paths = {
+            path[len(prefix) :] for path in untracked_status if path.startswith(prefix) and not path.endswith("/")
+        }
         if reconcile_worktree:
             # The diff covers tracked changes. Keep status for untracked
             # files, including collapsed directories that need discovery.
-            status_paths = _git_paths(b"\0".join(record[2:] for record in records if record.startswith(b"? ")))
+            status_paths = untracked_status
         collapsed = any(
             path.endswith("/") and (path.startswith(prefix) or prefix.startswith(path)) for path in status_paths
         )
@@ -306,25 +314,27 @@ def _candidate_paths(
                 root, ["git", "ls-files", "-z", "--others", "--exclude-standard"], deadline
             )
             if untracked is None:
-                return None, False, set(), reason
+                return None, False, set(), set(), reason
             if _has_gitignore(untracked):
                 current = None
             else:
                 current.update(untracked)
+                if clean_build:
+                    untracked_paths.update(untracked)
         if current is not None:
             # A staged deletion is visible in status even when the file
             # remains on disk and now falls under an exclude rule.
             ignored, reason = _recorded_paths_ignored(root, prior, deadline)
             if ignored is None:
-                return None, False, set(), reason
+                return None, False, set(), set(), reason
             current.update(prior)
             current.update(path[len(prefix) :] for path in diff_paths if path.startswith(prefix))
-            return current, False, ignored, None
+            return current, False, ignored, untracked_paths, None
 
     from roam.index.discovery import GIT_LS_FILES
 
     listing, reason = _listed_git_paths(root, list(GIT_LS_FILES), deadline)
-    return listing, True, set(), reason
+    return listing, True, set(), set(), reason
 
 
 @dataclass(frozen=True)
@@ -420,6 +430,16 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
         return QueryIndexFreshness(age_s, None, "git status did not report a HEAD commit", indexed_commit=indexed_head)
     if not status.endswith(b"\0"):
         return QueryIndexFreshness(age_s, None, "git status reported an incomplete result", indexed_commit=indexed_head)
+    path_offsets = {b"1 ": 8, b"u ": 10, b"? ": 1}
+    for record in status[:-1].split(b"\0"):
+        if record.startswith(b"# "):
+            continue
+        offset = path_offsets.get(record[:2])
+        fields = record.split(b" ", offset) if offset is not None else []
+        if offset is None or len(fields) != offset + 1 or not fields[-1]:
+            return QueryIndexFreshness(
+                age_s, None, "git status reported a malformed path record", indexed_commit=indexed_head
+            )
     metadata = _manifest_notes(notes)
     options = metadata.get("index_options")
     include_excluded = isinstance(options, dict) and options.get("include_excluded") is True
@@ -431,7 +451,7 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
     ):
         recorded_paths = None
     config_changed = not include_excluded and _config_hash(root) != config_hash
-    paths, compare_all, ignored_paths, reason = _candidate_paths(
+    paths, compare_all, ignored_paths, untracked_paths, reason = _candidate_paths(
         root,
         git_root,
         indexed_head,
@@ -451,6 +471,7 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
             paths,
             compare_all=compare_all,
             ignored_paths=ignored_paths,
+            untracked_paths=untracked_paths,
             dirty=bool(dirty_hash),
             include_excluded=include_excluded,
             config_changed=config_changed,
@@ -671,6 +692,17 @@ def freshness_priority(state: str, *, skipped: bool = False) -> int:
     return _FRESHNESS_PRIORITY.get(state, -1) if not skipped else -1
 
 
+def valid_index_freshness_metadata(meta: object) -> bool:
+    """Check the state and count before reusing a serialized observation."""
+    if not isinstance(meta, dict) or "index_changed_files" not in meta:
+        return False
+    state, count = meta.get("index_state"), meta["index_changed_files"]
+    if state == "unknown":
+        reason = meta.get("index_state_reason")
+        return count is None and isinstance(reason, str) and bool(reason)
+    return type(count) is int and ((state == "fresh" and count == 0) or (state == "stale" and count > 0))
+
+
 def strongest_index_metadata(results: list[dict]) -> tuple[dict, bool]:
     """Copy the strongest index observation and indicate whether it was degraded."""
     selected: dict = {}
@@ -679,12 +711,7 @@ def strongest_index_metadata(results: list[dict]) -> tuple[dict, bool]:
         meta = result.get("_meta") if isinstance(result, dict) else None
         if not isinstance(meta, dict) or not {"index_state", "index_changed_files", "stale_index"} & meta.keys():
             continue
-        state, count = meta.get("index_state"), meta.get("index_changed_files")
-        if not (
-            (state == "fresh" and type(count) is int and count == 0)
-            or (state == "stale" and type(count) is int and count > 0)
-            or (state == "unknown" and count is None and isinstance(meta.get("index_state_reason"), str))
-        ):
+        if not valid_index_freshness_metadata(meta):
             meta = {
                 "index_state": "unknown",
                 "index_changed_files": None,

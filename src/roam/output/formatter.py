@@ -95,6 +95,7 @@ _NON_CACHEABLE_COMMANDS = {
     "vuln-map",
     "reset",
     "clean",
+    "doctor",
     "index",
     "init",
 }

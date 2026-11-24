@@ -228,6 +228,15 @@ most 2,147,483 seconds.
 The freshness check relies on paths visible to `git status`. Edits to files
 marked `assume-unchanged` or `skip-worktree` can go undetected. Clear the
 file's flag before checking freshness if the file is present and editable.
+Untracking a file with `git rm --cached` leaves the index fresh if the
+file is still eligible for discovery and its bytes match the indexed copy.
+A file that disappears, is ignored, or changes still counts as changed.
+
+Each `roam_doctor` call runs the current diagnostics. When fetching a stored
+response by handle, `summary.payload_scope: historical` identifies index
+evidence from the original call. The fetch envelope's
+`_meta.index_scope: current_project` identifies its separate observation of
+the current project's index.
 
 An ownership error means another writer is active, or Roam cannot prove that
 the recorded owner is stale. Wait for the writer, inspect the process that
