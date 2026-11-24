@@ -1174,7 +1174,9 @@ class LazyGroup(click.Group):
         _emit_deprecation_notice_for_args(args)
         try:
             name, command, remaining = super().resolve_command(ctx, args)
-            return name, _with_history_disclosure(command), remaining
+            if command is not None:
+                command = _with_history_disclosure(command)
+            return name, command, remaining
         except click.UsageError as exc:
             hinted = _unknown_command_usage_error(args, exc)
             if hinted is not None:

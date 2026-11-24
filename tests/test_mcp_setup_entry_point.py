@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import sys
 import sysconfig
 from pathlib import Path
 
@@ -10,6 +11,37 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+
+@pytest.mark.parametrize("venv", [True, False], ids=["activated-venv", "global"])
+def test_setup_writes_launcher_for_a_separate_shell(tmp_path, monkeypatch, venv):
+    prefix = tmp_path / "installation"
+    scripts = prefix / ("Scripts" if os.name == "nt" else "bin")
+    scripts.mkdir(parents=True)
+    launcher = scripts / ("roam.exe" if os.name == "nt" else "roam")
+    launcher.touch()
+    launcher.chmod(0o755)
+    monkeypatch.setattr(sys, "argv", [str(launcher)])
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    monkeypatch.setattr(sys, "base_prefix", str(tmp_path / "python" if venv else prefix))
+    # Installing the scripts directory on PATH also models activation done
+    # directly by an agent shell, without a VIRTUAL_ENV variable.
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setenv("PATH", str(scripts))
+    monkeypatch.chdir(tmp_path)
+    found = shutil.which("roam")
+    assert found is not None and launcher.samefile(found)
+
+    result = CliRunner().invoke(cli, ["--json", "mcp-setup", "claude-code", "--write"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    config = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+    assert config["mcpServers"]["roam-code"]["command"] == (str(launcher) if venv else "roam")
+    if venv:
+        assert "virtual environment" in data["launcher_warning"]
+        assert str(launcher) in data["next_step"]
+    else:
+        assert "launcher_warning" not in data
 
 
 @pytest.mark.parametrize("platform", ["claude-code", "codex-cli"])

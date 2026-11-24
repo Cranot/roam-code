@@ -914,15 +914,19 @@ def test_verify_ranks_cli_invoke_with_direct():
     }
 
 
-def test_attest_evidence_counts_file_level_kinds(monkeypatch):
-    from roam.commands import cmd_attest, cmd_diff
+def test_attest_evidence_counts_file_level_kinds(monkeypatch, tmp_path):
+    from roam.commands import cmd_affected_tests, cmd_attest
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
 
     entries = [
         {"file": "tests/test_i.py", "symbol": None, "kind": "CLI_INVOKE", "hops": None},
         {"file": "tests/test_m.py", "symbol": None, "kind": "MODULE_IMPORT", "hops": None},
         {"file": "tests/test_p.py", "symbol": None, "kind": "CLI_POSSIBLE", "hops": None},
     ]
-    monkeypatch.setattr(cmd_diff, "_collect_affected_tests", lambda conn, sym_by_file: (entries, "pytest x"))
-    evidence = cmd_attest._collect_affected_tests_evidence(None, {})
+    monkeypatch.setattr(cmd_affected_tests, "_gather_affected_tests", lambda conn, ids, paths: entries)
+    evidence = cmd_attest._collect_affected_tests_evidence(None, {"app.py": [{"id": 1}]})
     counts = (evidence["cli_invoke"], evidence["module_import"], evidence["cli_possible"])
     assert (evidence["selected"], *counts) == (3, 1, 1, 1)
+    assert evidence["command"] == "pytest tests/test_i.py tests/test_m.py tests/test_p.py"

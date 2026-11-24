@@ -177,6 +177,21 @@ def test_preflight_envelope_validates_against_schema(tmp_path: Path) -> None:
     assert not errors, "\n".join(["Schema validation errors:", *errors])
 
 
+def test_preflight_schema_declares_test_command_entries() -> None:
+    tests = _SCHEMA_PREFLIGHT["properties"]["tests"]["properties"]
+    schema = tests["test_commands"]
+    command = {
+        "runner": "vitest",
+        "command": "npx vitest run storage.test.ts",
+        "shell": "posix",
+        "files": ["storage.test.ts"],
+    }
+    assert schema["type"] == "array"
+    assert set(schema["items"]["required"]) == set(command)
+    assert set(schema["items"]["properties"]) == set(command)
+    assert not _validate([command], schema)
+
+
 def test_impact_schema_structure() -> None:
     """The specialised schema declares the high-leverage envelope keys agents read."""
     props = _SCHEMA_IMPACT["properties"]

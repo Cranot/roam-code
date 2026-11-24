@@ -1716,7 +1716,7 @@ def _apply_envelope_budget(out: dict, budget: int, uncapped: bool = False) -> di
 def _disclose_history_depth(command: str, summary: dict, payload: dict) -> None:
     import click
 
-    from roam.git_utils import HISTORY_WARNING_CONTEXT_KEY
+    from roam.git_utils import HISTORY_COMPOSITE_COMMANDS, HISTORY_WARNING_CONTEXT_KEY, history_depth_advisory
 
     ctx = click.get_current_context(silent=True)
     warning = ctx.meta.get(HISTORY_WARNING_CONTEXT_KEY) if ctx is not None else None
@@ -1726,7 +1726,8 @@ def _disclose_history_depth(command: str, summary: dict, payload: dict) -> None:
     payload["history_shallow"] = shallow
     if message is None:
         return
-    summary["partial_success"] = True
+    if command not in HISTORY_COMPOSITE_COMMANDS and not history_depth_advisory.get():
+        summary["partial_success"] = True
     verdict = summary.get("verdict")
     summary["verdict"] = f"{verdict.rstrip('.')}. {message}" if isinstance(verdict, str) and verdict else message
 

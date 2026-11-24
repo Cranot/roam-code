@@ -154,3 +154,47 @@ def test_git_false_with_present_shallow_marker_is_unverified(history_checkout, m
     data = json.loads(response.stdout)
     assert data["history_shallow"] is None
     assert "depth could not be checked" in data["summary"]["verdict"]
+
+
+@pytest.fixture(params=[True, None], ids=["depth-1", "unknown-depth"])
+def limited_checkout(history_checkout, monkeypatch, request):
+    from roam import git_utils
+
+    checkout = history_checkout(True)
+    if request.param is None:
+        monkeypatch.setattr(git_utils, "git_history_shallow", lambda root: None)
+    message = "Git history is shallow" if request.param else "Git history depth could not be checked"
+    return checkout, request.param, message
+
+
+def test_pr_analyze_accepts_history_limited_checkout(limited_checkout):
+    checkout, shallow, message = limited_checkout
+    source = checkout / "example.py"
+    source.write_text(source.read_text(encoding="utf-8").replace("return 1", "return 2"), encoding="utf-8")
+    subprocess.run(["git", "add", "example.py"], cwd=checkout, check=True, capture_output=True)
+
+    runner = CliRunner()
+    args = ["pr-analyze", "--staged"]
+    result = runner.invoke(cli, ["--json", *args], input="")
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert data["summary"].get("state") != "diff_failed", data["summary"]
+    assert not data["summary"].get("failed_subcommands")
+    assert data["summary"]["partial_success"] is False
+    assert data["history_shallow"] is shallow
+    assert message in data["summary"]["verdict"]
+
+    gated = runner.invoke(cli, [*args, "--gate"], input="")
+    assert gated.exit_code == 0, gated.output
+    assert message in gated.stderr
+
+
+def test_audit_accepts_history_limited_checkout(limited_checkout):
+    _, shallow, message = limited_checkout
+    result = CliRunner().invoke(cli, ["--json", "audit"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert "incomplete checks" not in data["summary"]["verdict"]
+    assert data["summary"]["partial_success"] is False, data["summary"]
+    assert data["history_shallow"] is shallow
+    assert message in data["summary"]["verdict"]

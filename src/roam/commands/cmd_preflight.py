@@ -323,7 +323,8 @@ def _check_affected_tests(conn, sym_ids, file_paths):
     suggested = test_files[:_MAX_SUGGESTED_TEST_FILES]
     commands, unknown_runners = affected_test_commands(find_project_root(), suggested)
     suffix = f"  # (+{len(test_files) - len(suggested)} more)" if truncated_files else ""
-    pytest_cmd = "\n".join(entry["command"] for entry in commands if entry["runner"] == "pytest")
+    # Despite its name, this preflight field has always held the detected runner.
+    pytest_cmd = "\n".join(entry["command"] for entry in commands)
     if pytest_cmd:
         pytest_cmd += suffix
     severity = _test_severity(direct, transitive, colocated, cli_invoke, module_import)

@@ -575,21 +575,33 @@ def mcp_setup(ctx, platform, preset, write):
     launcher = _running_launcher()
     on_path = shutil.which("roam")
     matches_path = _same_launcher(launcher, on_path)
+    # A venv's scripts directory can disappear from PATH in the MCP client.
+    # A tool manager's launcher exposed outside the venv remains usable.
+    venv_on_path = (
+        matches_path
+        and on_path is not None
+        and sys.prefix != sys.base_prefix
+        and Path(on_path).parent.resolve().is_relative_to(Path(sys.prefix).resolve())
+    )
+    use_path = matches_path and not venv_on_path
     shell = "powershell" if os.name == "nt" else "posix"
-    command = "roam" if matches_path else str(launcher)
+    command = "roam" if use_path else str(launcher)
     run_launcher = command
     run_prefix = "In PowerShell, run" if shell == "powershell" else "Run"
     launcher_warning = None
     launcher_unavailable = False
-    if not matches_path:
+    if not use_path:
         try:
             launcher_unavailable = not (launcher.is_file() and os.access(launcher, os.X_OK))
         except OSError:
             launcher_unavailable = True
         if not launcher_unavailable:
-            launcher_warning = (
-                f"Using the absolute path {launcher} because PATH does not resolve to this Roam installation."
+            reason = (
+                "the virtual environment's scripts directory may be absent from the MCP client's PATH"
+                if venv_on_path
+                else "PATH does not resolve to this Roam installation"
             )
+            launcher_warning = f"Using the absolute path {launcher} because {reason}."
             if cfg.get("config_path", "").startswith("./"):
                 launcher_warning += (
                     " The project configuration will contain a machine-specific path. "

@@ -1102,6 +1102,19 @@ _SCHEMA_PREFLIGHT = {
                 "total": {"type": "integer", "minimum": 0},
                 "test_files": {"type": "array", "items": {"type": "string"}},
                 "pytest_command": {"type": ["string", "null"]},
+                "test_commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["runner", "command", "shell", "files"],
+                        "properties": {
+                            "runner": {"type": "string"},
+                            "command": {"type": "string"},
+                            "shell": {"type": "string"},
+                            "files": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
                 "severity": {"type": "string"},
             },
         },

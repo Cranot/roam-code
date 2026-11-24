@@ -32,6 +32,21 @@ _MANIFESTS = {
 _WINDOWS = os.name == "nt"
 _PYTEST_DEPENDENCY = re.compile(r"pytest(?=\s|[\[<>=!~;@]|$)", re.IGNORECASE)
 
+# Vitest has reduced its defaults over time. Include the older exclusions
+# because static detection does not load the project's Vitest version.
+_VITEST_DEFAULT_EXCLUDES = (
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/cypress/**",
+    "**/.{idea,git,cache,output,temp}/**",
+    "**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*",
+)
+_JEST_DEFAULT_TEST_STEMS = {
+    "**/__tests__/**/*": r"(?:[^/]+/)*__tests__/(?:[^/]+/)*[^/]*",
+    "**/?(*.)+(spec|test)": r"(?:[^/]+/)*(?:[^/]*\.)?(?:spec|test)+",
+}
+_JEST_DEFAULT_TEST_EXTENSIONS = {"[jt]s?(x)": r"[jt]sx?", "?([mc])[jt]s?(x)": r"[mc]?[jt]sx?"}
+
 
 # Keep quoted/escaped separators inside shell words so an argument cannot
 # masquerade as a command. Shell scripts are examined as text, never run.
@@ -90,12 +105,51 @@ def _script_runner(invocations):
     return next(iter(runners)) if len(runners) == 1 else False
 
 
-def _literal_strings(node):
-    nodes = node.named_children if node.type == "array" else [node]
+def _string_literal(node):
     try:
-        return [ast.literal_eval(child.text.decode("utf-8")) for child in nodes if child.type == "string"]
+        return ast.literal_eval(node.text.decode("utf-8"))
     except SyntaxError as exc:
         raise ValueError("unsupported JavaScript string literal") from exc
+
+
+def _vitest_default_bindings(root):
+    bindings = set()
+    for statement in root.named_children:
+        if statement.type != "import_statement":
+            continue
+        source = statement.child_by_field_name("source")
+        if source is None or _string_literal(source) != "vitest/config":
+            continue
+        clause = next((child for child in statement.named_children if child.type == "import_clause"), None)
+        if clause is None:
+            continue
+        imports = next((child for child in clause.named_children if child.type == "named_imports"), None)
+        if imports is not None:
+            for specifier in imports.named_children:
+                name = specifier.child_by_field_name("name")
+                if name is not None and name.text == b"configDefaults":
+                    alias = specifier.child_by_field_name("alias")
+                    bindings.add((alias or name).text)
+    return bindings
+
+
+def _config_patterns(value, default_bindings):
+    patterns = []
+    for item in value.named_children if value.type == "array" else [value]:
+        if item.type == "string":
+            patterns.append(_string_literal(item))
+            continue
+        if item.type == "comment" and value.type == "array":
+            continue
+        if item.type == "spread_element" and default_bindings:
+            member = item.named_children[0]
+            owner = member.child_by_field_name("object")
+            prop = member.child_by_field_name("property")
+            if owner is not None and owner.text in default_bindings and prop is not None and prop.text == b"exclude":
+                patterns.extend(_VITEST_DEFAULT_EXCLUDES)
+                continue
+        raise ValueError("non-static test configuration value")
+    return patterns
 
 
 def _js_config_scope(path, runner):
@@ -112,6 +166,7 @@ def _js_config_scope(path, runner):
         "jest": {"roots", "testMatch", "testRegex", "testPathIgnorePatterns"},
         "vitest": {"include", "exclude"},
     }[runner]
+    defaults = _vitest_default_bindings(tree.root_node) if runner == "vitest" else set()
     scope = {}
     pending = [tree.root_node]
     while pending:
@@ -123,15 +178,10 @@ def _js_config_scope(path, runner):
                 parent.type == "pair" and parent.child_by_field_name("key").text.decode("utf-8").strip("'\"") == "test"
             )
             if key in settings and (runner != "vitest" or vitest_test_settings):
+                if key in scope:
+                    raise ValueError(f"duplicate {key} in {path.name}")
                 value = node.child_by_field_name("value")
-                literals = _literal_strings(value)
-                if (
-                    key in scope
-                    or (not literals and value.type != "array")
-                    or (value.type == "array" and len(literals) != len(value.named_children))
-                ):
-                    raise ValueError(f"non-static {key} in {path.name}")
-                scope[key] = literals
+                scope[key] = _config_patterns(value, defaults if key == "exclude" else ())
         pending.extend(node.named_children)
     return scope
 
@@ -185,6 +235,13 @@ def _match_test_glob(file, pattern):
     pattern = pattern.removeprefix("<rootDir>/").removeprefix("./")
     if PurePosixPath(pattern).is_absolute() or pattern.startswith("!"):
         return False
+    # Jest 29 and 30 use micromatch extglobs in their default testMatch.
+    stem, _, extension = pattern.rpartition(".")
+    if stem in _JEST_DEFAULT_TEST_STEMS and extension in _JEST_DEFAULT_TEST_EXTENSIONS:
+        return (
+            re.fullmatch(rf"{_JEST_DEFAULT_TEST_STEMS[stem]}\.{_JEST_DEFAULT_TEST_EXTENSIONS[extension]}", file)
+            is not None
+        )
     return matches_glob(file, pattern)
 
 
@@ -253,8 +310,8 @@ def _js_runner(evidence, file):
         runner = _only_runner({_script_runner(invocations) for invocations in explicit})
     elif configured:
         runner = _only_runner(configured)
-    elif "test" in scripts:
-        default = scripts["test"]
+    elif "test" in scripts or "test:unit" in scripts:
+        default = scripts["test"] if "test" in scripts else scripts["test:unit"]
         if default and len(default) == 1:
             executable, args = default[0]
             if executable in {"nr", "run"} and len(args) == 1 and args[0] != "test":

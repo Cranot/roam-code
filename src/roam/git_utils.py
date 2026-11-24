@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 _GIT_SUBPROCESS_ENV_ALLOWLIST = frozenset(
@@ -104,6 +106,7 @@ HISTORY_REPORT_COMMANDS = frozenset(
         "agent-export",
         "ai-ratio",
         "attest",
+        "audit",
         "blame-reviewers",
         "bus-factor",
         "clean",
@@ -130,6 +133,7 @@ HISTORY_REPORT_COMMANDS = frozenset(
         "partition",
         "postmortem",
         "preflight",
+        "pr-analyze",
         "pr-prep",
         "pr-risk",
         "recommend",
@@ -148,6 +152,20 @@ HISTORY_REPORT_COMMANDS = frozenset(
 )
 
 HISTORY_WARNING_CONTEXT_KEY = "roam.git_history_warning"
+# Composite status reflects whether the checks ran. Their history notice is
+# advisory, as it is in the child envelopes they collect.
+HISTORY_COMPOSITE_COMMANDS = frozenset({"audit", "pr-analyze", "pr-prep"})
+history_depth_advisory: ContextVar[bool] = ContextVar("history_depth_advisory", default=False)
+
+
+@contextmanager
+def advisory_history_depth():
+    """Keep history notices advisory during an in-process child invocation."""
+    token = history_depth_advisory.set(True)
+    try:
+        yield
+    finally:
+        history_depth_advisory.reset(token)
 
 
 def git_history_shallow(root: Path) -> bool | None:
@@ -162,7 +180,7 @@ def git_history_shallow(root: Path) -> bool | None:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if result.returncode != 0:
+    if result.returncode != 0 or not isinstance(result.stdout, bytes):
         return None
     depth, _, metadata = result.stdout.partition(b"\n")
     depth = depth.removesuffix(b"\r")

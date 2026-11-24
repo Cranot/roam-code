@@ -45,6 +45,7 @@ from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
+from roam.git_utils import advisory_history_depth
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
@@ -57,7 +58,8 @@ def _capture(args: list[str]) -> dict:
     budget = parent.obj.get("budget") if parent and isinstance(parent.obj, dict) else None
     explicit = parent.obj.get("budget_explicit", False) if parent and isinstance(parent.obj, dict) else False
     budget_args = ["--budget", str(budget)] if budget is not None and (budget != 0 or explicit) else []
-    result = runner.invoke(cli, ["--json", *budget_args, *args])
+    with advisory_history_depth():
+        result = runner.invoke(cli, ["--json", *budget_args, *args])
     try:
         payload = _json.loads(result.stdout)
         if not isinstance(payload, dict):

@@ -68,6 +68,94 @@ def test_preflight_suggests_vitest_for_typescript(mixed_tests, cli_runner):
 
 
 @pytest.mark.parametrize(
+    ("scripts", "config", "contents", "runner", "command"),
+    [
+        (
+            {"test": "vitest"},
+            "vitest.config.ts",
+            "import { configDefaults, defineConfig } from 'vitest/config';\n"
+            "export default defineConfig({test: {exclude: [...configDefaults.exclude, 'e2e/**']}});",
+            "vitest",
+            "npx vitest run storage.test.ts",
+        ),
+        (
+            {"test:unit": "vitest", "test:e2e": "playwright test"},
+            None,
+            None,
+            "vitest",
+            "npx vitest run storage.test.ts",
+        ),
+        (
+            {},
+            "jest.config.js",
+            "module.exports = {testMatch: ['**/__tests__/**/*.?([mc])[jt]s?(x)', "
+            "'**/?(*.)+(spec|test).?([mc])[jt]s?(x)']};",
+            "jest",
+            "npx jest --runTestsByPath storage.test.ts",
+        ),
+    ],
+    ids=["vitest-default-excludes", "unit-and-e2e-scripts", "jest-default-testmatch"],
+)
+def test_preflight_suggests_runner_for_common_js_layouts(
+    mixed_tests, cli_runner, scripts, config, contents, runner, command
+):
+    from roam.output.test_commands import affected_test_commands
+
+    (mixed_tests / "package.json").write_text(json.dumps({"scripts": scripts}), encoding="utf-8")
+    if config:
+        (mixed_tests / config).write_text(contents, encoding="utf-8")
+
+    result = invoke_cli(cli_runner, ["preflight", "useStorage"])
+    assert result.exit_code == 0, result.output
+    assert f"Suggested tests: {command}" in result.output
+
+    if runner == "jest":
+        files = ["__tests__/nested/helper.cts", "spec.test.mjs", "bare.test.jsx", "src/helper.ts"]
+        commands, unknown = affected_test_commands(mixed_tests, files)
+        assert commands[0]["files"] == files[:-1]
+        assert unknown == files[-1:]
+    else:
+        path = "e2e/storage.test.ts"
+        commands, unknown = affected_test_commands(mixed_tests, [path])
+        if config:
+            assert (commands, unknown) == ([], [path])
+        else:
+            assert commands[0]["runner"] == "playwright"
+            assert unknown == []
+
+
+def test_preflight_keeps_legacy_command_for_non_pytest_runner(mixed_tests, cli_runner):
+    result = invoke_cli(cli_runner, ["--json", "preflight", "useStorage"])
+    assert result.exit_code == 0, result.output
+    tests = json.loads(result.stdout)["tests"]
+    assert tests["pytest_command"] == "npx vitest run storage.test.ts"
+    assert tests["test_commands"][0]["command"] == tests["pytest_command"]
+
+
+def test_attest_reports_signed_command_and_runner_metadata(mixed_tests, cli_runner):
+    from hashlib import sha256
+
+    source = mixed_tests / "main.py"
+    source.write_text("def transform(): return 1\n", encoding="utf-8")
+    result = invoke_cli(cli_runner, ["--json", "attest", "--sign"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    evidence = payload["evidence"]
+    tests = evidence["tests"]
+    assert tests["command"] == "pytest test_main.py"
+    assert tests["test_run"]["test_commands"][0]["command"] == tests["command"]
+    assert (
+        payload["attestation"]["content_hash"]
+        == "sha256:" + sha256(json.dumps(evidence, sort_keys=True, default=str).encode()).hexdigest()
+    )
+
+    result = invoke_cli(cli_runner, ["attest", "--format", "markdown"])
+    assert result.exit_code == 0, result.output
+    assert "- `pytest test_main.py`" in result.stdout
+    assert "test_commands" not in result.stdout
+
+
+@pytest.mark.parametrize(
     ("package", "expected"),
     [
         (
