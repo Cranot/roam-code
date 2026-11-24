@@ -19,6 +19,8 @@ from conftest import (
     parse_json_output,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -30,11 +32,6 @@ def _enforcement_safe(monkeypatch):
     `ROAM_MODE_ENFORCEMENT` default-on (W23.3 staged-rollout PR-B). All tests
     in this file invoke `roam attest`, which is gated under `safe_edit`."""
     monkeypatch.setenv("ROAM_AGENT_MODE", "autonomous_pr")
-
-
-@pytest.fixture(autouse=True)
-def _generous_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
 
 
 @pytest.fixture

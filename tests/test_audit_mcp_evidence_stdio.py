@@ -14,6 +14,8 @@ from mcp.client.stdio import stdio_client
 from tests import test_w1448_health_list_cap_disclosure as cap_fixture
 from tests.conftest import git_init, index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("storage_available", [True, False])
 def test_audit_partial_state_survives_stdio_handle_and_fetch(tmp_path, monkeypatch, storage_available):
@@ -28,10 +30,8 @@ def test_audit_partial_state_survives_stdio_handle_and_fetch(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     # Host Roam configuration must not change indexing, presets, or evidence.
     for key in tuple(os.environ):
-        if not key.startswith("ROAM_"):
-            continue
-        monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+        if key.startswith("ROAM_") and key != "ROAM_INDEX_FRESHNESS_BUDGET_S":
+            monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
     git_init(tmp_path)

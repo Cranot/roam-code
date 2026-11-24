@@ -96,17 +96,10 @@ def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
-def _init(cwd: Path) -> None:
-    """``roam init``, then drop the ``.roamignore`` it writes.
-
-    That file is discovered but never indexed, so it makes every fresh fixture
-    report one unindexed file -- a pre-existing false positive on a DIFFERENT
-    axis, which would let an assertion about THIS one pass for the wrong
-    reason.  Same removal, same reasoning, as the W1466 fixture.
-    """
-    built = _run(cwd, "init")
+def _index(cwd: Path) -> None:
+    """Build the scan fixture without creating bootstrap configuration."""
+    built = _run(cwd, "index")
     assert built.returncode == 0, built.stdout[-800:] + built.stderr[-800:]
-    (cwd / ".roamignore").unlink(missing_ok=True)
 
 
 def _make_unenumerable(repo: Path) -> bool:
@@ -225,7 +218,7 @@ def test_an_ordinary_repository_reports_no_such_gap(tmp_path: Path) -> None:
 
 def test_secrets_does_not_certify_a_repo_it_could_not_fully_enumerate(tmp_path: Path) -> None:
     repo = _repo_with_unenumerable_dir(tmp_path / "repo")
-    _init(repo)
+    _index(repo)
 
     run = _run(repo, "secrets", "--fail-on-found")
 
@@ -239,7 +232,7 @@ def test_secrets_does_not_certify_a_repo_it_could_not_fully_enumerate(tmp_path: 
 
 def test_the_secrets_envelope_names_the_gap(tmp_path: Path) -> None:
     repo = _repo_with_unenumerable_dir(tmp_path / "repo")
-    _init(repo)
+    _index(repo)
 
     run = _run(repo, "--json", "secrets")
     summary = json.loads(run.stdout[run.stdout.find("{") :])["summary"]
@@ -270,7 +263,7 @@ def test_a_clean_repository_still_passes_unchanged(tmp_path: Path) -> None:
     (repo / "a.py").write_text("def helper(x):\n    return x + 1\n", encoding="utf-8")
     _git(repo, "add", "a.py")
     _git(repo, "commit", "-q", "-m", "fixture")
-    _init(repo)
+    _index(repo)
 
     run = _run(repo, "--json", "secrets", "--fail-on-found")
     assert run.returncode == 0, run.stdout[:800] + run.stderr[:800]

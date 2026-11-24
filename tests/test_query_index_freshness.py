@@ -15,12 +15,15 @@ import pytest
 from roam.cli import cli
 from roam.db.connection import get_db_path
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture(autouse=True)
 def _isolated_freshness_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
+    monkeypatch.delenv("ROAM_DB_DIR", raising=False)
+    monkeypatch.delenv("ROAM_REFUSE_STALE_INDEX", raising=False)
 
 
 @pytest.fixture
@@ -349,16 +352,39 @@ def test_indexable_paths_are_counted_in_clean_and_dirty_builds(project_factory, 
         return json.loads(result.stdout)["_meta"]["index_changed_files"]
 
     assert count() == 0
-    (project / "NOTES.txt").write_text("updated\n")
     (project / "excluded.py").write_text("def excluded(): pass\n")
     (project / "ignored.py").write_text("def ignored(): pass\n")
     assert count() == 0
-    (project / "new.py").write_text("def added(): pass\n")
+    notes = project / "NOTES.txt"
+    with closing(sqlite3.connect(get_db_path())) as conn:
+        assert conn.execute("SELECT language FROM files WHERE path = 'NOTES.txt'").fetchone() == (None,)
+    indexed_mtime = notes.stat().st_mtime
+    notes.write_bytes(b"updated\r\n")
+    os.utime(notes, (indexed_mtime - 10, indexed_mtime - 10))
     assert count() == 1
+    (project / "new.py").write_text("def added(): pass\n")
+    assert count() == 2
     (project / "rename_me.py").rename(project / "renamed.py")
-    assert count() == 3
+    assert count() == 4
     assert cli_runner.invoke(cli, ["index"]).exit_code == 0
     assert count() == 0
+
+
+def test_added_and_deleted_files_without_a_language_are_counted(project_factory, cli_runner, monkeypatch):
+    project = project_factory({"app.py": "def indexed_helper(): pass\n", "Makefile": "# tasks\n"})
+    monkeypatch.chdir(project)
+    (project / "Makefile").unlink()
+    (project / "Data Sheet.csv").write_bytes(b"item,count\r\nwidget,1\r\n")
+    (project / "skipped.png").write_bytes(b"image")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    subprocess.run(["git", "update-index", "--add", "--cacheinfo", f"160000,{head},vendor"], check=True)
+    (project / "vendor").mkdir()
+    result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["_meta"]["index_state"] == "stale"
+    assert payload["_meta"]["index_changed_files"] == 2
+    assert payload["summary"]["partial_success"] is True
 
 
 @pytest.mark.parametrize("committed", [False, True], ids=["worktree", "committed"])
@@ -793,7 +819,8 @@ def test_init_discloses_existing_stale_index_in_json(query_project, cli_runner):
     assert result.exit_code == 0, result.output
     envelope = json.loads(result.stdout)
     assert envelope["_meta"]["index_state"] == "stale"
-    assert envelope["_meta"]["index_changed_files"] == 1
+    # Init also creates the project ignore file, which discovery can index.
+    assert envelope["_meta"]["index_changed_files"] == 2
     assert envelope["summary"]["partial_success"] is True
     assert "Index is stale" in envelope["warnings"][-1]["message"]
 
@@ -852,7 +879,10 @@ def test_gitignore_edit_compares_scope_with_one_pattern_compilation(project_fact
     from roam.index.indexer import Indexer
 
     assert Indexer(project).run(quiet=True)
-    (project / ".gitignore").write_text(".roam/\nscratch.py\n")
+    gitignore_path = project / ".gitignore"
+    gitignore_mtime = gitignore_path.stat().st_mtime
+    gitignore_path.write_text(".roam/\nscratch.py\n")
+    os.utime(gitignore_path, (gitignore_mtime - 10, gitignore_mtime - 10))
     compile_pattern = gitignore._compile_pattern
     calls = []
 
@@ -863,14 +893,17 @@ def test_gitignore_edit_compares_scope_with_one_pattern_compilation(project_fact
     monkeypatch.setattr(gitignore, "_compile_pattern", record)
     freshness = probe_index_freshness(get_db_path(), project)
     assert freshness.state == "stale"
-    assert freshness.changed_paths == {"new.py", "scratch.py"}
+    assert freshness.changed_paths == {".gitignore", "new.py", "scratch.py"}
     assert len(calls) <= len(load_exclude_patterns(project))
 
-    (project / ".gitignore").write_text(".roam/\nnew.py\n")
-    (project / ".roamignore").write_text("generated/\nmodule_1.py\n")
+    gitignore_path.write_text(".roam/\nnew.py\n")
+    roamignore_path = project / ".roamignore"
+    roamignore_mtime = roamignore_path.stat().st_mtime
+    roamignore_path.write_text("generated/\nmodule_1.py\n")
+    os.utime(roamignore_path, (roamignore_mtime - 10, roamignore_mtime - 10))
     calls.clear()
     freshness = probe_index_freshness(get_db_path(), project)
-    assert freshness.changed_paths == {"module_1.py"}
+    assert freshness.changed_paths == {".roamignore", "module_1.py"}
     assert len(calls) == len(load_exclude_patterns(project))
 
 
@@ -887,7 +920,7 @@ def test_gitignore_inside_untracked_directory_removes_indexed_file(project_facto
     assert probe_index_freshness(db, repo).state == "fresh"
 
     (directory / ".gitignore").write_text("scratch.py\n")
-    assert probe_index_freshness(db, repo).changed_paths == {"untracked/scratch.py"}
+    assert probe_index_freshness(db, repo).changed_paths == {"untracked/.gitignore", "untracked/scratch.py"}
 
 
 @pytest.mark.parametrize(

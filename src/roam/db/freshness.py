@@ -11,7 +11,7 @@ import sys
 import time
 from contextlib import closing, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
@@ -25,6 +25,7 @@ _BUDGET_ENV = "ROAM_INDEX_FRESHNESS_BUDGET_S"
 _MAX_BUDGET_S = 2_147_483
 _BUDGET_EXCEEDED = "freshness check exceeded its time budget"
 _NO_GIT_WORKTREE = "project has no Git worktree"
+_INDEX_UNAVAILABLE = "the index is unavailable"
 _QUERY_FRESHNESS_KEY = "roam_query_index_freshness"
 _QUERY_INDEX_READ_KEY = "roam_query_index_read"
 _MAINTENANCE_COMMANDS = frozenset({"clean", "doctor", "index", "init", "reset", "watch"})
@@ -141,7 +142,7 @@ def _has_gitignore(paths: set[str]) -> bool:
 
 
 def _indexed_rows(conn: sqlite3.Connection, paths: set[str], *, compare_all: bool):
-    select = "SELECT path, language, mtime, hash FROM files"
+    select = "SELECT path, mtime, hash FROM files"
     if compare_all:
         yield from conn.execute(select)
         return
@@ -172,19 +173,16 @@ def _compare_indexed_files(
     from roam.index.discovery import MAX_FILE_SIZE, _filter_files, _is_skippable, load_exclude_patterns
     from roam.index.gitignore import compile_exclude_patterns
     from roam.index.incremental import file_hash
-    from roam.index.parser import detect_language
 
     root_path = os.fspath(root)
     changed_paths: set[str] = set()
     try:
         exclude = None if include_excluded else compile_exclude_patterns(load_exclude_patterns(root))
-        for path, language, mtime, digest in _indexed_rows(conn, paths, compare_all=compare_all):
+        for path, mtime, digest in _indexed_rows(conn, paths, compare_all=compare_all):
             if time.monotonic() >= deadline.end:
                 return None, _BUDGET_EXCEEDED
             listed = path in paths and path not in ignored_paths
             paths.discard(path)
-            if not language and not detect_language(path):
-                continue
             if not dirty and not compare_all:
                 # Git identified a change to a path already accepted by discovery.
                 changed_paths.add(path)
@@ -207,7 +205,8 @@ def _compare_indexed_files(
         for path in paths - ignored_paths:
             if time.monotonic() >= deadline.end:
                 return None, _BUDGET_EXCEEDED
-            if detect_language(path) and _filter_files([path], root, exclude, include_excluded):
+            # Git can list a submodule directory. The index needs a file it can read.
+            if (root / path).is_file() and _filter_files([path], root, exclude, include_excluded):
                 changed_paths.add(path)
     except (OSError, sqlite3.Error) as exc:
         log_swallowed("index_freshness:files", exc)
@@ -536,15 +535,35 @@ def _invoked_command(ctx: click.Context) -> str:
     return parent.invoked_subcommand or ctx.command.name or ""
 
 
+@dataclass
+class _QueryIndexObservations:
+    # The envelope describes this context's project. Siblings can reuse
+    # observations from another project without changing that selection.
+    root: Path
+    by_root: dict[Path, QueryIndexFreshness | None] = field(default_factory=dict)
+
+
+def _query_index_observations(ctx: click.Context, root: Path | None = None) -> _QueryIndexObservations:
+    observations = ctx.meta.get(_QUERY_FRESHNESS_KEY)
+    if observations is None:
+        if root is None:
+            from roam.db.connection import find_project_root
+
+            root = find_project_root()
+        observations = ctx.meta[_QUERY_FRESHNESS_KEY] = _QueryIndexObservations(root)
+    return observations
+
+
 def project_index_freshness(root: Path, *, required: bool = False) -> QueryIndexFreshness | None:
     """Observe an existing index and reuse its result within this invocation."""
     from roam.db.connection import StaleDbDirError, get_db_path
 
     ctx = click.get_current_context(silent=True)
     if ctx is not None:
-        if freshness := _reuse_query_index(ctx, root):
+        observations = _query_index_observations(ctx, root)
+        if freshness := _reuse_query_index(ctx, root, required=required):
             return freshness
-        if not required and ctx.meta.get(_QUERY_FRESHNESS_KEY) == (root, None):
+        if not required and root in observations.by_root:
             return None
 
     try:
@@ -554,10 +573,10 @@ def project_index_freshness(root: Path, *, required: bool = False) -> QueryIndex
         log_swallowed("index_freshness:db_path", exc)
         freshness = QueryIndexFreshness(None, None, "could not locate the index")
     if freshness is None and required:
-        freshness = QueryIndexFreshness(None, None, "the index is unavailable")
+        freshness = QueryIndexFreshness(None, None, _INDEX_UNAVAILABLE)
     if ctx is not None:
         if freshness is None:
-            ctx.meta[_QUERY_FRESHNESS_KEY] = (root, None)
+            observations.by_root[root] = None
         else:
             _record_query_index(ctx, root, freshness)
     return freshness
@@ -568,15 +587,13 @@ def query_index_freshness() -> QueryIndexFreshness | None:
     ctx = click.get_current_context(silent=True)
     if ctx is None or not isinstance(ctx.obj, dict):
         return None
-    recorded = ctx.meta.get(_QUERY_FRESHNESS_KEY)
-    if recorded is not None:
-        return recorded[1]
+    observations = ctx.meta.get(_QUERY_FRESHNESS_KEY)
+    if observations is not None and observations.root in observations.by_root:
+        return observations.by_root[observations.root]
     command = _invoked_command(ctx)
     if command in _MAINTENANCE_COMMANDS or command_is_stale_sensitive(command):
         return None
-    from roam.db.connection import find_project_root
-
-    return project_index_freshness(find_project_root())
+    return project_index_freshness(_query_index_observations(ctx).root)
 
 
 def _git_history_relation(root: Path, indexed: str, head: str, deadline: _CheckDeadline) -> str:
@@ -698,7 +715,8 @@ class IndexCompositeRunner(CliRunner):
         if parent is None or not isinstance(parent.obj, dict):
             return super().invoke(cli, args, **kwargs)
 
-        before = parent.meta.get(_QUERY_FRESHNESS_KEY)
+        observations = _query_index_observations(parent)
+        before = observations.by_root.get(observations.root)
         ancestors = _composite_contexts.get()
         token = _composite_contexts.set((*ancestors, parent))
         try:
@@ -706,32 +724,33 @@ class IndexCompositeRunner(CliRunner):
         finally:
             _composite_contexts.reset(token)
 
-        after = parent.meta.get(_QUERY_FRESHNESS_KEY)
-        if after is not None and after[1] is not None:
-            check_query_index_policy(parent, after[1], warn=not ancestors and after is not before)
+        after = observations.by_root.get(observations.root)
+        if after is not None:
+            check_query_index_policy(parent, after, warn=not ancestors and after is not before)
         return result
 
 
-def _reuse_query_index(ctx: click.Context, root: Path) -> QueryIndexFreshness | None:
+def _reuse_query_index(ctx: click.Context, root: Path, *, required: bool) -> QueryIndexFreshness | None:
     """Copy the first observation for this project into the reading context."""
     for query in (ctx, *_composite_contexts.get()):
-        recorded = query.meta.get(_QUERY_FRESHNESS_KEY)
-        if recorded is not None and recorded[0] == root and recorded[1] is not None:
-            _record_query_index(ctx, root, recorded[1])
-            return recorded[1]
+        observations = query.meta.get(_QUERY_FRESHNESS_KEY)
+        recorded = observations.by_root.get(root) if observations is not None else None
+        if recorded is not None and (not required or recorded.reason != _INDEX_UNAVAILABLE):
+            _record_query_index(ctx, root, recorded)
+            return recorded
     return None
 
 
 def _record_query_index(ctx: click.Context, root: Path, freshness: QueryIndexFreshness) -> None:
-    ctx.meta[_QUERY_FRESHNESS_KEY] = (root, freshness)
+    _query_index_observations(ctx, root).by_root[root] = freshness
     rank = freshness_priority(freshness.state, skipped=freshness.skipped)
     for parent in _composite_contexts.get():
-        existing = parent.meta.get(_QUERY_FRESHNESS_KEY)
-        if existing is not None and existing[1] is not None:
-            previous = existing[1]
+        observations = _query_index_observations(parent)
+        previous = observations.by_root.get(root)
+        if previous is not None and (previous.reason != _INDEX_UNAVAILABLE or freshness.reason == _INDEX_UNAVAILABLE):
             if freshness_priority(previous.state, skipped=previous.skipped) >= rank:
                 continue
-        parent.meta[_QUERY_FRESHNESS_KEY] = (root, freshness)
+        observations.by_root[root] = freshness
 
 
 def check_query_index_policy(ctx: click.Context, freshness: QueryIndexFreshness, *, warn: bool) -> None:
@@ -758,18 +777,22 @@ def observe_query_index(conn: sqlite3.Connection, root: Path) -> None:
         return
     if _invoked_command(ctx) in _MAINTENANCE_COMMANDS:
         return
-    for query in (ctx, *_composite_contexts.get()):
-        query.meta[_QUERY_INDEX_READ_KEY] = True
-    recorded = ctx.meta.get(_QUERY_FRESHNESS_KEY)
-    if recorded is not None and recorded[0] == root and recorded[1] is not None:
+    observations = _query_index_observations(ctx, root)
+    if observations.root == root:
+        ctx.meta[_QUERY_INDEX_READ_KEY] = True
+    parents = tuple(parent for parent in _composite_contexts.get() if _query_index_observations(parent).root == root)
+    for parent in parents:
+        parent.meta[_QUERY_INDEX_READ_KEY] = True
+    recorded = observations.by_root.get(root)
+    if recorded is not None and recorded.reason != _INDEX_UNAVAILABLE:
         return
-    freshness = _reuse_query_index(ctx, root)
+    freshness = _reuse_query_index(ctx, root, required=True)
     if freshness is None:
         freshness = read_query_index_freshness(conn, root)
         _record_query_index(ctx, root, freshness)
     # Refuse before any child consumes stale data, even if only its
     # enclosing command is stale-sensitive.
-    if freshness.stale and inside_index_composite() and refuse_stale_index():
-        if any(command_is_stale_sensitive(_invoked_command(parent)) for parent in _composite_contexts.get()):
+    if freshness.stale and parents and refuse_stale_index():
+        if any(command_is_stale_sensitive(_invoked_command(parent)) for parent in parents):
             raise StaleQueryIndexError(freshness.message(), json_output=True)
     check_query_index_policy(ctx, freshness, warn=not inside_index_composite())

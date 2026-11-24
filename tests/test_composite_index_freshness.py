@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 
+import click
 import pytest
 from click.testing import CliRunner
 from mcp import ClientSession, StdioServerParameters
@@ -13,12 +14,15 @@ from mcp.client.stdio import stdio_client
 
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture(autouse=True)
 def _isolated_freshness_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+    monkeypatch.delenv("ROAM_DB_DIR", raising=False)
+    monkeypatch.delenv("ROAM_REFUSE_STALE_INDEX", raising=False)
 
 
 @pytest.fixture
@@ -336,3 +340,75 @@ def test_next_composite_observes_an_edit_between_child_reads(edited_project, cli
     result = cli_runner.invoke(cli, ["--json", "audit"])
     assert result.exit_code == 0, result.output
     _assert_stale(json.loads(result.stdout), "audit")
+
+
+@pytest.mark.parametrize("observe_parent_first", [True, False], ids=["parent-first", "child-first"])
+def test_composite_reports_its_own_project_freshness(project_factory, monkeypatch, observe_parent_first):
+    from roam.db import freshness
+    from roam.output.formatter import json_envelope
+
+    parent_root = project_factory({"app.py": "def parent_helper(): pass\n"})
+    other_root = project_factory({"app.py": "def original(): pass\n"})
+    (other_root / "app.py").write_text("def child_edit(): pass\n")
+    monkeypatch.chdir(parent_root)
+    probe = freshness.probe_index_freshness
+    roots_checked = []
+
+    def record_probe(db_path, root):
+        roots_checked.append(root)
+        return probe(db_path, root)
+
+    monkeypatch.setattr(freshness, "probe_index_freshness", record_probe)
+
+    @click.command()
+    @click.argument("project")
+    def child(project):
+        root = other_root if project == "other" else parent_root
+        observed = freshness.project_index_freshness(root, required=True)
+        click.echo(observed.state)
+
+    with click.Context(click.Command("audit"), obj={"json": True}):
+        if observe_parent_first:
+            assert freshness.project_index_freshness(parent_root, required=True).state == "fresh"
+        runner = freshness.IndexCompositeRunner()
+        assert runner.invoke(child, ["other"]).output == "stale\n"
+        if not observe_parent_first:
+            assert freshness.query_index_freshness() is None
+        assert runner.invoke(child, ["parent"]).output == "fresh\n"
+        assert runner.invoke(child, ["other"]).output == "stale\n"
+        payload = json_envelope("audit", persist_response=False)
+        assert payload["_meta"]["index_state"] == "fresh"
+        assert payload["_meta"]["index_changed_files"] == 0
+    assert roots_checked == ([parent_root, other_root] if observe_parent_first else [other_root, parent_root])
+
+
+@pytest.mark.parametrize("in_composite", [False, True], ids=["same-context", "composite-child"])
+def test_required_freshness_rechecks_after_index_is_created(project_factory, monkeypatch, tmp_path, in_composite):
+    from roam.db import freshness
+    from roam.index.indexer import Indexer
+    from roam.output.formatter import json_envelope
+
+    root = project_factory({"app.py": "def helper(): pass\n"}, index=False)
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "external index"))
+
+    @click.command()
+    def child():
+        freshness.project_index_freshness(root, required=True)
+        click.echo(json.dumps(json_envelope("search", persist_response=False)["_meta"]))
+
+    with click.Context(click.Command("audit"), obj={"json": True}):
+        absent = freshness.project_index_freshness(root, required=True)
+        assert absent.state == "unknown"
+        assert absent.reason == "the index is unavailable"
+        assert Indexer(root).run(quiet=True)
+        if in_composite:
+            result = freshness.IndexCompositeRunner().invoke(child, [], obj={"json": True})
+            assert result.exit_code == 0, result.output
+            assert json.loads(result.output)["index_state"] == "fresh"
+        else:
+            assert freshness.project_index_freshness(root, required=True).state == "fresh"
+        meta = json_envelope("audit", persist_response=False)["_meta"]
+        assert meta["index_state"] == "fresh"
+        assert meta["index_changed_files"] == 0
+        assert "index_state_reason" not in meta
