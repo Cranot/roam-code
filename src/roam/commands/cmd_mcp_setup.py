@@ -29,6 +29,7 @@ import click
 import roam
 from roam.atomic_io import atomic_write_bytes
 from roam.capability import roam_capability
+from roam.observability import log_swallowed
 from roam.output.formatter import json_envelope, to_json
 
 # Platform config templates.
@@ -110,8 +111,9 @@ def _running_launcher() -> Path:
         try:
             if invoked.is_file():
                 return invoked.absolute()
-        except OSError:
-            pass  # Fall back to the running Python installation's scripts directory.
+        except OSError as exc:
+            # Fall back to the running Python installation's scripts directory.
+            log_swallowed("mcp_setup.invoked_launcher", exc)
     user_site = site.getusersitepackages()
     if user_site and roam.__file__ and Path(roam.__file__).is_relative_to(user_site):
         scripts = sysconfig.get_path("scripts", scheme=sysconfig.get_preferred_scheme("user"))
@@ -144,8 +146,8 @@ def _same_launcher(launcher: Path, on_path: str | None) -> bool:
                     and interpreter.suffix.lower() == ".exe"
                     and original == candidate.read(limit)
                 )
-    except OSError:
-        pass
+    except OSError as exc:
+        log_swallowed("mcp_setup.same_launcher", exc)
     return False
 
 
