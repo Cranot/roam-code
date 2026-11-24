@@ -45,6 +45,8 @@ _JEST_DEFAULT_TEST_STEMS = {
     "**/__tests__/**/*": r"(?:[^/]+/)*__tests__/(?:[^/]+/)*[^/]*",
     "**/?(*.)+(spec|test)": r"(?:[^/]+/)*(?:[^/]*\.)?(?:spec|test)+",
 }
+# 2 entries: the extension forms of Jest's default `testMatch` (js/jsx/ts/tsx, and the
+# mjs/cjs/mts/cts variants), added for review finding 4 of the first-use branch.
 _JEST_DEFAULT_TEST_EXTENSIONS = {"[jt]s?(x)": r"[jt]sx?", "?([mc])[jt]s?(x)": r"[mc]?[jt]sx?"}
 
 
