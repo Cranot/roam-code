@@ -82,10 +82,7 @@ from click.testing import CliRunner
 from roam.cli import cli
 from tests.conftest import make_src_project as _make_project
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 _PROJECT_FILES = {

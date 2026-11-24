@@ -32,10 +32,7 @@ from pathlib import Path
 import pytest
 from conftest import git_init
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 FIXTURE_SRC = Path(__file__).parent / "fixtures" / "dogfood_security"

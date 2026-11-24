@@ -16,10 +16,7 @@ from scripts import sync_surface_counts as sync
 from tests._helpers.repo_root import repo_root
 from tests.conftest import git_commit, git_init, index_in_process
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 ROOT = repo_root()

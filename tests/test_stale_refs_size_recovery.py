@@ -11,10 +11,7 @@ from roam.cli import cli
 from roam.commands import cmd_stale_refs as mod
 from roam.index.discovery import MAX_FILE_SIZE, SKIP_OVERSIZED, discover_files_with_skips
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 @pytest.fixture

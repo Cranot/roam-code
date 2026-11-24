@@ -40,10 +40,7 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.commands.cmd_ignore_drift import scan_tracked_ignored
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:

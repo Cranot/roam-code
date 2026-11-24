@@ -11,10 +11,7 @@ from click.testing import CliRunner
 import roam.cli as cli_module
 from roam.commands import cmd_audit, cmd_dogfood
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 @pytest.mark.parametrize("brief", [False, True])

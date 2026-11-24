@@ -54,10 +54,7 @@ import pytest
 from tests._helpers.repo_index import repo_index_status
 from tests._helpers.repo_root import repo_root
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 REPO = repo_root()

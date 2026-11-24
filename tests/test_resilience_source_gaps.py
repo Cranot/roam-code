@@ -10,10 +10,7 @@ import pytest
 
 from roam.resilience import run_resilience
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 @pytest.mark.parametrize("missing", [True, False])

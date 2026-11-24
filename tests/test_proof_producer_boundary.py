@@ -12,10 +12,7 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.proof_bundle import compose_agent_change_proof_bundle, load_pr_bundle
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 @pytest.mark.parametrize("key", ["review_evidence", "orchestration_contract"])

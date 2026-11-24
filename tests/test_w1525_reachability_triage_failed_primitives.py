@@ -56,10 +56,7 @@ from roam.commands.cmd_reachability_triage import (
 )
 from roam.commands.cmd_service_report import _component_failure
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _ok(**summary):

@@ -53,10 +53,7 @@ from roam.commands.cmd_compatibility import (
 from roam.exit_codes import EXIT_GATE_FAILURE
 from tests._helpers.repo_root import repo_root
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 WORKFLOW = repo_root() / ".github" / "workflows" / "roam-ci.yml"

@@ -17,10 +17,7 @@ from roam.output.structured_unknowns import (
     to_summary_payload,
 )
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 # ---------------------------------------------------------------------------

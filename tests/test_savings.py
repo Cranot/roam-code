@@ -24,10 +24,7 @@ from roam.savings import (
     materialize_ledger,
 )
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 _REPEATED_TASK_FINGERPRINT = "tfp_0123456789abcdef0123456789abcdef"

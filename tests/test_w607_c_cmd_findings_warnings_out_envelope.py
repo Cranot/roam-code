@@ -62,10 +62,7 @@ from roam.cli import cli
 from roam.db.connection import open_db
 from roam.db.findings import FindingRecord, emit_finding
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 # ---------------------------------------------------------------------------

@@ -61,10 +61,7 @@ from roam.index.discovery import (
     discover_files_with_skips,
 )
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 #: Vendor-shaped but synthetic: the AWS prefix plus 16 uppercase alphanumerics,

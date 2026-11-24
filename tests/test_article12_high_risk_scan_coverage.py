@@ -40,10 +40,7 @@ from roam.commands.cmd_article_12_check import (
     _classify_high_risk_likelihood,
 )
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 HR_SOURCE = "def score_employee_promotion(record):\n    return record\n"

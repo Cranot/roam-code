@@ -32,10 +32,7 @@ import roam.commands.cmd_compatibility as compat_cmd
 from roam.cli import cli
 from roam.commands.cmd_compatibility import _build_snapshot, _diff, _introspect_flags, _verdict_for
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 # ---------------------------------------------------------------------------

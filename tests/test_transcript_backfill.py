@@ -29,10 +29,7 @@ from roam.transcript_backfill import (
     sanitize_command_template,
 )
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _write_claude_session(path: Path, cwd: Path, session_id: str, command: str) -> None:

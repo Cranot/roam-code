@@ -14,10 +14,7 @@ from roam.output.formatter import json_envelope, strip_list_payloads
 # Import helpers from conftest
 from tests.conftest import invoke_cli
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 # ---------------------------------------------------------------------------

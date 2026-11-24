@@ -21,10 +21,7 @@ import pytest
 from roam.commands.grep_helpers import SearchEngineError
 from tests.conftest import index_in_process, invoke_cli, parse_json_output
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 LAUNCHER = Path(sys.executable).with_name("roam.exe" if os.name == "nt" else "roam")

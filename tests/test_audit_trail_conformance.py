@@ -20,10 +20,7 @@ from roam.commands.cmd_audit_trail_conformance import (
     _parse_iso,
 )
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _write_chain(path: Path, records: list[dict]) -> None:

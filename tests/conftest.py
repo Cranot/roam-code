@@ -296,6 +296,17 @@ def _disable_shallow_git_history_for_marked_tests(request, monkeypatch):
 
 
 @pytest.fixture
+def pinned_index_freshness_budget(monkeypatch):
+    """Give freshness assertions a budget that does not depend on machine speed.
+
+    When a query's freshness check runs out of time, it answers
+    `index_state: unknown` with `partial_success: true`. Tests that assert
+    either field can opt in to a larger budget and force timeouts explicitly.
+    """
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
+@pytest.fixture
 def cli_runner():
     """Provide a Click CliRunner for in-process CLI testing."""
     return CliRunner()

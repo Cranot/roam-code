@@ -12,10 +12,7 @@ from roam.commands import cmd_health
 from tests import test_w1448_health_list_cap_disclosure as cap_fixture
 from tests.conftest import invoke_cli
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 @pytest.mark.parametrize("detail", [False, True])

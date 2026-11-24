@@ -11,10 +11,7 @@ from click.testing import CliRunner
 from roam import observability_opt as oo
 from roam.cli import cli
 
-
-@pytest.fixture(autouse=True)
-def _pin_index_freshness_budget(monkeypatch):
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 @pytest.mark.parametrize(
