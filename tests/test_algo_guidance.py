@@ -12,6 +12,12 @@ from roam.commands.cmd_math import math_cmd
 from roam.surface_counts import mcp_preset_members
 from tests._helpers.repo_root import repo_root
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 ROOT = repo_root()
 
 

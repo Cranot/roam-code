@@ -75,6 +75,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # Repo root anchor.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CMD_PATH = _REPO_ROOT / "src" / "roam" / "commands" / "cmd_evidence_oscal.py"

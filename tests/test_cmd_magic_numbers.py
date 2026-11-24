@@ -13,6 +13,7 @@ import json
 import textwrap
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.commands.cmd_magic_numbers import (
@@ -21,6 +22,12 @@ from roam.commands.cmd_magic_numbers import (
     _is_test_path,
     magic_numbers,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
 
 # ---------------------------------------------------------------------------
 # Fixture builder

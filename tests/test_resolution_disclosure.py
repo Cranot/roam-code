@@ -22,6 +22,12 @@ import pytest
 
 from roam.output.formatter import _RESOLUTION_KINDS, resolution_disclosure
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Drift guard — locks the closed enum membership.
 # ---------------------------------------------------------------------------

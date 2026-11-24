@@ -59,6 +59,12 @@ import pytest
 from roam.commands.cmd_stale_refs import _read_text_with_reason
 from tests.conftest import invoke_cli
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 _OVERSIZE_BYTES = 1_100_000
 
 

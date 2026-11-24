@@ -37,6 +37,12 @@ from click.testing import CliRunner
 
 from tests._helpers.wording_lint import scan_for_overclaims
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Canned envelopes — shaped like the real ``roam --json <cmd>`` output.
 # ---------------------------------------------------------------------------

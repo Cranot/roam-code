@@ -27,6 +27,12 @@ from __future__ import annotations
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # CLAUDE.md "Pattern-1 canonical failure envelope" — the closed
 # enumeration of ``status`` values. Source of truth: the ``status``
 # field description in CLAUDE.md ("closed enum: index_not_built |

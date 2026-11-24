@@ -12,6 +12,12 @@ import pytest
 
 from roam.output.structured_unknowns import structured_unknown_filter
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Happy path: ``requested in known`` returns None (no envelope-fragment).
 # ---------------------------------------------------------------------------

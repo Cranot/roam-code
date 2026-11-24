@@ -22,6 +22,11 @@ from tests.conftest import index_in_process
 
 
 @pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
+@pytest.fixture(autouse=True)
 def isolated_compound_state(monkeypatch):
     monkeypatch.setenv("ROAM_MCP_HANDLE_KB", "0")
     mcp._reset_error_storm()

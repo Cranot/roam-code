@@ -49,6 +49,12 @@ import pytest
 from roam.commands import cmd_preflight
 from tests.conftest import index_in_process, invoke_cli
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures: a two-symbol project plus the broken / healthy rule files.
 # ---------------------------------------------------------------------------

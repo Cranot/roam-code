@@ -54,6 +54,12 @@ from roam.commands.cmd_magic_numbers import (
     _scan_python_file_status,
 )
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 #: Syntactically broken, and each holds a literal repeated twice -- so a
 #: scanner that COULD read them would report findings, not silence.
 BROKEN_1 = "def a(:\n    return 86400 + 86400\n"

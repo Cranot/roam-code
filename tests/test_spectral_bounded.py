@@ -21,6 +21,11 @@ from roam.commands.cmd_spectral import _MAX_GRAPH_SYMBOLS, spectral
 from tests.conftest import git_init, index_in_process
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def _bulk_insert_symbols(db_path: Path, n_symbols: int) -> None:
     """Inflate the indexed DB with ``n_symbols`` synthetic function rows.
 

@@ -23,6 +23,11 @@ from tests.conftest import make_src_project as _make_src_project
 
 
 @pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
+@pytest.fixture(autouse=True)
 def _enforcement_safe(monkeypatch):
     """Mirror the existing test_cga.py fixture so privileged `roam cga`
     runs under future ROAM_MODE_ENFORCEMENT default-on (W23.3)."""

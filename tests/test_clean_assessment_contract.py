@@ -8,6 +8,11 @@ from click.testing import CliRunner
 from roam.cli import cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("command", ["pr-risk", "breaking", "pr-diff"])
 def test_clean_diff_is_complete(project_factory, monkeypatch, command):
     """Named contract change for breaking on a repository with one commit.

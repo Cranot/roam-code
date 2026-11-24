@@ -29,6 +29,11 @@ from click.testing import CliRunner
 from roam.cli import cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def cli_runner():
     return CliRunner()

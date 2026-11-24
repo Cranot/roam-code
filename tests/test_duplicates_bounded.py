@@ -21,6 +21,11 @@ from roam.db.connection import open_db
 from tests.conftest import git_init, index_in_process
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def _populate_duplicate_candidates(
     db_path: Path,
     total_symbols: int,

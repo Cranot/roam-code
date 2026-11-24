@@ -8,6 +8,11 @@ from roam.cli import cli
 from tests.conftest import assert_json_envelope, git_init, index_in_process, invoke_cli, parse_json_output
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def typed_fixture_project(tmp_path):
     project = tmp_path / "typed_project"

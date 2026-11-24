@@ -13,6 +13,12 @@ from roam.cli import cli
 from roam.commands import cmd_critique
 from tests import test_critique as _fixtures
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 _DIFF_REFRESH_ONLY = _fixtures._DIFF_REFRESH_ONLY
 critique_project = _fixtures.critique_project
 

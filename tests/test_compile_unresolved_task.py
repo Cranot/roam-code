@@ -10,6 +10,11 @@ from click.testing import CliRunner
 from roam.cli import cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("json_mode", [False, True])
 def test_generic_bug_fix_reports_typed_reason(tmp_path, monkeypatch, json_mode):
     monkeypatch.chdir(tmp_path)

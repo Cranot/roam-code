@@ -73,6 +73,12 @@ from click.testing import CliRunner
 
 from roam.commands.cmd_supply_chain import supply_chain
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Helpers -- invoke supply-chain through the click runner
 # ---------------------------------------------------------------------------

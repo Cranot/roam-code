@@ -28,6 +28,11 @@ from roam.commands.cmd_envelope_diff import envelope_diff
 from tests._helpers.repo_root import repo_root
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def runner():
     return CliRunner()

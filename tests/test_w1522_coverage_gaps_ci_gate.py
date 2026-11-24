@@ -35,6 +35,11 @@ import pytest
 from tests.conftest import git_init, index_in_process, invoke_cli, parse_json_output
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def gap_project(tmp_path):
     """Project that trips the python preset's error-severity critical-modules rule.

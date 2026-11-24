@@ -17,11 +17,17 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.db.connection import open_db
 from roam.db.findings import FindingRecord, emit_finding
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def _seed_repo_and_index(tmp_path):

@@ -10,6 +10,11 @@ from roam.commands import cmd_debt
 from tests.conftest import invoke_cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def debt_corpus(project_factory):
     # Real fixture-local indexing/SQLite/CLI serialization are intentional:

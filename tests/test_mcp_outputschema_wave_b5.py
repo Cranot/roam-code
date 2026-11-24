@@ -26,6 +26,12 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.mcp_server import _SCHEMA_AUDIT_TRAIL_VERIFY, _SCHEMA_DIAGNOSE
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Tiny structural validator (mirrors Wave B1/B2/B3 — keep in sync if extended)
 # ---------------------------------------------------------------------------

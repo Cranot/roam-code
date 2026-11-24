@@ -32,6 +32,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -42,6 +43,12 @@ from roam.commands.smells_suppress import (
     load_smells_suppressions,
     load_smells_suppressions_typed,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
 
 # ---------------------------------------------------------------------------
 # Helpers

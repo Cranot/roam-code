@@ -7,6 +7,11 @@ import pytest
 from tests.conftest import invoke_cli, parse_json_output
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("limit", ["0", "-1"])
 def test_grep_rejects_nonpositive_limits_before_indexing(cli_runner, tmp_path, limit):
     result = invoke_cli(cli_runner, ["grep", "x", "--max-results", limit], cwd=tmp_path)

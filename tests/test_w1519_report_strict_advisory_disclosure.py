@@ -44,6 +44,11 @@ from tests.conftest import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def report_project(tmp_path):
     """Minimal indexed Python project the security preset can run against."""

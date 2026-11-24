@@ -85,6 +85,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Canonical W607-DZ-role aggregation phases (the role W607-CJ plays for
 # cmd_taint -- same 4 phase names cmd_missing_index W607-DX wraps).

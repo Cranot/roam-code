@@ -13,6 +13,12 @@ from roam.graph import clone_evidence
 from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 from tests import test_clone_scan_evidence as _fixtures
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 project = _fixtures.project
 run = _fixtures.run
 

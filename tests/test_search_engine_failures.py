@@ -11,6 +11,11 @@ from roam.commands.grep_helpers import SearchEngineError, _run_and_parse
 from tests.conftest import invoke_cli, parse_json_output
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def test_partial_stdout_survives_nonzero_search_exit(monkeypatch, tmp_path):
     monkeypatch.setattr(
         subprocess,

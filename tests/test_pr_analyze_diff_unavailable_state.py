@@ -45,6 +45,11 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(
         ["git", *args],

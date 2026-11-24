@@ -10,10 +10,18 @@ splice. These tests pin the contract.
 
 from __future__ import annotations
 
+import pytest
+
 from roam.output.structured_unknowns import (
     structured_unknown_filter,
     to_summary_payload,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
 
 # ---------------------------------------------------------------------------
 # Shape stability across the three scenarios callsites care about.

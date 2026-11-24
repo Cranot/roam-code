@@ -90,6 +90,12 @@ from click.testing import CliRunner
 
 from tests.conftest import record_test_index_manifest
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Canonical W607-DT phase enumeration
 # ---------------------------------------------------------------------------

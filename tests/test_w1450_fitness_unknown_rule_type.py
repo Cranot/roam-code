@@ -66,6 +66,12 @@ from click.testing import CliRunner
 from roam.commands import cmd_fitness
 from tests.conftest import git_init, index_in_process, invoke_cli
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

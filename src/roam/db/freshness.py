@@ -541,9 +541,11 @@ def project_index_freshness(root: Path, *, required: bool = False) -> QueryIndex
     from roam.db.connection import StaleDbDirError, get_db_path
 
     ctx = click.get_current_context(silent=True)
-    recorded = ctx.meta.get(_QUERY_FRESHNESS_KEY) if ctx is not None else None
-    if recorded is not None and recorded[0] == root and (not required or recorded[1] is not None):
-        return recorded[1]
+    if ctx is not None:
+        if freshness := _reuse_query_index(ctx, root):
+            return freshness
+        if not required and ctx.meta.get(_QUERY_FRESHNESS_KEY) == (root, None):
+            return None
 
     try:
         db_path = get_db_path(root, create=False)
@@ -689,7 +691,7 @@ def inside_index_composite() -> bool:
 
 
 class IndexCompositeRunner(CliRunner):
-    """Run a CLI child and disclose its index observation to the calling command."""
+    """Run a CLI child with the calling command's index observation."""
 
     def invoke(self, cli, args=None, **kwargs):
         parent = click.get_current_context(silent=True)
@@ -708,6 +710,16 @@ class IndexCompositeRunner(CliRunner):
         if after is not None and after[1] is not None:
             check_query_index_policy(parent, after[1], warn=not ancestors and after is not before)
         return result
+
+
+def _reuse_query_index(ctx: click.Context, root: Path) -> QueryIndexFreshness | None:
+    """Copy the first observation for this project into the reading context."""
+    for query in (ctx, *_composite_contexts.get()):
+        recorded = query.meta.get(_QUERY_FRESHNESS_KEY)
+        if recorded is not None and recorded[0] == root and recorded[1] is not None:
+            _record_query_index(ctx, root, recorded[1])
+            return recorded[1]
+    return None
 
 
 def _record_query_index(ctx: click.Context, root: Path, freshness: QueryIndexFreshness) -> None:
@@ -748,10 +760,13 @@ def observe_query_index(conn: sqlite3.Connection, root: Path) -> None:
         return
     for query in (ctx, *_composite_contexts.get()):
         query.meta[_QUERY_INDEX_READ_KEY] = True
-    if _QUERY_FRESHNESS_KEY in ctx.meta:
+    recorded = ctx.meta.get(_QUERY_FRESHNESS_KEY)
+    if recorded is not None and recorded[0] == root and recorded[1] is not None:
         return
-    freshness = read_query_index_freshness(conn, root)
-    _record_query_index(ctx, root, freshness)
+    freshness = _reuse_query_index(ctx, root)
+    if freshness is None:
+        freshness = read_query_index_freshness(conn, root)
+        _record_query_index(ctx, root, freshness)
     # Refuse before any child consumes stale data, even if only its
     # enclosing command is stale-sensitive.
     if freshness.stale and inside_index_composite() and refuse_stale_index():

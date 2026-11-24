@@ -7,6 +7,7 @@ import hashlib
 import json as _json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.commands.cmd_audit_trail_conformance import (
@@ -18,6 +19,11 @@ from roam.commands.cmd_audit_trail_conformance import (
     _check_verdicts_and_rationale,
     _parse_iso,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def _write_chain(path: Path, records: list[dict]) -> None:

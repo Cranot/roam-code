@@ -24,6 +24,11 @@ from click.testing import CliRunner
 from roam.cli import cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def empty_project(tmp_path: Path) -> Path:
     """Tmp git project with one .py file and no audit trail yet."""

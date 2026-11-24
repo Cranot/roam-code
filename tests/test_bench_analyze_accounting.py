@@ -9,6 +9,12 @@ import pytest
 
 from tests._helpers.repo_root import repo_root
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 _SPEC = importlib.util.spec_from_file_location("bench_analyze_accounting", repo_root() / "scripts" / "bench_analyze.py")
 bench = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(bench)

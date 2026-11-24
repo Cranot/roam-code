@@ -12,6 +12,11 @@ from roam.cli import cli
 from roam.commands import cmd_surface_gaps
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def _source(tmp_path, monkeypatch, aliases):
     path = tmp_path / "cli.py"
     # Deliberately raises if imported: registry discovery must stay AST-only.

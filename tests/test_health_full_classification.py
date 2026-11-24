@@ -13,6 +13,11 @@ from tests import test_w1448_health_list_cap_disclosure as cap_fixture
 from tests.conftest import invoke_cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("detail", [False, True])
 @pytest.mark.parametrize("failed", [False, True])
 def test_all_classifies_population_preserves_score(cli_runner, indexed_project, monkeypatch, detail, failed):

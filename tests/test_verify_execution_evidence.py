@@ -16,6 +16,11 @@ from roam.testing import pytest_evidence
 from tests.conftest import git_init, index_in_process, invoke_cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def project(tmp_path, monkeypatch):
     (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")

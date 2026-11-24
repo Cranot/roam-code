@@ -10,6 +10,11 @@ from click.testing import CliRunner
 from roam.commands import cmd_audit, cmd_dogfood
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("invalid", [[], "", 0, False])
 def test_empty_malformed_child_summary_is_not_a_clean_result(monkeypatch, invalid):
     monkeypatch.setattr(cmd_audit, "ensure_index", lambda: None)

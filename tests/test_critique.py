@@ -31,6 +31,12 @@ from roam.critique.checks import (
 from roam.output._severity import severity_rank
 from tests.conftest import make_src_project as _make_project
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Diff parsing — pure function, no DB
 # ---------------------------------------------------------------------------

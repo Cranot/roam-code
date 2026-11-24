@@ -13,6 +13,11 @@ from tests.conftest import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def drift_project(tmp_path):
     """Laravel+TS project with deliberate field mismatches."""

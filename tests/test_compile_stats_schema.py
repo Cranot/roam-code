@@ -18,6 +18,12 @@ import pytest
 from roam.commands.cmd_compile_stats import _read_telemetry, compile_stats
 from roam.security.owner_only import ensure_owner_only_path
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 _EXPECTED_FIELDS = {
     "schema_version",
     "ts",

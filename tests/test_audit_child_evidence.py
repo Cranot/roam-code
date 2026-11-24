@@ -12,6 +12,11 @@ import roam.cli as cli_module
 from roam.commands import cmd_audit, cmd_dogfood
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("brief", [False, True])
 @pytest.mark.parametrize("outcome", ["failed", "incomplete", "complete", "gate", "shortened", "unknown_shortened"])
 def test_child_evidence_survives_summary_consumption(monkeypatch, brief, outcome):

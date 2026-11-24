@@ -10,6 +10,11 @@ from click.testing import CliRunner
 from roam.commands import cmd_audit, cmd_dogfood
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("command", ["audit", "dogfood"])
 @pytest.mark.parametrize("budget", [1000, 100000])
 def test_aggregate_honors_requested_budget_without_losing_evidence(monkeypatch, command, budget):

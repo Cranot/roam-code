@@ -13,6 +13,11 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
+@pytest.fixture(autouse=True)
 def _disable_cold_start_guard(monkeypatch):
     """W1282 root-cause fix: ``for_refactor`` and ``for_security_review`` are
     @_tool-wrapped, so the cold-start guard intercepts them when the project's

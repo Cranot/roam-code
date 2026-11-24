@@ -5,10 +5,16 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from tests.test_dogfood import tiny_indexed  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def test_dogfood_forwards_explicit_input_without_losing_rules(tmp_path, monkeypatch):

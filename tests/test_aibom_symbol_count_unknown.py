@@ -29,6 +29,12 @@ import pytest
 from roam.attest.cga import PREDICATE_TYPE_AIBOM, build_cga_statement, serialize_statement
 from roam.security.aibom_extension import aibom_block_incomplete_reason, build_aibom_block
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 _AIBOM_SQL_MARK = "JOIN files f ON f.id = s.file_id"
 
 

@@ -24,10 +24,17 @@ import json as _json
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli as roam_cli
 from roam.rules.engine import _load_yaml, load_rules
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
 
 # ---------------------------------------------------------------------------
 # _load_yaml — direct loader behaviour

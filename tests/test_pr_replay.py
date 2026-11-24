@@ -31,6 +31,12 @@ from click.testing import CliRunner
 from roam.exit_codes import EXIT_PARTIAL
 from tests.conftest import git_init, index_in_process
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -12,6 +12,11 @@ from roam.commands import cmd_stale_refs as mod
 from roam.index.discovery import MAX_FILE_SIZE, SKIP_OVERSIZED, discover_files_with_skips
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def large_reference_project(tmp_path, monkeypatch):
     # Real fixture-local filesystem and CLI scan are the boundary under test;

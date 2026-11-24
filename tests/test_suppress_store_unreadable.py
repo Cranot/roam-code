@@ -34,6 +34,12 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # Two entries plus a trailing comma and no closing brace — a plausible
 # truncated/interrupted write, the shape that reaches JSONDecodeError.
 CORRUPT_STORE = '{\n "aaaaaaaaaaaaaaaa": {"reason":"vetted by security"},\n "bbbbbbbbbbbbbbbb": {"reason":"SEC-441"},\n'

@@ -11,6 +11,12 @@ import pytest
 from roam.verdict import VERDICTS, compute_verdict, verdict_exit_code
 from roam.verification_contract import build_verification_contract
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---- fixtures ----
 
 _SAMPLE_GRAPH = {

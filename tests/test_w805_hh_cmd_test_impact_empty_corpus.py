@@ -70,6 +70,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402 -- relative-to-tests-dir import after sys.path mutation
     git_commit,

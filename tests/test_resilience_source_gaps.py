@@ -11,6 +11,11 @@ import pytest
 from roam.resilience import run_resilience
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("missing", [True, False])
 def test_actual_harvester_keeps_findings_and_discloses_missing_source(tmp_path, missing):
     (tmp_path / "app.py").write_text("import requests\nrequests.get(url)\n", encoding="utf-8")

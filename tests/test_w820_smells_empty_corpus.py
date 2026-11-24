@@ -24,6 +24,12 @@ from tests.conftest import (
     parse_json_output,
 )
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Helper: invoke smells directly via its Click command object
 # ---------------------------------------------------------------------------

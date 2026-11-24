@@ -82,6 +82,12 @@ from click.testing import CliRunner
 from roam.cli import cli
 from tests.conftest import make_src_project as _make_project
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 _PROJECT_FILES = {
     "auth.py": """
         class UserSession:

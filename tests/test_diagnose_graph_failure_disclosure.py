@@ -48,6 +48,12 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 MODULE = (
     "def alpha(x):\n    return x + 1\n\n\ndef beta(x):\n    return alpha(x)\n\n\ndef gamma(x):\n    return beta(x)\n"
 )

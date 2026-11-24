@@ -11,6 +11,11 @@ import sys
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def cold_project(tmp_path):
     project = tmp_path / "project"
@@ -20,7 +25,12 @@ def cold_project(tmp_path):
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith("ROAM_")}
     env.pop("PYTHONPATH", None)
-    env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", ROAM_TELEMETRY_LOCAL="0")
+    env.update(
+        PYTHONUTF8="1",
+        PYTHONIOENCODING="utf-8",
+        ROAM_TELEMETRY_LOCAL="0",
+        ROAM_INDEX_FRESHNESS_BUDGET_S=os.environ["ROAM_INDEX_FRESHNESS_BUDGET_S"],
+    )
     for args in (
         ["init", "--quiet"],
         # Snapshot all Git files too: prevent the fixture commit's background

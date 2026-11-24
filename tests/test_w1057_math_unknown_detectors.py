@@ -16,8 +16,15 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from roam.catalog.detectors import _DETECTOR_REGISTRY, run_detectors
 from roam.db.connection import ensure_schema
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def _empty_conn():

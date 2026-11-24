@@ -21,13 +21,19 @@ import pytest
 from roam.commands.grep_helpers import SearchEngineError
 from tests.conftest import index_in_process, invoke_cli, parse_json_output
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 LAUNCHER = Path(sys.executable).with_name("roam.exe" if os.name == "nt" else "roam")
 
 
 @pytest.fixture
 def reference_project(tmp_path, monkeypatch):
     for key in tuple(os.environ):
-        if key.startswith("ROAM_"):
+        if key.startswith("ROAM_") and key != "ROAM_INDEX_FRESHNESS_BUDGET_S":
             monkeypatch.delenv(key, raising=False)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ROAM_GREP_ENGINE", "git")

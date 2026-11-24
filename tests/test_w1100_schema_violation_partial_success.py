@@ -26,6 +26,11 @@ import pytest
 from roam.output.formatter import strip_list_payloads
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def _raw_envelope(**extra) -> dict:
     """Build a raw envelope bypassing ``json_envelope`` so malformed
     shapes the canonical constructor would reject stay reachable.

@@ -90,6 +90,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Canonical W607-EE-role aggregation phases (the role W607-CO plays for
 # cmd_audit_trail_conformance -- same 4 phase names cmd_missing_index W607-DX

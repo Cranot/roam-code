@@ -13,6 +13,11 @@ from roam.commands import cmd_audit, cmd_dogfood, cmd_metrics_push
 from tests.test_metrics_push import _FAKE_AUDIT_ENVELOPE
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("has_tests", [True, False])
 def test_real_indexed_audit_reaches_metrics_dry_run_without_a_fake_envelope(tmp_path, monkeypatch, has_tests):
     """Real Git/index/CLI in tmp_path; outbound posting is forbidden by a stub."""

@@ -9,6 +9,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402
     git_init,

@@ -12,6 +12,11 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
+@pytest.fixture(autouse=True)
 def _reset_storm_state():
     """Reset both the storm counter and the first-error-message cache
     between tests so one test's poison doesn't leak into the next."""

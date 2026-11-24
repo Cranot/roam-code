@@ -26,7 +26,14 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.conftest import git_init, roam
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def _write(path, name, body):

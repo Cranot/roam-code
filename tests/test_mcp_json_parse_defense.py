@@ -15,6 +15,11 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
+@pytest.fixture(autouse=True)
 def _reset_mcp_state():
     """Mirror tests/test_mcp_server.py's isolation fixture."""
     from roam.mcp_server import _ROAM_RESULT_CACHE, _reset_error_storm

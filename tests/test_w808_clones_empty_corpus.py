@@ -23,10 +23,16 @@ from __future__ import annotations
 import os
 import subprocess
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from tests.conftest import parse_json_output
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def _make_empty_corpus(tmp_path):

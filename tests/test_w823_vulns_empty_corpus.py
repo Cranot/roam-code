@@ -25,7 +25,14 @@ import json as _json
 import sys
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
 
 # Reuse the conftest helpers used by the rest of the suite.
 sys.path.insert(0, str(Path(__file__).parent))

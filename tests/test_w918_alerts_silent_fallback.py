@@ -21,7 +21,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from roam.commands.cmd_alerts import _resolved_thresholds
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def _make_minimal_alerts_yaml(text: str, root: Path) -> Path:

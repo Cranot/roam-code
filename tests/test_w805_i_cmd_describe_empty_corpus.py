@@ -93,6 +93,12 @@ from click.testing import CliRunner
 
 from tests.conftest import git_init, index_in_process
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Helpers - invoke describe via the Click group so the top-level --json flag
 # is honoured by ctx.obj.

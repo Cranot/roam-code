@@ -12,6 +12,12 @@ from roam.commands import stale_refs_anchors as anchors
 from tests import test_w1527_stale_refs_unreadable_files as fixture_module
 from tests.conftest import invoke_cli
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 refs_project = fixture_module.refs_project
 
 

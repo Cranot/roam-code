@@ -52,6 +52,12 @@ from roam.index.calc_extract import (
     extract_calcs_from_file_status,
 )
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 MONEY_A = "def f(base, rate):\n    vat = round(base * rate / 100, 2)\n    return vat\n"
 MONEY_B = "def g(base, rate):\n    total = round(base * rate / 100, 2)\n    return total\n"
 

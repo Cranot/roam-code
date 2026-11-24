@@ -22,9 +22,16 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
 
 # Mirror W823's blacklist: any of these substrings in the verdict on an
 # empty corpus is a silent-SAFE Pattern-2 violation.

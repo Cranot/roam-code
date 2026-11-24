@@ -15,6 +15,12 @@ from tests.conftest import (
     parse_json_output,
 )
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # The release version the generated-CI assertions below are DERIVED from
 # (W1501). ``roam init --with-ci=github`` writes a workflow into the USER'S
 # repository, so the action ref and ``version:`` input it emits are INSTALL

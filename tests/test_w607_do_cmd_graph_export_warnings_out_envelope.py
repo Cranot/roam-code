@@ -92,6 +92,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Canonical W607-DO phase enumeration
 # ---------------------------------------------------------------------------

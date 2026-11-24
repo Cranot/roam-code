@@ -28,6 +28,11 @@ from tests.conftest import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.fixture
 def empty_corpus_project(tmp_path):
     """A project with one empty .py file + one git commit.

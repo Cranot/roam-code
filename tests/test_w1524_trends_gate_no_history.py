@@ -52,6 +52,11 @@ import pytest
 from tests.conftest import git_init, index_in_process, invoke_cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def _seed_flat_snapshots(proj, n=6):
     """Insert `n` identical snapshots so analysis RUNS and finds no anomaly.
 

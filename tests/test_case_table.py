@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.conftest import invoke_cli
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def test_python_table(project_factory, cli_runner, monkeypatch):

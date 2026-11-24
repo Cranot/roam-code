@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import sys
-from datetime import timedelta
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -32,7 +31,7 @@ def test_initialize_advertises_roam_package_not_framework_version(tmp_path):
         # task-local descriptor and retain server diagnostics on every platform.
         with (tmp_path / "mcp-stderr.log").open("w", encoding="utf-8") as errlog:
             async with stdio_client(params, errlog=errlog) as (read, write):
-                async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=30)) as session:
+                async with ClientSession(read, write) as session:
                     result = await session.initialize()
                     tools = await session.list_tools()
                     return json.loads(result.model_dump_json()), [tool.name for tool in tools.tools]
@@ -52,6 +51,9 @@ def test_stdio_tool_calls_do_not_inherit_the_protocol_input(tmp_path, monkeypatc
     (root / "app.py").write_text("def answer():\n    return 42\n", encoding="utf-8")
     for key in ("ROAM_PROJECT_ROOT", "ROAM_DB_DIR", "ROAM_RUN_ID"):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
     git_init(root)
     output, code = index_in_process(root)
     assert code == 0, output
@@ -66,7 +68,7 @@ def test_stdio_tool_calls_do_not_inherit_the_protocol_input(tmp_path, monkeypatc
         )
         with (tmp_path / "mcp-tools-stderr.log").open("w", encoding="utf-8") as errlog:
             async with stdio_client(params, errlog=errlog) as (read, write):
-                async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=20)) as session:
+                async with ClientSession(read, write) as session:
                     await session.initialize()
                     observations = []
                     for query in ("answer", "absent_symbol_7fe302"):

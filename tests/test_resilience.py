@@ -19,6 +19,11 @@ from roam import resilience as rs
 from roam.catalog.tasks import CATALOG
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Detector unit tests (pure function — deterministic, no live harvest)
 # ---------------------------------------------------------------------------

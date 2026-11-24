@@ -29,6 +29,12 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # A live network call, then a hard syntax error.
 UNPARSEABLE_LEAKY = (
     'import requests\n\n\ndef test_network():\n    requests.get("https://example.com")\n\n\ndef broken(:\n    pass\n'

@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from roam.guard_errors import (
     GUARD_ERROR_CODES,
     exit_code_for_guard_error,
     guard_error_envelope,
     make_guard_error,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 def test_make_guard_error_returns_full_shape():

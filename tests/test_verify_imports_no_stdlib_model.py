@@ -44,6 +44,12 @@ import click
 import pytest
 from click.testing import CliRunner
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 GO_MAIN = 'package main\n\nimport (\n\t"encoding/json"\n\t"fmt"\n\t"net/http"\n\t"os"\n)\n\nfunc main() {\n\tfmt.Println(os.Args, json.Valid(nil), http.StatusOK)\n}\n'
 
 JAVA_APP = (

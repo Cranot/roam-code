@@ -55,6 +55,12 @@ import pytest
 
 from roam.index.discovery import SKIP_UNENUMERABLE, discover_files, discover_files_with_skips
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 #: Vendor-shaped but synthetic: the AWS prefix plus 16 uppercase alphanumerics,
 #: matching the shipped `AKIA[0-9A-Z]{16}` pattern at RUNTIME while never
 #: appearing as one literal in this source.  Same reason

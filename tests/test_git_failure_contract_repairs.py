@@ -9,6 +9,11 @@ from click.testing import CliRunner
 from roam.cli import cli
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def invoke(*args):
     result = CliRunner().invoke(cli, list(args))
     assert result.exception is None or isinstance(result.exception, SystemExit), result.output

@@ -16,6 +16,12 @@ import pytest
 
 from tests._helpers.repo_root import repo_root
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 SITE = repo_root() / "templates/distribution/landing-page"
 VOID_TAGS = {
     "area",

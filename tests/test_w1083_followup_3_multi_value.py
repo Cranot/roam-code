@@ -32,6 +32,12 @@ from roam.output.structured_unknowns import (
     to_summary_payload_many,
 )
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 # ---------------------------------------------------------------------------
 # Helper unit tests — three partition scenarios + did_you_mean shape.
 # ---------------------------------------------------------------------------

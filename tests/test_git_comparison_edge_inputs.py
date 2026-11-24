@@ -11,6 +11,12 @@ from roam.cli import cli
 from roam.commands import changed_files
 from tests._helpers.repo_root import repo_root
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 SOURCE = "def calculate(value):\n    return value\n"
 KEEP = "".join(f"def keep_{i}(value):\n    return value + {i}\n\n" for i in range(12))
 

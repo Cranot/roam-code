@@ -20,6 +20,7 @@ from __future__ import annotations
 import json as _json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli as roam_cli
@@ -28,6 +29,12 @@ from roam.commands.cmd_check_rules import (
     _load_raw_config,
     _load_user_config,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
 
 # ---------------------------------------------------------------------------
 # _load_raw_config — direct loader behaviour

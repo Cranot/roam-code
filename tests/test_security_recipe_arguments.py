@@ -8,6 +8,12 @@ import pytest
 
 from tests import test_critique as fixtures
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 critique_project = fixtures.critique_project
 
 

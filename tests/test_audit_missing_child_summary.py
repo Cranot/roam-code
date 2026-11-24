@@ -12,6 +12,11 @@ import roam.cli as cli_module
 from roam.commands import cmd_audit, cmd_dogfood
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 @pytest.mark.parametrize("detail", [False, True])
 def test_brief_transport_failure_does_not_invent_available_detail(monkeypatch, detail):
     failed = {"_error": "exit 2", "_command": ["health"], "_output_head": "failed"}

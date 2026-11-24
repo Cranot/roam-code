@@ -96,6 +96,12 @@ import pytest
 
 from tests._helpers.repo_root import repo_root
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 REPO_ROOT = repo_root()
 SCANNER = REPO_ROOT / "scripts" / "scan_disclosure_asymmetry.py"
 BASELINE = REPO_ROOT / "tests" / "data" / "disclosure_asymmetry_baseline.json"

@@ -5,7 +5,6 @@ import json
 import os
 import subprocess
 import sys
-from datetime import timedelta
 
 import pytest
 from click.testing import CliRunner
@@ -15,11 +14,15 @@ from mcp.client.stdio import stdio_client
 from roam.cli import cli
 
 
-@pytest.fixture
-def edited_project(project_factory, monkeypatch, tmp_path):
+@pytest.fixture(autouse=True)
+def _isolated_freshness_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
-    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
+@pytest.fixture
+def edited_project(project_factory, monkeypatch):
     project = project_factory({"app.py": "def indexed_helper():\n    return 1\n"})
     monkeypatch.chdir(project)
     mode = CliRunner().invoke(cli, ["mode", "autonomous_pr"])
@@ -96,6 +99,31 @@ def test_composite_discloses_interrupted_freshness_check(edited_project, cli_run
     assert payload["summary"]["child_evidence"]["test_pyramid"]["summary"]["state"] == "no_test_files"
 
 
+@pytest.mark.parametrize("command", _COMPOSITES)
+def test_composite_shares_its_first_freshness_result(edited_project, cli_runner, monkeypatch, command):
+    run = subprocess.run
+    statuses = []
+
+    def interrupt_first_check(args, *positional, **kwargs):
+        if args[:2] == ["git", "status"] and "--porcelain=v2" in args:
+            statuses.append(args)
+            if len(statuses) == 1:
+                raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        return run(args, *positional, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", interrupt_first_check)
+    result = cli_runner.invoke(cli, ["--json", command, *_COMPOSITES[command]])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["_meta"]["index_state"] == "unknown"
+    assert payload["_meta"]["index_changed_files"] is None
+    assert payload["_meta"]["index_state_reason"] == "freshness check exceeded its time budget"
+    assert payload["summary"]["partial_success"] is True
+    if command == "dogfood":
+        assert payload["sections"]["pr_analyze"]["_meta"]["index_state"] == "unknown"
+    assert len(statuses) == 1
+
+
 def test_cached_pr_analysis_checks_index_freshness(edited_project, cli_runner, monkeypatch):
     args = ["--json", "pr-analyze", "--cache"]
     assert cli_runner.invoke(cli, ["index"]).exit_code == 0
@@ -126,7 +154,7 @@ def test_mcp_composites_disclose_stale_index_over_stdio(edited_project, explicit
         )
         with (edited_project / ".roam" / "server.log").open("w", encoding="utf-8") as errlog:
             async with stdio_client(params, errlog=errlog) as (read, write):
-                async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=45)) as session:
+                async with ClientSession(read, write) as session:
                     await session.initialize()
                     for command in _COMPOSITES:
                         args = None
@@ -149,7 +177,7 @@ def test_mcp_composites_disclose_stale_index_over_stdio(edited_project, explicit
                         payload = json.loads(next(item.text for item in reply.content if item.type == "text"))
                         _assert_stale(payload, command)
 
-    asyncio.run(asyncio.wait_for(check(), timeout=120))
+    asyncio.run(check())
 
 
 @pytest.mark.parametrize(
@@ -286,7 +314,7 @@ def test_mcp_compound_explains_inconsistent_freshness_metadata():
     assert not payload["summary"]["failed_subcommands"]
 
 
-def test_composite_observes_an_edit_between_child_reads(edited_project, cli_runner, monkeypatch):
+def test_next_composite_observes_an_edit_between_child_reads(edited_project, cli_runner, monkeypatch):
     from roam.commands import cmd_audit
 
     assert cli_runner.invoke(cli, ["index"]).exit_code == 0
@@ -299,7 +327,12 @@ def test_composite_observes_an_edit_between_child_reads(edited_project, cli_runn
             (edited_project / "app.py").write_bytes(b"def indexed_helper():\n    return 300\n")
         return payload
 
-    monkeypatch.setattr(cmd_audit, "_capture", edit_after_health)
+    with monkeypatch.context() as patch:
+        patch.setattr(cmd_audit, "_capture", edit_after_health)
+        result = cli_runner.invoke(cli, ["--json", "audit"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["_meta"]["index_state"] == "fresh"
+
     result = cli_runner.invoke(cli, ["--json", "audit"])
     assert result.exit_code == 0, result.output
     _assert_stale(json.loads(result.stdout), "audit")

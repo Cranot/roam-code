@@ -9,6 +9,12 @@ from click.testing import CliRunner
 
 from roam.commands.cmd_hooks import hooks
 
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 _FAILURE = re.compile(
     r"error|fail|denied|permission|unable|could\s+not|couldn't|cannot|can't|"
     r"unsuccessful|incomplete|not\b.*\bremoved|remain|warning",

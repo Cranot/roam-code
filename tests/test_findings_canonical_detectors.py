@@ -28,6 +28,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -38,6 +39,12 @@ from roam.db.findings import (
     emit_finding,
     known_detector_names,
 )
+
+
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
 
 # ---------------------------------------------------------------------------
 # CANONICAL_DETECTOR_NAMES content

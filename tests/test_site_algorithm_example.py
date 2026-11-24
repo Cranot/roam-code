@@ -12,6 +12,11 @@ from tests.conftest import invoke_cli
 from tests.test_homepage_contract import SITE, HomepageParser, normalized
 
 
+@pytest.fixture(autouse=True)
+def _pin_index_freshness_budget(monkeypatch):
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
+
+
 def _example():
     page = HomepageParser((SITE / "docs/command-reference.html").read_text(encoding="utf-8"))
     section = next(node for node in page.root.find("section") if node.attrs.get("id") == "algorithm-choices")
