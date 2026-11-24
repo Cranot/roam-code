@@ -1,0 +1,236 @@
+<!-- Stored PR Replay copy for templates/distribution/landing-page/audit.html. The tier states in dev/site-product-policy.json select each variant; run python scripts/build_site_product_facts.py --write after changing either. -->
+<!-- variant:hero-eyebrow:open -->PR Replay · Free sample and paid reports<!-- /variant -->
+<!-- variant:hero-eyebrow:paused -->PR Replay · Free local sample<!-- /variant -->
+<!-- variant:hero-offer:open -->
+        Run a free sample, or request a written report on an agreed change history.
+        Paid reports add founder review, practical next steps, and a walk-through
+        with your team.
+      <!-- /variant -->
+<!-- variant:hero-offer:paused -->
+        Run the free local sample over recent commits and investigate what it flags.
+      <!-- /variant -->
+<!-- variant:hero-compare:open --><a class="btn-secondary" href="#tiers">Compare the paid reports</a><!-- /variant -->
+<!-- variant:hero-compare:paused --><a class="btn-secondary" href="#tiers">See report availability</a><!-- /variant -->
+<!-- variant:hero-strip:open -->Same free engine · Local DIY sample · Paid interpretation by request · No hosted subscription required<!-- /variant -->
+<!-- variant:hero-strip:paused -->Same free engine · Local DIY sample · No account or upload for the sample<!-- /variant -->
+<!-- variant:tiers-intro:open -->
+      <h2 id="tiers-heading">Try the sample. Choose the depth of help.</h2>
+      <p class="lede">
+        The local sample is free. Paid Team and Deep reports add founder time and a
+        defined deliverable. Before kickoff, agree how your repository's commits
+        map to the requested PR window, especially with squash merges or shallow history.
+      </p>
+<!-- /variant -->
+<!-- variant:tiers-intro:paused -->
+      <h2 id="tiers-heading">Start with the free local sample.</h2>
+      <p class="lede">
+        The sample runs the same free engine on your machine. It needs no account,
+        email, or repository upload.
+      </p>
+<!-- /variant -->
+<!-- variant:team-card:open -->        <article class="replay-tier replay-tier--team">
+          <h3>Team</h3>
+          <p class="replay-price"><strong><!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact --></strong> · <!-- product-fact:teamReplayPrCount -->30<!-- /product-fact --> PRs · 30-min walk-through</p>
+          <p class="replay-body">
+            A focused assessment of an agreed <!-- product-fact:teamReplayPrCount -->30<!-- /product-fact -->-PR history window.
+          </p>
+          <ul class="selling-deliverables">
+            <li>Markdown + PDF report with ranked findings and a breakdown by check.</li>
+            <li>Founder review of the important patterns and checks to evaluate in CI.</li>
+            <li>A 30-minute walk-through with your team.</li>
+          </ul>
+          <p class="replay-foot">5 business days from the agreed kickoff.
+            We confirm availability before work starts.</p>
+          <p class="replay-body"><strong><!-- product-fact:teamCreditPrice -->$1,250<!-- /product-fact --> banked toward Roam Review</strong>
+            — redeemable within 60 days of its launch, not before.
+            <a href="#credit">Read the future-credit conditions</a>.</p>
+          <!-- STRIPE_TEAM_LINK / PLACEHOLDER_TEAM: when the live Stripe
+               Payment Link URL is ready, replace the primary button's
+               href with the Stripe URL and re-add the "Or email first"
+               mailto as the secondary. The PLACEHOLDER_TEAM marker is
+               the string the PR Replay engagement playbook tells the
+               founder to grep for. -->
+          <a class="btn-primary"
+             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20request&amp;body=Hi%2C%20I%27m%20interested%20in%20a%20Team%20PR%20Replay%20report.%0A%0AQuestion%20we%20want%20answered%3A%20%0ALanguages%20%2F%20framework%3A%20%0ARepository%20(public%20link%20or%20will%20share%20privately)%3A%20%0AProposed%20change%20window%20or%20commit%20range%20(optional)%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0APlease%20send%20scope%20and%20availability%20before%20we%20arrange%20access%20or%20payment.%0AThis%20first%20email%20includes%20no%20source%20code%20or%20credentials.">
+            Request Team — <!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact --> <!-- Evidence: PR Replay Team price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
+          </a>
+          <p class="replay-checkout-note">This opens an email draft, not an order. Payment follows agreed written scope and invoice confirmation.</p>
+        </article>
+
+<!-- /variant -->
+<!-- variant:deep-card:open -->        <article class="replay-tier replay-tier--deep">
+          <h3>Deep</h3>
+          <p class="replay-price"><strong><!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact --></strong> · <!-- product-fact:deepReplayPrCount -->90<!-- /product-fact --> PRs · 90-min walk-through</p>
+          <p class="replay-body">
+            A broader assessment of an agreed <!-- product-fact:deepReplayPrCount -->90<!-- /product-fact -->-PR window or specified range.
+          </p>
+          <ul class="selling-deliverables">
+            <li>Everything in Team, with a deeper look at each finding category.</li>
+            <li>A written 90-day remediation plan in the Markdown + PDF report.</li>
+            <li>A 90-minute walk-through with your team.</li>
+          </ul>
+          <p class="replay-foot">10 business days from the agreed kickoff.
+            We confirm availability before work starts.</p>
+          <p class="replay-body"><strong><!-- product-fact:deepCreditPrice -->$3,000<!-- /product-fact --> banked toward Roam Review</strong>
+            — redeemable within 60 days of its launch, not before.
+            <a href="#credit">Read the future-credit conditions</a>.</p>
+          <!-- STRIPE_DEEP_LINK / PLACEHOLDER_DEEP: when the live Stripe
+               Payment Link URL is ready, replace the primary button's
+               href with the Stripe URL and re-add the "Or email first"
+               mailto as the secondary. The PLACEHOLDER_DEEP marker is
+               the string the PR Replay engagement playbook tells the
+               founder to grep for. -->
+          <a class="btn-primary"
+             href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20request&amp;body=Hi%2C%20I%27m%20interested%20in%20a%20Deep%20PR%20Replay%20report.%0A%0AQuestion%20we%20want%20answered%3A%20%0ALanguages%20%2F%20framework%3A%20%0ARepository%20(public%20link%20or%20will%20share%20privately)%3A%20%0AProposed%20change%20window%20or%20commit%20range%20(optional)%3A%20%0APreferred%20walk-through%20windows%3A%20%0A%0APlease%20send%20scope%20and%20availability%20before%20we%20arrange%20access%20or%20payment.%0AThis%20first%20email%20includes%20no%20source%20code%20or%20credentials.">
+            Request Deep — <!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact --> <!-- Evidence: PR Replay Deep price as of 2026-06-13; see templates/legal/sow-pr-replay.md#1-engagement. -->
+          </a>
+          <p class="replay-checkout-note">This opens an email draft, not an order. Payment follows agreed written scope and invoice confirmation.</p>
+        </article>
+
+<!-- /variant -->
+<!-- variant:paused-card:paused -->        <article class="replay-tier replay-tier--paused" id="paid-reports">
+          <h3>[[paused-tiers]] reports</h3>
+          <p class="replay-body">
+            Paid [[paused-tiers]] reports are paused for new requests while we fix
+            defects in the reports. Existing orders keep their agreed terms.
+          </p>
+          <p class="replay-foot">
+            The free local sample is open now:
+            <code>roam pr-replay --tier sample</code>.
+            Questions: <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>.
+          </p>
+        </article>
+
+<!-- /variant -->
+<!-- variant:request-terms:open -->      <p class="selling-contact-note">
+        Do not email source code, credentials, or private reports. Start with your
+        question, languages, and approximate scope. If the email button does not
+        open an app, write to <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
+        Response time and availability are confirmed by email.
+      </p>
+      <p class="replay-fineprint">
+        Reports ship as Markdown + PDF. Turnaround: 5 business days for
+        Team, 10 business days for Deep, both from kickoff. We never
+        train on or reuse buyer code; the engagement runs against a
+        temporary clone we delete within 7 calendar days of report delivery. A separate
+        tax invoice is issued within 30 days of payment according to the
+        applicable VAT treatment. Confirm billing details before payment.
+        See the
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">SOW</a>,
+        <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">DPA</a>,
+        and <a href="/security">security policy</a> for details. Email
+        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a>
+        with questions before purchase.
+      </p>
+<!-- /variant -->
+<!-- variant:how-it-works:open -->  <section class="how-it-works" id="how">
+    <div class="how-it-works-inner">
+      <h2>How it works</h2>
+      <p class="lede">
+        Agree the question and scope, review the findings, then walk through the report together.
+      </p>
+      <ol class="flow">
+        <li>
+          <span class="flow-num">1</span>
+          <strong>Agree the scope (before kickoff).</strong>
+          Describe your question and proposed history window. We confirm fit and
+          availability, then agree a
+          <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md">written scope of work</a>
+          and <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/dpa.md">data-handling agreement</a>.
+          The linked documents are templates for review, not signed agreements.
+          Kickoff follows payment, countersignature of the scope of work, and
+          approval of the agreed repository access.
+        </li>
+        <li>
+          <span class="flow-num">2</span>
+          <strong>Kickoff and replay (days 2–4 for Team, 2–8 for Deep).</strong>
+          We clone to a temp working tree, run <code>roam pr-replay</code>
+          across your range, founder reviews the top findings by hand and
+          drafts the narrative. Per-detector deep-dive added on Deep tier.
+        </li>
+        <li>
+          <span class="flow-num">3</span>
+          <strong>Walk-through + delivery (day 5 / day 10).</strong>
+          30-min call (Team) or 90-min call (Deep) over your video tool of
+          choice. We walk the report, answer questions, and discuss the
+          recommended CI gates. Polished Markdown + PDF lands in your
+          inbox right after.
+        </li>
+      </ol>
+      <p class="how-it-works-foot">
+        We delete the temporary clone within 7 calendar days of report delivery. The git ledger we kept
+        of the engagement is yours on request, and the optional 50% credit
+        toward Roam Review is banked as a founding-customer credit — the
+        60-day redemption window starts when Roam Review ships, not now.
+      </p>
+    </div>
+  </section>
+
+<!-- /variant -->
+<!-- variant:credit-open:open -->  <section class="audit-upsell" id="credit">
+    <div class="audit-upsell-inner">
+      <h2>The optional credit toward a future Roam Review subscription</h2>
+      <p class="lede">
+        Half of the engagement fee is banked toward your first year of Roam
+        Review — the 60-day redemption window starts when Roam Review ships
+        (it's in development), so the credit can't expire before you can use it.
+      </p>
+      <p>Roam Review has no confirmed launch date and is not available to subscribe to.
+        This is a future subscription credit, not cash back. The PR Replay report
+        fee is still payable in full.</p>
+      <div class="compare-table-wrap" tabindex="0" role="region" aria-labelledby="review-credit-caption">
+      <table class="compare-table compare-table--compact" style="max-width: 760px; margin: 24px auto 0;">
+        <caption class="visually-hidden" id="review-credit-caption">PR Replay report fees and optional future Review credits, in USD.</caption>
+        <thead>
+          <tr>
+            <th scope="col">PR Replay tier</th>
+            <th scope="col">Fee</th>
+            <th scope="col">Credits toward Review</th>
+          </tr>
+        </thead>
+        <tbody>
+<!-- /variant -->
+<!-- variant:credit-open:paused -->  <section class="audit-upsell" id="credit">
+    <div class="audit-upsell-inner">
+      <h2>Review credit on existing orders</h2>
+      <p class="lede">
+        Existing Team and Deep orders keep the optional credit toward a future
+        Roam Review subscription set out in their agreed terms.
+      </p>
+      <p>Roam Review has no confirmed launch date and is not available to subscribe to.
+        The credit is not cash back.</p>
+      <p class="compare-foot">
+        Read the <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md#7-roam-review-subscription-credit">written credit terms</a>,
+        or email <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20question">hello@roam-code.com</a> with a question about an order.
+      </p>
+    </div>
+  </section>
+
+<!-- /variant -->
+<!-- variant:credit-team:open -->          <tr>
+            <th scope="row">Team</th>
+            <td><!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact --></td>
+            <td><!-- product-fact:teamCreditPrice -->$1,250<!-- /product-fact --></td>
+          </tr>
+<!-- /variant -->
+<!-- variant:credit-deep:open -->          <tr>
+            <th scope="row">Deep</th>
+            <td><!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact --></td>
+            <td><!-- product-fact:deepCreditPrice -->$3,000<!-- /product-fact --></td>
+          </tr>
+<!-- /variant -->
+<!-- variant:credit-close:open -->        </tbody>
+      </table>
+      </div>
+      <p class="compare-foot">
+        Mention the report when subscribing and we apply the credit to
+        the first invoice. Credit is single-use and expires 60 days
+        after Roam Review reaches general availability.
+        The <a href="https://github.com/Cranot/roam-code/blob/main/templates/legal/sow-pr-replay.md#7-roam-review-subscription-credit">written credit terms</a>
+        also define transferability and eligible tiers. Review those terms
+        before agreeing an engagement; the credit is not a launch promise.
+      </p>
+    </div>
+  </section>
+
+<!-- /variant -->

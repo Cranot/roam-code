@@ -1,0 +1,9 @@
+<!-- Stored PR Replay copy for templates/distribution/landing-page/llms.txt. The tier states in dev/site-product-policy.json select each variant; run python scripts/build_site_product_facts.py --write after changing either. -->
+<!-- variant:llms-availability:open -->; paid PR Replay reports by email
+request after scope and terms are agreed.<!-- /variant -->
+<!-- variant:llms-availability:paused -->; a free local PR Replay sample.<!-- /variant -->
+<!-- variant:llms-replay-1:open -->- [PR Replay](https://roam-code.com/audit) — free local sample<!-- /variant -->
+<!-- variant:llms-replay-1:paused -->- [PR Replay](https://roam-code.com/audit) — free local sample: `roam pr-replay --tier sample`. Paid Team and Deep reports are paused for new requests while we fix defects in the reports; existing orders keep their agreed terms. Questions: hello@roam-code.com.<!-- /variant -->
+<!-- variant:llms-replay-2:open -->; Team report <!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact --><!-- /variant -->
+<!-- variant:llms-replay-3:open -->; Deep report <!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact --><!-- /variant -->
+<!-- variant:llms-replay-4:open -->. Paid reports add founder review and a walk-through. Read the scope and conditional future credit at /audit; an email enquiry is not an order.<!-- /variant -->

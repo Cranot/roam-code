@@ -72,6 +72,22 @@ retain the windows and prices of their recorded or illustrative engagements.
 The binding check catches known shapes, not every possible contradiction in
 natural language; review the whole diff and search current offer wording too.
 
+PR Replay tiers have their own states in the policy's `replayTiers`
+(`sample`, `team`, `deep`: `OPEN` or `PAUSED`). Copy that depends on a tier is
+wrapped in `<!-- replay-offer:GATE:NAME -->` markers; both its open and paused
+variants are kept in `dev/site-replay-offers/` (one file per served page, plus
+`offers.json` for the Audit structured offers). The gate is a tier (`team`,
+`deep`), `paid` (open while any paid tier is open) or `paused` (shown while any
+paid tier is paused). Pausing or reopening a tier is one policy change followed
+by `--write`; edit a variant in the store, never only its rendered copy.
+Structured offers, `llms.txt` and `data/product-facts.json` list only open
+tiers. The generator and `tests/test_site_replay_availability.py` refuse a
+served file that presents a paused tier: a structured offer, request email,
+request button, bound price or scope, or paid-report call to action. Terms,
+Refund, Privacy, the thank-you page and the changelog govern existing orders or
+record history and are not rewritten. Render every state before reopening a
+tier and read the changed pages; the check covers known shapes, not wording.
+
 Keep offer and policy ownership explicit: `dev/site-product-policy.json` owns
 adopted availability and bound offer facts; the signed SOW/order form governs
 engagement terms; Terms and Refund explain those terms; Privacy owns processing
