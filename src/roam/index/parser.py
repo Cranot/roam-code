@@ -296,7 +296,7 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
     return processed.encode("utf-8"), effective_lang
 
 
-def parse_file(path: Path, language: str | None = None):
+def parse_file(path: Path, language: str | None = None, *, source: bytes | None = None):
     """Parse a file with tree-sitter and return (tree, source_bytes, language).
 
     Returns (None, None, None) if parsing fails.
@@ -310,7 +310,8 @@ def parse_file(path: Path, language: str | None = None):
     if language is None:
         return None, None, None  # Not a supported extension, expected skip
 
-    source = read_source(path)
+    if source is None:
+        source = read_source(path)
     if source is None:
         parse_errors["unreadable"] += 1
         log.warning("Unreadable file: %s", path)

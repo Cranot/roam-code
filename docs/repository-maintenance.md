@@ -167,17 +167,19 @@ without opening the index. `init` still creates project configuration.
 
 Index-backed CLI and MCP queries and `roam doctor` compare the current
 source files against the saved index. Both clean and dirty builds use the
-same comparison. Roam lists tracked and untracked files with
-`git ls-files --cached --others --exclude-standard` and applies the index's
-discovery and language rules. It checks saved files by mtime and hashes their
-content when mtimes differ. A rename counts its old and new paths. Touching
-a file without changing its contents leaves it fresh.
+same comparison. Roam checks the bytes of Git-reported paths, including
+untracked files that the index can discover. When the comparison needs a
+full file listing, Roam uses `git ls-files --cached --others --exclude-standard`
+and applies the index's discovery and language rules. A rename counts its
+old and new paths. Touching a file without changing its contents leaves it fresh.
 
 In JSON and MCP, read `_meta.index_state` and `_meta.index_changed_files`.
 `fresh` means zero changed files. `stale` means a positive count and includes
 `_meta.stale_index: true`. An unavailable check returns `unknown` with a
 null count and `_meta.index_state_reason`. MCP result-cache hits can reuse
-that result for three seconds.
+the last check for three seconds. During that window, a working-tree edit
+can leave a cached reply reporting `fresh`. Publishing a new index invalidates
+the cached result.
 `_meta.index_age_s` measures elapsed seconds since the recorded index build
 and is null when the record is missing. Age is informational.
 `_meta.index_status` remains available, with `fresh` and `dirty_files`

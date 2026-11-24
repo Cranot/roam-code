@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -358,11 +359,20 @@ class TestAdversarialTextOutput:
         output = result.stdout.strip()
         assert output.startswith("VERDICT:"), f"Expected output to start with 'VERDICT:', got:\n{output[:200]}"
 
-    def test_adversarial_verdict_line_no_changes(self, indexed_project_no_changes):
+    def test_adversarial_verdict_line_no_changes(self, indexed_project_no_changes, monkeypatch):
         """Text output has VERDICT: even when no changes."""
+        run = subprocess.run
+
+        def timeout_freshness(command, *args, **kwargs):
+            if command[:2] == ["git", "status"] and "--porcelain=v2" in command:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return run(command, *args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", timeout_freshness)
         result = run_adversarial(indexed_project_no_changes)
         assert result.exit_code == 0
-        output = result.output.strip()
+        assert "freshness check exceeded its time budget" in result.stderr
+        output = result.stdout.strip()
         assert output.startswith("VERDICT:"), f"Expected VERDICT: at start, got:\n{output[:200]}"
 
     def test_adversarial_challenge_block_when_found(self, adversarial_project):

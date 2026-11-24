@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib
 import json
 import logging
@@ -34,7 +35,7 @@ from roam.index.discovery import discover_files
 # import gives the dead-export detector a real production edge.
 from roam.index.django_post import resolve_all_django  # noqa: F401
 from roam.index.file_roles import classify_file
-from roam.index.incremental import file_hash, get_index_changed_files
+from roam.index.incremental import get_index_changed_files
 from roam.index.manifest import GitSnapshot, capture_git_snapshot, record_indexer_run
 from roam.index.parser import (
     detect_language,
@@ -1954,7 +1955,7 @@ class Indexer:
             mtime = full_path.stat().st_mtime
         except OSError:
             mtime = None
-        fhash = file_hash(full_path)
+        fhash = hashlib.sha256(source).hexdigest()
         content_head = source[:2048].decode("utf-8", errors="replace") if source else None
         file_role = classify_file(rel_path, content_head)
 
@@ -2015,7 +2016,7 @@ class Indexer:
         if file_id is None:
             return None
 
-        tree, parsed_source, lang = parse_file(full_path, language)
+        tree, parsed_source, lang = parse_file(full_path, language, source=source)
         if tree is None and parsed_source is None:
             return file_id
 
@@ -2908,7 +2909,7 @@ class Indexer:
                 modified = []
                 removed = []
             else:
-                added, modified, removed = get_index_changed_files(conn, all_files, self.root)
+                added, modified, removed = get_index_changed_files(conn, all_files, self.root, git_snapshot=git_before)
             # Discover-phase wallclock covers ls-files + change detection.
             self._phase_timer.record_phase("discover", time.perf_counter() - t_discover)
 

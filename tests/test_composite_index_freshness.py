@@ -149,6 +149,57 @@ def test_cached_pr_analysis_checks_index_freshness(edited_project, cli_runner, m
     assert json.loads(refused.stdout)["error_code"] == "INDEX_STALE"
 
 
+@pytest.mark.parametrize("rebuild", [False, True], ids=["restore-working-tree", "rebuild-index"])
+def test_pr_analysis_recomputes_after_index_becomes_fresh(edited_project, cli_runner, rebuild):
+    # Keep the analyzed diff fixed when the checkout/index changes.
+    diff = subprocess.check_output(["git", "diff", "HEAD", "--", "app.py"])
+    diff_path = edited_project / ".roam" / "review.diff"
+    diff_path.write_bytes(diff)
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    scratch = edited_project / "scratch.py"
+    scratch.write_bytes(b"def scratch(): pass\n")
+
+    def analyze():
+        result = cli_runner.invoke(cli, ["--json", "pr-analyze", "--cache", "--input", str(diff_path)])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    stale = analyze()
+    assert stale["_meta"]["index_state"] == "stale"
+    assert stale["summary"]["partial_success"] is True
+    assert analyze()["cache_hit"] is True
+    if rebuild:
+        assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    else:
+        scratch.unlink()
+    fresh = analyze()
+    assert fresh["_meta"]["index_state"] == "fresh"
+    assert fresh["pr_prep"]["_meta"]["index_state"] == "fresh"
+    assert not fresh.get("cache_hit")
+    assert analyze()["cache_hit"] is True
+
+
+def test_pr_analysis_cache_key_tracks_index_publication(edited_project, cli_runner):
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    args = ["--json", "pr-analyze", "--cache"]
+
+    def analyze():
+        result = cli_runner.invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["_meta"]["index_state"] == "fresh"
+        return payload
+
+    assert not analyze().get("cache_hit")
+    before = analyze()
+    assert before["cache_hit"] is True
+    assert cli_runner.invoke(cli, ["index", "--force"]).exit_code == 0
+    assert not analyze().get("cache_hit")
+    after = analyze()
+    assert after["cache_hit"] is True
+    assert before["cache_key"] != after["cache_key"]
+
+
 def test_mcp_doctor_reobserves_index_on_stdio_with_omitted_and_empty_arguments(edited_project, cli_runner):
     assert cli_runner.invoke(cli, ["index"]).exit_code == 0
 

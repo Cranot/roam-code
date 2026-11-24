@@ -43,6 +43,15 @@ def git_status_head_and_paths(status: bytes) -> tuple[str | None, set[str]]:
     return head, paths
 
 
+def project_relative_git_paths(paths: set[str], root: Path, git_root: Path) -> set[str]:
+    """Scope Git's worktree-relative names to a possibly nested project."""
+    if root == git_root:
+        return paths
+    prefix = root.relative_to(git_root).as_posix() + "/"
+    scoped_prefix = os.path.normcase(prefix)
+    return {path[len(prefix) :] for path in paths if os.path.normcase(path).startswith(scoped_prefix)}
+
+
 _GIT_SUBPROCESS_ENV_ALLOWLIST = frozenset(
     {
         # Needed for subprocess executable lookup on systems where git is not

@@ -6218,37 +6218,9 @@ _CACHEABLE_COMMANDS = frozenset(
 
 
 def _cache_index_identity() -> tuple | None:
-    """Identify the current index and its publication and WAL files."""
-    from roam.db.connection import INDEX_STATE_NAME, get_db_path
+    from roam.db.connection import index_cache_identity
 
-    try:
-        path = get_db_path(create=False).resolve()
-        primary = path.stat()
-        if not _stat_mod.S_ISREG(primary.st_mode):
-            return None
-        files = [primary]
-        sidecars = (path.with_name(path.name + "-wal"), path.with_name(INDEX_STATE_NAME))
-        for sidecar in sidecars:
-            try:
-                info = sidecar.stat()
-            except FileNotFoundError:
-                info = None
-            # Read-only SQLite connections may create/remove an empty WAL.
-            if info is not None and sidecar.name.endswith("-wal") and info.st_size == 0:
-                info = None
-            files.append(info)
-    except FileNotFoundError:
-        return None
-    except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        log_swallowed("mcp_server:cache_index_identity", exc)
-        return None
-    # A read-only SQLite open can change the WAL ctime without changing its contents.
-    marker = files[-1]
-    stamps = tuple(
-        (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns) if info is not None else None
-        for info in files
-    )
-    return path, primary.st_ctime_ns, marker.st_ctime_ns if marker is not None else None, stamps
+    return index_cache_identity()
 
 
 def _track_query_result(result: dict) -> dict:

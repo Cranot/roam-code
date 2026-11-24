@@ -79,12 +79,14 @@ from roam.commands.pr_analyze.cache import (
     _save_cache,
 )
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, index_cache_identity
 from roam.db.freshness import (
     IndexCompositeRunner,
     StaleQueryIndexError,
     check_query_index_policy,
     project_index_freshness,
     strongest_index_metadata,
+    valid_index_freshness_metadata,
 )
 from roam.exit_codes import EXIT_ERROR
 from roam.observability import log_swallowed
@@ -1528,6 +1530,7 @@ def _serve_from_cache(
     quiet: bool,
     gate: bool,
     token_budget: int = 0,
+    index_identity: tuple | None = None,
 ) -> bool:
     """Try the envelope cache. On hit emit the cached output and return True.
 
@@ -1535,14 +1538,29 @@ def _serve_from_cache(
     pipeline. Top-level ``cache_hit`` + ``cache_key`` keys survive the
     json_envelope() ``_meta`` rebuild.
     """
-    key = _cache_key(diff_text, rules_path, block_threshold, language_override)
+    key = _cache_key(diff_text, rules_path, block_threshold, language_override, index_identity=index_identity)
     cached = _load_cache(cache_dir_path, key)
     if cached is None:
         return False
-    from roam.db.connection import find_project_root
-
     ctx = click.get_current_context(silent=True)
-    if ctx is not None and (freshness := project_index_freshness(find_project_root(), required=True)):
+    if ctx is not None:
+        meta = cached.get("_meta")
+        summary = cached.get("summary")
+        if not (
+            valid_index_freshness_metadata(meta)
+            and isinstance(summary, dict)
+            and isinstance(summary.get("verdict"), str)
+            and summary["verdict"] in VERDICT_CODES
+        ):
+            return False
+        root = find_project_root()
+        if index_identity is None or index_identity != index_cache_identity(root):
+            return False
+        freshness = project_index_freshness(root, required=True)
+        if freshness is None or index_identity != index_cache_identity(root):
+            return False
+        if freshness.state == "fresh" and meta["index_state"] != "fresh":
+            return False
         check_query_index_policy(ctx, freshness, warn=True)
     cached["cache_hit"] = True
     cached["cache_key"] = key
@@ -2394,20 +2412,18 @@ def pr_analyze_command(
     # Cache lookup — bypasses pr-prep (the slow part) on hit.
     cache_dir_path = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
     rules_path = Path(rules_file) if rules_file else (Path(".roam") / "rules.yml")
-    if (
-        cache
-        and not _diff_fetch_errors
-        and _serve_from_cache(
-            diff_text,
-            rules_path,
-            block_threshold,
-            language_override,
-            cache_dir_path,
-            json_mode=json_mode,
-            quiet=quiet,
-            gate=gate,
-            token_budget=token_budget,
-        )
+    index_identity = index_cache_identity() if cache and not _diff_fetch_errors else None
+    if index_identity is not None and _serve_from_cache(
+        diff_text,
+        rules_path,
+        block_threshold,
+        language_override,
+        cache_dir_path,
+        json_mode=json_mode,
+        quiet=quiet,
+        gate=gate,
+        token_budget=token_budget,
+        index_identity=index_identity,
     ):
         return
 
@@ -2620,13 +2636,20 @@ def pr_analyze_command(
         except OSError as exc:
             bundle["baseline_save_error"] = str(exc)
 
-    if cache and not _diff_fetch_errors:
-        # Persist the analysis envelope so future runs with the same diff +
-        # rules + threshold replay instantly. Save AFTER all post-processing
-        # (drift + baseline) so the cached envelope is the final canonical one.
-        cache_save_key = _cache_key(diff_text, rules_path, block_threshold, language_override)
-        _save_cache(cache_dir_path, cache_save_key, bundle)
-        bundle.setdefault("_meta", {})["cache_saved_to"] = str(_cache_path(cache_dir_path, cache_save_key))
+    if index_identity is not None:
+        root = find_project_root()
+        freshness = project_index_freshness(root, required=True)
+        if freshness is not None and index_identity == index_cache_identity(root):
+            cache_save_key = _cache_key(
+                diff_text, rules_path, block_threshold, language_override, index_identity=index_identity
+            )
+            bundle["_meta"] = {
+                "index_state": freshness.state,
+                "index_changed_files": freshness.changed_files,
+                "index_state_reason": freshness.reason,
+            }
+            _save_cache(cache_dir_path, cache_save_key, bundle)
+            bundle["_meta"]["cache_saved_to"] = str(_cache_path(cache_dir_path, cache_save_key))
 
     if audit_trail:
         trail_path = Path(audit_trail_path) if audit_trail_path else DEFAULT_AUDIT_TRAIL_PATH

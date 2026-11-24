@@ -3,8 +3,8 @@
 A cache hit short-circuits the heavy work — pr-prep + AI scoring + rules
 matching — when the inputs that affect the analysis haven't changed.
 Inputs hashed: diff text, rules-file content (mtime-independent), block
-threshold, language override, the cache schema version, and the identity of
-the analyzer code that produced the bundle.
+threshold, language override, the cache schema version, and the identities of
+the index and analyzer code that produced the bundle.
 
 That last term is the one this module was missing. ``CACHE_VERSION`` is a
 serialization tag — its own comment scopes it to "when the envelope shape
@@ -148,7 +148,7 @@ class _CacheKeyInputs:
             language_override=None if language_override is None else str(language_override),
         )
 
-    def digest(self) -> str:
+    def digest(self, index_identity: tuple | None = None) -> str:
         """Derive the stable sha256 cache key for these inputs.
 
         Covers the inputs AND the producer — see :func:`_analyzer_fingerprint`
@@ -170,10 +170,12 @@ class _CacheKeyInputs:
                 h.update(b"<unreadable>")
         h.update(f"\nthreshold={self.block_threshold}\n".encode())
         h.update(f"lang={self.language_override or ''}".encode())
+        if index_identity is not None:
+            h.update(f"\nindex={index_identity!r}".encode("utf-8"))
         return h.hexdigest()
 
 
-def _cache_key(inputs: _CacheKeyInputs | object, *legacy_inputs: object) -> str:
+def _cache_key(inputs: _CacheKeyInputs | object, *legacy_inputs: object, index_identity: tuple | None = None) -> str:
     """Derive a stable cache key from inputs that affect the analysis.
 
     ``_CacheKeyInputs`` is the canonical value object. The variadic branch is a
@@ -183,7 +185,7 @@ def _cache_key(inputs: _CacheKeyInputs | object, *legacy_inputs: object) -> str:
     if isinstance(inputs, _CacheKeyInputs):
         if legacy_inputs:
             raise TypeError("_cache_key(_CacheKeyInputs) accepts no extra arguments")
-        return inputs.digest()
+        return inputs.digest(index_identity)
 
     if len(legacy_inputs) != 3:
         raise TypeError(
@@ -191,7 +193,7 @@ def _cache_key(inputs: _CacheKeyInputs | object, *legacy_inputs: object) -> str:
         )
 
     rules_path, block_threshold, language_override = legacy_inputs
-    return _CacheKeyInputs._from_loose(inputs, rules_path, block_threshold, language_override).digest()
+    return _CacheKeyInputs._from_loose(inputs, rules_path, block_threshold, language_override).digest(index_identity)
 
 
 def _cache_path(cache_dir: Path, key: str) -> Path:
@@ -243,6 +245,8 @@ def _load_cache(
         ``OSError``). The cache file is on disk but unreadable.
       * ``pr_analyze_cache_corrupt:<path>:JSONDecodeError`` — the
         bytes parsed as something other than JSON.
+      * ``pr_analyze_cache_corrupt:<path>:UnicodeDecodeError`` — the file
+        was not valid UTF-8.
       * ``pr_analyze_cache_corrupt:<path>:NotAJsonObject`` — JSON
         parsed cleanly but the top-level value was not a dict (the
         downstream ``_try_cache_envelope`` callsite indexes
@@ -264,8 +268,8 @@ def _load_cache(
     except OSError as exc:
         _emit(f"pr_analyze_cache_read_failed:{p}:{type(exc).__name__}:{exc}")
         return None
-    except _json.JSONDecodeError:
-        _emit(f"pr_analyze_cache_corrupt:{p}:JSONDecodeError")
+    except (_json.JSONDecodeError, UnicodeDecodeError, RecursionError) as exc:
+        _emit(f"pr_analyze_cache_corrupt:{p}:{type(exc).__name__}")
         return None
     if not isinstance(raw, dict):
         _emit(f"pr_analyze_cache_corrupt:{p}:NotAJsonObject")

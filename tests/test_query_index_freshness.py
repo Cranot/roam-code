@@ -61,6 +61,54 @@ def test_25_hour_index_with_unchanged_tree(query_project, cli_runner, monkeypatc
     assert envelope["summary"]["partial_success"] is False
 
 
+@pytest.mark.parametrize("tracked", [True, False], ids=["tracked", "untracked"])
+@pytest.mark.parametrize("reindex", [False, True], ids=["query-only", "reindex"])
+def test_preserved_mtime_edit_uses_indexed_content(
+    project_factory, tmp_path, cli_runner, monkeypatch, tracked, reindex
+):
+    name = "Pkg/Source (one).py"
+    files = {".gitattributes": "*.py -text\n"}
+    if tracked:
+        files[name] = "def committed_symbol(): pass\n"
+    project = project_factory(files, index=False)
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "external index"))
+    path = project / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"def indexed_symbol():\r\n    return 1\r\n")
+    if tracked and reindex:
+        subprocess.run(["git", "commit", "-qam", "Commit the source snapshot"], check=True)
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+
+    def query(symbol):
+        result = cli_runner.invoke(cli, ["--json", "search", symbol])
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    assert query("indexed_symbol")["_meta"]["index_state"] == "fresh"
+    before = path.stat()
+    path.write_bytes(b"def new_content_symbol():\r\n    return 111\r\n")
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    status = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all", "-z"])
+    assert name.encode() + b"\0" in status
+
+    if reindex:
+        if tracked:
+            assert query("indexed_symbol")["_meta"]["index_state"] == "stale"
+        assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+        answer = query("new_content_symbol")
+        assert [row["name"] for row in answer["results"]] == ["new_content_symbol"]
+        assert answer["_meta"]["index_state"] == "fresh"
+        assert answer["_meta"]["index_changed_files"] == 0
+        assert not query("indexed_symbol")["results"]
+    else:
+        for _ in range(2):
+            answer = query("indexed_symbol")
+            assert answer["_meta"]["index_state"] == "stale"
+            assert answer["_meta"]["index_changed_files"] == 1
+            assert answer["summary"]["partial_success"] is True
+
+
 def test_snapshot_write_preserves_index_age(query_project, cli_runner):
     _age_index(25 * 3600)
     db_path = get_db_path()
@@ -73,6 +121,35 @@ def test_snapshot_write_preserves_index_age(query_project, cli_runner):
     result = cli_runner.invoke(cli, ["--json", "search", "indexed_helper"])
     assert result.exit_code == 0, result.output
     assert abs(json.loads(result.stdout)["_meta"]["index_age_s"] - 25 * 3600) < 10
+
+
+def test_edit_between_source_read_and_parsing_leaves_index_stale(query_project, cli_runner, monkeypatch):
+    from roam.index.indexer import Indexer
+
+    path = query_project / "app.py"
+    path.write_bytes(b"def captured_symbol():\r\n    return 10\r\n")
+    read_source = Indexer._read_index_source
+
+    def edit_after_read(indexer, full_path, rel_path, verbose):
+        source = read_source(indexer, full_path, rel_path, verbose)
+        if full_path == path:
+            before = path.stat()
+            path.write_bytes(b"def edited_while_indexing():\r\n    return 200\r\n")
+            os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        return source
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Indexer, "_read_index_source", edit_after_read)
+        assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+
+    first = json.loads(cli_runner.invoke(cli, ["--json", "search", "captured_symbol"]).stdout)
+    assert first["_meta"]["index_state"] == "stale"
+    assert first["_meta"]["index_changed_files"] == 1
+    assert [row["name"] for row in first["results"]] == ["captured_symbol"]
+    assert cli_runner.invoke(cli, ["index"]).exit_code == 0
+    second = json.loads(cli_runner.invoke(cli, ["--json", "search", "edited_while_indexing"]).stdout)
+    assert second["_meta"]["index_state"] == "fresh"
+    assert [row["name"] for row in second["results"]] == ["edited_while_indexing"]
 
 
 def test_git_failure_leaves_index_state_unknown(query_project, cli_runner, monkeypatch):

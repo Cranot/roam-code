@@ -274,7 +274,14 @@ def _git_status(project_root: Path) -> bytes | None:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
-    return result.stdout if result.returncode == 0 and not result.stderr.strip() else None
+    if result.returncode or result.stderr.strip():
+        return None
+    status = result.stdout
+    if status and (
+        not status.endswith(b"\0") or any(len(record) < 4 or record[2:3] != b" " for record in status[:-1].split(b"\0"))
+    ):
+        return None
+    return status
 
 
 @dataclass(frozen=True)

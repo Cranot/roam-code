@@ -17,7 +17,7 @@ from pathlib import Path
 import click
 from click.testing import CliRunner
 
-from roam.git_utils import GIT_STATUS_WITH_HEAD, git_status_head_and_paths, worktree_git_env
+from roam.git_utils import GIT_STATUS_WITH_HEAD, git_status_head_and_paths, project_relative_git_paths, worktree_git_env
 from roam.observability import log_swallowed
 
 _BUDGET_ENV = "ROAM_INDEX_FRESHNESS_BUDGET_S"
@@ -129,6 +129,15 @@ def _manifest_notes(notes: str | None) -> dict:
     return manifest if isinstance(manifest, dict) else {}
 
 
+def _manifest_dirty_paths(dirty_hash: str | None, metadata: dict) -> list[str] | None:
+    paths = metadata.get("git_dirty_paths", None if dirty_hash else [])
+    if metadata.get("git_build_head_changed") or not isinstance(paths, list):
+        return None
+    if any(not isinstance(path, str) or not path or "\0" in path for path in paths):
+        return None
+    return paths
+
+
 def _git_paths(output: bytes, *, name_status: bool = False) -> set[str]:
     records = output.decode("utf-8", errors="replace").split("\0")
     if name_status:
@@ -142,7 +151,7 @@ def _has_gitignore(paths: set[str]) -> bool:
 
 
 def _indexed_rows(conn: sqlite3.Connection, paths: set[str], *, compare_all: bool):
-    select = "SELECT path, mtime, hash FROM files"
+    select = "SELECT path, hash FROM files"
     if compare_all:
         yield from conn.execute(select)
         return
@@ -161,8 +170,6 @@ def _compare_indexed_files(
     *,
     compare_all: bool,
     ignored_paths: set[str],
-    untracked_paths: set[str],
-    dirty: bool,
     include_excluded: bool,
     config_changed: bool,
     deadline: _CheckDeadline,
@@ -179,16 +186,11 @@ def _compare_indexed_files(
     changed_paths: set[str] = set()
     try:
         exclude = None if include_excluded else compile_exclude_patterns(load_exclude_patterns(root))
-        for path, mtime, digest in _indexed_rows(conn, paths, compare_all=compare_all):
+        for path, digest in _indexed_rows(conn, paths, compare_all=compare_all):
             if time.monotonic() >= deadline.end:
                 return None, _BUDGET_EXCEEDED
             listed = path in paths and path not in ignored_paths
             paths.discard(path)
-            untracked = path in untracked_paths
-            if not dirty and not compare_all and not untracked:
-                # Git identified a change to a path already accepted by discovery.
-                changed_paths.add(path)
-                continue
             # Git ignore changes can drop a listed path. An indexed path
             # only needs its Roam exclusion rules reapplied if they changed.
             if not listed or _is_skippable(path) or (config_changed and exclude is not None and exclude(path)):
@@ -198,9 +200,7 @@ def _compare_indexed_files(
                 full_path = os.path.join(root_path, path)
                 current = os.stat(full_path)
                 changed = not stat.S_ISREG(current.st_mode) or current.st_size > MAX_FILE_SIZE
-                # A staged removal leaves Git without a tracked copy of the
-                # file. Compare the bytes even if its timestamp was preserved.
-                if not changed and (untracked or current.st_mtime != mtime):
+                if not changed:
                     changed = file_hash(full_path) != digest
             except (FileNotFoundError, NotADirectoryError):
                 changed = True
@@ -247,6 +247,30 @@ def _recorded_paths_ignored(
     return {names[record] for record in records}, None
 
 
+def _git_diff_paths(
+    git_root: Path, indexed_head: str, head: str, deadline: _CheckDeadline
+) -> tuple[set[str] | None, set[str], str | None]:
+    if indexed_head == head:
+        return set(), set(), None
+    diff, reason = _run_git(
+        git_root,
+        ["git", "diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", indexed_head, head, "--"],
+        deadline,
+    )
+    if diff is None:
+        return None, set(), reason
+    fields = diff.split(b"\0")
+    changes = list(zip(fields[:-1:2], fields[1::2]))
+    if (
+        fields[-1]
+        or len(fields) % 2 != 1
+        or any(kind not in (b"A", b"B", b"D", b"M", b"T", b"U", b"X") or not path for kind, path in changes)
+    ):
+        return None, set(), "git diff reported an incomplete result"
+    deleted = _git_paths(b"\0".join(path for kind, path in changes if kind == b"D"))
+    return _git_paths(diff, name_status=True), deleted, None
+
+
 def _candidate_paths(
     root: Path,
     git_root: Path,
@@ -254,87 +278,37 @@ def _candidate_paths(
     head: str,
     status: bytes,
     status_paths: set[str],
-    clean_build: bool,
     config_changed: bool,
     dirty_paths: list[str] | None,
     deadline: _CheckDeadline,
-) -> tuple[set[str] | None, bool, set[str], set[str], str | None]:
-    diff_paths: set[str] = set()
-    # Status describes changes on either side of the staging area. For a
-    # clean build those changes can cancel each other or changes in HEAD.
-    records = status.split(b"\0") if clean_build else ()
-    moved_head = indexed_head != head
-    reconcile_worktree = any(
-        (record.startswith(b"1 ") and (moved_head or b"." not in record[2:4]))
-        or (moved_head and record.startswith(b"u "))
-        for record in records
-    )
-    if moved_head or reconcile_worktree:
-        revisions = [indexed_head] if reconcile_worktree else [indexed_head, head]
-        diff, reason = _run_git(
-            git_root,
-            ["git", "diff", "--name-status", "-z", "--no-renames", "--no-ext-diff", *revisions, "--"],
-            deadline,
-        )
-        if diff is None:
-            return None, False, set(), set(), reason
-        fields = diff.split(b"\0")
-        if (
-            fields[-1]
-            or len(fields) % 2 != 1
-            or any(
-                kind not in (b"A", b"B", b"D", b"M", b"T", b"U", b"X") or not path
-                for kind, path in zip(fields[:-1:2], fields[1::2])
-            )
-        ):
-            return None, False, set(), set(), "git diff reported an incomplete result"
-        diff_paths = _git_paths(diff, name_status=True)
+) -> tuple[set[str] | None, bool, set[str], str | None]:
+    diff_paths, committed_deletions, reason = _git_diff_paths(git_root, indexed_head, head, deadline)
+    if diff_paths is None:
+        return None, False, set(), reason
 
     prior = set(dirty_paths or ())
     # Ignore rules can affect unchanged paths. A recorded dirty path that
     # disappears from status can also have fallen out of Git's untracked
     # discovery scope via info/exclude or a configured excludes file.
     if dirty_paths is not None and not config_changed and not _has_gitignore(status_paths | diff_paths | prior):
-        prefix = root.relative_to(git_root).as_posix() + "/" if root != git_root else ""
-        untracked_status = _git_paths(b"\0".join(record[2:] for record in records if record.startswith(b"? ")))
-        untracked_paths = {
-            path[len(prefix) :] for path in untracked_status if path.startswith(prefix) and not path.endswith("/")
-        }
-        if reconcile_worktree:
-            # The diff covers tracked changes. Keep status for untracked
-            # files, including collapsed directories that need discovery.
-            status_paths = untracked_status
-        collapsed = any(
-            path.endswith("/") and (path.startswith(prefix) or prefix.startswith(path)) for path in status_paths
+        records = status.split(b"\0")
+        staged_deletions = _git_paths(
+            b"\0".join(record.split(b" ", 8)[-1] for record in records if record.startswith(b"1 D"))
         )
-        current = {path[len(prefix) :] for path in status_paths if path.startswith(prefix) and not path.endswith("/")}
-        prior = {path[len(prefix) :] for path in prior if path.startswith(prefix)}
-        if collapsed:
-            untracked, reason = _listed_git_paths(
-                root, ["git", "ls-files", "-z", "--others", "--exclude-standard"], deadline
-            )
-            if untracked is None:
-                return None, False, set(), set(), reason
-            if _has_gitignore(untracked):
-                current = None
-            else:
-                current.update(untracked)
-                if clean_build:
-                    untracked_paths.update(untracked)
-        if current is not None:
-            # A staged deletion is visible in status even when the file
-            # remains on disk and now falls under an exclude rule.
-            ignored, reason = _recorded_paths_ignored(root, prior, deadline)
-            if ignored is None:
-                return None, False, set(), set(), reason
-            current.update(prior)
-            current.update(path[len(prefix) :] for path in diff_paths if path.startswith(prefix))
-            return current, False, ignored, untracked_paths, None
+        untracked = _git_paths(b"\0".join(record[2:] for record in records if record.startswith(b"? ")))
+        ignored, reason = _recorded_paths_ignored(root, project_relative_git_paths(prior, root, git_root), deadline)
+        if ignored is None:
+            return None, False, set(), reason
+        # A deletion can leave an eligible untracked file, or a later stage can add it back.
+        missing = (committed_deletions - status_paths) | (staged_deletions - untracked)
+        ignored.update(project_relative_git_paths(missing, root, git_root))
+        current = project_relative_git_paths(status_paths | diff_paths | prior, root, git_root)
+        return current, False, ignored, None
 
     from roam.index.discovery import GIT_LS_FILES
 
     listing, reason = _listed_git_paths(root, list(GIT_LS_FILES), deadline)
-    return listing, True, set(), set(), reason
+    return listing, True, set(), reason
 
 
 @dataclass(frozen=True)
@@ -410,7 +384,7 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
         return QueryIndexFreshness(age_s, None, "the index manifest has no Git commit")
     if not _is_git_oid(indexed_head):
         return QueryIndexFreshness(age_s, None, "the index manifest has an invalid Git commit")
-    status, reason = _run_git(git_root, [*GIT_STATUS_WITH_HEAD, "--untracked-files=normal"], deadline)
+    status, reason = _run_git(git_root, [*GIT_STATUS_WITH_HEAD, "--untracked-files=all"], deadline)
     if status is None:
         # A failed worktree scan can still leave HEAD readable.
         raw_head = None
@@ -443,22 +417,15 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
     metadata = _manifest_notes(notes)
     options = metadata.get("index_options")
     include_excluded = isinstance(options, dict) and options.get("include_excluded") is True
-    recorded_paths = metadata.get("git_dirty_paths", None if dirty_hash else [])
-    if (
-        metadata.get("git_build_head_changed")
-        or not isinstance(recorded_paths, list)
-        or any(not isinstance(path, str) or not path or "\0" in path for path in recorded_paths)
-    ):
-        recorded_paths = None
+    recorded_paths = _manifest_dirty_paths(dirty_hash, metadata)
     config_changed = not include_excluded and _config_hash(root) != config_hash
-    paths, compare_all, ignored_paths, untracked_paths, reason = _candidate_paths(
+    paths, compare_all, ignored_paths, reason = _candidate_paths(
         root,
         git_root,
         indexed_head,
         head,
         status,
         status_paths,
-        not dirty_hash and recorded_paths == [],
         config_changed,
         recorded_paths,
         deadline,
@@ -471,8 +438,6 @@ def _read_freshness(conn: sqlite3.Connection, root: Path, deadline: _CheckDeadli
             paths,
             compare_all=compare_all,
             ignored_paths=ignored_paths,
-            untracked_paths=untracked_paths,
-            dirty=bool(dirty_hash),
             include_excluded=include_excluded,
             config_changed=config_changed,
             deadline=deadline,
