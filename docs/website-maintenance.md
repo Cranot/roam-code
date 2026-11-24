@@ -80,6 +80,10 @@ variants are kept in `dev/site-replay-offers/` (one file per served page, plus
 `deep`), `paid` (open while any paid tier is open) or `paused` (shown while any
 paid tier is paused). Pausing or reopening a tier is one policy change followed
 by `--write`; edit a variant in the store, never only its rendered copy.
+In Markdown (README and served `.md` files) a marker that starts a line wraps
+whole top-level blocks: CommonMark treats a line opening with `<!--` as raw
+HTML, so the generator writes each such marker alone between blank lines and
+refuses Markdown that shares its line.
 Structured offers, `llms.txt` and `data/product-facts.json` list only open
 tiers. The generator and `tests/test_site_replay_availability.py` refuse a
 served file that presents a paused tier: a structured offer, request email,

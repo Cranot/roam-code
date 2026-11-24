@@ -24,10 +24,14 @@ this synthetic engagement; missing evidence is not a clean result.
 
 ## 2. Agreed scope and delivered object
 
-<!-- replay-offer:team:report-scope -->A Team report covers an agreed PR window, a Markdown + PDF report and a
+<!-- replay-offer:team:report-scope -->
+
+A Team report covers an agreed PR window, a Markdown + PDF report and a
 founder walk-through. New Team report requests are paused; see
 [PR Replay](https://roam-code.com/audit) for what is open now. This public preview
-is the Markdown format only, not an invoice, a signed scope of work or a PDF delivery.<!-- /replay-offer -->
+is the Markdown format only, not an invoice, a signed scope of work or a PDF delivery.
+
+<!-- /replay-offer -->
 
 The paid object is reviewed interpretation of the agreed history and useful
 next steps, not access to otherwise locked analysis. The local tools are free.
@@ -182,9 +186,13 @@ findings and gaps, and settles which next checks are worth trying. Corrections
 must preserve the original raw finding and explain the reviewer disposition.
 Delivery is the report, not a promise that every proposed remediation is implemented.
 
-<!-- replay-offer:team:report-credit -->This synthetic document awards no Review credit. The agreed written terms of
+<!-- replay-offer:team:report-credit -->
+
+This synthetic document awards no Review credit. The agreed written terms of
 an actual order govern any credit; see the
-[credit terms for existing orders](https://roam-code.com/audit#credit).<!-- /replay-offer -->
+[credit terms for existing orders](https://roam-code.com/audit#credit).
+
+<!-- /replay-offer -->
 
 ## 9. Appendix — what to inspect before relying on a real report
 

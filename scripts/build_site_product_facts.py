@@ -232,7 +232,29 @@ def parse_variants(text: str, source: str) -> dict:
     return variants
 
 
-def render(text: str, facts: dict, variants: dict | None = None, offers: dict | None = None) -> str:
+def markdown_marker_findings(text: str) -> list[str]:
+    """CommonMark opens a raw HTML block on a line that starts with ``<!--``.
+
+    A replay-offer marker at the start of a Markdown line must therefore stand
+    alone between blank lines; otherwise the Markdown beside it renders as raw
+    text or the surrounding block structure changes.
+    """
+    lines = text.split("\n")
+    findings = []
+    for index, line in enumerate(lines):
+        if not re.match(r" {0,3}<!-- /?replay-offer", line):
+            continue
+        if re.sub(r"<!--.*?-->", "", line).strip():
+            findings.append(f"line {index + 1}: Markdown shares a line with a block-level replay offer marker")
+        for near in (index - 1, index + 1):
+            if 0 <= near < len(lines) and lines[near].strip():
+                findings.append(f"line {index + 1}: block-level replay offer marker needs blank lines around it")
+    return findings
+
+
+def render(
+    text: str, facts: dict, variants: dict | None = None, offers: dict | None = None, *, markdown: bool = False
+) -> str:
     if text.count("<!-- replay-offer:") != len(OFFER.findall(text)) or text.count("<!-- /replay-offer -->") != len(
         OFFER.findall(text)
     ):
@@ -244,6 +266,9 @@ def render(text: str, facts: dict, variants: dict | None = None, offers: dict | 
             raise ValueError(f"No stored variants for replay offer: {name}")
         body = variants[name].get(gate_state(facts, gate), "")
         body = body.replace(PAUSED_TIERS_SLOT, tier_titles(paused_paid_tiers(facts)))
+        if markdown and (match.start() == 0 or text[match.start() - 1] == "\n"):
+            # A Markdown block variant is whole blocks: each marker on its own line between blank lines.
+            body = "\n\n" + body.strip("\n") + "\n\n" if body.strip() else "\n\n"
         return f"<!-- replay-offer:{gate}:{name} -->{body}<!-- /replay-offer -->"
 
     text = OFFER.sub(offer, text)
@@ -383,7 +408,10 @@ def run(root: Path = ROOT, *, write: bool = False) -> int:
             unused = set(variants) - {name for _, name, _ in OFFER.findall(text)}
             if unused:
                 raise ValueError(f"{relative}: stored offer variants with no served marker: {sorted(unused)}")
-        rendered = render(text, facts, variants, offers)
+        markdown = relative.endswith(".md")
+        rendered = render(text, facts, variants, offers, markdown=markdown)
+        if markdown and markdown_marker_findings(rendered):
+            raise ValueError(f"{relative}: {markdown_marker_findings(rendered)[0]}")
         keys = {match[0] for match in FACT.findall(rendered)}
         required = {
             key for key in REQUIRED.get(relative, set()) if fact_tier(key) is None or tier_open(facts, fact_tier(key))

@@ -347,11 +347,13 @@ The CLI and MCP server are free under Apache 2.0 for individuals and teams.
 Static checks use local compute, not model calls; your agent's model charges
 are separate. You do not need a paid service to use Roam with your agents.
 
-<!-- replay-offer:paid:readme-replay -->- **PR Replay — free local sample.** Run `roam pr-replay --tier sample` to see
+<!-- replay-offer:paid:readme-list -->
+
+- **PR Replay — free local sample.** Run `roam pr-replay --tier sample` to see
   which structural findings in recent commits deserve a closer look. Paid Team
   and Deep reports are paused for new requests while we fix defects in the
   reports; existing orders keep their agreed terms.
-<!-- /replay-offer -->  Its default range is `HEAD~5..HEAD`, not necessarily five PRs; your checkout
+  Its default range is `HEAD~5..HEAD`, not necessarily five PRs; your checkout
   needs that history. A replay does not prove that an incident would have been prevented.
 - **Roam Review — planned, not available to subscribe to.** A proposed hosted
   pull-request check using Roam's local analysis. The hosted app, installation
@@ -359,6 +361,8 @@ are separate. You do not need a paid service to use Roam with your agents.
 - **Roam Cloud — planned, not available to subscribe to.** A proposed shared
   history of codebase measurements. The local `roam metrics-push` command exists;
   that does not establish a hosted dashboard. Inspect its payload with `--dry-run`.
+
+<!-- /replay-offer -->
 
 See [pricing and availability](https://roam-code.com/pricing) and the
 [PR Replay sample and scope](https://roam-code.com/audit#sample). Questions go to

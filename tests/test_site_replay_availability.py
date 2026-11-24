@@ -175,3 +175,43 @@ def test_stored_variant_without_a_served_marker_is_refused(product_site):
     store.write_text(store.read_text(encoding="utf-8") + "<!-- variant:orphan:open -->x<!-- /variant -->\n")
     with pytest.raises(ValueError, match="no served marker"):
         builder.run(product_site)
+
+
+MARKDOWN = [relative for _, relative, _ in builder.served_files(ROOT) if relative.endswith(".md")]
+MARKER = re.compile(r"<!-- /?replay-offer[\w:-]* -->")
+
+
+def block_comment_findings(text):
+    """CommonMark HTML block type 2: a line opening with ``<!--`` makes the whole line raw HTML.
+
+    So a replay-offer marker that starts a line must stand alone, with blank lines around it,
+    or the Markdown next to it renders as literal text or changes block structure.
+    """
+    lines = text.split("\n")
+    found = []
+    for index, line in enumerate(lines):
+        if not re.match(r" {0,3}<!--", line) or not MARKER.search(line):
+            continue
+        if re.sub(r"<!--.*?-->", "", line).strip():
+            found.append(f"{index + 1}: text shares a line with a block-level marker: {line.strip()[:80]}")
+        neighbours = [lines[i] for i in (index - 1, index + 1) if 0 <= i < len(lines)]
+        if any(neighbour.strip() and not MARKER.fullmatch(neighbour.strip()) for neighbour in neighbours):
+            found.append(f"{index + 1}: block-level marker without a blank line around it")
+    return found
+
+
+@pytest.mark.parametrize("case", STATE_CASES)
+@pytest.mark.parametrize("name", MARKDOWN)
+def test_markdown_markers_change_nothing_in_the_rendered_document(name, case):
+    from tests._helpers.replay_tiers import rendered
+
+    text = rendered(name, STATE_CASES[case])
+    assert block_comment_findings(text) == []
+    # markdown-it-py is locked through the dev and ci dependencies (rich), not declared directly.
+    markdown_it = pytest.importorskip("markdown_it")
+    md = markdown_it.MarkdownIt("commonmark")
+
+    def html(source):
+        return " ".join(MARKER.sub("", md.render(source)).split())
+
+    assert html(text) == html(MARKER.sub("", text))

@@ -25,4 +25,4 @@ def rendered(name: str, states: dict[str, str] | None = None) -> str:
     text = path.read_text(encoding="utf-8")
     variants = builder.parse_variants(store.read_text(encoding="utf-8"), name) if store.is_file() else None
     offers = json.loads((ROOT / builder.OFFERS / "offers.json").read_text(encoding="utf-8"))
-    return builder.render(text, facts, variants, offers)
+    return builder.render(text, facts, variants, offers, markdown=name.endswith(".md"))
