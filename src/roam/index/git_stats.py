@@ -893,6 +893,7 @@ def _run_git(cmd: list[str], *, cwd: Path, timeout: int = 120) -> subprocess.Com
             cmd,
             cwd=str(cwd),
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             timeout=timeout,
             encoding="utf-8",
