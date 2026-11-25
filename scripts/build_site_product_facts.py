@@ -451,7 +451,8 @@ def run(root: Path = ROOT, *, write: bool = False) -> int:
     if write:
         for path in changed:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(pending[path], encoding="utf-8")
+            # The served files are committed with LF endings; write them so on every platform.
+            path.write_text(pending[path], encoding="utf-8", newline="\n")
     print(f"Product facts: {scanned} content files inspected; {len(changed)} changed; historical records retained")
     return 0 if write or not changed else 1
 
