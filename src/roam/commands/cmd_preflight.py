@@ -32,8 +32,10 @@ from roam.commands.changed_files import (
     resolve_changed_to_db,
 )
 from roam.commands.cmd_affected_tests import (
+    DISPATCH_CACHE_DEFINITION,
     _gather_affected_tests,
     _looks_like_file,
+    _report_dispatch_cache_errors,
     _resolve_file_symbols,
     count_kinds,
 )
@@ -67,6 +69,7 @@ from roam.output.metric_definitions import (
     COGNITIVE_COMPLEXITY_DEFINITION,
     PREFLIGHT_RISK_LEVEL_DEFINITION,
 )
+from roam.output.test_commands import affected_test_commands, test_run_lines, unknown_runner_message
 from roam.runs.helpers import auto_log
 
 # ---------------------------------------------------------------------------
@@ -251,7 +254,7 @@ def _check_blast_radius(conn, sym_ids, file_paths):
         }
 
     G = build_symbol_graph(conn)
-    RG = G.reverse()
+    RG = G.reverse(copy=False)
 
     all_affected_syms = set()
     all_affected_files = set()
@@ -293,7 +296,8 @@ _MAX_SUGGESTED_TEST_FILES = 15
 
 def _check_affected_tests(conn, sym_ids, file_paths):
     """Find tests that need to run."""
-    results = _gather_affected_tests(conn, sym_ids, file_paths)
+    dispatch_cache = {}
+    results = _gather_affected_tests(conn, sym_ids, file_paths, dispatch_cache=dispatch_cache)
 
     # W847 — DIRECT/TRANSITIVE/COLOCATED are upstream kind tags from
     # ``_gather_affected_tests`` (internal vocabulary), not envelope
@@ -315,38 +319,14 @@ def _check_affected_tests(conn, sym_ids, file_paths):
             seen.add(r["file"])
             test_files.append(r["file"])
 
-    # Pick the actual test runner from package.json / pyproject when
-    # possible — noted preflight suggesting `pytest tests/`
-    # for Vitest projects.
-    try:
-        from roam.output.project_shape import _detect_test_runner
-
-        runner_name, _runner_cmd = _detect_test_runner(find_project_root())
-    except (OSError, UnicodeDecodeError):
-        runner_name = None
-    runner_token = "pytest"
-    if runner_name == "vitest":
-        runner_token = "npx vitest run"
-    elif runner_name == "jest":
-        runner_token = "npx jest"
-    elif runner_name == "mocha":
-        runner_token = "npx mocha"
-    elif runner_name == "playwright":
-        runner_token = "npx playwright test"
-    elif runner_name == "go test":
-        runner_token = "go test"
-    elif runner_name == "cargo test":
-        runner_token = "cargo test"
-    elif runner_name == "rspec":
-        runner_token = "bundle exec rspec"
-
     truncated_files = len(test_files) > _MAX_SUGGESTED_TEST_FILES
-    if truncated_files:
-        suggested = test_files[:_MAX_SUGGESTED_TEST_FILES]
-        suffix = f"  # (+{len(test_files) - _MAX_SUGGESTED_TEST_FILES} more)"
-        pytest_cmd = f"{runner_token} " + " ".join(suggested) + suffix
-    else:
-        pytest_cmd = f"{runner_token} " + " ".join(test_files) if test_files else ""
+    suggested = test_files[:_MAX_SUGGESTED_TEST_FILES]
+    commands, unknown_runners = affected_test_commands(find_project_root(), suggested)
+    suffix = f"  # (+{len(test_files) - len(suggested)} more)" if truncated_files else ""
+    # Despite its name, this preflight field has always held the detected runner.
+    pytest_cmd = "\n".join(entry["command"] for entry in commands)
+    if pytest_cmd:
+        pytest_cmd += suffix
     severity = _test_severity(direct, transitive, colocated, cli_invoke, module_import)
 
     _tests_result: dict = {
@@ -359,7 +339,10 @@ def _check_affected_tests(conn, sym_ids, file_paths):
         "total": len(results),
         "test_files": test_files,
         "pytest_command": pytest_cmd,
+        "test_commands": commands,
+        "unknown_runner_files": unknown_runners,
         "pytest_command_truncated": truncated_files,
+        "dispatch_cache": dispatch_cache,
         "severity": severity,
     }
     # W805-L Bug 2: disclose when no tests are indexed at all.
@@ -983,6 +966,8 @@ def preflight(ctx, target, staged):
                         "preflight",
                         summary={
                             "verdict": "no TARGET symbol/file or --staged provided",
+                            "target": "",
+                            "risk_level": "UNKNOWN",
                             "state": "usage_error",
                             "partial_success": True,
                         },
@@ -1283,6 +1268,9 @@ def preflight(ctx, target, staged):
                 "severity": "warning",
             },
         )
+        dispatch_cache = tests.get("dispatch_cache", {"state": "unusable", "reason": "test_analysis_unavailable"})
+        if not json_mode:
+            _report_dispatch_cache_errors(dispatch_cache)
         compl = _run_check(
             "complexity",
             _check_complexity,
@@ -1544,6 +1532,9 @@ def preflight(ctx, target, staged):
                 "total": tests["total"],
                 "test_files": tests["test_files"],
                 "pytest_command": tests["pytest_command"],
+                "test_commands": tests.get("test_commands", []),
+                "unknown_runner_files": tests.get("unknown_runner_files", []),
+                "test_command_files_omitted": max(0, len(tests["test_files"]) - _MAX_SUGGESTED_TEST_FILES),
                 "severity": tests["severity"],
             }
             if tests.get("state") is not None:
@@ -1605,6 +1596,8 @@ def preflight(ctx, target, staged):
                 "summary": _summary_dict,
                 "blast_radius": _blast_envelope,
                 "tests": _tests_envelope,
+                "dispatch_cache": dispatch_cache,
+                "dispatch_cache_definition": DISPATCH_CACHE_DEFINITION,
                 "complexity": _compl_envelope,
                 "coupling": _coupl_envelope,
                 "conventions": _convs_envelope,
@@ -1874,8 +1867,12 @@ def preflight(ctx, target, staged):
                 click.echo(f"  Risk driver:  {driver}")
 
             # Suggested tests
-            if tests["pytest_command"]:
-                click.echo(f"  Suggested tests: {tests['pytest_command']}")
+            for command in test_run_lines(tests):
+                click.echo(f"  Suggested tests: {command}")
+            if unknown := tests.get("unknown_runner_files"):
+                click.echo(f"  {unknown_runner_message(unknown)}")
+            if tests.get("pytest_command_truncated"):
+                click.echo(f"  {len(tests['test_files']) - _MAX_SUGGESTED_TEST_FILES} more affected test files")
 
             # — synergy with the rest of the surface. After a
             # preflight verdict the natural follow-ups depend on the risk

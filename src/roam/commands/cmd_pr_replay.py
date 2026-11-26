@@ -58,6 +58,7 @@ from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
+from roam.db.connection import get_db_path
 from roam.exit_codes import EXIT_PARTIAL, EXIT_SUCCESS
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
@@ -874,7 +875,7 @@ def _gather_vuln_reach_envelopes(commit_range: str, warnings: list[str]) -> list
     that envelope so the collector sees a deterministic signal).
     """
     out: list[dict] = []
-    if not (Path(".roam") / "index.db").exists():
+    if not get_db_path(create=False).exists():
         return out
     try:
         from roam.cli import cli
@@ -905,7 +906,7 @@ def _gather_test_impact_envelopes(commit_range: str, warnings: list[str]) -> lis
     whatever's currently changed in the working tree.
     """
     out: list[dict] = []
-    if not (Path(".roam") / "index.db").exists():
+    if not get_db_path(create=False).exists():
         return out
     try:
         from roam.cli import cli

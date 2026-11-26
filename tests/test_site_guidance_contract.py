@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from tests._helpers.replay_tiers import OPEN, rendered
 from tests.test_homepage_contract import SITE, HomepageParser, normalized
 
 
@@ -123,7 +124,7 @@ def test_customer_email_credit_reminders_wait_for_review_launch():
 
 
 def test_status_routes_to_scoped_reports_without_implying_payment_or_live_monitoring():
-    page = HomepageParser((SITE / "status.html").read_text(encoding="utf-8"))
+    page = HomepageParser(rendered("status.html", OPEN))
     main = next(page.root.find("main"))
     text = normalized(main.text())
     assert "paid reports over an agreed PR scope" in text

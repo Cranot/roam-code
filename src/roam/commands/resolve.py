@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
@@ -16,6 +17,9 @@ from roam.db.connection import (
     get_index_state_path,
 )
 from roam.db.queries import SEARCH_SYMBOLS, SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED
+
+if TYPE_CHECKING:
+    from roam.index.indexer import Indexer
 
 
 def index_status() -> dict | None:
@@ -140,8 +144,8 @@ def ensure_index(
     explicit_build: bool = False,
     project_root: Path | None = None,
     refresh: bool = False,
-) -> None:
-    """Build a missing or incomplete index, or request an incremental refresh.
+) -> Indexer | None:
+    """Build a missing or incomplete index, or request an incremental refresh; return the indexer that ran.
 
     Args:
         quiet: If True, suppress progress output during indexing.
@@ -195,6 +199,8 @@ def ensure_index(
             raise click.ClickException(
                 "The roam index could not be claimed for a complete build. Retry after the active indexer exits."
             )
+        return indexer
+    return None
 
 
 def require_index() -> None:

@@ -175,8 +175,10 @@ class TestFullIndexing:
         advice = _semantic_activation_advice(conn, tmp_path)
 
         assert advice is not None
-        assert "0/2 dense vectors" in advice
-        assert "zeta=0.2" in advice
+        # Contract change: first-use output used to show "0/2 dense vectors"
+        # and "zeta=0.2". Explain availability and coverage in plain words.
+        assert "Search by meaning is unavailable" in advice
+        assert "0 of 2 symbols have search data" in advice
 
 
 # ===========================================================================

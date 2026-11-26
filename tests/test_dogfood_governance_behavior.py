@@ -253,20 +253,27 @@ def test_attest_content_hash_is_deterministic_and_tamper_sensitive():
     assert _content_hash(tampered) != h1
 
 
-@needs_index
-def test_attest_sign_emits_content_hash_json():
-    """`roam --json attest --sign` on the real (possibly dirty) tree emits a content_hash."""
-    r = run_roam("--json", "attest", "--sign")
+@pytest.mark.parametrize("dirty", [True, False], ids=["changed", "clean"])
+def test_attest_sign_emits_content_hash_json(project_factory, dirty):
+    """`roam --json attest --sign` emits a content_hash for a change and discloses a clean tree.
+
+    Each case builds its own small repository. The test used to run on roam-code's own
+    working tree, so its time grew with the size of the local uncommitted change (it timed
+    out at 240 s on a large one). Both branches it accepted then are now each asserted.
+    """
+    root = project_factory({"core.py": "def calculate():\n    return 1\n"})
+    if dirty:
+        (root / "core.py").write_text("def calculate():\n    return 2\n")
+    r = run_roam("--json", "attest", "--sign", cwd=root)
     assert r.returncode == 0, r.stderr
     env = json.loads(r.stdout)
-    # Either a changeset was attested (content_hash present) OR a clean/no-change
-    # tree (attestation without content_hash but a disclosed no-changes verdict).
     att = env.get("attestation") or {}
     summ = env.get("summary") or {}
-    if att:
+    if dirty:
         assert "content_hash" in att and att["content_hash"].startswith("sha256:"), att
     else:
-        assert summ.get("state") in ("no_changes", None) or summ.get("partial_success") is True
+        assert not att, att
+        assert summ.get("state") == "no_changes", summ
 
 
 @needs_index

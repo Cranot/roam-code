@@ -347,12 +347,12 @@ def _collect_affected_tests_evidence(conn, sym_by_file):
     """Gather affected tests.
 
     Returns {selected, direct, transitive, colocated, cli_invoke,
-    module_import, cli_possible, command, tests}.
+    module_import, cli_possible, command, test_run, tests}.
     """
     from roam.commands.cmd_affected_tests import count_kinds
     from roam.commands.cmd_diff import _collect_affected_tests
 
-    test_results, pytest_cmd = _collect_affected_tests(conn, sym_by_file)
+    test_results, run_fields = _collect_affected_tests(conn, sym_by_file)
     kind_counts = count_kinds(test_results)
 
     return {
@@ -363,7 +363,8 @@ def _collect_affected_tests_evidence(conn, sym_by_file):
         "cli_invoke": kind_counts["cli_invoke"],
         "module_import": kind_counts["module_import"],
         "cli_possible": kind_counts["cli_possible"],
-        "command": pytest_cmd,
+        "command": run_fields["pytest_command"],
+        "test_run": run_fields,
         "tests": [
             {
                 "file": t["file"],

@@ -978,6 +978,42 @@ def _unknown_command_usage_error(args: list[str], exc: click.UsageError) -> clic
     return None
 
 
+def _with_history_disclosure(command: click.Command) -> click.Command:
+    """Attach a single Git-depth check to commands that report on history."""
+    from roam.git_utils import HISTORY_REPORT_COMMANDS
+
+    if command.name not in HISTORY_REPORT_COMMANDS:
+        return command
+
+    from copy import copy
+
+    command = copy(command)
+    invoke = command.invoke
+
+    def invoke_with_history(subctx: click.Context):
+        from roam.db.connection import find_project_root
+        from roam.git_utils import HISTORY_WARNING_CONTEXT_KEY, git_history_shallow
+
+        try:
+            shallow = git_history_shallow(find_project_root())
+        except OSError:
+            shallow = None
+        warning = None
+        if shallow is not False:
+            warning = (
+                "Git history is shallow. History-based results are limited to the commits available."
+                if shallow
+                else "Git history depth could not be checked. History-based results may be incomplete."
+            )
+            if not (subctx.obj or {}).get("json"):
+                click.echo(f"Warning: {warning}", err=True)
+        subctx.meta[HISTORY_WARNING_CONTEXT_KEY] = (command.name, shallow, warning)
+        return invoke(subctx)
+
+    command.invoke = invoke_with_history
+    return command
+
+
 class LazyGroup(click.Group):
     """A Click group that lazy-loads command modules on first access."""
 
@@ -1137,7 +1173,10 @@ class LazyGroup(click.Group):
         _set_active_deprecation_notice(None)
         _emit_deprecation_notice_for_args(args)
         try:
-            return super().resolve_command(ctx, args)
+            name, command, remaining = super().resolve_command(ctx, args)
+            if command is not None:
+                command = _with_history_disclosure(command)
+            return name, command, remaining
         except click.UsageError as exc:
             hinted = _unknown_command_usage_error(args, exc)
             if hinted is not None:

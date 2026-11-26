@@ -89,9 +89,9 @@ jobs:
       # it to the declared version: a ref that is not yet tagged fails this
       # workflow in the USER'S repository with 'Unable to resolve action'.
       # Harden further by resolving the tag to its reviewed 40-character SHA.
-      - uses: Cranot/roam-code@v14.1.0-r1
+      - uses: Cranot/roam-code@v14.2.3
         with:
-          version: "14.1.0"
+          version: "14.2.3"
           commands: ${{ steps.pr-range.outputs.base != '' && 'fitness pr-risk' || 'fitness' }}
           changed-only: ${{ steps.pr-range.outputs.base != '' }}
           base-ref: ${{ steps.pr-range.outputs.base }}
@@ -380,13 +380,14 @@ def init(ctx, root, yes, with_ci, since, full_history):
         )
     if not had_index and not json_mode:
         click.echo("No index found. Building...")
-    ensure_index(
+    indexer = ensure_index(
         quiet=json_mode,
         suppress_cold_start_advisory=True,
         explicit_build=True,
         project_root=project_root,
         refresh=refresh,
     )
+    parse_issues = indexer.parse_issue_details() if indexer is not None else {}
 
     if with_ci_norm == "gitlab":
         # Stub — full GitLab CI generation lives in ``roam ci-setup``.
@@ -490,6 +491,9 @@ def init(ctx, root, yes, with_ci, since, full_history):
         "warnings": warning_codes,
         "state": corpus.state,
     }
+    if parse_issues:
+        summary["partial_success"] = True
+        summary["verdict"] += " (parse issues in files processed in this run)"
     if corpus.state != STATE_INDEXED:
         summary["reason"] = corpus.reason
     if stale or corpus.state != STATE_INDEXED:
@@ -509,6 +513,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
                     health=health_summary,
                     corpus=corpus.as_dict(),
                     warnings=warnings,
+                    parse_issues_scope="files_parsed_this_run" if indexer is not None else "index_reused",
+                    **({"parse_issues": parse_issues} if parse_issues else {}),
                 )
             )
         )
@@ -528,7 +534,11 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # so the welcome banner contradicted `roam health` run seconds later in the
     # same shell. Point the user at `roam health` for the canonical number;
     # keep the snapshots/baseline pipeline's metric alone so history is stable.
-    click.echo(f"VERDICT: {_verdict}\n")
+    click.echo(f"VERDICT: {summary['verdict']}\n")
+    if indexer is None:
+        click.echo("  Reused the existing index. Parse issues cover only files parsed in this run.")
+    else:
+        click.echo("  Parse issues cover only files parsed in this run.")
 
     # Warnings go BEFORE the welcome banner so the user sees them
     # before the "Try one: ..." next-steps copy. Write to stderr so

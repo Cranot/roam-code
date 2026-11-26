@@ -110,9 +110,18 @@ def _make_indexed_rules_project(tmp_path: Path, *, rules_files: dict[str, str] |
             (rules_dir / name).write_text(body, encoding="utf-8")
 
     _git_add_commit(proj)
-    # Index in-process via the CliRunner so the CWD is set correctly.
+    # Index in-process from inside ``proj``. Without the chdir, ``init`` ran
+    # in the pytest cwd: it indexed (and wrote setup files into) the roam
+    # checkout under test, 100-190 s per test on the 3.13 CI lane.
+    import os
+
     runner = CliRunner()
-    result = runner.invoke(roam_cli, ["init"])
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(proj)
+        result = runner.invoke(roam_cli, ["init"])
+    finally:
+        os.chdir(old_cwd)
     # ``init`` may exit 0 (fresh index) or non-zero on prior-run schema
     # checks; both are acceptable here -- we only need the index to exist.
     assert result.exit_code in (0, 1), f"init failed:\n{result.output}"

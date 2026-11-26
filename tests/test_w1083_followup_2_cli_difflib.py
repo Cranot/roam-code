@@ -70,3 +70,15 @@ def test_unknown_command_with_zero_matches_omits_suggestion_line() -> None:
     # No close-match suggestion list — counts as zero ``Did you mean ` `roam`` pairs.
     # (Recipe-hint path uses ``Try `roam ask "..."``` phrasing, which is fine.)
     assert "Did you mean `roam" not in result.output
+
+
+def test_completion_after_unknown_subcommand() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [],
+        prog_name="roam",
+        complete_var="_ROAM_COMPLETE",
+        env={"_ROAM_COMPLETE": "bash_complete", "COMP_WORDS": "roam nosuchcmd --", "COMP_CWORD": "2"},
+    )
+    assert result.exit_code == 0, repr(result.exception)
+    assert "plain,--help" in result.stdout.splitlines()

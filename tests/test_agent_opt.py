@@ -353,6 +353,12 @@ class TestRunAgentOpt:
 # CLI surface
 # ---------------------------------------------------------------------------
 class TestCli:
+    @pytest.fixture(autouse=True)
+    def _in_small_project(self, indexed_project):
+        # The envelope tier runs health/dashboard/... in the working
+        # directory: a small indexed project keeps it off the checkout.
+        return indexed_project
+
     def test_list_tasks_json(self):
         r = CliRunner().invoke(cli, ["--json", "agent-opt", "--list-tasks"])
         assert r.exit_code == 0, r.output

@@ -216,6 +216,15 @@ _VERSION_PIN_EXEMPT: dict[str, str] = {
         "syncing them to the published release would make the install-target "
         "gate's failure case unreachable, i.e. green by construction"
     ),
+    # Historical: release notes quote the pins and tags of their own day,
+    # including ones that were wrong. The 14.2.2 pin bump rewrote the 14.2.1
+    # entry's quote of the missing 14.1.0 "-r1" action tag into the new tag,
+    # so the entry claimed that the just-published tag does not exist.
+    "CHANGELOG.md": ("release notes record the versions and tags of their own release; rewriting them changes history"),
+    "templates/distribution/landing-page/changelog.html": (
+        "rendered from CHANGELOG.md by build_changelog_html.py; the same "
+        "history, so it keeps the versions CHANGELOG.md keeps"
+    ),
 }
 
 
@@ -288,7 +297,12 @@ WITHHELD_RELEASE_TAGS: dict[str, str] = {
     "v14.2.0": (
         "tagged and pushed on 2026-11-20, but its PyPI deployment was rejected on "
         "2026-11-22 because `roam attest` cleared a detected breaking change; "
-        "PyPI never served 14.2.0, and 14.2.1 replaces it"
+        "PyPI never served 14.2.0, and 14.2.2 replaces it"
+    ),
+    "v14.2.1": (
+        "tagged and pushed on 2026-11-23 before the commit's CI run on main had finished; "
+        "that run then read the tag as published and failed the install-pin tests, so the "
+        "publish workflow refused it. PyPI never served 14.2.1, and 14.2.2 replaces it"
     ),
 }
 """Release tags whose publication was stopped, each with its reason.

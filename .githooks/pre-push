@@ -9,6 +9,9 @@
 #      Both are sub-second because they read only the blobs and commit
 #      messages this push publishes. They run FIRST so a leak in what you
 #      are about to publish blocks the push in ~1s instead of ~70s.
+#        * scripts/release_receipt_gate.py --updates-file: a v* tag or a
+#          version change needs a passed `prepush_check.py --release` receipt
+#          for that exact commit.
 #   B. python scripts/prepush_check.py --fast
 #        Repo-wide structural drift-guards AND the whole-tree anti-leak
 #        scan. Delegates so the gate list lives in ONE place
@@ -143,6 +146,16 @@ if ! run_python "$REPO_ROOT/scripts/scan_internal_language.py" --pre-push-update
     echo "" >&2
     echo "BLOCKED: pushed-history leak scan failed or found a leak -- see above." >&2
     echo "  Clean or reword the commit and resolve every scanner error before pushing." >&2
+    exit 1
+fi
+
+# --- A3. Release receipt for a v-tag or a version change ---------------------
+# A pushed v* tag (publish.yml releases on it) or a branch update that changes
+# [project].version needs `prepush_check.py --release` to have passed on that
+# exact commit, recorded as a receipt in the common Git directory.
+if ! run_python "$REPO_ROOT/scripts/release_receipt_gate.py" --updates-file "$UPDATES_FILE"; then
+    echo "" >&2
+    echo "BLOCKED: release receipt missing, invalid or not checkable -- see above." >&2
     exit 1
 fi
 

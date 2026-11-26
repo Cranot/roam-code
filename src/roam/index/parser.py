@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import struct
+from collections.abc import Mapping
+from contextvars import ContextVar
 from pathlib import Path
 
 from roam.observability import log_swallowed
@@ -171,6 +173,18 @@ parse_errors = {
 }
 
 
+# Index runs collect paths in their own context. Other parser callers (for
+# example, the corpus diagnostic) retain the counters without adding paths.
+active_parse_issues: ContextVar[dict[Path, str] | None] = ContextVar("active_parse_issues", default=None)
+
+
+def record_parse_issue(path: Path, kind: str) -> None:
+    parse_errors[kind] += 1
+    issues = active_parse_issues.get()
+    if issues is not None and kind not in {"stand_in_grammar", "no_grammar"}:
+        issues[path] = kind
+
+
 def _plugin_language_extensions() -> dict[str, str]:
     try:
         from roam.plugins import get_plugin_language_extensions
@@ -313,7 +327,7 @@ def parse_file(path: Path, language: str | None = None, *, source: bytes | None 
     if source is None:
         source = read_source(path)
     if source is None:
-        parse_errors["unreadable"] += 1
+        record_parse_issue(path, "unreadable")
         log.warning("Unreadable file: %s", path)
         return None, None, None
 
@@ -332,23 +346,23 @@ def parse_file(path: Path, language: str | None = None, *, source: bytes | None 
     grammar = plugin_alias or GRAMMAR_ALIASES.get(language, language)
 
     if not has_language(grammar):
-        parse_errors["no_grammar"] += 1
+        record_parse_issue(path, "no_grammar")
         return None, None, None  # Grammar not available, expected skip
 
     try:
         parser = get_parser(grammar)
     except (LanguageNotFoundError, LookupError):
-        parse_errors["no_grammar"] += 1
+        record_parse_issue(path, "no_grammar")
         return None, None, None  # Grammar not available, expected skip
 
     try:
         tree = parser.parse(source)
     except ValueError as e:
-        parse_errors["parse_error"] += 1
+        record_parse_issue(path, "parse_error")
         log.warning("Parse error in %s: %s", path, e)
         return None, None, None
     if tree is None:
-        parse_errors["parse_error"] += 1
+        record_parse_issue(path, "parse_error")
         log.warning("Parse error in %s: parser returned no tree", path)
         return None, None, None
 
@@ -362,9 +376,9 @@ def parse_file(path: Path, language: str | None = None, *, source: bytes | None 
             # A stand-in grammar's ERROR nodes describe the grammar mismatch,
             # not the file. Count them, name them differently.
             if language in SYNTAX_UNVERIFIABLE_LANGUAGES:
-                parse_errors["stand_in_grammar"] += 1
+                record_parse_issue(path, "stand_in_grammar")
             else:
-                parse_errors["syntax_error"] += 1
+                record_parse_issue(path, "syntax_error")
     except AttributeError as exc:  # pragma: no cover - older tree-sitter bindings
         # Not silent: this counter decides whether a zero-symbol index is a
         # legitimate empty tree or a broken one. A binding without
@@ -532,17 +546,19 @@ def get_parse_error_count() -> int:
     )
 
 
-def get_parse_error_summary() -> str:
+def get_parse_error_summary(counts: Mapping[str, int] | None = None) -> str:
     """Return a summary of parse errors for logging."""
+    if counts is None:
+        counts = parse_errors
     parts = []
-    if parse_errors["unreadable"]:
-        parts.append(f"{parse_errors['unreadable']} unreadable")
-    if parse_errors["parse_error"]:
-        parts.append(f"{parse_errors['parse_error']} parse errors")
-    if parse_errors["no_grammar"]:
-        parts.append(f"{parse_errors['no_grammar']} no grammar")
-    if parse_errors["syntax_error"]:
-        parts.append(f"{parse_errors['syntax_error']} with syntax errors")
-    if parse_errors["stand_in_grammar"]:
-        parts.append(f"{parse_errors['stand_in_grammar']} not syntax-checked (grammar is a stand-in)")
+    if counts.get("unreadable"):
+        parts.append(f"{counts['unreadable']} unreadable")
+    if counts.get("parse_error"):
+        parts.append(f"{counts['parse_error']} parse errors")
+    if counts.get("no_grammar"):
+        parts.append(f"{counts['no_grammar']} no grammar")
+    if counts.get("syntax_error"):
+        parts.append(f"{counts['syntax_error']} with syntax errors")
+    if counts.get("stand_in_grammar"):
+        parts.append(f"{counts['stand_in_grammar']} not syntax-checked (grammar is a stand-in)")
     return ", ".join(parts) if parts else ""

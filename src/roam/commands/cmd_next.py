@@ -99,6 +99,7 @@ def _git_porcelain_count(root: Path) -> int:
             ["git", "status", "--porcelain"],
             cwd=str(root),
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             timeout=5,
             check=False,

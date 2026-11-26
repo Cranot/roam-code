@@ -34,6 +34,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from roam.db.connection import get_db_path
 from roam.observability import log_swallowed
 
 __all__ = [
@@ -87,7 +88,7 @@ def _project_root_for(value: str | None) -> Path | None:
     except (RuntimeError, OSError):
         home = None
     while cur is not None:
-        has_index = (cur / ".roam" / "index.db").exists()
+        has_index = get_db_path(cur, create=False).exists()
         has_marker = (cur / ".git").exists() or (cur / "pyproject.toml").exists()
         if has_index and has_marker:
             return cur
@@ -113,6 +114,10 @@ def _open_index(root: str | None = None):
     if project is None:
         yield None
         return
+    db_path = get_db_path(project, create=False)
+    if not db_path.exists():
+        yield None
+        return
     with ExitStack() as stack:
         try:
             conn = stack.enter_context(open_db(project_root=project, readonly=True))
@@ -120,7 +125,6 @@ def _open_index(root: str | None = None):
             raise
         except Exception as exc:  # noqa: BLE001 -- completions also support older indexes
             log_swallowed("completions:open_db", exc)
-            db_path = project / ".roam" / "index.db"
             try:
                 conn = stack.enter_context(closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)))
             except sqlite3.Error as exc:

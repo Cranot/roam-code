@@ -25,6 +25,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
 from roam.db.freshness import IndexCompositeRunner, StaleQueryIndexError
+from roam.git_utils import advisory_history_depth
 from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
@@ -42,7 +43,8 @@ def _capture_json_subcommand(args: list[str]) -> dict:
     from roam.cli import cli
 
     runner = IndexCompositeRunner()
-    result = runner.invoke(cli, ["--json", *args])
+    with advisory_history_depth():
+        result = runner.invoke(cli, ["--json", *args])
     try:
         return _json.loads(result.output)
     except Exception as exc:

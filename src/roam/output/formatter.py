@@ -510,6 +510,26 @@ def _cap_lists_to_budget(result: dict, preserved: set, char_limit: int) -> None:
             return
 
 
+def _cap_preflight_test_paths(result: dict, char_limit: int) -> int:
+    """Shrink the affected-path list before the budget can drop test guidance."""
+    tests = result.get("tests")
+    if result.get("command") != "preflight" or not isinstance(tests, dict):
+        return 0
+    paths = tests.get("test_files")
+    if not isinstance(paths, list) or not paths:
+        return 0
+
+    tests["test_files"] = []
+    available = char_limit - len(_json.dumps(result, default=str, sort_keys=True))
+    for path in paths:
+        cost = len(_json.dumps(path, default=str, sort_keys=True)) + (2 if tests["test_files"] else 0)
+        if cost > available:
+            break
+        tests["test_files"].append(path)
+        available -= cost
+    return len(paths)
+
+
 def _drop_fields_to_budget(result: dict, preserved: set, char_limit: int) -> None:
     """Drop non-preserved keys, largest serialised first, until result fits.
 
@@ -755,15 +775,22 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
     result = _copy_envelope_mutable(data)
     importance_sorted = _presort_list_fields(result, preserved)
     _cap_lists_to_budget(result, preserved, char_limit)
+    test_path_count = _cap_preflight_test_paths(result, char_limit)
     _drop_fields_to_budget(result, preserved, char_limit)
     total_omitted = _count_omitted(data, result, preserved)
+    emitted_counts = _emitted_counts(data, result, preserved)
+    if test_path_count:
+        paths_emitted = len(result.get("tests", {}).get("test_files", []))
+        if paths_emitted < test_path_count:
+            emitted_counts["tests.test_files"] = paths_emitted
+            total_omitted += test_path_count - paths_emitted
     _annotate_truncation(
         result,
         budget,
         full_json,
         total_omitted,
         importance_sorted,
-        _emitted_counts(data, result, preserved),
+        emitted_counts,
     )
 
     return result
@@ -1722,6 +1749,29 @@ def _apply_envelope_budget(out: dict, budget: int, uncapped: bool = False) -> di
 # arbitrary user-supplied dicts merged via ``.update()``; do NOT TypedDict
 # this return without an at-boundary validator. See W933 _resolved_thresholds
 # for the canonical case study.
+def _disclose_history_depth(command: str, summary: dict, payload: dict) -> None:
+    import click
+
+    from roam.git_utils import HISTORY_COMPOSITE_COMMANDS, HISTORY_WARNING_CONTEXT_KEY, history_depth_advisory
+
+    ctx = click.get_current_context(silent=True)
+    warning = ctx.meta.get(HISTORY_WARNING_CONTEXT_KEY) if ctx is not None else None
+    if warning is None or warning[0] != command:
+        return
+    _, shallow, message = warning
+    payload["history_shallow"] = shallow
+    if message is None:
+        return
+    if command not in HISTORY_COMPOSITE_COMMANDS and not history_depth_advisory.get():
+        summary["partial_success"] = True
+    if command == "pr-analyze":
+        # The shipped CI validator fullmatches the canonical verdict sentence.
+        payload["history_depth_notice"] = message
+        return
+    verdict = summary.get("verdict")
+    summary["verdict"] = f"{verdict.rstrip('.')}. {message}" if isinstance(verdict, str) and verdict else message
+
+
 def json_envelope(
     command: str,
     summary: dict | None = None,
@@ -1770,6 +1820,7 @@ def json_envelope(
 
     summary = _prepare_envelope_summary(summary)
     freshness = _envelope_index_status() if include_index_metadata else None
+    _disclose_history_depth(command, summary, payload)
 
     compact = _compact_json_envelope_or_none(command, summary, payload)
     if compact is not None:

@@ -70,8 +70,15 @@ class TestMcpSetup:
         result = cli_runner.invoke(cli, ["mcp-setup", "gemini-cli"])
         assert result.exit_code == 0
 
-    def test_codex_config(self, cli_runner):
+    def test_codex_config(self, cli_runner, monkeypatch, tmp_path):
         from roam.cli import cli
+        from roam.commands import cmd_mcp_setup
+
+        launcher = tmp_path / "roam"
+        launcher.touch()
+        monkeypatch.setenv("PATH", str(tmp_path))
+        monkeypatch.setattr(cmd_mcp_setup, "_running_launcher", lambda: launcher)
+        monkeypatch.setattr(cmd_mcp_setup.shutil, "which", lambda name: str(launcher))
 
         result = cli_runner.invoke(cli, ["mcp-setup", "codex-cli"])
         assert result.exit_code == 0

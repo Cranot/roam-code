@@ -2900,6 +2900,9 @@ def _run_roam(args: list[str], cwd: str | None, timeout: float = 8.0, detail: bo
     `_run_roam_cache_get` / `_run_roam_cache_put` (in-memory cache),
     `_run_roam_invoke` (dispatch), and `_run_roam_parse_json` (decoding).
     """
+    if args[:1] == ["affected-tests"]:
+        # Runner evidence can change in uncommitted manifests or config files.
+        return _run_roam_invoke(_run_roam_build_cli_args(args, detail), cwd, timeout)
     # W54 — JSON-tuple key avoids collisions when args contain spaces.
     # Previous `" ".join(args)` would conflate `["uses", "foo bar"]` and
     # `["uses foo", "bar"]`. Tuple-of-tuples is hashable + unambiguous.
@@ -6507,26 +6510,34 @@ def _probe_test_impact_for_task(task: str, named_paths: list[str], cwd: str | No
     if not _TEST_IMPACT_RE.search(task):
         return None
     # Prefer a named SYMBOL ("which tests cover detect_layers") — resolve via
-    # `roam affected-tests <sym>`, which returns the ready-to-run pytest
-    # command. Tried FIRST because path-resolution often surfaces a TEST file
+    # `roam affected-tests <sym>` for runner-specific commands. Path resolution often surfaces a test file
     # as named_paths[0], which would mis-target the file branch below.
     sym = _first_target_symbol(task, _TEST_IMPACT_STOPWORDS)
     if sym:
         d = _run_roam(["affected-tests", sym], cwd, detail=True, timeout=4.0)
         test_files = (d.get("test_files") or [])[:15] if d else []
         if test_files:
+            commands = d.get("test_commands", [])
+            pytest_command = d.get("pytest_command")
+            guidance = (
+                "Use each entry in `test_commands` with its declared shell."
+                if commands
+                else "Run `pytest_command` in a POSIX shell."
+                if pytest_command and "test_commands" not in d
+                else "Choose a runner manually for the affected tests."
+            )
+            if d.get("unknown_runner_files") and commands:
+                guidance += " Check `unknown_runner_files` for tests that need a runner selected manually."
             return {
                 "test_impact": {
                     "target_symbol": sym,
                     "affected_test_files": test_files,
-                    "pytest_command": d.get("pytest_command"),
+                    "pytest_command": pytest_command,
+                    "test_commands": commands,
+                    "unknown_runner_files": d.get("unknown_runner_files", []),
                     "tests_total": (d.get("summary") or {}).get("tests") or len(d.get("tests") or []),
                 },
-                "test_impact_definition": (
-                    f"Test files that exercise `{sym}` (graph reverse-map). Run "
-                    f"`pytest_command` for the targeted subset instead of the "
-                    f"full suite."
-                ),
+                "test_impact_definition": f"Test files that exercise `{sym}` (graph reverse-map). {guidance}",
             }
     if not named_paths:
         return None
@@ -8403,6 +8414,27 @@ def _import_audit_suggestion(module: str, importable: bool, cwd: str | None) -> 
     return _import_audit_undeclared_hint(module)
 
 
+def _run_import_probe(probe_src: str, module: str, cwd: str) -> subprocess.CompletedProcess[str] | None:
+    """Run the import probe under the project's Python on PATH: `python3`, or
+    `python` where no `python3` command exists (a python.org install on
+    Windows). Returns None when no interpreter starts or the probe times out."""
+    for interpreter in ("python3", "python"):
+        try:
+            return subprocess.run(
+                [interpreter, "-I", "-c", probe_src, module],
+                capture_output=True,
+                text=True,
+                timeout=4.0,
+                cwd=cwd,
+            )
+        except FileNotFoundError as exc:
+            log_swallowed("compile.import_audit", exc)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            log_swallowed("compile.import_audit", exc)
+            return None
+    return None
+
+
 def _probe_import_audit_for_task(task: str, cwd: str | None) -> dict | None:
     if not task:
         return None
@@ -8456,22 +8488,40 @@ def _probe_import_audit_for_task(task: str, cwd: str | None) -> dict | None:
         "        part, next_origin, submodule_search_locations=next_locs)\n"
         "print('OK', cur.origin or '<no-file>')\n"
     )
-    try:
-        proc = subprocess.run(
-            ["python3", "-I", "-c", probe_src, module],
-            capture_output=True,
-            text=True,
-            timeout=4.0,
-            cwd=cwd or os.getcwd(),
-        )
-        # Importable iff stdout follows the `OK <origin>` protocol. We do
-        # NOT trust returncode alone: a fake/wrapped interpreter can exit 0
-        # without emitting the OK line and fabricate a false import success.
-        importable = _W201_PROBE_OK_RE.match((proc.stdout or "").lstrip()) is not None
-        details = proc.stdout.strip() or proc.stderr.strip()
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        log_swallowed("compile.import_audit", exc)
+    proc = _run_import_probe(probe_src, module, cwd or os.getcwd())
+    if proc is None:
         return None
+    # The probe's own stdout protocol is the only source of truth: `OK <origin>`
+    # means importable, `FAILED <reason>` means not importable. Anything else
+    # (a returncode-0 wrapper that swallows stdout, the Windows Store `python3`
+    # stub that prints an install hint) means the probe never ran, so the
+    # answer is unknown rather than a "not importable" verdict.
+    stdout = (proc.stdout or "").lstrip()
+    if _W201_PROBE_OK_RE.match(stdout):
+        importable: bool | None = True
+    elif stdout.startswith("FAILED"):
+        importable = False
+    else:
+        importable = None
+    details = (proc.stdout or "").strip() or (proc.stderr or "").strip()
+    if importable is None:
+        return {
+            "import_audit": {
+                "module": module,
+                "importable": None,
+                "details": details[:300],
+                "suggestion": "",
+            },
+            # The name comes from the task text, so the advice must not import it
+            # (that runs a same-named file in the repo); find_spec on the top-level
+            # name resolves it without executing anything.
+            "import_audit_definition": (
+                f"Could not audit `import {module}`: the interpreter gave no probe answer. "
+                "Check it in the project environment without running its code: "
+                '`python -c "import importlib.util, sys; print(importlib.util.find_spec(sys.argv[1]))" '
+                f"{module.split('.')[0]}`."
+            ),
+        }
     # Heuristic fix suggestion. The module name is captured from the
     # (untrusted) task string, so it is NEVER blessed as a `pip install <name>`
     # target unless that name is a declared project dependency — see
@@ -13371,7 +13421,7 @@ def _resolve_bare_filenames(task: str, cwd: str | None) -> list[str]:
             bares.append(name)
     if not bares:
         return []
-    db_path = os.path.join(cwd, ".roam", "index.db")
+    db_path = _index_db_path(cwd)
     if not os.path.exists(db_path):
         return []
     resolved: list[str] = []
@@ -13464,7 +13514,7 @@ def _resolve_module_names(task: str, cwd: str | None) -> list[str]:
         return []
     import os as _os
 
-    db_path = _os.path.join(cwd, ".roam", "index.db")
+    db_path = _index_db_path(cwd)
     if not _os.path.exists(db_path):
         return []
     try:
@@ -13856,7 +13906,7 @@ def _path_token_recall(task: str, cwd: str | None, known: set[str], cap: int = 6
     try:
         import sqlite3
 
-        index_path = os.path.join(cwd or "", ".roam", "index.db")
+        index_path = _index_db_path(cwd)
         if not os.path.isfile(index_path):
             return []
         conn = sqlite3.connect(index_path, timeout=1.0)

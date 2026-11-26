@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import json
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -54,7 +55,7 @@ def test_d5_failed_read_preserves_and_reports(dispatch_project, monkeypatch, fai
     real_open = builtins.open
 
     def fail_one(path, *args, **kwargs):
-        if str(path).endswith("roam/cli.py"):
+        if Path(path).as_posix().endswith("roam/cli.py"):
             error = FileNotFoundError if failure == "missing" else PermissionError
             raise error("dispatch source unavailable")
         return real_open(path, *args, **kwargs)
@@ -76,7 +77,7 @@ def test_d5_index_reports_failed_refresh(dispatch_project, monkeypatch):
     real_open = builtins.open
 
     def fail_one(path, *args, **kwargs):
-        if str(path).endswith("roam/cli.py"):
+        if Path(path).as_posix().endswith("roam/cli.py"):
             raise PermissionError("dispatch source unavailable")
         return real_open(path, *args, **kwargs)
 

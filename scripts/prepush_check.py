@@ -73,6 +73,7 @@ expensive checks; otherwise the selected gates run to produce a full summary.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -328,6 +329,10 @@ class GateRunner:
             pass
         for name in local_vars:
             env.pop(name, None)
+        # An inherited PYTEST_ADDOPTS (for example --collect-only) changes
+        # what every pytest gate runs; the release receipt claims the suite
+        # ran as written here.
+        env.pop("PYTEST_ADDOPTS", None)
         # Keep --workers as the total concurrency budget. NumPy/SciPy may load
         # a native math runtime in each xdist worker; inherited host-sized
         # defaults otherwise multiply a bounded worker pool into dozens of
@@ -628,6 +633,86 @@ def _print_summary(results: list[GateResult], tier: str = "FAST") -> bool:
     return not failures
 
 
+def _load_release_receipt_module():
+    """Load the sibling receipt module, or None when it is absent.
+
+    Without it no receipt is written, which leaves a release push refused:
+    the safe direction.
+    """
+    module_path = Path(__file__).resolve().parent / "release_receipt_gate.py"
+    if not module_path.is_file():
+        print(f"[prepush] release receipt: {module_path} is missing; no receipt will be written")
+        return None
+    spec = importlib.util.spec_from_file_location("roam_release_receipt_gate", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _release_receipt_start(root: Path) -> tuple[str, bool] | None:
+    """Record HEAD and whether the tree is clean before the release tier runs.
+
+    The pre-push hook refuses a v-tag or version change whose commit has no
+    receipt (scripts/release_receipt_gate.py). A receipt may only claim the
+    commit the gates actually ran on, so it needs a clean tree at the start
+    and an unmoved HEAD at the end.
+    """
+    gate = _load_release_receipt_module()
+    if gate is None:
+        return None
+    try:
+        git_top = gate.toplevel(root)
+        if git_top != Path(root).resolve():
+            print(
+                f"[prepush] release receipt: the gates run in {root} but Git's repository is {git_top}; "
+                "no receipt will be written"
+            )
+            return None
+        return gate.head_sha(root), gate.tree_is_clean(root, include_untracked=True)
+    except gate.ReceiptCheckError as exc:
+        print(f"[prepush] release receipt: cannot read HEAD or tree state ({exc}); no receipt will be written")
+        return None
+
+
+def _finish_release_receipt(root: Path, start: tuple[str, bool] | None, *, workers: int) -> Path | None:
+    if start is None:
+        print("[prepush] release receipt: NOT written (HEAD or tree state was unreadable at the start)")
+        return None
+    gate = _load_release_receipt_module()
+    if gate is None:
+        return None
+    start_sha, start_clean = start
+    if not start_clean:
+        print(
+            "[prepush] release receipt: NOT written: the tree had uncommitted or untracked changes when "
+            "the run started, so the gates did not test commit "
+            f"{start_sha} alone. Commit or remove them and run --release again before tagging."
+        )
+        return None
+    try:
+        end_sha = gate.head_sha(root)
+        end_clean = gate.tree_is_clean(root, include_untracked=False)
+    except gate.ReceiptCheckError as exc:
+        print(f"[prepush] release receipt: NOT written: cannot read HEAD or tree state at the end ({exc})")
+        return None
+    if end_sha != start_sha or not end_clean:
+        print(
+            "[prepush] release receipt: NOT written: HEAD or tracked files changed during the run "
+            f"(start {start_sha}, end {end_sha}). Run --release again on the commit you will tag."
+        )
+        return None
+    try:
+        path = gate.write_receipt(root, start_sha, workers=workers)
+    except (OSError, gate.ReceiptCheckError) as exc:
+        print(f"[prepush] release receipt: NOT written: {exc}")
+        return None
+    print(f"[prepush] release receipt: written for {start_sha} at {path}")
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     tier = parser.add_mutually_exclusive_group()
@@ -668,6 +753,7 @@ def main(argv: list[str] | None = None) -> int:
     if release and not runner.run_release_temp_capacity_gate().passed:
         _print_summary(runner.results, tier_label)
         return 1
+    receipt_start = _release_receipt_start(root) if release else None
     runner._run_leak_gate()
     runner._run_ruff()
     runner._run_count_scripts()
@@ -756,6 +842,8 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     ok = _print_summary(runner.results, tier_label)
+    if release and ok:
+        _finish_release_receipt(root, receipt_start, workers=args.workers)
     return 0 if ok else 1
 
 

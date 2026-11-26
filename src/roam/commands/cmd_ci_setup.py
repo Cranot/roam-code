@@ -120,9 +120,9 @@ jobs:
       # it to the declared version: a ref that is not yet tagged fails this
       # workflow in the USER'S repository with 'Unable to resolve action'.
       # Harden further by resolving the tag to its reviewed 40-character SHA.
-      - uses: Cranot/roam-code@v14.1.0-r1
+      - uses: Cranot/roam-code@v14.2.3
         with:
-          version: '14.1.0'
+          version: '14.2.3'
           commands: ${{ steps.pr-range.outputs.base != '' && 'health check-rules pr-risk' || 'health check-rules' }}
           changed-only: ${{ steps.pr-range.outputs.base != '' }}
           base-ref: ${{ steps.pr-range.outputs.base }}

@@ -187,7 +187,7 @@ class TestCiSetupText:
         assert "runs-on: ubuntu-24.04" in result.output
         assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in result.output
         assert "persist-credentials: false" in result.output
-        assert "Cranot/roam-code@v14.1.0-r1" in result.output
+        assert "Cranot/roam-code@v14.2.3" in result.output
         assert "@main" not in result.output
         assert "ubuntu-latest" not in result.output
 

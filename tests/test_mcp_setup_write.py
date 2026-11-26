@@ -306,7 +306,14 @@ def test_write_codex_toml_refuses_invalid_or_inline_existing_server(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_cli_write_creates_project_local_file(tmp_path):
+def test_cli_write_creates_project_local_file(tmp_path, monkeypatch):
+    from roam.commands import cmd_mcp_setup
+
+    launcher = tmp_path / "roam"
+    launcher.touch()
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(cmd_mcp_setup, "_running_launcher", lambda: launcher)
+    monkeypatch.setattr(cmd_mcp_setup.shutil, "which", lambda name: str(launcher))
     runner = CliRunner()
     cwd = os.getcwd()
     try:

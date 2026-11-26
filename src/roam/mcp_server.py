@@ -1102,6 +1102,19 @@ _SCHEMA_PREFLIGHT = {
                 "total": {"type": "integer", "minimum": 0},
                 "test_files": {"type": "array", "items": {"type": "string"}},
                 "pytest_command": {"type": ["string", "null"]},
+                "test_commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["runner", "command", "shell", "files"],
+                        "properties": {
+                            "runner": {"type": "string"},
+                            "command": {"type": "string"},
+                            "shell": {"type": "string"},
+                            "files": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
                 "severity": {"type": "string"},
             },
         },
@@ -6169,7 +6182,7 @@ def _ensure_fresh_index(root: str = ".") -> dict | None:
 
 # 12.15 — in-process result cache for read-only MCP tool calls. The MCP
 # server is long-running; an agent doing five consecutive
-# ``roam_preflight`` / ``roam_context`` / ``roam_impact`` calls on the
+# ``roam_context`` / ``roam_impact`` calls on the
 # same symbol within a session pays the full DB+graph cost every time.
 # Reuse query results while the same index is available. The working tree
 # observation has a shorter lifetime than the query result.
@@ -6179,6 +6192,8 @@ _FRESHNESS_CACHE_TTL_S = 3.0
 # Read-only commands eligible for caching. Adding a write-y command
 # here would violate the "fresh after mutation" invariant; never list
 # ``init``, ``index``, ``mutate``, ``annotate``, ``ingest-trace``, etc.
+# Preflight and affected-tests also read live source and report the outcome
+# of each dispatch-sidecar lookup, which a cached envelope would hide.
 _CACHEABLE_COMMANDS = frozenset(
     {
         "search",
@@ -6186,7 +6201,6 @@ _CACHEABLE_COMMANDS = frozenset(
         "impact",
         "uses",
         "refs",
-        "preflight",
         "tour",
         "understand",
         "onboard",
@@ -20562,6 +20576,13 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         click.echo(f"\navailable presets: {', '.join(sorted(_PRESETS.keys()))}")
         return
 
+    if transport == "stdio":
+        # Before any child process starts: no child may inherit the protocol
+        # pipe (on Windows it blocks at startup while the transport reads).
+        from roam.mcp_extras.stdio_isolation import isolate_stdio_transport_stdin
+
+        isolate_stdio_transport_stdin()
+
     if not no_auto_index:
         sys.stderr.write("checking index freshness...\n")
         err = _ensure_fresh_index(".")
@@ -20593,6 +20614,24 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         except Exception as exc:
             sys.stderr.write(f"watcher not available: {exc}\n")
 
+    # FastMCP reads FASTMCP_CHECK_FOR_UPDATES when it creates its settings,
+    # before this command runs. Apply its documented "off" value to this
+    # server run only, preserving settings explicitly loaded by FastMCP.
+    try:
+        from fastmcp import settings as fastmcp_settings
+    except ImportError:
+        fastmcp_settings = None
+
+    update_check = getattr(fastmcp_settings, "check_for_updates", None)
+    requested_update_check = os.environ.get("FASTMCP_CHECK_FOR_UPDATES", "off")
+    change_update_check = (
+        update_check is not None
+        and "check_for_updates" not in fastmcp_settings.model_fields_set
+        and requested_update_check in ("off", "stable", "prerelease")
+        and requested_update_check != update_check
+    )
+    if change_update_check:
+        fastmcp_settings.check_for_updates = requested_update_check
     try:
         if transport == "stdio":
             mcp.run()
@@ -20605,6 +20644,9 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
                 # Older FastMCP versions may use "http" alias.
                 mcp.run(transport="http", host=host, port=port)
     finally:
+        if change_update_check:
+            fastmcp_settings.check_for_updates = update_check
+            fastmcp_settings.model_fields_set.discard("check_for_updates")
         if watch_handle is not None:
             try:
                 watch_handle.stop()
@@ -21054,4 +21096,7 @@ _TASK_OPTIONAL_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() i
 if __name__ == "__main__":
     if mcp is None:
         raise SystemExit(_fastmcp_unavailable_message())
+    from roam.mcp_extras.stdio_isolation import isolate_stdio_transport_stdin
+
+    isolate_stdio_transport_stdin()
     mcp.run()
