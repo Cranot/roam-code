@@ -741,7 +741,9 @@ if "--pre-push-updates" in sys.argv:
 with Path(os.environ["HOOK_CALL_LOG"]).open("a", encoding="utf-8") as stream:
     stream.write(json.dumps(record, sort_keys=True) + "\\n")
 """
-    for name in ("scan_internal_language.py", "secret_scan.py", "prepush_check.py"):
+    # release_receipt_gate.py is pre-push step A3; a branch push needs no
+    # receipt, so its stub only has to exist and exit 0.
+    for name in ("scan_internal_language.py", "secret_scan.py", "release_receipt_gate.py", "prepush_check.py"):
         (scripts / name).write_text(stub, encoding="utf-8")
 
     env = os.environ.copy()
