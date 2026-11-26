@@ -10,6 +10,8 @@ import pytest
 
 from roam.resilience import run_resilience
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("missing", [True, False])
 def test_actual_harvester_keeps_findings_and_discloses_missing_source(tmp_path, missing):

@@ -12,6 +12,9 @@ from roam.commands.cmd_math import math_cmd
 from roam.surface_counts import mcp_preset_members
 from tests._helpers.repo_root import repo_root
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 ROOT = repo_root()
 
 

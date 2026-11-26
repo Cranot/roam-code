@@ -32,6 +32,8 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _make_project(tmp_path: Path) -> Path:
     """Minimal indexed project -- enough rows for the builtin rules to run."""

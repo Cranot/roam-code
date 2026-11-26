@@ -97,9 +97,13 @@ import json
 import os
 import subprocess
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # Fixtures — populated Python corpus + various rule packs.

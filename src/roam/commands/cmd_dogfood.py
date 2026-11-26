@@ -23,12 +23,12 @@ from __future__ import annotations
 import json as _json
 
 import click
-from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.git_helpers import git_metadata
 from roam.commands.resolve import ensure_index
+from roam.db.freshness import IndexCompositeRunner, StaleQueryIndexError
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
@@ -46,7 +46,7 @@ def _run_subcommand(args: list[str]) -> dict:
     """
     from roam.cli import cli
 
-    runner = CliRunner()
+    runner = IndexCompositeRunner()
     parent = click.get_current_context(silent=True)
     budget = parent.obj.get("budget") if parent and isinstance(parent.obj, dict) else None
     explicit = parent.obj.get("budget_explicit", False) if parent and isinstance(parent.obj, dict) else False
@@ -194,6 +194,8 @@ def dogfood_cmd(
         """
         try:
             return fn(*args, **kwargs)
+        except StaleQueryIndexError:
+            raise
         except Exception as exc:  # noqa: BLE001 -- top-level disclosure
             _w607av_warnings_out.append(f"dogfood_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
@@ -242,6 +244,8 @@ def dogfood_cmd(
                 ["--json", "audit-trail-conformance-check"],
                 default={"_subcommand_failed": True, "error": "conformance substrate raised"},
             )
+    except StaleQueryIndexError:
+        raise
     except Exception as exc:  # noqa: BLE001 — W607-D outer-guard
         # W607-D outer-guard: aggregation raised before sections completed
         # (git_metadata failure, subcommand-invocation crash, unexpected I/O

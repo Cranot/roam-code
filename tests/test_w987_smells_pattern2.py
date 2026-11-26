@@ -26,6 +26,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.catalog.registry import kind_to_confidence
@@ -36,6 +37,8 @@ from roam.commands.smells_suppress import (
     load_smells_suppressions,
     load_smells_suppressions_typed,
 )
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 # Minimal DB + git fixture mirroring tests/test_smells.py _make_db /

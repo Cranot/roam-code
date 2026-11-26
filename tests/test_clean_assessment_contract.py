@@ -7,13 +7,18 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("command", ["pr-risk", "breaking", "pr-diff"])
 def test_clean_diff_is_complete(project_factory, monkeypatch, command):
-    """Contract change: missing default comparison is incomplete.
+    """Named contract change for breaking on a repository with one commit.
 
-    Old: breaking on one commit reported no_changes / partial_success=False.
-    New: git_error / partial_success=True, because HEAD~1 does not exist.
+    Old: git_error / partial_success=True, because the default HEAD~1 does not exist.
+    New: no_changes / partial_success=False with baseline_state "root_commit": the
+    default target falls back to HEAD, the only earlier API, so the answer is complete.
+    Reason: comparing with the last commit answers the question and still reports
+    exports removed in the working tree; a target the caller names is never replaced.
     Other commands still completely assess the valid empty working-tree diff.
     """
     root = project_factory({"core.py": "def calculate():\n    return 1\n"})
@@ -21,8 +26,10 @@ def test_clean_diff_is_complete(project_factory, monkeypatch, command):
     result = CliRunner().invoke(cli, ["--json", command])
     assert result.exit_code == 0, result.output
     summary = json.loads(result.stdout)["summary"]
-    assert summary["state"] == ("git_error" if command == "breaking" else "no_changes")
-    assert summary["partial_success"] is (command == "breaking")
+    assert summary["state"] == "no_changes"
+    assert summary["partial_success"] is False
+    if command == "breaking":
+        assert summary["baseline_state"] == "root_commit"
 
 
 @pytest.mark.parametrize("command,partial", [("review-change", True), ("for-refactor", False)])

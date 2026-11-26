@@ -22,9 +22,13 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # Mirror W823's blacklist: any of these substrings in the verdict on an
 # empty corpus is a silent-SAFE Pattern-2 violation.

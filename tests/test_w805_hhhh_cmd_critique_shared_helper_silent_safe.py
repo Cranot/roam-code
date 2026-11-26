@@ -82,6 +82,9 @@ from click.testing import CliRunner
 from roam.cli import cli
 from tests.conftest import make_src_project as _make_project
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _PROJECT_FILES = {
     "auth.py": """
         class UserSession:

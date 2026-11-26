@@ -173,7 +173,7 @@ def _invoke_pr_replay(evidence_target: Path, json_mode: bool = True) -> tuple[in
         str(evidence_target),
     ]
     result = runner.invoke(cli, cli_args, catch_exceptions=False)
-    return result.exit_code, result.output
+    return result.exit_code, result.stdout if json_mode else result.output
 
 
 # ---------------------------------------------------------------------------

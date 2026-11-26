@@ -14,6 +14,9 @@ from roam.output.formatter import json_envelope, strip_list_payloads
 # Import helpers from conftest
 from tests.conftest import invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helper: build a minimal JSON envelope for testing strip_list_payloads
 # ---------------------------------------------------------------------------

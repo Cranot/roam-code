@@ -53,6 +53,34 @@ def git_commit(path, msg="update"):
     subprocess.run(["git", "commit", "-m", msg], cwd=path, capture_output=True)
 
 
+def record_test_index_manifest(conn, path):
+    """Tie a synthetic index's file rows to a matching Git worktree."""
+    from roam.index.incremental import file_hash
+    from roam.index.manifest import _config_hash
+
+    created = False
+    for (relative_path,) in conn.execute("SELECT path FROM files").fetchall():
+        source = path / relative_path
+        if not source.exists():
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("# synthetic index fixture\n")
+            created = True
+        conn.execute(
+            "UPDATE files SET mtime = ?, hash = ? WHERE path = ?",
+            (source.stat().st_mtime, file_hash(source), relative_path),
+        )
+    if created:
+        git_commit(path, "add synthetic index fixture files")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=path, text=True).strip()
+    conn.execute(
+        "CREATE TABLE index_manifest "
+        "(id INTEGER PRIMARY KEY, indexed_at INTEGER, git_head, git_dirty_hash, notes, config_hash)"
+    )
+    conn.execute(
+        "INSERT INTO index_manifest VALUES (1, strftime('%s', 'now'), ?, NULL, NULL, ?)", (head, _config_hash(path))
+    )
+
+
 # ===========================================================================
 # Symlink-capability probe (Windows portability)
 # ===========================================================================
@@ -265,6 +293,17 @@ def _disable_shallow_git_history_for_marked_tests(request, monkeypatch):
     """
     if request.node.get_closest_marker("git_history"):
         monkeypatch.setenv("ROAM_GIT_SINCE", "0")
+
+
+@pytest.fixture
+def pinned_index_freshness_budget(monkeypatch):
+    """Give freshness assertions a budget that does not depend on machine speed.
+
+    When a query's freshness check runs out of time, it answers
+    `index_state: unknown` with `partial_success: true`. Tests that assert
+    either field can opt in to a larger budget and force timeouts explicitly.
+    """
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "3600")
 
 
 @pytest.fixture

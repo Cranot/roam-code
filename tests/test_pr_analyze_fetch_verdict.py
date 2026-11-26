@@ -9,6 +9,8 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.commands import cmd_pr_analyze as analyze
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def run_analysis(tmp_path, monkeypatch):
@@ -116,20 +118,23 @@ def test_remote_diff_gate_refuses_unavailable_diff(run_analysis, monkeypatch, fa
 
 
 @pytest.mark.parametrize("gate", [False, True])
-def test_current_fetch_failure_cannot_replay_healthy_empty_cache(run_analysis, monkeypatch, gate):
+def test_current_fetch_failure_cannot_replay_healthy_empty_cache(run_analysis, monkeypatch, gate, project_factory):
+    project = project_factory({"app.py": "def sample(): pass\n"})
+    monkeypatch.chdir(project)
     monkeypatch.setattr(
         analyze,
         "_capture_pr_prep",
         lambda *a, **kw: {"summary": {"pr_risk_score": 0}, "diff": {"summary": {"state": "no_changes"}}},
     )
     failed = [False]
-    monkeypatch.setattr(
-        analyze.subprocess,
-        "run",
-        lambda args, **kw: subprocess.CompletedProcess(
-            args, int(failed[0] and args[:3] == ["gh", "pr", "diff"]), stdout="", stderr=""
-        ),
-    )
+    run = subprocess.run
+
+    def gh_run(args, **kwargs):
+        if args[:3] == ["gh", "pr", "diff"]:
+            return subprocess.CompletedProcess(args, int(failed[0]), stdout="", stderr="")
+        return run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", gh_run)
     args = ["--json", "pr-analyze", "--cache", "--diff-from-pr", "https://github.com/example/project/pull/7"]
     if gate:
         args.append("--gate")

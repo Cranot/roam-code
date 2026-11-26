@@ -56,6 +56,8 @@ from roam.commands.cmd_reachability_triage import (
 )
 from roam.commands.cmd_service_report import _component_failure
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _ok(**summary):
     """A component envelope for a SUCCESSFUL run (possibly with no findings)."""

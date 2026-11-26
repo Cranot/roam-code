@@ -15,6 +15,8 @@ from roam.commands import cmd_verify
 from roam.testing import pytest_evidence
 from tests.conftest import git_init, index_in_process, invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _python(directory):
     return directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")

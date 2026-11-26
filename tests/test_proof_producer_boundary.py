@@ -12,6 +12,8 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.proof_bundle import compose_agent_change_proof_bundle, load_pr_bundle
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("key", ["review_evidence", "orchestration_contract"])
 @pytest.mark.parametrize("value", [[], False, "invalid"])

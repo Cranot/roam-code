@@ -44,6 +44,9 @@ import click
 import pytest
 from click.testing import CliRunner
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

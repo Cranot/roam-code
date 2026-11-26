@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.conftest import assert_json_envelope, invoke_cli, parse_json_output
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _write_speedscope(path, frames, samples, weights):

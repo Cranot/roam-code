@@ -401,38 +401,76 @@ def is_low_risk_file(path: str | None) -> bool:
 GIT_NOT_AVAILABLE = "git_not_available"
 GIT_TIMEOUT = "git_timeout"
 GIT_ERROR = "git_error"
+MIN_GIT_VERSION = (2, 24)
+MIN_GIT_VERSION_LABEL = ".".join(map(str, MIN_GIT_VERSION))
 
 
 def run_git_comparison(
-    root: Path, cmd: list[str], error_details: list[str] | None, *, text=False, fallback_detail: str | None = None
+    root: Path,
+    cmd: list[str],
+    error_details: list[str] | None,
+    *,
+    text=False,
+    fallback_detail: str | None = None,
+    defer_nonzero: bool = False,
 ):
-    """Run a Git comparison step and preserve its failure kind and diagnostics."""
+    """Run Git and preserve its failure kind and diagnostics.
+
+    With `defer_nonzero`, return the failed process without logging so the
+    caller can distinguish an expected lookup miss from a genuine failure.
+    """
     from roam.git_utils import worktree_git_env
     from roam.observability import log_swallowed
 
+    git_env = worktree_git_env(root)
     try:
         result = subprocess.run(
             cmd,
             cwd=str(root),
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             timeout=10,
-            env=worktree_git_env(root),
+            env=git_env,
             **({"text": True, "encoding": "utf-8", "errors": "replace"} if text else {}),
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
         log_swallowed("changed_files:git_comparison", exc)
         if error_details is not None:
             error_details.append(str(exc))
-        return None, GIT_TIMEOUT if isinstance(exc, subprocess.TimeoutExpired) else GIT_NOT_AVAILABLE
+        if isinstance(exc, subprocess.TimeoutExpired):
+            return None, GIT_TIMEOUT
+        if isinstance(exc, FileNotFoundError) and root.is_dir():
+            return None, GIT_NOT_AVAILABLE
+        return None, GIT_ERROR
 
     if result.returncode != 0:
-        stderr = result.stderr if text else result.stderr.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace") if isinstance(result.stderr, bytes) else result.stderr
         detail = stderr.strip() or fallback_detail or f"git {cmd[1]} exited {result.returncode}"
-        log_swallowed("changed_files:git_comparison_returncode", RuntimeError(detail[:200]))
+        first_line = stderr.partition("\n")[0]
+        options_end = cmd.index("--") if "--" in cmd else len(cmd)
+        # git diff can print only usage and exit 129 for an unknown option.
+        option_rejected = "--end-of-options" in cmd[:options_end] and (
+            re.search(r"(?<![\w:./-])--end-of-options(?![\w./-])", first_line)
+            or "`end-of-options'" in first_line
+            or (result.returncode == 129 and "git diff " in first_line)
+        )
+        if option_rejected:
+            detail += f"\nGit {MIN_GIT_VERSION_LABEL} or later is required for --end-of-options."
+        defer_nonzero = defer_nonzero and not option_rejected
+        if not defer_nonzero:
+            log_swallowed("changed_files:git_comparison_returncode", RuntimeError(detail[:200]))
         if error_details is not None:
             error_details.append(detail)
-        return None, GIT_ERROR
+        return (result if defer_nonzero else None), GIT_ERROR
     return result, None
+
+
+def decode_git_path(path: bytes) -> str:
+    """Decode Git path bytes without losing bytes rejected by the filesystem codec."""
+    try:
+        return os.fsdecode(path)
+    except UnicodeDecodeError:
+        return path.decode("utf-8", errors="surrogateescape")
 
 
 def get_changed_files_status(
@@ -458,48 +496,44 @@ def get_changed_files_status(
     Callers behind a CI gate flag MUST branch on *error_kind* and refuse;
     callers that only report may keep using :func:`get_changed_files`.
     """
-    cmd = ["git", "diff", "--name-only"]
+    cmd = ["git", "diff", "--name-only", "-z", "--no-renames"]
 
-    if commit_range:
-        cmd.append(commit_range)
+    if commit_range is not None:
+        cmd.extend(["--end-of-options", commit_range, "--"])
     elif pr:
-        cmd.append(f"{base_ref}...HEAD")
+        cmd.extend(["--end-of-options", f"{base_ref}...HEAD", "--"])
     elif staged:
         cmd.append("--cached")
 
-    result, git_error = run_git_comparison(root, cmd, error_details, text=True)
+    result, git_error = run_git_comparison(root, cmd, error_details)
     if git_error is not None:
         return [], git_error
-    paths = [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
+    records = result.stdout.split(b"\0")
+    if records[-1] or any(not path for path in records[:-1]):
+        if error_details is not None:
+            error_details.append("git diff returned an invalid NUL-delimited path list")
+        return [], GIT_ERROR
+    paths = [decode_git_path(path) for path in records[:-1]]
 
     if untracked:
-        from roam.git_utils import worktree_git_env
+        # Enrichment is best-effort, with failures disclosed by the shared runner.
+        ut, _error = run_git_comparison(
+            root, ["git", "ls-files", "-z", "--others", "--exclude-standard"], error_details
+        )
+        if ut is not None:
+            paths.extend(decode_git_path(path) for path in ut.stdout.split(b"\0") if path)
 
-        git_env = worktree_git_env(root)
-        try:
-            ut = subprocess.run(
-                ["git", "ls-files", "--others", "--exclude-standard"],
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                timeout=10,
-                encoding="utf-8",
-                errors="replace",
-                env=git_env,
-            )
-            if ut.returncode == 0 and ut.stdout.strip():
-                for line in ut.stdout.strip().splitlines():
-                    line = line.strip()
-                    if line:
-                        paths.append(line.replace("\\", "/"))
-        except (FileNotFoundError, subprocess.TimeoutExpired) as _exc:
-            # Untracked-file enrichment is best-effort: the tracked-diff
-            # paths are still returned. Surface the cause so a missing
-            # git binary / slow repo isn't silently dropped.
+    # The index stores Unicode paths in SQLite, which cannot bind surrogates.
+    # Refuse a partial comparison and identify the path without printing raw surrogates.
+    for path in paths:
+        if re.search(r"[\ud800-\udfff]", path):
+            detail = f"Git path cannot be matched in the index: {path!r}"
+            if error_details is not None:
+                error_details.append(detail)
             from roam.observability import log_swallowed
 
-            log_swallowed("changed_files:get_changed_files:untracked_ls_files", _exc)
-
+            log_swallowed("changed_files:git_path_encoding", UnicodeError(detail))
+            return [], GIT_ERROR
     return paths, None
 
 
@@ -523,7 +557,7 @@ def get_changed_files(
     When *untracked* is True, also includes new files that are not yet
     tracked by git (``git ls-files --others --exclude-standard``).
 
-    Returns normalised forward-slash paths relative to the repo root.
+    Returns literal paths relative to the repo root, with Git’s forward-slash separators.
     Supply *error_details* to collect failed-read diagnostics via the shared
     status helper while retaining this list-returning interface.
 
@@ -617,44 +651,68 @@ def git_comparison_base(root: Path, ref: str) -> str:
     details: list[str] = []
     result, error = run_git_comparison(
         root,
-        ["git", "merge-base", left or "HEAD", right or "HEAD"],
+        ["git", "merge-base", "--", left or "HEAD", right or "HEAD"],
         details,
         text=True,
         fallback_detail="git merge-base failed",
     )
     if error:
         raise GitComparisonError(error, "\n".join(details))
-    return result.stdout.strip()
+    base = result.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", base):
+        raise GitComparisonError(GIT_ERROR, "git merge-base returned an invalid object ID")
+    return base
+
+
+class GitlinkPath(Exception):
+    """The tree entry is a submodule pointer, without source to compare."""
 
 
 def git_show_at_ref_status(
     root: Path, ref: str, path: str, error_details: list[str]
 ) -> tuple[bytes | None, str | None]:
-    """Read a blob, distinguishing tree absence from a failed read."""
-    result, git_error = run_git_comparison(root, ["git", "show", f"{ref}:{path}"], error_details)
-    if git_error == GIT_ERROR:
+    """Read a blob, distinguishing tree absence and gitlinks from failed reads."""
+    from roam.observability import log_swallowed
+
+    # Require a blob: git show can render trees and commits as text and
+    # can fall back to a pathspec when object resolution fails.
+    result, git_error = run_git_comparison(
+        root, ["git", "cat-file", "blob", "--end-of-options", f"{ref}:{path}"], error_details, defer_nonzero=True
+    )
+    if result is not None and git_error == GIT_ERROR:
         # Git diagnostics are localized; only a successful tree query proves absence.
+        show_detail = error_details[-1]
         listing, listing_error = run_git_comparison(
-            root, ["git", "--literal-pathspecs", "ls-tree", "-z", "--name-only", ref, "--", path], error_details
+            root, ["git", "--literal-pathspecs", "ls-tree", "-z", "--end-of-options", ref, "--", path], error_details
         )
         if listing_error:
             return None, listing_error
-        if not listing.stdout:
+        metadata, _, entry_path = listing.stdout.partition(b"\t")
+        entry_matches = entry_path == os.fsencode(path) + b"\0"
+        if not listing.stdout or (
+            entry_matches and re.fullmatch(rb"040000 tree [0-9a-f]{40}(?:[0-9a-f]{24})?", metadata)
+        ):
             error_details.pop()
             return None, None
-    return (result.stdout if result is not None else None), git_error
+        if entry_matches and re.fullmatch(rb"160000 commit [0-9a-f]{40}(?:[0-9a-f]{24})?", metadata):
+            error_details.pop()
+            raise GitlinkPath(path)
+        log_swallowed("changed_files:git_comparison_returncode", RuntimeError(show_detail[:200]))
+    return (result.stdout if git_error is None else None), git_error
 
 
 def git_show_at_ref(root: Path, ref: str, filepath: str, *, strict: bool = False) -> bytes | None:
     """Read content; strict callers distinguish absent paths from Git failures."""
     details: list[str] = []
-    if strict:
+    try:
         source, error = git_show_at_ref_status(root, ref, filepath, details)
-        if error:
-            raise GitComparisonError(error, "\n".join(details))
-        return source
-    result, _error = run_git_comparison(root, ["git", "show", f"{ref}:{filepath}"], details)
-    return result.stdout if result is not None else None
+    except GitlinkPath:
+        if strict:
+            raise
+        return None
+    if error and strict:
+        raise GitComparisonError(error, "\n".join(details))
+    return source
 
 
 def parse_source_with_grammar(source: bytes, language: str):

@@ -30,6 +30,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import git_init
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 FIXTURE_SRC = Path(__file__).parent / "fixtures" / "dogfood_security"
 _INDEX_TIMEOUT = 240
@@ -85,6 +89,7 @@ def _build_repo(tmp_path_factory, name: str) -> Path:
             _secretsmod.read_text(encoding="utf-8") + f'STRIPE_SECRET_KEY = "{_stripe}"\n',
             encoding="utf-8",
         )
+    git_init(repo)
     proc = _run_roam(repo, "index", "-q")
     assert proc.returncode == 0, f"index failed: {proc.stdout[-800:]}\n{proc.stderr[-800:]}"
     assert (repo / ".roam" / "index.db").exists(), "index.db not created"
@@ -430,7 +435,7 @@ def test_vuln_reach_reports_import_reachable(vuln_repo):
     assert env["summary"]["import_reachable_count"] == 2, env["summary"]
 
 
-def test_vulns_reachable_only_does_not_claim_empty(vuln_repo):
+def test_vulns_reachable_only_does_not_claim_empty(vuln_repo, monkeypatch):
     """FIXED (M2, DOGFOOD-DEFECTS-2026-07-15): after importing 4 vulns,
     `vulns --reachable-only` used to print 'no vulnerability scan available
     (vulnerabilities table is empty; ...)' even though the table held 4

@@ -85,6 +85,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Canonical phase enumerations
 # ---------------------------------------------------------------------------

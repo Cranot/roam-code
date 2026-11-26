@@ -29,7 +29,11 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # FINDING 1 -- compare: index missing symbol_metrics

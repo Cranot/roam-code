@@ -22,6 +22,9 @@ import pytest
 
 from tests.conftest import git_init, index_in_process, invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _ROUTES = """<?php
 
 use Illuminate\\Support\\Facades\\Route;

@@ -16,6 +16,8 @@ root-cause analysis.
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -163,7 +165,9 @@ class TestGetDbPath:
         selected = {"default": proj / ".roam", "config": configured, "env": override}[source]
         if existing:
             selected.mkdir(exist_ok=True)
-            (selected / "index.db").write_bytes(b"metadata probe")
+            with sqlite3.connect(selected / "index.db") as conn:
+                conn.execute("CREATE TABLE index_manifest (id INTEGER, indexed_at INTEGER, git_head, git_dirty_hash)")
+                conn.execute("INSERT INTO index_manifest VALUES (1, ?, NULL, NULL)", (int(time.time()),))
         monkeypatch.chdir(proj)
 
         def forbidden_mkdir(*args, **kwargs):

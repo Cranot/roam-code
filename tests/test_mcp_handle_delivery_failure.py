@@ -7,6 +7,9 @@ import json
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 pytest.importorskip("fastmcp")
 
 from roam import mcp_server as server

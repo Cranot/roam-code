@@ -59,6 +59,9 @@ import pytest
 from roam.commands.cmd_stale_refs import _read_text_with_reason
 from tests.conftest import invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _OVERSIZE_BYTES = 1_100_000
 
 

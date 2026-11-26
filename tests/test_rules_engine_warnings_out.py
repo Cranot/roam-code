@@ -24,10 +24,14 @@ import json as _json
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli as roam_cli
 from roam.rules.engine import _load_yaml, load_rules
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # _load_yaml — direct loader behaviour

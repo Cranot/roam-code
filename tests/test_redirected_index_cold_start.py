@@ -10,6 +10,8 @@ import sys
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def cold_project(tmp_path):
@@ -20,7 +22,12 @@ def cold_project(tmp_path):
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith("ROAM_")}
     env.pop("PYTHONPATH", None)
-    env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8", ROAM_TELEMETRY_LOCAL="0")
+    env.update(
+        PYTHONUTF8="1",
+        PYTHONIOENCODING="utf-8",
+        ROAM_TELEMETRY_LOCAL="0",
+        ROAM_INDEX_FRESHNESS_BUDGET_S=os.environ["ROAM_INDEX_FRESHNESS_BUDGET_S"],
+    )
     for args in (
         ["init", "--quiet"],
         # Snapshot all Git files too: prevent the fixture commit's background
@@ -196,10 +203,10 @@ def test_mcp_bridge_preserves_refusal_without_followup_index_probe(cold_project,
     monkeypatch.setenv("ROAM_TELEMETRY_LOCAL", "0")
     monkeypatch.setattr(mcp, "_ROAM_RESULT_CACHE", {})
 
-    def forbidden_probe():
-        pytest.fail("a refused index must not be probed for a stale banner")
+    def forbidden_probe(*args):
+        pytest.fail("a refused index must not be opened for a freshness check")
 
-    monkeypatch.setattr(mcp, "_check_stale_with_cache", forbidden_probe)
+    monkeypatch.setattr("roam.db.freshness.read_query_index_freshness", forbidden_probe)
     before = _snapshot(project)
     result = mcp._run_roam(["preflight", "helper"], root="." if transport == "inprocess" else str(project))
     assert result["isError"] is True

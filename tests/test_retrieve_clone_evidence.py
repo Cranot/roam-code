@@ -13,6 +13,9 @@ from roam.graph import clone_evidence
 from roam.retrieve.pipeline import RetrieveOptions, run_retrieve
 from tests import test_clone_scan_evidence as _fixtures
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 project = _fixtures.project
 run = _fixtures.run
 

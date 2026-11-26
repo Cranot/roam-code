@@ -9,6 +9,8 @@ import pytest
 from roam.commands import cmd_debt
 from tests.conftest import invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def debt_corpus(project_factory):

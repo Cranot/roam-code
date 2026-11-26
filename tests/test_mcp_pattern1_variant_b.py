@@ -37,6 +37,9 @@ import subprocess
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

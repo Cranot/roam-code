@@ -14,6 +14,10 @@ import yaml
 
 from scripts import sync_surface_counts as sync
 from tests._helpers.repo_root import repo_root
+from tests.conftest import git_commit, git_init, index_in_process
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 ROOT = repo_root()
 ACTION_PATH = ROOT / "action.yml"
@@ -99,6 +103,7 @@ def _validator_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "ACTION_PATH_INPUT": ROOT.as_posix(),
         "EVENT_NAME_INPUT": "pull_request",
         "PR_BASE_SHA_INPUT": "a" * 40,
+        "PR_HEAD_SHA_INPUT": "b" * 40,
         "PUSH_BEFORE_SHA_INPUT": "",
     }
     values.update(overrides)
@@ -167,6 +172,7 @@ def test_validator_is_the_single_raw_input_boundary() -> None:
         "${{ github.action_path }}",
         "${{ github.event_name }}",
         "${{ github.event.pull_request.base.sha }}",
+        "${{ github.event.pull_request.head.sha }}",
         "${{ github.event.before }}",
     ):
         assert context_expr in env_values
@@ -298,8 +304,8 @@ def test_ci_guide_examples_avoid_mutable_dependency_and_runner_defaults() -> Non
 
     assert "runs-on: ubuntu-latest" not in docs
     assert "Cranot/roam-code@main" not in docs
-    assert 'pip install --disable-pip-version-check "roam-code==14.1.0"' in docs
-    assert "Cranot/roam-code@v14.1.0-r1" in docs
+    assert 'pip install --disable-pip-version-check "roam-code==14.2.3"' in docs
+    assert "Cranot/roam-code@v14.2.3" in docs
     assert "replace the tag with its reviewed 40-character SHA" in docs
     for ref in (
         "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
@@ -312,7 +318,7 @@ def test_ci_guide_examples_avoid_mutable_dependency_and_runner_defaults() -> Non
     assert action_refs
     for ref in action_refs:
         if ref.startswith("Cranot/roam-code@"):
-            assert ref == "Cranot/roam-code@v14.1.0-r1"
+            assert ref == "Cranot/roam-code@v14.2.3"
         else:
             assert re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", ref), ref
 
@@ -323,7 +329,7 @@ def test_github_guard_template_has_closed_verdict_and_required_evidence() -> Non
     steps = payload["jobs"]["roam-guard"]["steps"]
 
     assert payload["jobs"]["roam-guard"]["runs-on"] == "ubuntu-24.04"
-    assert "'roam-code==14.1.0'" in text
+    assert "'roam-code==14.2.3'" in text
     assert "python -I -m venv .roam-guard-venv" in text
     assert 'case "${status}" in' in text
     assert "0|4|5" in text
@@ -435,6 +441,7 @@ def test_validator_accepts_closed_pep440_style_release_forms(tmp_path: Path, ver
         ({"INPUT_PYTHON_VERSION": "3.x"}, "expected Python 3.11 through 3.13"),
         ({"INPUT_PYTHON_VERSION": "3.14"}, "expected Python 3.11 through 3.13"),
         ({"PR_BASE_SHA_INPUT": "main"}, "expected an empty, SHA-1, or SHA-256"),
+        ({"PR_HEAD_SHA_INPUT": "main"}, "expected an empty, SHA-1, or SHA-256"),
     ],
 )
 def test_validator_rejects_injection_and_out_of_bounds_values(
@@ -458,6 +465,82 @@ def test_command_lists_are_consumed_as_validated_arrays() -> None:
     assert 'for CMD in "${REQUESTED_SARIF_COMMAND_LIST[@]}"' in sarif
     assert "for CMD in ${ANALYSIS_COMMANDS}" not in sarif
     assert "for CMD in ${REQUESTED_SARIF_COMMANDS}" not in sarif
+
+
+@pytest.mark.parametrize(
+    "case", ["pr-diff", "empty-range", "missing-base", "missing-head", "no-head-sha", "base-override"]
+)
+def test_pr_risk_uses_event_comparison(tmp_path, monkeypatch, case):
+    project = tmp_path / "repo"
+    project.mkdir()
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
+    (project / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    git_init(project)
+
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=project, text=True).strip()
+
+    ancestor = git("rev-parse", "HEAD")
+    (project / "base_only.py").write_text("def other():\n    return 1\n", encoding="utf-8")
+    git_commit(project, "base only")
+    base = git("rev-parse", "HEAD")
+    git("checkout", "--detach", ancestor)
+    (project / "app.py").write_text("def main():\n    return 2\n", encoding="utf-8")
+    git_commit(project, "PR change")
+    head = git("rev-parse", "HEAD")
+    assert not git("status", "--porcelain")
+    out, rc = index_in_process(project, "--force")
+    assert rc == 0, out
+
+    job_summary = tmp_path / "github-step-summary.md"
+    job_summary.write_text("Existing summary\n", encoding="utf-8")
+    run = _step(step_id="run-analysis")["run"]
+    result = subprocess.run(
+        [_bash_executable(), "-c", 'roam() { "$TEST_PYTHON" -c "from roam.cli import cli; cli()" "$@"; }\n' + run],
+        cwd=project,
+        env=os.environ
+        | {
+            "TEST_PYTHON": sys.executable,
+            "PYTHONPATH": str(ROOT / "src"),
+            "INPUT_COMMANDS": "pr-risk",
+            "INPUT_CHANGED_ONLY": "true" if case == "base-override" else "false",
+            "INPUT_CHANGED_DEPTH": "3",
+            "INPUT_BASE_REF": head if case == "base-override" else "",
+            "EVENT_NAME_INPUT": "pull_request",
+            "PUSH_BEFORE_SHA_INPUT": "",
+            "PR_BASE_SHA_INPUT": {"empty-range": head, "missing-base": "f" * 40}.get(case, base),
+            "PR_HEAD_SHA_INPUT": {"missing-head": "e" * 40, "no-head-sha": ""}.get(case, head),
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_OUTPUT": str(tmp_path / "github-output.txt"),
+            "GITHUB_STEP_SUMMARY": str(job_summary),
+        },
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    data = json.loads((tmp_path / "roam-results/pr-risk.json").read_text(encoding="utf-8"))
+    summary = data["summary"]
+    warning = "::warning::PR comparison could not run"
+    if case in {"pr-diff", "empty-range", "base-override"}:
+        assert warning not in result.stdout
+        assert job_summary.read_text(encoding="utf-8") == "Existing summary\n"
+    if case == "pr-diff":
+        assert data.get("label") == f"{base}...{head}", result.stdout
+        assert summary["changed_files"] == 1
+    elif case in {"empty-range", "base-override"}:
+        separator = ".." if case == "base-override" else "..."
+        assert summary["label"] == f"{head}{separator}{head}", result.stdout
+        assert summary["state"] == "no_changes"
+        assert summary["risk_score"] == 0
+    else:
+        assert summary["state"] == "comparison_unavailable", result.stdout
+        assert summary["risk_score"] is None
+        assert summary["partial_success"] is True
+        assert warning in result.stdout.splitlines()
+        assert job_summary.read_text(encoding="utf-8").splitlines() == [
+            "Existing summary",
+            "- PR comparison could not run. Pull request risk was skipped.",
+        ]
 
 
 def test_generated_step_outputs_are_closed_before_github_output_emission() -> None:

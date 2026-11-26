@@ -51,6 +51,8 @@ import pytest
 
 from tests.conftest import git_init, index_in_process, invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _seed_flat_snapshots(proj, n=6):
     """Insert `n` identical snapshots so analysis RUNS and finds no anomaly.

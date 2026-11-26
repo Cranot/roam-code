@@ -47,6 +47,9 @@ from tests.conftest import (  # type: ignore[no-redef]
     invoke_cli,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

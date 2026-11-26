@@ -74,6 +74,9 @@ from click.testing import CliRunner
 
 from roam.commands.cmd_sbom import sbom
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers -- invoke sbom through the click runner
 # ---------------------------------------------------------------------------

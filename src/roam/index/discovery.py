@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
+from roam.index.gitignore import compile_exclude_patterns
 from roam.observability import log_swallowed
 
 # 53 extensions the discovery walker skips as non-source: binaries, lockfiles,
@@ -121,6 +123,7 @@ SKIP_DIRS = frozenset(
 )
 
 MAX_FILE_SIZE = 1_000_000  # 1MB
+GIT_LS_FILES = ("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 
 # Built-in patterns for common auto-generated files
 BUILTIN_GENERATED_PATTERNS = [
@@ -283,7 +286,7 @@ def _git_ls_files(root: Path, skips: dict[str, list[str]] | None = None) -> list
 
     try:
         result = subprocess.run(
-            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            list(GIT_LS_FILES),
             cwd=str(root),
             capture_output=True,
             timeout=30,
@@ -401,7 +404,7 @@ SKIP_UNENUMERABLE = "unenumerable"
 def _filter_files(
     paths: list[str],
     root: Path,
-    exclude_patterns: list[str] | None = None,
+    exclude: Callable[[str], bool] | None = None,
     include_excluded: bool = False,
     skips: dict[str, list[str]] | None = None,
     max_file_size: int | None = None,
@@ -411,7 +414,7 @@ def _filter_files(
     Args:
         paths: List of relative file paths.
         root: Project root directory.
-        exclude_patterns: Glob patterns to exclude (from .roamignore, config, built-in).
+        exclude: Compiled matcher for .roamignore, config, and built-in rules.
         include_excluded: If True, skip exclusion filtering (for debugging).
         skips: Optional dict collecting resource-cap skips by reason
             (:data:`SKIP_OVERSIZED` / :data:`SKIP_UNSTATABLE`). Scope
@@ -425,9 +428,8 @@ def _filter_files(
     for rel_path in paths:
         if _is_skippable(rel_path):
             continue
-        if not include_excluded and exclude_patterns:
-            if _matches_exclude(rel_path, exclude_patterns):
-                continue
+        if exclude is not None and exclude(rel_path):
+            continue
         full_path = root / rel_path
         try:
             if full_path.stat().st_size > size_limit:
@@ -475,11 +477,11 @@ def discover_files_with_skips(
     # Normalise path separators
     raw = [p.replace("\\", "/") for p in raw]
 
-    exclude_patterns = load_exclude_patterns(root)
+    exclude = None if include_excluded else compile_exclude_patterns(load_exclude_patterns(root))
     filtered = _filter_files(
         raw,
         root,
-        exclude_patterns=exclude_patterns,
+        exclude=exclude,
         include_excluded=include_excluded,
         skips=skips,
         max_file_size=max_file_size,

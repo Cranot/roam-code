@@ -5,12 +5,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output
 
 
-def test_agent_mode_outputs_compact_json(cli_runner, indexed_project):
+def test_agent_mode_outputs_compact_json(cli_runner, indexed_project, monkeypatch):
     """--agent should force JSON and use compact envelope fields."""
+    monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
     result = invoke_cli(cli_runner, ["--agent", "health"], cwd=indexed_project)
     data = parse_json_output(result, command="health")
 
@@ -18,7 +24,9 @@ def test_agent_mode_outputs_compact_json(cli_runner, indexed_project):
     assert isinstance(data.get("summary"), dict)
     assert "version" not in data
     assert "schema" not in data
-    assert "_meta" not in data
+    assert set(data["_meta"]) == {"index_age_s", "index_changed_files", "index_state", "index_status"}
+    assert data["_meta"]["index_changed_files"] == 0
+    assert data["_meta"]["index_state"] == "fresh"
 
 
 def test_agent_mode_respects_explicit_budget(cli_runner, indexed_project):

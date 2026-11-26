@@ -10,6 +10,10 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.commands import cmd_postmortem, cmd_pr_replay
+from roam.exit_codes import EXIT_PARTIAL
+from tests.conftest import git_commit, git_init, index_in_process
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 @pytest.fixture
@@ -51,9 +55,49 @@ def test_no_scan_names_input_state(history, command, revision, state):
     assert data["summary"]["partial_success"] is True
     assert data["summary"]["commits_scanned"] == 0
     if command == "pr-replay":
+        assert result.exit_code == EXIT_PARTIAL
         assert data["summary"]["risk_level_canonical"] is None
         assert data["summary"]["risk_rank"] is None
         assert "clean window" not in data["report_markdown"].lower()
+
+
+def test_sample_without_history_reports_partial_in_text(history):
+    result = CliRunner().invoke(cli, ["pr-replay", "--tier", "sample"])
+    assert "PR Replay unavailable" in result.output
+    assert "No risk assessment was made" in result.output
+    assert result.exit_code == EXIT_PARTIAL
+
+
+def test_empty_range_names_no_replay_once(history):
+    args = ["pr-replay", "--range", "HEAD..HEAD"]
+    runner = CliRunner()
+    text = runner.invoke(cli, args)
+    structured = runner.invoke(cli, ["--json", *args])
+    assert text.exit_code == structured.exit_code == EXIT_PARTIAL
+    assert text.stdout.count("No replay performed:") == 1
+    verdict = json.loads(structured.stdout)["summary"]["verdict"]
+    assert verdict == "No replay performed: requested range contains no commits"
+
+
+def test_sample_with_nonempty_clean_range_succeeds(tmp_path, monkeypatch):
+    project = tmp_path / "repo"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("ROAM_DB_DIR", str(tmp_path / "db"))
+    app = project / "app.py"
+    app.write_text("def main():\n    return 1\n", encoding="utf-8")
+    git_init(project)
+    app.write_text("def main():\n    return 2\n", encoding="utf-8")
+    git_commit(project)
+    out, rc = index_in_process(project, "--force")
+    assert rc == 0, out
+
+    result = CliRunner().invoke(cli, ["--json", "pr-replay", "--tier", "sample", "--range", "HEAD~1..HEAD"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["summary"]["commits_scanned"] == len(data["commits"]) == 1
+    assert data["summary"]["commits_with_findings"] == 0
+    assert "Clean window" in data["report_markdown"]
 
 
 def test_no_scan_withholds_requested_deliverables(history):

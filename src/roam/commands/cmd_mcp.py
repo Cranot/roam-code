@@ -17,12 +17,8 @@ This wrapper short-circuits that path:
 
 * For the server start path (the common case: ``roam mcp`` on stdio for
   Claude Code, Cursor, etc.) we replace the heavy reindex with a fast
-  mtime-only ``check_stale`` call (typically <100 ms). If the index
-  looks fresh, we hand off to the underlying command with
-  ``no_auto_index=True`` so it skips its own reindex. If it looks stale,
-  we emit a stderr warning telling the user to run ``roam index`` and
-  still hand off with ``no_auto_index=True`` — the safety net becomes
-  a visible affordance rather than a 36 s connect-timeout bomb.
+  source-file check. We report stale or unavailable results on stderr
+  and hand off with ``no_auto_index=True`` so startup skips the reindex.
 
 * If the user passed ``--no-auto-index`` themselves we don't run the
   fast check either; their intent is explicit.
@@ -145,25 +141,17 @@ def mcp(transport, host, port, no_auto_index, list_tools, list_tools_json, compa
     # via ``--no-auto-index``.
     skip_heavy_reindex = False
     if not info_only and not no_auto_index:
+        from roam.db.connection import StaleDbDirError, find_project_root, get_db_path
+        from roam.db.freshness import QueryIndexFreshness, probe_index_freshness
+
         try:
-            from roam.commands.stale_index import check_stale
-
-            is_stale, reason = check_stale(sensitivity="medium")
-        except (ImportError, OSError):
-            # Defensive: if the fast check cannot import or read the local
-            # index, keep booting without paying the heavy reindex cost.
-            is_stale, reason = False, None
-
-        if is_stale:
-            click.echo(
-                f"warning: index appears stale — {reason}. "
-                "Run `roam index` to refresh. Booting server without auto-reindex.",
-                err=True,
-            )
-        # Either way: the fast check has already told us what we need,
-        # so we skip the slow reindex. The agent / IDE will get the
-        # stale-banner affordance on individual tool responses
-        # (mcp_server._annotate_stale already handles that).
+            root = find_project_root()
+            freshness = probe_index_freshness(get_db_path(root, create=False), root)
+        except (OSError, StaleDbDirError):
+            freshness = QueryIndexFreshness(None, None, "could not read the local index")
+        if hint := freshness.text_hint():
+            click.echo(f"Warning: {hint}", err=True)
+        # Individual tool responses also carry the query freshness check.
         skip_heavy_reindex = True
 
     # Lazy import: keep the 8600-line mcp_server module out of any code

@@ -7,6 +7,9 @@ import pytest
 from roam.graph.dark_matter import HypothesisEngine, dark_matter_edges
 from tests.conftest import assert_json_envelope, invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Fixture: project with dark-matter pairs
 # ---------------------------------------------------------------------------

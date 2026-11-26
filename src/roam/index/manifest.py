@@ -21,14 +21,15 @@ detail.
 from __future__ import annotations
 
 import hashlib
-import importlib.metadata
 import json
 import os
 import sqlite3
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
+from roam.git_utils import GIT_STATUS_PORCELAIN, git_status_paths, worktree_git_env
 from roam.observability import log_swallowed
 
 # Optional extras roam can take advantage of when present. Listed in
@@ -44,11 +45,11 @@ _OPTIONAL_EXTRAS = (
 
 def _roam_version() -> str:
     """Resolve the roam-code package version via importlib.metadata."""
-    try:
-        import importlib.metadata as _md
+    from importlib.metadata import PackageNotFoundError, version
 
-        return _md.version("roam-code")
-    except importlib.metadata.PackageNotFoundError:
+    try:
+        return version("roam-code")
+    except PackageNotFoundError:
         # Fall back to the package's __version__ string (which itself
         # falls back to "dev" when the distribution isn't installed).
         try:
@@ -61,11 +62,11 @@ def _roam_version() -> str:
 
 def _pkg_version(pkg_name: str) -> str | None:
     """Return the installed version of *pkg_name*, or None if missing."""
-    try:
-        import importlib.metadata as _md
+    from importlib.metadata import PackageNotFoundError, version
 
-        return _md.version(pkg_name)
-    except importlib.metadata.PackageNotFoundError:
+    try:
+        return version(pkg_name)
+    except PackageNotFoundError:
         return None
 
 
@@ -251,6 +252,7 @@ def _git_head(project_root: Path) -> str | None:
             timeout=5,
             encoding="utf-8",
             errors="replace",
+            env=worktree_git_env(project_root),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
@@ -260,30 +262,37 @@ def _git_head(project_root: Path) -> str | None:
     return sha or None
 
 
-def _git_dirty_hash(project_root: Path) -> str | None:
-    """Hash of ``git status --porcelain`` output, or None if clean / non-git.
-
-    Lets us tell "the working tree was clean at index time" vs "there were
-    uncommitted edits" without storing the full diff.
-    """
+def _git_status(project_root: Path) -> bytes | None:
+    """Capture individual dirty paths for comparison with future queries."""
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            [*GIT_STATUS_PORCELAIN, "--untracked-files=all"],
             cwd=str(project_root),
             capture_output=True,
-            text=True,
             timeout=10,
-            encoding="utf-8",
-            errors="replace",
+            env=worktree_git_env(project_root),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
-    if result.returncode != 0:
+    if result.returncode or result.stderr.strip():
         return None
-    out = result.stdout
-    if not out.strip():
-        return None  # clean
-    return hashlib.sha256(out.encode("utf-8", "replace")).hexdigest()
+    status = result.stdout
+    if status and (
+        not status.endswith(b"\0") or any(len(record) < 4 or record[2:3] != b" " for record in status[:-1].split(b"\0"))
+    ):
+        return None
+    return status
+
+
+@dataclass(frozen=True)
+class GitSnapshot:
+    head: str | None
+    status: bytes | None
+
+
+def capture_git_snapshot(project_root: Path) -> GitSnapshot:
+    """Capture Git state before source reads or as the manifest is written."""
+    return GitSnapshot(_git_head(project_root), _git_status(project_root))
 
 
 def _schema_version(conn: sqlite3.Connection | None) -> int:
@@ -316,9 +325,10 @@ def collect_manifest(
     *,
     profile: str = "all",
     conn: sqlite3.Connection | None = None,
-    notes: str | None = None,
+    notes: str | dict | None = None,
     extra_config_inputs: list[str] | None = None,
     steps_status: dict | None = None,
+    git_before: GitSnapshot | None = None,
 ) -> dict:
     """Build a fresh manifest dict from environment + project state.
 
@@ -328,7 +338,7 @@ def collect_manifest(
             'tests', 'rules', 'docs', or 'all'.
         conn: Optional open DB connection for reading PRAGMA user_version.
             When None, the value is taken from the module-level constant.
-        notes: Optional free-form note to persist alongside the row.
+        notes: Optional free-form note or structured indexer metadata.
         extra_config_inputs: Strings to mix into the config hash. Use for
             CLI flags that change indexing behaviour ("--include-excluded",
             "--force") so a flag flip invalidates the manifest comparison.
@@ -336,6 +346,7 @@ def collect_manifest(
             duration_ms}}`` map produced by the indexer's step-tracking
             (W82/A8). Persisted into the ``steps_status`` JSON column so
             ``roam doctor`` can surface per-sub-step degraded-mode signals.
+        git_before: Optional Git snapshot taken before the index read files.
 
     Returns a dict with stringly-typed JSON-friendly values, ready to be
     handed to :func:`write_manifest`.
@@ -351,6 +362,28 @@ def collect_manifest(
             h.update(str(item).encode("utf-8", "replace"))
         config_h = h.hexdigest()
 
+    git_after = capture_git_snapshot(project_root)
+    git_before = git_before or git_after
+    git_head = git_before.head or git_after.head
+    head_changed = git_before.head != git_after.head
+    before, after = git_before.status, git_after.status
+    dirty_paths = None
+    if before is not None and after is not None:
+        dirty_paths = sorted(git_status_paths(before) | git_status_paths(after))
+    dirty_hash = None
+    if dirty_paths or (git_head and (head_changed or dirty_paths is None)):
+        status = before or b""
+        if before != after:
+            status += b"\0" + (after or b"")
+        dirty_hash = hashlib.sha256(status).hexdigest()
+    if isinstance(notes, dict):
+        notes = {**notes, "git_dirty_paths": dirty_paths}
+        if head_changed:
+            # Two clean checkouts can contain different files. The path
+            # union is still useful evidence, but it cannot bound the scan.
+            notes["git_build_head_changed"] = True
+        notes = json.dumps(notes, sort_keys=True)
+
     return {
         "indexed_at": int(time.time()),
         "roam_version": _roam_version(),
@@ -358,8 +391,8 @@ def collect_manifest(
         "parser_versions": _parser_versions(),
         "grammar_versions": _grammar_versions(),
         "config_hash": config_h,
-        "git_head": _git_head(project_root),
-        "git_dirty_hash": _git_dirty_hash(project_root),
+        "git_head": git_head,
+        "git_dirty_hash": dirty_hash,
         "enabled_extras": _enabled_extras(),
         "index_profile": profile,
         "notes": notes,
@@ -541,6 +574,14 @@ def latest_manifest(conn: sqlite3.Connection) -> dict | None:
     }
 
 
+def latest_manifest_includes_excluded(conn: sqlite3.Connection) -> bool:
+    """Return the previous build's file discovery override, if recorded."""
+    manifest = latest_manifest(conn)
+    notes = _decode_json_dict(manifest["notes"]) if manifest else None
+    options = notes.get("index_options") if notes else None
+    return isinstance(options, dict) and options.get("include_excluded") is True
+
+
 # Fields whose change implies the index needs (or might need) a rebuild.
 # Used by stale-index detection in `roam doctor`. Order is presentation
 # order in the diff dict.
@@ -590,9 +631,10 @@ def record_indexer_run(
     project_root: Path,
     *,
     profile: str = "all",
-    notes: str | None = None,
+    notes: str | dict | None = None,
     extra_config_inputs: list[str] | None = None,
     steps_status: dict | None = None,
+    git_before: GitSnapshot | None = None,
 ) -> int | None:
     """Convenience: collect + write a manifest in one call.
 
@@ -611,6 +653,7 @@ def record_indexer_run(
             notes=notes,
             extra_config_inputs=extra_config_inputs,
             steps_status=steps_status,
+            git_before=git_before,
         )
         return write_manifest(conn, manifest)
     except sqlite3.DatabaseError:

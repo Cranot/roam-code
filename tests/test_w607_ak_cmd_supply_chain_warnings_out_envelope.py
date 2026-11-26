@@ -73,6 +73,9 @@ from click.testing import CliRunner
 
 from roam.commands.cmd_supply_chain import supply_chain
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers -- invoke supply-chain through the click runner
 # ---------------------------------------------------------------------------

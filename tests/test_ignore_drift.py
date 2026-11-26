@@ -40,6 +40,8 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.commands.cmd_ignore_drift import scan_tracked_ignored
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture(autouse=True)
 def _disable_cold_start_guard(monkeypatch):

@@ -37,6 +37,9 @@ from click.testing import CliRunner
 
 from tests._helpers.wording_lint import scan_for_overclaims
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Canned envelopes — shaped like the real ``roam --json <cmd>`` output.
 # ---------------------------------------------------------------------------

@@ -27,8 +27,12 @@ from __future__ import annotations
 
 import ast
 
+import pytest
+
 from roam.output.formatter import json_envelope
 from tests._helpers.repo_root import repo_root
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def test_formatter_does_not_import_cli_for_deprecation_notice():

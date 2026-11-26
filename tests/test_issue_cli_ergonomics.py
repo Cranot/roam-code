@@ -6,6 +6,8 @@ import pytest
 
 from tests.conftest import invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("limit", ["0", "-1"])
 def test_grep_rejects_nonpositive_limits_before_indexing(cli_runner, tmp_path, limit):
@@ -68,14 +70,11 @@ def test_installed_sdk_with_incompatible_api_is_not_reported_missing(monkeypatch
 
 
 def test_runtime_and_test_extras_keep_unmigrated_mcp_majors_out():
+    import tomllib
+
     from packaging.requirements import Requirement
 
     from tests._helpers.repo_root import repo_root
-
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib
 
     project = tomllib.loads((repo_root() / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     for extra in ("mcp", "dev"):

@@ -109,6 +109,9 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # Guarded import — mirrors W805-NNNNN's pattern. ``roam.mcp_server`` imports
 # only specific fastmcp submodules, so ``pytest.importorskip("fastmcp")``
 # would over-skip on environments where the compound IS callable.

@@ -9,6 +9,8 @@ from click.testing import CliRunner
 
 from roam.commands import cmd_audit, cmd_dogfood
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("invalid", [[], "", 0, False])
 def test_empty_malformed_child_summary_is_not_a_clean_result(monkeypatch, invalid):

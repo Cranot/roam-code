@@ -52,6 +52,8 @@ import pytest
 from roam.commands.cmd_verify import _report_scope_oversized_code
 from roam.index.discovery import MAX_FILE_SIZE
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(

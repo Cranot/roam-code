@@ -6,15 +6,18 @@ import re
 
 import pytest
 
+from tests._helpers.replay_tiers import OPEN, rendered
 from tests.test_homepage_contract import SITE, HomepageParser, normalized
 
 
-def page_text(name):
-    return normalized(HomepageParser((SITE / name).read_text(encoding="utf-8")).root.text())
+def page_text(name, states=None):
+    # Paid-tier terms are read from the open rendering; served pages carry the policy state.
+    source = rendered(name, states) if states else (SITE / name).read_text(encoding="utf-8")
+    return normalized(HomepageParser(source).root.text())
 
 
 def test_audit_clone_retention_uses_the_existing_calendar_window():
-    text = page_text("audit.html")
+    text = page_text("audit.html", OPEN)
     assert "delete on completion" not in text
     assert "deleted on completion" not in text
     assert "After delivery: temporary clone is deleted," not in text
@@ -47,7 +50,7 @@ def test_integration_tutorial_keeps_offer_conditions_at_the_canonical_destinatio
 
 
 def test_short_credit_table_opts_into_compact_layout_without_shrinking_other_tables():
-    document = HomepageParser((SITE / "audit.html").read_text(encoding="utf-8"))
+    document = HomepageParser(rendered("audit.html", OPEN))
     credit = next(node for node in document.elements if node.attrs.get("id") == "credit")
     table = next(credit.find("table"))
     assert "compare-table--compact" in table.attrs.get("class", "").split()

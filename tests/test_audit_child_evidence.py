@@ -11,6 +11,8 @@ from click.testing import CliRunner
 import roam.cli as cli_module
 from roam.commands import cmd_audit, cmd_dogfood
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("brief", [False, True])
 @pytest.mark.parametrize("outcome", ["failed", "incomplete", "complete", "gate", "shortened", "unknown_shortened"])

@@ -12,6 +12,8 @@ from roam.db.connection import open_db
 from roam.graph import clone_detect
 from tests.conftest import git_init, index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
@@ -178,8 +180,8 @@ def test_explicit_root_preserves_producer_freshness_without_server_probe(monkeyp
     }
     monkeypatch.setattr(mcp, "_run_roam_subprocess", lambda *_args: result)
 
-    def foreign_probe():
+    def foreign_probe(*args):
         pytest.fail("server cwd cannot qualify another project's evidence")
 
-    monkeypatch.setattr(mcp, "_check_stale_with_cache", foreign_probe)
+    monkeypatch.setattr("roam.db.freshness.read_query_index_freshness", foreign_probe)
     assert mcp._run_roam(["oracle", "is-clone-of", "first"], root="other-project") is result

@@ -18,6 +18,9 @@ import pytest
 from roam.commands.cmd_compile_stats import _read_telemetry, compile_stats
 from roam.security.owner_only import ensure_owner_only_path
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _EXPECTED_FIELDS = {
     "schema_version",
     "ts",

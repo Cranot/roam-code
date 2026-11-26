@@ -16,8 +16,10 @@ import os
 import click
 
 from roam.capability import roam_capability
+from roam.commands.cmd_ci_setup import _GITHUB_PR_RANGE_STEP
 from roam.commands.resolve import ensure_index
-from roam.db.connection import _is_genuine_git_marker, db_exists, find_project_root
+from roam.db.connection import _is_genuine_git_marker, db_exists, find_project_root, get_db_path
+from roam.db.freshness import probe_index_freshness, project_index_freshness
 from roam.db.fs_detect import cloud_sync_warning, detect_cloud_sync
 from roam.output.formatter import json_envelope, to_json
 
@@ -61,7 +63,8 @@ rules:
     reason: "Functions above 30 cognitive complexity need refactoring"
 """
 
-_GITHUB_WORKFLOW = """\
+_GITHUB_WORKFLOW = (
+    """\
 name: Roam Code Analysis
 on:
   pull_request:
@@ -75,19 +78,26 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+"""
+    + _GITHUB_PR_RANGE_STEP
+    + """\
       # The tag below is the last PUBLISHED release, kept there by
       # scripts/sync_surface_counts.py (install-pin class). Do not hand-edit
       # it to the declared version: a ref that is not yet tagged fails this
       # workflow in the USER'S repository with 'Unable to resolve action'.
       # Harden further by resolving the tag to its reviewed 40-character SHA.
-      - uses: Cranot/roam-code@v14.1.0-r1
+      - uses: Cranot/roam-code@v14.2.3
         with:
-          version: "14.1.0"
-          commands: "fitness pr-risk"
+          version: "14.2.3"
+          commands: ${{ steps.pr-range.outputs.base != '' && 'fitness pr-risk' || 'fitness' }}
+          changed-only: ${{ steps.pr-range.outputs.base != '' }}
+          base-ref: ${{ steps.pr-range.outputs.base }}
           python-version: "3.12"
 """
+)
 
 # Conservative .roamignore template — every line commented out so the
 # user opts in to whatever applies. Faster to remove a `#` than to
@@ -226,7 +236,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
     Indexes the project, creates ``.roam/`` config directory with
     ``fitness.yaml``, and (if absent) writes a starter ``.roamignore``
     template at the project root. Refuses to run outside a git
-    repository. Default ``--with-ci=none`` writes no CI file; pass
+    repository. Reports any stale existing index and how to refresh it.
+    Default ``--with-ci=none`` writes no CI file; pass
     ``--with-ci=github`` to opt into a starter GitHub Actions
     workflow. For full multi-platform CI generation (including
     GitLab), see ``roam ci-setup``.
@@ -305,29 +316,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
             }
         )
 
-    # 2. Run indexing if no index exists.
-    #
-    # Shallow git-history default (W405): unless the user explicitly opted
-    # out via ``--full-history`` (or set ``ROAM_GIT_SINCE`` themselves), the
-    # indexer caps git log to ~365 days on the FIRST index. Smaller wallclock
-    # cost, same agent-relevant signal. ``--full-history`` wins over
-    # ``--since`` per LAW 11 (user intent > inference).
-    if full_history:
-        os.environ["ROAM_GIT_SINCE"] = "0"
-    elif since:
-        os.environ["ROAM_GIT_SINCE"] = since
-
-    had_index = db_exists(project_root)
-    if not had_index:
-        if not json_mode:
-            click.echo("No index found. Building...")
-    # W1291: suppress the "Run `roam init` to create one" cold-start advisory
-    # since the user just ran exactly that. cmd_init IS the init path; the
-    # advisory belongs on commands that consume an index, not the one
-    # building it.
-    ensure_index(quiet=json_mode, suppress_cold_start_advisory=True, explicit_build=True)
-
-    # 2b. Self-ignore .roam/ so `roam init` does not dirty `git status`
+    # 2. Self-ignore .roam/ so `roam init` does not dirty `git status`
     # (and so `roam health` does not then report that dirt as index
     # staleness). Written only when absent — a user who deliberately
     # deleted it, or who committed .roam/ on purpose, keeps their choice.
@@ -346,9 +335,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
     else:
         skipped.append(".roam/fitness.yaml")
 
-    # 4. .roamignore template — only when absent. Every line commented
-    # out so the user opts in. Don't write inside .roam/ (gitignored
-    # already); it lives at the project root next to .gitignore.
+    # 4. Write the starter .roamignore before indexing so discovery and
+    # the manifest see the same configuration. All rules are commented out.
     roamignore_path = project_root / ".roamignore"
     if not roamignore_path.exists():
         roamignore_path.write_text(_ROAMIGNORE_TEMPLATE, encoding="utf-8")
@@ -372,7 +360,36 @@ def init(ctx, root, yes, with_ci, since, full_history):
             created.append(".github/workflows/roam.yml")
         else:
             skipped.append(".github/workflows/roam.yml")
-    elif with_ci_norm == "gitlab":
+
+    # 6. Index after all setup writes. Refresh a warm index when its only
+    # changes are files init created. If the check is inconclusive, let the
+    # incremental indexer discover changes. Leave independently stale indexes
+    # for the existing disclosure below.
+    if full_history:
+        os.environ["ROAM_GIT_SINCE"] = "0"
+    elif since:
+        os.environ["ROAM_GIT_SINCE"] = since
+
+    had_index = db_exists(project_root)
+    refresh = False
+    if had_index and created:
+        before_index = probe_index_freshness(get_db_path(project_root, create=False), project_root)
+        # Even a Git-ignored .roamignore contributes to the manifest's config hash.
+        refresh = before_index.changed_files is None or (
+            before_index.changed_paths.issubset(created) and (before_index.stale or ".roamignore" in created)
+        )
+    if not had_index and not json_mode:
+        click.echo("No index found. Building...")
+    indexer = ensure_index(
+        quiet=json_mode,
+        suppress_cold_start_advisory=True,
+        explicit_build=True,
+        project_root=project_root,
+        refresh=refresh,
+    )
+    parse_issues = indexer.parse_issue_details() if indexer is not None else {}
+
+    if with_ci_norm == "gitlab":
         # Stub — full GitLab CI generation lives in ``roam ci-setup``.
         # Point the user there instead of writing a half-baked template.
         if not json_mode:
@@ -381,7 +398,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
                 "Run `roam ci-setup --platform gitlab` for the full GitLab CI generator."
             )
 
-    # 5. Quick health summary
+    # 7. Quick health summary
     health_summary = {}
     try:
         from roam.commands.metrics_history import collect_metrics
@@ -394,7 +411,7 @@ def init(ctx, root, yes, with_ci, since, full_history):
 
         log_swallowed("cmd_init:health_summary", _exc)
 
-    # 5b. W1502 — the three-valued corpus verdict. ``init`` used to print
+    # 7b. W1502 — the three-valued corpus verdict. ``init`` used to print
     # "Roam is ready: N files, 0 symbols, 0 edges" and exit 0 for at least
     # six structurally different situations, four of them broken. That is
     # an ABSENT measurement rendered as a definite success value, in the
@@ -418,10 +435,9 @@ def init(ctx, root, yes, with_ci, since, full_history):
         # import-only tree — legitimately zero) from "no grammar was
         # installed" (a broken index that must refuse).
         #
-        # Only when it actually indexed, though. ``ensure_index`` is a no-op
-        # over an existing index, and the counters are per-process, so a
-        # SECOND ``roam init`` reads 0 having parsed nothing. Measured
-        # 2026-08-12 on a repo whose only .py is unparseable: run 1 refused
+        # On a warm index, the counters cannot describe the whole corpus.
+        # An incremental run only parses changed files, and a no-op parses
+        # nothing. On a repo whose only .py is unparseable, run 1 refused
         # (exit 1), run 2 over the identical index reported "1 file(s) …
         # parsed without error" and exited 0. Pass None when this process did
         # not parse, so the classifier re-measures rather than inheriting a
@@ -442,13 +458,19 @@ def init(ctx, root, yes, with_ci, since, full_history):
             remediation="Run `roam doctor` to diagnose the install.",
         )
 
-    # 6. Output. Counts come from the corpus verdict so the banner, the
+    # 8. Output. Counts come from the corpus verdict so the banner, the
     # JSON envelope and the exit code can never disagree about what was
     # actually indexed.
     _files = corpus.files
     _symbols = corpus.symbols
     _edges = corpus.edges
-    if corpus.state == STATE_INDEXED:
+    freshness = project_index_freshness(project_root) if had_index else None
+    stale = freshness is not None and freshness.stale
+    if stale:
+        warnings.append({"code": "INDEX_STALE", "message": freshness.message()})
+    if corpus.state == STATE_INDEXED and stale:
+        _verdict = "initialized with a stale index"
+    elif corpus.state == STATE_INDEXED:
         _verdict = f"initialized: {_files} files, {_symbols} symbols, {_edges} edges"
     else:
         # ``detail`` already opens with "no indexable content:",
@@ -469,8 +491,12 @@ def init(ctx, root, yes, with_ci, since, full_history):
         "warnings": warning_codes,
         "state": corpus.state,
     }
+    if parse_issues:
+        summary["partial_success"] = True
+        summary["verdict"] += " (parse issues in files processed in this run)"
     if corpus.state != STATE_INDEXED:
         summary["reason"] = corpus.reason
+    if stale or corpus.state != STATE_INDEXED:
         summary["partial_success"] = True
     if corpus.state == STATE_FAILED:
         summary["resolution"] = "unresolved"
@@ -487,6 +513,8 @@ def init(ctx, root, yes, with_ci, since, full_history):
                     health=health_summary,
                     corpus=corpus.as_dict(),
                     warnings=warnings,
+                    parse_issues_scope="files_parsed_this_run" if indexer is not None else "index_reused",
+                    **({"parse_issues": parse_issues} if parse_issues else {}),
                 )
             )
         )
@@ -506,7 +534,11 @@ def init(ctx, root, yes, with_ci, since, full_history):
     # so the welcome banner contradicted `roam health` run seconds later in the
     # same shell. Point the user at `roam health` for the canonical number;
     # keep the snapshots/baseline pipeline's metric alone so history is stable.
-    click.echo(f"VERDICT: {_verdict}\n")
+    click.echo(f"VERDICT: {summary['verdict']}\n")
+    if indexer is None:
+        click.echo("  Reused the existing index. Parse issues cover only files parsed in this run.")
+    else:
+        click.echo("  Parse issues cover only files parsed in this run.")
 
     # Warnings go BEFORE the welcome banner so the user sees them
     # before the "Try one: ..." next-steps copy. Write to stderr so
@@ -517,7 +549,10 @@ def init(ctx, root, yes, with_ci, since, full_history):
     if warnings:
         click.echo("", err=True)
 
-    if corpus.state == STATE_INDEXED:
+    if corpus.state != STATE_INDEXED:
+        for line in corpus.text_lines()[1:]:
+            click.echo(line)
+    elif not stale:
         click.echo(
             _WELCOME.format(
                 files=_files,
@@ -525,11 +560,6 @@ def init(ctx, root, yes, with_ci, since, full_history):
                 edges=_edges,
             )
         )
-    else:
-        # No "Roam is ready" banner over an index that can answer nothing.
-        # The disclosure block names which zero this is and what caused it.
-        for line in corpus.text_lines()[1:]:
-            click.echo(line)
 
     if created:
         click.echo("\nCreated:")

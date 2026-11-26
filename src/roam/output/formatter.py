@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json as _json
 import os
-import time
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Literal, Mapping, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Mapping, TypeAlias
+
+if TYPE_CHECKING:
+    from roam.db.freshness import QueryIndexFreshness
 
 # Envelope schema versioning (semver: major.minor.patch)
 # bumped to 1.1.0 to signal additive enhancements:
@@ -93,6 +95,7 @@ _NON_CACHEABLE_COMMANDS = {
     "vuln-map",
     "reset",
     "clean",
+    "doctor",
     "index",
     "init",
 }
@@ -507,6 +510,26 @@ def _cap_lists_to_budget(result: dict, preserved: set, char_limit: int) -> None:
             return
 
 
+def _cap_preflight_test_paths(result: dict, char_limit: int) -> int:
+    """Shrink the affected-path list before the budget can drop test guidance."""
+    tests = result.get("tests")
+    if result.get("command") != "preflight" or not isinstance(tests, dict):
+        return 0
+    paths = tests.get("test_files")
+    if not isinstance(paths, list) or not paths:
+        return 0
+
+    tests["test_files"] = []
+    available = char_limit - len(_json.dumps(result, default=str, sort_keys=True))
+    for path in paths:
+        cost = len(_json.dumps(path, default=str, sort_keys=True)) + (2 if tests["test_files"] else 0)
+        if cost > available:
+            break
+        tests["test_files"].append(path)
+        available -= cost
+    return len(paths)
+
+
 def _drop_fields_to_budget(result: dict, preserved: set, char_limit: int) -> None:
     """Drop non-preserved keys, largest serialised first, until result fits.
 
@@ -752,15 +775,22 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
     result = _copy_envelope_mutable(data)
     importance_sorted = _presort_list_fields(result, preserved)
     _cap_lists_to_budget(result, preserved, char_limit)
+    test_path_count = _cap_preflight_test_paths(result, char_limit)
     _drop_fields_to_budget(result, preserved, char_limit)
     total_omitted = _count_omitted(data, result, preserved)
+    emitted_counts = _emitted_counts(data, result, preserved)
+    if test_path_count:
+        paths_emitted = len(result.get("tests", {}).get("test_files", []))
+        if paths_emitted < test_path_count:
+            emitted_counts["tests.test_files"] = paths_emitted
+            total_omitted += test_path_count - paths_emitted
     _annotate_truncation(
         result,
         budget,
         full_json,
         total_omitted,
         importance_sorted,
-        _emitted_counts(data, result, preserved),
+        emitted_counts,
     )
 
     return result
@@ -1473,8 +1503,8 @@ def _write_response_to_responses_dir(envelope: dict) -> None:
         # the same inputs dedupes naturally (the bundle's auto-collect should not
         # see N copies of the same `roam health` run). Exclude the whole `_meta`
         # block from the dedup KEY: it carries non-deterministic fields
-        # (timestamp, latency_ms, index_age_s, response_tokens, and the staleness
-        # index_status/dirty_files) that vary call-to-call — e.g. a cold lazy-import
+        # (timestamp, latency_ms, index_age_s, response_tokens, and changed-file
+        # count) that vary call-to-call — e.g. a cold lazy-import
         # or git probe on the FIRST call inflates latency_ms relative to the second,
         # which would defeat dedup. The written file keeps full `_meta`; only the
         # dedup key drops it. This makes dedup robust to timing instead of relying
@@ -1581,7 +1611,9 @@ def _add_agent_contract(out: dict, summary: dict, explicit_contract: Any) -> Non
     out["agent_contract"] = auto_contract
 
 
-def _stamp_core_meta(out: dict, command: str, version: str, *, include_index_metadata: bool = True) -> None:
+def _stamp_core_meta(
+    out: dict, version: str, *, include_index_metadata: bool, freshness: QueryIndexFreshness | None
+) -> None:
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     # Non-deterministic metadata in _meta — kept separate so content
     # keys produce identical JSON across invocations (LLM cache-friendly).
@@ -1601,32 +1633,63 @@ def _stamp_core_meta(out: dict, command: str, version: str, *, include_index_met
     # this addition does not affect those golden hashes.
     out["_meta"] = {
         "timestamp": ts,
-        "index_age_s": _index_age_seconds() if include_index_metadata else None,
+        "index_age_s": _index_age_seconds() if include_index_metadata and freshness is None else None,
         "roam_version": version,
     }
-    if include_index_metadata:
-        _add_staleness_meta(out["_meta"], command)
-    else:
+    if not include_index_metadata:
         out["_meta"]["index_metadata"] = "not_read"
 
 
-def _add_staleness_meta(meta: dict, command: str) -> None:
-    # Wave-1 staleness disclosure (Root-1a): for stale-sensitive commands, surface
-    # index_status WHEN the index is actually stale, so an agent reading the envelope
-    # cannot act on data computed against code that no longer matches. Placed in _meta
-    # (alongside index_age_s), NOT top-level: top-level placement broke content-hash
-    # dedup + envelope-consistency/diff contracts (a dirty real-repo tree fires it
-    # globally during tests). _meta is the non-deterministic bucket dedup/consistency
-    # already exclude. We do NOT flip summary.partial_success here — that field reflects
-    # the CHECK outcome, not index freshness (conflating them broke clean-path tests).
-    # Gated on `fresh is False`; lazy imports avoid an output<-commands cycle; failures
-    # never break envelope generation.
-    if "index_status" in meta or not _command_is_stale_sensitive(command):
-        return
+def stamp_query_index_freshness(out: dict, freshness: QueryIndexFreshness, *, command: str | None = None) -> None:
+    """Stamp freshness on CLI and MCP envelopes.
 
-    _stale = _envelope_index_status()
-    if isinstance(_stale, dict) and _stale.get("fresh") is False:
-        meta["index_status"] = _stale
+    Confirmed staleness makes index-derived answers partial. Stale-sensitive
+    commands also mark an unavailable check partial.
+    """
+    from roam.db.freshness import inside_index_composite, query_is_stale_sensitive, query_read_index
+
+    command = command or out.get("command", "")
+    meta = out.setdefault("_meta", {})
+    meta["index_age_s"] = int(freshness.age_s) if freshness.age_s is not None else None
+    meta["index_changed_files"] = freshness.changed_files
+    meta["index_state"] = freshness.state
+    meta["index_status"] = freshness.legacy_status()
+    if command in {"health", "diagnose"}:
+        out["index_status"] = meta["index_status"]
+    meta.pop("stale_index", None)
+    meta.pop("index_state_reason", None)
+    if freshness.reason is not None:
+        meta["index_state_reason"] = freshness.reason
+    if freshness.stale:
+        meta["stale_index"] = True
+    if freshness.git_history_relation:
+        meta["git_history_relation"] = freshness.git_history_relation
+        meta["git_history_relation_definition"] = (
+            "Indexed commit relative to the observed HEAD: behind if the indexed commit is an ancestor of HEAD, "
+            "ahead if HEAD is an ancestor of the indexed commit, diverged if neither is an ancestor in complete "
+            "local history, unreachable if either commit is missing locally, unknown if ancestry could not be established."
+        )
+        meta["git_history_behind"] = freshness.git_history_behind
+        meta["git_history_indexed_commit"] = freshness.indexed_commit
+        meta["git_history_head_commit"] = freshness.head_commit
+    else:
+        for key in (
+            "git_history_relation",
+            "git_history_relation_definition",
+            "git_history_behind",
+            "git_history_indexed_commit",
+            "git_history_head_commit",
+        ):
+            meta.pop(key, None)
+    summary = out.setdefault("summary", {})
+    if (
+        freshness.degraded
+        and not inside_index_composite()
+        and ((freshness.stale and query_read_index()) or query_is_stale_sensitive(command))
+    ):
+        summary["partial_success"] = True
+    else:
+        summary.setdefault("partial_success", False)
 
 
 def _cache_policy(command: str) -> tuple[bool, int]:
@@ -1686,6 +1749,29 @@ def _apply_envelope_budget(out: dict, budget: int, uncapped: bool = False) -> di
 # arbitrary user-supplied dicts merged via ``.update()``; do NOT TypedDict
 # this return without an at-boundary validator. See W933 _resolved_thresholds
 # for the canonical case study.
+def _disclose_history_depth(command: str, summary: dict, payload: dict) -> None:
+    import click
+
+    from roam.git_utils import HISTORY_COMPOSITE_COMMANDS, HISTORY_WARNING_CONTEXT_KEY, history_depth_advisory
+
+    ctx = click.get_current_context(silent=True)
+    warning = ctx.meta.get(HISTORY_WARNING_CONTEXT_KEY) if ctx is not None else None
+    if warning is None or warning[0] != command:
+        return
+    _, shallow, message = warning
+    payload["history_shallow"] = shallow
+    if message is None:
+        return
+    if command not in HISTORY_COMPOSITE_COMMANDS and not history_depth_advisory.get():
+        summary["partial_success"] = True
+    if command == "pr-analyze":
+        # The shipped CI validator fullmatches the canonical verdict sentence.
+        payload["history_depth_notice"] = message
+        return
+    verdict = summary.get("verdict")
+    summary["verdict"] = f"{verdict.rstrip('.')}. {message}" if isinstance(verdict, str) and verdict else message
+
+
 def json_envelope(
     command: str,
     summary: dict | None = None,
@@ -1702,7 +1788,7 @@ def json_envelope(
     top-level keys that downstream tools (CI, dashboards, AI agents) can
     rely on.
 
-    Non-deterministic metadata (``timestamp``, ``index_age_s``) is placed
+    Non-deterministic metadata (``timestamp``, index freshness) is placed
     in a ``_meta`` sub-dict so the main content keys remain stable across
     invocations — enabling LLM prompt-caching (exact prefix matching).
 
@@ -1713,9 +1799,8 @@ def json_envelope(
 
     Set ``persist_response=False`` for refusals that must not write a response
     sidecar even when an agent run or proof bundle is active.
-    Also set ``include_index_metadata=False`` when a refusal must not open
-    an absent/incomplete database for freshness metadata: even readonly SQLite
-    connections can change WAL shared-memory sidecars.
+    Set ``include_index_metadata=False`` to omit freshness metadata for a
+    refusal involving an absent or incomplete index.
 
     Returns a dict with at minimum::
 
@@ -1731,10 +1816,17 @@ def json_envelope(
             ...payload
         }
     """
+    from roam.output.errors import mark_index_stale_refusal
+
     summary = _prepare_envelope_summary(summary)
+    freshness = _envelope_index_status() if include_index_metadata else None
+    _disclose_history_depth(command, summary, payload)
 
     compact = _compact_json_envelope_or_none(command, summary, payload)
     if compact is not None:
+        if freshness is not None:
+            stamp_query_index_freshness(compact, freshness, command=command)
+        mark_index_stale_refusal(compact)
         projected_compact = _project_if_requested(compact)
         if budget > 0 and not uncapped:
             return budget_truncate_json(projected_compact, budget)
@@ -1748,12 +1840,12 @@ def json_envelope(
     explicit_contract = payload.pop("agent_contract", None)
     out = _base_json_envelope(command, version, summary)
     out.update(payload)
+    _stamp_core_meta(out, version, include_index_metadata=include_index_metadata, freshness=freshness)
+    if freshness is not None:
+        stamp_query_index_freshness(out, freshness)
     _add_agent_contract(out, summary, explicit_contract)
-    if include_index_metadata:
-        _stamp_core_meta(out, command, version)
-    else:
-        _stamp_core_meta(out, command, version, include_index_metadata=False)
     _stamp_response_meta(out, command)
+    mark_index_stale_refusal(out)
 
     # Best-effort side-car write to `.roam/responses/` so `pr-bundle
     # --auto-collect` can fold this envelope into the bundle later. Fires
@@ -1770,28 +1862,10 @@ def json_envelope(
     return _apply_envelope_budget(_project_if_requested(out), budget, uncapped=uncapped)
 
 
-def _command_is_stale_sensitive(command: str) -> bool:
-    """True if the command's capability declares ``stale_sensitive`` (default True).
-    Lazy import: ``capability`` imports ``formatter``, so a top-level import would cycle."""
-    try:
-        from roam.capability import _CAPABILITIES
+def _envelope_index_status() -> QueryIndexFreshness | None:
+    from roam.db.freshness import query_index_freshness
 
-        cap = _CAPABILITIES.get(command)
-        return bool(cap.stale_sensitive) if cap is not None else True
-    except (ImportError, AttributeError):
-        return False
-
-
-def _envelope_index_status():
-    """Lazily fetch ``index_status()`` for envelope staleness disclosure (dict or None).
-    NOT cached: the MCP server is long-running and the index can be rebuilt mid-process,
-    so a per-process cache would serve a stale freshness verdict."""
-    try:
-        from roam.commands.resolve import index_status
-
-        return index_status()
-    except (ImportError, OSError, ValueError):
-        return None
+    return query_index_freshness()
 
 
 def _default_json_budget() -> int:
@@ -1817,19 +1891,15 @@ def _get_version() -> str:
 
 
 def _index_age_seconds() -> int | None:
-    """Seconds since .roam/index.db was last modified, or None if missing."""
-    try:
-        from roam.db.connection import get_db_path
+    """Supply the existing age metadata for envelopes outside an index query."""
+    from roam.db.connection import StaleDbDirError, get_db_path
+    from roam.db.freshness import index_age_seconds
 
-        db_path = get_db_path(create=False)
-        if db_path.exists():
-            return int(time.time() - db_path.stat().st_mtime)
-    except (OSError, FileNotFoundError):
-        # Expected-signal guard: a stat() race after exists() (TOCTOU) or
-        # a missing index just means "age unknown" — the None return IS
-        # the disclosed signal to the caller. No lineage needed.
-        pass
-    return None
+    try:
+        age_s = index_age_seconds(get_db_path(create=False))
+    except (OSError, StaleDbDirError):
+        return None
+    return int(age_s) if age_s is not None else None
 
 
 def _project_name() -> str:

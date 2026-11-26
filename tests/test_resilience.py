@@ -18,6 +18,8 @@ import pytest
 from roam import resilience as rs
 from roam.catalog.tasks import CATALOG
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # Detector unit tests (pure function — deterministic, no live harvest)

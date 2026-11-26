@@ -21,7 +21,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from roam.commands.cmd_alerts import _resolved_thresholds
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _make_minimal_alerts_yaml(text: str, root: Path) -> Path:

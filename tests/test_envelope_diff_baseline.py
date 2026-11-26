@@ -26,6 +26,8 @@ from click.testing import CliRunner
 from roam.commands import cmd_envelope_diff as mod
 from roam.commands.cmd_envelope_diff import envelope_diff
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def runner():

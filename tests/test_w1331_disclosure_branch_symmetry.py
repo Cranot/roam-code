@@ -96,6 +96,9 @@ import pytest
 
 from tests._helpers.repo_root import repo_root
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 REPO_ROOT = repo_root()
 SCANNER = REPO_ROOT / "scripts" / "scan_disclosure_asymmetry.py"
 BASELINE = REPO_ROOT / "tests" / "data" / "disclosure_asymmetry_baseline.json"

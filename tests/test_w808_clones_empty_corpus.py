@@ -23,10 +23,13 @@ from __future__ import annotations
 import os
 import subprocess
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from tests.conftest import parse_json_output
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _make_empty_corpus(tmp_path):

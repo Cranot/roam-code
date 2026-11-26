@@ -32,6 +32,8 @@ from roam.plan.compiler import (
     compile_plan,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _setup_repo(tmp_path: Path) -> Path:
     """Create a minimal git repo with a .roam dir and 2 source files."""
@@ -534,8 +536,8 @@ def test_stale_index_discloses_files_newer_than_index(tmp_path, monkeypatch):
     pf = plan_obj.get("prefetched_facts") or {}
     assert "src/a.py" in (pf.get("index_stale") or {}).get("files_newer_than_index", [])
 
-    # Refresh the index past the file mtime -> disclosure disappears.
-    os.utime(idx, (future + 5, future + 5))
+    # Refresh the saved source snapshot to clear the disclosure.
+    Indexer(project_root=repo).run(quiet=True)
     _clear_in_memory()
     plan3 = compile_plan("what does src/a.py do", cwd=str(repo))
     env3, _ = compile_for_artifact(plan3, cwd=str(repo))
@@ -551,7 +553,7 @@ def test_index_freshness_fails_closed_when_process_cwd_was_deleted(monkeypatch):
 
     assert newer is None
     assert staleness is not None
-    assert staleness["is_stale"] is True
+    assert staleness["is_stale"] is None
     assert staleness["working_directory_unavailable"] is True
     assert staleness["missing_paths"] == []
 

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import re
+import sys
 import tomllib
+from itertools import product
 
 import pytest
+import yaml
+from packaging.specifiers import SpecifierSet
 
 from scripts.verify_uv_runtime import EXPECTED_UV_VERSION
 from tests._helpers.repo_root import repo_root
+from tests.test_roam_guard_non_github_templates_security import _load as _load_workflow
 
 ROOT = repo_root()
 WORKFLOW = ROOT / ".github" / "workflows" / "roam-ci.yml"
@@ -159,55 +164,147 @@ def test_ci_tool_versions_are_exact_in_project_metadata_and_lock() -> None:
     assert versions["wheel"] == "0.48.0"
 
 
-def test_python_support_metadata_and_all_suite_matrices():
-    """Contract change: 3.10 -> 3.11 floor; retain an audit on every suite Python."""
-    import yaml
-    from packaging.specifiers import SpecifierSet
-    from packaging.version import Version
+def _python_matrix_versions(matrix, axis, location):
+    assert isinstance(matrix, dict), f"{location}: expected a static Python matrix"
+    axes = {key: values for key, values in matrix.items() if key not in {"include", "exclude"}}
+    includes = matrix.get("include", [])
+    excludes = matrix.get("exclude", [])
+    assert isinstance(includes, list) and all(isinstance(row, dict) for row in includes), location
+    assert isinstance(excludes, list) and all(isinstance(row, dict) and row for row in excludes), location
+    assert all(isinstance(values, list) and values for values in axes.values()), location
+    assert axis in axes or not axes, f"{location}: missing {axis} matrix axis"
+    assert axis in axes or includes, f"{location}: missing Python matrix values"
+    assert all(axis in row for row in includes), f"{location}: each include must specify {axis}"
+    assert all(row.keys() <= axes.keys() for row in excludes), f"{location}: unknown exclude axis"
 
+    declared = list(axes.get(axis, [])) + [row[axis] for row in includes]
+    excluded_versions = [row[axis] for row in excludes if axis in row]
+    assert all(
+        isinstance(version, str) and re.fullmatch(r"[0-9]+\.[0-9]+", version)
+        for version in declared + excluded_versions
+    ), f"{location}: expected quoted Python minors, found {declared + excluded_versions}"
+    versions = set(declared)
+    assert versions <= SUPPORTED_PYTHONS, f"{location}: unsupported Python in {sorted(versions)}"
+
+    if not excludes:
+        return versions
+
+    # Exclusions can remove only some combinations for a minor, or all of them.
+    remaining = {row[axis] for row in includes}
+    for values in product(*axes.values()):
+        row = dict(zip(axes, values))
+        if not any(all(row[key] == value for key, value in excluded.items()) for excluded in excludes):
+            remaining.add(row[axis])
+            if remaining == versions:
+                break
+    return remaining
+
+
+def test_python_support_metadata_and_all_suite_matrices():
+    """Contract change: match Python metadata and every Python workflow matrix."""
     metadata = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
     assert metadata["requires-python"] == ">=3.11"
-    supported = SpecifierSet(metadata["requires-python"])
-    workflows = sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
-    assert workflows, "No workflows inspected"
-    suite_matrices = []
-    for path in workflows:
-        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
-        for name, job in workflow["jobs"].items():
-            steps = job.get("steps", [])
-            if not any("pytest" in step.get("run", "") for step in steps):
-                continue
+    requires_python = SpecifierSet(metadata["requires-python"])
+    prefix = "Programming Language :: Python :: "
+    declared = metadata.get("classifiers")
+    assert isinstance(declared, list) and all(isinstance(value, str) for value in declared), (
+        "Python classifiers must be a list of strings"
+    )
+    classifiers = {
+        classifier.removeprefix(prefix)
+        for classifier in declared
+        if classifier.startswith(prefix) and classifier.removeprefix(prefix)[:1].isdigit()
+    } - {"3", "3 :: Only"}
+    assert classifiers == SUPPORTED_PYTHONS, f"Python classifiers: {sorted(classifiers)}"
+    assert all(version in requires_python for version in classifiers)
+
+    required_jobs = {("roam-ci.yml", "test"), ("roam-ci.yml", "dependency-audit")}
+    inspected = set()
+    directory = ROOT / ".github" / "workflows"
+    for path in sorted(directory.iterdir()):
+        if path.suffix not in {".yml", ".yaml"}:
+            continue
+        for name, job in _load_workflow(path)["jobs"].items():
+            location = f"{path.name}:{name}"
             matrix = job.get("strategy", {}).get("matrix")
-            if matrix is None:
-                continue
-            versions = matrix["python-version"]
-            assert isinstance(versions, list) and versions, (path.name, name, versions)
-            included_versions = [entry["python-version"] for entry in matrix.get("include", [])]
-            for version in versions + included_versions:
-                assert Version(str(version)) in supported, (path.name, name, version)
-            suite_matrices.append((path.name, name))
-    assert suite_matrices, "No suite Python matrices inspected"
+            axes = set()
+            if isinstance(matrix, dict) and (
+                "python-version" in matrix
+                or any(isinstance(row, dict) and "python-version" in row for row in matrix.get("include", []))
+            ):
+                axes.add("python-version")
+            selected_axes = set()
+            for step in [job, *job.get("steps", [])]:
+                selector = step.get("with", {}).get("python-version")
+                if isinstance(selector, str) and "${{" in selector:
+                    match = re.fullmatch(
+                        r"\$\{\{\s*matrix(?:\.([\w-]+)|\[(['\"])([\w-]+)\2\])\s*}}",
+                        selector,
+                    )
+                    assert match, f"{location}: cannot verify Python selector {selector!r}"
+                    selected_axes.add(match[1] or match[3])
+            if (path.name, name) in required_jobs:
+                assert selected_axes, f"{location}: Python input must select a matrix axis"
+            for axis in sorted(axes | selected_axes):
+                versions = _python_matrix_versions(matrix, axis, location)
+                assert versions == classifiers, (
+                    f"{location}: {axis} has {sorted(versions)}, expected {sorted(classifiers)}"
+                )
+                inspected.add((path.name, name))
+    assert required_jobs <= inspected, f"Missing Python matrices: {sorted(required_jobs - inspected)}"
 
 
 @pytest.mark.parametrize("versions", [["3.10", "3.11"], [], ["3.x"], None])
 def test_python_support_contract_refuses_invalid_matrices(tmp_path, monkeypatch, versions):
     """Controls: matrix input cannot disappear, be empty, or name unsupported Python."""
-    import yaml
+    _write_python_support_fixture(tmp_path, monkeypatch, sorted(SUPPORTED_PYTHONS), versions)
+    with pytest.raises(AssertionError, match="roam-ci.yml:test"):
+        test_python_support_metadata_and_all_suite_matrices()
 
+
+def _write_python_support_fixture(tmp_path, monkeypatch, minors, versions, audit_versions=None):
     metadata = tmp_path / "pyproject.toml"
-    metadata.write_text('[project]\nrequires-python = ">=3.11"\n', encoding="utf-8")
+    classifiers = ", ".join(f'"Programming Language :: Python :: {minor}"' for minor in minors)
+    metadata.write_text(f'[project]\nrequires-python = ">=3.11"\nclassifiers = [{classifiers}]\n', encoding="utf-8")
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     workflow = {
         "jobs": {
             "test": {
                 "strategy": {"matrix": {"python-version": versions}},
-                "steps": [{"run": "python -m pytest tests/"}],
-            }
+                "steps": [
+                    {"uses": "actions/setup-python", "with": {"python-version": "${{ matrix.python-version }}"}},
+                    {"run": "python -m pytest tests/"},
+                ],
+            },
+            "dependency-audit": {
+                "strategy": {
+                    "matrix": {
+                        "python-version": sorted(SUPPORTED_PYTHONS) if audit_versions is None else audit_versions
+                    }
+                },
+                "steps": [
+                    {"uses": "actions/setup-python", "with": {"python-version": "${{ matrix.python-version }}"}},
+                    {"run": "pip-audit"},
+                ],
+            },
         }
     }
-    (workflows / "ci.yml").write_text(yaml.safe_dump(workflow), encoding="utf-8")
-    monkeypatch.setattr(__import__(__name__, fromlist=["ROOT"]), "ROOT", tmp_path)
-    monkeypatch.setattr(__import__(__name__, fromlist=["PYPROJECT"]), "PYPROJECT", metadata)
-    with pytest.raises((AssertionError, ValueError)):
+    (workflows / "roam-ci.yml").write_text(yaml.safe_dump(workflow), encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "PYPROJECT", metadata)
+
+
+@pytest.mark.parametrize("drift", ["narrow-audit", "old-audit", "missing-classifier"])
+def test_python_support_contract_detects_drift(tmp_path, monkeypatch, drift):
+    versions = sorted(SUPPORTED_PYTHONS)
+    minors = versions[:-1] if drift == "missing-classifier" else versions
+    audit_versions = {
+        "narrow-audit": ["3.12"],
+        "old-audit": ["3.10", *versions],
+        "missing-classifier": versions,
+    }[drift]
+    _write_python_support_fixture(tmp_path, monkeypatch, minors, versions, audit_versions)
+    target = "classifiers" if drift == "missing-classifier" else "roam-ci.yml:dependency-audit"
+    with pytest.raises(AssertionError, match=target):
         test_python_support_metadata_and_all_suite_matrices()

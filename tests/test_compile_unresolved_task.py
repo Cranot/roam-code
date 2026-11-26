@@ -9,6 +9,8 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("json_mode", [False, True])
 def test_generic_bug_fix_reports_typed_reason(tmp_path, monkeypatch, json_mode):

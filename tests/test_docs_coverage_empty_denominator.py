@@ -52,6 +52,8 @@ import pytest
 
 from roam.commands.cmd_docs_coverage import _compute_coverage
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(

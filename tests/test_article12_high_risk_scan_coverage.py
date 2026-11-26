@@ -40,6 +40,9 @@ from roam.commands.cmd_article_12_check import (
     _classify_high_risk_likelihood,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 HR_SOURCE = "def score_employee_promotion(record):\n    return record\n"
 BENIGN_SOURCE = "def add(a, b):\n    return a + b\n"
 # Valid HR code followed by a genuine syntax error: the file both matches

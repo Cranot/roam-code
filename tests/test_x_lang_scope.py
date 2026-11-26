@@ -16,6 +16,8 @@ import pytest
 
 from tests.conftest import git_init, index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _seed_many_bridge_files(db_path: Path, n_py: int = 1200) -> None:
     """Inject many synthetic .py file rows.

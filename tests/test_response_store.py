@@ -8,7 +8,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
+
 from roam.response_store import newest_response, response_candidates, store_response_text
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _seed(root: Path, name: str, mtime: float, payload: dict | None = None) -> Path:

@@ -22,7 +22,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.conftest import git_init, index_in_process, invoke_cli, parse_json_output
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _make_repo(tmp_path, files):

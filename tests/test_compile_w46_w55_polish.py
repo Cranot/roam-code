@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
 from roam.plan.compiler import (
     _CONFIG_BY_NAME_RE,
     _FIND_BY_DESC_RE,
@@ -17,6 +19,8 @@ from roam.plan.compiler import (
     _probe_reachability_for_task,
 )
 from roam.security.owner_only import ensure_owner_only_path
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _task_fingerprint(character: str) -> str:

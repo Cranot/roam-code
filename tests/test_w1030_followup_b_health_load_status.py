@@ -42,6 +42,9 @@ from tests.conftest import (  # type: ignore[no-redef]
     invoke_cli,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -55,7 +58,7 @@ def _make_indexed_project(tmp_path: Path, name: str) -> Path:
     """
     proj = tmp_path / name
     proj.mkdir()
-    (proj / ".gitignore").write_text(".roam/\n")
+    (proj / ".gitignore").write_text(".roam/\n.roam-gates.yml\n")
     (proj / "main.py").write_text(
         'def main():\n    """Entry point."""\n    return 0\n',
     )

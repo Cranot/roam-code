@@ -33,9 +33,13 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # Fixture: a git-init'd project with one zero-byte Python file. Matches the

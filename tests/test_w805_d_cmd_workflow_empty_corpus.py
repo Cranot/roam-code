@@ -58,6 +58,9 @@ from click.testing import CliRunner
 
 from tests.conftest import git_init, index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

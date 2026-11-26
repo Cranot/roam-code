@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+
 import pytest
+import yaml
 
 from tests.conftest import (
     assert_json_envelope,
+    git_commit,
     git_init,
     invoke_cli,
     parse_json_output,
@@ -20,6 +26,94 @@ def ci_project(tmp_path):
     (proj / "main.py").write_text("print('hello')\n")
     git_init(proj)
     return proj
+
+
+@pytest.mark.parametrize("generator", ["init", "ci-setup"])
+@pytest.mark.parametrize("comparison", ["valid", "missing-base", "wrong-head", "empty-event"])
+def test_generated_github_workflow_passes_pr_range(cli_runner, ci_project, monkeypatch, generator, comparison):
+    monkeypatch.setenv("ROAM_DB_DIR", str(ci_project.parent / "db"))
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ci_project, text=True).strip()
+    (ci_project / "main.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    git_commit(ci_project)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ci_project, text=True).strip()
+    args = ["init", "--with-ci=github"] if generator == "init" else ["ci-setup", "--platform", "github", "--write"]
+    result = invoke_cli(cli_runner, args, cwd=ci_project)
+    assert result.exit_code == 0, result.output
+    workflow = yaml.safe_load((ci_project / ".github/workflows/roam.yml").read_text(encoding="utf-8"))
+    steps = next(iter(workflow["jobs"].values()))["steps"]
+    checkout, resolve, analysis = steps
+    assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha }}"
+    assert resolve["id"] == "pr-range"
+    assert resolve["env"] == {
+        "PR_BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+        "PR_HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+    }
+    assert analysis["with"]["base-ref"] == "${{ steps.pr-range.outputs.base }}"
+    assert analysis["with"]["changed-only"] == "${{ steps.pr-range.outputs.base != '' }}"
+    assert "steps.pr-range.outputs.base != ''" in analysis["with"]["commands"]
+    assert "pr-risk" in analysis["with"]["commands"]
+
+    outputs = ci_project.parent / "step-outputs"
+    outputs.touch()
+    job_summary = ci_project.parent / "job-summary"
+    job_summary.touch()
+    event_shas = {
+        "valid": (base, head),
+        "missing-base": ("f" * 40, head),
+        "wrong-head": (base, base),
+        "empty-event": ("", ""),
+    }
+    event_base, event_head = event_shas[comparison]
+    resolved = subprocess.run(
+        ["bash", "-e", "-c", resolve["run"]],
+        cwd=ci_project,
+        env=os.environ
+        | {
+            "PR_BASE_SHA": event_base,
+            "PR_HEAD_SHA": event_head,
+            "GITHUB_OUTPUT": str(outputs),
+            "GITHUB_STEP_SUMMARY": str(job_summary),
+        },
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    log_lines = resolved.stdout.splitlines()
+    warnings = [line for line in log_lines if line.startswith("::warning::")]
+    if comparison == "valid":
+        assert outputs.read_text(encoding="utf-8").splitlines() == [f"base={base}"]
+        assert not warnings
+        assert not job_summary.read_text(encoding="utf-8")
+    else:
+        assert not outputs.read_text(encoding="utf-8")
+        summary = json.loads(next(line for line in log_lines if line.startswith("{")))["summary"]
+        assert summary["state"] == "comparison_unavailable"
+        assert summary["risk_score"] is None
+        assert warnings == ["::warning::PR comparison could not run"]
+        assert "PR comparison could not run" in job_summary.read_text(encoding="utf-8")
+
+
+def test_ci_setup_rejects_old_python_before_writing(cli_runner, tmp_path, monkeypatch):
+    from roam.db import connection
+
+    monkeypatch.setattr(connection, "find_project_root", lambda: tmp_path)
+
+    result = invoke_cli(
+        cli_runner, ["ci-setup", "--platform", "github", "--python-version", "3.10", "--write"], cwd=tmp_path
+    )
+
+    assert "--python-version" in result.output
+    assert "Python 3.11" in result.output
+    assert result.exit_code == 2
+    workflow = tmp_path / ".github" / "workflows" / "roam.yml"
+    assert not workflow.exists()
+
+    result = invoke_cli(
+        cli_runner, ["ci-setup", "--platform", "github", "--python-version", "3.11.9", "--write"], cwd=tmp_path
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "python-version: '3.11.9'" in workflow.read_text(encoding="utf-8")
 
 
 class TestCiSetupSmoke:
@@ -93,7 +187,7 @@ class TestCiSetupText:
         assert "runs-on: ubuntu-24.04" in result.output
         assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in result.output
         assert "persist-credentials: false" in result.output
-        assert "Cranot/roam-code@v14.1.0-r1" in result.output
+        assert "Cranot/roam-code@v14.2.3" in result.output
         assert "@main" not in result.output
         assert "ubuntu-latest" not in result.output
 

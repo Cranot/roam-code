@@ -26,9 +26,12 @@ from __future__ import annotations
 
 import json as _json
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def test_adversarial_pattern2_partial_when_check_errors(monkeypatch, tmp_path):

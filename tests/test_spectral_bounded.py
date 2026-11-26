@@ -20,6 +20,8 @@ from click.testing import CliRunner
 from roam.commands.cmd_spectral import _MAX_GRAPH_SYMBOLS, spectral
 from tests.conftest import git_init, index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _bulk_insert_symbols(db_path: Path, n_symbols: int) -> None:
     """Inflate the indexed DB with ``n_symbols`` synthetic function rows.
@@ -146,6 +148,6 @@ class TestSpectralBounded:
         """Text-mode VERDICT line must also name the follow-up command."""
         result = _invoke_spectral([], large_spectral_project, json_mode=False)
         assert result.exit_code == 0, f"exit {result.exit_code}: {result.output[:400]}"
-        assert result.output.startswith("VERDICT:")
-        line = result.output.splitlines()[0]
+        assert result.stdout.startswith("VERDICT:")
+        line = result.stdout.splitlines()[0]
         assert "roam clusters" in line or "roam partition" in line

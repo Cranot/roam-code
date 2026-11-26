@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.commands import cmd_surface_gaps
 from tests.conftest import git_init
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _invoke_with_layers(monkeypatch, *, implementation, mcp_exposed, documented):

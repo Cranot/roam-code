@@ -48,6 +48,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 MODULE = (
     "def alpha(x):\n    return x + 1\n\n\ndef beta(x):\n    return alpha(x)\n\n\ndef gamma(x):\n    return beta(x)\n"
 )

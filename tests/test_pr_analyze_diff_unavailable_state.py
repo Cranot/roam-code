@@ -44,6 +44,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(

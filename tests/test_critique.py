@@ -31,6 +31,9 @@ from roam.critique.checks import (
 from roam.output._severity import severity_rank
 from tests.conftest import make_src_project as _make_project
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Diff parsing — pure function, no DB
 # ---------------------------------------------------------------------------
@@ -591,12 +594,26 @@ _PIPED_DIFF_OUTPUT_SNAPSHOT = (
 
 
 class TestCriticueCLI:
-    def test_piped_diff_conservation_snapshot(self, critique_project):
+    @pytest.mark.parametrize("warn", [False, True], ids=["fresh", "freshness-warning"])
+    def test_piped_diff_conservation_snapshot(self, critique_project, monkeypatch, warn):
+        from roam.db import freshness
+
+        unknown = freshness.QueryIndexFreshness(None, None, "freshness check exceeded its time budget")
+        if warn:
+            monkeypatch.setattr(freshness, "read_query_index_freshness", lambda *args: unknown)
         runner = CliRunner()
         result = runner.invoke(cli, ["critique"], input=_DIFF_REFRESH_ONLY)
         assert result.exit_code in (0, 5), result.output
         header = "REVIEWED: piped diff (base: caller-supplied; not computed by roam)\n"
-        assert result.output == header + _PIPED_DIFF_OUTPUT_SNAPSHOT
+        assert result.stdout == header + _PIPED_DIFF_OUTPUT_SNAPSHOT
+        if warn:
+            warning = f"Warning: {unknown.message()}"
+            assert warning in result.stderr
+            result = runner.invoke(cli, ["--json", "critique"], input=_DIFF_REFRESH_ONLY)
+            assert result.exit_code in (0, 5), result.output
+            assert json.loads(result.stdout)["_meta"]["index_state"] == "unknown"
+            assert warning not in result.stdout
+            assert warning not in result.stderr
 
     def test_explicit_working_tree_reviews_working_diff(self, critique_project):
         auth_path = critique_project / "src" / "auth.py"
@@ -612,8 +629,9 @@ class TestCriticueCLI:
         result = runner.invoke(cli, ["critique", "--working-tree"], input="")
 
         assert result.exit_code in (0, 5), result.output
-        assert result.output.startswith("REVIEWED: working tree (base: HEAD)\n")
-        assert "changed files:   2" in result.output
+        assert result.stdout.startswith("REVIEWED: working tree (base: HEAD)\n")
+        assert "changed files:   2" in result.stdout
+        assert "2 changed files" in result.stderr
 
     def test_interactive_clean_tree_reviews_last_commit(self, critique_project, monkeypatch):
         from click.testing import _NamedTextIOWrapper

@@ -7,6 +7,8 @@ import pytest
 from roam.commands import cmd_doc_drift as mod
 from tests.test_doc_drift import _invoke_json, _make_project
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize(
     "text",

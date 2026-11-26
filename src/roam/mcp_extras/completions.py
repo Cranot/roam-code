@@ -29,10 +29,12 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from contextlib import ExitStack, closing, contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from roam.db.connection import get_db_path
 from roam.observability import log_swallowed
 
 __all__ = [
@@ -86,7 +88,7 @@ def _project_root_for(value: str | None) -> Path | None:
     except (RuntimeError, OSError):
         home = None
     while cur is not None:
-        has_index = (cur / ".roam" / "index.db").exists()
+        has_index = get_db_path(cur, create=False).exists()
         has_marker = (cur / ".git").exists() or (cur / "pyproject.toml").exists()
         if has_index and has_marker:
             return cur
@@ -102,23 +104,35 @@ def _project_root_for(value: str | None) -> Path | None:
     return None
 
 
+@contextmanager
 def _open_index(root: str | None = None):
-    """Open the SQLite index in read-only mode. Returns conn or None."""
+    """Yield a read-only connection, including for older completion indexes."""
+    from roam.db.connection import open_db
+    from roam.db.freshness import StaleQueryIndexError, observe_query_index
+
     project = _project_root_for(root)
     if project is None:
-        return None
-    db_path = project / ".roam" / "index.db"
+        yield None
+        return
+    db_path = get_db_path(project, create=False)
     if not db_path.exists():
-        return None
-    try:
-        from roam.db.connection import open_db
-
-        return open_db(db_path=str(db_path), readonly=True)
-    except Exception:  # noqa: BLE001 -- resilience: any open_db failure falls back to a raw read-only sqlite connection
+        yield None
+        return
+    with ExitStack() as stack:
         try:
-            return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        except sqlite3.Error:
-            return None
+            conn = stack.enter_context(open_db(project_root=project, readonly=True))
+        except StaleQueryIndexError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- completions also support older indexes
+            log_swallowed("completions:open_db", exc)
+            try:
+                conn = stack.enter_context(closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)))
+            except sqlite3.Error as exc:
+                log_swallowed("completions:sqlite", exc)
+                conn = None
+            if conn is not None:
+                observe_query_index(conn, project)
+        yield conn
 
 
 _FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
@@ -193,25 +207,18 @@ def complete_symbols(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None
     """Return up to *limit* symbol names matching ``prefix``."""
     if not prefix:
         return []
-    conn = _open_index(root)
-    if conn is None:
-        return []
-    try:
+    with _open_index(root) as conn:
+        if conn is None:
+            return []
         rows = _symbol_rows_with_like_rescue(conn, prefix, limit)
         return _unique_symbol_names_preserving_rank(rows, limit)
-    finally:
-        try:
-            conn.close()
-        except Exception as exc:  # noqa: BLE001 — read-only conn cleanup; result already returned
-            log_swallowed("completions:complete_prefix.close", exc)
 
 
 def complete_paths(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None = None) -> list[str]:
     """Return up to *limit* indexed file paths starting with ``prefix``."""
-    conn = _open_index(root)
-    if conn is None:
-        return []
-    try:
+    with _open_index(root) as conn:
+        if conn is None:
+            return []
         like = (prefix or "") + "%"
         try:
             cur = conn.execute(
@@ -221,11 +228,6 @@ def complete_paths(prefix: str, *, limit: int = _MAX_RESULTS, root: str | None =
             return [row[0] for row in cur.fetchall() if row and row[0]]
         except sqlite3.Error:
             return []
-    finally:
-        try:
-            conn.close()
-        except Exception as exc:  # noqa: BLE001 — read-only conn cleanup; result already returned
-            log_swallowed("completions:complete_paths.close", exc)
 
 
 def complete_commands(prefix: str, *, limit: int = _MAX_RESULTS) -> list[str]:
@@ -312,44 +314,51 @@ def install_completion_handler(fastmcp_server: Any) -> bool:
     low_level = getattr(fastmcp_server, "_mcp_server", None)
     if low_level is None:
         return False
-    completion_decorator = getattr(low_level, "completion", None)
-    if not callable(completion_decorator):
+    handlers = getattr(low_level, "request_handlers", None)
+    if not isinstance(handlers, dict):
         return False
 
     try:
         from mcp.types import (
+            CompleteRequest,
             CompleteResult,
             Completion,
-            CompletionArgument,
-            CompletionContext,
             PromptReference,
             ResourceTemplateReference,
+            ServerResult,
         )
     except ImportError:
         return False
 
-    @completion_decorator()  # type: ignore[misc]
-    async def _complete(
-        ref: Any,
-        argument: CompletionArgument,
-        context: CompletionContext | None,
-    ) -> CompleteResult:
-        value = (argument.value or "").strip()
-        arg_name = (argument.name or "").lower()
-        values = _completion_values_for_decoupled_protocol_target(
-            ref,
-            value,
-            arg_name,
-            prompt_reference_type=PromptReference,
-            resource_template_reference_type=ResourceTemplateReference,
-        )
+    from roam.db.freshness import capture_direct_index_reads
+    from roam.output.formatter import stamp_query_index_freshness
 
-        return CompleteResult(
-            completion=Completion(
-                values=values[:_MAX_RESULTS],
-                total=len(values),
-                hasMore=len(values) > _MAX_RESULTS,
+    async def _complete(request: CompleteRequest) -> ServerResult:
+        argument = request.params.argument
+        with capture_direct_index_reads() as observations:
+            values = _completion_values_for_decoupled_protocol_target(
+                request.params.ref,
+                (argument.value or "").strip(),
+                (argument.name or "").lower(),
+                prompt_reference_type=PromptReference,
+                resource_template_reference_type=ResourceTemplateReference,
+            )
+        envelope: dict = {}
+        for freshness in observations.values():
+            stamp_query_index_freshness(envelope, freshness)
+
+        return ServerResult(
+            CompleteResult(
+                completion=Completion(
+                    values=values[:_MAX_RESULTS],
+                    total=len(values),
+                    hasMore=len(values) > _MAX_RESULTS,
+                ),
+                _meta=envelope.get("_meta"),
             )
         )
 
+    # The SDK decorator accepts only Completion, so register a full result
+    # handler to include freshness in the protocol result metadata.
+    handlers[CompleteRequest] = _complete
     return True

@@ -11,6 +11,8 @@ from roam import surface_counts
 from roam.cli import cli
 from roam.commands import cmd_surface_gaps
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _source(tmp_path, monkeypatch, aliases):
     path = tmp_path / "cli.py"

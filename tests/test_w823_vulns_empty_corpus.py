@@ -25,7 +25,11 @@ import json as _json
 import sys
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # Reuse the conftest helpers used by the rest of the suite.
 sys.path.insert(0, str(Path(__file__).parent))

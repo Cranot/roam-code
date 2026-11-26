@@ -7,6 +7,7 @@ import hashlib
 import json as _json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.commands.cmd_audit_trail_conformance import (
@@ -18,6 +19,8 @@ from roam.commands.cmd_audit_trail_conformance import (
     _check_verdicts_and_rationale,
     _parse_iso,
 )
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _write_chain(path: Path, records: list[dict]) -> None:

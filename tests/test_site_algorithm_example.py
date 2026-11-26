@@ -11,6 +11,8 @@ import pytest
 from tests.conftest import invoke_cli
 from tests.test_homepage_contract import SITE, HomepageParser, normalized
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _example():
     page = HomepageParser((SITE / "docs/command-reference.html").read_text(encoding="utf-8"))

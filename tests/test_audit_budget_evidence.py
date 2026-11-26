@@ -9,6 +9,8 @@ from click.testing import CliRunner
 
 from roam.commands import cmd_audit, cmd_dogfood
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("command", ["audit", "dogfood"])
 @pytest.mark.parametrize("budget", [1000, 100000])

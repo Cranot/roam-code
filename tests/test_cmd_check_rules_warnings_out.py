@@ -20,6 +20,7 @@ from __future__ import annotations
 import json as _json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli as roam_cli
@@ -28,6 +29,9 @@ from roam.commands.cmd_check_rules import (
     _load_raw_config,
     _load_user_config,
 )
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # _load_raw_config — direct loader behaviour

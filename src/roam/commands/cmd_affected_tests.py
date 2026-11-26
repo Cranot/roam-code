@@ -23,15 +23,24 @@ imports away from the test module.
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import os
 import re
 import shlex
+import stat
+import sys
+import tempfile
+from collections import deque
 from dataclasses import dataclass
+from functools import cache
+from itertools import chain
 from pathlib import Path
 
 import click
 
 from roam.capability import roam_capability
+from roam.commands import changed_files
 from roam.commands.changed_files import (
     GIT_ERROR,
     get_changed_files_status,
@@ -40,7 +49,9 @@ from roam.commands.changed_files import (
 )
 from roam.commands.resolve import ensure_index, find_symbol, resolve_file_symbols
 from roam.db.connection import batched_in, find_project_root, open_db
+from roam.index import file_roles, test_conventions
 from roam.index.test_conventions import find_test_candidates
+from roam.observability import log_swallowed
 from roam.output.formatter import (
     abbrev_kind,
     json_envelope,
@@ -48,6 +59,7 @@ from roam.output.formatter import (
     resolution_disclosure,
     to_json,
 )
+from roam.output.test_commands import affected_test_commands, test_run_lines, unknown_runner_message
 
 _MAX_HOPS = 10
 
@@ -206,7 +218,11 @@ def _python_module_name(path):
 
 def _parse_python(root, path):
     try:
-        return ast.parse((root / path).read_text(encoding="utf-8", errors="replace"))
+        source = (root / path).read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source)
+        # Python normalizes non-ASCII identifiers, so use the AST in that case.
+        tree.roam_may_mark_fixtures = "usefixtures" in source or not source.isascii()
+        return tree
     except (OSError, SyntaxError, ValueError):
         return None
 
@@ -421,6 +437,10 @@ _PROCESS_OPAQUE = frozenset(
     | {"os.posix_spawn", "os.posix_spawnp", "os.startfile", "pty.spawn"}
 )
 _PROCESS_CALLS = _PROCESS_ARGV | _PROCESS_SHELL | _PROCESS_VARARGS | _PROCESS_OPAQUE
+_PROCESS_MODULES = {name.rpartition(".")[0] for name in _PROCESS_CALLS}
+_PROCESS_PREFIXES = {
+    ".".join(parts[:i]) for name in _PROCESS_CALLS for parts in (name.split("."),) for i in range(1, len(parts) + 1)
+}
 # Calls that end a test without failing it or running what follows.
 _TERMINATORS = frozenset(
     {"pytest.skip", "pytest.fail", "pytest.xfail", "pytest.exit", "pytest.importorskip"}
@@ -612,7 +632,7 @@ def _env_key(node):
     )
 
 
-def _fresh_names(tree, parents):
+def _fresh_names(nodes, parents):
     """Names every binding of which is a new mapping (a dict display or copy), never the environment."""
     fresh, other = set(), set()
 
@@ -624,7 +644,7 @@ def _fresh_names(tree, parents):
             return func in _FRESH_MAPPINGS or (isinstance(value.func, ast.Attribute) and value.func.attr == "copy")
         return False
 
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
             use = parents.get(node)
             ok = isinstance(use, (ast.Assign, ast.AnnAssign)) and node is not use.value and is_fresh(use.value)
@@ -640,20 +660,20 @@ def _fresh_names(tree, parents):
     return fresh - other
 
 
-def _environ_aliases(tree):
+def _environ_aliases(nodes):
     """Names that may be the environment or one of its setters, resolved through imports.
 
     ``import os as X`` needs no entry: any ``.environ`` attribute counts.
     """
     environ, setters = {"environ", "environb"}, set(_ENV_SETTERS)
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 if alias.name in ("environ", "environb", "*"):
                     environ.add(alias.asname or alias.name)
                 elif alias.name in _ENV_SETTERS:
                     setters.add(alias.asname or alias.name)
-        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) for t in node.targets):
+        elif isinstance(node, ast.Assign):
             value = node.value
             name = value.attr if isinstance(value, ast.Attribute) else value.id if isinstance(value, ast.Name) else None
             if name in _ENV_SETTERS:  # ``setenv = monkeypatch.setenv``
@@ -661,7 +681,7 @@ def _environ_aliases(tree):
     return environ, setters
 
 
-def _writes_environment(tree):
+def _writes_environment(nodes):
     """Whether code may write the process environment, to any key: an unresolved write counts, a read does not.
 
     Any variable changes what a launched program runs (``PATH``,
@@ -671,14 +691,24 @@ def _writes_environment(tree):
     ``getattr(os, "environ")``).  A write with a literal key shaped like a
     variable name counts on any receiver not resolved as a new mapping.
     """
-    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    environ, setters = _environ_aliases(tree)
-    fresh = _fresh_names(tree, parents)
+    environ, setters = _environ_aliases(nodes)
+    parents = fresh = None
+
+    def parent_map():
+        nonlocal parents
+        if parents is None:
+            parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
+        return parents
 
     def unresolved(receiver):
-        return not (isinstance(receiver, ast.Name) and receiver.id in fresh)
+        if not isinstance(receiver, ast.Name):
+            return True
+        nonlocal fresh
+        if fresh is None:
+            fresh = _fresh_names(nodes, parent_map())
+        return receiver.id not in fresh
 
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Constant) and node.value in _ENVIRON_NAMES:
             return True  # the environment named by a string: ``patch.dict("os.environ", ...)``
         if isinstance(node, ast.Call):
@@ -709,7 +739,7 @@ def _writes_environment(tree):
             continue
         if not isinstance(node.ctx, ast.Load):
             return True  # ``os.environ = ...``
-        use = parents.get(node)
+        use = parent_map().get(node)
         if isinstance(use, ast.Subscript) and use.value is node:
             if not isinstance(use.ctx, ast.Load):
                 return True  # ``os.environ[key] = ...``, ``del os.environ[key]``
@@ -727,7 +757,7 @@ def _writes_environment(tree):
     return False
 
 
-def _launches(tree, qualnames):
+def _launches(tree, imports, qualnames):
     """Whether code names a process launcher (``subprocess.run``, ``os.system``, ...), called or not."""
 
     def dotted(e):
@@ -738,13 +768,18 @@ def _launches(tree, qualnames):
             return f"{base}.{e.attr}" if base else None
         return None
 
-    modules = {name.rpartition(".")[0] for name in _PROCESS_CALLS}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module in modules and any(a.name == "*" for a in node.names):
-            return True
-        if isinstance(node, (ast.Name, ast.Attribute)) and dotted(node) in _PROCESS_CALLS:
-            return True
-    return False
+    if any(
+        isinstance(node, ast.ImportFrom)
+        and node.module in _PROCESS_MODULES
+        and any(alias.name == "*" for alias in node.names)
+        for node in imports
+    ):
+        return True
+    if _PROCESS_PREFIXES.isdisjoint(qualnames.values()):
+        return False
+    return any(
+        isinstance(node, (ast.Name, ast.Attribute)) and dotted(node) in _PROCESS_CALLS for node in ast.walk(tree)
+    )
 
 
 def _shell_launch(call, qualname):
@@ -1005,15 +1040,33 @@ def _parametrize_bindings(decorators):
     return bound
 
 
-def _walk_own_body(node):
+def _walk_own_body(node, lambdas=None, parents=None):
     """``ast.walk`` that does not enter nested functions, lambdas or classes."""
     stack = [node]
     while stack:
         current = stack.pop()
         yield current
         for child in ast.iter_child_nodes(current):
+            if parents is not None:
+                parents[child] = current
             if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
                 stack.append(child)
+            elif lambdas is not None and isinstance(child, ast.Lambda):
+                lambdas.setdefault(current, []).append(child)
+
+
+def _own_body(fn, parents=None):
+    """Reuse the same body order when extracting a function's different facts."""
+    if not hasattr(fn, "roam_body"):
+        fn.roam_lambdas = {}
+        walk = _walk_own_body(fn, fn.roam_lambdas, parents)
+        next(walk)  # keep the function itself out of the cache it owns
+        fn.roam_body = tuple(walk)
+    elif parents is not None:
+        for node in chain((fn,), fn.roam_body):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+    return fn.roam_body
 
 
 _LOOPS = (ast.For, ast.AsyncFor, ast.While, ast.comprehension)
@@ -1049,12 +1102,12 @@ def _loop_exit_state(iterable, site, may_stop=lambda call: False):
     ]
     if not exits:
         return exits, False
-    prefix = loop.body[
-        : next(
-            (i for i, stmt in enumerate(loop.body) if any(x in set(ast.walk(stmt)) for x in exits)),
-            len(loop.body),
-        )
-    ]
+    exit_nodes = set(exits)
+    first_exit = next(
+        (i for i, stmt in enumerate(loop.body) if not exit_nodes.isdisjoint(ast.walk(stmt))),
+        len(loop.body),
+    )
+    prefix = loop.body[:first_exit]
     return exits, any(_unconditional_site(stmt, site) for stmt in prefix)
 
 
@@ -1088,9 +1141,7 @@ def _function_facts(fn):
     under a loop, ``"cond"`` under a branch, else None.
     """
     parents = {}
-    for node in _walk_own_body(fn):
-        for child in ast.iter_child_nodes(node):
-            parents[child] = node
+    body = _own_body(fn, parents)
 
     def flag(node):
         found = None
@@ -1114,7 +1165,7 @@ def _function_facts(fn):
         elif isinstance(target, ast.Starred):
             add(target.value, kind, value, node)
 
-    for node in _walk_own_body(fn):
+    for node in body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 add(target, "assign", node.value, node)
@@ -1155,6 +1206,15 @@ def _invocation_args(call, start=0):
     return [*call.args[start:], *(k.value for k in call.keywords if k.arg == "args")]
 
 
+def _function_name(expr):
+    """The suffix of a callable expression for matching decorator and mark names."""
+    if isinstance(expr, ast.Name):
+        return expr.id
+    if isinstance(expr, ast.Attribute):
+        return expr.attr
+    return ast.unparse(expr)
+
+
 class _Summary:
     """A function's dispatch: its settled reach and the templates its callers complete.
 
@@ -1174,8 +1234,8 @@ class _DispatchScope:
     """Follow test code to the dispatch sites of keyed registries.
 
     *flood* holds ``(path, name)`` of every symbol that reaches a keyed
-    registry through reverse edges; *registries* maps ``(path, name)``
-    to that registry's keys.  Names bind through each file's own
+    registry through reverse edges; *registries* holds the registry
+    bindings.  Names bind through each file's own
     imports, so ``from roam import cli`` and ``from roam.cli import cli``
     resolve alike, with or without an edge from the test.  Helpers are
     summarised once, their parameters bound per call.
@@ -1187,6 +1247,8 @@ class _DispatchScope:
         self.flood = flood
         self.registries = registries
         self._files = {}
+        self._effects = {}
+        self._environment_writes = {}
         self._summaries = {}
         self._facts = {}
         self._arity = {}
@@ -1194,6 +1256,13 @@ class _DispatchScope:
         self._returning = set()
         self._registry_readers = {}
         self._stops = {}
+        self._conftest_fixtures = {}
+        self._is_test = cache(is_test_file)
+        self._module_sources = cache(self._module_sources)
+        self._has_process_bindings = cache(self._has_process_bindings)
+        self.definition = cache(self._definition)
+        self.readable = cache(self._readable)
+        self.click_kind = cache(self._click_kind)
         packages = {_python_module_name(p).split(".")[0] for p, _n in registries}
         self.programs = packages
         self.modules = {*packages, *(f"{p}.__main__" for p in packages)}
@@ -1207,7 +1276,7 @@ class _DispatchScope:
         tree = _parse_python(self.root, path)
         info = None
         if tree is not None:
-            info = {"imports": {}, "qualnames": {}, "globals": {}, "functions": {}}
+            info = {"tree": tree, "imports": {}, "qualnames": {}, "globals": {}, "functions": {}, "import_nodes": []}
             for node in tree.body:
                 if isinstance(node, ast.Assign):
                     for t in node.targets:
@@ -1220,47 +1289,50 @@ class _DispatchScope:
                         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                             item.roam_class_decorators = node.decorator_list
 
-            def enclosures(node, outer=None):
-                for child in ast.iter_child_nodes(node):
-                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        child.roam_enclosing = outer
-                        enclosures(child, child)
-                    else:
-                        enclosures(child, outer)
-
-            enclosures(tree)
             info["rebound_globals"] = set()
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    node.roam_rebound = getattr(node, "roam_rebound", set())
-            for node in ast.walk(tree):
+            declarations = {}
+            # Keep the breadth-first binding order of ast.walk. Only statements
+            # and their containers can hold imports, definitions or declarations.
+            pending = deque([(tree, None, None)])
+            while pending:
+                node, outer, owner = pending.popleft()
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     info["functions"].setdefault(node.name, []).append(node)
-                    own = list(_walk_own_body(node))
-                    written = {s.id for s in own if isinstance(s, ast.Name) and not isinstance(s.ctx, ast.Load)}
-                    # A write through ``global`` makes the module value unknown;
-                    # one through ``nonlocal``, every enclosing value.
-                    info["rebound_globals"] |= {
-                        n for s in own if isinstance(s, ast.Global) for n in s.names if n in written
-                    }
-                    outer = getattr(node, "roam_enclosing", None)
-                    nonlocal_writes = {n for s in own if isinstance(s, ast.Nonlocal) for n in s.names if n in written}
-                    while outer is not None and nonlocal_writes:
-                        outer.roam_rebound = getattr(outer, "roam_rebound", set()) | nonlocal_writes
-                        outer = getattr(outer, "roam_enclosing", None)
+                    node.roam_enclosing = outer
+                    outer = owner = node
+                elif isinstance(node, ast.ClassDef):
+                    owner = None
+                elif isinstance(node, (ast.Global, ast.Nonlocal)) and owner is not None:
+                    declarations.setdefault(owner, []).append(node)
                 elif isinstance(node, ast.Import):
+                    info["import_nodes"].append(node)
                     for alias in node.names:
                         bound = alias.asname or alias.name.split(".")[0]
                         info["imports"][bound] = ("module", alias.name if alias.asname else bound)
                         info["qualnames"][bound] = alias.name if alias.asname else bound
-                elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-                    for alias in node.names:
-                        info["imports"][alias.asname or alias.name] = self._member(node.module, alias.name)
-                        info["qualnames"][alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                elif isinstance(node, ast.ImportFrom):
+                    info["import_nodes"].append(node)
+                    if node.module and not node.level:
+                        for alias in node.names:
+                            info["imports"][alias.asname or alias.name] = self._member(node.module, alias.name)
+                            info["qualnames"][alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                pending.extend(
+                    (child, outer, owner)
+                    for child in ast.iter_child_nodes(node)
+                    if isinstance(child, (ast.stmt, ast.ExceptHandler, ast.match_case))
+                )
+            for fn, names in declarations.items():
+                written = {n.id for n in _own_body(fn) if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load)}
+                for decl in names:
+                    rebound = written.intersection(decl.names)
+                    if isinstance(decl, ast.Global):
+                        info["rebound_globals"].update(rebound)
+                    else:
+                        outer = fn.roam_enclosing
+                        while outer is not None and rebound:
+                            outer.roam_rebound = getattr(outer, "roam_rebound", set()) | rebound
+                            outer = outer.roam_enclosing
             info["module"] = self._pseudo_function("<module>", tree.body, tree)
-            info["writes_environment"] = _writes_environment(tree)
-            info["loads"], info["plugins"] = self._loads(tree, path)
-            info["launches"] = _launches(tree, info["qualnames"])
         self._files[path] = info
         return info
 
@@ -1275,10 +1347,28 @@ class _DispatchScope:
 
     def writes_environment(self, path):
         """Whether the module at *path* may write the environment; an unreadable one may."""
-        info = self.file(path)
-        return info is None or info["writes_environment"]
+        if path not in self._environment_writes:
+            info = self.file(path)
+            self._environment_writes[path] = info is None or _writes_environment(tuple(ast.walk(info["tree"])))
+        return self._environment_writes[path]
 
-    def _loads(self, tree, path):
+    def _module_effects(self, path):
+        """Cache import and process facts even after the test's tree is released."""
+        if path not in self._effects:
+            info = self.file(path)
+            effects = None
+            if info is not None:
+                tree, imports = info["tree"], info["import_nodes"]
+                loads, plugins = self._loads(tree, imports, path)
+                effects = {
+                    "loads": loads,
+                    "plugins": plugins,
+                    "launches": _launches(tree, imports, info["qualnames"]),
+                }
+            self._effects[path] = effects
+        return self._effects[path]
+
+    def _loads(self, tree, imports, path):
         """Project modules *tree* imports (with their packages) and names in ``pytest_plugins``.
 
         A ``pytest_plugins`` value that is not a literal loads an unknown module: ``None``.
@@ -1286,7 +1376,7 @@ class _DispatchScope:
         module = _python_module_name(path) or ""
         package = module if path.replace("\\", "/").endswith("/__init__.py") else module.rpartition(".")[0]
         names, plugins = set(), set()
-        for node in ast.walk(tree):
+        for node in imports:
             if isinstance(node, ast.Import):
                 names.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom):
@@ -1320,7 +1410,7 @@ class _DispatchScope:
         return local(names), None if plugins is None else local(plugins)
 
     def loaded_effects(self, path, conftests):
-        """``(launches, writes_environment)`` of project code a test module loads besides itself.
+        """Return whether loaded code launches, and the paths to check for environment writes.
 
         The code is the conftests that apply, the modules named in their or
         the test's ``pytest_plugins`` (read like conftests), and the project
@@ -1332,18 +1422,14 @@ class _DispatchScope:
         run on import, a method of a class defined there).  An unreadable module or plugin list may do
         either.  Neither ever proves coverage.
         """
-        launches = writes = False
+        launches = False
         seen = {path}
         frontier = []
         for start in (path, *conftests):
-            info = self.file(start)
-            if info is None:
-                return True, True
-            if start != path:
-                seen.add(start)
-                writes |= info["writes_environment"]
-            if info["plugins"] is None:
-                return True, True
+            info = self._module_effects(start)
+            if info is None or info["plugins"] is None:
+                return True, ()
+            seen.add(start)
             frontier += [*info["loads"], *info["plugins"]]
         for _depth in range(_LOADED_DEPTH):
             following = []
@@ -1351,14 +1437,13 @@ class _DispatchScope:
                 if module in seen or (_python_module_name(module) or "").split(".")[0] in self.programs:
                     continue
                 seen.add(module)
-                info = self.file(module)
+                info = self._module_effects(module)
                 if info is None or info["plugins"] is None:
-                    return True, True
-                writes |= info["writes_environment"]
+                    return True, ()
                 launches |= info["launches"]
                 following += [*info["loads"], *info["plugins"]]
             frontier = following
-        return launches, writes
+        return launches, seen
 
     def release(self, path):
         """Drop a processed test module's trees; a later reference parses it again.
@@ -1369,9 +1454,8 @@ class _DispatchScope:
         if not (name.startswith("test_") or name.endswith("_test.py")):
             return
         self._files.pop(path, None)
-        for cache in (self._summaries, self._facts):
-            for key in [k for k in cache if k[0] == path]:
-                del cache[key]
+        self._summaries.pop(path, None)
+        self._facts.pop(path, None)
 
     def _member(self, module, name):
         if f"{module}.{name}" in self.module_paths:
@@ -1385,6 +1469,8 @@ class _DispatchScope:
 
     def target(self, expr, path):
         """Binding of a Name / Attribute chain in *path*, else None."""
+        if not isinstance(expr, (ast.Name, ast.Attribute)):
+            return None
         info = self.file(path)
         if info is None:
             return None
@@ -1412,6 +1498,10 @@ class _DispatchScope:
             return f"{base}.{expr.attr}" if base else None
         return None
 
+    def _has_process_bindings(self, path):
+        info = self.file(path)
+        return info is not None and not _PROCESS_PREFIXES.isdisjoint(info["qualnames"].values())
+
     def is_registry(self, expr, path):
         """The registry itself or a view of it (``sorted(R)``, ``R.items()``)."""
         if isinstance(expr, ast.Call):
@@ -1428,7 +1518,7 @@ class _DispatchScope:
         t = self.target(expr, path)
         return bool(t and t[0] == "registry")
 
-    def definition(self, t):
+    def _definition(self, t):
         """Follow a ``function`` binding through re-exports to its ``def``, else None."""
         for _ in range(5):
             if not (t and t[0] == "function"):
@@ -1447,10 +1537,10 @@ class _DispatchScope:
         d = self.definition(t)
         return t[1] in self.flood or bool(d and d[1] in self.flood)
 
-    def readable(self, t):
+    def _readable(self, t):
         """The ``def`` behind *t* when its body may decide keys (reaches a registry or is test-side)."""
         d = self.definition(t)
-        if d and (self.dispatcher(t) or is_test_file(d[1][0])):
+        if d and (self.dispatcher(t) or self._is_test(d[1][0])):
             return d
         if d:
             if d not in self._registry_readers:
@@ -1463,7 +1553,7 @@ class _DispatchScope:
                         and self.is_lookup(node.func.value, d[1][0])
                     )
                     for fn in self._defs(d)
-                    for node in _walk_own_body(fn)
+                    for node in _own_body(fn)
                 )
             if self._registry_readers[d]:
                 return d
@@ -1473,7 +1563,7 @@ class _DispatchScope:
         info = self.file(d[1][0])
         return info["functions"].get(d[1][1], []) if info else []
 
-    def click_kind(self, t):
+    def _click_kind(self, t):
         """``"group"`` / ``"command"`` for a click object that reaches a registry, else None."""
         if not self.dispatcher(t):
             return None
@@ -1551,23 +1641,37 @@ class _DispatchScope:
         if info is None:
             reach.any = True
             return reach
-        conftest_scopes = []  # (path, {name: [fn]}), nearest first
+
+        def fixture_scope(node):
+            found = _scope_fixtures(node.body)
+            autouse = tuple(name for name, fns in found.items() if any(map(_autouse, fns)))
+            return found, autouse
+
+        conftest_scopes = []  # (path, (fixtures, autouse names)), nearest first
         for p in sorted(conftests, key=lambda c: -c.replace("\\", "/").count("/")):
-            conftest_info = self.file(p)
-            if conftest_info is None:
+            if p not in self._conftest_fixtures:
+                conftest_info = self.file(p)
+                self._conftest_fixtures[p] = fixture_scope(conftest_info["module"]) if conftest_info else None
+            scope = self._conftest_fixtures[p]
+            if scope is None:
                 reach.any = True
                 continue
-            conftest_scopes.append((p, _scope_fixtures(conftest_info["module"].body)))
+            conftest_scopes.append((p, scope))
         marked = set()
-        for node in ast.walk(info["module"]):
-            if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("usefixtures"):
+        if info["tree"].roam_may_mark_fixtures:
+            for node in ast.walk(info["module"]):
+                if not isinstance(node, ast.Call) or not _function_name(node.func).endswith("usefixtures"):
+                    continue
                 marked |= {a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)}
                 if not all(isinstance(a, ast.Constant) for a in node.args):
                     reach.any = True  # a fixture named by a computed value may be any of them
         classes = {n.name: n for n in info["module"].body if isinstance(n, ast.ClassDef)}
+        local_scopes = {}
 
         def class_scopes(cls, seen=()):
-            yield (None, _scope_fixtures(cls.body))
+            if cls not in local_scopes:
+                local_scopes[cls] = fixture_scope(cls)
+            yield (None, local_scopes[cls])
             for base in cls.bases:
                 if isinstance(base, ast.Name) and base.id in classes and base.id not in seen:
                     yield from class_scopes(classes[base.id], (*seen, cls.name))
@@ -1579,19 +1683,19 @@ class _DispatchScope:
                 elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
                     yield node, outer
 
-        module_scope = [(None, _scope_fixtures(info["module"].body))]
+        module_scope = [(None, fixture_scope(info["module"]))]
         run = {}  # (path, lineno, col) -> (fn, path): conftest fixtures some test runs
         for test, outer in tests(info["module"].body, module_scope):
             scopes = [*outer, *conftest_scopes]
             decorators = [*test.decorator_list, *getattr(test, "roam_class_decorators", [])]
             blocked = _direct_parameters(decorators)
             todo = (_requested(test) | marked) - blocked
-            todo |= {name for _p, found in scopes for name, fns in found.items() if any(map(_autouse, fns))}
+            todo |= {name for _p, (_found, autouse) in scopes for name in autouse}
             done = set(blocked)
             while todo:
                 name = todo.pop()
                 done.add(name)
-                for p, found in scopes:
+                for p, (found, _autouse_names) in scopes:
                     fns = found.get(name, ())
                     if not fns:
                         continue
@@ -1616,31 +1720,47 @@ class _DispatchScope:
         return reach
 
     def _summary(self, fn, path, root=False):
-        key = (path, fn.lineno, fn.col_offset, root)
-        if key not in self._summaries:
-            self._summaries[key] = _Summary()  # recursion: the outer frame covers it
-            self._summaries[key] = self._summarize(fn, path, root)
-        return self._summaries[key]
+        summaries = self._summaries.setdefault(path, {})
+        key = (fn.lineno, fn.col_offset, root)
+        if key not in summaries:
+            summaries[key] = _Summary()  # recursion: the outer frame covers it
+            summaries[key] = self._summarize(fn, path, root)
+        return summaries[key]
 
-    def _context(self, fn, path, root):
-        key = (path, fn.lineno, fn.col_offset)
-        if key not in self._facts:
+    def _events(self, ctx):
+        fn = ctx.get("fn")
+        if fn is None:
+            return {}
+        path = ctx["path"]
+        by_location = self._facts.setdefault(path, {})
+        key = (fn.lineno, fn.col_offset)
+        if key not in by_location:
             facts = _function_facts(fn)
             for name in getattr(fn, "roam_rebound", ()):  # a nested scope may rebind it at any call
                 facts.setdefault(name, []).append(("opaque", None, None))
-            self._facts[key] = facts
+            by_location[key] = facts
             fn.roam_global_names = {
-                name for node in _walk_own_body(fn) if isinstance(node, ast.Global) for name in node.names
+                name for node in _own_body(fn) if isinstance(node, ast.Global) for name in node.names
             }
+        return by_location[key]
+
+    def _enclosing(self, name, ctx):
+        outer = ctx.get("enclosing")
+        if outer is not None:
+            self._events(ctx)
+            if name in getattr(ctx["fn"], "roam_global_names", ()):
+                return None
+        return outer
+
+    def _context(self, fn, path, root):
         decorators = [*fn.decorator_list, *getattr(fn, "roam_class_decorators", [])]
         args = fn.args
         params = {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
         params |= {a.arg for a in (args.vararg, args.kwarg) if a}
         return {
             "path": path,
+            "fn": fn,
             "enclosing": getattr(fn, "roam_enclosing", None),
-            "globals": getattr(fn, "roam_global_names", set()),
-            "events": self._facts[key],
             "params": params,
             "parametrized": _parametrize_bindings(decorators) if root else {},
             "root": root,
@@ -1648,20 +1768,21 @@ class _DispatchScope:
 
     @staticmethod
     def _module_context(path):
-        return {"path": path, "events": {}, "params": set(), "parametrized": {}, "root": False}
+        return {"path": path, "params": set(), "parametrized": {}, "root": False}
 
     def _summarize(self, fn, path, root):
         ctx = self._context(fn, path, root)
-        test_side = is_test_file(path)
+        test_side = self._is_test(path)
+        process_bindings = test_side and self._has_process_bindings(path)
         summary = _Summary()
-        invoked = self._invoked_calls(fn, ctx)
+        invoked, called = self._invoked_calls(fn, ctx)
         registry_loops = []
 
         def add(mode, seqs, arity=None):
             for seq in seqs:
                 self._settle(mode, seq, arity, summary, test_side)
 
-        for node in _walk_own_body(fn):
+        for node in _own_body(fn):
             ctx["site"] = node
             if isinstance(node, (ast.For, ast.AsyncFor)) and self.is_registry(node.iter, path):
                 registry_loops.append(node)
@@ -1676,7 +1797,7 @@ class _DispatchScope:
                 if node.args:
                     add("read", [(_slot(self.words(node.args[0], ctx)),)])
                 continue
-            qualname = self.qualname(func, path)
+            qualname = self.qualname(func, path) if process_bindings else None
             if test_side and qualname in _PROCESS_OPAQUE:
                 summary.reach.any = True
                 continue
@@ -1722,7 +1843,7 @@ class _DispatchScope:
                     break
 
         if test_side:
-            self._escapes(fn, path, summary.reach)
+            self._escapes(fn, path, called, summary.reach, process_bindings)
 
         # ``for name, (mod, fn) in R.items(): getattr(import_module(mod), fn)()``
         # calls the entry itself; ``mod.replace(".", "/")`` only reads it.
@@ -1739,7 +1860,7 @@ class _DispatchScope:
                     summary.reach.every = True
         return summary
 
-    def _escapes(self, fn, path, reach):
+    def _escapes(self, fn, path, called, reach, process_bindings):
         """Launchers and test code that run later, or elsewhere, than where they are named.
 
         A launcher passed on or aliased (``run = subprocess.run``,
@@ -1747,23 +1868,21 @@ class _DispatchScope:
         value (a callback) and a lambda body may each run: their reach is
         possible, never proven.
         """
-        called = {id(n.func) for n in _walk_own_body(fn) if isinstance(n, ast.Call)}
-        for node in _walk_own_body(fn):
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, ast.Lambda):
-                    if not hasattr(child, "roam_def"):
-                        child.roam_def = self._pseudo_function("<lambda>", [ast.Return(child.body)], child, child.args)
-                        child.roam_def.roam_enclosing = fn
-                    self._fold_possible(self._summary(child.roam_def, path), reach)
+        for node in chain((fn,), _own_body(fn)):
+            for child in fn.roam_lambdas.get(node, ()):
+                if not hasattr(child, "roam_def"):
+                    child.roam_def = self._pseudo_function("<lambda>", [ast.Return(child.body)], child, child.args)
+                    child.roam_def.roam_enclosing = fn
+                self._fold_possible(self._summary(child.roam_def, path), reach)
             if id(node) in called or not isinstance(node, (ast.Name, ast.Attribute)):
                 continue
             if not isinstance(node.ctx, ast.Load):
                 continue
-            if self.qualname(node, path) in _PROCESS_CALLS:
+            if process_bindings and self.qualname(node, path) in _PROCESS_CALLS:
                 reach.any = True
                 continue
-            d = self.readable(self.target(node, path))
-            if d and is_test_file(d[1][0]):
+            d = self.definition(self.target(node, path))
+            if d and self._is_test(d[1][0]):
                 for callee in self._defs(d):
                     if callee is not fn:
                         self._fold_possible(self._summary(callee, d[1][0]), reach)
@@ -1781,11 +1900,13 @@ class _DispatchScope:
 
     def _launcher_alias(self, name, ctx):
         """Whether *name* is bound to an expression naming a process launcher."""
-        sources = [(v, ctx) for k, v, _f in ctx["events"].get(name, ()) if k == "assign"]
-        sources += self._global_sources(name, ctx) or []
+        sources = list(self._global_sources(name, ctx) or ())
+        if self._has_process_bindings(ctx["path"]):
+            sources.extend((v, ctx) for k, v, _f in self._events(ctx).get(name, ()) if k == "assign")
         return any(
             isinstance(n, (ast.Name, ast.Attribute)) and self.qualname(n, c["path"]) in _PROCESS_CALLS
             for v, c in sources
+            if self._has_process_bindings(c["path"])
             for n in ast.walk(v)
         )
 
@@ -1801,24 +1922,26 @@ class _DispatchScope:
             if func.value.id in _SKIP_PARAMS and func.attr in _SELF_TERMINATORS:
                 return True
         d = self.definition(self.target(func, path))
-        if depth >= 3 or d is None or not is_test_file(d[1][0]):
+        if depth >= 3 or d is None or not self._is_test(d[1][0]):
             return False
         if d not in self._stops:
             self._stops[d] = False  # recursion: the outer frame decides
             self._stops[d] = any(
                 isinstance(n, ast.Call) and self._may_stop(n, d[1][0], depth + 1)
                 for callee in self._defs(d)
-                for n in _walk_own_body(callee)
+                for n in _own_body(callee)
             )
         return self._stops[d]
 
     def _invoked_calls(self, fn, ctx):
         """Calls whose result is itself run: ``f(...)()``, ``f(...).main()``, ``invoke(f(...))``."""
         out = set()
-        for node in _walk_own_body(fn):
+        called = set()
+        for node in _own_body(fn):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
+            called.add(id(func))
             if isinstance(func, ast.Call):
                 out.add(id(func))
             if isinstance(func, ast.Attribute) and func.attr in ("main", "invoke", "__call__"):
@@ -1830,10 +1953,10 @@ class _DispatchScope:
                 if isinstance(first, ast.Call):
                     out.add(id(first))
                 elif isinstance(first, ast.Name):
-                    for kind, value, _flag in ctx["events"].get(first.id, ()):
+                    for kind, value, _flag in self._events(ctx).get(first.id, ()):
                         if kind == "assign" and isinstance(value, ast.Call):
                             out.add(id(value))
-        return out
+        return out, called
 
     def _call(self, call, d, via_attribute, ctx, summary, promoted, test_side):
         """Follow a call into a helper or dispatcher with its parameters bound."""
@@ -1960,12 +2083,12 @@ class _DispatchScope:
     def _returns(self, call, ctx):
         """``[(return_exprs, callee_ctx, binding)]`` of a test-side helper call, else None."""
         d = self.definition(self.target(call.func, ctx["path"]))
-        if d is None or not is_test_file(d[1][0]):
+        if d is None or not self._is_test(d[1][0]):
             return None
         out = []
         for fn in self._defs(d):
             key = (d[1][0], fn.lineno, fn.col_offset)
-            returns = [n.value for n in _walk_own_body(fn) if isinstance(n, ast.Return) and n.value is not None]
+            returns = [n.value for n in _own_body(fn) if isinstance(n, ast.Return) and n.value is not None]
             if key in self._returning or not returns:
                 continue
             binding = self._bind(call, fn, isinstance(call.func, ast.Attribute), ctx, d[1][0])
@@ -2097,7 +2220,7 @@ class _DispatchScope:
             if not seq and items is not None and self._distinct_items(items, ctx, seen):
                 out.add(_EACH)  # every case runs
             return out
-        events = ctx["events"].get(name)
+        events = self._events(ctx).get(name)
         if events:
             if not seq and len(events) == 1 and events[0][0] == "iter":
                 container = self._literal_container(events[0][1], ctx)
@@ -2133,10 +2256,10 @@ class _DispatchScope:
             return self._param(name, ctx, seq)
         if self.is_registry(ast.Name(id=name), ctx["path"]):
             return {_EVERY} if seq else {_UNKNOWN}
-        outer = None if name in ctx.get("globals", ()) else ctx.get("enclosing")
+        outer = self._enclosing(name, ctx)
         while outer is not None:
             enclosing = self._context(outer, ctx["path"], _is_root(outer))
-            if name in enclosing["events"] or name in enclosing["params"]:
+            if name in self._events(enclosing) or name in enclosing["params"]:
                 # A captured parameter is not the inner function's parameter.
                 values = self._name_values(name, enclosing, seen - {name}, value_of, seq)
                 return {_UNKNOWN if isinstance(v, _Ref) else v for v in values}
@@ -2152,7 +2275,7 @@ class _DispatchScope:
             return e
         if not isinstance(e, ast.Name) or e.id in ctx["params"]:
             return None
-        events = ctx["events"].get(e.id)
+        events = self._events(ctx).get(e.id)
         if events is not None:
             sources = [value for kind, value, _flag in events if kind == "assign"] if len(events) == 1 else []
         else:
@@ -2173,26 +2296,31 @@ class _DispatchScope:
 
     def _global_sources(self, name, ctx):
         """Resolve enclosing assignments before module globals and imported names."""
-        outer = None if name in ctx.get("globals", ()) else ctx.get("enclosing")
+        outer = self._enclosing(name, ctx)
         while outer is not None:
             enclosing = self._context(outer, ctx["path"], _is_root(outer))
-            if name in enclosing["events"] or name in enclosing["params"]:
-                events = enclosing["events"].get(name, ())
+            events = self._events(enclosing).get(name)
+            if events or name in enclosing["params"]:
                 if name not in enclosing["params"] and all(k == "assign" for k, _v, _f in events):
                     return [(v, enclosing) for _k, v, _f in events]
                 return None  # a binding with unresolved contents shadows the global
             outer = enclosing.get("enclosing")
-        info = self.file(ctx["path"])
+        return self._module_sources(ctx["path"], name)
+
+    def _module_sources(self, path, name):
+        info = self.file(path)
         if info and name in info["rebound_globals"]:
             return None  # a function rebinds it through ``global``
         if info and name in info["globals"]:
-            return [(v, self._module_context(ctx["path"])) for v in info["globals"][name]]
+            ctx = self._module_context(path)
+            return [(v, ctx) for v in info["globals"][name]]
         t = info["imports"].get(name) if info else None
         other = self.file(t[1][0]) if t and t[0] == "function" else None
         if other and t[1][1] in other["rebound_globals"]:
             return None
         if other and t[1][1] in other["globals"]:
-            return [(v, self._module_context(t[1][0])) for v in other["globals"][t[1][1]]]
+            ctx = self._module_context(t[1][0])
+            return [(v, ctx) for v in other["globals"][t[1][1]]]
         return None
 
     # -- argv sequences -------------------------------------------------------
@@ -2205,7 +2333,7 @@ class _DispatchScope:
         if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Add):
             return self._is_text(e.left, ctx, depth) or self._is_text(e.right, ctx, depth)
         if isinstance(e, ast.Name) and depth < 4:
-            events = ctx["events"].get(e.id)
+            events = self._events(ctx).get(e.id)
             if events:
                 return all(k == "assign" and self._is_text(v, ctx, depth + 1) for k, v, _f in events)
             sources = None if e.id in ctx["params"] else self._global_sources(e.id, ctx)
@@ -2224,7 +2352,7 @@ class _DispatchScope:
             left, right = self._string_parts(e.left, ctx, depth), self._string_parts(e.right, ctx, depth)
             return [a + b for a in left for b in right][:_MAX_ALTERNATIVES]
         if isinstance(e, ast.Name) and depth < 4:
-            events = ctx["events"].get(e.id)
+            events = self._events(ctx).get(e.id)
             if events and all(k == "assign" for k, _v, _f in events):
                 return [p for _k, v, _f in events for p in self._string_parts(v, ctx, depth + 1)]
             sources = None if events or e.id in ctx["params"] else self._global_sources(e.id, ctx)
@@ -2298,7 +2426,7 @@ class _DispatchScope:
             out = [s for elt in e.elts for s in self.seqs(elt, ctx, seen)]
             return out if len(out) <= _MAX_ALTERNATIVES else _concat(out, [()])
         if isinstance(e, ast.Name):
-            events = ctx["events"].get(e.id)
+            events = self._events(ctx).get(e.id)
             if events and all(k == "assign" for k, _v, _f in events):
                 return [s for _k, v, _f in events for s in self._element_seqs(v, ctx, seen | {e.id})]
         return [(_slot({_UNKNOWN if v is _EVERY else v for v in self.elements(e, ctx, seen)}, splice=True),)]
@@ -2315,7 +2443,7 @@ class _DispatchScope:
                     self._element_seqs(case[1], ctx, seen) if isinstance(case, tuple) else self.seqs(case, ctx, seen)
                 )
             return out[:_MAX_ALTERNATIVES] if len(out) <= _MAX_ALTERNATIVES else _concat(out, [()])
-        events = ctx["events"].get(name)
+        events = self._events(ctx).get(name)
         if events:
             bases, mutations = [], []
             for kind, value, flag in events:
@@ -2380,44 +2508,8 @@ def _applying_conftests(path, conftests):
     return applying
 
 
-def _loaded_effects(scope, path, applying):
-    """``(launches, writes_environment)`` for a test module, the conftests that apply and the code they load."""
-    launches, writes = scope.loaded_effects(path, applying)
-    return launches, writes or scope.writes_environment(path)
-
-
-def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
-    """Test functions that may run a handler behind the *reached* registries.
-
-    Returns ``(cli_hits, every_hits, possible_hits)``: ``{test_file: key}``
-    for tests proven to run one of *handler_keys*; ``{(test_file,
-    function): hops_from_registry}`` for tests that run every registry
-    entry; ``{test_file: via}`` for tests the analysis cannot rule out,
-    *via* being the key or ``"<registry>[*]"`` when any key may run.  A
-    test that starts the package only in a subprocess imports none of it,
-    so any process-starting test file is read too.
-    """
-    cli_hits, every_hits, possible_hits = {}, {}, {}
-    if not reached:
-        return cli_hits, every_hits, possible_hits
-    flood_hops = _bfs_reverse_callers(conn, set(reached))
-    flood = {}
-    for row in batched_in(
-        conn,
-        "SELECT s.id, s.name, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
-        list(flood_hops),
-    ):
-        flood[(row["path"], row["name"])] = flood_hops[row["id"]][0]
-    module_paths, test_paths = {}, []
-    for row in conn.execute("SELECT path FROM files WHERE language = 'python'").fetchall():
-        module = _python_module_name(row["path"])
-        if module:
-            module_paths.setdefault(module, row["path"])
-        if is_test_file(row["path"]) and row["path"] not in exclude:
-            test_paths.append(row["path"])
-    by_registry = {registries[rid][:2]: registries[rid][2] for rid in reached}
-    registry_name = registries[reached[0]][1]
-    scope = _DispatchScope(root, module_paths, flood, by_registry)
+def _dispatch_reach(scope, test_paths):
+    """Yield the nonempty reach of each root, in dispatch scan order."""
     conftests = [p for p in test_paths if p.replace("\\", "/").rsplit("/", 1)[-1] == "conftest.py"]
     # A direct production registry subscript may have no symbol edge to
     # the registry. Inspect all test roots so that graph incompleteness
@@ -2427,7 +2519,8 @@ def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
         if info is None:
             continue
         applying = _applying_conftests(path, conftests)
-        launches, writes = _loaded_effects(scope, path, applying)
+        launches, loaded = scope.loaded_effects(path, applying)
+        writes = None
         fixture_reach = scope.fixture_reach(path, applying)
         for fn_name in [*sorted(info["functions"]), None]:  # None: module-level code runs on import
             reach = scope.reach_root(path, fn_name)
@@ -2435,18 +2528,201 @@ def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude):
                 reach.update(fixture_reach)  # the conftest fixtures its tests run
             if launches:
                 reach.any = True  # a loaded helper starts a process whose argv is not read
-            if reach.unrelated and writes:
-                reach.any = True  # the allowlisted program may be found anywhere or load any code
-            if reach.every:
-                name = fn_name or "<module>"
-                every_hits[(path, name)] = flood.get((path, name), 1)
-            hit = sorted(reach.run & handler_keys)
-            if hit and path not in cli_hits:
-                cli_hits[path] = hit[0]
-            maybe = sorted(reach.may & handler_keys)
-            if (maybe or reach.any) and path not in possible_hits:
-                possible_hits[path] = maybe[0] if maybe else f"{registry_name}[*]"
+            if reach.unrelated and not reach.any:
+                # Environment writes matter when they can change the program a
+                # resolved, otherwise unrelated launch would execute.
+                if writes is None:
+                    writes = any(scope.writes_environment(p) for p in loaded)
+                reach.any = writes
+            if reach.every or reach.run or reach.may or reach.any:
+                yield path, fn_name or "<module>", reach.every, sorted(reach.run), sorted(reach.may), reach.any
         scope.release(path)
+
+
+def _dispatch_source_stamp(root, paths):
+    """Fingerprint live source bytes, including edits the index has not seen."""
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(hashlib.sha256((root / path).read_bytes()).digest())
+    return digest.hexdigest()
+
+
+DISPATCH_CACHE_DEFINITION = (
+    "hit: reused dispatch rows; miss: scanned because the sidecar was absent or its key differed; "
+    "unusable: a cache lookup was unavailable or its data was rejected; "
+    "write_failed: scanned but could not publish the sidecar."
+)
+
+_DISPATCH_CACHE_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _dispatch_analyzer_stamp():
+    """Hash the dispatch analyser and the test classification it calls during reach."""
+    digest = hashlib.sha256()
+    for source in (__file__, changed_files.__file__, file_roles.__file__, test_conventions.__file__):
+        if not source:
+            raise OSError("analyser source path unavailable")
+        digest.update(hashlib.sha256(Path(source).read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def _read_dispatch_cache(path, key, test_paths):
+    """Read only bounded, regular sidecars and validate rows for the active scope."""
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError("dispatch sidecar is not a regular file")
+    with path.open("rb") as handle:
+        payload = handle.read(_DISPATCH_CACHE_MAX_BYTES + 1)
+    if len(payload) > _DISPATCH_CACHE_MAX_BYTES:
+        raise ValueError("dispatch sidecar exceeds its size limit")
+    envelope = json.loads(payload)
+    if not isinstance(envelope, list) or len(envelope) != 2:
+        raise ValueError("invalid dispatch sidecar envelope")
+    cached_key, rows = envelope
+    if not isinstance(cached_key, str) or not re.fullmatch(r"[0-9a-f]{64}", cached_key) or not isinstance(rows, list):
+        raise ValueError("invalid dispatch sidecar key or rows")
+    if cached_key != key:
+        return None
+
+    roots = set(test_paths)
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 6:
+            raise ValueError("invalid dispatch sidecar row")
+        path, name, every, run, may, any_key = row
+        if not (
+            isinstance(path, str)
+            and path in roots
+            and isinstance(name, str)
+            and isinstance(every, bool)
+            and isinstance(run, list)
+            and isinstance(may, list)
+            and all(isinstance(k, str) for k in chain(run, may))
+            and isinstance(any_key, bool)
+        ):
+            raise ValueError("invalid dispatch sidecar row fields")
+    return rows
+
+
+def _write_dispatch_cache(path, key, rows):
+    """Publish a rebuildable sidecar atomically from a private sibling directory."""
+    payload = json.dumps([key, rows], ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    if len(payload) > _DISPATCH_CACHE_MAX_BYTES:
+        raise ValueError("dispatch sidecar exceeds its size limit")
+    # Every writer owns its staging directory. Concurrent replacements are
+    # safe because each reader validates the key before using the full rows.
+    with tempfile.TemporaryDirectory(prefix=f".{path.name}.", dir=path.parent) as staging:
+        with tempfile.NamedTemporaryFile(dir=staging, delete=False) as handle:
+            handle.write(payload)
+        os.replace(handle.name, path)
+
+
+def _dispatch_cache_rows(conn, scope, test_paths, python_paths, *, log_errors=False):
+    """Reuse one registry scope per index, across commands and handler keys."""
+    from roam import __version__
+
+    db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    if not db_path:
+        return _dispatch_reach(scope, test_paths), {"state": "unusable", "reason": "no_database_path"}
+    cache_path = Path(db_path).with_name(Path(db_path).name + ".dispatch.json")
+    source_paths = sorted(set(python_paths) | {p for p, _ in chain(scope.registries, scope.flood)})
+    try:
+        source_stamp = _dispatch_source_stamp(scope.root, source_paths)
+        analyzer = _dispatch_analyzer_stamp()
+    except OSError as exc:
+        if log_errors:
+            log_swallowed("affected-tests:dispatch-cache-input", exc)
+        return _dispatch_reach(scope, test_paths), {"state": "unusable", "input_error": f"{type(exc).__name__}: {exc}"}
+    key = hashlib.sha256(
+        json.dumps(
+            [
+                __version__,
+                analyzer,
+                sys.version,
+                sys.platform,
+                sys.flags.optimize,
+                os.environ.get("PYTHONHASHSEED"),
+                sorted(scope.module_paths.items()),
+                sorted(scope.flood.items()),
+                # Scope analysis uses registry membership. Handler keys are
+                # intersected with the resulting rows after the cache lookup.
+                sorted(scope.registries),
+                source_paths,
+                test_paths,
+                source_stamp,
+            ]
+        ).encode()
+    ).hexdigest()
+    status = {"state": "miss"}
+    try:
+        rows = _read_dispatch_cache(cache_path, key, test_paths)
+        if rows is not None:
+            return rows, {"state": "hit"}
+    except FileNotFoundError:
+        status["reason"] = "sidecar_missing"
+    except (OSError, ValueError, RecursionError) as exc:
+        if log_errors:
+            log_swallowed("affected-tests:dispatch-cache-read", exc)
+        status.update(state="unusable", read_error=f"{type(exc).__name__}: {exc}")
+    else:
+        status["reason"] = "key_mismatch"
+
+    rows = list(_dispatch_reach(scope, test_paths))
+    try:
+        if source_stamp != _dispatch_source_stamp(scope.root, source_paths):
+            raise OSError("project source changed during dispatch scan")
+        _write_dispatch_cache(cache_path, key, rows)
+    except (OSError, ValueError) as exc:
+        if log_errors:
+            log_swallowed("affected-tests:dispatch-cache-write", exc)
+        status.update(state="write_failed", write_error=f"{type(exc).__name__}: {exc}")
+    return rows, status
+
+
+def _report_dispatch_cache_errors(status):
+    for phase in ("input", "read", "write"):
+        if error := status.get(f"{phase}_error"):
+            click.echo(f"Dispatch cache {phase}: {error}", err=True)
+
+
+def _dispatch_relations(conn, root, registries, reached, handler_keys, exclude, *, dispatch_cache=None):
+    """Tests proven to run a handler key, every key, or a possible handler key."""
+    cli_hits, every_hits, possible_hits = {}, {}, {}
+    if not reached:
+        if dispatch_cache is not None:
+            dispatch_cache.update(state="unusable", reason="no_reached_registry")
+        return cli_hits, every_hits, possible_hits
+    flood_hops = _bfs_reverse_callers(conn, set(reached))
+    flood = {}
+    for row in batched_in(
+        conn,
+        "SELECT s.id, s.name, f.path FROM symbols s JOIN files f ON f.id = s.file_id WHERE s.id IN ({ph})",
+        list(flood_hops),
+    ):
+        flood[(row["path"], row["name"])] = flood_hops[row["id"]][0]
+    module_paths, test_paths = {}, []
+    python_paths = [row["path"] for row in conn.execute("SELECT path FROM files WHERE language = 'python'")]
+    for path in python_paths:
+        module = _python_module_name(path)
+        if module:
+            module_paths.setdefault(module, path)
+        if path not in exclude and is_test_file(path):
+            test_paths.append(path)
+    by_registry = {registries[rid][:2] for rid in reached}
+    registry_name = registries[reached[0]][1]
+    scope = _DispatchScope(root, module_paths, flood, by_registry)
+    rows, status = _dispatch_cache_rows(conn, scope, test_paths, python_paths, log_errors=dispatch_cache is None)
+    if dispatch_cache is not None:
+        dispatch_cache.update(status)
+    for path, name, every, run, may, any_key in rows:
+        if every:
+            every_hits[(path, name)] = flood.get((path, name), 1)
+        if path not in cli_hits:
+            hit = min(handler_keys.intersection(run), default=None)
+            if hit is not None:
+                cli_hits[path] = hit
+        if path not in possible_hits:
+            maybe = min(handler_keys.intersection(may), default=None)
+            if maybe is not None or any_key:
+                possible_hits[path] = maybe if maybe is not None else f"{registry_name}[*]"
     return cli_hits, every_hits, possible_hits
 
 
@@ -2469,7 +2745,22 @@ def count_kinds(results):
     return counts
 
 
-def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
+def _test_case_name(path, name, kind, qualified_name="", decorators=""):
+    """Return a case label only for a recognized test definition."""
+    if kind == "test":
+        return name
+    if not path.endswith(".py") or Path(path).name == "conftest.py":
+        return None
+    if kind not in {"function", "method"} or not name.startswith("test"):
+        return None
+    if re.search(r"(?:^|,)@(?:pytest\.)?fixture(?=[(,]|$)", decorators):
+        return None
+    if kind == "function" and "." in qualified_name:
+        return None
+    return name
+
+
+def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None, *, dispatch_cache=None):
     """Return a sorted list of affected test entries.
 
     Each entry is a dict with keys:
@@ -2491,7 +2782,7 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
         if caller_ids:
             rows = batched_in(
                 conn,
-                "SELECT s.id, s.name, s.kind, f.path as file_path "
+                "SELECT s.id, s.name, s.kind, s.qualified_name, s.decorators, f.path as file_path "
                 "FROM symbols s "
                 "JOIN files f ON s.file_id = f.id "
                 "WHERE s.id IN ({ph})",
@@ -2502,7 +2793,10 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
                 if not is_test_file(r["file_path"]):
                     continue
                 hops, via = reachable[r["id"]]
-                key = (r["file_path"], r["name"])
+                name = _test_case_name(
+                    r["file_path"], r["name"], r["kind"], r["qualified_name"] or "", r["decorators"] or ""
+                )
+                key = (r["file_path"], name)
                 kind = "DIRECT" if hops == 1 else "TRANSITIVE"
 
                 # Keep the shortest path if we see a duplicate
@@ -2511,8 +2805,8 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
 
                 test_entries[key] = {
                     "file": r["file_path"],
-                    "symbol": r["name"],
-                    "symbol_kind": r["kind"],
+                    "symbol": name,
+                    "symbol_kind": r["kind"] if name else None,
                     "kind": kind,
                     "hops": hops,
                     "via": via if hops > 1 else None,
@@ -2544,26 +2838,33 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths, root=None):
         target_keys.update(handler_keys.get(sid, ()))
     exclude = set(target_file_paths)
     cli_hits, every_hits, possible_hits = _dispatch_relations(
-        conn, root, registries, [rid for _h, rid in reached], target_keys, exclude
+        conn, root, registries, [rid for _h, rid in reached], target_keys, exclude, dispatch_cache=dispatch_cache
     )
     if every_hits:
         registry_hops, registry_id = reached[0]
         kinds = {}
         for r in batched_in(
             conn,
-            "SELECT s.name, s.kind, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path IN ({ph})",
+            "SELECT s.name, s.kind, s.qualified_name, s.decorators, f.path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path IN ({ph})",
             sorted({path for path, _name in every_hits}),
         ):
-            kinds[(r["path"], r["name"])] = r["kind"]
+            kinds[(r["path"], r["name"])] = r
         for (path, name), hops in sorted(every_hits.items()):
             hops += registry_hops
+            symbol = kinds.get((path, name))
+            name = (
+                _test_case_name(path, name, symbol["kind"], symbol["qualified_name"] or "", symbol["decorators"] or "")
+                if symbol
+                else None
+            )
             key = (path, name)
             if key in test_entries and test_entries[key]["hops"] <= hops:
                 continue
             test_entries[key] = {
                 "file": path,
                 "symbol": name,
-                "symbol_kind": kinds.get(key, "function"),
+                "symbol_kind": symbol["kind"] if name else None,
                 "kind": "TRANSITIVE",
                 "hops": hops,
                 "via": registries[registry_id][1],
@@ -2660,7 +2961,7 @@ def _looks_like_file(target):
     "--command",
     "show_command",
     is_flag=True,
-    help="Output a runnable pytest command",
+    help="Output runnable commands for the detected test runners",
 )
 @click.pass_context
 def affected_tests_cmd(ctx, target, staged, show_command):
@@ -2856,23 +3157,22 @@ def affected_tests_cmd(ctx, target, staged, show_command):
                 target_label = f"{sym['name']} ({abbrev_kind(sym['kind'])}, {loc(sym['file_path'], sym['line_start'])})"
 
         # Gather affected tests
-        results = _gather_affected_tests(conn, all_sym_ids, all_file_paths)
+        dispatch_cache = {}
+        results = _gather_affected_tests(conn, all_sym_ids, all_file_paths, dispatch_cache=dispatch_cache)
+        if not json_mode or show_command or sarif_mode:
+            _report_dispatch_cache_errors(dispatch_cache)
 
-        # Unique test files for the pytest command
-        seen_order = []
-        seen_set = set()
-        for r in results:
-            if r["file"] not in seen_set:
-                seen_set.add(r["file"])
-                seen_order.append(r["file"])
+        seen_order = list(dict.fromkeys(r["file"] for r in results))
+        commands, unknown_runners = affected_test_commands(find_project_root(), seen_order)
+        pytest_cmd = "\n".join(entry["command"] for entry in commands if entry["runner"] == "pytest")
+        unknown_message = unknown_runner_message(unknown_runners) if unknown_runners else ""
 
-        pytest_cmd = "pytest " + " ".join(seen_order) if seen_order else ""
-
-        # --command mode: just print the command
         if show_command:
-            if pytest_cmd:
-                click.echo(pytest_cmd)
-            else:
+            for command in test_run_lines({"test_commands": commands}, command_only=True):
+                click.echo(command)
+            if unknown_message:
+                click.echo(f"# {unknown_message}")
+            if not seen_order:
                 click.echo("# No affected tests found.")
             return
 
@@ -2959,7 +3259,11 @@ def affected_tests_cmd(ctx, target, staged, show_command):
                             for r in results
                         ],
                         pytest_command=pytest_cmd,
+                        test_commands=commands,
+                        unknown_runner_files=unknown_runners,
                         test_files=seen_order,
+                        dispatch_cache=dispatch_cache,
+                        dispatch_cache_definition=DISPATCH_CACHE_DEFINITION,
                         **disclosure,
                     )
                 )
@@ -3000,5 +3304,7 @@ def affected_tests_cmd(ctx, target, staged, show_command):
             click.echo(f"  {kind_tag} {label:<55s} {detail}")
 
         click.echo()
-        if pytest_cmd:
-            click.echo(f"Run: {pytest_cmd}")
+        for command in test_run_lines({"test_commands": commands}):
+            click.echo(f"Run: {command}")
+        if unknown_message:
+            click.echo(unknown_message)

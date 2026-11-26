@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 pytest.importorskip("fastmcp", reason="MCP tool tests require fastmcp; mcp_server module won't import without it.")
 
 from roam.mcp_server import (

@@ -117,6 +117,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CMD_PATH = _REPO_ROOT / "src" / "roam" / "commands" / "cmd_postmortem.py"
 

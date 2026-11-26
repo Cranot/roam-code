@@ -88,6 +88,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from tests.conftest import record_test_index_manifest
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Canonical W607-DT phase enumeration
 # ---------------------------------------------------------------------------
@@ -260,7 +265,7 @@ def _build_empty_over_fetch_project(tmp_path: Path) -> Path:
         cwd=tmp_path,
         capture_output=True,
     )
-    (tmp_path / "README.md").write_text("# empty fixture\n")
+    (tmp_path / "NOTES.txt").write_text("empty fixture\n")
     subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
 
@@ -273,6 +278,7 @@ def _build_empty_over_fetch_project(tmp_path: Path) -> Path:
 
     conn.execute(f"PRAGMA user_version = {USER_VERSION}")  # task #147: pass the open_db version gate
     # No files / no symbols -> empty corpus.
+    record_test_index_manifest(conn, tmp_path)
     conn.commit()
     conn.close()
     return tmp_path

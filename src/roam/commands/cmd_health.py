@@ -48,6 +48,7 @@ from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import imported_coverage_overview
 from roam.db.connection import batched_in, open_db
+from roam.db.freshness import git_history_hint
 from roam.db.queries import TOP_BY_BETWEENNESS, TOP_BY_DEGREE
 from roam.graph.builder import build_symbol_graph
 from roam.graph.cycles import (
@@ -2637,14 +2638,6 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist, all_issues=F
                     for v in violations
                 ],
             )
-            # Round 4 #20 / U: top-level index_status field so JSON
-            # consumers see the staleness warning without scanning
-            # nested sections.
-            from roam.commands.resolve import index_status as _index_status_json
-
-            _idx_status_json = _index_status_json()
-            if _idx_status_json is not None:
-                envelope["index_status"] = _idx_status_json
             # W607-M + W607-BA: thread DB-shape AND additive-substrate
             # markers onto the main JSON envelope. Mirror discipline:
             # top-level ``warnings_out`` (so the preserved-list field
@@ -2668,15 +2661,8 @@ def health(ctx, no_framework, gate, explain, baseline_ref, persist, all_issues=F
             return
 
         # --- Text output ---
-        # Round 4 #20 / U: surface the staleness warning BEFORE the
-        # verdict so an agent reading top-down can't miss it. The
-        # health composite leans on git-derived metrics (churn,
-        # co-change), so an out-of-date index quietly skews all of them.
-        from roam.commands.resolve import index_status as _index_status
-
-        _idx_status = _index_status()
-        if _idx_status and not _idx_status.get("fresh"):
-            click.echo(f"NOTE: {_idx_status['hint']}\n")
+        if hint := git_history_hint():
+            click.echo(f"NOTE: {hint}", err=True)
         # W1331: a floored substrate turns a health FACTOR into a
         # measured zero -- a failed graph build renders as
         # "Tangle: 0.0% (0/44309 symbols in cycles)", which reads as the

@@ -100,6 +100,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process, invoke_cli  # noqa: E402
 

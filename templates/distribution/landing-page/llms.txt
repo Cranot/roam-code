@@ -2,8 +2,8 @@
 
 > Roam gives coding agents reusable local code analysis and checks through the CLI or MCP. Its index returns files, functions, and their connections; pattern checks can pair code with candidate alternatives from an algorithm catalog. Agents use the returned source locations, findings, and check results to decide what to inspect, try, or test instead of implementing each analysis themselves. Refresh the index as code changes. Static checks make no model calls. Alternatives require source inspection, behavior tests, and performance measurement before claiming an improvement. People set direction and decide what ships. Configured evidence workflows can save a record of checks and supplied decisions. Missing checks remain unknown, not proof of safety. A connected agent's own model usage and data handling are separate from Roam's local analysis.
 
-roam-code (`pip install roam-code`, Python 3.11+) is a local code-analysis
-toolkit for coding agents. Run `roam index` to refresh the index as code changes.
+roam-code (`pip install roam-code` for the CLI, `pip install "roam-code[mcp]"`
+for the MCP server, Python 3.11+) is a local code-analysis toolkit for coding agents. Run `roam index` to refresh the index as code changes.
 The local SQLite index holds symbols, dependencies, call graphs, architecture
 layers, and git history. Imported runtime traces are separate observations,
 not facts inferred from parsing source. Roam exposes analysis through 288 CLI commands and 259 MCP
@@ -61,13 +61,12 @@ Evidence generation stays on your machine and hash-verifies offline. No automati
 
 ## Products
 
-Availability: free local CLI and MCP tools; paid PR Replay reports by email
-request after scope and terms are agreed. Review and Cloud are planned hosted
+Availability: free local CLI and MCP tools<!-- replay-offer:paid:llms-availability -->; a free local PR Replay sample.<!-- /replay-offer --> Review and Cloud are planned hosted
 products, not available to subscribe to. No launch date is confirmed. Private
 deployment is a separately scoped enquiry, not a packaged hosted-product edition.
 
 - [Free agent tools](https://roam-code.com/setup) — CLI and MCP server, Apache 2.0. Local static checks make no model calls; the connected agent's model usage is separate.
-- [PR Replay](https://roam-code.com/audit) — free local sample; Team report <!-- product-fact:teamReplayPrice -->$2,500<!-- /product-fact -->; Deep report <!-- product-fact:deepReplayPrice -->$6,000<!-- /product-fact -->. Paid reports add founder review and a walk-through. Read the scope and conditional future credit at /audit; an email enquiry is not an order.
+<!-- replay-offer:paid:llms-replay-1 -->- [PR Replay](https://roam-code.com/audit) — free local sample: `roam pr-replay --tier sample`. Paid Team and Deep reports are paused for new requests while we fix defects in the reports; existing orders keep their agreed terms. Questions: hello@roam-code.com.<!-- /replay-offer --><!-- replay-offer:team:llms-replay-2 --><!-- /replay-offer --><!-- replay-offer:deep:llms-replay-3 --><!-- /replay-offer --><!-- replay-offer:paid:llms-replay-4 --><!-- /replay-offer -->
 - [Sample prerequisites](https://roam-code.com/audit#sample) — `roam pr-replay --tier sample` defaults to `HEAD~5..HEAD`, a commit range rather than five PR identities. Run inside a checkout with that history. Replay does not rerun tests or establish incident prevention.
 - [Roam Review](https://roam-code.com/pricing#review) — planned hosted pull-request checks; no hosted app or billing yet. Proposed tiers, not purchasable subscriptions, are at /pricing.
 - [Roam Cloud](https://roam-code.com/pricing#cloud) — planned history/dashboard; no hosted ingestion service or team accounts yet.
@@ -82,7 +81,7 @@ deployment is a separately scoped enquiry, not a packaged hosted-product edition
 - Landing page: https://roam-code.com/
 - Setup (agent integration): https://roam-code.com/setup
 - Pricing: https://roam-code.com/pricing
-- PR Replay (paid audit): https://roam-code.com/audit
+- PR Replay (free sample and report availability): https://roam-code.com/audit
 - Compare coding agents, review tools and local code graphs: https://roam-code.com/compare
 - Measurements and reproduction limits: https://roam-code.com/measurements
 - Status: https://roam-code.com/status
@@ -107,9 +106,10 @@ features have separate costs and data paths; see the network boundary above.
 ## Current product snapshot
 
 <!-- product-block:snapshot -->
-Source version: 14.1.0; 288 CLI commands; 259 MCP tools; 17 default core tools; 28 languages; Apache-2.0.
+Source version: 14.2.3; 288 CLI commands; 259 MCP tools; 17 default core tools; 28 languages; Apache-2.0.
 Product states: cli: AVAILABLE; mcp: AVAILABLE; prReplay: AVAILABLE; review: PLANNED; cloud: PLANNED.
+PR Replay tiers: sample: OPEN; team: PAUSED; deep: PAUSED.
 Local code analysis and mechanical checks for coding agents.
-Source snapshot, not a fresh installed-package check. Paid reports require agreed written scope.
+Source snapshot, not a fresh installed-package check. Paid Team and Deep reports are paused for new requests; existing orders keep their agreed terms.
 Machine-readable facts: https://roam-code.com/data/product-facts.json
 <!-- /product-block -->

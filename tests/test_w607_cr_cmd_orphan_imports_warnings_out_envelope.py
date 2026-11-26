@@ -85,6 +85,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from tests.conftest import record_test_index_manifest
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -164,6 +169,7 @@ def _build_orphan_imports_project(tmp_path: Path) -> Path:
         "visibility, is_exported) VALUES "
         "(1, 1, 'helper', 'src.engine.helper', 'function', 1, 2, 'public', 1)"
     )
+    record_test_index_manifest(conn, tmp_path)
     conn.commit()
     conn.close()
     return tmp_path

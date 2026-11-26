@@ -73,6 +73,9 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from _helpers.repo_root import repo_root  # noqa: E402, F401
 

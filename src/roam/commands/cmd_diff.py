@@ -94,10 +94,12 @@ def _diff_risk_level(
 def _collect_affected_tests(conn, sym_by_file):
     """Gather affected tests for all symbols across changed files.
 
-    Returns (test_entries, pytest_cmd) where test_entries is the list from
-    ``_gather_affected_tests`` and pytest_cmd is a runnable pytest string.
+    Returns (test_entries, run_fields) where test_entries is the list from
+    ``_gather_affected_tests`` and run_fields holds the commands for the
+    repository's own test runners (``test_run_fields``).
     """
     from roam.commands.cmd_affected_tests import _gather_affected_tests
+    from roam.output.test_commands import test_run_fields
 
     all_sym_ids = set()
     all_file_paths = set()
@@ -106,20 +108,11 @@ def _collect_affected_tests(conn, sym_by_file):
         all_sym_ids.update(s["id"] for s in syms)
 
     if not all_sym_ids:
-        return [], ""
+        return [], test_run_fields(find_project_root(), [])
 
     results = _gather_affected_tests(conn, all_sym_ids, all_file_paths)
-
-    # Build deduplicated ordered file list for pytest command
-    seen_order = []
-    seen_set = set()
-    for r in results:
-        if r["file"] not in seen_set:
-            seen_set.add(r["file"])
-            seen_order.append(r["file"])
-
-    pytest_cmd = "pytest " + " ".join(seen_order) if seen_order else ""
-    return results, pytest_cmd
+    seen_order = list(dict.fromkeys(r["file"] for r in results))
+    return results, test_run_fields(find_project_root(), seen_order)
 
 
 # ---------------------------------------------------------------------------
@@ -884,7 +877,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
 
         # Affected tests
         test_results = []
-        pytest_cmd = ""
+        run_fields = {"test_commands": [], "pytest_command": "", "unknown_runner_files": []}
         if tests:
             # W607-Z -- wrap to surface helper raises as a structured
             # marker rather than crashing the whole `roam diff` invocation.
@@ -893,9 +886,9 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 _collect_affected_tests,
                 conn,
                 sym_by_file,
-                default=([], ""),
+                default=([], run_fields),
             )
-            test_results, pytest_cmd = _at if _at is not None else ([], "")
+            test_results, run_fields = _at if _at is not None else ([], run_fields)
 
         # Coupling warnings
         coupling_warnings = []
@@ -1142,7 +1135,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 "module_import": kind_counts["module_import"],
                 "cli_possible": kind_counts["cli_possible"],
                 "test_files": test_files,
-                "pytest_command": pytest_cmd,
+                **run_fields,
                 "tests": [
                     {
                         "file": t["file"],
@@ -1404,8 +1397,13 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
                 if not full and len(test_results) > 20:
                     click.echo(f"  (+{len(test_results) - 20} more)")
 
-                if pytest_cmd:
-                    click.echo(f"\nRun: {pytest_cmd}")
+                from roam.output.test_commands import test_run_lines, unknown_runner_message
+
+                run_lines = test_run_lines(run_fields)
+                if run_lines:
+                    click.echo("\nRun: " + "\n     ".join(run_lines))
+                if unknown := run_fields["unknown_runner_files"]:
+                    click.echo(f"\n{unknown_runner_message(unknown)}")
 
         # -- Coupling warnings section --------------------------------
 

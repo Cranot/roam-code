@@ -9,7 +9,6 @@ JSON envelope directly. See action.yml _SUPPORTED_SARIF allowlist
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import click
@@ -17,6 +16,7 @@ import click
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
     GitComparisonError,
+    GitlinkPath,
     git_mode_only_files,
     unexamined_files_note,
 )
@@ -354,6 +354,8 @@ def semantic_diff(ctx, base_ref):
     command compares all symbols -- public and private -- plus import edges and
     body size changes. Compares the current working tree against BASE (default: HEAD~1).
     """
+    if base_ref == "":
+        raise click.BadParameter("Git ref cannot be empty", param_hint="--base")
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()
@@ -432,23 +434,20 @@ def semantic_diff(ctx, base_ref):
     unexamined: list[str] = []
     read_failures: list[dict] = []
 
+    git_failures = []
+
     for fpath in changed:
-        # Get old version from the ref
         try:
-            old_source = _git_show(root, base_ref, fpath)
-            if old_source is None:
-                # A missing blob can mean an added file or a failed read.
-                # Confirm absence before treating the old side as empty.
-                listing = subprocess.run(
-                    ["git", "ls-tree", "-z", "--name-only", base_ref, "--", fpath],
-                    cwd=str(root),
-                    capture_output=True,
-                    timeout=10,
-                )
-                if listing.returncode != 0 or listing.stdout:
-                    raise OSError("cannot read base file")
+            old_source = _git_show(root, base_ref, fpath, strict=True)
             new_source = _read_current_file(root, fpath)
-        except (OSError, subprocess.SubprocessError):
+        except GitComparisonError as exc:
+            git_failures.append(exc)
+            read_failures.append({"file": fpath, "reason": "read_failed"})
+            continue
+        except GitlinkPath:
+            read_failures.append({"file": fpath, "reason": "gitlink"})
+            continue
+        except OSError:
             read_failures.append({"file": fpath, "reason": "read_failed"})
             continue
 
@@ -495,6 +494,13 @@ def semantic_diff(ctx, base_ref):
         f"in {files_analyzed} file{'s' if files_analyzed != 1 else ''}"
     ) + unexamined_files_note(len(files_not_analyzed), len(changed))
 
+    git_failure_summary = {}
+    if git_failures:
+        git_failure_summary = {
+            "git_error": git_failures[0].kind,
+            "git_error_detail": "\n".join(exc.detail for exc in git_failures),
+        }
+
     # 3. Output
     if json_mode:
         click.echo(
@@ -507,6 +513,7 @@ def semantic_diff(ctx, base_ref):
                         "files_changed_total": len(changed),
                         # Changed files that were skipped make the analysis incomplete.
                         "partial_success": bool(files_not_analyzed),
+                        **git_failure_summary,
                         "symbols_added": len(all_added),
                         "symbols_removed": len(all_removed),
                         "symbols_modified": len(all_modified),
@@ -528,6 +535,8 @@ def semantic_diff(ctx, base_ref):
     # --- Text output ---
     click.echo(f"VERDICT: {verdict}")
     click.echo()
+    if git_failures:
+        click.echo(git_failure_summary["git_error_detail"])
     if files_not_analyzed:
         click.echo("FILES NOT ANALYZED:")
         for entry in files_not_analyzed:

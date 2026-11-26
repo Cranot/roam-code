@@ -16,6 +16,9 @@ import pytest
 
 from tests._helpers.repo_root import repo_root
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 SITE = repo_root() / "templates/distribution/landing-page"
 VOID_TAGS = {
     "area",

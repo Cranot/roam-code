@@ -12,7 +12,8 @@ requiring a vendor cloud. Emits a portable, integrity-checked bundle:
 
 Import verifies the manifest's integrity hash against the bundled
 ``index.db``, checks the schema version against the current roam, and
-extracts to ``.roam/index.db``. Refuses to overwrite without ``--force``.
+extracts to the project's index database (``.roam/index.db``, or ``ROAM_DB_DIR`` / the
+``db_dir`` config key when set). Refuses to overwrite without ``--force``.
 
 Same trust story as the CGA chain: in-toto-style manifest, optional
 cosign keyless or offline signing, deterministic hashing. No network,
@@ -42,7 +43,7 @@ import click
 from roam import __version__
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
-from roam.db.connection import get_connection
+from roam.db.connection import get_connection, get_db_path
 from roam.output.formatter import json_envelope, to_json
 
 # Bump when the bundle layout changes (manifest fields, file layout, etc.).
@@ -56,8 +57,13 @@ BUNDLE_FORMAT_VERSION = 1
 
 
 def _index_db_path() -> Path:
-    """Canonical path to the roam SQLite index in the cwd."""
-    return Path(".roam") / "index.db"
+    """The project's index database, resolved exactly as ``roam index`` resolves it.
+
+    That honors ``ROAM_DB_DIR`` and the ``db_dir`` key of ``.roam/config.json``,
+    so a lane worktree whose index lives outside ``.roam/`` can export and
+    import it. No directory is created here; import creates the parent.
+    """
+    return get_db_path(create=False)
 
 
 def _sha256_file(path: Path) -> str:
@@ -341,7 +347,7 @@ def index_export(ctx, output, sign, key, keyless):
 @click.option(
     "--force",
     is_flag=True,
-    help="Overwrite an existing .roam/index.db without prompting.",
+    help="Overwrite an existing index database without prompting.",
 )
 @click.option(
     "--no-verify-head",
@@ -370,7 +376,7 @@ def index_import(ctx, bundle, force, no_verify_head, cosign_bundle_path, cosign_
 
     Verifies the manifest's integrity hash against the bundled SQLite
     index. With ``--cosign-bundle <path>`` and/or ``--cosign-key <path>``
-    also verifies the cosign signature. Extracts to ``.roam/index.db`` and
+    also verifies the cosign signature. Extracts to the project's index database and
     refuses to overwrite without ``--force``.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False

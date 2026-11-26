@@ -11,6 +11,9 @@ from roam.commands import cmd_stale_refs as mod
 from tests import test_w1527_stale_refs_unreadable_files as fixture_module
 from tests.conftest import invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 refs_project = fixture_module.refs_project
 
 

@@ -45,6 +45,9 @@ from roam.mcp_server import (
     validate_plan,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Tiny structural validator (mirrors Wave B1/B2/B3/B5 -- keep in sync if extended)
 # ---------------------------------------------------------------------------

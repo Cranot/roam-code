@@ -49,6 +49,9 @@ import pytest
 from roam.commands import cmd_preflight
 from tests.conftest import index_in_process, invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures: a two-symbol project plus the broken / healthy rule files.
 # ---------------------------------------------------------------------------

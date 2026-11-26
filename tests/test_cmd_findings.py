@@ -17,11 +17,14 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.db.connection import open_db
 from roam.db.findings import FindingRecord, emit_finding
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _seed_repo_and_index(tmp_path):

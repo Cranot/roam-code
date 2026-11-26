@@ -21,6 +21,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from test_law4_lint import _is_concrete_anchored  # noqa: E402 — reuse canonical anchor logic
 
@@ -350,6 +353,12 @@ class TestRunAgentOpt:
 # CLI surface
 # ---------------------------------------------------------------------------
 class TestCli:
+    @pytest.fixture(autouse=True)
+    def _in_small_project(self, indexed_project):
+        # The envelope tier runs health/dashboard/... in the working
+        # directory: a small indexed project keeps it off the checkout.
+        return indexed_project
+
     def test_list_tasks_json(self):
         r = CliRunner().invoke(cli, ["--json", "agent-opt", "--list-tasks"])
         assert r.exit_code == 0, r.output

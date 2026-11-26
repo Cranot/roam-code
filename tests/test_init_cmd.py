@@ -15,6 +15,9 @@ from tests.conftest import (
     parse_json_output,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # The release version the generated-CI assertions below are DERIVED from
 # (W1501). ``roam init --with-ci=github`` writes a workflow into the USER'S
 # repository, so the action ref and ``version:`` input it emits are INSTALL
@@ -83,6 +86,40 @@ class TestInitSmoke:
 
 
 class TestInitJSON:
+    @pytest.mark.parametrize("setup", ["indexed", "indexed-with-roamignore", "indexed-including-excluded", "unindexed"])
+    def test_init_leaves_generated_files_indexed(self, cli_runner, fresh_project, setup):
+        roamignore = fresh_project / ".roamignore"
+        index_args = ["index"]
+        if setup == "indexed-with-roamignore":
+            roamignore.write_text("# Project exclusions\n", encoding="utf-8")
+        if setup == "indexed-including-excluded":
+            roam_dir = fresh_project / ".roam"
+            roam_dir.mkdir()
+            (roam_dir / "config.json").write_text('{"exclude": ["utils.py"]}', encoding="utf-8")
+            index_args.insert(0, "--include-excluded")
+        if setup != "unindexed":
+            parse_json_output(invoke_cli(cli_runner, index_args, cwd=fresh_project, json_mode=True), "index")
+
+        with_ci = setup in {"indexed-with-roamignore", "unindexed"}
+        args = ["init", "--with-ci=github"] if with_ci else ["init"]
+        initialized = parse_json_output(invoke_cli(cli_runner, args, cwd=fresh_project, json_mode=True), "init")
+        assert roamignore.is_file()
+        if with_ci:
+            assert (fresh_project / ".github" / "workflows" / "roam.yml").is_file()
+
+        result = invoke_cli(cli_runner, ["search", "helper"], cwd=fresh_project, json_mode=True)
+        query = parse_json_output(result, "search")
+        assert query["_meta"]["index_state"] == "fresh", query["_meta"]
+        assert query["_meta"]["index_changed_files"] == 0
+        assert query["summary"]["partial_success"] is False
+        assert [row["name"] for row in query["results"]] == ["helper"]
+
+        assert initialized["summary"]["verdict"].startswith("initialized:")
+        if setup != "unindexed":
+            assert initialized["_meta"]["index_state"] == "fresh"
+            assert initialized["_meta"]["index_changed_files"] == 0
+            assert initialized["summary"]["partial_success"] is False
+
     def test_json_envelope(self, cli_runner, fresh_project, monkeypatch):
         monkeypatch.chdir(fresh_project)
         result = invoke_cli(cli_runner, ["init"], cwd=fresh_project, json_mode=True)

@@ -23,9 +23,12 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _make_empty_corpus(tmp: Path) -> None:

@@ -41,10 +41,11 @@ from __future__ import annotations
 import json as _json
 
 import click
-from click.testing import CliRunner
 
 from roam.capability import roam_capability
 from roam.commands.resolve import ensure_index
+from roam.db.freshness import IndexCompositeRunner, StaleQueryIndexError
+from roam.git_utils import advisory_history_depth
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 
@@ -52,12 +53,13 @@ def _capture(args: list[str]) -> dict:
     """Invoke a JSON subcommand, inheriting the caller's token budget."""
     from roam.cli import cli
 
-    runner = CliRunner()
+    runner = IndexCompositeRunner()
     parent = click.get_current_context(silent=True)
     budget = parent.obj.get("budget") if parent and isinstance(parent.obj, dict) else None
     explicit = parent.obj.get("budget_explicit", False) if parent and isinstance(parent.obj, dict) else False
     budget_args = ["--budget", str(budget)] if budget is not None and (budget != 0 or explicit) else []
-    result = runner.invoke(cli, ["--json", *budget_args, *args])
+    with advisory_history_depth():
+        result = runner.invoke(cli, ["--json", *budget_args, *args])
     try:
         payload = _json.loads(result.stdout)
         if not isinstance(payload, dict):
@@ -177,6 +179,8 @@ def audit(ctx, brief) -> None:
                     "next_command": "roam " + " ".join(args[0]),
                 }
             return result
+        except StaleQueryIndexError:
+            raise
         except Exception as exc:  # noqa: BLE001 — top-level disclosure
             child_evidence[phase] = {"state": "failed", "error": f"{type(exc).__name__}:{exc}"}
             _w607p_warnings_out.append(f"audit_{phase}_failed:{type(exc).__name__}:{exc}")

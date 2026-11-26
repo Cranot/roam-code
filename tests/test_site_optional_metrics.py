@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tests.test_homepage_contract import SITE, HomepageParser, normalized
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def test_troubleshooting_explains_optional_metrics_and_rechecks_evidence():

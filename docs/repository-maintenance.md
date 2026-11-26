@@ -165,6 +165,81 @@ missing or incomplete index with exit 3, while `roam index` and `roam init`
 remain intentional build commands. JSON refusals distinguish those states
 without opening the index. `init` still creates project configuration.
 
+Index-backed CLI and MCP queries and `roam doctor` compare the current
+source files against the saved index. Both clean and dirty builds use the
+same comparison. Roam checks the bytes of Git-reported paths, including
+untracked files that the index can discover. When the comparison needs a
+full file listing, Roam uses `git ls-files --cached --others --exclude-standard`
+and applies the index's discovery and language rules. A rename counts its
+old and new paths. Touching a file without changing its contents leaves it fresh.
+
+In JSON and MCP, read `_meta.index_state` and `_meta.index_changed_files`.
+`fresh` means zero changed files. `stale` means a positive count and includes
+`_meta.stale_index: true`. An unavailable check returns `unknown` with a
+null count and `_meta.index_state_reason`. MCP result-cache hits can reuse
+the last check for three seconds. During that window, a working-tree edit
+can leave a cached reply reporting `fresh`. Publishing a new index invalidates
+the cached result.
+`_meta.index_age_s` measures elapsed seconds since the recorded index build
+and is null when the record is missing. Age is informational.
+`_meta.index_status` remains available, with `fresh` and `dirty_files`
+derived from the same state and count.
+
+When HEAD differs from the index's recorded commit, read
+`_meta.git_history_relation`. The values are `behind` (the indexed commit is
+an ancestor of HEAD), `ahead` (HEAD is an ancestor of the indexed commit),
+`diverged` (neither is an ancestor in complete local history), `unreachable`
+(a commit is missing locally), and `unknown` (Git could not establish
+ancestry, for example in a shallow clone). `_meta.git_history_behind` is true
+only for `behind`. The two commit IDs remain available in
+`_meta.git_history_indexed_commit` and `_meta.git_history_head_commit`.
+Different commits can still have a fresh source snapshot. In text mode,
+`weather`, `health`, and `diagnose` send the history note to stderr. Run
+`roam index` to refresh the Git data.
+
+Confirmed changes set `summary.partial_success: true` for answers that use
+the index, including `roam stats`, `roam diff` when it analyzes changes,
+and `roam index-stats`. Stale-sensitive commands also mark a failed check
+partial. In a project without Git, the state is
+`unknown` with a reason, doctor marks the check skipped, and text output
+is quiet. Other stale or unavailable checks produce a single stderr hint
+in text mode. To hide that hint, set `ROAM_NO_STALENESS_HINT=1`. Run
+`roam index` to refresh the index. Set `ROAM_REFUSE_STALE_INDEX=1` to
+refuse confirmed stale results for stale-sensitive commands. CLI refusals
+exit 1 and JSON or MCP refusals carry `error_code: INDEX_STALE`.
+Stale-insensitive commands remain available for inspecting an outdated index.
+Commands that only report the index status can still give a complete answer.
+Composite commands report the observed index state together with their own
+analysis status. A stale observation takes precedence over an unavailable
+check or a fresh observation from another child. Check outcomes in the
+composite describe the analysis each child completed.
+When `roam init` finds a stale existing index, it reports the change count
+and marks initialization partial. Run `roam index` to refresh it.
+
+The query shares one deadline for source freshness and Git ancestry.
+The budget is 1.5 seconds on Linux and other non-Windows systems and 3 seconds
+on Windows. An unfinished check reports `unknown`. A completed source check
+keeps its result when ancestry runs out of time. The deadline bounds the
+time Roam allocates to the check. OS process creation and cleanup, blocking
+filesystem operations, and scheduling can add wall time.
+Set `ROAM_INDEX_FRESHNESS_BUDGET_S` to override the budget
+in seconds. Fractional seconds are accepted. Unset or invalid values use
+the platform default. The supported range is greater than zero and at
+most 2,147,483 seconds.
+
+The freshness check relies on paths visible to `git status`. Edits to files
+marked `assume-unchanged` or `skip-worktree` can go undetected. Clear the
+file's flag before checking freshness if the file is present and editable.
+Untracking a file with `git rm --cached` leaves the index fresh if the
+file is still eligible for discovery and its bytes match the indexed copy.
+A file that disappears, is ignored, or changes still counts as changed.
+
+Each `roam_doctor` call runs the current diagnostics. When fetching a stored
+response by handle, `summary.payload_scope: historical` identifies index
+evidence from the original call. The fetch envelope's
+`_meta.index_scope: current_project` identifies its separate observation of
+the current project's index.
+
 An ownership error means another writer is active, or Roam cannot prove that
 the recorded owner is stale. Wait for the writer, inspect the process that
 owns this checkout, and stop it through its normal shutdown path if needed.

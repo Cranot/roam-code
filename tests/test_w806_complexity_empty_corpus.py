@@ -22,6 +22,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # Pull the subprocess + git helpers from the shared conftest.
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, roam  # noqa: E402

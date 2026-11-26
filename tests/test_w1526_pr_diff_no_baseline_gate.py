@@ -53,6 +53,8 @@ import pytest
 
 from tests.conftest import index_in_process, invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _git(cwd, *args):
     subprocess.run(
@@ -84,6 +86,11 @@ def snapshotless_project(tmp_path, monkeypatch):
     _git(proj, "commit", "-q", "-m", "base")
 
     monkeypatch.chdir(proj)
+    _git(proj, "checkout", "-q", "-b", "feature")
+    (proj / "src" / "b.py").write_text("from src.a import alpha\n\n\ndef beta(y):\n    return alpha(y) * 2\n")
+    _git(proj, "add", "src/b.py")
+    _git(proj, "commit", "-q", "-m", "add b")
+
     out, rc = index_in_process(proj, "--force")
     assert rc == 0, out
     # Reproduce the state the DOCUMENTED onboarding leaves. Measured live:
@@ -92,10 +99,6 @@ def snapshotless_project(tmp_path, monkeypatch):
     # post-`init` state, which is the state this finding is about.
     _clear_snapshots(proj)
 
-    _git(proj, "checkout", "-q", "-b", "feature")
-    (proj / "src" / "b.py").write_text("from src.a import alpha\n\n\ndef beta(y):\n    return alpha(y) * 2\n")
-    _git(proj, "add", "src/b.py")
-    _git(proj, "commit", "-q", "-m", "add b")
     return proj
 
 
@@ -202,7 +205,7 @@ def test_report_mode_does_not_claim_incompleteness(cli_runner, snapshotless_proj
     result = invoke_cli(cli_runner, ["pr-diff", "--range", "master..HEAD", "--json"], cwd=snapshotless_project)
     summary = json.loads(result.output)["summary"]
     assert summary["partial_success"] is False
-    assert "minimal structural impact" in summary["verdict"]
+    assert "significant structural impact" in summary["verdict"]
 
 
 def test_empty_diff_with_the_gate_still_exits_zero(cli_runner, snapshotless_project):

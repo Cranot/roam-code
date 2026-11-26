@@ -9,6 +9,9 @@ from click.testing import CliRunner
 
 from roam.commands.cmd_hooks import hooks
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _FAILURE = re.compile(
     r"error|fail|denied|permission|unable|could\s+not|couldn't|cannot|can't|"
     r"unsuccessful|incomplete|not\b.*\bremoved|remain|warning",

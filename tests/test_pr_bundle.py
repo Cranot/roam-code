@@ -23,6 +23,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, parse_json_output  # noqa: E402
 
@@ -1213,13 +1216,14 @@ def test_pr_bundle_redacts_github_pat_in_human_actor(cli_runner, bundle_project,
     """
     monkeypatch.setenv(
         "ROAM_HUMAN_ACTOR",
-        "alice+ghp_abc1234567890abc1234567890abc12345678@example.com",
+        "alice+ghp_abc1234567890abc1234567890abc12345678@example.com",  # secretsallow
     )
     _populate_minimal_emit_bundle(cli_runner)
     result = _invoke(cli_runner, ["--json", "pr-bundle", "emit", "--no-auto-collect"])
     assert result.exit_code == 0, result.output
     data = parse_json_output(result, command="pr-bundle")
-    assert "ghp_abc1234567890abc1234567890abc12345678" not in data["actor"]["human_actor"], data["actor"]["human_actor"]
+    human_actor = data["actor"]["human_actor"]
+    assert "ghp_abc1234567890abc1234567890abc12345678" not in human_actor, human_actor  # secretsallow
     assert "[REDACTED]" in data["actor"]["human_actor"]
     assert "secret" in (data.get("redactions") or []), f"expected 'secret' in redactions; got {data.get('redactions')}"
 
@@ -1234,7 +1238,7 @@ def test_pr_bundle_redacts_openai_key_in_verdict(cli_runner, bundle_project, mon
     """
     for var in ("ROAM_AGENT_ID", "ROAM_HUMAN_ACTOR"):
         monkeypatch.delenv(var, raising=False)
-    leaked_key = "sk-proj-abc1234567890abc1234567890"
+    leaked_key = "sk-proj-abc1234567890abc1234567890"  # secretsallow
     result = _invoke(
         cli_runner,
         [

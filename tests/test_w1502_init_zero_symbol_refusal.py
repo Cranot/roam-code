@@ -26,7 +26,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.conftest import git_init, roam
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _write(path, name, body):

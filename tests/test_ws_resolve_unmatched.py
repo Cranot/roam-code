@@ -17,6 +17,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Unit tests — find_unmatched_calls helper
 # ---------------------------------------------------------------------------

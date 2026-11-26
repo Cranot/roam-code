@@ -18,6 +18,8 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def empty_corpus(tmp_path: Path) -> Path:

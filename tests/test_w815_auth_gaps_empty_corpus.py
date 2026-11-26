@@ -26,6 +26,8 @@ from tests.conftest import (
     parse_json_output,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def empty_corpus_project(tmp_path):

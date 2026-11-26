@@ -31,8 +31,10 @@ import click
 from roam.capability import roam_capability
 from roam.command_advice import validate_command_advice
 from roam.commands.changed_files import (
+    GIT_ERROR,
     is_test_file,
     resolve_changed_to_db,
+    run_git_comparison,
 )
 from roam.commands.cmd_conventions import (
     _MIN_NAME_LEN,
@@ -144,6 +146,7 @@ _DUPLICATE_ENTRYPOINT_SKIP_NAMES = frozenset({"load_rules"})
 #   ROAM_VERIFY_TEST_HERMETICITY=0   warn on non-hermetic patterns in a changed test file
 # ---------------------------------------------------------------------------
 _VERIFY_BREAKING_CATEGORY = "breaking"
+_NO_BREAKING_BASELINE = "Breaking comparison has no baseline because the current branch has no commits."
 _VERIFY_TAINT_CATEGORY = "taint"
 _VERIFY_TENANT_SCOPE_CATEGORY = "tenant_scope"
 _VERIFY_FABRICATED_SUCCESS_CATEGORY = "fabricated_success"
@@ -238,7 +241,7 @@ def _git_diff_zero_context(files: list[str], root: Path) -> str:
 
     try:
         return subprocess.run(
-            ["git", "-C", str(root), "diff", "HEAD", "-U0", "--", *files],
+            ["git", "--literal-pathspecs", "-C", str(root), "diff", "HEAD", "-U0", "--", *files],
             capture_output=True,
             text=True,
             timeout=8,
@@ -3919,7 +3922,7 @@ def _changed_public_signatures_for_caller_gate(
     compare_file,
 ) -> list[dict]:
     """Signature changes that can matter to callers outside this edit."""
-    old_source = git_show(root, "HEAD", path)
+    old_source = git_show(root, "HEAD", path, strict=True)
     if old_source is None:
         return []  # new file at HEAD — nothing to break
     old_symbols = extract_old_symbols(old_source, path)
@@ -3988,6 +3991,22 @@ def _verify_check_incomplete(category: str, reason: str, *, advisory: bool = Fal
     return result
 
 
+def _has_unborn_head(root: Path) -> bool:
+    """Prove HEAD points to an absent branch rather than an unreadable commit."""
+    symbolic, error = run_git_comparison(root, ["git", "symbolic-ref", "--quiet", "HEAD"], None)
+    if error or symbolic.stderr:
+        return False
+    branch = symbolic.stdout.removesuffix(b"\n").removesuffix(b"\r")
+    if not re.fullmatch(rb"refs/heads/[^\s\0]+", branch):
+        return False
+    refs, error = run_git_comparison(
+        root,
+        ["git", "for-each-ref", "--count=1", "--format=%(refname)", "--", os.fsdecode(branch)],
+        None,
+    )
+    return error is None and refs.stdout == refs.stderr == b""
+
+
 def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Path) -> dict:
     """Guardrail: signature change + an un-edited external caller => FAIL (BLOCK).
 
@@ -4000,11 +4019,26 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
     source_paths = [p for p in changed_paths if p.endswith(".py") and not is_test_file(p)]
     if not source_paths:
         return {"score": 100, "violations": []}
+    from roam.commands.changed_files import GitComparisonError, GitlinkPath
+
+    details: list[str] = []
+    head, error = run_git_comparison(root, ["git", "rev-parse", "--verify", "HEAD"], details, defer_nonzero=True)
+    if error:
+        if error == GIT_ERROR and head is not None and _has_unborn_head(root):
+            return {"score": 100, "violations": [], "baseline_state": "no_commits"}
+        return _verify_check_incomplete(
+            _VERIFY_BREAKING_CATEGORY, "Cannot resolve breaking baseline: " + "\n".join(details)
+        )
+    if not re.fullmatch(rb"[0-9a-f]{40}(?:[0-9a-f]{24})?", head.stdout.strip()):
+        return _verify_check_incomplete(
+            _VERIFY_BREAKING_CATEGORY, "Git returned an invalid breaking baseline object ID"
+        )
     if len(source_paths) > _MAX_BREAKING_FILES:
         return _verify_check_incomplete(
             _VERIFY_BREAKING_CATEGORY,
             f"breaking-change scan capped at {_MAX_BREAKING_FILES} of {len(source_paths)} source files",
         )
+
     try:
         from roam.commands.cmd_breaking import (
             _compare_file,
@@ -4021,15 +4055,20 @@ def _check_breaking(conn, file_ids: list[int], target_paths: list[str], root: Pa
     min_callers = max(1, _verify_env_int("ROAM_VERIFY_BREAKING_MIN_CALLERS", 1))
     violations: list[dict] = []
     for path in source_paths:
-        sig_changed = _changed_public_signatures_for_caller_gate(
-            conn,
-            path,
-            root,
-            git_show=_git_show,
-            extract_old_symbols=_extract_old_symbols,
-            get_current_symbols=_get_current_symbols,
-            compare_file=_compare_file,
-        )
+        try:
+            sig_changed = _changed_public_signatures_for_caller_gate(
+                conn,
+                path,
+                root,
+                git_show=_git_show,
+                extract_old_symbols=_extract_old_symbols,
+                get_current_symbols=_get_current_symbols,
+                compare_file=_compare_file,
+            )
+        except (GitComparisonError, GitlinkPath) as exc:
+            return _verify_check_incomplete(
+                _VERIFY_BREAKING_CATEGORY, f"Cannot read breaking baseline for {path}: {exc}"
+            )
         violations.extend(_breaking_contract_violations_for_file(conn, path, changed_paths, min_callers, sig_changed))
     return {"score": 0 if violations else 100, "violations": violations}
 
@@ -6332,6 +6371,7 @@ def _category_summary(categories: dict) -> dict:
                 entry["unavailable_reason"] = cat_result["unavailable_reason"]
         for qualifier in (
             "applicability",
+            "baseline_state",
             "execution_state",
             "timed_out",
             "partial_success",
@@ -6494,7 +6534,7 @@ def _compact_fix_hint(fix_hint: dict | None) -> str | None:
     return None
 
 
-def _emit_verify_summary(violations: list[dict], files_checked: int) -> None:
+def _emit_verify_summary(violations: list[dict], files_checked: int, *, no_breaking_baseline: bool = False) -> None:
     """Print one top finding per file/severity/category group."""
     groups = _verify_summary_groups(violations)
     total = len(violations)
@@ -6502,9 +6542,10 @@ def _emit_verify_summary(violations: list[dict], files_checked: int) -> None:
         f"VERIFY SUMMARY: {total} finding{'s' if total != 1 else ''} "
         f"across {files_checked} file{'s' if files_checked != 1 else ''}"
     )
-    if not groups:
+    if no_breaking_baseline:
+        click.echo(f"  {_NO_BREAKING_BASELINE}")
+    elif not groups:
         click.echo("  OK -- all checks passed")
-        return
     for file_path, file_groups in groups.items():
         file_count = sum(len(items) for _, _, items in file_groups)
         click.echo(f"FILE: {file_path} ({file_count} finding{'s' if file_count != 1 else ''})")
@@ -6557,10 +6598,15 @@ def _emit_verify_result(
             ctx.exit(EXIT_GATE_FAILURE)
         return
     if summary_mode:
-        if _has_only_non_code_targets(verify_envelope["summary"]):
-            click.echo(f"VERDICT: {_verify_display_verdict(verify_envelope['summary'])}")
-        _emit_verify_summary(all_violations, verify_envelope["summary"]["files_checked"])
-        if _verify_gate_failed(verify_envelope["summary"], score, threshold, report):
+        summary = verify_envelope["summary"]
+        if _has_only_non_code_targets(summary):
+            click.echo(f"VERDICT: {_verify_display_verdict(summary)}")
+        _emit_verify_summary(
+            all_violations,
+            summary["files_checked"],
+            no_breaking_baseline=summary.get("breaking_baseline_state") == "no_commits",
+        )
+        if _verify_gate_failed(summary, score, threshold, report):
             ctx.exit(EXIT_GATE_FAILURE)
         return
     if report:
@@ -6850,6 +6896,8 @@ def _build_verify_run(
             verification_receipt,
         )
         verify_summary["quality_band"] = quality_band
+        if breaking_baseline_state := categories.get(_VERIFY_BREAKING_CATEGORY, {}).get("baseline_state"):
+            verify_summary["breaking_baseline_state"] = breaking_baseline_state
         if incomplete_reasons == ["no_applicable_checks"]:
             verify_summary["state"] = "no_applicable_checks"
         verify_summary["targets_checked"] = len(target_paths)
@@ -7366,7 +7414,9 @@ def _print_category(label: str, result: dict, fix_suggestions: bool, *, root: Pa
         violations = _complexity_display_violations(violations, root)
 
     click.echo(f"{label} ({score}/100):")
-    if not violations:
+    if result.get("baseline_state") == "no_commits":
+        click.echo(f"  {_NO_BREAKING_BASELINE}")
+    elif not violations:
         click.echo("  OK -- all checks passed")
     else:
         for v in violations:
@@ -7456,11 +7506,14 @@ def _render_verify_report(
     total = len(violations)
     fails = sum(1 for v in violations if v.get("severity") == SEVERITY_FAIL)
     warns = sum(1 for v in violations if v.get("severity") == SEVERITY_WARN)
-    files_n = envelope.get("summary", {}).get("files_checked", "?")
+    summary = envelope.get("summary", {})
+    files_n = summary.get("files_checked", "?")
     click.echo(
         f"VERDICT: REPORT -- {total} finding{'s' if total != 1 else ''} "
         f"({fails} FAIL, {warns} WARN) across {files_n} files (non-gating)"
     )
+    if summary.get("breaking_baseline_state") == "no_commits":
+        click.echo(_NO_BREAKING_BASELINE)
     counts = Counter(v.get("category", "?") for v in violations)
     if counts:
         click.echo("by category: " + ", ".join(f"{k}={n}" for k, n in sorted(counts.items(), key=lambda x: -x[1])))
@@ -7547,6 +7600,11 @@ def _persist_verify_report(envelope: dict, violations: list, out, root: Path, js
             "severity_counts": sev_counts,
             "category_counts": cat_counts,
             "inspect_hint": f"read {out_path} (the `violations` array) for the full ranked list",
+            **(
+                {"breaking_baseline_state": s_in["breaking_baseline_state"]}
+                if "breaking_baseline_state" in s_in
+                else {}
+            ),
         },
         top_findings=top_findings,
     )
@@ -7559,6 +7617,8 @@ def _persist_verify_report(envelope: dict, violations: list, out, root: Path, js
         f"WARN {sev_counts.get(SEVERITY_WARN, 0)}, "
         f"INFO {sev_counts.get(SEVERITY_INFO, 0)})"
     )
+    if s_in.get("breaking_baseline_state") == "no_commits":
+        click.echo(_NO_BREAKING_BASELINE)
     if cat_counts:
         click.echo("by category: " + ", ".join(f"{k}={n}" for k, n in sorted(cat_counts.items(), key=lambda x: -x[1])))
     click.echo(f"persisted: {out_path}  (read it / `jq '.violations'` to inspect all findings)")

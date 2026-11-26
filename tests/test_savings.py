@@ -24,6 +24,9 @@ from roam.savings import (
     materialize_ledger,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _REPEATED_TASK_FINGERPRINT = "tfp_0123456789abcdef0123456789abcdef"
 
 

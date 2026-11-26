@@ -16,6 +16,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_commit, git_init, index_in_process, invoke_cli
 
@@ -143,7 +146,9 @@ def test_unreadable_current_side_is_disclosed_without_false_removal(tmp_path, mo
     monkeypatch.setattr(semantic, "ensure_index", lambda: None)
     monkeypatch.setattr(semantic, "find_project_root", lambda: tmp_path)
     monkeypatch.setattr(semantic, "_git_changed_files", lambda *a: ["app.py"])
-    monkeypatch.setattr(semantic, "_git_show", lambda *a: b"def greet():\n    return 1\n")
+    # Named helper contract change: the command requests strict reads so a
+    # confirmed absence and a Git failure no longer have the same value.
+    monkeypatch.setattr(semantic, "_git_show", lambda *a, **kw: b"def greet():\n    return 1\n")
     real_read = Path.read_bytes
 
     def read(file):
@@ -173,7 +178,18 @@ def test_unavailable_base_side_is_not_reported_as_added(repo, monkeypatch, absen
         (repo / "new.py").write_text("def fresh():\n    return 1\n")
     path = "new.py" if absent else "src/app.py"
     monkeypatch.setattr(semantic, "_git_changed_files", lambda *a: [path])
-    monkeypatch.setattr(semantic, "_git_show", lambda *a: None)
+    # Named helper contract change: old reads collapsed failures and absence
+    # to None. The strict reader now reserves None for confirmed absence and
+    # raises on an unavailable blob so the caller can disclose the Git kind.
+    from roam.commands.changed_files import GitComparisonError
+
+    def show(*args, strict):
+        assert strict
+        if not absent:
+            raise GitComparisonError("git_error", "unavailable base blob")
+        return None
+
+    monkeypatch.setattr(semantic, "_git_show", show)
     result = CliRunner().invoke(semantic.semantic_diff, ["--base", "HEAD"], obj={"json": True})
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)

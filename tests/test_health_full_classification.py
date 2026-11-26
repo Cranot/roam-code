@@ -12,6 +12,8 @@ from roam.commands import cmd_health
 from tests import test_w1448_health_list_cap_disclosure as cap_fixture
 from tests.conftest import invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("detail", [False, True])
 @pytest.mark.parametrize("failed", [False, True])

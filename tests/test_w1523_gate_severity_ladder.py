@@ -39,6 +39,8 @@ from roam.commands.gate_presets import coerce_gate_severity, load_gates_config
 from roam.output._severity import severity_rank
 from tests.conftest import git_init, index_in_process, invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _write_config(proj, severity: str) -> str:
     cfg = proj / ".roam-gates.yml"
@@ -56,11 +58,11 @@ def _write_config(proj, severity: str) -> str:
 
 
 @pytest.fixture
-def gates_project(tmp_path):
+def gates_project(tmp_path, monkeypatch):
     """Project with two money-handling modules and no tests for either."""
     proj = tmp_path / "w1523_proj"
     proj.mkdir()
-    (proj / ".gitignore").write_text(".roam/\n")
+    (proj / ".gitignore").write_text(".roam/\n.roam-gates.yml\n")
     src = proj / "src" / "app"
     src.mkdir(parents=True)
     (src / "models.py").write_text(

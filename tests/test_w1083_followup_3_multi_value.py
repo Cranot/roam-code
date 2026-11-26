@@ -32,6 +32,9 @@ from roam.output.structured_unknowns import (
     to_summary_payload_many,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helper unit tests — three partition scenarios + did_you_mean shape.
 # ---------------------------------------------------------------------------

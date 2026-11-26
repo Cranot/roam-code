@@ -29,6 +29,8 @@ from roam.transcript_backfill import (
     sanitize_command_template,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _write_claude_session(path: Path, cwd: Path, session_id: str, command: str) -> None:
     rows = [

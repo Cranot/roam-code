@@ -30,6 +30,9 @@ import pytest
 from tests.conftest import git_init as _git_init
 from tests.conftest import index_in_process, invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # 1. `secrets` — a severity floor above the emit vocabulary is a VACUOUS
 #    scan, not a clean one.

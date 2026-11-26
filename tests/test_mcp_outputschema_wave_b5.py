@@ -26,6 +26,9 @@ from click.testing import CliRunner
 from roam.cli import cli
 from roam.mcp_server import _SCHEMA_AUDIT_TRAIL_VERIFY, _SCHEMA_DIAGNOSE
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Tiny structural validator (mirrors Wave B1/B2/B3 — keep in sync if extended)
 # ---------------------------------------------------------------------------

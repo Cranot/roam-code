@@ -55,11 +55,15 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.db.connection import open_db
 from roam.db.findings import FindingRecord, emit_finding
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # Helpers — mirror the test_cmd_findings.py fixture shape so the two test

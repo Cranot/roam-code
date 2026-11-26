@@ -34,6 +34,9 @@ from roam.runs.signing import (
     verify_chain_with_receipts,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ inputs:
   version:
     description: 'Exact roam-code version to install; source installs this action checkout; latest requires allow-latest=true'
     required: false
-    default: '14.1.0'
+    default: '14.2.3'
   allow-latest:
     description: 'Explicitly permit the mutable version=latest install path (true/false)'
     required: false
@@ -143,6 +143,7 @@ runs:
         ACTION_PATH_INPUT: ${{ github.action_path }}
         EVENT_NAME_INPUT: ${{ github.event_name }}
         PR_BASE_SHA_INPUT: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA_INPUT: ${{ github.event.pull_request.head.sha }}
         PUSH_BEFORE_SHA_INPUT: ${{ github.event.before }}
       run: |
         set -euo pipefail
@@ -303,6 +304,7 @@ runs:
           fail_input "github.event_name" "unexpected event name"
         fi
         validate_optional_sha "github.event.pull_request.base.sha" "${PR_BASE_SHA_INPUT}"
+        validate_optional_sha "github.event.pull_request.head.sha" "${PR_HEAD_SHA_INPUT}"
         validate_optional_sha "github.event.before" "${PUSH_BEFORE_SHA_INPUT}"
 
         {
@@ -326,6 +328,7 @@ runs:
           printf 'action-path=%s\n' "${ACTION_PATH_INPUT}"
           printf 'event-name=%s\n' "${EVENT_NAME_INPUT}"
           printf 'pr-base-sha=%s\n' "${PR_BASE_SHA_INPUT}"
+          printf 'pr-head-sha=%s\n' "${PR_HEAD_SHA_INPUT}"
           printf 'push-before-sha=%s\n' "${PUSH_BEFORE_SHA_INPUT}"
         } >> "${GITHUB_OUTPUT}"
 
@@ -442,6 +445,7 @@ runs:
         INPUT_BASE_REF: ${{ steps.validate-inputs.outputs.base-ref }}
         EVENT_NAME_INPUT: ${{ steps.validate-inputs.outputs.event-name }}
         PR_BASE_SHA_INPUT: ${{ steps.validate-inputs.outputs.pr-base-sha }}
+        PR_HEAD_SHA_INPUT: ${{ steps.validate-inputs.outputs.pr-head-sha }}
         PUSH_BEFORE_SHA_INPUT: ${{ steps.validate-inputs.outputs.push-before-sha }}
       run: |
         set -euo pipefail
@@ -451,6 +455,7 @@ runs:
         BASE_REF_INPUT="${INPUT_BASE_REF}"
         EVENT_NAME="${EVENT_NAME_INPUT}"
         PR_BASE_SHA="${PR_BASE_SHA_INPUT}"
+        PR_HEAD_SHA="${PR_HEAD_SHA_INPUT}"
         PUSH_BEFORE_SHA="${PUSH_BEFORE_SHA_INPUT}"
         read -r -a COMMAND_LIST <<< "${COMMANDS}"
         FINAL_EXIT=0
@@ -533,7 +538,29 @@ runs:
         for CMD in "${COMMAND_LIST[@]}"; do
           ARGS=("${CMD}")
 
-          if [ "${CHANGED_ONLY}" = "true" ]; then
+          if [ "${CMD}" = "pr-risk" ] && [ "${EVENT_NAME}" = "pull_request" ]; then
+            RISK_BASE="${PR_BASE_SHA}"
+            PR_RANGE="${RISK_BASE}...${PR_HEAD_SHA}"
+            if [ "${CHANGED_ONLY}" = "true" ] && [ -n "${BASE_REF_INPUT}" ]; then
+              RISK_BASE="${BASE_REF_INPUT}"
+              PR_RANGE="${RISK_BASE}..${PR_HEAD_SHA}"
+            fi
+            # Check the range before invoking the pinned CLI, which can
+            # otherwise report a failed Git comparison as an empty diff.
+            if [ -n "${RISK_BASE}" ] && [ -n "${PR_HEAD_SHA}" ] &&
+               git diff --name-only -z --end-of-options "${PR_RANGE}" -- >/dev/null; then
+              ARGS+=("${PR_RANGE}")
+            else
+              printf '%s\n' '{"command":"pr-risk","summary":{"verdict":"PR comparison could not run","state":"comparison_unavailable","partial_success":true,"risk_score":null}}' \
+                > "${RESULTS_DIR}/${CMD}.json"
+              cat "${RESULTS_DIR}/${CMD}.json"
+              echo "::warning::PR comparison could not run"
+              if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+                echo "- PR comparison could not run. Pull request risk was skipped." >> "$GITHUB_STEP_SUMMARY"
+              fi
+              continue
+            fi
+          elif [ "${CHANGED_ONLY}" = "true" ]; then
             case "${CMD}" in
               verify|syntax-check|test-gaps|suggest-reviewers|file)
                 if [ -s "${AFFECTED_LIST_FILE}" ]; then

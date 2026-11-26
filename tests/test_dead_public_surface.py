@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.conftest import invoke_cli
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _dead_results(data: dict) -> dict[str, dict]:

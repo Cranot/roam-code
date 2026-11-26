@@ -93,6 +93,9 @@ from click.testing import CliRunner
 
 from tests.conftest import git_init, index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers - invoke describe via the Click group so the top-level --json flag
 # is honoured by ctx.obj.

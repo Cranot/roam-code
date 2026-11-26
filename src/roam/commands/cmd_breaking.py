@@ -12,15 +12,18 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 
 import click
+from click.core import ParameterSource
 
 from roam.capability import roam_capability
 from roam.commands.changed_files import (
     GitComparisonError,
+    GitlinkPath,
     get_changed_files_status,
     git_comparison_base,
+    run_git_comparison,
 )
 from roam.commands.changed_files import (
-    git_changed_files_against_ref as _git_changed_files,  # noqa: F401 -- legacy export used by attest
+    git_changed_files_against_ref as _git_changed_files,  # noqa: F401 -- legacy export
 )
 from roam.commands.changed_files import (
     git_show_at_ref as _git_show,
@@ -282,6 +285,37 @@ def _get_current_symbols(conn, file_path: str) -> list[dict]:
     ]
 
 
+def collect_breaking_changes(conn, root, changed, base_ref, head_ref=None):
+    """Compare the base against a committed endpoint or the current index."""
+    evidence = {"removed": [], "signature_changed": [], "renamed": []}
+    skipped = []
+    for fpath in changed:
+        try:
+            old_source = _git_show(root, base_ref, fpath, strict=True)
+            if old_source is None:
+                # New files cannot break an existing API.
+                continue
+            old_symbols = _extract_old_symbols(old_source, fpath)
+            if not old_symbols:
+                continue
+            if head_ref is None:
+                new_symbols = _get_current_symbols(conn, fpath)
+            else:
+                new_source = _git_show(root, head_ref, fpath, strict=True)
+                new_symbols = _extract_old_symbols(new_source, fpath) if new_source is not None else []
+        except GitlinkPath:
+            skipped.append({"file": fpath, "reason": "gitlink"})
+            continue
+
+        removed, sig_changed, renamed = _compare_file(fpath, old_symbols, new_symbols)
+        evidence["removed"].extend(removed)
+        evidence["signature_changed"].extend(sig_changed)
+        evidence["renamed"].extend(renamed)
+    if skipped:
+        evidence["files_not_analyzed"] = skipped
+    return evidence
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -301,6 +335,16 @@ def _get_current_symbols(conn, file_path: str) -> list[dict]:
     ai_safe=True,
     requires_index=True,
 )
+def _head_is_root_commit(root) -> bool:
+    """True only when HEAD exists and has no parent; any Git failure answers False."""
+    result, kind = run_git_comparison(
+        root, ["git", "rev-list", "--max-count=2", "HEAD", "--"], None, text=True, defer_nonzero=True
+    )
+    if kind or result is None or result.returncode != 0:
+        return False
+    return len(result.stdout.split()) == 1
+
+
 @click.command("breaking")
 @click.argument("target", required=False, default="HEAD~1")
 @click.pass_context
@@ -314,9 +358,20 @@ def breaking(ctx, target):
     use ``api-changes``. This command provides a simpler binary signal:
     removed, signature-changed, or renamed exports.
     """
+    if target == "":
+        raise click.BadParameter("Git ref or range cannot be empty", param_hint="TARGET")
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()
+
+    # The default target HEAD~1 does not exist when HEAD is the first commit. The
+    # last commit is then the only earlier API, so compare against it and say so;
+    # a target the caller named is never replaced.
+    baseline_extra: dict = {}
+    if ctx.get_parameter_source("target") == ParameterSource.DEFAULT and _head_is_root_commit(root):
+        target = "HEAD"
+        baseline_extra = {"baseline_state": "root_commit"}
+    first_commit_note = " (HEAD is the first commit)" if baseline_extra else ""
 
     # 1. Find changed files
     git_details: list[str] = []
@@ -362,7 +417,7 @@ def breaking(ctx, target):
                     json_envelope(
                         "breaking",
                         summary={
-                            "verdict": f"no breaking changes vs {target}",
+                            "verdict": f"no breaking changes vs {target}{first_commit_note}",
                             "removed": 0,
                             "signature_changed": 0,
                             "renamed": 0,
@@ -370,6 +425,7 @@ def breaking(ctx, target):
                             # aggregators can detect no-diff degradation.
                             "state": "no_changes",
                             "partial_success": False,
+                            **baseline_extra,
                         },
                         target=target,
                         removed=[],
@@ -379,48 +435,26 @@ def breaking(ctx, target):
                 )
             )
         else:
-            click.echo(f"VERDICT: no breaking changes vs {target}")
+            click.echo(f"VERDICT: no breaking changes vs {target}{first_commit_note}")
             click.echo()
             click.echo(f"No changed files vs {target}.")
         return
 
-    all_removed: list[dict] = []
-    all_sig_changed: list[dict] = []
-    all_renamed: list[dict] = []
-
     try:
         base_ref = git_comparison_base(root, target)
+        head_ref = None
+        if ".." in target:
+            head_ref = target.split("..." if "..." in target else "..", 1)[1] or "HEAD"
         with open_db(readonly=True) as conn:
-            for fpath in changed:
-                # Get old file content from the ref
-                old_source = _git_show(root, base_ref, fpath, strict=True)
-                if old_source is None:
-                    # File didn't exist at ref — it's new, no breaking changes
-                    continue
-
-                old_symbols = _extract_old_symbols(old_source, fpath)
-                if not old_symbols:
-                    continue
-
-                if ".." in target:
-                    head_ref = target.split("..." if "..." in target else "..", 1)[1] or "HEAD"
-                    new_source = _git_show(root, head_ref, fpath, strict=True)
-                    new_symbols = _extract_old_symbols(new_source, fpath) if new_source is not None else []
-                else:
-                    new_symbols = _get_current_symbols(conn, fpath)
-
-                removed, sig_changed, renamed = _compare_file(
-                    fpath,
-                    old_symbols,
-                    new_symbols,
-                )
-                all_removed.extend(removed)
-                all_sig_changed.extend(sig_changed)
-                all_renamed.extend(renamed)
-
+            evidence = collect_breaking_changes(conn, root, changed, base_ref, head_ref)
     except GitComparisonError as exc:
         emit_git_failure(exc.kind, exc.detail)
         return
+
+    all_removed = evidence["removed"]
+    all_sig_changed = evidence["signature_changed"]
+    all_renamed = evidence["renamed"]
+    skipped = evidence.get("files_not_analyzed", [])
 
     # Sort for stable output
     all_removed.sort(key=lambda r: (r["file"], r.get("line") or 0))
@@ -430,7 +464,7 @@ def breaking(ctx, target):
     total = len(all_removed) + len(all_sig_changed) + len(all_renamed)
 
     if total == 0:
-        _breaking_verdict = f"no breaking changes vs {target}"
+        _breaking_verdict = f"no breaking changes vs {target}{first_commit_note}"
     else:
         _parts = []
         if all_removed:
@@ -439,7 +473,10 @@ def breaking(ctx, target):
             _parts.append(f"{len(all_sig_changed)} sig changes")
         if all_renamed:
             _parts.append(f"{len(all_renamed)} renames")
-        _breaking_verdict = f"{total} breaking changes vs {target}: {', '.join(_parts)}"
+        _breaking_verdict = f"{total} breaking changes vs {target}{first_commit_note}: {', '.join(_parts)}"
+
+    if skipped:
+        _breaking_verdict += f" ({len(skipped)} submodule path(s) skipped)"
 
     if json_mode:
         click.echo(
@@ -448,15 +485,18 @@ def breaking(ctx, target):
                     "breaking",
                     summary={
                         "verdict": _breaking_verdict,
+                        **({"partial_success": True} if skipped else {}),
                         "removed": len(all_removed),
                         "signature_changed": len(all_sig_changed),
                         "renamed": len(all_renamed),
                         "total": total,
+                        **baseline_extra,
                     },
                     target=target,
                     removed=all_removed,
                     signature_changed=all_sig_changed,
                     renamed=all_renamed,
+                    **({"files_not_analyzed": skipped} if skipped else {}),
                 )
             )
         )
@@ -465,6 +505,8 @@ def breaking(ctx, target):
     # --- Text output ---
     click.echo(f"VERDICT: {_breaking_verdict}")
     click.echo()
+    for entry in skipped:
+        click.echo(f"Skipped {entry['file']} (submodule pointer).")
     if total == 0:
         click.echo(f"No breaking changes vs {target}.")
         return

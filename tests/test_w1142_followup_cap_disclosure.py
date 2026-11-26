@@ -38,10 +38,14 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from tests.conftest import make_src_project as _make_project
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # Shared verdict suffix - the canonical phrase mirrored across 4 commands.
 _TRUNCATION_PHRASE_TAIL = "pass --limit larger to see more"

@@ -46,7 +46,7 @@ W978 first-hypothesis discipline (re-run BEFORE writing any test)
 
    * **`subject.name`** divergence by design:
      * CGA: ``project_root`` path string (e.g.
-       ``D:/Safe/tmp/proj``) OR sanitised remote URL.
+       ``/home/user/proj``) OR sanitised remote URL.
      * VSA: ``git+{repo_id}@{sha}`` URI OR ``urn:roam:evidence:<id>``
        fallback.
 

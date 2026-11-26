@@ -8,6 +8,9 @@ import pytest
 
 from tests import test_critique as fixtures
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 critique_project = fixtures.critique_project
 
 

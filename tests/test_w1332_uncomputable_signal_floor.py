@@ -45,6 +45,9 @@ import pytest
 
 from tests.conftest import index_in_process, invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # 1. tenant-scope guard config — "unreadable" must not read as "disabled".
 # ---------------------------------------------------------------------------

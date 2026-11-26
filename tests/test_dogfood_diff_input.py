@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 from tests.test_dogfood import tiny_indexed  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def test_dogfood_forwards_explicit_input_without_losing_rules(tmp_path, monkeypatch):

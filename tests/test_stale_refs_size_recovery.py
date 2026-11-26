@@ -11,6 +11,8 @@ from roam.cli import cli
 from roam.commands import cmd_stale_refs as mod
 from roam.index.discovery import MAX_FILE_SIZE, SKIP_OVERSIZED, discover_files_with_skips
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def large_reference_project(tmp_path, monkeypatch):

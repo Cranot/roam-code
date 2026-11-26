@@ -20,6 +20,8 @@ from roam.commands.cmd_duplicates import duplicates
 from roam.db.connection import open_db
 from tests.conftest import git_init, index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _populate_duplicate_candidates(
     db_path: Path,

@@ -79,8 +79,26 @@ from roam.commands.pr_analyze.cache import (
     _save_cache,
 )
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, index_cache_identity
+from roam.db.freshness import (
+    IndexCompositeRunner,
+    StaleQueryIndexError,
+    can_reuse_index_result,
+    check_query_index_policy,
+    project_index_freshness,
+    strongest_index_metadata,
+    valid_index_freshness_metadata,
+)
+from roam.exit_codes import EXIT_ERROR
 from roam.observability import log_swallowed
-from roam.output.formatter import ENVELOPE_SCHEMA_VERSION, echo_text_warnings, json_envelope, to_json
+from roam.output.errors import mark_index_stale_refusal
+from roam.output.formatter import (
+    ENVELOPE_SCHEMA_VERSION,
+    echo_text_warnings,
+    json_envelope,
+    stamp_query_index_freshness,
+    to_json,
+)
 from roam.output.risk import normalize_risk_level, risk_rank
 from roam.runs.helpers import auto_log
 
@@ -226,10 +244,12 @@ def _capture_suggest_reviewers(file_paths: list[str], top: int) -> dict:
     if not file_paths:
         return {"summary": {"verdict": "no files in diff"}}
     from roam.cli import cli
+    from roam.git_utils import advisory_history_depth
 
-    runner = CliRunner()
+    runner = IndexCompositeRunner()
     args = ["--json", "suggest-reviewers", "--top", str(top), *file_paths]
-    result = runner.invoke(cli, args)
+    with advisory_history_depth():
+        result = runner.invoke(cli, args)
     try:
         return _json.loads(result.output)
     except Exception as exc:  # noqa: BLE001 — defensive
@@ -294,7 +314,7 @@ def _capture_pr_prep(
     """
     from roam.cli import cli
 
-    runner = CliRunner()
+    runner = IndexCompositeRunner()
     args = ["--json", "pr-prep"]
     tmp_path: str | None = None
     try:
@@ -1509,6 +1529,16 @@ def _determine_verdict(
 # coordinator's cognitive complexity below the project's 99-cc gate.
 
 
+def _cached_analysis_children(payload: dict):
+    """Yield nested analysis envelopes that recorded index freshness."""
+    for child in payload.values():
+        if isinstance(child, dict) and "_meta" in child:
+            meta = child["_meta"]
+            if not isinstance(meta, dict) or {"index_state", "index_changed_files", "stale_index"} & meta.keys():
+                yield child
+            yield from _cached_analysis_children(child)
+
+
 def _serve_from_cache(
     diff_text: str,
     rules_path: Path,
@@ -1520,6 +1550,7 @@ def _serve_from_cache(
     quiet: bool,
     gate: bool,
     token_budget: int = 0,
+    index_identity: tuple | None = None,
 ) -> bool:
     """Try the envelope cache. On hit emit the cached output and return True.
 
@@ -1527,10 +1558,38 @@ def _serve_from_cache(
     pipeline. Top-level ``cache_hit`` + ``cache_key`` keys survive the
     json_envelope() ``_meta`` rebuild.
     """
-    key = _cache_key(diff_text, rules_path, block_threshold, language_override)
+    key = _cache_key(diff_text, rules_path, block_threshold, language_override, index_identity=index_identity)
     cached = _load_cache(cache_dir_path, key)
     if cached is None:
         return False
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None:
+        meta = cached.get("_meta")
+        summary = cached.get("summary")
+        if not (
+            valid_index_freshness_metadata(meta)
+            and isinstance(summary, dict)
+            and isinstance(summary.get("verdict"), str)
+            and summary["verdict"] in VERDICT_CODES
+        ):
+            return False
+        root = find_project_root()
+        if index_identity is None or index_identity != index_cache_identity(root):
+            return False
+        freshness = project_index_freshness(root, required=True)
+        if freshness is None or index_identity != index_cache_identity(root):
+            return False
+        if not can_reuse_index_result(meta, freshness):
+            return False
+        children = list(_cached_analysis_children(cached))
+        if any(
+            not can_reuse_index_result(child["_meta"], freshness) or not isinstance(child.get("summary"), dict)
+            for child in children
+        ):
+            return False
+        check_query_index_policy(ctx, freshness, warn=True)
+        for child in children:
+            stamp_query_index_freshness(child, freshness)
     cached["cache_hit"] = True
     cached["cache_key"] = key
     s = cached.get("summary") or {}
@@ -1636,7 +1695,8 @@ def _run_watch_loop(
                 if diff_from_pr:
                     args.extend(["--diff-from-pr", diff_from_pr])
                 result = runner.invoke(cli, args, catch_exceptions=False)
-                click.echo(result.output)
+                click.echo(result.stdout, nl=False)
+                click.echo(result.stderr, err=True, nl=False)
                 last_hash = cur_hash
             time.sleep(watch_seconds)
     except KeyboardInterrupt:
@@ -1768,12 +1828,18 @@ def _process_single_diff(
     result = runner.invoke(cli, args)
     row: dict = {"file": Path(diff_path).name}
     try:
-        env = _json.loads(result.output)
+        env = _json.loads(result.stdout)
         s = env.get("summary") or {}
         row["verdict"] = s.get("verdict")
         row["blast_radius"] = s.get("blast_radius")
         row["ai_likelihood"] = s.get("ai_likelihood")
         row["rule_violations"] = s.get("rule_violations")
+        if "_meta" in env and "index_state" in env["_meta"]:
+            row["_meta"], _ = strongest_index_metadata([env])
+        if env.get("error_code") == "INDEX_STALE":
+            row["error_code"] = env["error_code"]
+            row["error"] = env["error"]
+            mark_index_stale_refusal(row)
         # Surface cache hit in the row so batch summary can compute hit-rate.
         row["cache_hit"] = bool(env.get("cache_hit"))
     except Exception as exc:  # noqa: BLE001 — defensive
@@ -1934,18 +2000,44 @@ def _emit_batch(
             "cache_hits": cache_hits,
             "cache_hit_rate": round(cache_hits / len(per_file), 3) if per_file else 0,
         }
+    freshness_meta, degraded = strongest_index_metadata(per_file)
+    stale_refusal = next((row for row in per_file if row.get("error_code") == "INDEX_STALE"), None)
+    if degraded:
+        summary["partial_success"] = True
+    if stale_refusal:
+        summary.update(
+            verdict="Run `roam index` to refresh the stale index",
+            state="stale_index",
+            worst_verdict=None,
+            partial_success=True,
+        )
     bundle = {"summary": summary, "files": per_file}
+    if stale_refusal:
+        bundle.update(
+            error_code="INDEX_STALE", status="stale_index", error=stale_refusal["error"], next_command="roam index"
+        )
 
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     pr_analyze_batch_envelope = json_envelope("pr-analyze", budget=token_budget, **bundle)
+    pr_analyze_batch_envelope.setdefault("_meta", {}).update(freshness_meta)
     auto_log(pr_analyze_batch_envelope, action="pr-analyze", target=str(base))
     if stream_jsonl:
         # Per-file rows already emitted line-by-line above; finish with the
         # summary as the last JSONL line so consumers can detect end-of-stream.
-        click.echo(_json.dumps({"_summary": summary}, separators=(",", ":")))
+        terminal = {"_summary": summary}
+        if freshness_meta:
+            terminal["_meta"] = freshness_meta
+        if stale_refusal:
+            terminal["error_code"] = "INDEX_STALE"
+            mark_index_stale_refusal(terminal)
+        click.echo(_json.dumps(terminal, separators=(",", ":")))
     elif json_mode:
         click.echo(to_json(pr_analyze_batch_envelope))
     else:
+        if degraded and not os.environ.get("ROAM_NO_STALENESS_HINT"):
+            hint = (freshness_meta.get("index_status") or {}).get("hint")
+            if hint:
+                click.echo(f"Warning: {hint}", err=True)
         click.echo(f"VERDICT: {summary['verdict']}")
         click.echo(f"  files processed: {len(per_file)}")
         click.echo(f"  counts: {verdict_counts}")
@@ -1965,6 +2057,8 @@ def _emit_batch(
             else:
                 click.echo(f"{row['file']:<40}  {str(v):<12}  {str(b):>5}  {str(a):>5}  {str(r):>5}")
 
+    if stale_refusal:
+        sys.exit(EXIT_ERROR)
     if gate and worst_verdict == "BLOCK":
         sys.exit(EXIT_GATE_BLOCK)
 
@@ -2213,6 +2307,8 @@ def pr_analyze_command(
         """
         try:
             return fn(*args, **kwargs)
+        except StaleQueryIndexError:
+            raise
         except Exception as exc:  # noqa: BLE001 -- top-level disclosure
             _w607aa_warnings_out.append(f"pr_analyze_{phase}_failed:{type(exc).__name__}:{exc}")
             return default
@@ -2346,20 +2442,18 @@ def pr_analyze_command(
     # Cache lookup — bypasses pr-prep (the slow part) on hit.
     cache_dir_path = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
     rules_path = Path(rules_file) if rules_file else (Path(".roam") / "rules.yml")
-    if (
-        cache
-        and not _diff_fetch_errors
-        and _serve_from_cache(
-            diff_text,
-            rules_path,
-            block_threshold,
-            language_override,
-            cache_dir_path,
-            json_mode=json_mode,
-            quiet=quiet,
-            gate=gate,
-            token_budget=token_budget,
-        )
+    index_identity = index_cache_identity() if cache and not _diff_fetch_errors else None
+    if index_identity is not None and _serve_from_cache(
+        diff_text,
+        rules_path,
+        block_threshold,
+        language_override,
+        cache_dir_path,
+        json_mode=json_mode,
+        quiet=quiet,
+        gate=gate,
+        token_budget=token_budget,
+        index_identity=index_identity,
     ):
         return
 
@@ -2572,13 +2666,20 @@ def pr_analyze_command(
         except OSError as exc:
             bundle["baseline_save_error"] = str(exc)
 
-    if cache and not _diff_fetch_errors:
-        # Persist the analysis envelope so future runs with the same diff +
-        # rules + threshold replay instantly. Save AFTER all post-processing
-        # (drift + baseline) so the cached envelope is the final canonical one.
-        cache_save_key = _cache_key(diff_text, rules_path, block_threshold, language_override)
-        _save_cache(cache_dir_path, cache_save_key, bundle)
-        bundle.setdefault("_meta", {})["cache_saved_to"] = str(_cache_path(cache_dir_path, cache_save_key))
+    if index_identity is not None:
+        root = find_project_root()
+        freshness = project_index_freshness(root, required=True)
+        if freshness is not None and index_identity == index_cache_identity(root):
+            cache_save_key = _cache_key(
+                diff_text, rules_path, block_threshold, language_override, index_identity=index_identity
+            )
+            bundle["_meta"] = {
+                "index_state": freshness.state,
+                "index_changed_files": freshness.changed_files,
+                "index_state_reason": freshness.reason,
+            }
+            _save_cache(cache_dir_path, cache_save_key, bundle)
+            bundle["_meta"]["cache_saved_to"] = str(_cache_path(cache_dir_path, cache_save_key))
 
     if audit_trail:
         trail_path = Path(audit_trail_path) if audit_trail_path else DEFAULT_AUDIT_TRAIL_PATH

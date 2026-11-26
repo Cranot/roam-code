@@ -1102,6 +1102,19 @@ _SCHEMA_PREFLIGHT = {
                 "total": {"type": "integer", "minimum": 0},
                 "test_files": {"type": "array", "items": {"type": "string"}},
                 "pytest_command": {"type": ["string", "null"]},
+                "test_commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["runner", "command", "shell", "files"],
+                        "properties": {
+                            "runner": {"type": "string"},
+                            "command": {"type": "string"},
+                            "shell": {"type": "string"},
+                            "files": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
                 "severity": {"type": "string"},
             },
         },
@@ -3785,6 +3798,19 @@ def _maybe_handle_off(payload: dict, *, tool_name: str = "") -> dict:
 
     preview = _build_handle_preview(payload)
     result = _build_handle_envelope(sha=sha, size=size, target=target, tool_name=tool_name, preview=preview)
+    meta = payload.get("_meta")
+    if isinstance(meta, dict) and meta.get("index_state") in ("fresh", "stale", "unknown"):
+        result["_meta"] = {
+            key: meta[key]
+            for key in (
+                "index_state",
+                "index_changed_files",
+                "index_state_reason",
+                "stale_index",
+                "git_history_relation",
+            )
+            if key in meta
+        }
     if gc_warning:
         result["summary"]["partial_success"] = True
         result["summary"]["verdict"] += "; handle cleanup status unknown"
@@ -6156,17 +6182,18 @@ def _ensure_fresh_index(root: str = ".") -> dict | None:
 
 # 12.15 — in-process result cache for read-only MCP tool calls. The MCP
 # server is long-running; an agent doing five consecutive
-# ``roam_preflight`` / ``roam_context`` / ``roam_impact`` calls on the
+# ``roam_context`` / ``roam_impact`` calls on the
 # same symbol within a session pays the full DB+graph cost every time.
-# A small TTL cache keyed on (cmd, args-tuple, index-mtime) returns the
-# same envelope when the index hasn't changed — typical hit window for
-# an agent reasoning about one symbol is 30–120 seconds, well under
-# the 300s TTL.
-_ROAM_RESULT_CACHE: dict[tuple, tuple[float, float, dict]] = {}
+# Reuse query results while the same index is available. The working tree
+# observation has a shorter lifetime than the query result.
+_ROAM_RESULT_CACHE: dict[tuple, tuple[float, tuple, dict, float]] = {}
 _ROAM_CACHE_TTL_S = 300.0
+_FRESHNESS_CACHE_TTL_S = 3.0
 # Read-only commands eligible for caching. Adding a write-y command
 # here would violate the "fresh after mutation" invariant; never list
 # ``init``, ``index``, ``mutate``, ``annotate``, ``ingest-trace``, etc.
+# Preflight and affected-tests also read live source and report the outcome
+# of each dispatch-sidecar lookup, which a cached envelope would hide.
 _CACHEABLE_COMMANDS = frozenset(
     {
         "search",
@@ -6174,7 +6201,6 @@ _CACHEABLE_COMMANDS = frozenset(
         "impact",
         "uses",
         "refs",
-        "preflight",
         "tour",
         "understand",
         "onboard",
@@ -6200,106 +6226,22 @@ _CACHEABLE_COMMANDS = frozenset(
         "weather",
         "churn",
         "hotspots",
-        "doctor",
         "map",
     }
 )
 
 
-def _index_mtime() -> float:
-    """Return current index DB mtime (cache invalidation key)."""
-    try:
-        from roam.db.connection import get_db_path
+def _cache_index_identity() -> tuple | None:
+    from roam.db.connection import index_cache_identity
 
-        p = get_db_path()
-        if p and p.exists():
-            return p.stat().st_mtime
-    except Exception as exc:  # noqa: BLE001 — cache-key probe must never break a tool call
-        # DB path unresolvable / stat failed — fall back to 0.0 (treats the
-        # cache as cold). Surface under ROAM_VERBOSE so a recurring stat
-        # failure doesn't silently disable mtime-based cache invalidation.
-        log_swallowed("mcp_server:index_mtime", exc)
-    return 0.0
+    return index_cache_identity()
 
 
-# Tool names whose response should NOT be decorated with the stale-index
-# banner — running these is the recovery path, so saying "INDEX STALE"
-# in the response would be both noisy and confusing.
-_STALE_BANNER_SKIP = frozenset({"index", "init", "reindex", "doctor", "watch"})
+def _track_query_result(result: dict) -> dict:
+    from roam.output.errors import mark_index_stale_refusal
 
-_STALE_CHECK_CACHE: dict[str, tuple[float, bool, str | None]] = {}
-_STALE_CHECK_TTL_S = 30.0
-
-
-def _check_stale_with_cache() -> tuple[bool, str | None]:
-    """Cached wrapper around ``stale_index.check_stale`` for the MCP path.
-
-    Per audit E5: every read-only MCP tool should surface a stale-index
-    affordance — the agent shouldn't search a renamed symbol, get
-    nothing, and conclude the symbol doesn't exist. The full check
-    stats the DB and reads the manifest, so we cache for 30 seconds
-    to keep batch tool calls fast.
-    """
-    now = _time.time()
-    cached = _STALE_CHECK_CACHE.get("default")
-    if cached is not None:
-        ts, is_stale, reason = cached
-        if (now - ts) < _STALE_CHECK_TTL_S:
-            return is_stale, reason
-    try:
-        from roam.commands.stale_index import check_stale
-
-        is_stale, reason = check_stale(sensitivity="medium")
-    except Exception as exc:  # noqa: BLE001 — stale-index probe must never break a tool call
-        # check_stale raised — assume not-stale rather than break the call.
-        # Surface under ROAM_VERBOSE: a silent failure here suppresses the
-        # stale-index banner agents rely on to avoid acting on a stale graph.
-        log_swallowed("mcp_server:check_stale_with_cache", exc)
-        is_stale, reason = False, None
-    _STALE_CHECK_CACHE["default"] = (now, is_stale, reason)
-    return is_stale, reason
-
-
-def _annotate_stale(result: dict, command: str, *, root: str = ".") -> dict:
-    """If the index is stale and *command* isn't a recovery tool,
-    prepend a banner to the verdict and stamp ``_meta.stale_index``.
-
-    Fix E (Sub-task 4): _annotate_stale runs on every envelope returned
-    by ``_run_roam`` — both inprocess and subprocess paths. Tick the
-    session-wide ``partial_success`` counter here so the
-    ``session_metrics`` envelope reflects ANY partial-success envelope,
-    not just errors.
-    """
+    mark_index_stale_refusal(result)
     _note_partial_success(result)
-    if root != ".":
-        # The subprocess already emits index_status for the requested root.
-        # The cached probe below examines this server's cwd, not that root:
-        # applying it here would mix project evidence and can create .roam
-        # in an unrelated directory. Preserve the scoped producer metadata.
-        return result
-    if command in _STALE_BANNER_SKIP:
-        return result
-    if not isinstance(result, dict):
-        return result
-    if result.get("isError") is True and result.get("error_code") in {"INDEX_NOT_FOUND", "INDEX_STALE"}:
-        # The index refusal is already actionable. A freshness probe here can
-        # create an absent store or open an incomplete SQLite generation.
-        return result
-    is_stale, reason = _check_stale_with_cache()
-    if not is_stale:
-        return result
-
-    summary = result.get("summary")
-    if isinstance(summary, dict):
-        verdict = summary.get("verdict") or ""
-        banner = "INDEX STALE — call roam_reindex first."
-        if banner not in verdict:
-            summary["verdict"] = f"{banner} {verdict}".strip()
-    meta = dict(result.get("_meta") or {})
-    meta["stale_index"] = True
-    if reason:
-        meta["stale_reason"] = reason
-    result["_meta"] = meta
     return result
 
 
@@ -6388,42 +6330,102 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
     Uses in-process Click invocation (fast, no subprocess overhead) when
     *root* is ``"."``.  Falls back to subprocess for non-local roots.
 
-    v12.15: caches read-only command results in-memory for 5 minutes
-    (TTL keyed on the index DB's mtime so any reindex invalidates the
-    cache automatically). Same call within the window returns the
-    same envelope without re-running the command.
-
-    v12.51: post-process responses with a stale-index banner so agents
-    don't search a renamed symbol, get nothing, and conclude the
-    symbol doesn't exist (audit E5).
+    Reuses read-only results from the same index for up to five minutes.
+    Rechecks worktree freshness when the observation expires.
     """
     if root != ".":
-        result = _run_roam_subprocess(args, root)
-        return _annotate_stale(result, args[0] if args else "", root=root)
+        return _track_query_result(_run_roam_subprocess(args, root))
+
+    from roam.db.freshness import refuse_stale_index, valid_index_freshness_metadata
 
     # Cache lookup — only for read-only commands.
-    if args and args[0] in _CACHEABLE_COMMANDS:
-        cache_key = tuple(args)
-        cached = _ROAM_RESULT_CACHE.get(cache_key)
+    if args and args[0] in _CACHEABLE_COMMANDS and not refuse_stale_index():
+        cache_key = (Path.cwd(), *args)
+        identity = _cache_index_identity()
+        cached = _ROAM_RESULT_CACHE.get(cache_key) if identity is not None else None
         if cached is not None:
-            ts, mt, payload = cached
-            now = _time.time()
-            if (now - ts) < _ROAM_CACHE_TTL_S and mt == _index_mtime():
-                # Stamp the envelope with a cache-hit marker so callers
-                # can observe the optimisation. Don't mutate the cached
-                # dict in case a future caller compares object identity.
-                if isinstance(payload, dict):
-                    out = dict(payload)
-                    meta = dict(out.get("_meta") or {})
-                    meta["cache_hit"] = True
-                    out["_meta"] = meta
-                    return _annotate_stale(out, args[0])
+            ts, cached_identity, payload, checked_at = cached
+            if (
+                cached_identity == identity
+                and (_time.time() - ts) < _ROAM_CACHE_TTL_S
+                and valid_index_freshness_metadata(payload.get("_meta"))
+            ):
+                now = _time.monotonic()
+                if (now - checked_at) < _FRESHNESS_CACHE_TTL_S:
+                    return _track_query_result({**payload, "_meta": dict(payload["_meta"], cache_hit=True)})
+                out = _refresh_cached_envelope(payload)
+                if out is not None and identity == _cache_index_identity():
+                    _ROAM_RESULT_CACHE[cache_key] = (ts, identity, out, now)
+                    return _track_query_result(out)
+        _ROAM_RESULT_CACHE.pop(cache_key, None)
+        checked_at = _time.monotonic()
         result = _run_roam_inprocess(args)
-        if isinstance(result, dict) and "error" not in result:
-            _ROAM_RESULT_CACHE[cache_key] = (_time.time(), _index_mtime(), result)
-        return _annotate_stale(result, args[0] if args else "")
-    result = _run_roam_inprocess(args)
-    return _annotate_stale(result, args[0] if args else "")
+        if (
+            identity is not None
+            and isinstance(result, dict)
+            and not result.get("isError")
+            and "error" not in result
+            and valid_index_freshness_metadata(result.get("_meta"))
+            and identity == _cache_index_identity()
+        ):
+            _ROAM_RESULT_CACHE[cache_key] = (_time.time(), identity, result, checked_at)
+        return _track_query_result(result)
+    return _track_query_result(_run_roam_inprocess(args))
+
+
+def _refresh_cached_envelope(payload: dict) -> dict | None:
+    """Refresh query metadata that can change without an index rebuild."""
+    import sqlite3
+
+    from roam.db.connection import StaleDbDirError, find_project_root, open_db
+    from roam.db.freshness import can_reuse_index_result, read_query_index_freshness
+    from roam.output.formatter import stamp_query_index_freshness
+
+    try:
+        root = find_project_root()
+        with open_db(readonly=True, project_root=root, disclose_freshness=False) as conn:
+            freshness = read_query_index_freshness(conn, root)
+    except (OSError, click.ClickException, StaleDbDirError, sqlite3.Error) as exc:
+        log_swallowed("mcp_server:refresh_cached_freshness", exc)
+        return None
+    if not can_reuse_index_result(payload.get("_meta"), freshness):
+        return None
+    meta = dict(payload["_meta"], cache_hit=True)
+    out = {**payload, "_meta": meta, "summary": dict(payload.get("summary") or {})}
+    stamp_query_index_freshness(out, freshness)
+    return out
+
+
+def _with_direct_index_freshness(fn):
+    """Attach the observation from the index the MCP tool actually read."""
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        from roam.db.freshness import capture_direct_index_reads, refuse_stale_index
+        from roam.output.errors import mark_index_stale_refusal
+        from roam.output.formatter import stamp_query_index_freshness
+
+        with capture_direct_index_reads() as observations:
+            out = fn(*args, **kwargs)
+        for freshness in observations.values():
+            if freshness.stale and refuse_stale_index():
+                out = _structured_error(
+                    {
+                        "command": out["command"],
+                        "error_code": "INDEX_STALE",
+                        "error": freshness.message(),
+                        "hint": "Run `roam index` to refresh.",
+                        "next_command": "roam index",
+                    }
+                )
+                stamp_query_index_freshness(out, freshness)
+                mark_index_stale_refusal(out)
+                break
+            stamp_query_index_freshness(out, freshness)
+        return out
+
+    return wrapped
 
 
 def _build_no_data_envelope(args: list[str]) -> dict:
@@ -6997,6 +6999,35 @@ def _score_prepare_change_recipe(sub_results: list[tuple[str, dict]]) -> str:
     return best if scores[best] > 0 else "safe-delete-check"
 
 
+def _disclose_compound_freshness(result: dict, sub_results: list[tuple[str, dict]]) -> None:
+    """Keep the strongest index observation accessible at the compound level."""
+    from roam.db.freshness import strongest_index_metadata
+    from roam.output.errors import mark_index_stale_refusal
+
+    children = [child for _, child in sub_results if isinstance(child, dict)]
+    meta, degraded = strongest_index_metadata(children)
+    if meta:
+        result.setdefault("_meta", {}).update(meta)
+    if degraded:
+        result["summary"]["partial_success"] = True
+    refusal = next((child for child in children if child.get("error_code") == "INDEX_STALE"), None)
+    if refusal is not None:
+        result.update(
+            isError=True,
+            error_code="INDEX_STALE",
+            status="stale_index",
+            error=refusal.get("error") or refusal.get("first_error_message") or "The index is stale.",
+            hint="Run `roam index` to refresh.",
+            next_command="roam index",
+        )
+        result["summary"].update(
+            partial_success=True,
+            state="stale_index",
+            verdict="Run `roam index` to refresh the stale index",
+        )
+        mark_index_stale_refusal(result)
+
+
 def _compound_envelope(
     command: str,
     sub_results: list[tuple[str, dict]],
@@ -7174,9 +7205,10 @@ def _compound_envelope(
         result["_errors"] = errors
 
     # Fix E (Sub-task 4) — compound envelopes don't all flow back
-    # through ``_run_roam`` / ``_annotate_stale``. Tick the session-wide
+    # through ``_run_roam``. Tick the session-wide
     # counter here too so the session_metrics envelope reflects partial
     # compound outcomes.
+    _disclose_compound_freshness(result, sub_results)
     _note_partial_success(result)
     return result
 
@@ -7594,6 +7626,7 @@ def _batch_get_payload(summary: dict, results: dict | None = None, errors: dict 
     description="Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls.",
     output_schema=_SCHEMA_BATCH_SEARCH,
 )
+@_with_direct_index_freshness
 def batch_search(
     queries: list,
     limit_per_query: int = 5,
@@ -7630,7 +7663,7 @@ def batch_search(
     import sqlite3
 
     from roam.commands.resolve import ensure_index
-    from roam.db.connection import StaleDbDirError, open_db
+    from roam.db.connection import StaleDbDirError, find_project_root, open_db
 
     queries_list: list[str] = [str(q) for q in (queries or [])][:_MAX_BATCH_QUERIES]
     limit = max(1, min(int(limit_per_query), 50))
@@ -7666,8 +7699,11 @@ def batch_search(
     # an offline DB still got an opaque @_tool error envelope from the index
     # probe instead of the documented batch-search fatal shape.
     try:
-        ensure_index()
-        conn_ctx = open_db(readonly=True)
+        if root == ".":
+            ensure_index()
+            conn_ctx = open_db(readonly=True)
+        else:
+            conn_ctx = open_db(readonly=True, project_root=find_project_root(root))
     except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
         # Expected DB/config boundary failures get a structured MCP payload;
         # programmer-class failures propagate instead of looking like no data.
@@ -7732,6 +7768,7 @@ def batch_search(
     description="Get details for up to 50 symbols in one call. Replaces 50 sequential roam_symbol calls.",
     output_schema=_SCHEMA_BATCH_GET,
 )
+@_with_direct_index_freshness
 def batch_get(symbols: list, root: str = ".") -> dict:
     """Batch symbol detail retrieval: fetch multiple symbol definitions in one MCP call.
 
@@ -7756,7 +7793,7 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     import sqlite3
 
     from roam.commands.resolve import ensure_index
-    from roam.db.connection import StaleDbDirError, open_db
+    from roam.db.connection import StaleDbDirError, find_project_root, open_db
 
     # Cap-as-census (finding #38): record the pre-cap request size BEFORE
     # the batch cap so ``symbols_requested`` reports what the caller asked
@@ -7783,8 +7820,11 @@ def batch_get(symbols: list, root: str = ".") -> dict:
     # ensure_index() joins that block for the reason given in batch_search:
     # it fails on the same boundaries and earns the same structured payload.
     try:
-        ensure_index()
-        conn_ctx = open_db(readonly=True)
+        if root == ".":
+            ensure_index()
+            conn_ctx = open_db(readonly=True)
+        else:
+            conn_ctx = open_db(readonly=True, project_root=find_project_root(root))
     except (click.ClickException, sqlite3.DatabaseError, OSError, StaleDbDirError) as exc:
         # Expected DB/config boundary failures get a structured MCP payload;
         # programmer-class failures propagate instead of looking like no data.
@@ -8999,6 +9039,25 @@ def _read_fetch_handle_payload(handle: str) -> tuple[str, object, dict | None]:
     return raw_text, payload, None
 
 
+def _disclose_handle_freshness(result: dict, payload: object, root: str) -> dict:
+    """Identify archived index evidence and disclose the current project's index separately."""
+    from roam.db.connection import find_project_root
+    from roam.db.freshness import project_index_freshness
+    from roam.output.formatter import stamp_query_index_freshness
+
+    if result.get("isError") or not isinstance(payload, dict):
+        return result
+    meta = payload.get("_meta")
+    has_observation = isinstance(meta, dict) and {"index_state", "index_changed_files", "stale_index"} & meta.keys()
+    if not has_observation and payload.get("command") != "doctor":
+        return result
+    result["summary"]["payload_scope"] = "historical"
+    if freshness := project_index_freshness(find_project_root(root), required=True):
+        stamp_query_index_freshness(result, freshness)
+        result["_meta"]["index_scope"] = "current_project"
+    return result
+
+
 @_tool(
     name="roam_fetch_handle",
     description="Fetch all or part of a large payload by handle — supports byte slice, section pick, jq projection.",
@@ -9017,6 +9076,8 @@ def fetch_handle(
     """Retrieve a large MCP response previously written to disk under a
     content-addressed handle. Supports chunked / projected retrieval so
     the agent never has to re-load the full 1MB+ payload in one shot.
+    Index evidence inside a handle describes the original call. The fetch
+    envelope reports the current project's index separately.
 
     WHEN TO USE: When a tool returned a small envelope with
     ``is_handle=true`` and a ``handle: "<sha16>"`` field, call this to
@@ -9067,9 +9128,8 @@ def fetch_handle(
     total_size = len(raw_bytes)
     top_keys: list[str] = sorted(payload.keys()) if isinstance(payload, dict) else []
 
-    # --- section pick ----------------------------------------------------
     if section:
-        return _fetch_handle_section(
+        result = _fetch_handle_section(
             handle=handle,
             payload=payload,
             section=section,
@@ -9077,9 +9137,8 @@ def fetch_handle(
             total_size=total_size,
         )
 
-    # --- jq projection ---------------------------------------------------
-    if jq:
-        return _fetch_handle_jq(
+    elif jq:
+        result = _fetch_handle_jq(
             handle=handle,
             payload=payload,
             jq=jq,
@@ -9087,15 +9146,16 @@ def fetch_handle(
             total_size=total_size,
         )
 
-    # --- byte slice (default) -------------------------------------------
-    return _fetch_handle_byte_slice(
-        handle=handle,
-        raw_bytes=raw_bytes,
-        offset=offset,
-        limit=limit,
-        top_keys=top_keys,
-        total_size=total_size,
-    )
+    else:
+        result = _fetch_handle_byte_slice(
+            handle=handle,
+            raw_bytes=raw_bytes,
+            offset=offset,
+            limit=limit,
+            top_keys=top_keys,
+            total_size=total_size,
+        )
+    return _disclose_handle_freshness(result, payload, root)
 
 
 # ---------------------------------------------------------------------------
@@ -9267,6 +9327,7 @@ def _finalize_compound_recipe(
                 "target": target,
             },
         }
+        _disclose_compound_freshness(envelope, sections)
     if warnings_out:
         summary = envelope.setdefault("summary", {})
         existing_summary_wo = list(summary.get("warnings_out") or [])
@@ -9837,6 +9898,7 @@ def search_symbol(query: str, root: str = ".") -> dict:
     name="roam_complete",
     description="Prefix completion for symbols / file paths / commands. Faster than search; returns just names.",
 )
+@_with_direct_index_freshness
 def complete_tool(prefix: str, kind: str = "symbol", limit: int = 30, root: str = ".") -> dict:
     """Autocomplete a partial symbol name, file path, or command.
 
@@ -9887,7 +9949,7 @@ def complete_tool(prefix: str, kind: str = "symbol", limit: int = 30, root: str 
             _prefix_symbols = None  # type: ignore[assignment]
         if _prefix_symbols is not None:
             try:
-                payload["symbols"] = _prefix_symbols(prefix, limit=limit_clamped)
+                payload["symbols"] = _prefix_symbols(prefix, limit=limit_clamped, root=root)
             except Exception as exc:  # noqa: BLE001 — completion degrades to empty list
                 # Prefix query raised (e.g. DB locked) — return [] rather than
                 # break the call. Surface under ROAM_VERBOSE so a recurring
@@ -10262,6 +10324,7 @@ def oracle_test_only_alias(symbol: str, root: str = ".") -> dict:
         "is-test-only, is-reachable-from-entry, is-clone-of."
     ),
 )
+@_with_direct_index_freshness
 def oracle_batch(items: list, root: str = ".") -> dict:
     """Batch multiple oracle queries.
 
@@ -12616,18 +12679,23 @@ if mcp is not None:
     @mcp.resource("roam://tech-stack")
     def get_tech_stack_resource() -> str:
         """Language and framework breakdown (JSON)."""
+        from roam.db.freshness import strongest_index_metadata
+
         data = _run_roam(["understand"])
-        # Extract just the tech stack portion
-        if isinstance(data, dict):
-            return json.dumps(
-                {
-                    "languages": data.get("languages", {}),
-                    "files": data.get("files", {}),
-                    "frameworks": data.get("frameworks", []),
-                },
-                indent=2,
-            )
-        return json.dumps(data, indent=2)
+        if not isinstance(data, dict) or data.get("isError") or "error" in data:
+            return json.dumps(data, indent=2)
+        result = {
+            "languages": data.get("languages", {}),
+            "files": data.get("files", {}),
+            "frameworks": data.get("frameworks", []),
+        }
+        meta, degraded = strongest_index_metadata([data])
+        if meta:
+            result["_meta"] = meta
+        summary = data.get("summary")
+        if degraded or isinstance(summary, dict) and "partial_success" in summary:
+            result["summary"] = {"partial_success": degraded or summary["partial_success"]}
+        return json.dumps(result, indent=2)
 
     @mcp.resource("roam://dead-code")
     def get_dead_code_resource() -> str:
@@ -20508,6 +20576,13 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         click.echo(f"\navailable presets: {', '.join(sorted(_PRESETS.keys()))}")
         return
 
+    if transport == "stdio":
+        # Before any child process starts: no child may inherit the protocol
+        # pipe (on Windows it blocks at startup while the transport reads).
+        from roam.mcp_extras.stdio_isolation import isolate_stdio_transport_stdin
+
+        isolate_stdio_transport_stdin()
+
     if not no_auto_index:
         sys.stderr.write("checking index freshness...\n")
         err = _ensure_fresh_index(".")
@@ -20539,6 +20614,24 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         except Exception as exc:
             sys.stderr.write(f"watcher not available: {exc}\n")
 
+    # FastMCP reads FASTMCP_CHECK_FOR_UPDATES when it creates its settings,
+    # before this command runs. Apply its documented "off" value to this
+    # server run only, preserving settings explicitly loaded by FastMCP.
+    try:
+        from fastmcp import settings as fastmcp_settings
+    except ImportError:
+        fastmcp_settings = None
+
+    update_check = getattr(fastmcp_settings, "check_for_updates", None)
+    requested_update_check = os.environ.get("FASTMCP_CHECK_FOR_UPDATES", "off")
+    change_update_check = (
+        update_check is not None
+        and "check_for_updates" not in fastmcp_settings.model_fields_set
+        and requested_update_check in ("off", "stable", "prerelease")
+        and requested_update_check != update_check
+    )
+    if change_update_check:
+        fastmcp_settings.check_for_updates = requested_update_check
     try:
         if transport == "stdio":
             mcp.run()
@@ -20551,6 +20644,9 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
                 # Older FastMCP versions may use "http" alias.
                 mcp.run(transport="http", host=host, port=port)
     finally:
+        if change_update_check:
+            fastmcp_settings.check_for_updates = update_check
+            fastmcp_settings.model_fields_set.discard("check_for_updates")
         if watch_handle is not None:
             try:
                 watch_handle.stop()
@@ -21000,4 +21096,7 @@ _TASK_OPTIONAL_TOOLS = frozenset(name for name, meta in _TOOL_METADATA.items() i
 if __name__ == "__main__":
     if mcp is None:
         raise SystemExit(_fastmcp_unavailable_message())
+    from roam.mcp_extras.stdio_isolation import isolate_stdio_transport_stdin
+
+    isolate_stdio_transport_stdin()
     mcp.run()

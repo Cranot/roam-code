@@ -72,6 +72,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from tests.conftest import git_init, record_test_index_manifest
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -91,6 +96,8 @@ def _build_closure_project(tmp_path: Path) -> Path:
     .roam DB rooted at tmp_path AND find_symbol() to resolve a symbol
     by name.
     """
+    (tmp_path / ".gitignore").write_text(".roam/\n")
+    git_init(tmp_path)
     db_path = tmp_path / ".roam" / "index.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
@@ -156,6 +163,7 @@ def _build_closure_project(tmp_path: Path) -> Path:
         "(2, 2, 'bar', 'src.b.bar', 'function', 1, 2, 'public', 1)"
     )
     conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (2, 1, 'calls')")
+    record_test_index_manifest(conn, tmp_path)
     conn.commit()
     conn.close()
     return tmp_path

@@ -13,6 +13,9 @@ import pytest
 
 from tests.conftest import git_init, index_in_process, invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 NO_INPUT = "no input: 0 route/controller files indexed (detector ran but had no input to analyze)"
 
 

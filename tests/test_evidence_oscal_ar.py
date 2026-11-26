@@ -60,6 +60,9 @@ from roam.evidence.oscal import (
 )
 from tests._helpers.repo_root import repo_root
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

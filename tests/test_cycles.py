@@ -9,8 +9,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (  # noqa: E402
+    git_init,
     index_in_process,
     invoke_cli,
     parse_json_output,
@@ -67,9 +73,9 @@ def test_cycles_finds_cross_file_cycle(cli_runner, tmp_path, monkeypatch):
 def _build_cycle_project(tmp_path):
     proj = tmp_path / "cyc_budget"
     proj.mkdir()
-    (proj / ".git").mkdir()
     (proj / "a.py").write_text("from b import foo\n\n\ndef bar():\n    return foo()\n")
     (proj / "b.py").write_text("from a import bar\n\n\ndef foo():\n    return bar()\n")
+    git_init(proj)
     return proj
 
 
@@ -120,6 +126,7 @@ class TestCyclesSurvivesTokenBudget:
         """Sanity anchor: a normal-sized envelope must NOT be flipped to
         partial_success=True just because the fix exists -- only a genuine
         truncation event should raise it."""
+        monkeypatch.setenv("ROAM_INDEX_FRESHNESS_BUDGET_S", "30")
         proj = _build_cycle_project(tmp_path)
         monkeypatch.chdir(proj)
         out, rc = index_in_process(proj, "--force")

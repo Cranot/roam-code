@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib
 import json
 import logging
@@ -12,6 +13,7 @@ import sqlite3
 import stat
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,18 +36,51 @@ from roam.index.discovery import discover_files
 # import gives the dead-export detector a real production edge.
 from roam.index.django_post import resolve_all_django  # noqa: F401
 from roam.index.file_roles import classify_file
-from roam.index.incremental import file_hash, get_index_changed_files
+from roam.index.incremental import get_index_changed_files
+from roam.index.manifest import GitSnapshot, capture_git_snapshot, record_indexer_run
 from roam.index.parser import (
+    active_parse_issues,
     detect_language,
     extract_vue_template,
+    get_parse_error_summary,
     parse_file,
     read_source,
+    record_parse_issue,
     scan_template_references,
 )
 from roam.index.relations import build_file_edges, resolve_references
 from roam.index.symbols import extract_references, extract_symbols
 from roam.languages.generic_lang import GenericExtractor
 from roam.observability import log_swallowed
+
+
+@dataclass(frozen=True)
+class _SourceSnapshot:
+    data: bytes
+    stat: os.stat_result
+
+    @classmethod
+    def read(cls, path: Path) -> _SourceSnapshot:
+        before = path.stat()
+        with path.open("rb") as source:
+            return cls(source.read(), before)
+
+    def stable_mtime(self, path: Path) -> float | None:
+        """Return the captured mtime if the path still matches the read."""
+        try:
+            after = path.stat()
+        except OSError:
+            return None
+        before = self.stat
+        if (
+            after.st_mtime_ns == before.st_mtime_ns
+            and after.st_ctime_ns == before.st_ctime_ns
+            and after.st_size == before.st_size == len(self.data)
+            and after.st_ino == before.st_ino
+            and after.st_dev == before.st_dev
+        ):
+            return before.st_mtime
+        return None
 
 
 def _format_count(n: int) -> str:
@@ -718,8 +753,8 @@ def _semantic_activation_advice(conn, project_root: Path) -> str | None:
     if zeta <= 0 or coverage["ready"] or int(coverage["symbols"]) <= 0:
         return None
     return (
-        f"Semantic retrieve: {coverage['embeddings']}/{coverage['symbols']} dense vectors; "
-        f"zeta={zeta:g} is inert until semantic backend vectors are populated."
+        f"Search by meaning is unavailable ({coverage['embeddings']} of "
+        f"{coverage['symbols']} symbols have search data). Text search is available."
     )
 
 
@@ -1783,6 +1818,7 @@ class Indexer:
         self._quiet = False
         self._progress_bar = True
         self.summary: dict | None = None
+        self._parse_issue_paths: dict[Path, str] = {}
         self._phase5_cache = _Phase5SourceCache()
 
     def _log(self, msg: str):
@@ -1824,6 +1860,7 @@ class Indexer:
         from roam.index.parser import reset_parse_errors
 
         reset_parse_errors()
+        self._parse_issue_paths.clear()
 
         global _quiet_mode
         self._quiet = quiet
@@ -1846,6 +1883,7 @@ class Indexer:
                 "Interrupted index ownership was recovered; running a full forced rebuild "
                 f"before completion ({claim.recovery_reason})."
             )
+        parse_issue_token = active_parse_issues.set(self._parse_issue_paths)
         try:
             # Publish the lifecycle marker before the first database mutation.
             # A killed process leaves ``in_progress`` behind, allowing every
@@ -1886,6 +1924,7 @@ class Indexer:
             self._log("Indexing interrupted. Lock released; rerun `roam index` to resume.")
             raise
         finally:
+            active_parse_issues.reset(parse_issue_token)
             _quiet_mode = False
             _release_index_lock(claim)
 
@@ -1935,43 +1974,41 @@ class Indexer:
                 if verbose:
                     self._log(f"  Warning: generic extractor failed for {rel_path}: {e}")
 
-    def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> bytes | None:
+    def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> _SourceSnapshot | None:
         # Prefetched cache hit (parallel I/O prefetch).
         cache = getattr(self, "_source_cache", None)
         if cache is not None and rel_path in cache:
             return cache.pop(rel_path)
         try:
-            with open(full_path, "rb") as f:
-                return f.read()
+            return _SourceSnapshot.read(full_path)
         except OSError as e:
             if verbose:
                 self._log(f"  Warning: Could not read {rel_path}: {e}")
             return None
 
     def _prefetch_sources(self, files_to_process, verbose: bool) -> None:
-        """Pre-read source bytes into memory in parallel.
+        """Pre-read source bytes and their metadata into memory in parallel.
 
         On-by-default since W404 (W396 in the perf memo); opt-OUT via
         ``ROAM_PARALLEL_INDEX=0`` (or ``false``/``no``). File I/O dominates
         on cold caches (network drives, OneDrive, etc.). A thread pool
         eliminates that wait without touching the (serial) DB write path.
-        Bytes are stored on ``self._source_cache`` and consumed by
+        Snapshots are stored on ``self._source_cache`` and consumed by
         ``_read_index_source`` so the rest of the pipeline is unchanged.
         """
         if os.environ.get("ROAM_PARALLEL_INDEX", "1").strip().lower() in {"0", "false", "no"}:
             return
         from concurrent.futures import ThreadPoolExecutor
 
-        def _read(rel_path: str) -> tuple[str, bytes | None]:
+        def _read(rel_path: str) -> tuple[str, _SourceSnapshot | None]:
             full_path = self.root / rel_path
             try:
-                with open(full_path, "rb") as f:
-                    return rel_path, f.read()
+                return rel_path, _SourceSnapshot.read(full_path)
             except OSError:
                 return rel_path, None
 
         max_workers = min(32, (os.cpu_count() or 4) * 2)
-        cache: dict[str, bytes] = {}
+        cache: dict[str, _SourceSnapshot] = {}
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             for rel_path, data in ex.map(_read, list(files_to_process)):
                 if data is not None:
@@ -1981,15 +2018,11 @@ class Indexer:
             self._log(f"  Prefetched {len(cache)} source files in parallel")
 
     def _insert_file_record(
-        self, conn, full_path: Path, rel_path: str, language: str | None, source: bytes
+        self, conn, rel_path: str, language: str | None, source: bytes, mtime: float | None
     ) -> int | None:
         line_count = _count_lines(source)
         complexity = _compute_complexity(source)
-        try:
-            mtime = full_path.stat().st_mtime
-        except OSError:
-            mtime = None
-        fhash = file_hash(full_path)
+        fhash = hashlib.sha256(source).hexdigest()
         content_head = source[:2048].decode("utf-8", errors="replace") if source else None
         file_role = classify_file(rel_path, content_head)
 
@@ -2042,15 +2075,18 @@ class Indexer:
     ) -> int | None:
         full_path = self.root / rel_path
         language = detect_language(rel_path)
-        source = self._read_index_source(full_path, rel_path, verbose)
-        if source is None:
+        snapshot = self._read_index_source(full_path, rel_path, verbose)
+        if snapshot is None:
+            if language is not None:
+                record_parse_issue(full_path, "unreadable")
             return None
 
-        file_id = self._insert_file_record(conn, full_path, rel_path, language, source)
+        source = snapshot.data
+        file_id = self._insert_file_record(conn, rel_path, language, source, snapshot.stable_mtime(full_path))
         if file_id is None:
             return None
 
-        tree, parsed_source, lang = parse_file(full_path, language)
+        tree, parsed_source, lang = parse_file(full_path, language, source=source)
         if tree is None and parsed_source is None:
             return file_id
 
@@ -2800,14 +2836,30 @@ class Indexer:
         except Exception as e:
             self._log(f"  Search index build failed (non-fatal): {e}")
 
-    def _log_parse_issues(self) -> None:
-        from roam.index.parser import get_parse_error_summary
+    def parse_issue_details(self, *, verbose: bool = False) -> dict:
+        """Return this run's affected paths and the command for a full recheck."""
+        if not self._parse_issue_paths:
+            return {}
+        files = sorted(
+            path.relative_to(self.root).as_posix() if path.is_relative_to(self.root) else path.as_posix()
+            for path in self._parse_issue_paths
+        )
+        shown = files if verbose else files[:5]
+        return {"files": shown, "more": len(files) - len(shown), "detail_command": "roam index --force --verbose"}
 
-        error_summary = get_parse_error_summary()
-        if error_summary:
-            self._log(f"  Parse issues: {error_summary}")
+    def _log_parse_issues(self, *, verbose: bool = False) -> None:
+        details = self.parse_issue_details(verbose=verbose)
+        if details:
+            error_summary = get_parse_error_summary(Counter(self._parse_issue_paths.values()))
+            self._log(f"  Parse issues in files processed in this run: {error_summary}")
+            for path in details["files"]:
+                self._log(f"    {path!r}")
+            if details["more"]:
+                self._log(f"    +{details['more']} more")
+            if not verbose:
+                self._log(f"    To check all files, run `{details['detail_command']}`.")
 
-    def _record_manifest(self, conn, *, force: bool, include_excluded: bool) -> None:
+    def _record_manifest(self, conn, *, force: bool, include_excluded: bool, git_before: GitSnapshot) -> None:
         """Persist an index_manifest row capturing this run's environment.
 
         Best-effort: any failure logs (in verbose mode via ROAM_DEBUG) but
@@ -2823,10 +2875,6 @@ class Indexer:
         key still rides along in ``notes`` (it's an indexer-internal
         gate, not a consumer signal).
         """
-        try:
-            from roam.index.manifest import record_indexer_run
-        except ImportError:
-            return
         step_status = getattr(self, "_step_status", None) or None
         cluster_sig = getattr(self, "_cluster_signature", None)
         phase_timings = self._phase_timer.timings if self._phase_timer else None
@@ -2847,17 +2895,13 @@ class Indexer:
             # W408: persist per-phase wallclock so ``roam doctor`` and
             # the W395-followup perf work can rank optimization candidates.
             notes_payload["phase_timings"] = phase_timings
-        notes: str | None = None
-        if notes_payload:
-            import json as _json
-
-            notes = _json.dumps(notes_payload, sort_keys=True)
         record_indexer_run(
             conn,
             self.root,
             profile="all",
-            notes=notes,
+            notes=notes_payload,
             steps_status=step_status,
+            git_before=git_before,
         )
 
     def _set_completion_summary(self, conn, elapsed: float) -> None:
@@ -2970,19 +3014,20 @@ class Indexer:
         # JSON under "phase_timings". Stable keys live in ``_PhaseTimer``.
         self._phase_timer = _PhaseTimer(self._quiet, self._log)
         t_discover = time.perf_counter()
+        git_before = capture_git_snapshot(self.root)
         self._log("Discovering files...")
         all_files = discover_files(self.root, include_excluded=include_excluded)
         self._log(f"  {_format_count(len(all_files))} files found")
 
         saved_annotations = self._reset_index_for_force(force)
 
-        with open_db(project_root=self.root) as conn:
+        with open_db(project_root=self.root, disclose_freshness=False) as conn:
             if force:
                 added = all_files
                 modified = []
                 removed = []
             else:
-                added, modified, removed = get_index_changed_files(conn, all_files, self.root)
+                added, modified, removed = get_index_changed_files(conn, all_files, self.root, git_snapshot=git_before)
             # Discover-phase wallclock covers ls-files + change detection.
             self._phase_timer.record_phase("discover", time.perf_counter() - t_discover)
 
@@ -3016,7 +3061,7 @@ class Indexer:
                     self._phase_timer.begin_phase(4, "Checking git history...")
                     self._run_git_analysis(conn)
                     self._phase_timer.close_open_phase()
-                    self._record_manifest(conn, force=force, include_excluded=include_excluded)
+                    self._record_manifest(conn, force=force, include_excluded=include_excluded, git_before=git_before)
                 self.summary = {
                     "files": 0,
                     "symbols": 0,
@@ -3094,9 +3139,9 @@ class Indexer:
             self._restore_or_relink_annotations(conn, force, saved_annotations)
             # W408: close the last open phase before any post-phase bookkeeping.
             self._phase_timer.close_open_phase()
-            self._log_parse_issues()
+            self._log_parse_issues(verbose=verbose)
             self._set_completion_summary(conn, time.monotonic() - t0)
-            self._record_manifest(conn, force=force, include_excluded=include_excluded)
+            self._record_manifest(conn, force=force, include_excluded=include_excluded, git_before=git_before)
 
         try:
             from roam.graph.builder import clear_graph_cache

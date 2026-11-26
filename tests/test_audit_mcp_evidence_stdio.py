@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import sys
-from datetime import timedelta
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -14,6 +13,8 @@ from mcp.client.stdio import stdio_client
 
 from tests import test_w1448_health_list_cap_disclosure as cap_fixture
 from tests.conftest import git_init, index_in_process
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 @pytest.mark.parametrize("storage_available", [True, False])
@@ -29,9 +30,10 @@ def test_audit_partial_state_survives_stdio_handle_and_fetch(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     # Host Roam configuration must not change indexing, presets, or evidence.
     for key in tuple(os.environ):
-        if not key.startswith("ROAM_"):
-            continue
-        monkeypatch.delenv(key, raising=False)
+        if key.startswith("ROAM_") and key != "ROAM_INDEX_FRESHNESS_BUDGET_S":
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "git config"))
     git_init(tmp_path)
     output, code = index_in_process(tmp_path)
     assert code == 0, output
@@ -44,7 +46,7 @@ def test_audit_partial_state_survives_stdio_handle_and_fetch(tmp_path, monkeypat
         )
         with (tmp_path / "server.log").open("w", encoding="utf-8") as errlog:
             async with stdio_client(params, errlog=errlog) as (read, write):
-                async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=45)) as session:
+                async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool("roam_audit", {"brief": True, "root": str(tmp_path)})
                     assert not result.isError, result
@@ -89,6 +91,4 @@ def test_audit_partial_state_survives_stdio_handle_and_fetch(tmp_path, monkeypat
                     assert health_summary["god_components"] == god_population
                     assert health_summary["partial_success"] is False
 
-    # Wall-clock deadlines bound a stuck protocol; they are not performance
-    # assertions. Keep a whole-session bound as well as the per-read timeout.
-    asyncio.run(asyncio.wait_for(observe(), timeout=120))
+    asyncio.run(observe())

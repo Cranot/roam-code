@@ -54,6 +54,9 @@ from roam.commands.cmd_magic_numbers import (
     _scan_python_file_status,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 #: Syntactically broken, and each holds a literal repeated twice -- so a
 #: scanner that COULD read them would report findings, not silence.
 BROKEN_1 = "def a(:\n    return 86400 + 86400\n"

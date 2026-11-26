@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from roam.guard_errors import (
     GUARD_ERROR_CODES,
     exit_code_for_guard_error,
     guard_error_envelope,
     make_guard_error,
 )
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def test_make_guard_error_returns_full_shape():

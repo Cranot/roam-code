@@ -180,13 +180,7 @@ class TestRunRoam:
         mock_result.exit_code = 0
         mock_result.output = json.dumps(payload)
         mock_result.exception = None
-        # W839 (W791 follow-up): pin a non-stale index so `_annotate_stale`
-        # doesn't decorate the envelope with `_meta.stale_index` + a verdict
-        # banner, which would break the success-path equality assertion.
-        with (
-            patch("click.testing.CliRunner.invoke", return_value=mock_result),
-            patch("roam.mcp_server._check_stale_with_cache", return_value=(False, None)),
-        ):
+        with patch("click.testing.CliRunner.invoke", return_value=mock_result):
             result = _run_roam(["health"], ".")
             assert result == payload
 
@@ -223,13 +217,7 @@ class TestRunRoam:
         from roam.mcp_server import _run_roam
 
         payload = {"summary": {"health_score": 85}}
-        # W839 (W791 follow-up): mirror the inprocess-success test —
-        # pin non-stale so `_annotate_stale` is a no-op on the parsed
-        # subprocess JSON, preserving the equality assertion's intent.
-        with (
-            patch("subprocess.run") as mock,
-            patch("roam.mcp_server._check_stale_with_cache", return_value=(False, None)),
-        ):
+        with patch("subprocess.run") as mock:
             mock.return_value = MagicMock(
                 returncode=0,
                 stdout=json.dumps(payload),

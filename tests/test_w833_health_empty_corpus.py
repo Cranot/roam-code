@@ -20,6 +20,9 @@ import pytest
 
 from tests.conftest import git_init, invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Fixture: a git-init'd project with an empty Python file (zero symbols).
 # ---------------------------------------------------------------------------

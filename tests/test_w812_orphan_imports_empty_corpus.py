@@ -29,6 +29,8 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _make_empty_repo(tmp: Path) -> None:
     """Initialise a git repo with one EMPTY .py file and run ``roam init``."""

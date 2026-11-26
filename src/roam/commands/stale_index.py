@@ -41,6 +41,7 @@ def _git_head_short(root: Path | None = None) -> str | None:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -73,6 +74,7 @@ def _git_dirty(root: Path | None = None) -> bool:
         result = subprocess.run(
             ["git", "status", "--porcelain"],
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             encoding="utf-8",
             errors="replace",

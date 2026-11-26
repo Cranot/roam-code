@@ -12,6 +12,8 @@ from click.testing import CliRunner
 from roam.commands import cmd_audit, cmd_dogfood, cmd_metrics_push
 from tests.test_metrics_push import _FAKE_AUDIT_ENVELOPE
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("has_tests", [True, False])
 def test_real_indexed_audit_reaches_metrics_dry_run_without_a_fake_envelope(tmp_path, monkeypatch, has_tests):

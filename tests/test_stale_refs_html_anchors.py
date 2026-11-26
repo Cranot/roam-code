@@ -10,6 +10,9 @@ from roam.commands.stale_refs_anchors import _read_anchors_for, extract_anchors
 from tests import test_w1527_stale_refs_unreadable_files as fixture_module
 from tests.conftest import invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 refs_project = fixture_module.refs_project
 
 

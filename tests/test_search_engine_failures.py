@@ -10,6 +10,8 @@ import pytest
 from roam.commands.grep_helpers import SearchEngineError, _run_and_parse
 from tests.conftest import invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def test_partial_stdout_survives_nonzero_search_exit(monkeypatch, tmp_path):
     monkeypatch.setattr(

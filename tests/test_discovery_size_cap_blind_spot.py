@@ -61,6 +61,9 @@ from roam.index.discovery import (
     discover_files_with_skips,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 #: Vendor-shaped but synthetic: the AWS prefix plus 16 uppercase alphanumerics,
 #: matching the shipped `AKIA[0-9A-Z]{16}` pattern at RUNTIME while never
 #: appearing as one literal in this source. Split for the same reason
@@ -85,18 +88,10 @@ def _git(cwd: Path, *args: str) -> None:
     )
 
 
-def _init(cwd: Path) -> None:
-    """`roam init`, then drop the .roamignore it writes.
-
-    That file is discovered but never indexed (no language), so it makes
-    ``_count_unindexed`` report 1 in every freshly-initialised fixture --
-    a pre-existing false positive on a DIFFERENT axis than the one under
-    test here. Removing it keeps the unindexed term at zero so an assertion
-    about the SIZE-CAP term cannot pass or fail for the wrong reason.
-    """
-    built = _run(cwd, "init")
+def _index(cwd: Path) -> None:
+    """Build the scan fixture without creating bootstrap configuration."""
+    built = _run(cwd, "index")
     assert built.returncode == 0, built.stdout[-800:] + built.stderr[-800:]
-    (cwd / ".roamignore").unlink(missing_ok=True)
 
 
 def _run(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -184,7 +179,7 @@ def test_scope_decisions_are_not_recorded_as_skips(tmp_path: Path) -> None:
 
 def test_secrets_finds_the_key_in_the_oversized_file(tmp_path: Path) -> None:
     repo = _oversized_repo(tmp_path / "repo", small_has_key=False)
-    _init(repo)
+    _index(repo)
 
     run = _run(repo, "secrets", "--fail-on-found")
 
@@ -198,7 +193,7 @@ def test_secrets_finds_the_key_in_the_oversized_file(tmp_path: Path) -> None:
 
 def test_secrets_envelope_names_the_recovered_files(tmp_path: Path) -> None:
     repo = _oversized_repo(tmp_path / "repo", small_has_key=False)
-    _init(repo)
+    _index(repo)
 
     run = _run(repo, "--json", "secrets")
     summary = json.loads(run.stdout[run.stdout.find("{") :])["summary"]
@@ -216,7 +211,7 @@ def test_the_positive_control_still_fires(tmp_path: Path) -> None:
     that never matches.
     """
     repo = _oversized_repo(tmp_path / "repo", small_has_key=True)
-    _init(repo)
+    _index(repo)
 
     run = _run(repo, "--json", "secrets")
     payload = json.loads(run.stdout[run.stdout.find("{") :])
@@ -236,7 +231,7 @@ def test_past_the_scanner_bound_the_file_is_named_not_silently_dropped(
     from roam.commands import cmd_secrets
 
     repo = _oversized_repo(tmp_path / "repo", small_has_key=False)
-    _init(repo)
+    _index(repo)
     monkeypatch.setattr(cmd_secrets, "SECRETS_MAX_RECOVERABLE_SIZE", MAX_FILE_SIZE)
 
     from click.testing import CliRunner
@@ -272,7 +267,7 @@ def test_a_repo_with_no_oversized_files_is_unchanged(tmp_path: Path) -> None:
     (repo / "a.py").write_text("def helper(x):\n    return x + 1\n", encoding="utf-8")
     _git(repo, "add", "a.py")
     _git(repo, "commit", "-q", "-m", "fixture")
-    _init(repo)
+    _index(repo)
 
     run = _run(repo, "--json", "secrets", "--fail-on-found")
     assert run.returncode == 0, run.stdout[:800] + run.stderr[:800]

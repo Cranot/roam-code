@@ -41,22 +41,23 @@ tests, security tools, and code review.
 
 ## Connect your agent
 
-You need **Python 3.11+** and a Git repository. On Linux, macOS, or Windows:
+You need **Python 3.11+**, **Git 2.24+**, and a Git repository. On Linux, macOS, or Windows:
 
 ```bash
 pip install "roam-code[mcp]"
 cd path/to/your/repo
 roam init
+roam mcp-setup claude-code --write
 ```
 
 Replace the path with your project. `init` builds the local index and creates
 project configuration; use `roam index` if you want only the index. The first
 run can download a parser and takes longer than a refresh.
 
-Then **[choose your agent's setup guide](https://roam-code.com/setup#install-mcp)**.
-Connect through MCP (a standard way for agents to use tools), or let your agent
-call the CLI. Add the usage instructions to its project configuration; connecting
-tools alone does not make the agent use them.
+Use `roam mcp-setup <agent> --write` with `claude-code`, `cursor`, `windsurf`,
+`vscode`, `gemini-cli`, or `codex-cli`. Add the usage instructions to your
+agent's project configuration. See the [agent setup guide](https://roam-code.com/setup#install-mcp)
+for details, including setup for agents that call the CLI directly.
 
 Prefer an isolated installation? Use `pipx install "roam-code[mcp]"` or
 `uv tool install "roam-code[mcp]"`. If your agent only needs shell commands,
@@ -247,9 +248,9 @@ jobs:
           persist-credentials: false
       # For production, replace the tag with the reviewed 40-character SHA it
       # points at — a release tag is readable but remains movable.
-      - uses: Cranot/roam-code@v14.1.0-r1
+      - uses: Cranot/roam-code@v14.2.3
         with:
-          version: '14.1.0'
+          version: '14.2.3'
           commands: health
           gate: "score>=70"
           sarif: 'true'
@@ -347,11 +348,12 @@ The CLI and MCP server are free under Apache 2.0 for individuals and teams.
 Static checks use local compute, not model calls; your agent's model charges
 are separate. You do not need a paid service to use Roam with your agents.
 
-- **PR Replay — paid report by request.** A written assessment of an agreed
-  change history, reviewed findings, and a founder walk-through. The existing
-  [Team and Deep scopes](https://roam-code.com/audit#tiers) define the PR window;
-  agree how commits map to those PRs before kickoff. Try the free local sample
-  with `roam pr-replay --tier sample`.
+<!-- replay-offer:paid:readme-list -->
+
+- **PR Replay — free local sample.** Run `roam pr-replay --tier sample` to see
+  which structural findings in recent commits deserve a closer look. Paid Team
+  and Deep reports are paused for new requests while we fix defects in the
+  reports; existing orders keep their agreed terms.
   Its default range is `HEAD~5..HEAD`, not necessarily five PRs; your checkout
   needs that history. A replay does not prove that an incident would have been prevented.
 - **Roam Review — planned, not available to subscribe to.** A proposed hosted
@@ -361,11 +363,12 @@ are separate. You do not need a paid service to use Roam with your agents.
   history of codebase measurements. The local `roam metrics-push` command exists;
   that does not establish a hosted dashboard. Inspect its payload with `--dry-run`.
 
-See [pricing and paid help](https://roam-code.com/pricing) and the
+<!-- /replay-offer -->
+
+See [pricing and availability](https://roam-code.com/pricing) and the
 [PR Replay sample and scope](https://roam-code.com/audit#sample). Questions go to
 [hello@roam-code.com](mailto:hello@roam-code.com); describe the task first, without
-source code, credentials, or private reports. Availability and written terms
-are agreed before work starts.
+source code, credentials, or private reports.
 
 ## FAQ
 
@@ -396,8 +399,8 @@ framework applicability and assessment need appropriate specialist review.
 
 **What's the difference between the free CLI and Roam Review / Cloud / PR Replay?**
 The CLI and MCP tools are free under Apache 2.0; their static checks run locally
-without model calls. Your agent's model usage is separate. PR Replay offers a
-free local sample and paid reports with founder review, by agreed scope.
+without model calls. Your agent's model usage is separate. <!-- replay-offer:paid:readme-faq -->PR Replay offers a
+free local sample; see [PR Replay](https://roam-code.com/audit) for report availability.<!-- /replay-offer -->
 Roam Review and Roam Cloud are planned hosted products, not available to
 subscribe to. See [pricing and availability](https://roam-code.com/pricing).
 

@@ -29,6 +29,9 @@ from tests.conftest import (
     parse_json_output,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Local helper: invoke coverage-gaps directly via its Click command object
 # ---------------------------------------------------------------------------

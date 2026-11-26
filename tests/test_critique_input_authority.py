@@ -13,6 +13,9 @@ from roam.cli import cli
 from roam.commands import cmd_critique
 from tests import test_critique as _fixtures
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _DIFF_REFRESH_ONLY = _fixtures._DIFF_REFRESH_ONLY
 critique_project = _fixtures.critique_project
 

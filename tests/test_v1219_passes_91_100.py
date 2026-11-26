@@ -176,12 +176,13 @@ def test_pass99_impact_indirect_refs_field_present():
     assert "indirect_refs" in parsed
 
 
-def test_pass100_agent_export_brief_drops_verbose_payload():
+def test_pass100_agent_export_brief_drops_verbose_payload(indexed_project, monkeypatch):
+    monkeypatch.chdir(indexed_project)
     runner = CliRunner()
     full = runner.invoke(cli, ["--json", "agent-export"])
     brief = runner.invoke(cli, ["--json", "agent-export", "--brief"])
-    assert full.exit_code == 0
-    assert brief.exit_code == 0
+    assert full.exit_code == 0, full.output
+    assert brief.exit_code == 0, brief.output
     full_p = json.loads(full.output)
     brief_p = json.loads(brief.output)
     assert "directory_layout" in full_p

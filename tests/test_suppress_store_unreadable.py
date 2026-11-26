@@ -34,6 +34,9 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # Two entries plus a trailing comma and no closing brace — a plausible
 # truncated/interrupted write, the shape that reaches JSONDecodeError.
 CORRUPT_STORE = '{\n "aaaaaaaaaaaaaaaa": {"reason":"vetted by security"},\n "bbbbbbbbbbbbbbbb": {"reason":"SEC-441"},\n'

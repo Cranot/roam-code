@@ -45,7 +45,8 @@ _DEFAULT_ENVELOPE_MAX_AGE_SEC = 24 * 60 * 60
 
 from roam.capability import roam_capability
 from roam.commands._command_utils import bare_command_name as _bare_command_name
-from roam.db.connection import db_exists, find_project_root, get_db_path
+from roam.db.connection import db_exists, find_project_root
+from roam.db.freshness import project_index_freshness
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -98,6 +99,7 @@ def _git_porcelain_count(root: Path) -> int:
             ["git", "status", "--porcelain"],
             cwd=str(root),
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             text=True,
             timeout=5,
             check=False,
@@ -107,62 +109,6 @@ def _git_porcelain_count(root: Path) -> int:
     if result.returncode != 0:
         return 0
     return len([ln for ln in result.stdout.splitlines() if ln.strip()])
-
-
-def _newest_source_mtime(root: Path, limit: int = 500) -> float:
-    """Cheap mtime walk of the working tree.
-
-    Returns the newest mtime seen across non-``.roam`` / non-``.git``
-    files, or 0.0 if nothing is found. Capped at *limit* files so we
-    don't walk huge repos — the router only needs *any* file newer than
-    the index to flag staleness.
-    """
-    newest = 0.0
-    count = 0
-    skip_dirs = {".git", ".roam", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
-    try:
-        for dirpath, dirnames, filenames in os.walk(root):
-            # In-place prune so we don't recurse into skip_dirs.
-            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-            for fn in filenames:
-                count += 1
-                if count > limit:
-                    return newest
-                try:
-                    p = Path(dirpath) / fn
-                    m = p.stat().st_mtime
-                    if m > newest:
-                        newest = m
-                except (OSError, FileNotFoundError):
-                    continue
-    except OSError:
-        return newest
-    return newest
-
-
-def _check_index_staleness(root: Path) -> tuple[bool, str | None]:
-    """Return (is_stale, reason). True if any source file is newer than the DB.
-
-    Best-effort — returns ``(False, None)`` on any error so the router
-    falls through to the next branch instead of falsely flagging stale.
-    """
-    try:
-        db_path = get_db_path(root)
-    except Exception as _exc:  # noqa: BLE001 -- best-effort; fall through to next branch
-        from roam.observability import log_swallowed
-
-        log_swallowed("cmd_next:get_db_path", _exc)
-        return (False, None)
-    try:
-        db_mtime = db_path.stat().st_mtime
-    except OSError:
-        return (False, None)
-    newest = _newest_source_mtime(root)
-    if newest == 0.0:
-        return (False, None)
-    if newest > db_mtime:
-        return (True, f"source files modified after index mtime ({int(newest - db_mtime)}s newer)")
-    return (False, None)
 
 
 def _read_recent_memory_commands(root: Path, limit: int = 5) -> list[str]:
@@ -456,9 +402,10 @@ def _collect_state() -> RepoState:
 
     if state.has_index:
         try:
-            is_stale, reason = _check_index_staleness(root)
-            state.index_stale = is_stale
-            state.index_stale_reason = reason
+            freshness = project_index_freshness(root)
+            if freshness is not None and freshness.stale:
+                state.index_stale = True
+                state.index_stale_reason = freshness.message()
         except Exception as _exc:
             # Defensive per the module docstring — a probe failure must
             # not crash the router. Surface lineage so a degraded
@@ -695,11 +642,8 @@ def next_cmd(ctx):
         # it as a list with the chosen command first satisfies LAW 2
         # (imperative, copy-paste-executable).
         next_steps = [suggestion["next_invocation"]]
-        # ``partial_success`` required on every envelope. True whenever
-        # the router is reacting to a non-ideal repo state (no index /
-        # stale index / pending work) so agents can see at a glance the
-        # router is nudging away from idle.
-        partial = suggestion["state"] not in ("idle", "from_prior")
+        # Staleness is itself enough information to recommend a refresh.
+        partial = suggestion["state"] not in ("idle", "from_prior", "stale_index")
         click.echo(
             to_json(
                 json_envelope(

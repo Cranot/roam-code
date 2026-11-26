@@ -26,6 +26,9 @@ from roam.commands.cmd_compiler_health import (
     compiler_health,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ----------------------------------------------------------------------
 # Fixture helpers
 # ----------------------------------------------------------------------

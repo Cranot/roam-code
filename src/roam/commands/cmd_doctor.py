@@ -36,6 +36,7 @@ from pathlib import Path
 import click
 
 from roam.capability import roam_capability
+from roam.commands.changed_files import MIN_GIT_VERSION, MIN_GIT_VERSION_LABEL
 from roam.output.formatter import echo_text_warnings, json_envelope, to_json
 
 # How old ``.git/index.lock`` must be before it is called stale.
@@ -237,15 +238,17 @@ def _check_git() -> dict:
             timeout=5,
         )
         version_line = result.stdout.strip() if result.returncode == 0 else ""
-        # "git version 2.43.0" -> "2.43.0"
-        version = version_line.replace("git version", "").strip() or "unknown"
     except (subprocess.SubprocessError, OSError):
-        version = "unknown"
-    return {
-        "name": "git executable",
-        "passed": True,
-        "detail": f"git {version}",
-    }
+        version_line = ""
+    version = version_line.removeprefix("git version ").strip() or "unknown"
+    check = {"name": "git executable", "passed": True, "detail": f"git {version}"}
+    match = re.fullmatch(r"git version ([0-9]{1,4})\.([0-9]{1,4})(?:[.\-+ ].*)?", version_line)
+    requirement = f"Git {MIN_GIT_VERSION_LABEL} or later is required for --end-of-options in comparisons."
+    if match is None:
+        check["version_advisory"] = f"Could not determine Git version. {requirement}"
+    elif tuple(map(int, match.groups())) < MIN_GIT_VERSION:
+        check["version_advisory"] = f"Installed Git {version} is too old. {requirement}"
+    return check
 
 
 def _check_git_repo_health() -> dict:
@@ -779,44 +782,36 @@ def _check_index_exists() -> dict:
     }
 
 
-def _check_index_freshness(db_path_str: str | None) -> dict:
-    """Index mtime <= 24 hours old."""
-    if db_path_str is None:
+def _check_index_freshness(db_path_str: str | None, ctx: click.Context | None = None) -> dict:
+    """Compare the index with the current source files using the query freshness rule."""
+    from roam.db.connection import find_project_root
+    from roam.db.freshness import _record_query_index, probe_index_freshness
+
+    if db_path_str is None or not Path(db_path_str).exists():
         return {
             "name": "Index freshness",
             "passed": False,
             "detail": "index does not exist (run `roam init`)",
         }
-    db_path = Path(db_path_str)
-    if not db_path.exists():
-        return {
-            "name": "Index freshness",
-            "passed": False,
-            "detail": "index does not exist (run `roam init`)",
-        }
 
-    age_s = time.time() - db_path.stat().st_mtime
-    age_h = age_s / 3600.0
-    stale = age_h > 24.0
-
-    if age_s < 60:
-        age_str = f"{int(age_s)} second{'s' if int(age_s) != 1 else ''} ago"
-    elif age_s < 3600:
-        age_m = int(age_s / 60)
-        age_str = f"{age_m} minute{'s' if age_m != 1 else ''} ago"
-    elif age_s < 86400:
-        age_h_int = int(age_h)
-        age_str = f"{age_h_int} hour{'s' if age_h_int != 1 else ''} ago"
-    else:
-        age_d = int(age_h / 24)
-        age_str = f"{age_d} day{'s' if age_d != 1 else ''} ago"
-
-    return {
+    root = find_project_root()
+    freshness = probe_index_freshness(Path(db_path_str), root)
+    if ctx is not None:
+        _record_query_index(ctx, root, freshness)
+    check = {
         "name": "Index freshness",
-        "passed": not stale,
-        "detail": (f"fresh ({age_str})" if not stale else f"stale ({age_str}, run `roam index` to refresh)"),
-        "_age_s": round(age_s, 1),
+        "passed": freshness.state == "fresh",
+        "detail": freshness.message(),
+        "state": freshness.state,
+        "index_changed_files": freshness.changed_files,
+        "_age_s": round(freshness.age_s, 1) if freshness.age_s is not None else None,
     }
+    if freshness.reason is not None:
+        check["reason"] = freshness.reason
+    if freshness.skipped:
+        check["skipped"] = True
+        check["detail"] = f"Index freshness skipped ({freshness.reason})."
+    return check
 
 
 def _check_search_index_sync(db_path_str: str | None) -> dict:
@@ -2517,6 +2512,7 @@ def _check_claude_hook_bodies() -> dict:
 
 _ADVISORY_CHECK_NAMES = frozenset(
     {
+        "Git version",
         "Claude hook bodies",  # T2c heal reporting — actionable locally only
         "Optional extras",  # graceful degradation when extras missing
         "Cloud sync",  # OneDrive/Dropbox warning, not a hard break
@@ -2687,7 +2683,9 @@ def doctor(ctx, strict, persist):
     _run_check("python_version", _check_python_version)
     _run_check("tree_sitter", _check_tree_sitter)
     _run_check("tree_sitter_language_pack", _check_tree_sitter_language_pack)
-    _run_check("git", _check_git)
+    git_check = _run_check("git", _check_git)
+    if git_check and (version_advisory := git_check.pop("version_advisory", None)):
+        checks.append({"name": "Git version", "passed": False, "detail": version_advisory})
     _run_check("git_repo_health", _check_git_repo_health)
     _run_check("ci_environment_parity", _check_ci_environment_parity)
     _run_check("dependency_versions", _check_dependency_versions)
@@ -2709,7 +2707,7 @@ def doctor(ctx, strict, persist):
     index_check = _run_check("index_exists", _check_index_exists)
 
     db_path_str = index_check.get("_db_path") if index_check else None
-    _run_check("index_freshness", _check_index_freshness, db_path_str)
+    _run_check("index_freshness", _check_index_freshness, db_path_str, ctx)
     _run_check("sqlite", _check_sqlite, db_path_str)
     _run_check("search_index_sync", _check_search_index_sync, db_path_str)
     _run_check("index_manifest", _check_index_manifest)
@@ -2726,8 +2724,9 @@ def doctor(ctx, strict, persist):
 
     # --- Compute summary, with advisory / blocking severity split ---
     total = len(checks)
-    failed = [c for c in checks if not c["passed"]]
-    passed_count = total - len(failed)
+    skipped_count = sum(bool(c.get("skipped")) for c in checks)
+    failed = [c for c in checks if not c["passed"] and not c.get("skipped")]
+    passed_count = total - skipped_count - len(failed)
 
     advisory_failed = [c for c in failed if c["name"] in _ADVISORY_CHECK_NAMES]
     blocking_failed = [c for c in failed if c["name"] not in _ADVISORY_CHECK_NAMES]
@@ -2860,7 +2859,7 @@ def doctor(ctx, strict, persist):
     # non-dict surrogate) surfaces a canonical marker instead of crashing.
     def _compute_scores():
         if not failed:
-            return {"verdict_kind": "all_passed", "verdict_arg": total}
+            return {"verdict_kind": "all_passed", "verdict_arg": passed_count}
         elif blocking_failed and len(failed) == 1:
             return {"verdict_kind": "single_fail", "verdict_arg": failed[0]["name"]}
         elif blocking_failed:
@@ -2928,7 +2927,8 @@ def doctor(ctx, strict, persist):
         f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} · "
         f"{_os_label} · "
         f"{passed_count}/{total} checks pass · "
-        f"{len(advisory_failed)} advisory · {len(blocking_failed)} blocking"
+        + (f"{skipped_count} skipped · " if skipped_count else "")
+        + f"{len(advisory_failed)} advisory · {len(blocking_failed)} blocking"
     )
 
     # Strip private keys (prefixed with _) before output
@@ -3016,12 +3016,20 @@ def doctor(ctx, strict, persist):
                 "state": state,
                 "strict": bool(strict),
             }
+            if skipped_count:
+                _summary_block["skipped"] = skipped_count
             _envelope_kwargs: dict = {
                 "checks": clean_checks,
-                "failed_checks": [c for c in clean_checks if not c["passed"]],
-                "advisory_failed": [c for c in clean_checks if c["name"] in _ADVISORY_CHECK_NAMES and not c["passed"]],
+                "failed_checks": [c for c in clean_checks if not c["passed"] and not c.get("skipped")],
+                "advisory_failed": [
+                    c
+                    for c in clean_checks
+                    if c["name"] in _ADVISORY_CHECK_NAMES and not c["passed"] and not c.get("skipped")
+                ],
                 "blocking_failed": [
-                    c for c in clean_checks if c["name"] not in _ADVISORY_CHECK_NAMES and not c["passed"]
+                    c
+                    for c in clean_checks
+                    if c["name"] not in _ADVISORY_CHECK_NAMES and not c["passed"] and not c.get("skipped")
                 ],
                 "phase_timings": phase_timings_block,
                 "ci_workflow_drift": ci_workflow_drift_block,
@@ -3113,7 +3121,9 @@ def doctor(ctx, strict, persist):
     def _format_text():
         click.echo(f"VERDICT: {verdict}\n")
         for c in clean_checks:
-            if c["passed"]:
+            if c.get("skipped"):
+                label = "SKIP"
+            elif c["passed"]:
                 label = "PASS"
             elif c["name"] in _ADVISORY_CHECK_NAMES:
                 label = "WARN"  # advisory failures get distinct visual weight

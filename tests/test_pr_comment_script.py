@@ -38,6 +38,16 @@ def _script_path() -> Path:
     return Path(__file__).resolve().parents[1] / ".github" / "scripts" / "pr-comment.js"
 
 
+def test_pr_risk_comment_contract():
+    result = subprocess.run(
+        ["node", str(Path(__file__).with_name("pr_comment.test.mjs"))],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_build_comment_includes_marker_and_sections(tmp_path):
     results_dir = tmp_path / "results"
     results_dir.mkdir()
@@ -68,8 +78,7 @@ def test_build_comment_includes_marker_and_sections(tmp_path):
 
     code = """
 const mod = require(process.env.PR_COMMENT_PATH);
-const body = mod.buildComment(process.env);
-console.log(body);
+mod.buildCommentAsync(process.env).then(console.log);
 """
     out = _node_eval(
         code,
@@ -95,6 +104,18 @@ console.log(body);
     assert "### PR Risk" in out
     assert "### Quality Gate: PASSED" in out
     assert "### SARIF Upload" in out
+
+
+def test_build_comment_discloses_unavailable_pr_comparison(tmp_path):
+    (tmp_path / "pr-risk.json").write_text(
+        json.dumps({"summary": {"state": "comparison_unavailable", "risk_score": None}}), encoding="utf-8"
+    )
+    out = _node_eval(
+        "require(process.env.PR_COMMENT_PATH).buildCommentAsync(process.env).then(console.log);",
+        env={"PR_COMMENT_PATH": str(_script_path()), "RESULTS_DIR": str(tmp_path)},
+    )
+    assert "PR comparison could not run" in out
+    assert "/100" not in out
 
 
 def test_select_sticky_comments_prefers_latest_and_marks_duplicates():

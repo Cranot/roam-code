@@ -11,6 +11,8 @@ from click.testing import CliRunner
 import roam.cli as cli_module
 from roam.commands import cmd_audit, cmd_dogfood
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize("detail", [False, True])
 def test_brief_transport_failure_does_not_invent_available_detail(monkeypatch, detail):

@@ -7,6 +7,8 @@ from click.testing import CliRunner
 from roam.cli import cli
 from tests.conftest import assert_json_envelope, git_init, index_in_process, invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def typed_fixture_project(tmp_path):

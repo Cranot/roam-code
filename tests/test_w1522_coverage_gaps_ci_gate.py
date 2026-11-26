@@ -34,6 +34,8 @@ import pytest
 
 from tests.conftest import git_init, index_in_process, invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def gap_project(tmp_path):

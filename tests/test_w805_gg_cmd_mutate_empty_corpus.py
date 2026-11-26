@@ -48,6 +48,9 @@ from click.testing import CliRunner
 
 from tests.conftest import invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ===========================================================================
 # Empty-corpus fixture
 # ===========================================================================

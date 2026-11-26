@@ -12,6 +12,9 @@ import pytest
 
 from roam.output.structured_unknowns import structured_unknown_filter
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Happy path: ``requested in known`` returns None (no envelope-fragment).
 # ---------------------------------------------------------------------------

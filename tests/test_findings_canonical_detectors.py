@@ -28,6 +28,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -38,6 +39,9 @@ from roam.db.findings import (
     emit_finding,
     known_detector_names,
 )
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # CANONICAL_DETECTOR_NAMES content

@@ -72,9 +72,8 @@ jobs:
   # Use -m "not slow" to skip timing-sensitive performance tests that are
   # prone to flaking under CI resource constraints.
   #
-  # 3.9 dropped 2026-05-16: pyproject.toml requires-python = ">=3.10". The
-  # 3.9 matrix entry was failing every PR with "Package 'roam-code' requires
-  # a different Python: 3.9.25 not in '>=3.10'".
+  # The Python floor is 3.11. Keep this matrix and the dependency audit
+  # aligned with the supported Python classifiers in pyproject.toml.
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-24.04
@@ -198,8 +197,11 @@ jobs:
       # dogfood index guard, then a bare console-script invocation -- each only
       # visible once its predecessor was fixed. Report the whole inventory in
       # one run; exit status is unchanged, so a red suite is still red.
+      # --durations lists the 40 slowest tests per lane, so a lane that nears
+      # timeout-minutes names its cause in its own log (3.13 reached the cap at
+      # 90-92% twice on 2026-11-23 while 3.11 and 3.12 took about 40 minutes).
       - name: Run tests
-        run: .venv/bin/python -m pytest tests/ -q -m "not slow"
+        run: .venv/bin/python -m pytest tests/ -q -m "not slow" --durations=40
 
   # -- Exact dependency security gate across every supported Python --------
   # Audit the same lock selections CI executes, including CI-only build and

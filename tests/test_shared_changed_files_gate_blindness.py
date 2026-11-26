@@ -57,6 +57,8 @@ from roam.commands.changed_files import (
     get_changed_files_status,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(

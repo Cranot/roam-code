@@ -37,6 +37,9 @@ import pytest
 
 from tests.conftest import git_init, index_in_process, invoke_cli, parse_json_output
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 _PAY_SRC = (
     "def charge_card(user, amount):\n"
     '    """Charge a card."""\n'

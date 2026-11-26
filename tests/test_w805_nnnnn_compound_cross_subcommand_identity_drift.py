@@ -20,6 +20,8 @@ from roam import mcp_server as mcp
 from roam.cli import cli
 from tests.conftest import index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture(autouse=True)
 def isolated_compound_state(monkeypatch):

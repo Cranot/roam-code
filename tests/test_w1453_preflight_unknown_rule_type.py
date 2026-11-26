@@ -54,6 +54,9 @@ from click.testing import CliRunner
 from roam.commands import cmd_fitness, cmd_preflight
 from tests.conftest import index_in_process, invoke_cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

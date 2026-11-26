@@ -16,8 +16,12 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from roam.catalog.detectors import _DETECTOR_REGISTRY, run_detectors
 from roam.db.connection import ensure_schema
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
 
 
 def _empty_conn():

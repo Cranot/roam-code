@@ -25,6 +25,8 @@ import pytest
 
 from roam.output.formatter import strip_list_payloads
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _raw_envelope(**extra) -> dict:
     """Build a raw envelope bypassing ``json_envelope`` so malformed

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -282,6 +283,158 @@ class TestSpectralGap:
 
         G = _two_cluster_graph().to_directed()
         assert isinstance(spectral_gap(G), float)
+
+
+class TestEigensolverKnownAnswers:
+    """lambda2 of path and cycle graphs is known in closed form."""
+
+    @pytest.mark.parametrize("n", [3, 10, 30, 60])
+    def test_path_graph_lambda2(self, n):
+        pytest.importorskip("scipy")
+        from roam.graph.spectral import spectral_gap
+
+        assert spectral_gap(nx.path_graph(n)) == pytest.approx(2 * (1 - math.cos(math.pi / n)), abs=1e-9)
+
+    @pytest.mark.parametrize("n", [3, 10, 30, 60])
+    def test_cycle_graph_lambda2(self, n):
+        pytest.importorskip("scipy")
+        from roam.graph.spectral import spectral_gap
+
+        assert spectral_gap(nx.cycle_graph(n)) == pytest.approx(2 * (1 - math.cos(2 * math.pi / n)), abs=1e-9)
+
+    def test_health_fiedler_on_a_path_graph(self, tmp_path, monkeypatch):
+        # cycles.algebraic_connectivity solves at tol 1e-3 and rounds to 6 places.
+        pytest.importorskip("scipy")
+        from roam.graph.cycles import algebraic_connectivity
+
+        monkeypatch.chdir(tmp_path)
+        value = algebraic_connectivity(nx.path_graph(30).to_directed())
+        assert value == pytest.approx(2 * (1 - math.cos(math.pi / 30)), abs=1e-5)
+
+    def test_fiedler_split_halves_a_path_graph(self):
+        pytest.importorskip("scipy")
+        from roam.graph.spectral import fiedler_partition
+
+        mapping = fiedler_partition(nx.path_graph(40), max_depth=1)
+        halves = {pid: sorted(n for n, p in mapping.items() if p == pid) for pid in set(mapping.values())}
+        assert sorted(halves.values()) == [list(range(20)), list(range(20, 40))]
+
+
+_EIGENSOLVER_CALLS = {"algebraic_connectivity", "fiedler_vector", "spectral_ordering"}
+
+
+def test_every_networkx_eigensolver_call_names_a_method_and_a_seed():
+    # networkx defaults to tracemin_pcg, unseeded: its CG has no iteration
+    # limit and it took minutes on a 2,351-node file graph. Every call in src
+    # names its method and seed so that default can never come back unseen.
+    import ast
+
+    import roam
+
+    src = Path(roam.__file__).parent
+    offenders = []
+    calls = 0
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        calls_here, offenders_here = _networkx_eigensolver_calls(tree)
+        calls += calls_here
+        offenders += [f"{path.relative_to(src).as_posix()}:{line}" for line in offenders_here]
+    assert calls >= 4, calls  # the sweep must still see the known call sites
+    assert offenders == []
+
+
+def _networkx_eigensolver_calls(tree):
+    """Return (calls, offending line numbers) of networkx eigensolver calls in one module.
+
+    A call is a networkx one when it goes through a name bound to a networkx module
+    (``nx.algebraic_connectivity``) or to a function imported from networkx
+    (``from networkx import algebraic_connectivity``); roam's own wrappers of the
+    same name are not networkx and are not counted. A call passes only with a
+    method that resolves to a string other than tracemin_pcg (a literal, a
+    module-level string constant, or a constant imported from roam.graph.spectral)
+    and a seed that is not None.
+    """
+    import ast
+
+    from roam.graph import spectral
+
+    modules, functions, constants = set(), set(), {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            constants.update({t.id: node.value.value for t in node.targets if isinstance(t, ast.Name)})
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "roam.graph.spectral":
+            for alias in node.names:
+                value = getattr(spectral, alias.name, None)
+                if isinstance(value, str):
+                    constants[alias.asname or alias.name] = value
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "networkx" or alias.name.startswith("networkx."):
+                    modules.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "networkx":
+            for alias in node.names:
+                if alias.name in _EIGENSOLVER_CALLS:
+                    functions.add(alias.asname or alias.name)
+                else:
+                    modules.add(alias.asname or alias.name)
+    calls, offenders = 0, []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            base = func.value
+            while isinstance(base, ast.Attribute):
+                base = base.value
+            if func.attr not in _EIGENSOLVER_CALLS or not (isinstance(base, ast.Name) and base.id in modules):
+                continue
+        elif not (isinstance(func, ast.Name) and func.id in functions):
+            continue
+        calls += 1
+        keywords = {kw.arg: kw.value for kw in node.keywords}
+        method, seed = keywords.get("method"), keywords.get("seed")
+        if isinstance(method, ast.Constant):
+            method_value = method.value
+        elif isinstance(method, ast.Name):
+            method_value = constants.get(method.id)
+        else:
+            method_value = None
+        method_ok = isinstance(method_value, str) and method_value != "tracemin_pcg"
+        seed_ok = seed is not None and not (isinstance(seed, ast.Constant) and seed.value is None)
+        if not (method_ok and seed_ok):
+            offenders.append(node.lineno)
+    return calls, offenders
+
+
+def test_eigensolver_guard_sees_imported_names_and_rejects_open_arguments():
+    import ast
+
+    evading = ast.parse(
+        "import networkx as nx\n"
+        "from networkx import algebraic_connectivity\n"
+        "from networkx import fiedler_vector as fv\n"
+        "def a(G): return algebraic_connectivity(G)\n"
+        "def b(G):\n"
+        "    m = 'tracemin_lu'\n"
+        "    return nx.algebraic_connectivity(G, method=m, seed=1)\n"
+        "def c(G): return nx.linalg.algebraic_connectivity(G, method='tracemin_lu', seed=None)\n"
+        "def d(G): return fv(G, method='tracemin_pcg', seed=1)\n"
+    )
+    assert _networkx_eigensolver_calls(evading) == (4, [4, 7, 8, 9])
+    seeded = ast.parse(
+        "import networkx as nx\n"
+        "from roam.graph import cycles\n"
+        "from roam.graph.spectral import EIGENSOLVER_METHOD, EIGENSOLVER_SEED\n"
+        "LOCAL_METHOD = 'tracemin_lu'\n"
+        "SLOW_METHOD = 'tracemin_pcg'\n"
+        "def a(G): return nx.algebraic_connectivity(G, method='tracemin_lu', seed=7)\n"
+        "def b(G): return cycles.algebraic_connectivity(G)\n"
+        "def c(G): return nx.fiedler_vector(G, method=EIGENSOLVER_METHOD, seed=EIGENSOLVER_SEED)\n"
+        "def d(G): return nx.fiedler_vector(G, method=LOCAL_METHOD, seed=0)\n"
+        "def e(G): return nx.fiedler_vector(G, method=SLOW_METHOD, seed=0)\n"
+    )
+    assert _networkx_eigensolver_calls(seeded) == (4, [10])
 
 
 class TestSpectralCommunities:
@@ -590,9 +743,9 @@ class TestInternalHelpers:
 
         calls = []
 
-        def fake_fiedler_vector(_graph, method):
+        def fake_fiedler_vector(_graph, method, seed=None):
             calls.append(method)
-            if method == "tracemin_pcg":
+            if method == spectral_module.EIGENSOLVER_METHOD:
                 raise nx.NetworkXError("primary solver unavailable")
             return [-1.0, -1.0, 1.0, 1.0, 1.0]
 
@@ -602,14 +755,14 @@ class TestInternalHelpers:
             fake_fiedler_vector,
         )
         assert _fiedler_split(nx.path_graph(5)) == ([0, 1], [2, 3, 4])
-        assert calls == ["tracemin_pcg", "lobpcg"]
+        assert calls == [spectral_module.EIGENSOLVER_METHOD, "lobpcg"]
 
     def test_fiedler_split_propagates_unexpected_solver_error(self, monkeypatch):
         from roam.graph import spectral as spectral_module
         from roam.graph.spectral import _fiedler_split
 
-        def fake_fiedler_vector(_graph, method):
-            if method == "tracemin_pcg":
+        def fake_fiedler_vector(_graph, method, seed=None):
+            if method == spectral_module.EIGENSOLVER_METHOD:
                 raise nx.NetworkXError("primary solver unavailable")
             raise AssertionError("unexpected solver bug")
 

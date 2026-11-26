@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # CLAUDE.md "Pattern-1 canonical failure envelope" — the closed
 # enumeration of ``status`` values. Source of truth: the ``status``
 # field description in CLAUDE.md ("closed enum: index_not_built |

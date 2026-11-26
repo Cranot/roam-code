@@ -15,7 +15,11 @@ from __future__ import annotations
 import json as _json
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 # ---------------------------------------------------------------------------
 # audit-trail-verify -- "chain not initialized" vs "chain BROKEN"

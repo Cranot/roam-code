@@ -72,4 +72,4 @@ def test_cycle_break_acyclic_project_has_no_findings(cli_runner, tmp_path, monke
 
     text_result = invoke_cli(cli_runner, ["cycle-break"], cwd=project)
     assert text_result.exit_code == 0
-    assert text_result.output == ""
+    assert text_result.stdout == ""

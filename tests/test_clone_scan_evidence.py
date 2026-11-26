@@ -12,6 +12,8 @@ from roam.db.connection import open_db
 from roam.graph import clone_detect
 from tests.conftest import git_init, index_in_process
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
@@ -35,11 +37,11 @@ def run(*args):
 def review(project, *, batch=False):
     diff = "--- a/a.py\n+++ b/a.py\n@@ -2,1 +2,1 @@\n-    total = 0\n+    total = 1\n"
     if batch:
-        directory = project / "patches"
+        directory = project / ".roam" / "patches"
         directory.mkdir()
         (directory / "one.diff").write_text(diff, encoding="utf-8")
         return run("critique", "--batch", str(directory), "--intent", "adjust first")
-    path = project / "change.diff"
+    path = project / ".roam" / "change.diff"
     path.write_text(diff, encoding="utf-8")
     return run("critique", "--input", str(path), "--intent", "adjust first")
 

@@ -21,6 +21,8 @@ from click.testing import CliRunner
 from roam.cli import cli
 from tests.conftest import make_src_project as _make_src_project
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.fixture(autouse=True)
 def _enforcement_safe(monkeypatch):

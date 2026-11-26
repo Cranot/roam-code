@@ -22,6 +22,9 @@ import pytest
 
 from roam.output.formatter import _RESOLUTION_KINDS, resolution_disclosure
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Drift guard — locks the closed enum membership.
 # ---------------------------------------------------------------------------

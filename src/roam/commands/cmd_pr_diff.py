@@ -16,7 +16,12 @@ from __future__ import annotations
 import click
 
 from roam.capability import roam_capability
-from roam.commands.changed_files import get_changed_files_status, resolve_changed_to_db
+from roam.commands.changed_files import (
+    GitComparisonError,
+    get_changed_files_status,
+    git_comparison_base,
+    resolve_changed_to_db,
+)
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.exit_codes import EXIT_GATE_FAILURE, gate_should_fail
@@ -71,6 +76,8 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     (PR risk score), and ``critique`` (clones-not-edited check on a
     diff).
     """
+    if commit_range == "":
+        raise click.BadParameter("Git ref or range cannot be empty", param_hint="--range")
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()
@@ -81,12 +88,21 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # and must not authorise under --fail-on-degradation.
     git_details: list[str] = []
     changed, git_error = get_changed_files_status(root, staged=staged, commit_range=commit_range, error_details=git_details)  # fmt: skip
+    failed_git_step = "read git diff"
+    symbol_base_ref = "HEAD"
+    if git_error is None and changed and commit_range is not None:
+        try:
+            symbol_base_ref = git_comparison_base(root, commit_range)
+        except GitComparisonError as exc:
+            failed_git_step = "resolve the Git symbol baseline"
+            git_error = exc.kind
+            git_details.append(exc.detail)
     if git_error is not None:
         verdict = f"diff unavailable: {git_error} — cannot gate"
         # W1331: the SAME bucket reaches both channels. Building it once and
         # emitting it in both branches is what keeps the text reader from
         # seeing a quieter story than the --json reader.
-        warnings_out = [f"pr_diff_changed_files_failed:{git_error}:cannot read git diff"]
+        warnings_out = [f"pr_diff_changed_files_failed:{git_error}:cannot {failed_git_step}"]
         if json_mode:
             click.echo(
                 to_json(
@@ -127,7 +143,9 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
             )
         else:
             click.echo(f"VERDICT: {verdict}")
-            click.echo(f"Could not read the git diff ({git_error}); no change set was measured.")
+            click.echo(f"Could not {failed_git_step} ({git_error}); no change set was measured.")
+            for detail in git_details:
+                click.echo(detail)
             echo_text_warnings(warnings_out)
         if fail_on_degradation:
             ctx.exit(EXIT_GATE_FAILURE)
@@ -175,7 +193,7 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # Determine base ref for snapshot matching
     base_ref = "HEAD"
     if commit_range and ".." in commit_range:
-        base_ref = commit_range.split("..")[0]
+        base_ref = commit_range.split("..", 1)[0] or "HEAD"
 
     from roam.commands.metrics_history import collect_metrics
     from roam.graph.diff import (
@@ -218,7 +236,9 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
         edges = edge_analysis(conn, changed_file_ids)
 
         # Symbol changes
-        sym_changes = symbol_changes(conn, root, base_ref, changed)
+        sym_changes = symbol_changes(conn, root, symbol_base_ref, changed)
+        skipped = sym_changes.pop("files_not_analyzed", [])
+        git_failures = [entry for entry in skipped if "git_error" in entry]
 
         # Footprint
         footprint = compute_footprint(conn, changed_file_ids)
@@ -276,11 +296,22 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # the user fixes it immediately. An outage you cannot clear and a setup step
     # you clear with one command are not the same thing, and treating them alike
     # was the error.
+    if skipped:
+        verdict += f" ({len(skipped)} path(s) skipped in symbol comparison)"
+    if git_failures and fail_on_degradation:
+        verdict += " - cannot gate"
     gate_failed = gate_should_fail(
         fail_on_degradation,
         findings=health_degraded,
-        scan_incomplete=not deltas_available,
+        scan_incomplete=not deltas_available or bool(git_failures),
     )
+
+    git_failure_summary = {}
+    if git_failures:
+        git_failure_summary = {
+            "git_error": git_failures[0]["git_error"],
+            "git_error_detail": "\n".join(entry["detail"] for entry in git_failures),
+        }
 
     # --- JSON output ---
     if json_mode:
@@ -295,12 +326,14 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
                         "health_delta": health_delta,
                         "new_issues": new_issues,
                         "baseline_commit": baseline_commit,
-                        "partial_success": no_baseline_for_gate,
+                        "partial_success": no_baseline_for_gate or bool(skipped),
+                        **git_failure_summary,
                     },
                     changed_files=changed,
                     metric_deltas=deltas,
                     edge_analysis=edges,
                     symbol_changes=sym_changes,
+                    **({"files_not_analyzed": skipped} if skipped else {}),
                     footprint=footprint,
                 )
             )
@@ -312,6 +345,10 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
     # --- Markdown output ---
     if fmt == "markdown":
         _emit_markdown(verdict, deltas, deltas_available, edges, sym_changes, footprint, changed)
+        for item in skipped:
+            click.echo(f"- Skipped {item['file']} ({item['reason']})")
+        if git_failures:
+            click.echo(git_failure_summary["git_error_detail"])
         if gate_failed:
             ctx.exit(EXIT_GATE_FAILURE)
         return
@@ -361,6 +398,10 @@ def pr_diff_cmd(ctx, staged, commit_range, fmt, fail_on_degradation):
         click.echo()
 
     # Symbol changes
+    for item in skipped:
+        click.echo(f"Skipped {item['file']} ({item['reason']})")
+    if git_failures:
+        click.echo(git_failure_summary["git_error_detail"])
     n_added = len(sym_changes["added"])
     n_removed = len(sym_changes["removed"])
     n_modified = len(sym_changes["modified"])

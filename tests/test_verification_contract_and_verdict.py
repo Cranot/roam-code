@@ -11,6 +11,9 @@ import pytest
 from roam.verdict import VERDICTS, compute_verdict, verdict_exit_code
 from roam.verification_contract import build_verification_contract
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---- fixtures ----
 
 _SAMPLE_GRAPH = {

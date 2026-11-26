@@ -52,6 +52,9 @@ from roam.index.calc_extract import (
     extract_calcs_from_file_status,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 MONEY_A = "def f(base, rate):\n    vat = round(base * rate / 100, 2)\n    return vat\n"
 MONEY_B = "def g(base, rate):\n    total = round(base * rate / 100, 2)\n    return total\n"
 

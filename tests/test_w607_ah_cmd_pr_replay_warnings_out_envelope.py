@@ -82,6 +82,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from roam.exit_codes import EXIT_PARTIAL
+
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process  # noqa: E402
 
@@ -185,7 +190,7 @@ def test_pr_replay_run_postmortem_failure_marker_format(cli_runner, pr_replay_pr
     monkeypatch.setattr(cmd_pr_replay, "_run_postmortem", _raise)
 
     result = _invoke_pr_replay(cli_runner, pr_replay_project, "--tier", "sample")
-    assert result.exit_code in (0, 5), result.output
+    assert result.exit_code == EXIT_PARTIAL, result.output
     data = _json.loads(result.output)
 
     top_wo = data.get("warnings_out") or []
@@ -298,7 +303,7 @@ def test_pr_replay_warnings_out_in_envelope(cli_runner, pr_replay_project, monke
     monkeypatch.setattr(cmd_pr_replay, "_run_postmortem", _raise)
 
     result = _invoke_pr_replay(cli_runner, pr_replay_project, "--tier", "sample")
-    assert result.exit_code in (0, 5), result.output
+    assert result.exit_code == EXIT_PARTIAL, result.output
     data = _json.loads(result.output)
 
     assert data.get("warnings_out"), (
@@ -327,7 +332,7 @@ def test_partial_success_set_when_pr_replay_helper_raises(cli_runner, pr_replay_
     monkeypatch.setattr(cmd_pr_replay, "_run_postmortem", _raise)
 
     result = _invoke_pr_replay(cli_runner, pr_replay_project, "--tier", "sample")
-    assert result.exit_code in (0, 5), result.output
+    assert result.exit_code == EXIT_PARTIAL, result.output
     data = _json.loads(result.output)
     assert data["summary"].get("partial_success") is True, (
         f"non-empty warnings_out must flip summary.partial_success=True; got summary = {data['summary']!r}"
@@ -354,7 +359,7 @@ def test_three_segment_marker_shape(cli_runner, pr_replay_project, monkeypatch):
     monkeypatch.setattr(cmd_pr_replay, "_run_postmortem", _raise)
 
     result = _invoke_pr_replay(cli_runner, pr_replay_project, "--tier", "sample")
-    assert result.exit_code in (0, 5), result.output
+    assert result.exit_code == EXIT_PARTIAL, result.output
     data = _json.loads(result.output)
 
     top_wo = data.get("warnings_out") or []
@@ -391,7 +396,7 @@ def test_marker_prefix_pr_replay_not_pr_bundle_or_pr_analyze(cli_runner, pr_repl
     monkeypatch.setattr(cmd_pr_replay, "_run_postmortem", _raise)
 
     result = _invoke_pr_replay(cli_runner, pr_replay_project, "--tier", "sample")
-    assert result.exit_code in (0, 5), result.output
+    assert result.exit_code == EXIT_PARTIAL, result.output
     data = _json.loads(result.output)
     top_wo = data.get("warnings_out") or []
     # Filter to substrate-CALL markers (have ``_failed:`` in the middle).

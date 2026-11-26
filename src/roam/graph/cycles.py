@@ -10,6 +10,7 @@ from itertools import combinations
 import networkx as nx
 
 from roam.db.connection import batched_in
+from roam.graph.spectral import EIGENSOLVER_METHOD, EIGENSOLVER_SEED
 
 
 # algebraic connectivity is the most expensive step in
@@ -104,7 +105,9 @@ def algebraic_connectivity(G: nx.DiGraph) -> float:
             undirected = undirected.subgraph(largest_cc).copy()
         if len(undirected) < 3:
             return 0.0
-        value = round(nx.algebraic_connectivity(undirected, method="tracemin_lu", tol=1e-3), 6)
+        value = round(
+            nx.algebraic_connectivity(undirected, method=EIGENSOLVER_METHOD, tol=1e-3, seed=EIGENSOLVER_SEED), 6
+        )
     except Exception as exc:
         # scipy missing, eigensolver divergence, or OOM. Returning 0.0
         # keeps the float contract but downstream consumers (cmd_health

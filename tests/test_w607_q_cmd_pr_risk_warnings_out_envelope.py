@@ -80,6 +80,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process  # noqa: E402
 
@@ -562,9 +565,8 @@ def test_get_changed_files_failure_surfaces_via_warnings_out(cli_runner, pr_risk
     W607-Q surfaces the marker via warnings_out so the agent can see
     the substrate degradation.
 
-    This test injects an OSError (which is NOT in the helper's own
-    except list -- only FileNotFoundError + TimeoutExpired are caught
-    by the helper) to verify the W607-Q wrapper catches the escape.
+    This test raises OSError at the Python helper boundary. Git process
+    startup handling does not apply to this failure.
     """
     _patch_helper(
         monkeypatch,
@@ -580,9 +582,8 @@ def test_get_changed_files_failure_surfaces_via_warnings_out(cli_runner, pr_risk
     assert result.exit_code == 0, result.output
     data = _json.loads(result.output)
 
-    # Marker surfaces on the no-changes envelope (the OSError makes
-    # _run_check return its default of [], which triggers the
-    # no-changes branch; the wrapper still surfaces the marker there).
+    # The OSError reaches the unavailable-comparison envelope. The warning
+    # identifies the Python failure without assigning a Git kind.
     top_wo = data.get("warnings_out") or data["summary"].get("warnings_out") or []
     assert top_wo, (
         f"OSError escape from get_changed_files must surface via "
@@ -591,10 +592,10 @@ def test_get_changed_files_failure_surfaces_via_warnings_out(cli_runner, pr_risk
     markers = [m for m in top_wo if m.startswith("pr_risk_get_changed_files_failed:")]
     assert markers, f"expected ``pr_risk_get_changed_files_failed:`` marker; got {top_wo!r}"
     assert any("OSError" in m for m in markers), markers
-    # partial_success must flip on the no-changes envelope too.
+    # The unavailable comparison must disclose partial success.
     assert data["summary"].get("partial_success") is True, (
         f"OSError escape must flip summary.partial_success=True on the "
-        f"no-changes branch; got summary = {data['summary']!r}"
+        f"unavailable comparison; got summary = {data['summary']!r}"
     )
 
 

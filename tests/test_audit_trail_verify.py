@@ -14,6 +14,8 @@ from roam.commands.cmd_audit_trail_verify import (
     _verify_chain,
 )
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 def _write_chain(path: Path, records: list[dict]) -> None:
     """Write records as JSONL with proper SHA-256 chain linking."""

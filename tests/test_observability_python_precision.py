@@ -11,6 +11,8 @@ from click.testing import CliRunner
 from roam import observability_opt as oo
 from roam.cli import cli
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
 
 @pytest.mark.parametrize(
     "source,lines",

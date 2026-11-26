@@ -32,6 +32,9 @@ import roam.commands.cmd_compatibility as compat_cmd
 from roam.cli import cli
 from roam.commands.cmd_compatibility import _build_snapshot, _diff, _introspect_flags, _verdict_for
 
+pytestmark = pytest.mark.usefixtures("pinned_index_freshness_budget")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

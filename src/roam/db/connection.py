@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -268,6 +269,40 @@ def get_db_dir(project_root: Path | None = None, *, create: bool = True) -> Path
 def get_db_path(project_root: Path | None = None, *, create: bool = True) -> Path:
     """Resolve index.db; pass create=False for a write-free metadata probe."""
     return get_db_dir(project_root, create=create) / DEFAULT_DB_NAME
+
+
+def index_cache_identity(project_root: Path | None = None) -> tuple | None:
+    """Identify the current index and its publication and WAL files."""
+    from roam.observability import log_swallowed
+
+    try:
+        path = get_db_path(project_root, create=False).resolve()
+        primary = path.stat()
+        if not stat.S_ISREG(primary.st_mode):
+            return None
+        files = [primary]
+        sidecars = (path.with_name(path.name + "-wal"), path.with_name(INDEX_STATE_NAME))
+        for sidecar in sidecars:
+            try:
+                info = sidecar.stat()
+            except FileNotFoundError:
+                info = None
+            # Read-only SQLite connections may create/remove an empty WAL.
+            if info is not None and sidecar.name.endswith("-wal") and info.st_size == 0:
+                info = None
+            files.append(info)
+    except FileNotFoundError:
+        return None
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        log_swallowed("db:cache_index_identity", exc)
+        return None
+    # A read-only SQLite open can change the WAL ctime without changing its contents.
+    marker = files[-1]
+    stamps = tuple(
+        (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns) if info is not None else None
+        for info in files
+    )
+    return path, primary.st_ctime_ns, marker.st_ctime_ns if marker is not None else None, stamps
 
 
 def get_index_lock_path(project_root: Path | None = None, *, create: bool = True) -> Path:
@@ -1207,6 +1242,7 @@ def open_db(
     project_root: Path | None = None,
     *,
     warnings_out: WarningsOut = None,
+    disclose_freshness: bool = True,
 ) -> "Iterator[sqlite3.Connection]":
     """Context manager for database access. Creates schema if needed.
 
@@ -1237,8 +1273,10 @@ def open_db(
 
     ``warnings_out=None`` (default) preserves the legacy silent-pass
     behaviour for every existing caller (~200+ commands import open_db).
+    Index builders pass ``disclose_freshness=False`` while writing a generation.
     """
-    db_path = get_db_path(project_root)
+    root = project_root if project_root is not None else find_project_root()
+    db_path = get_db_path(root)
     conn = _open_validated_connection(db_path, readonly, warnings_out)
     try:
         if not readonly:
@@ -1248,6 +1286,10 @@ def open_db(
             # Readonly opens skip ensure_schema, so this is the only place
             # the stamped user_version is ever compared on the read side.
             _require_compatible_user_version(conn)
+        if disclose_freshness:
+            from roam.db.freshness import observe_query_index
+
+            observe_query_index(conn, root)
         yield conn
         if not readonly:
             _commit_and_optimize(conn)
