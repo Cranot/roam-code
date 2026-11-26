@@ -170,6 +170,102 @@ def test_stdio_server_start_hands_children_the_null_device(tmp_path):
     assert "transport: 'protocol line\\n'" in out, (out, err)
 
 
+# With roam 14.2.3 roam_doctor answered in 6-18 s over stdio on one Windows 11
+# host with numpy 2.4.4 and scipy installed; with the stdio isolation call
+# removed it gave no answer in 120 s.
+_DOCTOR_CALL_BOUND_S = 60.0
+
+
+def test_stdio_server_doctor_answers_with_scipy_installed(tmp_path, monkeypatch):
+    # Intentional integration I/O. On one Windows 11 host, roam 14.2.2's
+    # `roam mcp` gave no answer to a roam_doctor call over stdio once numpy and
+    # scipy were installed; 14.2.3 answers. Measured with this fixture, an
+    # indexed git project. In the one run in an empty folder, the call answered
+    # with the isolation removed.
+    import importlib.util
+    from datetime import timedelta
+    from pathlib import Path
+
+    import roam
+
+    if importlib.util.find_spec("scipy") is None:
+        pytest.skip("scipy is not installed")
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    for key in tuple(os.environ):
+        if key.startswith(("ROAM_", "GIT_")):
+            monkeypatch.delenv(key, raising=False)
+    # The children run in the project folder: point them at the roam under test,
+    # not whichever roam their interpreter would find from there.
+    roam_src = str(Path(roam.__file__).resolve().parents[1])
+    # Every child, roam's own git calls included, reads no host git config.
+    env = dict(
+        os.environ,
+        PYTHONPATH=os.pathsep.join(filter(None, [roam_src, os.environ.get("PYTHONPATH")])),
+        GIT_CONFIG_GLOBAL=os.devnull,
+        GIT_CONFIG_NOSYSTEM="1",
+        GIT_TERMINAL_PROMPT="0",
+    )
+    git_env = dict(
+        env,
+        GIT_AUTHOR_NAME="t",
+        GIT_AUTHOR_EMAIL="t@example.invalid",
+        GIT_COMMITTER_NAME="t",
+        GIT_COMMITTER_EMAIL="t@example.invalid",
+    )
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+
+    def run(argv, run_env, timeout):
+        return subprocess.run(
+            argv,
+            cwd=project,
+            env=run_env,
+            check=True,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+
+    for args in (
+        ["init", "-q"],
+        ["add", "app.py"],
+        ["-c", "commit.gpgsign=false", "-c", f"core.hooksPath={tmp_path / 'no-hooks'}", "commit", "-qm", "init"],
+    ):
+        run(["git", *args], git_env, 60)
+    origin = run([sys.executable, "-c", "import roam; print(roam.__file__)"], env, 60).stdout.strip()
+    assert Path(origin).resolve() == Path(roam.__file__).resolve(), origin
+    try:
+        run([sys.executable, "-c", "import numpy, scipy.linalg"], env, 120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        pytest.skip(f"numpy/scipy do not load in a child interpreter: {exc}")
+    run([sys.executable, "-m", "roam", "index"], env, 180)
+
+    async def observe():
+        server_env = dict(env, ROAM_MCP_PRESET="full", ROAM_MCP_WATCH="0")
+        params = StdioServerParameters(
+            command=sys.executable, args=["-m", "roam", "mcp", "--no-auto-index"], cwd=project, env=server_env
+        )
+        with (tmp_path / "server.log").open("w", encoding="utf-8") as errlog:
+            async with stdio_client(params, errlog=errlog) as (read, write):
+                async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=120)) as session:
+                    await session.initialize()
+                    result = await asyncio.wait_for(session.call_tool("roam_doctor", {}), _DOCTOR_CALL_BOUND_S)
+                    assert not result.isError, result
+                    payload = json.loads(result.content[0].text)
+                    assert payload["command"] == "doctor", payload
+                    checks = {check["name"]: check for check in payload["checks"]}
+                    # The check that imports scipy ran and found it; the index is the fixture's.
+                    assert "scipy=installed" in checks["Optional extras"]["detail"], checks["Optional extras"]
+                    assert checks["Index exists"]["passed"], checks["Index exists"]
+                    assert str(project.name) in checks["Index exists"]["detail"], checks["Index exists"]
+
+    asyncio.run(asyncio.wait_for(observe(), timeout=240))
+
+
 def test_stdin_isolation_leaves_a_replaced_stdin_alone(monkeypatch):
     import io
 
