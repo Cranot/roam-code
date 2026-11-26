@@ -861,3 +861,33 @@ class TestAttestStalenessContract:
         monkeypatch.chdir(attest_project)
         a = self._attestation(cli_runner, attest_project)
         assert isinstance(a.get("not_checked"), list)
+
+
+class TestAttestIndexedCommitBehindHead:
+    """The indexed commit is behind HEAD exactly when HEAD moved since indexing."""
+
+    @staticmethod
+    def _behind(cli_runner, project):
+        result = invoke_cli(cli_runner, ["attest"], cwd=project, json_mode=True)
+        attestation = parse_json_output(result, "attest")["attestation"]
+        (cond,) = [c for c in attestation["stale_if"] if c["condition"] == "indexed_commit_behind_head"]
+        return cond["already_true"]
+
+    def test_true_after_an_empty_commit(self, cli_runner, attest_project, monkeypatch):
+        monkeypatch.chdir(attest_project)
+        # Index the fixture's edit so the source matches the index, then move HEAD only.
+        out, rc = index_in_process(attest_project)
+        assert rc == 0, out
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--allow-empty", "-qm", "empty"],
+            cwd=attest_project,
+            check=True,
+            capture_output=True,
+        )
+        assert self._behind(cli_runner, attest_project) is True
+
+    def test_false_for_a_source_edit_at_the_same_head(self, cli_runner, attest_project, monkeypatch):
+        monkeypatch.chdir(attest_project)
+        source = next(p for p in sorted(attest_project.rglob("*.py")) if ".roam" not in p.parts)
+        source.write_text(source.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
+        assert self._behind(cli_runner, attest_project) is False

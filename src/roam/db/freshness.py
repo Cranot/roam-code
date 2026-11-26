@@ -97,9 +97,11 @@ def _run_git(
     remaining = deadline.remaining()
     if remaining <= 0:
         return None, _BUDGET_EXCEEDED
+    # Argument-only commands read end-of-file, never the caller's stdin (the MCP protocol pipe).
+    stdin_kw: dict = {"input": data} if data is not None else {"stdin": subprocess.DEVNULL}
     try:
         result = subprocess.run(
-            command, cwd=root, capture_output=True, env=env, timeout=remaining, check=False, input=data
+            command, cwd=root, capture_output=True, env=env, timeout=remaining, check=False, **stdin_kw
         )
     except FileNotFoundError as exc:
         log_swallowed("index_freshness:git", exc)
@@ -596,6 +598,7 @@ def _git_history_relation(root: Path, indexed: str, head: str, deadline: _CheckD
                 ["git", "merge-base", "--is-ancestor", ancestor, descendant],
                 cwd=root,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 env=env,
                 timeout=remaining,
                 check=False,

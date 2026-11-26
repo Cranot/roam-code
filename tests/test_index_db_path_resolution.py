@@ -61,3 +61,23 @@ def test_no_source_file_builds_the_index_path_by_hand():
             if _HAND_BUILT.search(line):
                 offenders.append(f"{rel}:{number}: {line.strip()}")
     assert not offenders, "resolve the index with roam.db.connection.get_db_path:\n" + "\n".join(offenders)
+
+
+def test_mcp_completions_fallback_opens_a_relative_roam_db_dir(tmp_path, monkeypatch):
+    from roam.db import connection
+    from roam.mcp_extras import completions
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".git").mkdir()
+    (tmp_path / "cache").mkdir()
+    sqlite3.connect(tmp_path / "cache" / "index.db").close()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ROAM_DB_DIR", "cache")
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("older index layout")
+
+    monkeypatch.setattr(connection, "open_db", refuse)
+    with completions._open_index(str(proj)) as conn:
+        assert conn is not None

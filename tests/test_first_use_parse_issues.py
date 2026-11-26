@@ -92,6 +92,11 @@ def test_parse_issue_scope_on_reused_index(tmp_path, monkeypatch, command):
     expected_scope = "files_parsed_this_run" if command == "init" else "index_reused"
     assert data["parse_issues_scope"] == expected_scope
     assert "parse_issues" not in data
+    if command == "init":
+        # Init has now written its setup files, so a second init reuses the index.
+        again = runner.invoke(cli, ["--json", "init"])
+        assert again.exit_code == 0, again.output
+        assert json.loads(again.stdout)["parse_issues_scope"] == "index_reused"
     text = runner.invoke(cli, [command])
     assert text.exit_code == 0, text.output
     assert "Parse issues cover only files parsed in this run" in text.output

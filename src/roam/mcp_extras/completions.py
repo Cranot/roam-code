@@ -126,7 +126,7 @@ def _open_index(root: str | None = None):
         except Exception as exc:  # noqa: BLE001 -- completions also support older indexes
             log_swallowed("completions:open_db", exc)
             try:
-                conn = stack.enter_context(closing(sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)))
+                conn = stack.enter_context(closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)))
             except sqlite3.Error as exc:
                 log_swallowed("completions:sqlite", exc)
                 conn = None

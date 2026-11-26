@@ -287,3 +287,22 @@ def test_explicit_critique_diff_keeps_its_input_channel():
     assert result == payload
     assert run.call_args.kwargs["input"] == diff
     assert "stdin" not in run.call_args.kwargs
+
+
+def test_index_freshness_git_children_detach_stdin(tmp_path):
+    from roam.db import freshness
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(command, 1, b"", b"")
+
+    with patch.object(freshness.subprocess, "run", side_effect=fake_run):
+        freshness._run_git(tmp_path, ["git", "status", "--porcelain"], freshness._CheckDeadline())
+        freshness._run_git(tmp_path, ["git", "hash-object", "--stdin"], freshness._CheckDeadline(), data=b"x")
+        freshness._git_history_relation(tmp_path, "a" * 40, "b" * 40, freshness._CheckDeadline())
+    argument_only = [calls[0], *calls[2:]]
+    assert argument_only and all(kw.get("stdin") == subprocess.DEVNULL for kw in argument_only)
+    assert all(kw.get("input") is None for kw in argument_only)
+    assert calls[1].get("input") == b"x" and "stdin" not in calls[1]

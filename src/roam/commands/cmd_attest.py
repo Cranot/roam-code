@@ -564,12 +564,22 @@ def _build_staleness_contract(root, hashes, tool_version, conn, evidence, budget
     from roam.observability import log_swallowed
 
     idx = {}
+    freshness = None
     try:
-        from roam.commands.resolve import index_status
+        from roam.db.connection import find_project_root
+        from roam.db.freshness import project_index_freshness, query_index_freshness
 
-        idx = index_status() or {}
+        freshness = query_index_freshness() or project_index_freshness(find_project_root())
+        idx = freshness.legacy_status() if freshness is not None else {}
     except Exception as exc:  # noqa: BLE001 -- best-effort freshness, never fatal
         log_swallowed("attest.staleness.index_status", exc)
+    # Compare full commit ids: the source snapshot can be fresh after HEAD moved, and short ids differ in length.
+    indexed_behind_head = bool(
+        freshness is not None
+        and freshness.indexed_commit
+        and freshness.head_commit
+        and freshness.indexed_commit != freshness.head_commit
+    )
     indexed_commit = idx.get("indexed_commit")
     head_commit = hashes.get("head") or idx.get("head_commit")
     base_commit = hashes.get("base")
@@ -603,9 +613,7 @@ def _build_staleness_contract(root, hashes, tool_version, conn, evidence, budget
         {
             "condition": "indexed_commit_behind_head",
             "baseline": {"indexed_commit": indexed_commit, "head_commit": head_commit},
-            "already_true": bool(
-                idx.get("fresh") is False and indexed_commit and head_commit and indexed_commit != head_commit
-            ),
+            "already_true": indexed_behind_head,
         },
         {
             "condition": "working_tree_dirty",
