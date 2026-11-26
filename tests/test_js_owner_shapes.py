@@ -12,7 +12,26 @@ import pytest
 from tests.test_js_edge_resolution import calls
 
 FILES = {
-    "tsconfig.json": '{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["src/lib/*"]}}}\n',
+    "tsconfig.json": (
+        '{"compilerOptions":{"baseUrl":".","paths":{"@lib/*":["src/lib/*"],"@pkg":["./src/pkg/index.ts"]}}}\n'
+    ),
+    "src/pkg/feature.ts": "export interface Opt {}\nexport function featureFn() { return 1 }\n",
+    "src/pkg/index.ts": "export * from './feature'\n",
+    "src/alias_bare.ts": "import { featureFn } from '@pkg'\nexport function useAliasBare() {\n  return featureFn()\n}\n",
+    "src/lib/factory.ts": "export class Factory {\n  static make() { return 1 }\n}\n",
+    "src/alias_member.ts": (
+        "import { Factory } from '@lib/factory'\nexport function useFactory() {\n  return Factory.make()\n}\n"
+    ),
+    "src/lib/deco.ts": "export function Deco() {\n  return (target: any) => target\n}\n",
+    "src/decorated.ts": "import { Deco } from '@lib/deco'\n@Deco()\nexport class Decorated {}\n",
+    "src/Comp.vue": (
+        "<script setup lang=\"ts\">\nimport { featureFn } from './pkg/feature'\nconst value = featureFn()\n</script>\n"
+    ),
+    "src/feature.test.ts": (
+        "import type { Opt } from './pkg/feature'\n"
+        "import { featureFn } from './pkg/feature'\n"
+        "it('runs', () => {\n  const o: Opt = {}\n  featureFn()\n})\n"
+    ),
     "src/svc/app.service.ts": "export class AppService {\n  run() { return 1 }\n}\n",
     "src/di.ts": (
         "import { AppService } from './svc/app.service'\n"
@@ -61,6 +80,11 @@ SHAPES = {
     "barrel re-export": ("src/barrel.ts", "src/a.ts", "barrelFn"),
     "tsconfig path": ("src/paths.ts", "src/lib/tools.ts", "pathTool"),
     "CommonJS destructuring": ("src/cjs.js", "src/util.js", "helper"),
+    "exact path alias to a barrel": ("src/alias_bare.ts", "src/pkg/feature.ts", "featureFn"),
+    "member through a path alias": ("src/alias_member.ts", "src/lib/factory.ts", "Factory.make"),
+    "decorator through a path alias": ("src/decorated.ts", "src/lib/deco.ts", "Deco"),
+    "call in a .vue script": ("src/Comp.vue", "src/pkg/feature.ts", "featureFn"),
+    "type and value import of one module": ("src/feature.test.ts", "src/pkg/feature.ts", "featureFn"),
 }
 
 

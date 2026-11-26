@@ -50,17 +50,92 @@ class ModuleExports:
                 self.by_file.setdefault(symbol.get("file_path"), []).append(symbol)
         self.cache = {}
         self.instances = set()
+        self.alias_rules = {}
 
     def module_path(self, source_file, module):
         import posixpath
 
         if module.startswith("."):
-            base = posixpath.normpath(posixpath.join(posixpath.dirname(source_file), module))
-        elif module.startswith("@/"):
-            base = "src/" + module[2:]
+            bases = [posixpath.normpath(posixpath.join(posixpath.dirname(source_file), module))]
         else:
-            return None
-        return next((p for p in source_path_candidates(base) if (self.root / p).is_file()), None)
+            bases = self._aliased(source_file, module)
+            if not bases and module.startswith("@/"):
+                bases = ["src/" + module[2:]]
+        for base in bases:
+            found = next((p for p in source_path_candidates(base) if (self.root / p).is_file()), None)
+            if found:
+                return found
+        return None
+
+    def _aliased(self, source_file, module):
+        """Targets of ``compilerOptions.paths`` for ``module``, in the order TypeScript tries them."""
+        best, targets = -1, []
+        for pattern, replacements in self._rules_for(source_file):
+            prefix, star, suffix = pattern.partition("*")
+            if not star:
+                if module == pattern and len(pattern) > best:
+                    best, targets = len(pattern), list(replacements)
+            elif module.startswith(prefix) and module.endswith(suffix) and len(module) >= len(prefix) + len(suffix):
+                if len(prefix) > best:
+                    middle = module[len(prefix) : len(module) - len(suffix)]
+                    best, targets = len(prefix), [r.replace("*", middle, 1) for r in replacements]
+        return targets
+
+    def _rules_for(self, source_file):
+        """Path rules of the nearest tsconfig/jsconfig above the file that has any (``extends`` followed)."""
+        import posixpath
+
+        directory = posixpath.dirname(source_file.replace("\\", "/"))
+        while True:
+            if directory not in self.alias_rules:
+                rules = None
+                for name in ("tsconfig.json", "jsconfig.json"):
+                    config = posixpath.join(directory, name) if directory else name
+                    if (self.root / config).is_file():
+                        rules = self._config_rules(config, set())
+                        if rules:
+                            break
+                self.alias_rules[directory] = rules or []
+            if self.alias_rules[directory] or not directory:
+                return self.alias_rules[directory]
+            directory = posixpath.dirname(directory)
+
+    def _config_rules(self, config, seen):
+        import json
+        import posixpath
+        import re
+
+        if config in seen:
+            return []
+        seen.add(config)
+        try:
+            text = (self.root / config).read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            return []
+        # tsconfig is JSON with comments and trailing commas.
+        text = re.sub(r'("(?:\\.|[^"\\])*")|//[^\n]*|/\*.*?\*/', lambda m: m.group(1) or "", text, flags=re.S)
+        text = re.sub(r",(\s*[}\]])", r"\1", text)
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return []
+        options = data.get("compilerOptions") if isinstance(data, dict) else None
+        here = posixpath.dirname(config)
+        paths = options.get("paths") if isinstance(options, dict) else None
+        if isinstance(paths, dict):
+            base = posixpath.normpath(posixpath.join(here, options.get("baseUrl") or "."))
+            return [
+                (pattern, [posixpath.normpath(posixpath.join(base, t)) for t in targets])
+                for pattern, targets in paths.items()
+                if isinstance(targets, list) and all(isinstance(t, str) for t in targets)
+            ]
+        parent = data.get("extends") if isinstance(data, dict) else None
+        if isinstance(parent, str) and parent.startswith("."):
+            parent = posixpath.normpath(posixpath.join(here, parent))
+            if not parent.endswith(".json"):
+                parent += ".json"
+            return self._config_rules(parent, seen)
+        return []
 
     def _summary(self, path):
         if path in self.cache:
