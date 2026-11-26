@@ -286,20 +286,19 @@ def test_cli_project_root_fallback_only_catches_oserror():
     assert handler_names == ["OSError"]
 
 
-def test_agents_md_smoke_on_roam_code(cli_runner):
+def test_agents_md_smoke_on_roam_code(cli_runner, repo_index):
     """End-to-end smoke: run against the actual roam-code repo.
 
     This is the W11 polish "never N/A without running it" rule -- a
     fixture-only test can pass while the real repo crashes. Asserts
     only structural facts so it survives normal codebase churn.
+
+    ``repo_index`` skips unless the repo's own index is complete and
+    populated (a fresh CI worker has none). The earlier existence check
+    let the test run while another test was still building that index,
+    and it then failed on "being built by another process".
     """
     repo_root = _repo_root()
-    # Skip if the index isn't built (e.g. a fresh CI worker that
-    # hasn't run `roam index`); we don't want CI to fail on missing
-    # index, only on a regression in the generator itself.
-    if not (repo_root / ".roam" / "index.db").exists():
-        pytest.skip("roam-code index not present; skipping live smoke test")
-
     result = invoke_cli(cli_runner, ["agents-md"], cwd=repo_root, json_mode=True)
     assert result.exit_code == 0, result.output
     # Skip if stdout is empty (degraded environment, not a regression — the
