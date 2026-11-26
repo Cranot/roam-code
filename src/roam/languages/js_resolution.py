@@ -25,7 +25,8 @@ def source_path_candidates(path: str) -> tuple[str, ...]:
     if suffix in substitutions:
         stem = path[: -len(suffix)]
         return tuple(stem + ext for ext in substitutions[suffix])
-    if suffix:
-        return (path,)
     extensions = (".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".json", ".vue", ".svelte")
+    if suffix in extensions:
+        return (path,)
+    # A dot inside a file name (`./app.service`, `./user.dto`) is not an extension.
     return (path, *(path + ext for ext in extensions), *(path + "/index" + ext for ext in extensions))
