@@ -1175,12 +1175,44 @@ def _standard_target_key(ref: dict, source_parent: str) -> _StandardTargetKey:
         ref.get("receiver_import_path"),
         ref.get("receiver_mode"),
         ref.get("receiver_owner_kind"),
+        ref.get("receiver_owners"),
+        ref.get("receiver_base"),
+        ref.get("receiver_base_import_path"),
         ref.get("binding_import_path"),
         ref.get("binding_export"),
     )
 
 
 def _resolve_js_member(ref: dict, symbols_by_name: dict[str, list[dict]], modules) -> dict | None:
+    """Resolve through the evidenced owner, then a union's members or the class's ``extends`` base.
+
+    A union resolves when exactly one member owns the name. The base is
+    tried only when the owner resolved and has no such member; one level.
+    """
+    owners = ref.get("receiver_owners")
+    if owners:
+        found = {}
+        for entry in owners.split("|"):
+            name, _, path = entry.partition("@")
+            member = {k: v for k, v in ref.items() if k not in {"receiver_owners", "receiver_import_path"}}
+            member["receiver_owner"] = name
+            if path:
+                member["receiver_import_path"] = path
+            target = _resolve_js_member(member, symbols_by_name, modules)
+            if target is not None:
+                found[target["id"]] = target
+        return next(iter(found.values())) if len(found) == 1 else None
+    owner_resolved, target = _resolve_js_member_in_owner(ref, symbols_by_name, modules)
+    if target is not None or not owner_resolved or not ref.get("receiver_base"):
+        return target
+    base = {k: v for k, v in ref.items() if not k.startswith("receiver_base") and k != "receiver_import_path"}
+    base["receiver_owner"] = ref["receiver_base"]
+    if ref.get("receiver_base_import_path"):
+        base["receiver_import_path"] = ref["receiver_base_import_path"]
+    return _resolve_js_member_in_owner(base, symbols_by_name, modules)[1]
+
+
+def _resolve_js_member_in_owner(ref: dict, symbols_by_name: dict[str, list[dict]], modules) -> tuple[bool, dict | None]:
     """Resolve a member only through its evidenced owner, never property-name locality.
 
     An imported namespace owns top-level exports of the exact module. An
@@ -1191,16 +1223,16 @@ def _resolve_js_member(ref: dict, symbols_by_name: dict[str, list[dict]], module
     source_file = ref.get("source_file", "")
     owner_name = ref.get("receiver_owner", "")
     if not owner_name or owner_name == "?":
-        return None
+        return False, None
     module = ref.get("receiver_import_path")
     module_path = None
     if module:
         module_path = modules.module_path(source_file, module)
         if module_path is None:
-            return None
+            return False, None
     if owner_name == "*":
         candidates = modules.resolve(module_path, ref["target_name"]) or []
-        return candidates[0] if len(candidates) == 1 else None
+        return True, candidates[0] if len(candidates) == 1 else None
 
     type_only = ref.get("receiver_owner_kind") == "type"
     if module_path:
@@ -1216,12 +1248,14 @@ def _resolve_js_member(ref: dict, symbols_by_name: dict[str, list[dict]], module
     identities = {(s.get("file_path"), s.get("qualified_name")) for s in owners}
     classes = [s for s in owners if s.get("kind") == "class"]
     if len(identities) != 1 or (len(owners) > 1 and not (type_only and len(classes) == 1)):
-        return None
+        return False, None
 
     owner_path, qualified_owner = identities.pop()
     if not _same_language_family(source_file, owner_path):
-        return None
+        return False, None
     mode = ref.get("receiver_mode")
+    if module_path and modules.is_instance_export(module_path, owner_name):
+        mode = "instance"  # export default new Service()
     if not type_only and classes and mode == "instance":
         # A class/interface merge contributes interface members to the instance
         # type, including when the class came from a value import.
@@ -1255,17 +1289,17 @@ def _resolve_js_member(ref: dict, symbols_by_name: dict[str, list[dict]], module
     elif mode is not None and all(kind in {"class", "interface"} for kind in parents.values()):
         candidates = [s for s in candidates if ("static" in (s.get("signature") or "").split()) == (mode == "static")]
     if len(candidates) <= 1:
-        return candidates[0] if candidates else None
+        return True, candidates[0] if candidates else None
     if not all(
         s["kind"] in {"method", "constructor"} and parents[s["parent_id"]] in {"class", "interface"} for s in candidates
     ):
-        return None
+        return True, None
     implementations = [
         s for s in candidates if parents[s["parent_id"]] == "class" and not (s.get("signature") or "").endswith(";")
     ]
     if implementations:
-        return implementations[0] if len(implementations) == 1 else None
-    return min(candidates, key=lambda s: (s["line_start"], s["id"]))
+        return True, implementations[0] if len(implementations) == 1 else None
+    return True, min(candidates, key=lambda s: (s["line_start"], s["id"]))
 
 
 def _same_language_family(source_file: str, target_file: str) -> bool:

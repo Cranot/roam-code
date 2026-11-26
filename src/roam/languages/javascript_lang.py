@@ -38,6 +38,7 @@ class JavaScriptExtractor(LanguageExtractor):
         self._binding_cache = {}
         self._member_imports = {}
         self._dynamic_parameter_imports = {}
+        self._require_bindings = self._destructured_requires(tree.root_node, source)
         for statement in tree.root_node.named_children:
             if statement.type != "import_statement":
                 continue
@@ -80,6 +81,7 @@ class JavaScriptExtractor(LanguageExtractor):
             self._binding_cache = {}
             self._member_imports = {}
             self._dynamic_parameter_imports = {}
+            self._require_bindings = {}
         refs.extend(self._extract_dynamic_import_refs(source))
         # Collect inheritance refs accumulated during extract_symbols
         refs.extend(getattr(self, "_pending_inherits", []))
@@ -144,6 +146,112 @@ class JavaScriptExtractor(LanguageExtractor):
         if name is not None and name.type in {"type_identifier", "nested_type_identifier"}:
             return self.node_text(name, source)
         return "?"
+
+    def _destructured_requires(self, root, source):
+        """Top-level ``const { a, b: c } = require('./m')``: local name -> (path, export, declarator id)."""
+        found = {}
+        for statement in root.named_children:
+            if statement.type not in {"lexical_declaration", "variable_declaration"}:
+                continue
+            for declarator in statement.named_children:
+                if declarator.type != "variable_declarator":
+                    continue
+                pattern = declarator.child_by_field_name("name")
+                value = self._unparenthesized(declarator.child_by_field_name("value"))
+                if pattern is None or pattern.type != "object_pattern" or value is None:
+                    continue
+                if (
+                    value.type != "call_expression"
+                    or self.node_text(value.child_by_field_name("function"), source) != "require"
+                ):
+                    continue
+                args = value.child_by_field_name("arguments")
+                specifier = next((c for c in args.named_children if c.type != "comment"), None) if args else None
+                if specifier is None or specifier.type != "string":
+                    continue
+                path = self.node_text(specifier, source)[1:-1]
+                for prop in pattern.named_children:
+                    if prop.type == "shorthand_property_identifier_pattern":
+                        name = self.node_text(prop, source)
+                        found[name] = (path, name, declarator.id)
+                    elif prop.type == "pair_pattern":
+                        key = prop.child_by_field_name("key")
+                        local = prop.child_by_field_name("value")
+                        if key is not None and local is not None and local.type == "identifier":
+                            found[self.node_text(local, source)] = (path, self.node_text(key, source), declarator.id)
+        return found
+
+    def _class_base(self, cls, source):
+        """The single ``extends`` identifier of a class, or None."""
+        heritage = next((c for c in cls.named_children if c.type == "class_heritage"), None)
+        if heritage is None:
+            return None
+        clause = next((c for c in heritage.named_children if c.type == "extends_clause"), heritage)
+        values = [c for c in clause.named_children if c.type not in {"comment", "type_arguments"}]
+        if len(values) != 1 or values[0].type != "identifier":
+            return None
+        return self.node_text(values[0], source)
+
+    def _instanceof_owner(self, member, receiver, source):
+        """A class the receiver was checked against on the path to this member (if / ?: / &&)."""
+
+        def checked(condition):
+            condition = self._unparenthesized(condition)
+            if condition is None or condition.type != "binary_expression":
+                return None
+            operator = condition.child_by_field_name("operator")
+            left = self._unparenthesized(condition.child_by_field_name("left"))
+            right = condition.child_by_field_name("right")
+            if operator is None or self.node_text(operator, source) != "instanceof":
+                return None
+            if left is None or left.type != "identifier" or self.node_text(left, source) != receiver:
+                return None
+            return self.node_text(right, source) if right is not None and right.type == "identifier" else None
+
+        def inside(node, outer):
+            return outer is not None and outer.start_byte <= node.start_byte and node.end_byte <= outer.end_byte
+
+        current = member
+        while current.parent is not None:
+            parent = current.parent
+            if parent.type in self._FUNCTION_NODES | self._CLASS_NODES:
+                return None
+            if parent.type in {"if_statement", "ternary_expression"} and inside(
+                member, parent.child_by_field_name("consequence")
+            ):
+                owner = checked(parent.child_by_field_name("condition"))
+                if owner:
+                    return owner
+            if parent.type == "binary_expression" and inside(member, parent.child_by_field_name("right")):
+                operator = parent.child_by_field_name("operator")
+                if operator is not None and self.node_text(operator, source) == "&&":
+                    owner = checked(parent.child_by_field_name("left"))
+                    if owner:
+                        return owner
+            current = parent
+        return None
+
+    def _union_members(self, declaration, source):
+        """Named members of a ``A | B`` parameter annotation, null and undefined left out."""
+        annotation = declaration.child_by_field_name("type")
+        if annotation is None or annotation.type != "type_annotation" or len(annotation.named_children) != 1:
+            return []
+        node = annotation.named_children[0]
+        if node.type != "union_type":
+            return []
+        names = []
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == "union_type":
+                stack.extend(reversed(current.named_children))
+            elif self.node_text(current, source) in {"null", "undefined"}:
+                continue
+            elif current.type == "type_identifier":
+                names.append(self.node_text(current, source))
+            else:
+                return []
+        return names if len(names) > 1 else []
 
     def _scope_bindings(self, scope, source):
         """Cache lexical bindings per AST scope for this extraction only.
@@ -384,6 +492,7 @@ class JavaScriptExtractor(LanguageExtractor):
         mode = None
         declared_type = False
         declaration = member
+        this_class = None
         if receiver == "this" or (
             receiver_node is not None
             and receiver_node.type == "member_expression"
@@ -396,6 +505,7 @@ class JavaScriptExtractor(LanguageExtractor):
                 if receiver == "this":
                     owner = self.node_text(name, source) if name is not None and cls.type != "class" else "?"
                     declaration = cls
+                    this_class = cls
                 else:
                     field = self.node_text(receiver_node.child_by_field_name("property"), source)
                     body = cls.child_by_field_name("body")
@@ -435,11 +545,18 @@ class JavaScriptExtractor(LanguageExtractor):
                     mode = "instance"
         elif receiver_node is not None and receiver_node.type == "identifier":
             mode = "static"
-            if binding is not None:
+            narrowed = self._instanceof_owner(member, receiver, source)
+            if narrowed:
+                owner, declared_type, mode = narrowed, True, "instance"
+            elif binding is not None:
                 owner = binding.owner
                 declared_type = binding.declared_type
                 mode = binding.mode
                 declaration = binding.declaration
+                if owner == "?" and declared_type and declaration.type in {"required_parameter", "optional_parameter"}:
+                    union = self._union_members(declaration, source)
+                    if union:
+                        return self._union_evidence(receiver, union, declaration, source)
         evidence = {"receiver": receiver, "receiver_owner": owner}
         if mode is not None:
             evidence["receiver_mode"] = mode
@@ -469,7 +586,37 @@ class JavaScriptExtractor(LanguageExtractor):
                 path, exported = self._member_imports[root]
                 evidence["receiver_import_path"] = path
                 evidence["receiver_owner"] = suffix if exported == "*" else exported + "." + suffix
+        base = self._class_base(this_class, source) if this_class is not None else None
+        if base and evidence.get("receiver_owner") not in {None, "", "?"}:
+            base_binding = self._lexical_binding(this_class, base, source)
+            if base_binding is not None and base_binding.indexed_owner:
+                evidence["receiver_base"] = base
+            elif base_binding is None and base in self._member_imports:
+                path, exported = self._member_imports[base]
+                if exported != "*":
+                    evidence["receiver_base"] = exported
+                    evidence["receiver_base_import_path"] = path
         return evidence
+
+    def _union_evidence(self, receiver, members, declaration, source):
+        """Each union member as `name@import-path` (empty path: a class in this file)."""
+        owners = []
+        for name in members:
+            local = self._lexical_binding(declaration, name, source, type_only=True)
+            if local is not None and local.indexed_owner:
+                owners.append(name + "@")
+            elif local is None and name in self._member_imports and self._member_imports[name][1] != "*":
+                path, exported = self._member_imports[name]
+                owners.append(exported + "@" + path)
+            else:
+                return {"receiver": receiver, "receiver_owner": "?", "receiver_mode": "instance"}
+        return {
+            "receiver": receiver,
+            "receiver_owner": "|",
+            "receiver_owners": "|".join(owners),
+            "receiver_mode": "instance",
+            "receiver_owner_kind": "type",
+        }
 
     def get_docstring(self, node, source: bytes) -> str | None:
         """JSDoc: look for comment node immediately before this node."""
@@ -1499,6 +1646,11 @@ class JavaScriptExtractor(LanguageExtractor):
         if not evidence and name in self._member_imports and self._lexical_binding(node, name, source) is None:
             path, exported = self._member_imports[name]
             if exported in {"default", "export="}:
+                evidence = {"binding_import_path": path, "binding_export": exported}
+        elif not evidence and func_node.type == "identifier" and name in getattr(self, "_require_bindings", {}):
+            path, exported, declarator_id = self._require_bindings[name]
+            binding = self._lexical_binding(node, name, source)
+            if binding is not None and binding.declaration.id == declarator_id:
                 evidence = {"binding_import_path": path, "binding_export": exported}
         ref.update(evidence)
         refs.append(ref)

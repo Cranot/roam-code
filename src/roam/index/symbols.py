@@ -135,6 +135,9 @@ def _normalize_reference(ref: dict) -> dict | None:
         "receiver_import_path",
         "receiver_mode",
         "receiver_owner_kind",
+        "receiver_owners",
+        "receiver_base",
+        "receiver_base_import_path",
         "binding_import_path",
         "binding_export",
     ):

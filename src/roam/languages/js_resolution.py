@@ -25,9 +25,10 @@ def source_path_candidates(path: str) -> tuple[str, ...]:
     if suffix in substitutions:
         stem = path[: -len(suffix)]
         return tuple(stem + ext for ext in substitutions[suffix])
-    if suffix:
-        return (path,)
     extensions = (".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".json", ".vue", ".svelte")
+    if suffix in extensions:
+        return (path,)
+    # A dot inside a file name (`./app.service`, `./user.dto`) is not an extension.
     return (path, *(path + ext for ext in extensions), *(path + "/index" + ext for ext in extensions))
 
 
@@ -48,6 +49,7 @@ class ModuleExports:
             for symbol in symbols:
                 self.by_file.setdefault(symbol.get("file_path"), []).append(symbol)
         self.cache = {}
+        self.instances = set()
 
     def module_path(self, source_file, module):
         import posixpath
@@ -84,6 +86,20 @@ class ModuleExports:
             exports.setdefault(name, []).append((local, module))
 
         for stmt in tree.root_node.named_children:
+            if stmt.type == "expression_statement":
+                # CommonJS: module.exports = { a, b: c }
+                assignment = stmt.named_children[0] if stmt.named_children else None
+                if assignment is not None and assignment.type == "assignment_expression":
+                    left, right = assignment.child_by_field_name("left"), assignment.child_by_field_name("right")
+                    if text(left) == "module.exports" and right is not None and right.type == "object":
+                        for prop in right.named_children:
+                            if prop.type == "shorthand_property_identifier":
+                                add(text(prop), text(prop))
+                            elif prop.type == "pair":
+                                value = prop.child_by_field_name("value")
+                                if value is not None and value.type == "identifier":
+                                    add(text(prop.child_by_field_name("key")), text(value))
+                continue
             if stmt.type != "export_statement":
                 continue
             module_node = stmt.child_by_field_name("source")
@@ -97,6 +113,11 @@ class ModuleExports:
                 local = declaration.child_by_field_name("name") if declaration is not None else None
                 if local is None and declaration is not None and declaration.type == "identifier":
                     local = declaration
+                if local is None and declaration is not None and declaration.type == "new_expression":
+                    ctor = declaration.child_by_field_name("constructor")
+                    if ctor is not None and ctor.type == "identifier":
+                        local = ctor
+                        self.instances.add((path, name))
                 if local is not None:
                     add(name, text(local))
                 continue
@@ -121,6 +142,11 @@ class ModuleExports:
                             if local is not None and local.type == "identifier":
                                 add(text(local), text(local))
         return exports, stars
+
+    def is_instance_export(self, path, name):
+        """True when ``name`` is exported as ``new Class()`` (not the class itself)."""
+        self._summary(path)
+        return (path, name) in self.instances
 
     def resolve(self, path, name, visited=frozenset(), *, type_only=False):
         # None distinguishes unresolved/ambiguous module evidence from a
