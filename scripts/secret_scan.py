@@ -364,6 +364,7 @@ def _scan_content_bytes(
     operation: str,
     commit: str,
     allow_suppression: bool = True,
+    suppressed: list[dict] | None = None,
 ) -> list[dict]:
     """``_scan_text`` over every reading of *data*, deduplicated.
 
@@ -371,11 +372,22 @@ def _scan_content_bytes(
     are keyed on everything that identifies them.
     """
     seen: dict[tuple, dict] = {}
+    skipped: dict[tuple, dict] = {}
     for view in _decode_content_views(data, operation=operation):
-        for finding in _scan_text(rel_path, view, commit=commit, allow_suppression=allow_suppression):
-            key = (finding["file"], finding["line"], finding["pattern_name"], finding["matched_text"])
-            seen.setdefault(key, finding)
+        marked: list[dict] = []
+        for finding in _scan_text(
+            rel_path, view, commit=commit, allow_suppression=allow_suppression, suppressed=marked
+        ):
+            seen.setdefault(_finding_key(finding), finding)
+        for finding in marked:
+            skipped.setdefault(_finding_key(finding), finding)
+    if suppressed is not None:
+        suppressed.extend(skipped.values())
     return list(seen.values())
+
+
+def _finding_key(finding: dict) -> tuple:
+    return (finding["file"], finding["line"], finding["pattern_name"], finding["matched_text"])
 
 
 def _redact_label(label: str) -> str:
@@ -392,31 +404,41 @@ def _scan_text(
     *,
     commit: str,
     allow_suppression: bool = True,
+    suppressed: list[dict] | None = None,
 ) -> list[dict]:
+    """Findings in *text*; a marked line that would have produced some goes to *suppressed*."""
     findings: list[dict] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
+        line_findings = _line_findings(rel_path, line_no, line, commit=commit)
         if allow_suppression and _line_is_allowlisted(line):
+            if line_findings and suppressed is not None:
+                suppressed.extend(line_findings)
             continue
-        for pat in _COMPILED_PATTERNS:
-            for match in pat["regex"].finditer(line):
-                matched_value = match.group()
-                if _is_explicit_placeholder(match):
-                    continue
-                if not _high_entropy_passes(pat, match):
-                    continue
-                if not _assignment_value_is_credential_shaped(pat, match):
-                    continue
-                findings.append(
-                    {
-                        "file": _redact_label(rel_path),
-                        "line": line_no,
-                        "severity": pat["severity"],
-                        "pattern_name": pat["name"],
-                        "matched_text": mask_secret(matched_value),
-                        "remediation": _REMEDIATION.get(pat["name"], "Move to environment variable or secrets manager"),
-                        "commit": commit,
-                    }
-                )
+        findings.extend(line_findings)
+    return findings
+
+
+def _line_findings(rel_path: str, line_no: int, line: str, *, commit: str) -> list[dict]:
+    findings: list[dict] = []
+    for pat in _COMPILED_PATTERNS:
+        for match in pat["regex"].finditer(line):
+            if _is_explicit_placeholder(match):
+                continue
+            if not _high_entropy_passes(pat, match):
+                continue
+            if not _assignment_value_is_credential_shaped(pat, match):
+                continue
+            findings.append(
+                {
+                    "file": _redact_label(rel_path),
+                    "line": line_no,
+                    "severity": pat["severity"],
+                    "pattern_name": pat["name"],
+                    "matched_text": mask_secret(match.group()),
+                    "remediation": _REMEDIATION.get(pat["name"], "Move to environment variable or secrets manager"),
+                    "commit": commit,
+                }
+            )
     return findings
 
 
@@ -432,7 +454,7 @@ def _resolve_commits(repo_root: Path, revision_args: str | tuple[str, ...]) -> l
     return [line.strip() for line in commits.splitlines() if line.strip()]
 
 
-def _scan_commits(repo_root: Path, commits: list[str]) -> list[dict]:
+def _scan_commits(repo_root: Path, commits: list[str], suppressed: list[dict] | None = None) -> list[dict]:
     findings: list[dict] = []
     for commit in commits:
         try:
@@ -486,15 +508,16 @@ def _scan_commits(repo_root: Path, commits: list[str]) -> list[dict]:
                     blob_raw,
                     operation=f"read blob {commit}:{rel_path}",
                     commit=commit,
+                    suppressed=suppressed,
                 )
             )
     findings.sort(key=lambda row: (row["commit"], row["file"], row["line"], row["pattern_name"]))
     return findings
 
 
-def scan_commit_range(repo_root: Path, rev_range: str) -> list[dict]:
-    """Scan every commit in *rev_range* and return secret findings."""
-    return _scan_commits(repo_root, _resolve_commits(repo_root, rev_range))
+def scan_commit_range(repo_root: Path, rev_range: str, suppressed: list[dict] | None = None) -> list[dict]:
+    """Scan every commit in *rev_range* and return secret findings; marked lines go to *suppressed*."""
+    return _scan_commits(repo_root, _resolve_commits(repo_root, rev_range), suppressed)
 
 
 def scan_pre_push_updates(
@@ -502,8 +525,9 @@ def scan_pre_push_updates(
     updates_path: Path,
     *,
     remote_url: str | None = None,
+    suppressed: list[dict] | None = None,
 ) -> list[dict]:
-    """Scan every commit introduced by captured Git pre-push updates."""
+    """Scan every commit introduced by captured Git pre-push updates; marked lines go to *suppressed*."""
     try:
         updates = _prepush_refs.load_pre_push_updates(updates_path)
     except _prepush_refs.PrePushUpdateError as exc:
@@ -522,6 +546,7 @@ def scan_pre_push_updates(
                 operation=f"decode pushed {published.kind} {published.oid}",
                 commit=published.oid,
                 allow_suppression=published.kind == "blob",
+                suppressed=suppressed,
             )
         )
 
@@ -541,7 +566,7 @@ def scan_pre_push_updates(
                 continue
             seen.add(commit)
             commits.append(commit)
-    findings.extend(_scan_commits(repo_root, commits))
+    findings.extend(_scan_commits(repo_root, commits, suppressed))
     findings.sort(key=lambda row: (row["commit"], row["file"], row["line"], row["pattern_name"]))
     return findings
 
@@ -554,6 +579,14 @@ def _format_findings(findings: list[dict]) -> str:
             f"[{finding['pattern_name']}] {finding['matched_text']}"
         )
     return "\n".join(lines)
+
+
+def _format_suppressed(suppressed: list[dict]) -> str:
+    """One line per marked line that matched, so a marker never hides a value unseen."""
+    lines = sorted({(row["commit"][:7], row["file"], row["line"]) for row in suppressed})
+    out = [f"secret scan: {len(lines)} line(s) skipped by a secretsallow marker"]
+    out.extend(f"  {commit} {path}:{line}" for commit, path, line in lines)
+    return "\n".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -578,10 +611,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--remote-url requires --pre-push-updates")
 
     repo_root = _repo_root()
+    suppressed: list[dict] = []
     if args.pre_push_updates is not None:
-        findings = scan_pre_push_updates(repo_root, args.pre_push_updates, remote_url=args.remote_url)
+        findings = scan_pre_push_updates(
+            repo_root, args.pre_push_updates, remote_url=args.remote_url, suppressed=suppressed
+        )
     else:
-        findings = scan_commit_range(repo_root, args.rev_range or "HEAD")
+        findings = scan_commit_range(repo_root, args.rev_range or "HEAD", suppressed)
+    if suppressed:
+        print(_format_suppressed(suppressed), file=sys.stderr)
     if findings:
         print(_format_findings(findings), file=sys.stderr)
         return 1

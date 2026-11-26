@@ -1179,3 +1179,97 @@ def test_first_party_source_has_no_credential_shaped_literals() -> None:
         [{"file": f["file"], "line": f["line"], "pattern": f["pattern_name"]} for f in findings],
         indent=2,
     )
+
+
+def test_marked_line_that_matches_is_reported_as_suppressed(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    app = repo / "app.py"
+    app.write_text("def main():\n    return 0\n")
+    git_init(repo)
+
+    secret = "AKIA" + "A" * 16
+    app.write_text(f'value = "{secret}"  # secretsallow\nnote = "plain"  # secretsallow\n')
+    git_commit(repo, "allowlisted secret")
+
+    suppressed: list[dict] = []
+    findings = secret_scan.scan_commit_range(repo, "HEAD~1..HEAD", suppressed)
+
+    assert findings == []
+    assert [(row["file"], row["line"]) for row in suppressed] == [("app.py", 1)]
+
+
+def test_pre_push_scan_reports_suppressed_marked_lines(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    secret = "AKIA" + "F" * 16
+    (repo / "app.py").write_text(f'value = "{secret}"  # secretsallow\n', encoding="utf-8")
+    git_init(repo)
+    head = _git(repo, "rev-parse", "HEAD").stdout.decode("ascii").strip()
+    updates = tmp_path / "updates"
+    updates.write_text(f"refs/heads/topic {head} refs/heads/topic {'0' * len(head)}\n", encoding="utf-8")
+
+    suppressed: list[dict] = []
+    findings = secret_scan.scan_pre_push_updates(repo, updates, suppressed=suppressed)
+
+    assert findings == []
+    assert {(row["file"], row["line"]) for row in suppressed} == {("app.py", 1)}
+
+
+def test_cli_prints_count_and_location_of_suppressed_lines(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    app = repo / "app.py"
+    app.write_text("def main():\n    return 0\n")
+    git_init(repo)
+    secret = "AKIA" + "B" * 16
+    app.write_text(f'x = 1\nvalue = "{secret}"  # secretsallow\n')
+    git_commit(repo, "allowlisted secret")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--rev-range", "HEAD~1..HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(repo_root() / "src")},
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "secret scan: 1 line(s) skipped by a secretsallow marker" in result.stderr
+    assert "app.py:2" in result.stderr
+    assert secret not in result.stderr
+
+
+# Marked lines in this tree that hide a secret-shaped match, per file. A new
+# marker that hides a match changes this table, so it is seen in review.
+_PINNED_SUPPRESSING_MARKERS = {
+    "tests/test_mcp_readonly_security_receipts.py": 2,
+    "tests/test_pr_bundle.py": 3,
+    "tests/test_w_mcp_injection_marker_egress.py": 1,
+    "tests/test_w_mcp_mode_enforcement.py": 1,
+}
+
+
+def test_suppressing_markers_in_the_tree_are_pinned() -> None:
+    root = repo_root()
+    listed = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True, timeout=60
+    ).stdout.decode("utf-8")
+    allow_file = root / ".secretsallow"
+    allowlist = (
+        secret_scan._parse_path_allowlist(allow_file.read_text(encoding="utf-8")) if allow_file.is_file() else []
+    )
+    counts: dict[str, int] = {}
+    for rel_path in filter(None, listed.split("\0")):
+        path = root / rel_path
+        if not path.is_file() or secret_scan._path_is_allowlisted(rel_path, allowlist):
+            continue
+        if secret_scan._is_exempt_fixture_path(rel_path):
+            continue
+        data = path.read_bytes()
+        if b"secretsallow" not in data.lower():
+            continue
+        suppressed: list[dict] = []
+        secret_scan._scan_content_bytes(rel_path, data, operation=rel_path, commit="tree", suppressed=suppressed)
+        lines = {row["line"] for row in suppressed}
+        if lines:
+            counts[rel_path] = len(lines)
+    assert counts == _PINNED_SUPPRESSING_MARKERS
