@@ -6,6 +6,8 @@ import os
 import re
 from collections.abc import Callable
 
+_StandardTargetKey = tuple[str | None, ...]
+
 # ---------------------------------------------------------------------------
 # W167 — import-edge text verification
 # ---------------------------------------------------------------------------
@@ -481,6 +483,71 @@ def _filter_symbols_for_import(
     return view
 
 
+_CALL_SCOPES = frozenset({"function", "method", "constructor", "macro", "procedure", "trigger", "test", "validator"})
+_JS_SOURCE_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte")
+
+
+def _call_source(source_name, source_file, line, file_symbols, symbols_by_qualified, symbols_by_name):
+    """Find an executable scope in the reference's own file."""
+    lower_path = source_file.lower()
+    js = lower_path.endswith(_JS_SOURCE_SUFFIXES)
+    python = lower_path.endswith((".py", ".pyi"))
+
+    def callable_scope(sym):
+        return sym.get("kind") in _CALL_SCOPES or (
+            sym.get("kind") == "property"
+            and (js or (python and "@property" in (sym.get("decorators") or "").split(",")))
+        )
+
+    def contains(sym):
+        start, end = sym.get("line_start"), sym.get("line_end")
+        return line is not None and start is not None and end is not None and start <= line <= end
+
+    def innermost(candidates):
+        return max(candidates, key=lambda sym: (sym.get("line_start") or 0, -(sym.get("line_end") or 0)), default=None)
+
+    def matching_scope(candidates):
+        return innermost(
+            sym
+            for sym in candidates
+            if sym.get("file_path") == source_file
+            and callable_scope(sym)
+            and (contains(sym) or line is None or sym.get("line_end") is None)
+        )
+
+    scope = source_name
+    while scope:
+        match = matching_scope(symbols_by_qualified.get(scope, ()))
+        if match is None and not js:
+            match = matching_scope(symbols_by_name.get(scope, ()))
+        if match is not None:
+            return match
+        scope = scope.rpartition(".")[0] if js else ""
+
+    syms = file_symbols.get(source_file, ())
+    # JS/TS lexical scopes distinguish different statements on the same line.
+    # Other extractors can omit scope names, so use line containment there.
+    if not js and (source_name or not python):
+        match = innermost(sym for sym in syms if callable_scope(sym) and contains(sym))
+        if match is not None:
+            return match
+    # A FoxPro SCX form is the file-level declaration, stored as a class.
+    form_name = os.path.splitext(os.path.basename(source_file))[0] if lower_path.endswith(".scx") else None
+    return next(
+        (
+            sym
+            for sym in syms
+            if sym.get("line_start") == 1
+            and (
+                sym.get("kind") == "module"
+                or (sym.get("kind") == "component" and lower_path.endswith((".vue", ".svelte")))
+                or (form_name is not None and sym.get("kind") == "class" and sym.get("name") == form_name)
+            )
+        ),
+        None,
+    )
+
+
 def _source_context_for_target_disambiguation(
     source_name: str,
     source_file: str,
@@ -488,16 +555,17 @@ def _source_context_for_target_disambiguation(
     kind: str,
     symbols_by_name: dict[str, list[dict]],
     file_symbols: dict[str, list[dict]],
-) -> tuple[dict, str] | None:
+    symbols_by_qualified: dict[str, list[dict]],
+) -> tuple[dict | None, str] | None:
     """Resolve the caller context that target disambiguation reuses."""
-    source_sym = _best_match(source_name, source_file, symbols_by_name)
-    if source_sym is None:
-        # Fallback for top-level code (e.g. Vue <script setup>, Python module scope):
-        # pick the closest symbol at or before the reference line.
-        # W742: for kind='import', _closest_symbol skips the syms[0]
-        # fallback so module-scope imports don't mis-attribute to
-        # whichever function happens to be first in the file.
-        source_sym = _closest_symbol(source_file, line, file_symbols, kind=kind)
+    if kind == "call":
+        source_sym = _call_source(source_name, source_file, line, file_symbols, symbols_by_qualified, symbols_by_name)
+        if source_sym is None:
+            return None, ""  # The file symbol is materialized only for a resolved edge.
+    else:
+        source_sym = _best_match(source_name, source_file, symbols_by_name)
+        if source_sym is None:
+            source_sym = _closest_symbol(source_file, line, file_symbols, kind=kind)
     if source_sym is None:
         return None
 
@@ -505,6 +573,8 @@ def _source_context_for_target_disambiguation(
     # e.g. MyStruct::some_method -> parent = "MyStruct"
     source_parent = ""
     src_qn = source_sym.get("qualified_name", "")
+    if kind == "call" and source_sym.get("kind") == "module":
+        return source_sym, source_parent
     if "::" in src_qn:
         source_parent = src_qn.rsplit("::", 1)[0]
     elif "." in src_qn:
@@ -529,11 +599,12 @@ def _precompute_contexts_for_precise_reuse(
     references: list[dict],
     symbols_by_name: dict[str, list[dict]],
     file_symbols: dict[str, list[dict]],
-) -> dict[tuple[str, str, int | None, str], tuple[dict, str] | None]:
+    symbols_by_qualified: dict[str, list[dict]],
+) -> dict[tuple[str, str, int | None, str], tuple[dict | None, str] | None]:
     """Resolve each distinct caller context once without weakening line precision."""
     hoisted_source_contexts: dict[
         tuple[str, str, int | None, str],
-        tuple[dict, str] | None,
+        tuple[dict | None, str] | None,
     ] = {}
     for ref in references:
         if not ref.get("target_name"):
@@ -549,6 +620,7 @@ def _precompute_contexts_for_precise_reuse(
             kind,
             symbols_by_name,
             file_symbols,
+            symbols_by_qualified,
         )
     return hoisted_source_contexts
 
@@ -664,11 +736,10 @@ def _target_for_reference_preserving_specialized_precedence(
     source_parent: str,
     hoisted_salesforce_imports: dict[str, dict | None],
     hoisted_salesforce_names: dict[tuple[str, str], dict | None],
-    hoisted_standard_targets: dict[tuple[str, str, str, str], dict | None],
+    hoisted_standard_targets: dict[_StandardTargetKey, dict | None],
 ) -> dict | None:
     """Pick a target while preserving Salesforce-first resolver precedence."""
     target_name = ref.get("target_name", "")
-    source_file = ref.get("source_file", "")
     kind = ref.get("kind", "call")
 
     import_path = ref.get("import_path", "")
@@ -679,7 +750,7 @@ def _target_for_reference_preserving_specialized_precedence(
         target_sym = hoisted_salesforce_names.get((target_name, kind))
 
     if target_sym is None:
-        std_key = (target_name, source_file, source_parent, kind)
+        std_key = _standard_target_key(ref, source_parent)
         target_sym = hoisted_standard_targets.get(std_key)
     return target_sym
 
@@ -716,11 +787,12 @@ def _edge_record_preserving_import_verification_metadata(
 def _edge_for_reference_preserving_context_precision(
     ref: dict,
     files_by_path: dict[str, int],
-    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict, str] | None],
+    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict | None, str] | None],
     hoisted_salesforce_imports: dict[str, dict | None],
     hoisted_salesforce_names: dict[tuple[str, str], dict | None],
-    hoisted_standard_targets: dict[tuple[str, str, str, str], dict | None],
+    hoisted_standard_targets: dict[_StandardTargetKey, dict | None],
     seen: set[tuple[object, object, str]],
+    module_source: Callable[[str], dict | None] | None,
 ) -> dict | None:
     """Resolve one ref only when its context, target, and identity agree."""
     target_name = ref.get("target_name", "")
@@ -742,6 +814,11 @@ def _edge_for_reference_preserving_context_precision(
     )
     if target_sym is None:
         return None
+
+    if source_sym is None:
+        source_sym = module_source(ref.get("source_file", "")) if module_source is not None else None
+        if source_sym is None:
+            return None
 
     source_id = source_sym["id"]
     target_id = target_sym["id"]
@@ -765,10 +842,11 @@ def _edge_for_reference_preserving_context_precision(
 def _edges_for_references_preserving_context_precision(
     references: list[dict],
     files_by_path: dict[str, int],
-    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict, str] | None],
+    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict | None, str] | None],
     hoisted_salesforce_imports: dict[str, dict | None],
     hoisted_salesforce_names: dict[tuple[str, str], dict | None],
-    hoisted_standard_targets: dict[tuple[str, str, str, str], dict | None],
+    hoisted_standard_targets: dict[_StandardTargetKey, dict | None],
+    module_source: Callable[[str], dict | None] | None,
 ) -> list[dict]:
     """Emit unique edges only after each ref reuses its exact source context."""
     edges: list[dict] = []
@@ -783,6 +861,7 @@ def _edges_for_references_preserving_context_precision(
             hoisted_salesforce_names,
             hoisted_standard_targets,
             seen,
+            module_source,
         )
         if edge_record is not None:
             edges.append(edge_record)
@@ -795,6 +874,8 @@ def resolve_references(
     files_by_path: dict[str, int],
     project_root: str | None = None,
     drop_stats: dict[str, int] | None = None,
+    *,
+    module_source: Callable[[str], dict | None] | None = None,
 ) -> list[dict]:
     """Resolve references to concrete symbol edges.
 
@@ -812,6 +893,8 @@ def resolve_references(
             its dropped-edge counter into (under key
             ``dropped_import_edges``). Pass an empty dict to receive
             indexing-time diagnostics; pass ``None`` to discard them.
+        module_source: Supply a persistent file symbol for calls at module scope
+            when the language extractor does not provide one.
 
     Returns:
         List of edge dicts with source_id, target_id, kind, line, source_file_id.
@@ -833,6 +916,7 @@ def resolve_references(
         references,
         symbols_by_name,
         _file_symbols,
+        symbols_by_qualified,
     )
 
     # Pre-compute Salesforce canonical file preferences
@@ -851,6 +935,7 @@ def resolve_references(
         symbols_by_qualified,
         symbols_by_name_lower,
         import_map,
+        project_root,
     )
 
     edges = _edges_for_references_preserving_context_precision(
@@ -860,6 +945,7 @@ def resolve_references(
         hoisted_salesforce_imports,
         hoisted_salesforce_names,
         hoisted_standard_targets,
+        module_source,
     )
 
     # W167: drop ``kind='import'`` edges whose target name isn't written as
@@ -936,6 +1022,46 @@ def _resolve_standard(
     concept from "dropped" and do not increment the counter
     (W1260 / W1257-audit).
     """
+    from roam.index.parser import detect_language
+
+    if kind in {"call", "reference", "import"} and detect_language(source_file) in {
+        "javascript",
+        "typescript",
+        "tsx",
+        "vue",
+        "svelte",
+    }:
+        owner_index = symbols_by_name
+
+        def eligible(symbol):
+            qn = symbol.get("qualified_name", "")
+            if "." not in qn:
+                return True
+            parent = qn.rsplit(".", 1)[0]
+            return not any(
+                owner.get("qualified_name") == parent
+                and owner.get("file_path") == symbol.get("file_path")
+                and owner.get("kind") in {"constant", "variable"}
+                for owner in owner_index.get(parent.rsplit(".", 1)[-1], [])
+            )
+
+        # Narrow just the queried entries; no copy of the complete symbol index.
+        symbols_by_name = {target_name: [s for s in symbols_by_name.get(target_name, []) if eligible(s)]}
+        symbols_by_qualified = {target_name: [s for s in symbols_by_qualified.get(target_name, []) if eligible(s)]}
+        symbols_by_name_lower = {
+            target_name.lower(): [s for s in symbols_by_name_lower.get(target_name.lower(), []) if eligible(s)]
+        }
+
+    # Restrict every selection path before locality or singleton choices.
+    def compatible(symbol):
+        return _same_language_family(source_file, symbol.get("file_path", ""))
+
+    symbols_by_name = {target_name: [s for s in symbols_by_name.get(target_name, []) if compatible(s)]}
+    symbols_by_qualified = {target_name: [s for s in symbols_by_qualified.get(target_name, []) if compatible(s)]}
+    symbols_by_name_lower = {
+        target_name.lower(): [s for s in symbols_by_name_lower.get(target_name.lower(), []) if compatible(s)]
+    }
+
     # W181: for ``kind='import'`` resolution, pre-filter the candidate
     # set to drop kinds that are never legitimate import targets
     # (``local``, ``parameter``, ``property``) plus ``variable``
@@ -1037,21 +1163,180 @@ def _resolve_standard(
     return target_sym
 
 
+def _standard_target_key(ref: dict, source_parent: str) -> _StandardTargetKey:
+    """Receiver identity is part of resolution identity, including cached misses."""
+    return (
+        ref.get("target_name", ""),
+        ref.get("source_file", ""),
+        source_parent,
+        ref.get("kind", "call"),
+        ref.get("receiver"),
+        ref.get("receiver_owner"),
+        ref.get("receiver_import_path"),
+        ref.get("receiver_mode"),
+        ref.get("receiver_owner_kind"),
+        ref.get("receiver_owners"),
+        ref.get("receiver_base"),
+        ref.get("receiver_base_import_path"),
+        ref.get("binding_import_path"),
+        ref.get("binding_export"),
+    )
+
+
+def _resolve_js_member(ref: dict, symbols_by_name: dict[str, list[dict]], modules) -> dict | None:
+    """Resolve through the evidenced owner, then a union's members or the class's ``extends`` base.
+
+    A union resolves when exactly one member owns the name. The base is
+    tried only when the owner resolved and has no such member; one level.
+    """
+    owners = ref.get("receiver_owners")
+    if owners:
+        found = {}
+        for entry in owners.split("|"):
+            name, _, path = entry.partition("@")
+            member = {k: v for k, v in ref.items() if k not in {"receiver_owners", "receiver_import_path"}}
+            member["receiver_owner"] = name
+            if path:
+                member["receiver_import_path"] = path
+            target = _resolve_js_member(member, symbols_by_name, modules)
+            if target is not None:
+                found[target["id"]] = target
+        return next(iter(found.values())) if len(found) == 1 else None
+    owner_resolved, target = _resolve_js_member_in_owner(ref, symbols_by_name, modules)
+    if target is not None or not owner_resolved or not ref.get("receiver_base"):
+        return target
+    base = {k: v for k, v in ref.items() if not k.startswith("receiver_base") and k != "receiver_import_path"}
+    base["receiver_owner"] = ref["receiver_base"]
+    if ref.get("receiver_base_import_path"):
+        base["receiver_import_path"] = ref["receiver_base_import_path"]
+    return _resolve_js_member_in_owner(base, symbols_by_name, modules)[1]
+
+
+def _resolve_js_member_in_owner(ref: dict, symbols_by_name: dict[str, list[dict]], modules) -> tuple[bool, dict | None]:
+    """Resolve a member only through its evidenced owner, never property-name locality.
+
+    An imported namespace owns top-level exports of the exact module. An
+    imported object/class owns qualified members of its binding. Local owners
+    are direct const constructions/objects, explicit TS annotations, or the
+    enclosing class (`this`). Function owners require a matching member assignment.
+    """
+    source_file = ref.get("source_file", "")
+    owner_name = ref.get("receiver_owner", "")
+    if not owner_name or owner_name == "?":
+        return False, None
+    module = ref.get("receiver_import_path")
+    module_path = None
+    if module:
+        module_path = modules.module_path(source_file, module)
+        if module_path is None:
+            return False, None
+    if owner_name == "*":
+        candidates = modules.resolve(module_path, ref["target_name"]) or []
+        return True, candidates[0] if len(candidates) == 1 else None
+
+    type_only = ref.get("receiver_owner_kind") == "type"
+    if module_path:
+        owners = modules.resolve(module_path, owner_name, type_only=type_only) or []
+    else:
+        owners = [
+            s
+            for s in symbols_by_name.get(owner_name.rsplit(".", 1)[-1], [])
+            if s.get("qualified_name") == owner_name and s.get("file_path") == source_file
+        ]
+    owner_kinds = {"class", "interface"} if type_only else {"class", "constant", "variable", "namespace", "function"}
+    owners = [s for s in owners if s.get("kind") in owner_kinds]
+    identities = {(s.get("file_path"), s.get("qualified_name")) for s in owners}
+    classes = [s for s in owners if s.get("kind") == "class"]
+    if len(identities) != 1 or (len(owners) > 1 and not (type_only and len(classes) == 1)):
+        return False, None
+
+    owner_path, qualified_owner = identities.pop()
+    if not _same_language_family(source_file, owner_path):
+        return False, None
+    mode = ref.get("receiver_mode")
+    if module_path and modules.is_instance_export(module_path, owner_name):
+        mode = "instance"  # export default new Service()
+    if not type_only and classes and mode == "instance":
+        # A class/interface merge contributes interface members to the instance
+        # type, including when the class came from a value import.
+        owners.extend(
+            s
+            for s in symbols_by_name.get(qualified_owner.rsplit(".", 1)[-1], [])
+            if s.get("kind") == "interface"
+            and s.get("file_path") == owner_path
+            and s.get("qualified_name") == qualified_owner
+        )
+    parents = {s["id"]: s["kind"] for s in owners}
+    candidates = [
+        s
+        for s in symbols_by_name.get(ref["target_name"], [])
+        if s.get("file_path") == owner_path
+        and s.get("qualified_name", "").rsplit(".", 1)[0] == qualified_owner
+        and s.get("parent_id") in parents
+    ]
+    if owners[0]["kind"] == "function":
+        prefix = qualified_owner + (".prototype." if mode == "instance" else ".")
+        assignment = prefix + ref["target_name"] + " = function("
+        # The trailing semicolon distinguishes new assignment signatures
+        # from stored rows that did not distinguish static and prototype members.
+        candidates = [
+            s
+            for s in candidates
+            if s["kind"] == "function"
+            and (s.get("signature") or "").startswith(assignment)
+            and s["signature"].endswith(";")
+        ]
+    elif mode is not None and all(kind in {"class", "interface"} for kind in parents.values()):
+        candidates = [s for s in candidates if ("static" in (s.get("signature") or "").split()) == (mode == "static")]
+    if len(candidates) <= 1:
+        return True, candidates[0] if candidates else None
+    if not all(
+        s["kind"] in {"method", "constructor"} and parents[s["parent_id"]] in {"class", "interface"} for s in candidates
+    ):
+        return True, None
+    implementations = [
+        s for s in candidates if parents[s["parent_id"]] == "class" and not (s.get("signature") or "").endswith(";")
+    ]
+    if implementations:
+        return True, implementations[0] if len(implementations) == 1 else None
+    return True, min(candidates, key=lambda s: (s["line_start"], s["id"]))
+
+
+def _same_language_family(source_file: str, target_file: str) -> bool:
+    """Shared JS/TS and C/C++ source/header ecosystems; others need bridges."""
+    from roam.index.parser import detect_language
+
+    source = detect_language(source_file)
+    target = detect_language(target_file)
+    from roam.languages.registry import JS_FAMILY_LANGUAGES
+
+    js = set(JS_FAMILY_LANGUAGES)
+    if source in js and target in js:
+        return True
+    if source in {"c", "cpp"} and target in {"c", "cpp"}:
+        return True
+    return source is None or target is None or source == target
+
+
 def _precompute_standard_targets_for_precise_reuse(
     references: list[dict],
-    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict, str] | None],
+    hoisted_source_contexts: dict[tuple[str, str, int | None, str], tuple[dict | None, str] | None],
     symbols_by_name: dict[str, list[dict]],
     symbols_by_qualified: dict[str, list[dict]],
     symbols_by_name_lower: dict[str, list[dict]],
     import_map: dict[tuple[str, str], str],
-) -> dict[tuple[str, str, str, str], dict | None]:
+    project_root=None,
+) -> dict[_StandardTargetKey, dict | None]:
     """Resolve each distinct standard target once while preserving context precision.
 
     Trades memory (the resolution cache) for CPU time: repeated references
     with the same target name and source context reuse one
     ``_resolve_standard`` call instead of resolving per iteration.
     """
-    hoisted_standard_targets: dict[tuple[str, str, str, str], dict | None] = {}
+    from roam.languages.js_resolution import ModuleExports
+
+    modules = ModuleExports(project_root, symbols_by_name)
+    hoisted_standard_targets: dict[_StandardTargetKey, dict | None] = {}
     for ref in references:
         target_name = ref.get("target_name", "")
         if not target_name:
@@ -1063,8 +1348,16 @@ def _precompute_standard_targets_for_precise_reuse(
         _source_sym, source_parent = source_context
         source_file = ref.get("source_file", "")
         kind = ref.get("kind", "call")
-        std_key = (target_name, source_file, source_parent, kind)
+        std_key = _standard_target_key(ref, source_parent)
         if std_key in hoisted_standard_targets:
+            continue
+        if "binding_import_path" in ref:
+            path = modules.module_path(source_file, ref["binding_import_path"])
+            targets = modules.resolve(path, ref["binding_export"]) or []
+            hoisted_standard_targets[std_key] = targets[0] if len(targets) == 1 else None
+            continue
+        if "receiver" in ref:
+            hoisted_standard_targets[std_key] = _resolve_js_member(ref, symbols_by_name, modules)
             continue
         hoisted_standard_targets[std_key] = _resolve_standard(
             target_name,

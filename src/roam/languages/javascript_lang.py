@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import os
 import re
+from typing import NamedTuple
 
 from .base import LanguageExtractor
+
+
+class _Binding(NamedTuple):
+    owner: str
+    declaration: object
+    indexed_owner: bool = False
+    declared_type: bool = False
+    mode: str | None = None
 
 
 class JavaScriptExtractor(LanguageExtractor):
@@ -26,12 +35,588 @@ class JavaScriptExtractor(LanguageExtractor):
 
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
         refs = []
-        self._walk_refs(tree.root_node, source, refs, scope_name=None)
+        self._binding_cache = {}
+        self._member_imports = {}
+        self._dynamic_parameter_imports = {}
+        self._require_bindings = self._destructured_requires(tree.root_node, source)
+        for statement in tree.root_node.named_children:
+            if statement.type != "import_statement":
+                continue
+            require_clause = next((n for n in statement.named_children if n.type == "import_require_clause"), None)
+            if require_clause is not None:
+                name = next((n for n in require_clause.named_children if n.type == "identifier"), None)
+                path_node = next((n for n in require_clause.named_children if n.type == "string"), None)
+                if name is not None and path_node is not None:
+                    self._member_imports[self.node_text(name, source)] = (
+                        self.node_text(path_node, source).strip("'\""),
+                        "export=",
+                    )
+                continue
+            source_node = statement.child_by_field_name("source")
+            if source_node is None:
+                continue
+            path = self.node_text(source_node, source).strip("'\"")
+            for node in statement.named_children:
+                if node.type != "import_clause":
+                    continue
+                for binding in node.named_children:
+                    if binding.type == "namespace_import":
+                        for name in binding.named_children:
+                            if name.type == "identifier":
+                                self._member_imports[self.node_text(name, source)] = (path, "*")
+                    elif binding.type == "identifier":
+                        self._member_imports[self.node_text(binding, source)] = (path, "default")
+                    elif binding.type == "named_imports":
+                        for spec in binding.named_children:
+                            name = spec.child_by_field_name("name")
+                            alias = spec.child_by_field_name("alias") or name
+                            if name is not None:
+                                self._member_imports[self.node_text(alias, source)] = (
+                                    path,
+                                    self.node_text(name, source),
+                                )
+        try:
+            self._walk_refs(tree.root_node, source, refs, scope_name=None)
+        finally:
+            self._binding_cache = {}
+            self._member_imports = {}
+            self._dynamic_parameter_imports = {}
+            self._require_bindings = {}
         refs.extend(self._extract_dynamic_import_refs(source))
         # Collect inheritance refs accumulated during extract_symbols
         refs.extend(getattr(self, "_pending_inherits", []))
         self._pending_inherits = []
         return refs
+
+    _FUNCTION_NODES = frozenset(
+        {
+            "function_declaration",
+            "generator_function_declaration",
+            "function_expression",
+            "generator_function",
+            "arrow_function",
+            "method_definition",
+        }
+    )
+    _CLASS_NODES = frozenset({"class", "class_declaration", "abstract_class_declaration"})
+    _BINDING_SCOPES = (
+        _FUNCTION_NODES
+        | _CLASS_NODES
+        | frozenset({"program", "statement_block", "catch_clause", "for_statement", "for_in_statement", "switch_body"})
+    )
+
+    def _pattern_names(self, node, source):
+        """Binding identifiers only; object keys and default expressions are not bindings."""
+        if node is None:
+            return []
+        if node.type in {"identifier", "shorthand_property_identifier_pattern"}:
+            return [self.node_text(node, source)]
+        if node.type in {"pair_pattern", "required_parameter", "optional_parameter"}:
+            field = "value" if node.type == "pair_pattern" else "pattern"
+            return self._pattern_names(node.child_by_field_name(field), source)
+        if node.type in {"assignment_pattern", "object_assignment_pattern"}:
+            return self._pattern_names(node.child_by_field_name("left"), source)
+        if node.type in {"formal_parameters", "object_pattern", "array_pattern", "rest_pattern"}:
+            return [name for child in node.named_children for name in self._pattern_names(child, source)]
+        return []
+
+    def _annotated_owner(self, node, source):
+        """A single named TS type, optionally generic or nullable."""
+        annotation = node.child_by_field_name("type")
+        if annotation is None or annotation.type != "type_annotation":
+            return "?"
+        children = annotation.named_children
+        if len(children) != 1:
+            return "?"
+        name = children[0]
+
+        def non_null_types(node):
+            if node.type == "union_type":
+                return [t for child in node.named_children for t in non_null_types(child)]
+            if self.node_text(node, source) in {"null", "undefined"}:
+                return []
+            return [node]
+
+        types = non_null_types(name)
+        if len(types) != 1:
+            return "?"
+        name = types[0]
+        if name.type == "generic_type":
+            name = name.child_by_field_name("name")
+        if name is not None and name.type in {"type_identifier", "nested_type_identifier"}:
+            return self.node_text(name, source)
+        return "?"
+
+    def _destructured_requires(self, root, source):
+        """Top-level ``const { a, b: c } = require('./m')``: local name -> (path, export, declarator id)."""
+        found = {}
+        for statement in root.named_children:
+            if statement.type not in {"lexical_declaration", "variable_declaration"}:
+                continue
+            for declarator in statement.named_children:
+                if declarator.type != "variable_declarator":
+                    continue
+                pattern = declarator.child_by_field_name("name")
+                value = self._unparenthesized(declarator.child_by_field_name("value"))
+                if pattern is None or pattern.type != "object_pattern" or value is None:
+                    continue
+                if (
+                    value.type != "call_expression"
+                    or self.node_text(value.child_by_field_name("function"), source) != "require"
+                ):
+                    continue
+                args = value.child_by_field_name("arguments")
+                specifier = next((c for c in args.named_children if c.type != "comment"), None) if args else None
+                if specifier is None or specifier.type != "string":
+                    continue
+                path = self.node_text(specifier, source)[1:-1]
+                for prop in pattern.named_children:
+                    if prop.type == "shorthand_property_identifier_pattern":
+                        name = self.node_text(prop, source)
+                        found[name] = (path, name, declarator.id)
+                    elif prop.type == "pair_pattern":
+                        key = prop.child_by_field_name("key")
+                        local = prop.child_by_field_name("value")
+                        if key is not None and local is not None and local.type == "identifier":
+                            found[self.node_text(local, source)] = (path, self.node_text(key, source), declarator.id)
+        return found
+
+    def _class_base(self, cls, source):
+        """The single ``extends`` identifier of a class, or None."""
+        heritage = next((c for c in cls.named_children if c.type == "class_heritage"), None)
+        if heritage is None:
+            return None
+        clause = next((c for c in heritage.named_children if c.type == "extends_clause"), heritage)
+        values = [c for c in clause.named_children if c.type not in {"comment", "type_arguments"}]
+        if len(values) != 1 or values[0].type != "identifier":
+            return None
+        return self.node_text(values[0], source)
+
+    def _instanceof_owner(self, member, receiver, source):
+        """A class the receiver was checked against on the path to this member (if / ?: / &&)."""
+
+        def checked(condition):
+            condition = self._unparenthesized(condition)
+            if condition is None or condition.type != "binary_expression":
+                return None
+            operator = condition.child_by_field_name("operator")
+            left = self._unparenthesized(condition.child_by_field_name("left"))
+            right = condition.child_by_field_name("right")
+            if operator is None or self.node_text(operator, source) != "instanceof":
+                return None
+            if left is None or left.type != "identifier" or self.node_text(left, source) != receiver:
+                return None
+            return self.node_text(right, source) if right is not None and right.type == "identifier" else None
+
+        def inside(node, outer):
+            return outer is not None and outer.start_byte <= node.start_byte and node.end_byte <= outer.end_byte
+
+        current = member
+        while current.parent is not None:
+            parent = current.parent
+            if parent.type in self._FUNCTION_NODES | self._CLASS_NODES:
+                return None
+            if parent.type in {"if_statement", "ternary_expression"} and inside(
+                member, parent.child_by_field_name("consequence")
+            ):
+                owner = checked(parent.child_by_field_name("condition"))
+                if owner:
+                    return owner
+            if parent.type == "binary_expression" and inside(member, parent.child_by_field_name("right")):
+                operator = parent.child_by_field_name("operator")
+                if operator is not None and self.node_text(operator, source) == "&&":
+                    owner = checked(parent.child_by_field_name("left"))
+                    if owner:
+                        return owner
+            current = parent
+        return None
+
+    def _union_members(self, declaration, source):
+        """Named members of a ``A | B`` parameter annotation, null and undefined left out."""
+        annotation = declaration.child_by_field_name("type")
+        if annotation is None or annotation.type != "type_annotation" or len(annotation.named_children) != 1:
+            return []
+        node = annotation.named_children[0]
+        if node.type != "union_type":
+            return []
+        names = []
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            if current.type == "union_type":
+                stack.extend(reversed(current.named_children))
+            elif self.node_text(current, source) in {"null", "undefined"}:
+                continue
+            elif current.type == "type_identifier":
+                names.append(self.node_text(current, source))
+            else:
+                return []
+        return names if len(names) > 1 else []
+
+    def _scope_bindings(self, scope, source):
+        """Cache lexical bindings per AST scope for this extraction only.
+
+        Type and value bindings occupy separate namespaces. Unknown bindings
+        shadow imports. Only direct immutable constructions/objects establish owners;
+        direct TS annotations are retained, but aliases and mutations are not inferred.
+        """
+        cache = self._binding_cache
+        if scope.id in cache:
+            return cache[scope.id]
+        bindings = {}
+        types = {}
+        # Named expressions bind their name only inside their own body. They
+        # have no indexed owner and cannot borrow a same-named outer symbol.
+        if scope.type in {"function_expression", "generator_function", "class"}:
+            name = scope.child_by_field_name("name")
+            if name is not None:
+                name_text = self.node_text(name, source)
+                bindings[name_text] = _Binding("?", scope)
+                if scope.type == "class":
+                    types[name_text] = bindings[name_text]
+        if scope.type in self._FUNCTION_NODES:
+            params = scope.child_by_field_name("parameters") or scope.child_by_field_name("parameter")
+            if params is not None:
+                parameters = params.named_children if params.type == "formal_parameters" else [params]
+                for parameter in parameters:
+                    for name in self._pattern_names(parameter, source):
+                        bindings[name] = _Binding(
+                            self._annotated_owner(parameter, source), parameter, declared_type=True, mode="instance"
+                        )
+        type_params = scope.child_by_field_name("type_parameters")
+        for param in type_params.named_children if type_params is not None else []:
+            name = param.child_by_field_name("name")
+            if name is not None:
+                name_text = self.node_text(name, source)
+                types[name_text] = bindings[name_text] = _Binding("?", param)
+        if scope.type == "catch_clause":
+            for name in self._pattern_names(scope.child_by_field_name("parameter"), source):
+                bindings[name] = _Binding("?", scope)
+        if scope.type == "for_in_statement" and scope.child_by_field_name("kind") is not None:
+            for name in self._pattern_names(scope.child_by_field_name("left"), source):
+                bindings[name] = _Binding("?", scope)
+        # `var` belongs to the function even when declared in a nested block.
+        if scope.type in self._FUNCTION_NODES | {"program"}:
+            stack = list(scope.named_children)
+            while stack:
+                node = stack.pop()
+                if node.type in self._FUNCTION_NODES | self._CLASS_NODES:
+                    continue
+                if node.type == "variable_declaration":
+                    for declarator in node.named_children:
+                        for name in self._pattern_names(declarator.child_by_field_name("name"), source):
+                            bindings[name] = _Binding("?", declarator)
+                if node.type == "for_in_statement":
+                    kind = node.child_by_field_name("kind")
+                    if kind is not None and self.node_text(kind, source) == "var":
+                        for name in self._pattern_names(node.child_by_field_name("left"), source):
+                            bindings[name] = _Binding("?", node)
+                stack.extend(node.named_children)
+        stack = list(scope.named_children)
+        while stack:
+            node = stack.pop()
+            type_declaration = node.type in {"interface_declaration", "type_alias_declaration"}
+            is_class = node.type in {"class_declaration", "abstract_class_declaration"}
+            if type_declaration or is_class or node.type in {"function_declaration", "generator_function_declaration"}:
+                name = node.child_by_field_name("name")
+                if name is not None:
+                    name_text = self.node_text(name, source)
+                    indexed = scope.type == "program" and node.type != "type_alias_declaration"
+                    binding = _Binding(
+                        name_text if indexed else "?", node, indexed, mode="static" if is_class else None
+                    )
+                    if is_class or type_declaration:
+                        types[name_text] = binding
+                    if not type_declaration:
+                        bindings[name_text] = binding
+                continue
+            if node.type in self._BINDING_SCOPES | self._CLASS_NODES:
+                continue
+            if node.type == "variable_declarator":
+                pattern = node.child_by_field_name("name")
+                value = node.child_by_field_name("value")
+                owner = self._annotated_owner(node, source)
+                declared_type = owner != "?"
+                mode = "instance" if declared_type else None
+                if value is not None and pattern is not None and pattern.type == "identifier":
+                    declaration = node.parent
+                    immutable = declaration is not None and declaration.children[0].type == "const"
+                    if immutable and value.type == "new_expression":
+                        ctor = value.child_by_field_name("constructor")
+                        if ctor is not None and ctor.type == "identifier":
+                            owner = self.node_text(ctor, source)
+                            declared_type = False
+                            mode = "instance"
+                    elif immutable and value.type == "object":
+                        owner = self.node_text(pattern, source) if scope.type == "program" else "?"
+                        declared_type = False
+                for name in self._pattern_names(pattern, source):
+                    bindings[name] = _Binding(owner, node, declared_type=declared_type, mode=mode)
+                continue
+            stack.extend(node.named_children)
+        cache[scope.id] = bindings, types
+        return bindings, types
+
+    def _lexical_binding(self, node, name, source, *, local_only=False, type_only=False):
+        current = node.parent
+        while current is not None:
+            if current.type in self._BINDING_SCOPES:
+                if local_only and current.type == "program":
+                    return None
+                bindings, types = self._scope_bindings(current, source)
+                found = (types if type_only else bindings).get(name)
+                if found is not None:
+                    return found
+            current = current.parent
+        return None
+
+    def _is_local_value(self, node, name, source):
+        binding = self._lexical_binding(node, name, source, local_only=True)
+        return binding is not None
+
+    def _this_context(self, node, source):
+        """Nearest non-arrow function owns `this`; object methods stop the walk."""
+        current = node.parent
+        while current is not None:
+            if current.type in {"method_definition", "field_definition", "public_field_definition"}:
+                body = current.parent
+                cls = body.parent if body is not None and body.type == "class_body" else None
+                if cls is None or cls.type not in self._CLASS_NODES:
+                    return None, None
+                mode = "static" if "static" in self._collect_method_prefixes(current, source) else "instance"
+                return cls, mode
+            if current.type in self._CLASS_NODES or current.type in self._FUNCTION_NODES - {"arrow_function"}:
+                return None, None
+            current = current.parent
+        return None, None
+
+    def _unparenthesized(self, node):
+        while node is not None and node.type == "parenthesized_expression":
+            node = next((child for child in node.named_children if child.type != "comment"), None)
+        return node
+
+    def _dynamic_import_path(self, expression, source):
+        call = self._unparenthesized(expression)
+        if call is None or call.type != "call_expression":
+            return None
+        callee = call.child_by_field_name("function")
+        args = call.child_by_field_name("arguments")
+        if callee is None or callee.type != "import" or args is None:
+            return None
+        specifier = next((child for child in args.named_children if child.type != "comment"), None)
+        if specifier is not None and specifier.type == "string":
+            return self.node_text(specifier, source)[1:-1]
+        return None
+
+    def _awaited_import_path(self, expression, source):
+        expression = self._unparenthesized(expression)
+        if expression is None or expression.type != "await_expression":
+            return None
+        operand = next((child for child in expression.named_children if child.type != "comment"), None)
+        return self._dynamic_import_path(operand, source)
+
+    def _then_parameter_import_path(self, parameter, name, source):
+        # Only the first argument to the callback receives the module namespace.
+        callback = parameter.parent
+        if callback.type == "formal_parameters":
+            first = next((child for child in callback.named_children if child.type != "comment"), None)
+            if first != parameter:
+                return None
+            callback = callback.parent
+        pattern = parameter
+        if parameter.type in {"required_parameter", "optional_parameter"}:
+            pattern = parameter.child_by_field_name("pattern")
+        if pattern is None or pattern.type != "identifier":
+            return None
+        if callback.type not in {"arrow_function", "function_expression"}:
+            return None
+        args = callback.parent
+        if args.type != "arguments" or callback != next(
+            (child for child in args.named_children if child.type != "comment"), None
+        ):
+            return None
+        call = args.parent
+        callee = call.child_by_field_name("function")
+        if callee is None or callee.type != "member_expression":
+            return None
+        if self.node_text(callee.child_by_field_name("property"), source) != "then":
+            return None
+        path = self._dynamic_import_path(callee.child_by_field_name("object"), source)
+        if path and not self._writes_to_parameter(callback, parameter, name, source):
+            return path
+        return None
+
+    def _writes_to_parameter(self, callback, parameter, name, source):
+        stack = list(callback.named_children)
+        while stack:
+            node = stack.pop()
+            target = None
+            if node.type in {"assignment_expression", "augmented_assignment_expression"}:
+                target = node.child_by_field_name("left")
+            elif node.type == "update_expression":
+                target = node.child_by_field_name("argument")
+            elif node.type == "for_in_statement" and node.child_by_field_name("kind") is None:
+                target = node.child_by_field_name("left")
+            if name in self._pattern_names(self._unparenthesized(target), source):
+                binding = self._lexical_binding(target, name, source)
+                if binding is not None and binding.declaration == parameter:
+                    return True
+            stack.extend(node.named_children)
+        return False
+
+    def _dynamic_receiver_import_path(self, receiver, binding, name, source):
+        if binding is None:
+            return self._awaited_import_path(receiver, source)
+        declaration = binding.declaration
+        if declaration.type == "variable_declarator":
+            kind = declaration.parent.child_by_field_name("kind")
+            pattern = declaration.child_by_field_name("name")
+            if kind is not None and kind.type == "const" and pattern is not None and pattern.type == "identifier":
+                return self._awaited_import_path(declaration.child_by_field_name("value"), source)
+            return None
+        paths = self._dynamic_parameter_imports
+        if declaration.id not in paths:
+            paths[declaration.id] = self._then_parameter_import_path(declaration, name, source)
+        return paths[declaration.id]
+
+    def _member_evidence(self, member, source):
+        receiver_node = member.child_by_field_name("object")
+        receiver = self.node_text(receiver_node, source) if receiver_node is not None else "?"
+        binding = None
+        if receiver_node is not None and receiver_node.type == "identifier":
+            binding = self._lexical_binding(member, receiver, source)
+        path = self._dynamic_receiver_import_path(receiver_node, binding, receiver, source)
+        if path:
+            return {"receiver": receiver, "receiver_owner": "*", "receiver_import_path": path}
+        owner = ""
+        mode = None
+        declared_type = False
+        declaration = member
+        this_class = None
+        if receiver == "this" or (
+            receiver_node is not None
+            and receiver_node.type == "member_expression"
+            and self.node_text(receiver_node.child_by_field_name("object"), source) == "this"
+        ):
+            cls, mode = self._this_context(member, source)
+            owner = "?"
+            if cls is not None:
+                name = cls.child_by_field_name("name")
+                if receiver == "this":
+                    owner = self.node_text(name, source) if name is not None and cls.type != "class" else "?"
+                    declaration = cls
+                    this_class = cls
+                else:
+                    field = self.node_text(receiver_node.child_by_field_name("property"), source)
+                    body = cls.child_by_field_name("body")
+                    declarations = []
+                    for child in body.named_children if body is not None else []:
+                        child_name = child.child_by_field_name("name") or child.child_by_field_name("property")
+                        is_static = "static" in self._collect_method_prefixes(child, source)
+                        if (
+                            child_name is not None
+                            and self.node_text(child_name, source) == field
+                            and is_static == (mode == "static")
+                        ):
+                            declarations.append(child)
+                        if (
+                            mode == "instance"
+                            and child_name is not None
+                            and self.node_text(child_name, source) == "constructor"
+                        ):
+                            params = child.child_by_field_name("parameters")
+                            for param in params.named_children if params is not None else []:
+                                modifiers = {n.type for n in param.children}
+                                if modifiers & {"accessibility_modifier", "readonly"} and field in self._pattern_names(
+                                    param, source
+                                ):
+                                    declarations.append(param)
+                    owner = "?"
+                    declared_type = True
+                    if len(declarations) == 1:
+                        declaration = declarations[0]
+                        owner = self._annotated_owner(declaration, source)
+                        value = declaration.child_by_field_name("value")
+                        if owner == "?" and value is not None and value.type == "new_expression":
+                            ctor = value.child_by_field_name("constructor")
+                            if ctor is not None and ctor.type == "identifier":
+                                owner = self.node_text(ctor, source)
+                                declared_type = False
+                    mode = "instance"
+        elif receiver_node is not None and receiver_node.type == "identifier":
+            mode = "static"
+            narrowed = self._instanceof_owner(member, receiver, source)
+            if narrowed:
+                owner, declared_type, mode = narrowed, True, "instance"
+            elif binding is not None:
+                owner = binding.owner
+                declared_type = binding.declared_type
+                mode = binding.mode
+                declaration = binding.declaration
+                if owner == "?" and declared_type and declaration.type in {"required_parameter", "optional_parameter"}:
+                    union = self._union_members(declaration, source)
+                    if union:
+                        return self._union_evidence(receiver, union, declaration, source)
+        evidence = {"receiver": receiver, "receiver_owner": owner}
+        if mode is not None:
+            evidence["receiver_mode"] = mode
+        if declared_type:
+            evidence["receiver_owner_kind"] = "type"
+        owner_binding = self._lexical_binding(declaration, owner or receiver, source, type_only=declared_type)
+        if (
+            owner
+            and (mode == "instance" or owner != receiver)
+            and owner_binding is not None
+            and not owner_binding.indexed_owner
+        ):
+            owner = "?"
+            evidence["receiver_owner"] = owner
+        imported = self._member_imports.get(owner or receiver) if owner_binding is None else None
+        if imported is not None and owner != "?":
+            evidence["receiver_import_path"], evidence["receiver_owner"] = imported
+        if declared_type and "." in owner:
+            root, suffix = owner.split(".", 1)
+            # A qualified type still refers to a lexical root binding.
+            if (
+                self._lexical_binding(declaration, root, source) is not None
+                or self._lexical_binding(declaration, root, source, type_only=True) is not None
+            ):
+                evidence["receiver_owner"] = "?"
+            elif root in self._member_imports:
+                path, exported = self._member_imports[root]
+                evidence["receiver_import_path"] = path
+                evidence["receiver_owner"] = suffix if exported == "*" else exported + "." + suffix
+        base = self._class_base(this_class, source) if this_class is not None else None
+        if base and evidence.get("receiver_owner") not in {None, "", "?"}:
+            base_binding = self._lexical_binding(this_class, base, source)
+            if base_binding is not None and base_binding.indexed_owner:
+                evidence["receiver_base"] = base
+            elif base_binding is None and base in self._member_imports:
+                path, exported = self._member_imports[base]
+                if exported != "*":
+                    evidence["receiver_base"] = exported
+                    evidence["receiver_base_import_path"] = path
+        return evidence
+
+    def _union_evidence(self, receiver, members, declaration, source):
+        """Each union member as `name@import-path` (empty path: a class in this file)."""
+        owners = []
+        for name in members:
+            local = self._lexical_binding(declaration, name, source, type_only=True)
+            if local is not None and local.indexed_owner:
+                owners.append(name + "@")
+            elif local is None and name in self._member_imports and self._member_imports[name][1] != "*":
+                path, exported = self._member_imports[name]
+                owners.append(exported + "@" + path)
+            else:
+                return {"receiver": receiver, "receiver_owner": "?", "receiver_mode": "instance"}
+        return {
+            "receiver": receiver,
+            "receiver_owner": "|",
+            "receiver_owners": "|".join(owners),
+            "receiver_mode": "instance",
+            "receiver_owner_kind": "type",
+        }
 
     def get_docstring(self, node, source: bytes) -> str | None:
         """JSDoc: look for comment node immediately before this node."""
@@ -167,7 +752,7 @@ class JavaScriptExtractor(LanguageExtractor):
     def _extract_single_class_member(self, child, source, symbols, class_name):
         if child.type not in ("method_definition", "public_field_definition", "field_definition"):
             return
-        name_node = child.child_by_field_name("name")
+        name_node = child.child_by_field_name("name") or child.child_by_field_name("property")
         if name_node is None:
             return
         name = self.node_text(name_node, source)
@@ -199,6 +784,7 @@ class JavaScriptExtractor(LanguageExtractor):
             self._make_symbol(
                 name=name,
                 kind="property",
+                signature=f"static {name}" if "static" in self._collect_method_prefixes(child, source) else None,
                 line_start=child.start_point[0] + 1,
                 line_end=child.end_point[0] + 1,
                 qualified_name=qualified,
@@ -216,7 +802,7 @@ class JavaScriptExtractor(LanguageExtractor):
 
     def _collect_method_prefixes(self, child, source):
         prefixes = []
-        name_node = child.child_by_field_name("name")
+        name_node = child.child_by_field_name("name") or child.child_by_field_name("property")
         for sub in child.children:
             if sub == name_node:
                 continue
@@ -320,20 +906,30 @@ class JavaScriptExtractor(LanguageExtractor):
                         )
                     )
 
-    def _extract_member_assignment(self, child, left, right, source, symbols, node):
-        """Extract symbol from a member_expression assignment (exports.X = ..., obj.method = ...)."""
+                if value_node is not None and value_node.type == "object":
+                    self._extract_class_members(value_node, source, symbols, qualified)
+
+    def _member_assignment_parts(self, left, source):
         obj_node = left.child_by_field_name("object")
         prop_node = left.child_by_field_name("property")
         if obj_node is None or prop_node is None:
-            return
-        obj_text = self.node_text(obj_node, source)
-        prop_name = self.node_text(prop_node, source)
-
+            return None
+        prototype = False
         if obj_node.type == "member_expression":
             inner_obj = obj_node.child_by_field_name("object")
             inner_prop = obj_node.child_by_field_name("property")
             if inner_prop and self.node_text(inner_prop, source) == "prototype" and inner_obj:
-                obj_text = self.node_text(inner_obj, source)
+                obj_node = inner_obj
+                prototype = True
+        return self.node_text(obj_node, source), self.node_text(prop_node, source), obj_node.type, prototype
+
+    def _extract_member_assignment(self, child, left, right, source, symbols, node):
+        """Extract symbol from a member_expression assignment (exports.X = ..., obj.method = ...)."""
+        parts = self._member_assignment_parts(left, source)
+        if parts is None:
+            return
+        obj_text, prop_name, base_type, prototype = parts
+        assignment_owner = f"{obj_text}.prototype" if prototype else obj_text
 
         is_exports = obj_text in ("exports", "module.exports")
 
@@ -347,6 +943,9 @@ class JavaScriptExtractor(LanguageExtractor):
         if right.type in ("function_expression", "arrow_function", "generator_function"):
             params = right.child_by_field_name("parameters")
             p_text = self._params_text(params, source)
+            signature = f"{assignment_owner}.{prop_name} = function({p_text})"
+            if not is_exports and base_type == "identifier":
+                signature += ";"
             symbols.append(
                 self._make_symbol(
                     name=prop_name,
@@ -354,7 +953,7 @@ class JavaScriptExtractor(LanguageExtractor):
                     line_start=child.start_point[0] + 1,
                     line_end=child.end_point[0] + 1,
                     qualified_name=f"{obj_text}.{prop_name}",
-                    signature=f"{obj_text}.{prop_name} = function({p_text})",
+                    signature=signature,
                     docstring=self.get_docstring(node, source),
                     is_exported=is_exports,
                     parent_name=obj_text,
@@ -592,7 +1191,7 @@ class JavaScriptExtractor(LanguageExtractor):
         """Bug 2 — identifiers passed as function arguments (callbacks by
         reference, e.g. ``addEventListener('keydown', handleKeyboardShortcut)``)."""
         name = self.node_text(child, source)
-        if name and name not in self._JS_KEYWORDS:
+        if name and name not in self._JS_KEYWORDS and not self._is_local_value(child, name, source):
             refs.append(
                 self._make_reference(
                     target_name=name,
@@ -607,7 +1206,7 @@ class JavaScriptExtractor(LanguageExtractor):
         (e.g. ``defineExpose({ resetForm, loadUserData })``). Leaf node, so
         no recursion needed."""
         name = self.node_text(child, source)
-        if name:
+        if name and not self._is_local_value(child, name, source):
             refs.append(
                 self._make_reference(
                     target_name=name,
@@ -639,6 +1238,75 @@ class JavaScriptExtractor(LanguageExtractor):
                         vname = self.node_text(n, source)
                         return f"{scope_name}.{vname}" if scope_name else vname
                     break
+        if child.type in {"method_definition", "field_definition", "public_field_definition"} and scope_name:
+            name = child.child_by_field_name("name") or child.child_by_field_name("property")
+            if name is not None:
+                return f"{scope_name}.{self.node_text(name, source)}"
+        return scope_name
+
+    def _call_scope(self, node, source):
+        """Read the lexical owner of this call, independent of declaration references."""
+        ancestors = []
+        ancestor = node.parent
+        while ancestor is not None:
+            ancestors.append(ancestor)
+            ancestor = ancestor.parent
+        scope = None
+        for ancestor in reversed(ancestors):
+            scope = self._call_scope_name_for_child(ancestor, source, scope)
+        return scope
+
+    def _call_scope_name_for_child(self, child, source, scope_name) -> str | None:
+        """Extend the scope at a named declaration or member."""
+        if child.type in (
+            "function_declaration",
+            "class_declaration",
+            "abstract_class_declaration",
+            "generator_function_declaration",
+            "method_definition",
+            "internal_module",
+        ):
+            name = child.child_by_field_name("name")
+            if name and name.type not in ("object_pattern", "array_pattern"):
+                text = self.node_text(name, source)
+                return f"{scope_name}.{text}" if scope_name else text
+        elif child.type in ("field_definition", "public_field_definition"):
+            value = child.child_by_field_name("value")
+            name = child.child_by_field_name("name") or child.child_by_field_name("property")
+            if scope_name and name and value and value.type in self._FUNCTION_NODES:
+                return f"{scope_name}.{self.node_text(name, source)}"
+        elif child.type == "variable_declarator":
+            name = child.child_by_field_name("name")
+            value = child.child_by_field_name("value")
+            if (
+                name
+                and name.type == "identifier"
+                and value
+                and (value.type in self._FUNCTION_NODES or value.type in ("class", "object"))
+            ):
+                text = self.node_text(name, source)
+                return f"{scope_name}.{text}" if scope_name else text
+        elif child.type == "assignment_expression":
+            left = child.child_by_field_name("left")
+            value = child.child_by_field_name("right")
+            if left and value:
+                text = self.node_text(left, source)
+                if text in ("module.exports", "exports") and value.type == "object":
+                    return "exports"
+                if left.type == "member_expression" and value.type in (
+                    "arrow_function",
+                    "function_expression",
+                    "generator_function",
+                ):
+                    parts = self._member_assignment_parts(left, source)
+                    if parts:
+                        owner, member, _, _ = parts
+                        qualified = f"{owner}.{member}"
+                        return f"{scope_name}.{qualified}" if scope_name else qualified
+        elif child.type == "pair" and scope_name == "exports":
+            key = child.child_by_field_name("key")
+            if key is not None:
+                return f"exports.{self.node_text(key, source)}"
         return scope_name
 
     def _walk_refs(self, node, source, refs, scope_name):
@@ -680,7 +1348,7 @@ class JavaScriptExtractor(LanguageExtractor):
                             target_name=name,
                             kind="call",
                             line=ch.start_point[0] + 1,
-                            source_name=scope_name,
+                            source_name=self._call_scope(node, source),
                         )
                     )
                 break
@@ -834,21 +1502,9 @@ class JavaScriptExtractor(LanguageExtractor):
         return names
 
     _IDENT_RE = r"[A-Za-z_$][A-Za-z0-9_$]*"
-    _DYN_IMPORT_THEN_MEMBER_RE = re.compile(
-        r"import\s*\(\s*(['\"])(?P<path>[^'\"]+)\1\s*\)"
-        r"\s*\.\s*then\s*\(\s*(?P<param>[A-Za-z_$][A-Za-z0-9_$]*)\s*=>"
-        r"\s*(?P=param)\.(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)",
-        re.DOTALL,
-    )
     _DYN_IMPORT_THEN_DESTRUCTURED_RE = re.compile(
         r"import\s*\(\s*(['\"])(?P<path>[^'\"]+)\1\s*\)"
         r"\s*\.\s*then\s*\(\s*\(\s*\{(?P<names>[^}]*)\}\s*\)\s*=>",
-        re.DOTALL,
-    )
-    _DYN_IMPORT_AWAIT_ASSIGN_RE = re.compile(
-        r"(?:const|let|var)\s+(?P<var>[A-Za-z_$][A-Za-z0-9_$]*)\s*="
-        r"\s*await\s+import\s*\(\s*(['\"])(?P<path>[^'\"]+)\2\s*\)"
-        r"(?P<body>[\s\S]{0,1200})",
         re.DOTALL,
     )
     _DYN_IMPORT_AWAIT_DESTRUCTURED_RE = re.compile(
@@ -883,12 +1539,7 @@ class JavaScriptExtractor(LanguageExtractor):
         )
 
     def _extract_dynamic_import_refs(self, source: bytes) -> list[dict]:
-        """Extract named consumers from dynamic ``import(...)`` forms.
-
-        Static ESM imports already carry an import_path that disambiguates
-        same-named exports. Dynamic imports need the same treatment or dead
-        code analysis can miss production-only button/action consumers.
-        """
+        """Extract named consumers from destructured dynamic imports."""
         text = source.decode("utf-8", errors="replace")
         refs: list[dict] = []
         seen: set[tuple[str, str, int]] = set()
@@ -900,22 +1551,10 @@ class JavaScriptExtractor(LanguageExtractor):
             seen.add(key)
             refs.append(self._make_dynamic_import_ref(name, path, line))
 
-        for match in self._DYN_IMPORT_THEN_MEMBER_RE.finditer(text):
-            add(match.group("name"), match.group("path"), self._dynamic_import_line(text, match.start()))
-
         for match in self._DYN_IMPORT_THEN_DESTRUCTURED_RE.finditer(text):
             line = self._dynamic_import_line(text, match.start())
             for name in self._destructured_export_names(match.group("names")):
                 add(name, match.group("path"), line)
-
-        member_access_re = re.compile(rf"\b(?P<var>{self._IDENT_RE})\.(?P<name>{self._IDENT_RE})")
-        for match in self._DYN_IMPORT_AWAIT_ASSIGN_RE.finditer(text):
-            var_name = match.group("var")
-            path = match.group("path")
-            line = self._dynamic_import_line(text, match.start())
-            for access in member_access_re.finditer(match.group("body")):
-                if access.group("var") == var_name:
-                    add(access.group("name"), path, line)
 
         for match in self._DYN_IMPORT_AWAIT_DESTRUCTURED_RE.finditer(text):
             line = self._dynamic_import_line(text, match.start())
@@ -974,8 +1613,10 @@ class JavaScriptExtractor(LanguageExtractor):
         if func_node is None:
             return
 
+        evidence = {}
         # Handle method calls: obj.method() -> extract "method"
         if func_node.type == "member_expression":
+            evidence = self._member_evidence(func_node, source)
             prop = func_node.child_by_field_name("property")
             if prop:
                 name = self.node_text(prop, source)
@@ -990,14 +1631,29 @@ class JavaScriptExtractor(LanguageExtractor):
         ):
             return
 
-        refs.append(
-            self._make_reference(
-                target_name=name,
-                kind="call",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-            )
+        if func_node.type == "identifier" and self._is_local_value(node, name, source):
+            args = node.child_by_field_name("arguments")
+            if args is not None:
+                self._walk_refs(args, source, refs, scope_name)
+            return
+
+        ref = self._make_reference(
+            target_name=name,
+            kind="call",
+            line=node.start_point[0] + 1,
+            source_name=self._call_scope(node, source),
         )
+        if not evidence and name in self._member_imports and self._lexical_binding(node, name, source) is None:
+            path, exported = self._member_imports[name]
+            if exported in {"default", "export="}:
+                evidence = {"binding_import_path": path, "binding_export": exported}
+        elif not evidence and func_node.type == "identifier" and name in getattr(self, "_require_bindings", {}):
+            path, exported, declarator_id = self._require_bindings[name]
+            binding = self._lexical_binding(node, name, source)
+            if binding is not None and binding.declaration.id == declarator_id:
+                evidence = {"binding_import_path": path, "binding_export": exported}
+        ref.update(evidence)
+        refs.append(ref)
 
         # Recurse into arguments for nested calls
         args = node.child_by_field_name("arguments")
@@ -1038,8 +1694,10 @@ class JavaScriptExtractor(LanguageExtractor):
         if ctor is None:
             return
 
+        evidence = {}
         # Handle new module.Foo() -> extract "Foo"
         if ctor.type == "member_expression":
+            evidence = self._member_evidence(ctor, source)
             prop = ctor.child_by_field_name("property")
             if prop:
                 name = self.node_text(prop, source)
@@ -1048,14 +1706,24 @@ class JavaScriptExtractor(LanguageExtractor):
         else:
             name = self.node_text(ctor, source)
 
-        refs.append(
-            self._make_reference(
-                target_name=name,
-                kind="call",
-                line=ctor.start_point[0] + 1,
-                source_name=scope_name,
-            )
+        if ctor.type == "identifier" and self._is_local_value(node, name, source):
+            args = node.child_by_field_name("arguments")
+            if args is not None:
+                self._walk_refs(args, source, refs, scope_name)
+            return
+
+        ref = self._make_reference(
+            target_name=name,
+            kind="call",
+            line=ctor.start_point[0] + 1,
+            source_name=self._call_scope(node, source),
         )
+        if not evidence and name in self._member_imports and self._lexical_binding(node, name, source) is None:
+            path, exported = self._member_imports[name]
+            if exported in {"default", "export="}:
+                evidence = {"binding_import_path": path, "binding_export": exported}
+        ref.update(evidence)
+        refs.append(ref)
 
         # Recurse into arguments for nested calls/refs
         args = node.child_by_field_name("arguments")

@@ -1217,22 +1217,54 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_
     for sym, sym_id in zip(symbols, symbol_ids):
         parent_ids_by_name.setdefault(sym["name"], sym_id)
 
+    from roam.index.parser import detect_language
+    from roam.languages.registry import JS_FAMILY_LANGUAGES
+
+    js_owners = detect_language(rel_path) in JS_FAMILY_LANGUAGES
+    # JS/TS extractors normally emit owners before their children. Keep
+    # that association for same-named type and value declarations.
+    hoisted_functions = {}
+    if js_owners:
+        for sym, sym_id in zip(symbols, symbol_ids):
+            if sym["kind"] == "function" and (sym.get("signature") or "").startswith(("function ", "function* ")):
+                name = sym["qualified_name"]
+                hoisted_functions[name] = None if name in hoisted_functions else sym_id
+
+    preceding_owners = {}
+    preceding_value_owners = {}
     parent_updates = []
     for sym, sym_id in zip(symbols, symbol_ids):
         parent_name = sym.get("parent_name")
-        parent_id = parent_ids_by_name.get(parent_name) if parent_name else None
+        parent_id = (preceding_owners if js_owners else parent_ids_by_name).get(parent_name) if parent_name else None
+        if (
+            parent_name in hoisted_functions
+            and sym["kind"] == "function"
+            and (sym.get("signature") or "").endswith(";")
+        ):
+            # Direct function assignments use value bindings. An interface or
+            # type alias cannot displace a preceding value or a hoisted function.
+            parent_id = preceding_value_owners.get(parent_name)
+        if js_owners and parent_id is None and parent_name and sym["qualified_name"].startswith(parent_name + "."):
+            parent_id = hoisted_functions.get(parent_name)
         parent_updates.append((parent_id, sym_id))
+        name = sym["qualified_name"]
+        preceding_owners[name] = sym_id
+        if name in hoisted_functions and sym["kind"] not in {"interface", "type_alias"}:
+            preceding_value_owners[name] = sym_id
 
     conn.executemany("UPDATE symbols SET parent_id = ? WHERE id = ?", parent_updates)
 
+    stored_parents = {sym_id: parent_id for parent_id, sym_id in parent_updates}
     for sym, sym_id in zip(symbols, symbol_ids):
         all_symbol_rows[sym_id] = {
+            "parent_id": stored_parents[sym_id],
             "id": sym_id,
             "file_id": file_id,
             "file_path": rel_path,
             "name": sym["name"],
             "qualified_name": sym["qualified_name"],
             "kind": sym["kind"],
+            "signature": sym.get("signature"),
             "is_exported": bool(sym.get("is_exported")),
             "line_start": sym["line_start"],
             # W708: include line_end so the relations resolver's
@@ -1243,6 +1275,7 @@ def _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows, extractor_
             # in symbols_by_name silently re-attributes to syms[0]
             # (the first symbol in the file by line_start).
             "line_end": sym["line_end"],
+            "decorators": sym.get("decorators"),
         }
 
 
@@ -1422,7 +1455,7 @@ def _merge_existing_symbols(conn, all_symbol_rows: dict) -> None:
     # _store_symbols).
     existing_rows = conn.execute(
         "SELECT s.id, s.file_id, s.name, s.qualified_name, s.kind, "
-        "s.is_exported, s.line_start, s.line_end, f.path as file_path "
+        "s.is_exported, s.signature, s.parent_id, s.line_start, s.line_end, s.decorators, f.path as file_path "
         "FROM symbols s JOIN files f ON s.file_id = f.id"
     ).fetchall()
     for row in existing_rows:
@@ -1436,9 +1469,12 @@ def _merge_existing_symbols(conn, all_symbol_rows: dict) -> None:
             "name": row["name"],
             "qualified_name": row["qualified_name"],
             "kind": row["kind"],
+            "signature": row["signature"],
+            "parent_id": row["parent_id"],
             "is_exported": bool(row["is_exported"]),
             "line_start": row["line_start"],
             "line_end": row["line_end"],
+            "decorators": row["decorators"],
         }
 
 
@@ -2272,10 +2308,42 @@ class Indexer:
         # per-method log only emits result counts now to avoid duplicate
         # "Resolving references..." lines under inline-progress mode.
         symbols_by_name: dict[str, list[dict]] = {}
+        modules = {}
         for sym in all_symbol_rows.values():
-            symbols_by_name.setdefault(sym["name"], []).append(sym)
+            if sym["kind"] == "module" and sym["name"] == "<module>":
+                modules[sym["file_path"]] = sym
+            else:
+                symbols_by_name.setdefault(sym["name"], []).append(sym)
 
-        symbol_edges = resolve_references(all_references, symbols_by_name, file_id_by_path)
+        def module_source(path):
+            file_id = file_id_by_path.get(path)
+            if file_id is None:
+                return None
+            if path not in modules:
+                qualified_name = f"{path}::<module>"
+                cursor = conn.execute(
+                    "INSERT INTO symbols (file_id, name, qualified_name, kind, line_start, visibility, is_exported) "
+                    "VALUES (?, '<module>', ?, 'module', 1, 'private', 0)",
+                    (file_id, qualified_name),
+                )
+                symbol = {
+                    "id": cursor.lastrowid,
+                    "file_id": file_id,
+                    "file_path": path,
+                    "name": "<module>",
+                    "qualified_name": qualified_name,
+                    "kind": "module",
+                    "line_start": 1,
+                    "line_end": None,
+                    "is_exported": False,
+                }
+                modules[path] = symbol
+                all_symbol_rows[symbol["id"]] = symbol
+            return modules[path]
+
+        symbol_edges = resolve_references(
+            all_references, symbols_by_name, file_id_by_path, project_root=self.root, module_source=module_source
+        )
         conn.executemany(
             "INSERT INTO edges (source_id, target_id, kind, line, source_file_id) VALUES (?, ?, ?, ?, ?)",
             [(e["source_id"], e["target_id"], e["kind"], e["line"], e.get("source_file_id")) for e in symbol_edges],

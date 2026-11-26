@@ -626,7 +626,7 @@ class TypeScriptExtractor(JavaScriptExtractor):
                                     target_name=name,
                                     kind="call",
                                     line=dec_child.start_point[0] + 1,
-                                    source_name=scope_name,
+                                    source_name=self._call_scope(child, source),
                                 )
                             )
                     elif dec_child.type == "call_expression":
@@ -639,7 +639,7 @@ class TypeScriptExtractor(JavaScriptExtractor):
                                     target_name=self.node_text(obj, source),
                                     kind="call",
                                     line=obj.start_point[0] + 1,
-                                    source_name=scope_name,
+                                    source_name=self._call_scope(child, source),
                                 )
                             )
             elif ctype == "ambient_declaration":
@@ -693,14 +693,16 @@ class TypeScriptExtractor(JavaScriptExtractor):
                     "method_signature",
                     "abstract_method_signature",
                 ):
-                    params = child.child_by_field_name("parameters")
-                    sig = f"{name}({self._params_text(params, source)})"
+                    sig = self._build_method_signature(child, source, name)
                     if child.type == "abstract_method_signature":
                         sig = "abstract " + sig
                     ret = child.child_by_field_name("return_type")
                     if ret:
                         ret_text = self.node_text(ret, source).lstrip(": ").lstrip(":")
                         sig += f": {ret_text}"
+
+                    if child.type in {"method_signature", "abstract_method_signature"}:
+                        sig += ";"
 
                     # Decorators
                     decorators = self._get_ts_decorators(child, source)
@@ -728,7 +730,7 @@ class TypeScriptExtractor(JavaScriptExtractor):
                         self._extract_constructor_param_properties(child, source, symbols, class_name)
                 else:
                     type_ann = child.child_by_field_name("type")
-                    sig = name
+                    sig = ("static " if "static" in self._collect_method_prefixes(child, source) else "") + name
                     if type_ann:
                         ta_text = self.node_text(type_ann, source).lstrip(": ").lstrip(":")
                         sig += f": {ta_text}"

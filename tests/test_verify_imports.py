@@ -49,6 +49,31 @@ def test_optional_extra_and_uninstalled_self_import_are_optional_unresolved(proj
     assert result["unresolved"] == 0
 
 
+def test_dotted_file_name_import_resolves(project_factory, monkeypatch):
+    """`./app.service` names app.service.ts; the dot inside the name is not an extension."""
+    proj = project_factory(
+        {
+            "app.service.ts": "export class AppService {}\n",
+            "main.ts": "import { AppService } from './app.service'\nexport const s = new AppService()\n",
+        }
+    )
+    monkeypatch.chdir(proj)
+    from roam.commands.cmd_verify_imports import verify_imports_for_connection
+    from roam.db.connection import open_db
+
+    with open_db(readonly=True, project_root=proj) as conn:
+        result = verify_imports_for_connection(conn, str(proj))
+    assert result["unresolved"] == 0, result["imports"]
+
+
+def test_source_path_candidates_keep_real_extensions():
+    from roam.languages.js_resolution import source_path_candidates
+
+    assert "app.service.ts" in source_path_candidates("app.service")
+    assert source_path_candidates("data.json") == ("data.json",)
+    assert source_path_candidates("a.js")[0] == "a.ts"
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

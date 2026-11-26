@@ -25,7 +25,243 @@ def source_path_candidates(path: str) -> tuple[str, ...]:
     if suffix in substitutions:
         stem = path[: -len(suffix)]
         return tuple(stem + ext for ext in substitutions[suffix])
-    if suffix:
-        return (path,)
     extensions = (".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs", ".json", ".vue", ".svelte")
+    if suffix in extensions:
+        return (path,)
+    # A dot inside a file name (`./app.service`, `./user.dto`) is not an extension.
     return (path, *(path + ext for ext in extensions), *(path + "/index" + ext for ext in extensions))
+
+
+class ModuleExports:
+    """Read explicit local module exports for one resolution pass.
+
+    Local paths use ordered source-path candidates. Duplicate definitions and
+    conflicting star exports stay unresolved. Cached AST summaries include
+    symbol-free barrels. Cycles stop at the visited module.
+    """
+
+    def __init__(self, root, symbols_by_name):
+        from pathlib import Path
+
+        self.root = Path(root or ".")
+        self.by_file = {}
+        for symbols in symbols_by_name.values():
+            for symbol in symbols:
+                self.by_file.setdefault(symbol.get("file_path"), []).append(symbol)
+        self.cache = {}
+        self.instances = set()
+        self.alias_rules = {}
+
+    def module_path(self, source_file, module):
+        import posixpath
+
+        if module.startswith("."):
+            bases = [posixpath.normpath(posixpath.join(posixpath.dirname(source_file), module))]
+        else:
+            bases = self._aliased(source_file, module)
+            if not bases and module.startswith("@/"):
+                bases = ["src/" + module[2:]]
+        for base in bases:
+            found = next((p for p in source_path_candidates(base) if (self.root / p).is_file()), None)
+            if found:
+                return found
+        return None
+
+    def _aliased(self, source_file, module):
+        """Targets of ``compilerOptions.paths`` for ``module``, in the order TypeScript tries them."""
+        best, targets = -1, []
+        for pattern, replacements in self._rules_for(source_file):
+            prefix, star, suffix = pattern.partition("*")
+            if not star:
+                if module == pattern and len(pattern) > best:
+                    best, targets = len(pattern), list(replacements)
+            elif module.startswith(prefix) and module.endswith(suffix) and len(module) >= len(prefix) + len(suffix):
+                if len(prefix) > best:
+                    middle = module[len(prefix) : len(module) - len(suffix)]
+                    best, targets = len(prefix), [r.replace("*", middle, 1) for r in replacements]
+        return targets
+
+    def _rules_for(self, source_file):
+        """Path rules of the nearest tsconfig/jsconfig above the file that has any (``extends`` followed)."""
+        import posixpath
+
+        directory = posixpath.dirname(source_file.replace("\\", "/"))
+        while True:
+            if directory not in self.alias_rules:
+                rules = None
+                for name in ("tsconfig.json", "jsconfig.json"):
+                    config = posixpath.join(directory, name) if directory else name
+                    if (self.root / config).is_file():
+                        rules = self._config_rules(config, set())
+                        if rules:
+                            break
+                self.alias_rules[directory] = rules or []
+            if self.alias_rules[directory] or not directory:
+                return self.alias_rules[directory]
+            directory = posixpath.dirname(directory)
+
+    def _config_rules(self, config, seen):
+        import json
+        import posixpath
+        import re
+
+        if config in seen:
+            return []
+        seen.add(config)
+        try:
+            text = (self.root / config).read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            return []
+        # tsconfig is JSON with comments and trailing commas.
+        text = re.sub(r'("(?:\\.|[^"\\])*")|//[^\n]*|/\*.*?\*/', lambda m: m.group(1) or "", text, flags=re.S)
+        text = re.sub(r",(\s*[}\]])", r"\1", text)
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return []
+        options = data.get("compilerOptions") if isinstance(data, dict) else None
+        here = posixpath.dirname(config)
+        paths = options.get("paths") if isinstance(options, dict) else None
+        if isinstance(paths, dict):
+            base = posixpath.normpath(posixpath.join(here, options.get("baseUrl") or "."))
+            return [
+                (pattern, [posixpath.normpath(posixpath.join(base, t)) for t in targets])
+                for pattern, targets in paths.items()
+                if isinstance(targets, list) and all(isinstance(t, str) for t in targets)
+            ]
+        parent = data.get("extends") if isinstance(data, dict) else None
+        if isinstance(parent, str) and parent.startswith("."):
+            parent = posixpath.normpath(posixpath.join(here, parent))
+            if not parent.endswith(".json"):
+                parent += ".json"
+            return self._config_rules(parent, seen)
+        return []
+
+    def _summary(self, path):
+        if path in self.cache:
+            return self.cache[path]
+        exports, stars = {}, []
+        self.cache[path] = exports, stars
+        from roam.index.parser import detect_language
+        from roam.parser_pack import get_parser
+
+        language = detect_language(path)
+        if language not in {"javascript", "typescript", "tsx"}:
+            return exports, stars
+        try:
+            source = (self.root / path).read_bytes()
+            tree = get_parser(language).parse(source)
+        except (OSError, ValueError):
+            return exports, stars
+
+        def text(node):
+            return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace") if node is not None else ""
+
+        def add(name, local, module=None):
+            exports.setdefault(name, []).append((local, module))
+
+        for stmt in tree.root_node.named_children:
+            if stmt.type == "expression_statement":
+                # CommonJS: module.exports = { a, b: c }
+                assignment = stmt.named_children[0] if stmt.named_children else None
+                if assignment is not None and assignment.type == "assignment_expression":
+                    left, right = assignment.child_by_field_name("left"), assignment.child_by_field_name("right")
+                    if text(left) == "module.exports" and right is not None and right.type == "object":
+                        for prop in right.named_children:
+                            if prop.type == "shorthand_property_identifier":
+                                add(text(prop), text(prop))
+                            elif prop.type == "pair":
+                                value = prop.child_by_field_name("value")
+                                if value is not None and value.type == "identifier":
+                                    add(text(prop.child_by_field_name("key")), text(value))
+                continue
+            if stmt.type != "export_statement":
+                continue
+            module_node = stmt.child_by_field_name("source")
+            module = text(module_node).strip("'\"") if module_node is not None else None
+            tokens = {n.type for n in stmt.children}
+            if "default" in tokens or "=" in tokens:
+                name = "default" if "default" in tokens else "export="
+                declaration = stmt.child_by_field_name("declaration") or stmt.child_by_field_name("value")
+                if declaration is None:
+                    declaration = next((n for n in stmt.named_children if n.type == "identifier"), None)
+                local = declaration.child_by_field_name("name") if declaration is not None else None
+                if local is None and declaration is not None and declaration.type == "identifier":
+                    local = declaration
+                if local is None and declaration is not None and declaration.type == "new_expression":
+                    ctor = declaration.child_by_field_name("constructor")
+                    if ctor is not None and ctor.type == "identifier":
+                        local = ctor
+                        self.instances.add((path, name))
+                if local is not None:
+                    add(name, text(local))
+                continue
+            clause = next((n for n in stmt.named_children if n.type == "export_clause"), None)
+            if clause is not None:
+                for spec in clause.named_children:
+                    local = spec.child_by_field_name("name")
+                    alias = spec.child_by_field_name("alias") or local
+                    if local is not None:
+                        add(text(alias), text(local), module)
+            elif "*" in tokens and module:
+                stars.append(module)
+            else:
+                declaration = stmt.child_by_field_name("declaration")
+                if declaration is not None:
+                    local = declaration.child_by_field_name("name")
+                    if local is not None:
+                        add(text(local), text(local))
+                    for child in declaration.named_children:
+                        if child.type == "variable_declarator":
+                            local = child.child_by_field_name("name")
+                            if local is not None and local.type == "identifier":
+                                add(text(local), text(local))
+        return exports, stars
+
+    def is_instance_export(self, path, name):
+        """True when ``name`` is exported as ``new Class()`` (not the class itself)."""
+        self._summary(path)
+        return (path, name) in self.instances
+
+    def resolve(self, path, name, visited=frozenset(), *, type_only=False):
+        # None distinguishes unresolved/ambiguous module evidence from a
+        # known module which simply does not export this name. Barrels must
+        # propagate the former rather than silently select another branch.
+        if path is None:
+            return None
+        if path in visited:
+            return []
+        if "." in name:
+            root, suffix = name.split(".", 1)
+            owners = self.resolve(path, root, visited) or []
+            if len(owners) != 1 or owners[0].get("kind") != "namespace":
+                return None
+            owner = owners[0]
+            qualified = owner["qualified_name"] + "." + suffix
+            return [s for s in self.by_file.get(owner["file_path"], []) if s.get("qualified_name") == qualified]
+        visited = visited | {path}
+        exports, stars = self._summary(path)
+        found = []
+        if name in exports:
+            # Repeated declarations may describe one value (TS overloads or
+            # a type/value pair). Distinct re-export identities stay ambiguous;
+            # actual duplicate owners are retained below for owner selection.
+            identities = set(exports[name])
+            if len(identities) != 1:
+                return None
+            local, module = next(iter(identities))
+            if module:
+                return self.resolve(self.module_path(path, module), local, visited, type_only=type_only)
+            symbols = [s for s in self.by_file.get(path, []) if s.get("qualified_name") == local]
+            if type_only:
+                return [s for s in symbols if s.get("kind") in {"class", "interface"}]
+            values = [s for s in symbols if s.get("kind") not in {"type_alias", "interface"}]
+            return values or symbols
+        if name in {"default", "export="}:
+            return []  # export * never forwards a default/export assignment
+        for module in stars:
+            branch = self.resolve(self.module_path(path, module), name, visited, type_only=type_only)
+            if branch is None:
+                return None
+            found.extend(branch)
+        return list({s["id"]: s for s in found}.values())

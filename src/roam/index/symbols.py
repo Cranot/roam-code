@@ -121,13 +121,29 @@ def _normalize_reference(ref: dict) -> dict | None:
     # Build the result directly with already-validated values; avoids a 5-key
     # comprehension that would fetch source_name, target_name, and line a second
     # time only to immediately override them.
-    return {
+    result = {
         "source_name": source_name,
         "target_name": target_name,
         "kind": ref.get("kind", "call"),
         "line": line,
         "import_path": ref.get("import_path"),
     }
+    # Preserve receiver evidence across the extractor/indexer boundary.
+    for key in (
+        "receiver",
+        "receiver_owner",
+        "receiver_import_path",
+        "receiver_mode",
+        "receiver_owner_kind",
+        "receiver_owners",
+        "receiver_base",
+        "receiver_base_import_path",
+        "binding_import_path",
+        "binding_export",
+    ):
+        if key in ref:
+            result[key] = ref[key]
+    return result
 
 
 def _safe_extract_normalized(
