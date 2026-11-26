@@ -91,6 +91,7 @@
 <h3>Fixed</h3>
 <ul>
 <li><strong>Index freshness.</strong> CLI queries, MCP tools and doctor share a bounded source-file comparison that includes indexable untracked files. The public <code>_meta.index_status</code> field now follows this rule. Its <code>fresh</code> value reflects the state, and <code>dirty_files</code> gives the changed-file count. Commands declared stale-insensitive remain available under <code>ROAM_REFUSE_STALE_INDEX</code>. In projects without Git, doctor marks the check skipped.</li>
+<li><strong><code>roam verify-imports</code> and dotted file names.</strong> An import such as <code>./app.service</code> or <code>./user.dto</code> now resolves to <code>app.service.ts</code> or <code>user.dto.ts</code>. The dot inside the file name was read as an extension, so the import was reported unresolved. Only real source extensions (<code>.ts</code>, <code>.js</code>, <code>.json</code>, <code>.vue</code> and the rest) end the name.</li>
 </ul>
 <h2>[14.2.3] — 2026-11-25</h2>
 <h3>Fixed</h3>

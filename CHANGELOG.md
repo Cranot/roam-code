@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - **Index freshness.** CLI queries, MCP tools and doctor share a bounded source-file comparison that includes indexable untracked files. The public `_meta.index_status` field now follows this rule. Its `fresh` value reflects the state, and `dirty_files` gives the changed-file count. Commands declared stale-insensitive remain available under `ROAM_REFUSE_STALE_INDEX`. In projects without Git, doctor marks the check skipped.
+- **`roam verify-imports` and dotted file names.** An import such as `./app.service` or `./user.dto` now resolves to `app.service.ts` or `user.dto.ts`. The dot inside the file name was read as an extension, so the import was reported unresolved. Only real source extensions (`.ts`, `.js`, `.json`, `.vue` and the rest) end the name.
 
 ## [14.2.3] — 2026-11-25
 
