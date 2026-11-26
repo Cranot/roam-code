@@ -58,7 +58,9 @@ def test_unconfigured_typescript_does_not_guess_pytest(mixed_tests, cli_runner):
     (mixed_tests / "package.json").write_text('{"scripts": {"test": "echo jest"}}', encoding="utf-8")
     result = invoke_cli(cli_runner, ["affected-tests", "useStorage", "--command"])
     assert result.exit_code == 0, result.output
-    assert result.output.strip() == "# Unknown test runner for: storage.test.ts"
+    # Contract change: editing a project file after indexing now prints a stale-index warning on stderr;
+    # the command line is read from stdout.
+    assert result.stdout.strip() == "# Unknown test runner for: storage.test.ts"
 
 
 def test_preflight_suggests_vitest_for_typescript(mixed_tests, cli_runner):
@@ -178,7 +180,9 @@ def test_script_and_dependency_evidence(mixed_tests, cli_runner, package, expect
     # A POSIX shell comment now identifies the required shell and keeps the command copyable.
     if os.name == "nt" and not expected.startswith("#"):
         expected = "# Run in a POSIX shell\n" + expected
-    assert "\n".join(result.output.splitlines()) == expected
+    # Contract change: editing a project file after indexing now prints a stale-index warning on stderr;
+    # the command line is read from stdout.
+    assert "\n".join(result.stdout.splitlines()) == expected
 
 
 def test_diff_suggests_the_repository_runner(mixed_tests, cli_runner):
@@ -417,7 +421,9 @@ def test_windows_text_identifies_posix_test_commands(mixed_tests, cli_runner, mo
         assert text.exit_code == 0, text.output
         assert "npx vitest run storage.test.ts (POSIX shell)" in text.output
     result = invoke_cli(cli_runner, ["affected-tests", "useStorage", "--command"])
-    assert result.output.splitlines() == ["# Run in a POSIX shell", "npx vitest run storage.test.ts"]
+    # Contract change: editing a project file after indexing now prints a stale-index warning on stderr;
+    # the command line is read from stdout.
+    assert result.stdout.splitlines() == ["# Run in a POSIX shell", "npx vitest run storage.test.ts"]
 
 
 def test_compile_refreshes_runner_after_manifest_edit(mixed_tests):

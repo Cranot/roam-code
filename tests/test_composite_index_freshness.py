@@ -323,8 +323,13 @@ def test_mcp_audit_handle_keeps_freshness_disclosure(edited_project, monkeypatch
 def test_watch_keeps_freshness_warning_off_stdout(edited_project, cli_runner, monkeypatch):
     import time
 
-    def stop_after_one_update(*_args):
-        raise KeyboardInterrupt
+    real_sleep = time.sleep
+
+    def stop_after_one_update(seconds):
+        # Only the one-second watch interval stops; POSIX subprocess waits also sleep.
+        if seconds == 1:
+            raise KeyboardInterrupt
+        real_sleep(seconds)
 
     monkeypatch.setattr(time, "sleep", stop_after_one_update)
     result = cli_runner.invoke(cli, ["pr-analyze", "--watch", "1"])
@@ -514,3 +519,29 @@ def test_required_freshness_rechecks_after_index_is_created(project_factory, mon
         assert meta["index_state"] == "fresh"
         assert meta["index_changed_files"] == 0
         assert "index_state_reason" not in meta
+
+
+def _health_index_state(project, stdout):
+    subprocess.run(
+        [sys.executable, "-c", "from roam.cli import cli; cli()", "--json", "health"],
+        cwd=project,
+        stdout=stdout,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        timeout=180,
+        check=False,
+    )
+
+
+def test_output_redirected_into_the_project_is_not_a_project_change(project_factory):
+    project = project_factory({"app.py": "def indexed_helper():\n    return 1\n"})
+    report = project / "report.json"
+    with report.open("wb") as handle:
+        _health_index_state(project, handle)
+    assert json.loads(report.read_text(encoding="utf-8"))["_meta"]["index_state"] == "fresh"
+    # Left behind, the same file is a new project file for the next command.
+    with (project.parent / "outside.json").open("wb") as handle:
+        _health_index_state(project, handle)
+    later = json.loads((project.parent / "outside.json").read_text(encoding="utf-8"))
+    assert later["_meta"]["index_state"] == "stale"
+    assert later["_meta"]["index_changed_files"] == 1

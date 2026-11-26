@@ -165,6 +165,19 @@ def _indexed_rows(conn: sqlite3.Connection, paths: set[str], *, compare_all: boo
         yield from conn.execute(f"{select} WHERE path IN ({placeholders})", batch)
 
 
+def _own_output_files() -> list[os.stat_result]:
+    """Regular files this process writes its stdout or stderr into (``roam --json x > out.json``)."""
+    outputs = []
+    for fd in (1, 2):
+        try:
+            current = os.fstat(fd)
+        except (OSError, ValueError):
+            continue
+        if stat.S_ISREG(current.st_mode):
+            outputs.append(current)
+    return outputs
+
+
 def _compare_indexed_files(
     conn: sqlite3.Connection,
     root: Path,
@@ -211,12 +224,18 @@ def _compare_indexed_files(
                 changed = True
             if changed:
                 changed_paths.add(path)
+        own_outputs = _own_output_files()
         for path in paths - ignored_paths:
             if time.monotonic() >= deadline.end:
                 return None, _BUDGET_EXCEEDED
+            full_path = root / path
             # Git can list a submodule directory. The index needs a file it can read.
-            if (root / path).is_file() and _filter_files([path], root, exclude, include_excluded):
-                changed_paths.add(path)
+            if not full_path.is_file() or not _filter_files([path], root, exclude, include_excluded):
+                continue
+            # A new file this command is writing its own output into is not a project change.
+            if own_outputs and any(os.path.samestat(full_path.stat(), out) for out in own_outputs):
+                continue
+            changed_paths.add(path)
     except (OSError, sqlite3.Error) as exc:
         log_swallowed("index_freshness:files", exc)
         return None, f"could not compare indexed files ({type(exc).__name__})"
