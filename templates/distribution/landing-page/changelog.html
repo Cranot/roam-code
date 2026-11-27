@@ -88,6 +88,8 @@
 <p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
 <p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>, and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
 <h2>[Unreleased]</h2>
+<h2>[14.3.0rc1] — 2026-11-27</h2>
+<p>A pre-release for testing the JavaScript and TypeScript call-edge change (#136). Install it with <code>pip install --pre roam-code==14.3.0rc1</code>; a plain <code>pip install roam-code</code> still installs 14.2.3.</p>
 <h3>Fixed</h3>
 <ul>
 <li><strong>Index freshness.</strong> CLI queries, MCP tools and doctor share a bounded source-file comparison that includes indexable untracked files. The public <code>_meta.index_status</code> field now follows this rule. Its <code>fresh</code> value reflects the state, and <code>dirty_files</code> gives the changed-file count. Commands declared stale-insensitive remain available under <code>ROAM_REFUSE_STALE_INDEX</code>. In projects without Git, doctor marks the check skipped.</li>

@@ -24,7 +24,7 @@
   },
   "offerSource": "templates/legal/sow-pr-replay.md",
   "availabilityMeaning": "AVAILABLE means free tools can be installed or used. replayTiers gives each PR Replay tier: OPEN tiers can be run or requested now; PAUSED tiers take no new requests, and existing orders keep their agreed terms. Paid work requires agreed scope, availability and written terms; no online checkout is implied.",
-  "sourceVersion": "14.2.3",
+  "sourceVersion": "14.3.0rc1",
   "cliCommandCount": 288,
   "mcpToolCount": 259,
   "defaultMcpToolCount": 17,

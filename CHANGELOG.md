@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [14.3.0rc1] — 2026-11-27
+
+A pre-release for testing the JavaScript and TypeScript call-edge change (#136). Install it with `pip install --pre roam-code==14.3.0rc1`; a plain `pip install roam-code` still installs 14.2.3.
+
 ### Fixed
 
 - **Index freshness.** CLI queries, MCP tools and doctor share a bounded source-file comparison that includes indexable untracked files. The public `_meta.index_status` field now follows this rule. Its `fresh` value reflects the state, and `dirty_files` gives the changed-file count. Commands declared stale-insensitive remain available under `ROAM_REFUSE_STALE_INDEX`. In projects without Git, doctor marks the check skipped.
