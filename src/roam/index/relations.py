@@ -1052,8 +1052,16 @@ def _resolve_standard(
             target_name.lower(): [s for s in symbols_by_name_lower.get(target_name.lower(), []) if eligible(s)]
         }
 
+    # A plain Rust call `f(..)` calls a function or a tuple-struct constructor;
+    # never a method (that needs `x.f()` or `T::f()`, which reach here with a
+    # receiver or a path), a field or enum variant (stored as fields), or an
+    # associated type.
+    plain_rust_call = kind == "call" and source_file.endswith(".rs") and "::" not in target_name
+
     # Restrict every selection path before locality or singleton choices.
     def compatible(symbol):
+        if plain_rust_call and symbol.get("kind") not in {"function", "struct"}:
+            return False
         return _same_language_family(source_file, symbol.get("file_path", ""))
 
     symbols_by_name = {target_name: [s for s in symbols_by_name.get(target_name, []) if compatible(s)]}
@@ -1302,6 +1310,36 @@ def _resolve_js_member_in_owner(ref: dict, symbols_by_name: dict[str, list[dict]
     return True, min(candidates, key=lambda s: (s["line_start"], s["id"]))
 
 
+def _resolve_rust_member(ref: dict, symbols_by_name: dict[str, list[dict]]) -> dict | None:
+    """Resolve `value.method()` only through the type the extractor saw for `value`.
+
+    A method of type ``T`` is stored as ``..::T::method`` (inherent impl, or the
+    declaration in trait ``T``) or ``..::T::Trait::method`` (trait impl for ``T``).
+    Both shapes end in ``Trait::method`` for a trait impl, so a method whose
+    parent symbol is stored (the type or the trait itself) is tried first.
+    Candidates in the calling file win; otherwise exactly one must remain.
+    """
+    owner = ref.get("receiver_owner")
+    if not owner or owner == "?":
+        return None
+    strict, loose = [], []
+    for symbol in symbols_by_name.get(ref["target_name"], []):
+        if symbol.get("kind") != "method" or not symbol.get("file_path", "").endswith(".rs"):
+            continue
+        segments = [part.split("<", 1)[0].strip() for part in symbol.get("qualified_name", "").split("::")]
+        if len(segments) >= 3 and segments[-3] == owner:
+            strict.append(symbol)  # impl Trait for Owner
+        elif len(segments) >= 2 and segments[-2] == owner:
+            (strict if symbol.get("parent_id") is not None else loose).append(symbol)
+    source_file = ref.get("source_file")
+    for group in (strict, loose):
+        local = [s for s in group if s.get("file_path") == source_file]
+        if local:
+            return local[0] if len(local) == 1 else None
+    candidates = strict or loose
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _same_language_family(source_file: str, target_file: str) -> bool:
     """Shared JS/TS and C/C++ source/header ecosystems; others need bridges."""
     from roam.index.parser import detect_language
@@ -1357,7 +1395,10 @@ def _precompute_standard_targets_for_precise_reuse(
             hoisted_standard_targets[std_key] = targets[0] if len(targets) == 1 else None
             continue
         if "receiver" in ref:
-            hoisted_standard_targets[std_key] = _resolve_js_member(ref, symbols_by_name, modules)
+            if source_file.endswith(".rs"):
+                hoisted_standard_targets[std_key] = _resolve_rust_member(ref, symbols_by_name)
+            else:
+                hoisted_standard_targets[std_key] = _resolve_js_member(ref, symbols_by_name, modules)
             continue
         hoisted_standard_targets[std_key] = _resolve_standard(
             target_name,

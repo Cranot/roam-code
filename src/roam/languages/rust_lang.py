@@ -21,8 +21,222 @@ class RustExtractor(LanguageExtractor):
 
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
         refs = []
+        # Receiver evidence for method calls: the type `self` names in the
+        # enclosing impl or trait, the local bindings whose type the code shows,
+        # and the declared field types of this file's structs.
+        self._self_owner: str | None = None
+        self._bindings: dict[str, list[tuple[int, str | None]]] = {}
+        self._fields = self._struct_fields(tree.root_node, source)
+        self._returns = self._method_returns(tree.root_node, source)
         self._walk_refs(tree.root_node, source, refs, scope_name=None)
         return refs
+
+    def _method_returns(self, root, source) -> dict[str, dict[str, str | None]]:
+        """``{type: {fn: returned type}}`` for this file's impl blocks (`Self` is the type).
+
+        This lets a chain such as ``Builder::new().a(1).build()`` keep its owner.
+        """
+        returns: dict[str, dict[str, str | None]] = {}
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            stack.extend(node.named_children)
+            if node.type != "impl_item" or node.child_by_field_name("type") is None:
+                continue
+            owner = self._get_type_base_name(node.child_by_field_name("type"), source)
+            body = node.child_by_field_name("body")
+            outer, self._self_owner = self._self_owner, owner
+            for item in body.named_children if body is not None else ():
+                name = item.child_by_field_name("name") if item.type == "function_item" else None
+                if name is not None:
+                    returned = self._receiver_type(item.child_by_field_name("return_type"), source)
+                    returns.setdefault(owner, {})[self.node_text(name, source)] = returned
+            self._self_owner = outer
+        return returns
+
+    def _struct_fields(self, root, source) -> dict[str, dict[str, str | None]]:
+        """``{struct: {field: type}}`` for the named-field structs of one file."""
+        fields: dict[str, dict[str, str | None]] = {}
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.type == "struct_item":
+                name, body = node.child_by_field_name("name"), node.child_by_field_name("body")
+                if name is not None and body is not None:
+                    struct = self.node_text(name, source)
+                    own = fields.setdefault(struct, {})
+                    for field in body.named_children:
+                        if field.type == "field_declaration":
+                            fname, ftype = field.child_by_field_name("name"), field.child_by_field_name("type")
+                            if fname is None:
+                                continue
+                            owner = self._receiver_type(ftype, source)
+                            if owner == struct and "::" in self.node_text(ftype, source):
+                                # `inner: other::Field` inside `Field` names another type.
+                                owner = None
+                            own[self.node_text(fname, source)] = owner
+            stack.extend(node.named_children)
+        return fields
+
+    # Binding positions whose type the code does not show (closure and loop
+    # variables, destructuring, match arms). A name bound here has no type.
+    _UNTYPED_PATTERNS = frozenset(
+        {
+            "closure_parameters",
+            "match_pattern",
+            "tuple_pattern",
+            "tuple_struct_pattern",
+            "struct_pattern",
+            "slice_pattern",
+            "let_condition",
+        }
+    )
+    _CONSTRUCTORS = frozenset({"new", "default"})
+
+    def _receiver_type(self, type_node, source) -> str | None:
+        """The type a method call on a value of this declared type dispatches on."""
+        while type_node is not None and type_node.type == "reference_type":
+            type_node = type_node.child_by_field_name("type")
+        if type_node is None or type_node.type not in {"type_identifier", "scoped_type_identifier", "generic_type"}:
+            return None
+        name = self._get_type_base_name(type_node, source)
+        return self._self_owner if name == "Self" else name
+
+    def _constructed_type(self, value, source) -> str | None:
+        """`T { .. }`, or a call rooted at a type path (see ``_call_type``)."""
+        if value is None:
+            return None
+        if value.type == "struct_expression":
+            name = value.child_by_field_name("name")
+            return self._receiver_type(name, source) if name is not None else None
+        if value.type == "call_expression":
+            return self._call_type(value, source, rooted=True)
+        return None
+
+    def _call_type(self, call, source, rooted=False) -> str | None:
+        """The type a call returns, when the code shows it.
+
+        `T::f(..)` returns what this file's `impl T` declares for `f`, and
+        `T::new(..)` / `T::default()` return `T` when `f` is not declared here.
+        `recv.m(..)` returns what `impl <type of recv>` declares for `m`. With
+        ``rooted`` the chain must start at a type path (no local bindings yet).
+        """
+        func = call.child_by_field_name("function")
+        if func is None:
+            return None
+        if func.type == "scoped_identifier":
+            path, name = func.child_by_field_name("path"), func.child_by_field_name("name")
+            if path is None or name is None or path.type not in {"identifier", "scoped_identifier"}:
+                return None
+            leaf = path.child_by_field_name("name") if path.type == "scoped_identifier" else path
+            owner = self.node_text(leaf, source) if leaf is not None else None
+            owner = self._self_owner if owner == "Self" else owner
+            fname = self.node_text(name, source)
+            declared = self._returns.get(owner, {})
+            if fname in declared:
+                return declared[fname]
+            return owner if fname in self._CONSTRUCTORS else None
+        if func.type == "field_expression":
+            inner, field = func.child_by_field_name("value"), func.child_by_field_name("field")
+            if inner is None or field is None:
+                return None
+            if inner.type == "call_expression":
+                owner = self._call_type(inner, source, rooted)
+            elif rooted:
+                return None
+            else:
+                owner = self._value_type(inner, source)
+            return self._returns.get(owner, {}).get(self.node_text(field, source)) if owner else None
+        return None
+
+    def _function_bindings(self, fn_node, source) -> dict[str, list[tuple[int, str | None]]]:
+        """Each name's bindings in one function, as (byte where it takes effect, type or None).
+
+        A `let` takes effect after its statement, so `let v = v.unwrap_value();`
+        still reads the parameter `v`. Block scope is not modelled: a binding in
+        an inner block shadows the name until the next binding.
+        """
+        found: dict[str, list[tuple[int, str | None]]] = {}
+
+        def bind(name_node, owner, at=None):
+            if name_node is not None and name_node.type == "identifier":
+                position = name_node.start_byte if at is None else at
+                found.setdefault(self.node_text(name_node, source), []).append((position, owner))
+
+        def simple(pattern):
+            if pattern is not None and pattern.type == "mut_pattern" and pattern.named_child_count:
+                return pattern.named_children[0]
+            return pattern
+
+        def untyped(node):
+            if node.type == "identifier":
+                bind(node, None)
+            for child in node.children:
+                untyped(child)
+
+        def walk(node):
+            for child in node.children:
+                if child.type in {"function_item", "impl_item", "trait_item", "mod_item"}:
+                    continue
+                if child.type == "let_declaration":
+                    pattern = simple(child.child_by_field_name("pattern"))
+                    declared = child.child_by_field_name("type")
+                    if pattern is not None and pattern.type == "identifier":
+                        if declared is not None:
+                            owner = self._receiver_type(declared, source)
+                        else:
+                            owner = self._constructed_type(child.child_by_field_name("value"), source)
+                        bind(pattern, owner, at=child.end_byte)
+                    elif pattern is not None:
+                        untyped(pattern)
+                elif child.type == "for_expression":
+                    pattern = child.child_by_field_name("pattern")
+                    if pattern is not None:
+                        untyped(pattern)
+                elif child.type in self._UNTYPED_PATTERNS:
+                    untyped(child)
+                    continue
+                walk(child)
+
+        params = fn_node.child_by_field_name("parameters")
+        for param in params.named_children if params is not None else ():
+            if param.type == "parameter":
+                pattern = simple(param.child_by_field_name("pattern"))
+                if pattern is not None and pattern.type == "identifier":
+                    bind(pattern, self._receiver_type(param.child_by_field_name("type"), source), at=0)
+                elif pattern is not None:
+                    untyped(pattern)
+        body = fn_node.child_by_field_name("body")
+        if body is not None:
+            walk(body)
+        for bindings in found.values():
+            bindings.sort(key=lambda binding: binding[0])
+        return found
+
+    def _value_type(self, value, source) -> str | None:
+        """The type of `self`, a bound name, or a field path on either, when shown."""
+        if value.type == "self":
+            return self._self_owner
+        if value.type == "identifier":
+            owner = None
+            for position, bound in self._bindings.get(self.node_text(value, source), ()):
+                if position > value.start_byte:
+                    break
+                owner = bound
+            return owner
+        if value.type == "field_expression":
+            inner, field = value.child_by_field_name("value"), value.child_by_field_name("field")
+            owner = self._value_type(inner, source) if inner is not None else None
+            if owner is None or field is None:
+                return None
+            return self._fields.get(owner, {}).get(self.node_text(field, source))
+        if value.type == "call_expression":
+            return self._call_type(value, source)
+        return None
+
+    def _receiver_owner(self, value, source) -> str:
+        """The receiver's type when the code shows it, else ``?`` (no edge)."""
+        return self._value_type(value, source) or "?"
 
     def get_docstring(self, node, source: bytes) -> str | None:
         """Rust doc comments: /// or //! lines before node."""
@@ -599,7 +813,16 @@ class RustExtractor(LanguageExtractor):
                 self._emit_fn_type_refs(child, source, refs, new_scope)
                 body = child.child_by_field_name("body")
                 if body:
+                    outer = self._bindings
+                    self._bindings = self._function_bindings(child, source)
                     self._walk_refs(body, source, refs, new_scope)
+                    self._bindings = outer
+            elif child.type == "trait_item":
+                name_n = child.child_by_field_name("name")
+                outer = self._self_owner
+                self._self_owner = self.node_text(name_n, source) if name_n else None
+                self._walk_refs(child, source, refs, scope_name)
+                self._self_owner = outer
             elif child.type == "struct_item":
                 name_n = child.child_by_field_name("name")
                 struct_name = self.node_text(name_n, source) if name_n else None
@@ -645,7 +868,10 @@ class RustExtractor(LanguageExtractor):
                             break
                     body = child.child_by_field_name("body")
                     if body:
+                        outer = self._self_owner
+                        self._self_owner = type_name
                         self._walk_refs(body, source, refs, new_scope)
+                        self._self_owner = outer
             else:
                 self._walk_refs(child, source, refs, scope_name)
 
@@ -738,24 +964,33 @@ class RustExtractor(LanguageExtractor):
         if func_node is None:
             return
 
-        # Handle method calls: obj.method() -> extract "method"
+        ref = None
+        # A method call `value.method()` resolves only through the type the code
+        # shows for `value`; the calls inside `value` are references too.
         if func_node.type == "field_expression":
             field = func_node.child_by_field_name("field")
-            if field:
-                name = self.node_text(field, source)
-            else:
-                name = self.node_text(func_node, source)
-        else:
-            name = self.node_text(func_node, source)
-
-        refs.append(
-            self._make_reference(
-                target_name=name,
+            value = func_node.child_by_field_name("value")
+            ref = self._make_reference(
+                target_name=self.node_text(field if field else func_node, source),
                 kind="call",
                 line=func_node.start_point[0] + 1,
                 source_name=scope_name,
             )
-        )
+            if value is not None:
+                ref["receiver"] = self.node_text(value, source)
+                ref["receiver_owner"] = self._receiver_owner(value, source)
+                if value.type == "call_expression":
+                    self._extract_call(value, source, refs, scope_name)
+                else:
+                    self._walk_refs(value, source, refs, scope_name)
+        else:
+            ref = self._make_reference(
+                target_name=self.node_text(func_node, source),
+                kind="call",
+                line=func_node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        refs.append(ref)
         args = node.child_by_field_name("arguments")
         if args:
             self._walk_refs(args, source, refs, scope_name)

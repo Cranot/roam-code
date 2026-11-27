@@ -269,6 +269,27 @@ does not prove purity. Likewise, `beginPath()` and `beginRound()` are not
 transaction openers, and browser/network mutations alone do not establish that
 a database transaction is missing.
 
+## Rust method calls
+
+A Rust method call `value.method()` becomes an edge only when the code shows the
+type of `value`: `self` in an `impl` or `trait` block, a parameter or `let` with
+a declared type, `T::new(..)`, `T::default()` or a struct literal, a field path
+(`self.inner.method()`) through a struct declared in the same file, or a chain
+through methods whose return types that file declares
+(`Builder::new().a(1).build()`). The binding in effect at the call is used, so
+`let v = v.unwrap_value();` reads the parameter `v`. The method must belong to
+that type: its inherent `impl`, a trait `impl` for it, or the trait itself for
+`self` inside a trait. A plain call `f(..)` binds only to a function or a
+tuple-struct constructor, never to a method, field, enum variant or associated
+type. Unknown receivers produce no edge.
+
+Types are matched by name, and block scope is not modelled. These real calls are
+still missed: calls through a generic bound or `dyn Trait` (`out.combine(..)`
+with `T: Combine`), trait methods on a type from another crate
+(`req.extract()` on `http::Request`), bindings from `match` and `if let`
+patterns and closure parameters, a chain through a method declared in another
+file, and a type whose `impl` has two methods of one name.
+
 ## Review an algorithm finding
 
 Broad-exception findings are recovery-review candidates, not proof that an
