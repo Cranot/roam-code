@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.sync_surface_counts import VERSION_PATTERN
 from tests._helpers.repo_root import repo_root
 
 ROOT = repo_root()
@@ -154,7 +155,7 @@ def _status_html_current_version() -> str | None:
     if not p.exists():
         return None
     matches = re.findall(
-        r"<!-- product-fact:sourceVersion -->\s*(\d+\.\d+\.\d+)\s*<!-- /product-fact -->",
+        rf"<!-- product-fact:sourceVersion -->\s*({VERSION_PATTERN})\s*<!-- /product-fact -->",
         p.read_text(encoding="utf-8"),
     )
     return matches[0] if len(matches) == 1 else None
@@ -186,7 +187,7 @@ def _changelog_html_latest_release_version() -> str | None:
         return None
     # Match released entries only: a bracketed version + an em-dash date.
     m = re.search(
-        r"<h2>\[(\d+\.\d+(?:\.\d+)?)\]\s*&mdash;|<h2>\[(\d+\.\d+(?:\.\d+)?)\]\s*—", p.read_text(encoding="utf-8")
+        rf"<h2>\[({VERSION_PATTERN})\]\s*&mdash;|<h2>\[({VERSION_PATTERN})\]\s*—", p.read_text(encoding="utf-8")
     )
     if not m:
         return None
@@ -227,7 +228,7 @@ class TestVersionConsistency:
         # release commit explicitly noted "skipping the third version
         # component going forward". Tests guard the *consistency*
         # across pyproject/server.json/mcp-card, not the segment count.
-        assert re.match(r"^\d+\.\d+(\.\d+)?$", v), f"Bad version format: {v!r}"
+        assert re.fullmatch(VERSION_PATTERN, v), f"Bad version format: {v!r}"
 
     def test_server_json_matches_pyproject(self):
         truth = _truth_version()
@@ -1007,8 +1008,8 @@ def _version_tuple(v: str) -> tuple[int, ...]:
 # (JSON-LD softwareVersion, a status-page "current: vX" stamp). Prose mentions
 # and changelog history legitimately name older versions, so they are NOT matched.
 _CURRENT_VERSION_PATTERNS = (
-    re.compile(r'"softwareVersion"\s*:\s*"v?(\d+\.\d+\.\d+)"'),
-    re.compile(r"current[^<>\n]{0,20}?\bv(\d+\.\d+\.\d+)\b", re.IGNORECASE),
+    re.compile(rf'"softwareVersion"\s*:\s*"v?({VERSION_PATTERN})"'),
+    re.compile(rf"current[^<>\n]{{0,20}}?\bv({VERSION_PATTERN})\b", re.IGNORECASE),
 )
 
 

@@ -171,7 +171,10 @@ def _live_languages() -> int:
 # No single pattern below may use this twice (duplicate group name).
 # A declared pre-release (PEP 440 ``14.3.0rc1``, ``1.0a2``, ``2.0.0.dev1``) is one
 # version: read only up to ``X.Y.Z``, it looked like drift after a correct write.
-_PIN_VERSION = r"(?P<ver>\d+\.\d+(?:\.\d+)?(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?)"
+# Every reader of a written version uses this one shape, so a pre-release cannot
+# pass one check and fail another.
+VERSION_PATTERN = r"\d+\.\d+(?:\.\d+)?(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?"
+_PIN_VERSION = rf"(?P<ver>{VERSION_PATTERN})"
 # Everything an action ref carries after its version (``@v14.1.0-r1`` -> ``-r1``).
 # Only the action pattern has this group, and the scanner reads its presence to
 # know that a site names a GitHub ref rather than only a version.

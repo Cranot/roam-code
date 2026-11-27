@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts import build_site_product_facts as facts_builder  # noqa: E402
 from scripts.stage_site import SITE, git, require_candidate  # noqa: E402
+from scripts.sync_surface_counts import VERSION_PATTERN  # noqa: E402
 
 REQUIRED = {
     "index.html",
@@ -126,7 +127,7 @@ def current_fact_issues(name: str, text: str, facts: dict) -> list[dict]:
         "cliCommandCount": r"\b(\d+)\s+CLI\s+commands\b",
         "languageCount": r"\b(\d+)\s+languages\b",
         "defaultMcpToolCount": r"\b(\d+)\s+(?:default(?:\s+core)?|core)\s+tools\b",
-        "sourceVersion": r"\b(?:current(?:\s+(?:release|version))?|source version)\s*[:=]\s*v?(\d+\.\d+\.\d+)",
+        "sourceVersion": rf"\b(?:current(?:\s+(?:release|version))?|source version)\s*[:=]\s*v?({VERSION_PATTERN})",
     }
     issues = []
     for key, pattern in patterns.items():

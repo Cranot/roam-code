@@ -59,6 +59,19 @@ def test_stale_current_fact_refused_but_dated_archive_retained(phrase):
     assert not check.current_fact_issues("measurements.html", "Historical experiment, engine v13.10.0", facts)
 
 
+@pytest.mark.parametrize(
+    ("declared", "page", "refused"),
+    [
+        ("14.3.0rc1", "current version: 14.3.0rc1", False),
+        ("14.3.0rc1", "current version: 14.3.0", True),
+        ("14.3.0", "current version: 14.3.0rc1", True),
+    ],
+)
+def test_a_pre_release_source_version_is_read_whole(declared, page, refused):
+    issues = check.current_fact_issues("llms.txt", page, {"sourceVersion": declared})
+    assert bool(issues) is refused, issues
+
+
 @pytest.mark.parametrize("mutation", ["price", "count", "availability", "extra", "empty", "old_html"])
 def test_served_mutations_cannot_agree_themselves_into_a_pass(mutation):
     expected = (SITE / "data/product-facts.json").read_bytes()
