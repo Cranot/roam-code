@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [14.3.0rc2] — 2026-11-27
+
+A second pre-release, adding the Rust call-edge change (#136). Install it with `pip install --pre roam-code==14.3.0rc2`; a plain `pip install roam-code` still installs 14.2.3.
+
 ### Fixed
 
 - **Rust call edges keep only owners the code shows (#136).** A method call such as `resp.status()` was bound by the method name alone, often to an unrelated function of that name (in the issue's repro, a route handler in another crate directory). It is now an edge only when the receiver's type is shown: `self` in an `impl` or `trait`, a typed parameter or `let`, `T::new()`, `T::default()` or a struct literal, a field of a struct declared in the same file, or a chain through methods whose return types that file declares. A plain call `f(..)` now binds only to a function or a tuple-struct constructor, not to a method, field, enum variant or associated type. Calls inside a receiver (`make()` in `make().status()`) were dropped and are now recorded. Measured on ripgrep 14.1.1 and axum 0.7.9 against the previous resolver: call edges went from 3,708 to 2,958 and from 1,982 to 1,488. In random samples, 32 of 40 removed edges were wrong guesses and 8 were real calls now missed, and 39 of 40 added edges were real. The real calls still missed are listed in docs/concepts/detector-evidence.md, "Rust method calls": generic bounds and `dyn Trait`, trait methods on types from other crates, `match` and closure bindings, and chains through methods declared in another file.

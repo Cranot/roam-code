@@ -2147,7 +2147,7 @@ wheels = [
 
 [[package]]
 name = "roam-code"
-version = "14.3.0rc1"
+version = "14.3.0rc2"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
