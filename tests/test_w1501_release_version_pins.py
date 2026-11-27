@@ -87,7 +87,8 @@ ROOT = repo_root()
 
 def test_pyproject_version_is_readable_and_release_shaped() -> None:
     version = sync._pyproject_version()
-    assert re.fullmatch(r"\d+\.\d+(\.\d+)?", version), f"unexpected version shape: {version!r}"
+    # A final release or a PEP 440 pre-release (``14.3.0rc1``), the shapes publish.yml accepts.
+    assert re.fullmatch(r"\d+\.\d+(\.\d+)?((a|b|rc)\d+)?", version), f"unexpected version shape: {version!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +256,32 @@ def test_install_pins_take_published_and_identity_pins_take_declared(fake_tree) 
     # bump time. Freezing them would be the mirror-image defect.
     assert "version: 14.0.0" in body("CITATION.cff")
     assert '"version": "14.0.0"' in body(".claude-plugin/plugin.json")
+
+
+def test_a_declared_pre_release_converges_and_leaves_install_pins_on_the_release(fake_tree) -> None:
+    """Declared ``14.3.0rc1`` against published ``14.2.3``: one write, then no drift.
+
+    A version pattern that stopped at ``X.Y.Z`` read ``14.3.0rc1`` as ``14.3.0``
+    followed by text, so the check reported every identity pin as drift after a
+    correct write, and a second write would have produced ``14.3.0rc1rc1``.
+    """
+    tree = fake_tree(
+        {
+            "src/roam/templates/ci/gitlab-ci.yml": _STALE_TEMPLATE,
+            "CITATION.cff": _IDENTITY_CITATION,
+            ".claude-plugin/plugin.json": _IDENTITY_PLUGIN,
+        }
+    )
+    assert sync.release_pin_drift("14.3.0rc1", "14.2.3", write=True) != []
+    assert sync.release_pin_drift("14.3.0rc1", "14.2.3") == [], "the rewrite must converge in one pass"
+    assert sync.release_pin_drift("14.3.0rc1", "14.2.3", write=True) == []
+
+    def body(rel: str) -> str:
+        return (tree / rel).read_text(encoding="utf-8")
+
+    assert "version: 14.3.0rc1\n" in body("CITATION.cff")
+    assert '"version": "14.3.0rc1"\n' in body(".claude-plugin/plugin.json")
+    assert '"roam-code==14.2.3"' in body("src/roam/templates/ci/gitlab-ci.yml"), "a pre-release is not an install pin"
 
 
 def test_published_version_refuses_when_no_release_tag_exists(monkeypatch) -> None:

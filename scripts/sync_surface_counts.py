@@ -169,7 +169,9 @@ def _live_languages() -> int:
 # things to keep in agreement, and the gate that checks install targets exist
 # must read exactly the sites this script rewrites — not a copy of them.
 # No single pattern below may use this twice (duplicate group name).
-_PIN_VERSION = r"(?P<ver>\d+\.\d+(?:\.\d+)?)"
+# A declared pre-release (PEP 440 ``14.3.0rc1``, ``1.0a2``, ``2.0.0.dev1``) is one
+# version: read only up to ``X.Y.Z``, it looked like drift after a correct write.
+_PIN_VERSION = r"(?P<ver>\d+\.\d+(?:\.\d+)?(?:(?:a|b|rc)\d+)?(?:\.post\d+)?(?:\.dev\d+)?)"
 # Everything an action ref carries after its version (``@v14.1.0-r1`` -> ``-r1``).
 # Only the action pattern has this group, and the scanner reads its presence to
 # know that a site names a GitHub ref rather than only a version.
