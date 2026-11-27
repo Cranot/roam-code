@@ -40,6 +40,8 @@ import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+from scripts.sync_surface_counts import VERSION_PATTERN  # noqa: E402
 
 
 def _pyproject_version() -> str:
@@ -61,6 +63,22 @@ def _pypi_latest() -> str | None:
     return data.get("info", {}).get("version")
 
 
+def _pypi_serves(version: str) -> bool | None:
+    """Whether pypi.org serves this exact, unyanked version; None on network failure."""
+    try:
+        with urllib.request.urlopen(f"https://pypi.org/pypi/roam-code/{version}/json", timeout=10) as resp:
+            data = json.load(resp)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        print(f"WARN: PyPI fetch failed: {exc}", file=sys.stderr)
+        return None
+    except urllib.error.URLError as exc:
+        print(f"WARN: PyPI fetch failed: {exc}", file=sys.stderr)
+        return None
+    return data.get("info", {}).get("version") == version and not data.get("info", {}).get("yanked")
+
+
 def _final_release_tuple(version: str) -> tuple[int, int, int] | None:
     """Normalize final ``major.minor[.patch]`` versions without extra deps."""
     match = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", version)
@@ -78,6 +96,15 @@ def check_pypi_freshness() -> bool:
     drift signal.
     """
     repo_v = _pyproject_version()
+    if _final_release_tuple(repo_v) is None and re.fullmatch(VERSION_PATTERN, repo_v):
+        # PyPI's latest never names a pre-release, so ask for this exact version.
+        served = _pypi_serves(repo_v)
+        if served:
+            print(f"OK: PyPI serves the pre-release {repo_v}")
+            return True
+        reason = "PyPI unreachable" if served is None else "PyPI does not serve it"
+        print(f"FAIL: pre-release {repo_v}: {reason}", file=sys.stderr)
+        return False
     pypi_v = _pypi_latest()
     if pypi_v is None:
         print("FAIL: PyPI unreachable; cannot verify freshness", file=sys.stderr)

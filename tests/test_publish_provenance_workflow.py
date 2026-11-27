@@ -409,3 +409,30 @@ def test_every_literal_shell_step_parses_as_bash() -> None:
         )
         error = result.stderr.decode("utf-8", "replace")
         assert result.returncode == 0, f"run block at publish.yml:{line_number}: {error}"
+
+
+@pytest.mark.parametrize(
+    ("tag", "flags"),
+    [
+        ("v14.3.0rc1", "--prerelease --latest=false"),
+        ("v1.0a2", "--prerelease --latest=false"),
+        ("v2.0.0.dev1", "--prerelease --latest=false"),
+        ("v14.2.3", ""),
+        ("v14.1.0.post1", ""),
+    ],
+)
+def test_a_pre_release_tag_is_published_as_a_pre_release_and_not_latest(tag, flags) -> None:
+    """v14.3.0rc1 was published as the repository's Latest release (27 Nov)."""
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is unavailable")
+    upload = _job(_text(), "release-evidence", "smoke")
+    start = upload.index("release_kind=()")
+    end = upload.index("\n", upload.index("fi", start))
+    probe = textwrap.dedent(upload[start:end]) + '\necho "${release_kind[*]}"\n'
+    result = subprocess.run([bash, "-c", probe], env={"TAG": tag}, capture_output=True, timeout=20, check=True)
+    assert result.stdout.decode().strip() == flags
+    assert 'gh release create "$TAG"' in upload and 'gh release edit "$TAG"' in upload
+    for command in ('gh release create "$TAG"', 'gh release edit "$TAG"'):
+        line = upload[upload.index(command) : upload.index("\n", upload.index(command))]
+        assert '"${release_kind[@]}"' in line, line

@@ -1362,7 +1362,9 @@ def main() -> int:
     print(f"Published release (highest v* tag): {published}   -> install pins")
     if published_ref(published) != f"v{published}":
         print(f"  published under the ref {published_ref(published)}   -> action pins")
-    if version != published:
+    if version != published and _RELEASE_TAG.fullmatch(f"v{version}") is None:
+        print(f"  {version} is a pre-release: install pins stay at {published} until a final release is tagged")
+    elif version != published:
         print(f"  bump-to-release window is OPEN: install pins stay at {published} until v{version} is tagged")
     print()
 

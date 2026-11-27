@@ -1477,10 +1477,14 @@ jobs:
           printf '%s\n' "${evidence_names[@]}" | LC_ALL=C sort > /tmp/expected-release-assets
           verify_evidence_set signed-evidence
 
+          # A pre-release tag (a, b, rc or dev, as tag_pattern admits) is published as a
+          # pre-release and never becomes the repository's Latest release.
+          release_kind=()
+          if [[ "$TAG" =~ [0-9]((a|b|rc)[0-9]+|[.]dev[0-9]+) ]]; then release_kind=(--prerelease --latest=false); fi
           resolve_expected_tag
           fetch_release_state
           if [[ "$release_status" == 404 ]]; then
-            gh release create "$TAG" --repo "$REPO" --verify-tag --draft --title "$TAG" --generate-notes
+            gh release create "$TAG" --repo "$REPO" --verify-tag --draft --title "$TAG" --generate-notes "${release_kind[@]}"
             wait_for_created_release_state
           fi
           jq -e --arg tag "$TAG" '.tag_name == $tag and (.draft | type == "boolean") and (.immutable | type == "boolean")' \
@@ -1497,7 +1501,7 @@ jobs:
             download_release_assets "$uploaded"
             verify_evidence_set "$uploaded"
             resolve_expected_tag
-            gh release edit "$TAG" --repo "$REPO" --draft=false
+            gh release edit "$TAG" --repo "$REPO" --draft=false "${release_kind[@]}"
 
             immutable=false
             for delay in 0 2 5 10; do
